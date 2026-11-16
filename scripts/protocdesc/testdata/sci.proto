@@ -1,0 +1,78 @@
+// source info protodesc.build_with_source_info follows protoc on (std/protodesc_test.xo):
+// comment placement, groups, extend, oneofs, ranges, streams, tabs.
+
+// detached one
+
+/* detached block */
+
+// leading syntax
+syntax = "proto2"; // trailing syntax
+
+package xo.sci;
+
+import "google/protobuf/descriptor.proto";
+
+option java_package = "x.y"; /* block trailing */
+
+extend google.protobuf.FieldOptions {
+  optional int32 weight = 50101; // weight
+  repeated string tags = 50102;
+}
+
+/**
+ * A doc block.
+ *   indented
+ */
+message Item { // brace trailing
+	// tab leading
+	optional int32 id = 1 [default = -5, json_name = "ID", (weight) = 3, (tags) = "a", (tags) = "b"];
+  required string name = 2; /* not
+     trailing */ optional bytes data = 3;
+  repeated group Part = 4 [deprecated = true] {
+    optional int32 n = 1;
+  }
+  oneof choice {
+    option (xo.sci.oneof_flag) = true;
+    string text = 5;
+    group Pick = 6 { optional int32 v = 1; }
+  }
+  map<string, Item> children = 7;
+
+  // between
+
+  extensions 100 to 199, 300 [(xo.sci.range_tag) = "r"];
+  extensions 500 to max;
+  reserved 10, 12 to 14;
+  reserved "old", "older";
+  extend Item {
+    optional string note = 150;
+  }
+  message Inner {}
+  enum Kind { KIND_A = 0; KIND_B = -1 [deprecated = true]; reserved 5 to 9, -3; reserved "KIND_C"; }
+  optional .xo.sci.Item.Kind kind = 8;
+}
+
+extend google.protobuf.OneofOptions {
+  optional bool oneof_flag = 50103;
+}
+extend google.protobuf.ExtensionRangeOptions {
+  optional string range_tag = 50104;
+}
+
+enum Top {
+  option allow_alias = true;
+  TOP_A = 0;
+  TOP_B = 0; // alias
+}
+
+service Svc {
+  option deprecated = true;
+  // leading rpc
+  rpc Get(Item) returns (stream Item);
+  rpc Put(stream .xo.sci.Item) returns (Item) {
+    option deprecated = true;
+  }
+  rpc Empty(Item) returns (Item) {}
+}
+
+// trailing file comment

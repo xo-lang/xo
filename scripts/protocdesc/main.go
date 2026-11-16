@@ -3,7 +3,8 @@
 // (scripts/stdcorpus/testdata/protoparse) that protoc compiles, with the files
 // it imports (the well known types from protoc's include directory), as
 // (name, text, protoc's FileDescriptorProto as hex) and the groups to build
-// in order. protodesc.build must give protoc's bytes for each.
+// in order. protodesc.build must give protoc's bytes for each, and
+// protodesc.build_with_source_info protoc's SourceCodeInfo (PROTOC_SCI).
 //
 // It needs protoc (not on the offload hosts), so it is not a stdcorpus
 // generator (gate.sh's stdcorpus -check runs there): run it by hand after a
@@ -29,7 +30,7 @@ const (
 	end      = "// END protoc cases\n"
 )
 
-type text struct{ name, src, hex string }
+type text struct{ name, src, hex, sci string }
 
 func main() {
 	wkt := includeDir()
@@ -81,6 +82,13 @@ func main() {
 		}
 		fmt.Fprintf(&o, "  [%s],\n", strings.Join(s, ", "))
 	}
+	o.WriteString("]\n\n/// protoc's SourceCodeInfo (--include_source_info) of each file outside google/protobuf: (index into\n/// PROTOC_FILES, hex)\nconst PROTOC_SCI: List[(Int, Str)] = [\n")
+	for i, t := range texts {
+		if strings.HasPrefix(t.name, "google/protobuf/") || t.sci == "" {
+			continue
+		}
+		fmt.Fprintf(&o, "  (%d, \"%s\"),\n", i, t.sci)
+	}
 	o.WriteString("]\n")
 	o.WriteString(end)
 	old, err := os.ReadFile(testFile)
@@ -111,7 +119,7 @@ func compile(p, wkt string) ([]text, bool) {
 			panic(err)
 		}
 		out.Close()
-		cmd := exec.Command("protoc", "-I", d, "-I", wkt, "--include_imports", "--descriptor_set_out="+out.Name(), filepath.ToSlash(rel))
+		cmd := exec.Command("protoc", "-I", d, "-I", wkt, "--include_imports", "--include_source_info", "--descriptor_set_out="+out.Name(), filepath.ToSlash(rel))
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		err = cmd.Run()
@@ -130,7 +138,8 @@ func compile(p, wkt string) ([]text, bool) {
 			if err != nil {
 				panic(name + ": " + err.Error())
 			}
-			g = append(g, text{name, string(src), hex.EncodeToString(fd)})
+			desc, sci := splitSourceInfo(fd)
+			g = append(g, text{name, string(src), hex.EncodeToString(desc), hex.EncodeToString(sci)})
 		}
 		return g, true
 	}
@@ -152,6 +161,33 @@ func files(set []byte) [][]byte {
 		set = set[l:]
 	}
 	return out
+}
+
+// splitSourceInfo splits a FileDescriptorProto into the descriptor without its
+// source_code_info (field 9) and that field's message.
+func splitSourceInfo(fd []byte) (desc, sci []byte) {
+	for i := 0; i < len(fd); {
+		start := i
+		tag, n := uvarint(fd[i:])
+		i += n
+		switch tag & 7 {
+		case 0:
+			_, n = uvarint(fd[i:])
+			i += n
+		case 2:
+			l, n := uvarint(fd[i:])
+			if tag>>3 == 9 {
+				sci = fd[i+n : i+n+int(l)]
+				i += n + int(l)
+				continue
+			}
+			i += n + int(l)
+		default:
+			panic("unexpected wire type")
+		}
+		desc = append(desc, fd[start:i]...)
+	}
+	return desc, sci
 }
 
 // fdName is a FileDescriptorProto's name (field 1).

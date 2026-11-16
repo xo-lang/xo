@@ -1,0 +1,23 @@
+/* only a block */ syntax = "proto3";
+package xo.sci3;
+import public "other.proto";
+import "google/protobuf/descriptor.proto";
+option go_package = "example.com/x" "/y"; // concatenated
+;
+extend google.protobuf.MessageOptions { Lim lim = 50201; }
+message Lim { int32 min = 1; int32 max = 2; }
+message A {
+  option (lim) = { min: 1 };
+  option (lim).max = 3; // sub path
+  optional int32 x = 1; /* ambiguous */ int32 y = 2;
+  int32 z = 3;
+  // dangling at end
+}
+message B { /* one */ /* two */
+  int32 a = 1; // a
+  // for b
+  int32 b = 2;
+  /* before close */ }
+
+// final
+enum E { E0 = 0; } // eof no newline

@@ -1,5 +1,20 @@
 # std/protodesc changes
 
+## 2026-11-16: feature: build_with_source_info; fix: custom options on oneofs and extension ranges
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: task #109 (protocompile.SourceInfoStandard)
+- Go reference: protoc 36.2 --include_source_info; protocompile's sourceinfo (standard mode)
+- Test: std/protodesc_test.xo, protoc's SourceCodeInfo for the 47 cases of scripts/protocdesc outside
+  google/protobuf (byte exact; scripts/protocdesc/testdata/sci.proto and sci3.proto for comment placement, groups,
+  extend, oneof options, ranges, streams); internal/stdtest/testdata/corpus/protodesc/sourceinfo_test.xo
+- Shipped in: not yet released
+
+`build_with_source_info(src, name, deps)` parses and builds a file with `source_code_info` as protoc writes it: the
+locations of the file, its declarations and their parts, with leading, trailing and detached comments. `build` now
+writes custom options set on a oneof or an extension range (protoc does; they were left out).
+
 ## 2026-11-16: feature: custom options
 
 - Kind: feature

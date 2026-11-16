@@ -10807,6 +10807,7 @@ A parser for `.proto` files and a generator of `derive Proto` structs, for `xo p
 ```xo
 struct ParseErr { line: Int, col: Int, msg: Str }              // 1 based; displays as `line:col: msg`
 fn tokens(src: Str) -> List[Token] ! ParseErr
+fn lex(src: Str) -> Lexed ! ParseErr                           // tokens, comments, and the end's position
 fn parse(src: Str) -> File ! ParseErr
 fn gen(f: File) -> Str ! ParseErr
 fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr   // (import path, File) each; one source per file
@@ -10819,7 +10820,17 @@ fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate o
 // Enum { name, values: List[EnumValue], options, reserved, reserved_names }   EnumValue { name, num, options }
 // Service { name, rpcs, options }   Rpc { name, req, resp, client_stream, server_stream, options, body }
 // Extend { extendee, fields: List[Field] }   options: List[(Str, Str)], (name, value as written)
+// Token { kind, text, line, col, pcol, pend }   Lexed { tokens, comments: List[Comment], eof_line, eof_col }
+// Comment { text, line, col, end_line, end_col, nl, tok, trailing }
 ```
+
+`lex` keeps what source info needs: each token's protoc columns (`pcol` and `pend`, 0 based, the byte after the
+token for `pend`; a tab moves to the next multiple of 8, any other byte one column), and each comment (its text as
+written, a line comment without its newline and `nl` when one ended it) with the token it belongs to, `tok` (the
+token count for the end of the file): protocompile's lexer gives the first comment after a token to that token as
+its trailing comment when it starts on that token's line, the next token (the end of the file counts as on the next
+line) is on a later line, and it is a line comment, one of several, or a block comment ending before the next
+token's line; the rest lead the next token. A oneof's options are kept in `Message.oneof_options`.
 
 - The lexer reads identifiers (dots inside), integers (a `0x` prefix is lexed), floats, string literals (escapes decoded)
   and single symbol characters; `//` and `/* */` comments are dropped.
@@ -10827,7 +10838,7 @@ fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate o
   `oneof`, nested messages and enums, top level enums, `service` with `rpc` and `stream`, and `extend` blocks.
   Options are kept as (name, value) pairs on the file, messages, fields, enums, values, services and rpcs (a name's
   tokens joined, `(my.ext).x`; a string value unquoted; an aggregate `{ key: value ... }` as pairs `aggregate_pairs`
-  reads, a nested message's keys joined with a dot (`limits.min`); a oneof's options are dropped), with a field's `default` and
+  reads, a nested message's keys joined with a dot (`limits.min`)), with a field's `default` and
   `json_name` in their own fields; `reserved` ranges and names and `extensions` ranges with their options are kept
   (end included, `max` the largest number), and where each map field sits among the nested messages (`map_at`).
   In a proto2 file every field outside a oneof needs a label (`required`, `optional` or `repeated`, else an error),
@@ -10918,6 +10929,7 @@ their wire reader and writers are the internal module `std/protowire` (not for p
 fn encode(f: FileDesc) -> Bytes
 fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr
 fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDesc ! protoparse.ParseErr
+fn build_with_source_info(src: Str, name: Str, deps: List[FileDesc] = []) -> FileDesc ! protoparse.ParseErr
 ```
 
 `encode` writes fields in field number order, the order protobuf-go's Deterministic marshaling uses; a proto2 file has an
@@ -10936,9 +10948,21 @@ number order, a repeated one in written order. An option no extension resolves a
 out, and an rpc with a `{ }` body gets an empty options message, as protoc's. An
 unknown type is an error at line 0. An editions file's descriptor has syntax `editions`, its edition's number
 (EDITION_2023 is 1000) and each `features.NAME` option in a FeatureSet at its options' features field.
-Checked byte for byte against protoc 36.2 on 49 files: the protoparse corpus files protoc compiles, descriptor.proto
+Custom options on oneofs and extension ranges are written too.
+Checked byte for byte against protoc 36.2 on 51 files: the protoparse corpus files protoc compiles, descriptor.proto
 and the well known types they import, and proto2, proto3 and edition 2023 feature files
 (scripts/protocdesc writes those cases into std/protodesc_test.xo; it needs protoc, so it runs by hand).
+
+`build_with_source_info` parses `src` and builds it as `build`, with `source_code_info` set as protoc writes it with
+`--include_source_info` (protocompile's SourceInfoStandard): a location for the file and for each declaration and
+its parts in source order (a field's label, type or type name, name, number and options; a message's, enum's,
+oneof's, service's and method's name; values, ranges, reserved names, imports, the package and each option, a
+field's `default` as its value and `json_name` as the option then its value), each with the path of descriptor
+fields and indexes that reaches it and its span (0 based line and columns, 3 numbers on one line, else 4), and the
+declarations' leading, trailing and leading detached comments (a block's trailing comment is the one after its `{`;
+a comment group goes to one location only). Checked byte for byte against protoc 36.2 on the 47 files of those
+cases outside google/protobuf, two of them written for comment placement, groups, extend blocks, oneof options,
+ranges and streams.
 
 ## 73. std/protowkt
 

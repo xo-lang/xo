@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/protodesc, std/protoparse): `protodesc.build_with_source_info` writes protoc's SourceCodeInfo (`--include_source_info`: locations and comments) byte for byte; `protoparse.lex` gives tokens with protoc's columns and attributed comments; `parse` keeps oneof options. Fix: `build` writes custom options set on a oneof or an extension range.
 - Feature (std/protodesc, std/protoparse): `protodesc.build` writes custom options (`(ext)`, `(ext).a.b` and aggregate values of extensions of descriptor.proto's options messages) byte for byte as protoc does; `protoparse` keeps a nested aggregate's keys as dotted pairs (`limits.min`) instead of dropping the nested message.
 - Feature (std/protoparse, std/protodesc, xo proto gen): `.proto` files in editions 2023 and 2024: parsed (`edition`, `features.NAME` options, identifier reserved names), built into protoc's descriptors byte for byte, and generated with `features.field_presence` and `features.repeated_field_encoding`. Fix: `gen` refuses a proto2 group (and an editions DELIMITED field), which it wrote as a length prefixed message protoc's readers reject for a group.
 - Fix (std/cbor, every backend): `decode(reject_dup_keys: true)` accepts a map whose keys are NaN under tags (`22(NaN)` twice), as fxamacker does; a bare NaN key was already never a duplicate.

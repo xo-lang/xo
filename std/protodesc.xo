@@ -618,9 +618,7 @@ pub fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDe
   out.options = fo
   out.options_set = fset
   // custom options: extensions of descriptor.proto's options messages, from this file and deps
-  var cx = CoCx{exts: [], msgs: {}, enums: {}}
-  cx = co_collect(cx, out)
-  for d in deps { cx = co_collect(cx, d) }
+  let cx = co_cx(out, deps)
   if cx.exts.is_empty() { return Ok(out) }
   Ok(co_file(f, out, cx))
 }
@@ -637,6 +635,7 @@ struct CoExt {
   full: Str
   extendee: Str
   number: Int
+  label: Int
   kind: Int
   type_name: Str
 }
@@ -649,7 +648,7 @@ struct CoCx {
 }
 
 fn co_ext(full: Str, x: FieldDesc) -> CoExt {
-  CoExt{full: full, extendee: x.extendee, number: x.number, kind: x.kind, type_name: x.type_name}
+  CoExt{full: full, extendee: x.extendee, number: x.number, label: x.label, kind: x.kind, type_name: x.type_name}
 }
 
 fn co_collect_msg(cx0: CoCx, pre: Str, m: MessageDesc) -> CoCx {
@@ -871,6 +870,32 @@ fn co_message_desc(m: protoparse.Message, d0: MessageDesc, cx: CoCx) -> MessageD
     fields.push(fd)
   }
   d.field = fields
+  var ranges: List[ExtensionRange] = []
+  for (k, r0) in d.extension_range.indexed() {
+    var r = r0
+    if k < m.extension_options.len() {
+      let ro = co_opts(m.extension_options[k], CO_PRE + "ExtensionRangeOptions", cx)
+      if !ro.is_empty() {
+        r.options = r.options + ro
+        r.options_set = true
+      }
+    }
+    ranges.push(r)
+  }
+  d.extension_range = ranges
+  var oneofs: List[OneofDesc] = []
+  for (k, od0) in d.oneof_decl.indexed() {
+    var od = od0
+    if k < m.oneof_options.len() {
+      let oo = co_opts(m.oneof_options[k], CO_PRE + "OneofOptions", cx)
+      if !oo.is_empty() {
+        od.options = od.options + oo
+        od.options_set = true
+      }
+    }
+    oneofs.push(od)
+  }
+  d.oneof_decl = oneofs
   var nested: List[MessageDesc] = []
   for nd in d.nested_type {
     var done = nd
@@ -1068,7 +1093,11 @@ fn b_type(syms: Map[Str, Int], scope: Str, t: Str) -> (Int, Str) ! protoparse.Pa
 fn b_message(syms: Map[Str, Int], scope: Str, m: protoparse.Message, proto3: Bool) -> MessageDesc ! protoparse.ParseErr {
   let full = if scope.is_empty() { m.name } else { scope + "." + m.name }
   var d = MessageDesc{name: m.name}
-  for o in m.oneofs { d.oneof_decl.push(OneofDesc{name: o}) }
+  for (k, o) in m.oneofs.indexed() {
+    let oo = if k < m.oneof_options.len() { m.oneof_options[k] } else { [] }
+    let (ob, oset) = b_opts(oo, ONEOF_OPTS)
+    d.oneof_decl.push(OneofDesc{name: o, options: ob, options_set: oset})
+  }
   var entries: List[(Int, MessageDesc)] = []
   var synthetic: List[Str] = []
   var mi = 0
@@ -1196,6 +1225,7 @@ const FIELD_OPTS: List[(Str, Int, Int, Str)] = [
 // ExtensionRangeOptions' declaration and verification are source retention options, which protoc leaves out
 // of the descriptors it writes; so are FeatureSet's enforce_naming_style and the others marked so.
 const EXT_RANGE_OPTS: List[(Str, Int, Int, Str)] = []
+const ONEOF_OPTS: List[(Str, Int, Int, Str)] = [("features", 1, 5, "")]
 const EDITIONS: Str = "EDITION_UNKNOWN:0,EDITION_LEGACY:900,EDITION_PROTO2:998,EDITION_PROTO3:999,EDITION_2023:1000,EDITION_2024:1001,EDITION_2026:1002,EDITION_UNSTABLE:9999,EDITION_1_TEST_ONLY:1,EDITION_2_TEST_ONLY:2,EDITION_99997_TEST_ONLY:99997,EDITION_99998_TEST_ONLY:99998,EDITION_99999_TEST_ONLY:99999,EDITION_MAX:2147483647"
 
 /// The fields of the aggregate option values build writes (descriptor.proto's own options).
@@ -1285,4 +1315,853 @@ fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, 
   var out = BytesBuilder.new()
   for (_, b) in sorted { out.write(b) }
   (out.freeze(), true)
+}
+
+// Source info (protoc --include_source_info, protocompile's sourceinfo in its standard mode): a
+// SourceCodeInfo location for the file and each declaration and part of one, in source order, with the
+// path of descriptor fields and indexes that reaches it, its span (0 based line and columns, the end
+// column after the last byte; 3 numbers when on one line, else 4), and the comments it takes.
+
+/// `src` parsed and built (as `build`), with `source_code_info` set as protoc writes it with
+/// `--include_source_info`: the locations of the file, its declarations and their parts (names,
+/// numbers, labels, types, options), and the leading, trailing and detached comments of each
+/// declaration.
+pub fn build_with_source_info(src: Str, name: Str, deps: List[FileDesc] = []) -> FileDesc ! protoparse.ParseErr {
+  let f = protoparse.parse(src)?
+  var out = build(f, name, deps)?
+  let lx = protoparse.lex(src)?
+  var w = Sw{ts: lx.tokens, cs: lx.comments, lead: [], trail: [], used: [], at: 0, o: BytesBuilder.new(), cx: co_cx(out, deps), eof_line: lx.eof_line}
+  for _ in 0..w.ts.len() + 1 {
+    w.lead.push([])
+    w.trail.push([])
+  }
+  for (i, c) in lx.comments.indexed() {
+    if c.trailing {
+      w.trail[c.tok].push(i)
+    } else {
+      w.lead[c.tok].push(i)
+    }
+    w.used.push(false)
+  }
+  sw_file(w)
+  out.source_code_info = w.o.freeze()
+  Ok(out)
+}
+
+/// The source info walk: the tokens and comments, the comments' groups already given to a location,
+/// the next token, and the locations written so far.
+struct Sw {
+  ts: List[protoparse.Token]
+  cs: List[protoparse.Comment]
+  /// for each token (and the end of the file), its leading comments and its trailing ones
+  lead: List[List[Int]]
+  trail: List[List[Int]]
+  used: List[Bool]
+  at: Int
+  o: BytesBuilder
+  cx: CoCx
+  eof_line: Int
+}
+
+fn co_cx(out: FileDesc, deps: List[FileDesc]) -> CoCx {
+  var cx = CoCx{exts: [], msgs: {}, enums: {}}
+  cx = co_collect(cx, out)
+  for d in deps { cx = co_collect(cx, d) }
+  cx
+}
+
+fn sw_is(w: Sw, s: Str) -> Bool {
+  w.at < w.ts.len() && w.ts[w.at].text == s && w.ts[w.at].kind != protoparse.Kind.Str
+}
+
+fn sw_tok_is(w: Sw, i: Int, s: Str) -> Bool {
+  i < w.ts.len() && w.ts[i].text == s && w.ts[i].kind != protoparse.Kind.Str
+}
+
+/// The index of the token closing the bracket opened at token `open` (`{`, `[`, `(` or `<`).
+fn sw_close(w: Sw, open: Int) -> Int {
+  var depth = 0
+  var i = open
+  while i < w.ts.len() {
+    let t = w.ts[i]
+    if t.kind == protoparse.Kind.Sym {
+      if t.text is "{" | "[" | "(" | "<" {
+        depth += 1
+      } else if t.text is "}" | "]" | ")" | ">" {
+        depth -= 1
+        if depth == 0 { return i }
+      }
+    }
+    i += 1
+  }
+  w.ts.len() - 1
+}
+
+/// The last token of the value starting at token `i` (an aggregate, a list, a signed number, adjacent
+/// strings, or one token).
+fn sw_value_end(w: Sw, i: Int) -> Int {
+  if sw_tok_is(w, i, "{") || sw_tok_is(w, i, "[") { return sw_close(w, i) }
+  if sw_tok_is(w, i, "-") || sw_tok_is(w, i, "+") { return i + 1 }
+  var j = i
+  if w.ts[i].kind == protoparse.Kind.Str {
+    while j + 1 < w.ts.len() && w.ts[j + 1].kind == protoparse.Kind.Str { j += 1 }
+  }
+  j
+}
+
+/// The last token of a type name starting at token `i` (`.a.b` is `.` then `a.b`).
+fn sw_type_end(w: Sw, i: Int) -> Int { if sw_tok_is(w, i, ".") { i + 1 } else { i } }
+
+// comments (protocompile's sourceinfo rules)
+
+/// Comments in groups: consecutive line comments with no blank line between are one group; each
+/// block comment starts one.
+fn sw_group(w: Sw, ids: List[Int]) -> List[List[Int]] {
+  var out: List[List[Int]] = []
+  if ids.is_empty() { return out }
+  var cur: List[Int] = [ids[0]]
+  var single = w.cs[ids[0]].text.starts_with("//")
+  var line = w.cs[ids[0]].end_line
+  for k in 1..ids.len() {
+    let c = w.cs[ids[k]]
+    let prev_single = single
+    single = c.text.starts_with("//")
+    if !single || prev_single != single || c.line > line + 1 {
+      out.push(cur)
+      cur = []
+    }
+    cur.push(ids[k])
+    line = c.end_line
+  }
+  out.push(cur)
+  out
+}
+
+fn sw_start_line(w: Sw, t: Int) -> Int { if t < w.ts.len() { w.ts[t].line - 1 } else { w.eof_line } }
+
+/// (trailing comments of prev, detached groups and leading comments of tok); prev is -1 for none.
+fn sw_attribute(w: Sw, prev: Int, tok: Int) -> (List[Int], List[List[Int]], List[Int]) {
+  var detached = sw_group(w, w.lead[tok])
+  var trail: List[Int] = []
+  if prev >= 0 {
+    trail = w.trail[prev]
+    if trail.is_empty() {
+      let (t, d) = sw_donate(w, prev, tok, detached)
+      trail = t
+      detached = d
+    }
+  }
+  let (d, l) = sw_attach(w, prev, tok, !trail.is_empty(), detached)
+  (trail, d, l)
+}
+
+fn sw_donate(w: Sw, prev: Int, tok: Int, lead: List[List[Int]]) -> (List[Int], List[List[Int]]) {
+  if lead.is_empty() { return ([], []) }
+  let prev_end = w.ts[prev].line - 1
+  let first = w.cs[lead[0][0]]
+  if first.line > prev_end + 1 { return ([], lead) }
+  if lead.len() > 1 { return (lead[0], lead[1..]) }
+  let comment = lead[0]
+  let last = w.cs[comment[comment.len() - 1]]
+  let tok_line = sw_start_line(w, tok)
+  if last.end_line < tok_line - 1 { return (comment, []) }
+  let txt = if tok < w.ts.len() { w.ts[tok].text } else { "" }
+  if txt == "" || (w.ts[tok].kind == protoparse.Kind.Sym && txt is "}" | "]" | ")" | "," | ";") {
+    if txt != "" && first.line == prev_end && last.end_line == tok_line { return ([], lead) }
+    return (comment, [])
+  }
+  ([], lead)
+}
+
+fn sw_attach(w: Sw, prev: Int, tok: Int, has_trail: Bool, lead: List[List[Int]]) -> (List[List[Int]], List[Int]) {
+  if lead.is_empty() { return ([], []) }
+  let tok_line = sw_start_line(w, tok)
+  if lead.len() == 1 && !has_trail && prev >= 0 {
+    let c = lead[0]
+    let to_prev = w.cs[c[0]].line == w.ts[prev].line - 1
+    let to_next = w.cs[c[c.len() - 1]].end_line == tok_line
+    if to_prev && to_next { return (lead, []) }
+  }
+  let last = lead[lead.len() - 1]
+  if w.cs[last[last.len() - 1]].end_line >= tok_line - 1 { return (lead[0..lead.len() - 1], last) }
+  (lead, [])
+}
+
+/// Whether the group starting with comment g[0] went to a location already (and marks it).
+fn sw_used(var w: Sw, g: List[Int]) -> Bool {
+  if g.is_empty() { return false }
+  if w.used[g[0]] { return true }
+  w.used[g[0]] = true
+  false
+}
+
+/// A group's text as protoc keeps it: line comments without `//`, each with its newline; a block
+/// comment without `/*` and `*/`, each later line without its indent and a leading `*`.
+fn sw_text(w: Sw, g: List[Int]) -> Str {
+  var sb = StrBuilder.new()
+  for id in g {
+    let c = w.cs[id]
+    let t = c.text
+    if t.starts_with("//") {
+      sb.write(t[2..t.len()])
+      if c.nl { sb.write("\n") }
+      continue
+    }
+    let lines = t[2..t.len() - 2].split("\n")
+    for (k, l0) in lines.indexed() {
+      if k == 0 {
+        sb.write(l0)
+        continue
+      }
+      sb.write("\n")
+      var j = 0
+      let lb = l0.bytes()
+      while j < lb.len() && (Int(lb[j]) == 32 || Int(lb[j]) == 9) { j += 1 }
+      if j == lb.len() {
+        continue
+      } else if Int(lb[j]) == 42 {
+        sb.write(l0[j + 1..l0.len()])
+      } else {
+        sb.write(l0[j..l0.len()])
+      }
+    }
+  }
+  sb.freeze()
+}
+
+// locations
+
+fn sw_packed(var o: BytesBuilder, num: Int, vs: List[Int]) {
+  if vs.is_empty() { return }
+  var b = BytesBuilder.new()
+  for v in vs { pw.wv(b, v) }
+  let bb = b.freeze()
+  pw.wtag(o, num, 2)
+  pw.wv(o, bb.len())
+  o.write(bb)
+}
+
+fn sw_str(var o: BytesBuilder, num: Int, s: Str) {
+  let b = s.bytes()
+  pw.wtag(o, num, 2)
+  pw.wv(o, b.len())
+  o.write(b)
+}
+
+fn sw_span(w: Sw, s: Int, e: Int) -> List[Int] {
+  let a = w.ts[s]
+  let z = w.ts[e]
+  if a.line == z.line { [a.line - 1, a.pcol, z.pend] } else { [a.line - 1, a.pcol, z.line - 1, z.pend] }
+}
+
+fn sw_emit(var w: Sw, path: List[Int], span: List[Int], lead: Str?, trail: Str?, det: List[Str]) {
+  var b = BytesBuilder.new()
+  sw_packed(b, 1, path)
+  sw_packed(b, 2, span)
+  if let Some(l) = lead { sw_str(b, 3, l) }
+  if let Some(t) = trail { sw_str(b, 4, t) }
+  for d in det { sw_str(b, 6, d) }
+  let bb = b.freeze()
+  pw.wtag(w.o, 1, 2)
+  pw.wv(w.o, bb.len())
+  w.o.write(bb)
+}
+
+/// A location without comments for tokens s..e.
+fn sw_loc(var w: Sw, s: Int, e: Int, path: List[Int]) { sw_emit(w, path, sw_span(w, s, e), None, None, []) }
+
+/// A location for tokens s..e with the comments before s and the trailing comment of token `tr`.
+fn sw_loc_c(var w: Sw, s: Int, e: Int, tr: Int, path: List[Int]) {
+  let (_, det0, lead0) = sw_attribute(w, s - 1, s)
+  let (trail0, _, _) = sw_attribute(w, tr, tr + 1)
+  var det = det0
+  var lead = lead0
+  var trail = trail0
+  if (!det.is_empty() && sw_used(w, det[0])) || (det.is_empty() && sw_used(w, lead)) {
+    det = []
+    lead = []
+  }
+  if sw_used(w, trail) { trail = [] }
+  var ds: List[Str] = []
+  for g in det { ds.push(sw_text(w, g)) }
+  let l: Str? = if lead.is_empty() { None } else { Some(sw_text(w, lead)) }
+  let t: Str? = if trail.is_empty() { None } else { Some(sw_text(w, trail)) }
+  sw_emit(w, path, sw_span(w, s, e), l, t, ds)
+}
+
+// options
+
+const SW_FILE: Int = 0
+const SW_MSG: Int = 1
+const SW_FIELD: Int = 2
+const SW_ENUM: Int = 3
+const SW_VALUE: Int = 4
+const SW_SVC: Int = 5
+const SW_METHOD: Int = 6
+const SW_ONEOF: Int = 7
+const SW_EXTR: Int = 8
+
+fn sw_extendee(kind: Int) -> Str {
+  CO_PRE + match kind {
+    0 => "FileOptions"
+    1 => "MessageOptions"
+    2 => "FieldOptions"
+    3 => "EnumOptions"
+    4 => "EnumValueOptions"
+    5 => "ServiceOptions"
+    6 => "MethodOptions"
+    7 => "OneofOptions"
+    _ => "ExtensionRangeOptions"
+  }
+}
+
+/// A known option's field number in the options message of kind, and whether it is repeated.
+fn sw_known(kind: Int, name: Str) -> (Int, Bool)? {
+  let table = match kind {
+    0 => FILE_OPTS + [("php_generic_services", 42, 0, "")]
+    1 => MESSAGE_OPTS + [("deprecated_legacy_json_field_conflicts", 11, 0, "")]
+    2 => FIELD_OPTS
+    3 => ENUM_OPTS + [("deprecated_legacy_json_field_conflicts", 6, 0, "")]
+    4 => ENUM_VALUE_OPTS + [("feature_support", 4, 4, "")]
+    5 => SERVICE_OPTS
+    6 => METHOD_OPTS
+    7 => ONEOF_OPTS
+    _ => [("declaration", 2, 4, ""), ("verification", 3, 2, ""), ("features", 50, 5, "")]
+  }
+  for (n, num, _, _) in table {
+    if n == name { return Some((num, (kind == 2 && (num == 19 || num == 20)) || (kind == 8 && num == 2))) }
+  }
+  None
+}
+
+/// The path within the options message of kind that the option `name` sets (`-1` first for a field's
+/// `default` and `json_name`, which are the field's own), with the index of a repeated field's value
+/// counted in `seen`; None when it names nothing known.
+fn sw_opt_path(w: Sw, kind: Int, name: Str, var seen: Map[Str, Int]) -> List[Int]? {
+  if kind == SW_FIELD && name == "default" { return Some([-1, 7]) }
+  if kind == SW_FIELD && name == "json_name" { return Some([-1, 10]) }
+  var path: List[Int] = []
+  var repeated = false
+  var rest = ""
+  var type_name = ""
+  if name.starts_with("(") {
+    let close = name.find(")")?
+    let x = co_resolve(name[1..close], sw_extendee(kind), w.cx)?
+    path.push(x.number)
+    repeated = x.label == LABEL_REPEATED
+    type_name = x.type_name
+    rest = name[close + 1..name.len()]
+    if rest.starts_with(".") { rest = rest[1..rest.len()] }
+  } else {
+    let parts = name.split(".")
+    let (num, rep) = sw_known(kind, parts[0])?
+    path.push(num)
+    repeated = rep
+    if parts.len() > 1 {
+      if parts[0] != "features" || parts.len() != 2 { return None }
+      var fnum = match parts[1] {
+        "enforce_naming_style" => 7
+        "default_symbol_visibility" => 8
+        _ => 0
+      }
+      for (n, num2, _, _) in FEATURE_FIELDS {
+        if n == parts[1] { fnum = num2 }
+      }
+      if fnum == 0 { return None }
+      path.push(fnum)
+      return Some(path)
+    }
+  }
+  if !rest.is_empty() {
+    for part in rest.split(".") {
+      let md = w.cx.msgs.get(type_name)?
+      var found = false
+      for fd in md.field {
+        if fd.name == part {
+          path.push(fd.number)
+          type_name = fd.type_name
+          repeated = fd.label == LABEL_REPEATED
+          found = true
+        }
+      }
+      if !found { return None }
+    }
+  }
+  if repeated {
+    var key = ""
+    for x in path { key = key + "${x},"}
+    let n = seen.get(key) ?? 0
+    seen[key] = n + 1
+    path.push(n)
+  }
+  Some(path)
+}
+
+/// The option's path joined to the options path (a `-1` path is the element's own field).
+fn sw_opt_full(opts_path: List[Int], p: List[Int]) -> List[Int] {
+  if !p.is_empty() && p[0] == -1 { return opts_path[0..opts_path.len() - 1] + p[1..] }
+  opts_path + p
+}
+
+/// `NAME = VALUE` from token at: its name, its value's first token and its last token.
+fn sw_opt_node(w: Sw, at: Int) -> (Str, Int, Int) {
+  var name = ""
+  var i = at
+  while i < w.ts.len() && !sw_tok_is(w, i, "=") {
+    name = name + w.ts[i].text
+    i += 1
+  }
+  (name, i + 1, sw_value_end(w, i + 1))
+}
+
+/// An `option NAME = VALUE;` statement at w.at.
+fn sw_option_stmt(var w: Sw, opts_path: List[Int], kind: Int, var seen: Map[Str, Int]) {
+  let s = w.at
+  let (name, _, ve) = sw_opt_node(w, s + 1)
+  let e = if sw_tok_is(w, ve + 1, ";") { ve + 1 } else { ve }
+  w.at = e + 1
+  sw_loc(w, s, e, opts_path)
+  if let Some(p) = sw_opt_path(w, kind, name, seen) { sw_loc_c(w, s, e, e, sw_opt_full(opts_path, p)) }
+}
+
+/// A `[ ... ]` option list at w.at, when there is one.
+fn sw_compact(var w: Sw, opts_path: List[Int], kind: Int) {
+  if !sw_is(w, "[") { return }
+  let open = w.at
+  let close = sw_close(w, open)
+  sw_loc(w, open, close, opts_path)
+  var seen: Map[Str, Int] = {}
+  var i = open + 1
+  while i < close {
+    let (name, vs, ve) = sw_opt_node(w, i)
+    if let Some(p) = sw_opt_path(w, kind, name, seen) {
+      // a field's `default` (its own field): protoc's location is the value's; `json_name` has the
+      // option's and then the value's
+      sw_loc(w, if p == [-1, 7] { vs } else { i }, ve, sw_opt_full(opts_path, p))
+      if p == [-1, 10] { sw_loc(w, vs, ve, sw_opt_full(opts_path, p)) }
+    }
+    i = ve + 1
+    if sw_tok_is(w, i, ",") { i += 1 }
+  }
+  w.at = close + 1
+}
+
+// declarations
+
+const SW_SCALARS: Str = " double float int32 int64 uint32 uint64 sint32 sint64 fixed32 fixed64 sfixed32 sfixed64 bool string bytes "
+
+fn sw_file(var w: Sw) {
+  if w.ts.is_empty() {
+    sw_emit(w, [], [0, 0, 0], None, None, [])
+    return
+  }
+  sw_loc(w, 0, w.ts.len() - 1, [])
+  var dep = 0
+  var pub_dep = 0
+  var weak_dep = 0
+  var msg = 0
+  var en = 0
+  var ext = 0
+  var svc = 0
+  var seen: Map[Str, Int] = {}
+  // syntax and edition come first, wherever they are
+  if (sw_tok_is(w, 0, "syntax") || sw_tok_is(w, 0, "edition")) && sw_tok_is(w, 1, "=") {
+    var e = 2
+    while e < w.ts.len() && !sw_tok_is(w, e, ";") { e += 1 }
+    // protoc gives an `edition = "2023";` statement the syntax field's path too
+    sw_loc_c(w, 0, e, e, [12])
+  }
+  while w.at < w.ts.len() {
+    let s = w.at
+    if sw_is(w, "syntax") || sw_is(w, "edition") || sw_is(w, "package") || sw_is(w, "import") {
+      var e = s
+      while e < w.ts.len() && !sw_tok_is(w, e, ";") { e += 1 }
+      w.at = e + 1
+      if w.ts[s].text == "package" {
+        sw_loc_c(w, s, e, e, [2])
+      } else if w.ts[s].text == "import" {
+        sw_loc_c(w, s, e, e, [3, dep])
+        dep += 1
+        if sw_tok_is(w, s + 1, "public") {
+          sw_loc(w, s + 1, s + 1, [10, pub_dep])
+          pub_dep += 1
+        } else if sw_tok_is(w, s + 1, "weak") {
+          sw_loc(w, s + 1, s + 1, [11, weak_dep])
+          weak_dep += 1
+        }
+      }
+    } else if sw_is(w, "option") {
+      sw_option_stmt(w, [8], SW_FILE, seen)
+    } else if sw_is(w, "message") {
+      sw_message(w, s, s + 1, [4, msg], [])
+      msg += 1
+    } else if sw_is(w, "enum") {
+      sw_enum(w, [5, en])
+      en += 1
+    } else if sw_is(w, "extend") {
+      let (e2, m2) = sw_extend(w, [7], ext, [4], msg)
+      ext = e2
+      msg = m2
+    } else if sw_is(w, "service") {
+      sw_service(w, [6, svc])
+      svc += 1
+    } else {
+      w.at += 1
+    }
+  }
+}
+
+/// A message (or a group's message) whose declaration starts at token s, its name at token n and its
+/// `{` after the name (after the group's number and options); field_path is the group field's path.
+fn sw_message(var w: Sw, s: Int, n: Int, path: List[Int], field_path: List[Int]) {
+  var open = n + 1
+  while open < w.ts.len() && !sw_tok_is(w, open, "{") { open += 1 }
+  let close = sw_close(w, open)
+  sw_loc_c(w, s, close, open, path)
+  sw_loc(w, n, n, path + [1])
+  if !field_path.is_empty() { sw_loc(w, n, n, field_path + [6]) }
+  w.at = open + 1
+  var field = 0
+  var oneof = 0
+  var ext = 0
+  var nested = 0
+  var en = 0
+  var ext_range = 0
+  var res_range = 0
+  var res_name = 0
+  var seen: Map[Str, Int] = {}
+  while w.at < close {
+    let t = w.at
+    if sw_is(w, "option") {
+      sw_option_stmt(w, path + [7], SW_MSG, seen)
+    } else if sw_is(w, "message") {
+      sw_message(w, t, t + 1, path + [3, nested], [])
+      nested += 1
+    } else if sw_is(w, "enum") {
+      sw_enum(w, path + [4, en])
+      en += 1
+    } else if sw_is(w, "extend") {
+      let (e2, n2) = sw_extend(w, path + [6], ext, path + [3], nested)
+      ext = e2
+      nested = n2
+    } else if sw_is(w, "extensions") {
+      ext_range = sw_ext_ranges(w, path + [5], ext_range)
+    } else if sw_is(w, "reserved") {
+      let (r2, n2) = sw_reserved(w, path, 9, 10, res_range, res_name)
+      res_range = r2
+      res_name = n2
+    } else if sw_is(w, "oneof") {
+      let (f2, n2) = sw_oneof(w, path + [8, oneof], path + [2], field, path + [3], nested)
+      field = f2
+      nested = n2
+      oneof += 1
+    } else if sw_is(w, ";") {
+      w.at += 1
+    } else {
+      let kind = sw_field(w, path + [2, field], -1, -1, false, path + [3, nested])
+      field += 1
+      if kind != 0 { nested += 1 }
+    }
+  }
+  w.at = close + 1
+}
+
+/// A field at w.at (path its location; extendee the tokens of an extension's extendee, or -1), and
+/// whether it was a map (1), a group (2, its message at msg_path) or neither (0).
+fn sw_field(var w: Sw, path: List[Int], ext_s: Int, ext_e: Int, in_oneof: Bool, msg_path: List[Int]) -> Int {
+  let s = w.at
+  var label = -1
+  if !in_oneof && (sw_is(w, "repeated") || sw_is(w, "optional") || sw_is(w, "required")) {
+    label = w.at
+    w.at += 1
+  }
+  if sw_is(w, "group") {
+    let g = w.at
+    let n = g + 1
+    let num = n + 2
+    let num_e = num
+    var open = num + 1
+    while open < w.ts.len() && !sw_tok_is(w, open, "{") { open += 1 }
+    let close = sw_close(w, open)
+    sw_loc(w, s, close, path)
+    if ext_s >= 0 { sw_loc(w, ext_s, ext_e, path + [2]) }
+    if label >= 0 { sw_loc(w, label, label, path + [4]) }
+    sw_loc(w, g, g, path + [5])
+    sw_loc(w, n, n, path + [1])
+    sw_loc(w, num, num_e, path + [3])
+    w.at = num_e + 1
+    sw_compact(w, path + [8], SW_FIELD)
+    sw_message(w, s, n, msg_path, path)
+    return 2
+  }
+  var map = false
+  let ts = w.at
+  var te = sw_type_end(w, ts)
+  if sw_is(w, "map") && sw_tok_is(w, ts + 1, "<") {
+    te = sw_close(w, ts + 1)
+    map = true
+  }
+  let n = te + 1
+  let num = n + 2
+  let num_e = num
+  w.at = num_e + 1
+  var e = w.at
+  if sw_tok_is(w, e, "[") { e = sw_close(w, e) + 1 }
+  sw_loc_c(w, s, e, e, path)
+  if ext_s >= 0 { sw_loc(w, ext_s, ext_e, path + [2]) }
+  if label >= 0 { sw_loc(w, label, label, path + [4]) }
+  let scalar = !map && te == ts && SW_SCALARS.contains(" " + w.ts[ts].text + " ")
+  sw_loc(w, ts, te, path + [if scalar { 5 } else { 6 }])
+  sw_loc(w, n, n, path + [1])
+  sw_loc(w, num, num_e, path + [3])
+  sw_compact(w, path + [8], SW_FIELD)
+  w.at = e + 1
+  if map { 1 } else { 0 }
+}
+
+/// An `extend NAME { ... }` at w.at: its fields at exts_path + [index from ext], a group's message at
+/// msgs_path + [index from msg]; the next indexes.
+fn sw_extend(var w: Sw, exts_path: List[Int], ext0: Int, msgs_path: List[Int], msg0: Int) -> (Int, Int) {
+  let s = w.at
+  let es = s + 1
+  let ee = sw_type_end(w, es)
+  let open = ee + 1
+  let close = sw_close(w, open)
+  sw_loc_c(w, s, close, open, exts_path)
+  w.at = open + 1
+  var ext = ext0
+  var msg = msg0
+  while w.at < close {
+    if sw_is(w, ";") {
+      w.at += 1
+      continue
+    }
+    let kind = sw_field(w, exts_path + [ext], es, ee, false, msgs_path + [msg])
+    ext += 1
+    if kind == 2 { msg += 1 }
+  }
+  w.at = close + 1
+  (ext, msg)
+}
+
+/// A `oneof NAME { ... }` at w.at; the next field and nested message indexes.
+fn sw_oneof(var w: Sw, path: List[Int], fields_path: List[Int], field0: Int, msgs_path: List[Int], msg0: Int) -> (Int, Int) {
+  let s = w.at
+  let n = s + 1
+  let open = n + 1
+  let close = sw_close(w, open)
+  sw_loc_c(w, s, close, open, path)
+  sw_loc(w, n, n, path + [1])
+  w.at = open + 1
+  var field = field0
+  var msg = msg0
+  var seen: Map[Str, Int] = {}
+  while w.at < close {
+    if sw_is(w, "option") {
+      sw_option_stmt(w, path + [2], SW_ONEOF, seen)
+    } else if sw_is(w, ";") {
+      w.at += 1
+    } else {
+      let kind = sw_field(w, fields_path + [field], -1, -1, true, msgs_path + [msg])
+      field += 1
+      if kind == 2 { msg += 1 }
+    }
+  }
+  w.at = close + 1
+  (field, msg)
+}
+
+/// The tokens of a range or number starting at i (`-` and its number, `a to b`, `a to max`): its last
+/// token, and the start's and the end's last tokens and the end's first.
+fn sw_range(w: Sw, i: Int) -> (Int, Int, Int) {
+  let se = if sw_tok_is(w, i, "-") { i + 1 } else { i }
+  if !sw_tok_is(w, se + 1, "to") { return (se, se, i) }
+  let es = se + 2
+  let ee = if sw_tok_is(w, es, "-") { es + 1 } else { es }
+  (ee, se, es)
+}
+
+/// `reserved ...;` at w.at in a message or enum (ranges at path + [ranges_tag], names at
+/// path + [names_tag]); the next range and name indexes.
+fn sw_reserved(var w: Sw, path: List[Int], ranges_tag: Int, names_tag: Int, r0: Int, n0: Int) -> (Int, Int) {
+  let s = w.at
+  var e = s
+  while e < w.ts.len() && !sw_tok_is(w, e, ";") { e += 1 }
+  w.at = e + 1
+  let names = w.ts[s + 1].kind == protoparse.Kind.Str || w.ts[s + 1].kind == protoparse.Kind.Ident
+  var r = r0
+  var nn = n0
+  var i = s + 1
+  if names {
+    sw_loc_c(w, s, e, e, path + [names_tag])
+    while i < e {
+      var j = i
+      while j + 1 < e && w.ts[j + 1].kind == protoparse.Kind.Str && w.ts[i].kind == protoparse.Kind.Str { j += 1 }
+      sw_loc(w, i, j, path + [names_tag, nn])
+      nn += 1
+      i = j + 1
+      if sw_tok_is(w, i, ",") { i += 1 }
+    }
+    return (r, nn)
+  }
+  sw_loc_c(w, s, e, e, path + [ranges_tag])
+  while i < e {
+    let (last, se, es) = sw_range(w, i)
+    sw_loc(w, i, last, path + [ranges_tag, r])
+    sw_loc(w, i, se, path + [ranges_tag, r, 1])
+    if last == se {
+      // a single number's end: protoc's location is its first token (the `-` alone of a negative one)
+      sw_loc(w, i, i, path + [ranges_tag, r, 2])
+    } else {
+      sw_loc(w, es, last, path + [ranges_tag, r, 2])
+    }
+    r += 1
+    i = last + 1
+    if sw_tok_is(w, i, ",") { i += 1 }
+  }
+  (r, nn)
+}
+
+/// `extensions ...;` at w.at; the next range index.
+fn sw_ext_ranges(var w: Sw, path: List[Int], r0: Int) -> Int {
+  let s = w.at
+  var e = s
+  while e < w.ts.len() && !sw_tok_is(w, e, ";") {
+    if sw_tok_is(w, e, "[") { e = sw_close(w, e) }
+    e += 1
+  }
+  w.at = e + 1
+  sw_loc_c(w, s, e, e, path)
+  var r = r0
+  var i = s + 1
+  while i < e && !sw_tok_is(w, i, "[") {
+    let (last, se, es) = sw_range(w, i)
+    sw_loc(w, i, last, path + [r])
+    sw_loc(w, i, se, path + [r, 1])
+    if last == se {
+      sw_loc(w, i, i, path + [r, 2])
+    } else {
+      sw_loc(w, es, last, path + [r, 2])
+    }
+    r += 1
+    i = last + 1
+    if sw_tok_is(w, i, ",") { i += 1 }
+  }
+  if sw_tok_is(w, i, "[") {
+    for k in r0..r {
+      w.at = i
+      sw_compact(w, path + [k, 3], SW_EXTR)
+    }
+  }
+  w.at = e + 1
+  r
+}
+
+fn sw_enum(var w: Sw, path: List[Int]) {
+  let s = w.at
+  let n = s + 1
+  let open = n + 1
+  let close = sw_close(w, open)
+  sw_loc_c(w, s, close, open, path)
+  sw_loc(w, n, n, path + [1])
+  w.at = open + 1
+  var val = 0
+  var res_range = 0
+  var res_name = 0
+  var seen: Map[Str, Int] = {}
+  while w.at < close {
+    let t = w.at
+    if sw_is(w, "option") {
+      sw_option_stmt(w, path + [3], SW_ENUM, seen)
+    } else if sw_is(w, "reserved") {
+      let (r2, n2) = sw_reserved(w, path, 4, 5, res_range, res_name)
+      res_range = r2
+      res_name = n2
+    } else if sw_is(w, ";") {
+      w.at += 1
+    } else {
+      let num = t + 2
+      let num_e = if sw_tok_is(w, num, "-") { num + 1 } else { num }
+      var e = num_e + 1
+      if sw_tok_is(w, e, "[") { e = sw_close(w, e) + 1 }
+      let vp = path + [2, val]
+      sw_loc_c(w, t, e, e, vp)
+      sw_loc(w, t, t, vp + [1])
+      sw_loc(w, num, num_e, vp + [2])
+      w.at = num_e + 1
+      sw_compact(w, vp + [3], SW_VALUE)
+      w.at = e + 1
+      val += 1
+    }
+  }
+  w.at = close + 1
+}
+
+fn sw_service(var w: Sw, path: List[Int]) {
+  let s = w.at
+  let n = s + 1
+  let open = n + 1
+  let close = sw_close(w, open)
+  sw_loc_c(w, s, close, open, path)
+  sw_loc(w, n, n, path + [1])
+  w.at = open + 1
+  var rpc = 0
+  var seen: Map[Str, Int] = {}
+  while w.at < close {
+    if sw_is(w, "option") {
+      sw_option_stmt(w, path + [3], SW_SVC, seen)
+    } else if sw_is(w, "rpc") {
+      sw_method(w, path + [2, rpc])
+      rpc += 1
+    } else {
+      w.at += 1
+    }
+  }
+  w.at = close + 1
+}
+
+fn sw_method(var w: Sw, path: List[Int]) {
+  let s = w.at
+  let n = s + 1
+  var i = n + 2
+  var in_stream = -1
+  if sw_tok_is(w, i, "stream") && !sw_tok_is(w, i + 1, ")") {
+    in_stream = i
+    i += 1
+  }
+  let in_s = i
+  let in_e = sw_type_end(w, in_s)
+  i = in_e + 4
+  var out_stream = -1
+  if sw_tok_is(w, i, "stream") && !sw_tok_is(w, i + 1, ")") {
+    out_stream = i
+    i += 1
+  }
+  let out_s = i
+  let out_e = sw_type_end(w, out_s)
+  let after = out_e + 2
+  var close = after
+  if sw_tok_is(w, after, "{") {
+    close = sw_close(w, after)
+    sw_loc_c(w, s, close, after, path)
+  } else {
+    sw_loc_c(w, s, after, after, path)
+  }
+  sw_loc(w, n, n, path + [1])
+  if in_stream >= 0 { sw_loc(w, in_stream, in_stream, path + [5]) }
+  sw_loc(w, in_s, in_e, path + [2])
+  if out_stream >= 0 { sw_loc(w, out_stream, out_stream, path + [6]) }
+  sw_loc(w, out_s, out_e, path + [3])
+  if sw_tok_is(w, after, "{") {
+    w.at = after + 1
+    var seen: Map[Str, Int] = {}
+    while w.at < close {
+      if sw_is(w, "option") {
+        sw_option_stmt(w, path + [4], SW_METHOD, seen)
+      } else {
+        w.at += 1
+      }
+    }
+  }
+  w.at = close + 1
 }

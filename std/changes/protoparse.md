@@ -1,5 +1,18 @@
 # std/protoparse changes
 
+## 2026-11-16: feature: lex (protoc columns, comments); oneof options kept
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (protocompile source info)
+- Go reference: protocompile's lexer (comment attribution), protoc's tokenizer columns
+- Test: internal/stdtest/testdata/corpus/protoparse/lex_test.xo; std/protodesc_test.xo (source info built on it)
+- Shipped in: not yet released
+
+`lex` gives the tokens with protoc's columns (`pcol`, `pend`; a tab to the next multiple of 8) and the comments,
+each with the token it leads or trails. `parse` keeps a oneof's options (`Message.oneof_options`) instead of
+dropping them; the lexer also skips form feed and vertical tab as whitespace, as protoc does.
+
 ## 2026-11-16: feature: nested aggregate option values
 
 - Kind: feature

@@ -28,13 +28,73 @@ pub struct Token {
   pub text: Str
   pub line: Int
   pub col: Int
+  /// protoc's column (0 based; a tab moves to the next multiple of 8) of the token's first byte, and of
+  /// the byte after it (source info spans)
+  pub pcol: Int = 0
+  pub pend: Int = 0
 }
 
 /// The tokens of `src` without comments (`//` and `/* */`). A token never spans lines except
 /// inside a comment.
-pub fn tokens(src: Str) -> List[Token] ! ParseErr {
+pub fn tokens(src: Str) -> List[Token] ! ParseErr { Ok(lex(src)?.tokens) }
+
+/// A comment, kept for source info (`protodesc.build_with_source_info`): its text as written (a line
+/// comment without its newline), protoc's line (0 based) and columns of its first byte and of the byte
+/// after it, and the token it belongs to, `tok` (an index into the tokens, their count for the end of the
+/// file), as that token's trailing comment or one of its leading ones (protocompile's lexer rules).
+pub struct Comment {
+  pub text: Str
+  pub line: Int
+  pub col: Int
+  pub end_line: Int
+  pub end_col: Int
+  /// A line comment ended by a newline (source info keeps the newline).
+  pub nl: Bool
+  pub tok: Int
+  pub trailing: Bool = false
+}
+
+/// The tokens and comments of a file, and protoc's position of its end (0 based line and column).
+pub struct Lexed {
+  pub tokens: List[Token]
+  pub comments: List[Comment]
+  pub eof_line: Int
+  pub eof_col: Int
+}
+
+/// A cursor for protoc's columns on the line starting at byte `ls`: byte `i` is at column `c`.
+struct Pc {
+  ls: Int
+  i: Int
+  c: Int
+}
+
+/// Protoc's column of byte `to` on the line starting at byte `ls`: a byte is one column, a tab moves to
+/// the next multiple of 8.
+fn pc_at(b: Bytes, var pc: Pc, ls: Int, to: Int) -> Int {
+  if pc.ls != ls || pc.i > to {
+    pc.ls = ls
+    pc.i = ls
+    pc.c = 0
+  }
+  while pc.i < to {
+    if Int(b[pc.i]) == 9 {
+      pc.c += 8 - pc.c % 8
+    } else {
+      pc.c += 1
+    }
+    pc.i += 1
+  }
+  pc.c
+}
+
+/// The tokens of `src` with each token's protoc columns, and its comments, each given to the token
+/// before it as a trailing comment or to the one after it as a leading one.
+pub fn lex(src: Str) -> Lexed ! ParseErr {
   let b = src.bytes()
   var out: List[Token] = []
+  var cs: List[Comment] = []
+  var pc = Pc{ls: 0, i: 0, c: 0}
   var i = 0
   var line = 1
   var ls = 0
@@ -45,11 +105,17 @@ pub fn tokens(src: Str) -> List[Token] ! ParseErr {
       line += 1
       i += 1
       ls = i
-    } else if c == 32 || c == 9 || c == 13 {
+    } else if c == 32 || c == 9 || c == 13 || c == 12 || c == 11 {
       i += 1
     } else if c == 47 && i + 1 < b.len() && Int(b[i + 1]) == 47 {
+      let s = i
       while i < b.len() && Int(b[i]) != 10 { i += 1 }
+      let pcs = pc_at(b, pc, ls, s)
+      cs.push(Comment{text: src[s..i], line: line - 1, col: pcs, end_line: line - 1, end_col: pc_at(b, pc, ls, i), nl: i < b.len(), tok: out.len()})
     } else if c == 47 && i + 1 < b.len() && Int(b[i + 1]) == 42 {
+      let s = i
+      let sl = line - 1
+      let scol = pc_at(b, pc, ls, s)
       i += 2
       var closed = false
       while i < b.len() {
@@ -64,11 +130,13 @@ pub fn tokens(src: Str) -> List[Token] ! ParseErr {
         }
         i += 1
       }
-      if !closed { return Err(ParseErr{line: line, col: col, msg: "unterminated comment"}) }
+      if !closed { return Err(ParseErr{line: sl + 1, col: col, msg: "unterminated comment"}) }
+      cs.push(Comment{text: src[s..i], line: sl, col: scol, end_line: line - 1, end_col: pc_at(b, pc, ls, i), nl: false, tok: out.len()})
     } else if is_letter(c) {
       let s = i
       while i < b.len() && (is_letter(Int(b[i])) || is_digit(Int(b[i])) || Int(b[i]) == 46) { i += 1 }
-      out.push(Token{kind: Kind.Ident, text: src[s..i], line: line, col: col})
+      let pcs = pc_at(b, pc, ls, s)
+      out.push(Token{kind: Kind.Ident, text: src[s..i], line: line, col: col, pcol: pcs, pend: pc_at(b, pc, ls, i)})
     } else if is_digit(c) {
       let s = i
       var fl = false
@@ -88,8 +156,10 @@ pub fn tokens(src: Str) -> List[Token] ! ParseErr {
       }
       let t = src[s..i]
       let isf = fl || ((t.contains("e") || t.contains("E")) && !t.starts_with("0x") && !t.starts_with("0X"))
-      out.push(Token{kind: if isf { Kind.Float } else { Kind.Int }, text: t, line: line, col: col})
+      let pcs = pc_at(b, pc, ls, s)
+      out.push(Token{kind: if isf { Kind.Float } else { Kind.Int }, text: t, line: line, col: col, pcol: pcs, pend: pc_at(b, pc, ls, i)})
     } else if c == 34 || c == 39 {
+      let s = i
       i += 1
       var sb = BytesBuilder.new()
       var closed = false
@@ -111,15 +181,46 @@ pub fn tokens(src: Str) -> List[Token] ! ParseErr {
         }
       }
       if !closed { return Err(ParseErr{line: line, col: col, msg: "unterminated string"}) }
-      out.push(Token{kind: Kind.Str, text: sb.freeze().to_str_lossy(), line: line, col: col})
+      let pcs = pc_at(b, pc, ls, s)
+      out.push(Token{kind: Kind.Str, text: sb.freeze().to_str_lossy(), line: line, col: col, pcol: pcs, pend: pc_at(b, pc, ls, i)})
     } else if c < 128 {
-      out.push(Token{kind: Kind.Sym, text: src[i..i + 1], line: line, col: col})
+      let pcs = pc_at(b, pc, ls, i)
+      out.push(Token{kind: Kind.Sym, text: src[i..i + 1], line: line, col: col, pcol: pcs, pend: pcs + 1})
       i += 1
     } else {
       return Err(ParseErr{line: line, col: col, msg: "unexpected character"})
     }
   }
-  Ok(out)
+  let eof_line = line - 1
+  let eof_col = pc_at(b, pc, ls, b.len())
+  attribute_comments(cs, out, eof_line)
+  Ok(Lexed{tokens: out, comments: cs, eof_line: eof_line, eof_col: eof_col})
+}
+
+/// protocompile's lexer rule: of the comments between two tokens, the first is the earlier token's
+/// trailing comment when it starts on that token's line, the later token (the end of the file counts
+/// as on the next line) is on a later line, and it is a line comment, one of several, or a block
+/// comment ending before the later token's line. The rest lead the later token.
+fn attribute_comments(var cs: List[Comment], toks: List[Token], eof_line: Int) {
+  var i = 0
+  while i < cs.len() {
+    let k = cs[i].tok
+    var j = i
+    while j < cs.len() && cs[j].tok == k { j += 1 }
+    if k > 0 {
+      let prev_end = toks[k - 1].line - 1
+      var n_start = if k < toks.len() { toks[k].line - 1 } else { eof_line }
+      if k == toks.len() && n_start == prev_end { n_start += 1 }
+      let c = cs[i]
+      if n_start > prev_end && c.line == prev_end && (c.text.starts_with("//") || j - i > 1 || c.end_line < n_start) {
+        var t = c
+        t.trailing = true
+        t.tok = k - 1
+        cs[i] = t
+      }
+    }
+    i = j
+  }
 }
 
 /// A field of a message. `typ` is the type as written (`int32`, `Other.Msg`); for a map it is the
@@ -184,6 +285,8 @@ pub struct Message {
   pub map_at: List[Int] = []
   /// `extend` blocks inside the message, in order.
   pub extends: List[Extend] = []
+  /// Each oneof's options, parallel to `oneofs`.
+  pub oneof_options: List[List[(Str, Str)]] = []
 }
 
 pub struct Rpc {
@@ -222,7 +325,7 @@ pub struct File {
 }
 
 /// Parses a proto3 or proto2 file. Options are kept as (name, value) pairs on the file, messages,
-/// fields, enums, values, services and rpcs (an aggregate value as `{}`; a oneof's are dropped), with
+/// fields, enums, values, services and rpcs (an aggregate value as `{}`), with
 /// a field's `default` and `json_name` in their own fields; `reserved` and `extensions` ranges and
 /// names are kept; `extend` blocks are read and dropped. In proto2 every field outside a oneof needs a
 /// label (`required`, `optional` or `repeated`); a `group` becomes a nested message and a field of
@@ -756,14 +859,16 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
       let on = p_ident(p)?
       p_expect(p, "{")?
       m.oneofs.push(on)
+      var oo: List[(Str, Str)] = []
       while !p_is(p, "}") {
         if p.at >= p.ts.len() { return Err(p_err(p, "unterminated oneof `${on}`")) }
         if p_is(p, "option") {
-          p_skip_stmt(p)?
+          oo.push(p_option_stmt(p)?)
         } else {
           m = p_field(p, on, m)?
         }
       }
+      m.oneof_options.push(oo)
       p.at += 1
     } else if p_is(p, ";") {
       p.at += 1

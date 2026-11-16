@@ -1,0 +1,16 @@
+// std/protoparse's lex: protoc's columns and the comments' owners, after
+// protocompile's lexer. Written by hand beside the generated protoparse_test.xo.
+
+use std/protoparse
+
+test "lex gives protoc's columns and each comment's token" {
+  let lx = protoparse.lex("syntax = \"proto3\"; // t\n\t// lead\nmessage A {}\n") ?? e => fault(e.msg)
+  expect(lx.tokens.len()) == 8
+  expect(lx.tokens[4].text) == "message"
+  // a tab moves to column 8
+  expect(lx.comments[1].col) == 8
+  // the first comment trails `;`, the second leads `message`
+  expect((lx.comments[0].tok, lx.comments[0].trailing)) == (3, true)
+  expect((lx.comments[1].tok, lx.comments[1].trailing)) == (4, false)
+  expect(lx.eof_line) == 3
+}

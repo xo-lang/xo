@@ -1,0 +1,16 @@
+// std/protodesc's build_with_source_info on a small file, after protoc's
+// --include_source_info (the byte exact cases against protoc are in
+// std/protodesc_test.xo). Written by hand beside the generated
+// protodesc_test.xo.
+
+use std/protodesc
+
+test "build_with_source_info writes the locations and comments protoc writes" {
+  let src = "syntax = \"proto3\";\n// lead\nmessage A {\n  int32 x = 1; // trail\n}\n"
+  let d = protodesc.build_with_source_info(src, "a.proto") ?? e => fault(e.msg)
+  // the file's location: no path, span 0:0 to 4:1
+  expect(d.source_code_info[0..8]) == b"\x0a\x06\x12\x04\x00\x00\x04\x01"
+  expect(d.source_code_info.to_str_lossy().contains(" lead\n")) == true
+  expect(d.source_code_info.to_str_lossy().contains(" trail\n")) == true
+  expect(protodesc.encode(d).len() > protodesc.encode(protodesc.build_with_source_info("syntax = \"proto3\";\nmessage A {}\n", "a.proto") ?? e => fault(e.msg)).len()) == true
+}
