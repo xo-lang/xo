@@ -103,7 +103,10 @@ fn list_swap_both(xs: List[Int], ys: List[Int], zs: List[Int])
 /// "rand_kat" (word a of the native Rand's ChaCha8 generator seeded with
 /// Go's chacha8rand test seed, decision 0669), "rand_fork" (1 when a
 /// forked child's next Rand word differs from its parent's, 0 when it
-/// repeats it, 2 with no generator state, -1 on a failed call). An
+/// repeats it, 2 with no generator state, -1 on a failed call),
+/// "sleep_mono" (the runtime's sleep_until a ns past the timers' clock:
+/// 3, its TIMEOUT) and "sleep_wall" (the same a ns past the wall clock,
+/// the wrong clock: a fault, task #95). An
 /// unknown op faults, and
 /// every op faults on the Go backend.
 fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int

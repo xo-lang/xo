@@ -1,0 +1,11 @@
+// The runtime's sleep_until on the timers' clock returns after its
+// deadline; a deadline on the wall clock faults with a message naming the
+// clock (task #95: it parked the task for decades). TestRuntimeSleepClock.
+use std/internal
+
+fn main(os: Os) {
+  let r = internal.rt_probe("sleep_mono", 1000000, 0, 0, 0)
+  os.stdio.println("mono: ${r}")
+  let w = internal.rt_probe("sleep_wall", 1000000, 0, 0, 0)
+  os.stdio.println("wall returned: ${w}")
+}

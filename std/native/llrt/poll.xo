@@ -1497,11 +1497,19 @@ pub fn timer_end(t: Int) {
 /// The park of context c.
 pub fn park_of(c: Int) -> Int { addw(c, ctx.C_PARK) }
 
-/// Waits in the current task until the monotonic time deadline (ns,
-/// rt.clock_now's clock) passes or the task is canceled: TIMEOUT or
-/// CANCELED (xo_rt.c clock_wait, for std/native/llrt/proc.xo's wait for
-/// a child's exit).
+/// Waits in the current task until deadline passes or the task is
+/// canceled: TIMEOUT or CANCELED (xo_rt.c clock_wait, for
+/// std/native/llrt/proc.xo's wait for a child's exit). deadline is on the
+/// timers' clock, poll.now: sysio.mono_ns() + d, or the test world's
+/// virtual clock while it runs (stdin.xo deadline). A wall clock time
+/// (rt.clock_now, sysio.clock_now) is decades past that clock and parked
+/// the task for good (aws-43, 2026-11-16; this comment named rt.clock_now
+/// before): a deadline more than WRONG_CLOCK_NS past now faults instead.
 pub fn sleep_until(deadline: Int) -> Int {
+  let now0 = now()
+  if wrong_clock(deadline, now0) {
+    rt.fault_raise("poll.sleep_until: deadline ${deadline} is ${(deadline - now0) / 1000000000} s past the timers' clock (poll.now, the monotonic one); a wall clock time? pass sysio.mono_ns() + d", "")
+  }
   let c = ctx.cur()
   let park = park_of(c)
   pool.park_reset(park)
@@ -1523,6 +1531,15 @@ pub fn sleep_until(deadline: Int) -> Int {
   timer_end(t)
   res
 }
+
+/// Ten years in ns: a timer deadline further past poll.now is not on its
+/// clock. The wall clock reads about 56 years past the monotonic one
+/// (Unix time against the time since boot), and no wait is that long.
+pub const WRONG_CLOCK_NS = 315360000000000000
+
+/// Whether deadline is too far past now to be on the timers' clock
+/// (sleep_until; task #95).
+pub fn wrong_clock(deadline: Int, now0: Int) -> Bool { deadline > now0 && deadline - now0 > WRONG_CLOCK_NS }
 
 /// Signals the park p (xo_rt.c park_signal): its context's wait returns.
 pub fn park_signal(p: Int) { signal(p) }
