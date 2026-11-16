@@ -5,21 +5,24 @@
 // ARMv8.0's load and store exclusive loop; no call of libgcc's outline
 // helper (__aarch64_ldadd8_acq_rel and the rest), whose call was 11% of a
 // labelled std/metrics Counter.inc (2026-11-15). darwin has LSE always:
-// the instruction alone.
+// the instruction alone. The sequences' own registers are x14 and x15
+// (clobbers), never x16 or x17, where the emitter reloads spilled
+// operands (task #104: w17 overwrote one under XO_ARM64_REGS=2 and every
+// linux program faulted at start).
 
 fn bump(a: Atomic[Int], n: Int) -> Int {
-  // arm64@linux: "xo_lse" "ldaddal" "ldaxr" "stlxr" -"__aarch64_ldadd8"
+  // arm64@linux: "xo_lse" "ldaddal" "ldaxr" "stlxr" "w15" -"w17" -"__aarch64_ldadd8"
   // arm64: "ldaddal" -"__aarch64_ldadd8"
   a.add(n)
 }
 
 fn swap_in(a: Atomic[Int], n: Int) -> Int {
-  // arm64@linux: "xo_lse" "swpal" -"__aarch64_swp8"
+  // arm64@linux: "xo_lse" "swpal" "w15" -"w17" -"__aarch64_swp8"
   a.swap(n)
 }
 
 fn claim(a: Atomic[Int], old: Int, n: Int) -> Bool {
-  // arm64@linux: "xo_lse" "casal" -"__aarch64_cas8"
+  // arm64@linux: "xo_lse" "casal" "w15" -"w17" -"__aarch64_cas8"
   a.compare_and_swap(old, n)
 }
 

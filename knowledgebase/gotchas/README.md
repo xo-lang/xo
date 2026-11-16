@@ -1414,3 +1414,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [std-module-name-ambiguous-with-native.md](std-module-name-ambiguous-with-native.md): `xo test --std-module=cbor` is ambiguous (std/cbor and native/cbor); the gate's stdfast step now passes std/NAME
 - [offload-bare-wait-waits-on-pruner.md](offload-bare-wait-waits-on-pruner.md): a bare `wait` in an offload job waits on the wrapper's offprune watcher forever; wait on the PIDs you launched
 - [std-json-via-unchecked.md](std-json-via-unchecked.md): a std type's derive Json(via:) was ignored by importing programs (unchecked std bodies, body-less declarations, Go names); fixed 2026-11-16
+- [arm64-template-scratch-x16-x17.md](arm64-template-scratch-x16-x17.md): Observed 2026-11-16: the inline linux atomics wrote w17/x16, where the emitter reloads spilled operands; every linux program crashed under XO_ARM64_REGS=2; template registers go in Inst.clobbers (x14, x15)

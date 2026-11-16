@@ -4125,6 +4125,19 @@ fn (var g: G) atomic_def(text: Str, us: List[Int]) -> Int {
   d
 }
 
+/// atomic_def of a template that also writes the registers cl (allocatable
+/// ones, so no value is used, defined, or live in them there): never x16
+/// or x17, the emitter's scratch registers, where it reloads spilled
+/// operands (task #104: the inline LSE test's w17 overwrote a reloaded
+/// operand under XO_ARM64_REGS=2, and every program faulted on linux).
+fn (var g: G) atomic_def_cl(text: Str, us: List[Int], cl: List[Int]) -> Int {
+  let d = g.atomic_def(text, us)
+  let b = g.cur
+  let i = g.blocks[b].insts.len() - 1
+  g.blocks[b].insts[i].clobbers = cl
+  d
+}
+
 /// Sets v, an Int or a Bool (a Bool cell holds 0 or 1), to register r.
 fn (var g: G) atomic_result(v: Int, r: Int) {
   let x = g.f.values[v]
@@ -4279,10 +4292,13 @@ fn (var g: G) atomic(v: Int) {
         g.atomic_result(v, g.atomic_def("${op}${sfx} $u0, $d0, [$u1]", [val, a]))
       } else if g.lse_inline() {
         let (ld, st) = llsc(ord)
-        let alu = if op == "swp" { "" } else { "add x16, $d0, $u0\n" }
-        let sv = if op == "swp" { "$u0" } else { "x16" }
+        let alu = if op == "swp" { "" } else { "add x14, $d0, $u0\n" }
+        let sv = if op == "swp" { "$u0" } else { "x14" }
         let lse = g.c_sym_addr("xo_lse")
-        g.atomic_result(v, g.atomic_def("ldrb w17, [$u2]\ncbz w17, 1f\n${op}${sfx} $u0, $d0, [$u1]\nb 2f\n1:\n${ld} $d0, [$u1]\n${alu}${st} w17, ${sv}, [$u1]\ncbnz w17, 1b\n2:", [val, a, lse]))
+        // x14 and x15 its own (clobbers), never x16 or x17: the emitter
+        // reloads spilled operands into those (task #104: under
+        // XO_ARM64_REGS=2 the flag's load overwrote a reloaded operand)
+        g.atomic_result(v, g.atomic_def_cl("ldrb w15, [$u2]\ncbz w15, 1f\n${op}${sfx} $u0, $d0, [$u1]\nb 2f\n1:\n${ld} $d0, [$u1]\n${alu}${st} w15, ${sv}, [$u1]\ncbnz w15, 1b\n2:", [val, a, lse], if op == "swp" { [15] } else { [14, 15] }))
       } else {
         g.race_release(v, ord, a)
         let r = g.rt("__aarch64_${op}8_${model}", [rsrc(val), rsrc(a)], [false])
@@ -4303,7 +4319,8 @@ fn (var g: G) atomic(v: Int) {
       } else if g.lse_inline() {
         let (ld, st) = llsc(ord)
         let lse = g.c_sym_addr("xo_lse")
-        g.set(v, [g.atomic_def("ldrb w17, [$u3]\ncbz w17, 1f\nmov $d0, $u0\ncas${sfx} $d0, $u1, [$u2]\nb 2f\n1:\n${ld} $d0, [$u2]\ncmp $d0, $u0\nb.ne 2f\n${st} w17, $u1, [$u2]\ncbnz w17, 1b\n2:\ncmp $d0, $u0\ncset $d0, eq", [old, new, a, lse])])
+        // w15 its own (clobbers), not x17: atomic_def_cl
+        g.set(v, [g.atomic_def_cl("ldrb w15, [$u3]\ncbz w15, 1f\nmov $d0, $u0\ncas${sfx} $d0, $u1, [$u2]\nb 2f\n1:\n${ld} $d0, [$u2]\ncmp $d0, $u0\nb.ne 2f\n${st} w15, $u1, [$u2]\ncbnz w15, 1b\n2:\ncmp $d0, $u0\ncset $d0, eq", [old, new, a, lse], [15])])
       } else {
         g.race_release(v, ord, a)
         let r = g.rt("__aarch64_cas8_${model}", [rsrc(old), rsrc(new), rsrc(a)], [false])
