@@ -11,6 +11,7 @@ the text of every entry is unchanged).
 
 - Feature (std/sqlite): the DSN takes mattn/go-sqlite3's other keys (`_txlock`, `_auto_vacuum`, `_cache_size`, `_case_sensitive_like`, `_defer_foreign_keys`, `_ignore_check_constraints`, `_locking_mode`, `_query_only`, `_recursive_triggers`, `_secure_delete`, `_writable_schema`, and `_loc`, which changes nothing); a Server error names every extended result code (`SQLITE_CONSTRAINT_TRIGGER`, was `SQLITE_1811`).
 - Fix (std/sql): `Row.time` reads SQLite's date and time text (`2026-11-16 12:34:56`, with a fraction or offset) and a DATE, DATETIME or TIMESTAMP column's Unix integer, as mattn/go-sqlite3 does; only `YYYY-MM-DD` read before.
+- Fixed (std/timego): `parse` of a two digit year with a sign gives Go's result (`-3` is 1997, `+3` is 2003).
 - Fixed (std/timego): `parse` of a fixed width fraction with a sign gives Go's result: `.-5677...` is "fractional second out of range" and `.+5677...` parses.
 - Feature (std/ui): `ui.pg_bus(db, tasks, clock)` carries notices between instances by Postgres LISTEN/NOTIFY, so Hosts on many hosts sharing `sql_store` update each other's live pages (decision 0686).
 - Fix (xo test): a std module's test that uses `os.tasks` runs under `xo test --std-module` as under `xo test DIR`; it faulted with "os.tasks is not available here", because the test build gave the os.tasks scope only when a non-std module spelt os.tasks.

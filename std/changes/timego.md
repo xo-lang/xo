@@ -1,5 +1,18 @@
 # std/timego changes
 
+## 2026-11-16: fix: parse reads a signed two digit year as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #116, timego fuzz seed 20 (layout "06-1-2", input "-3-4-6")
+- Go reference: time.Parse stdYear (the two bytes are read with atoi, which takes a sign)
+- Test: std/timego_test.xo "parse matches Go" ("-3" is 1997, "+3" is 2003; it failed before on arm64)
+- Shipped in: not yet released
+
+A two digit year (`06`) of a sign and a digit failed as "expected 2
+digit year"; Go reads the two bytes with atoi, so "-3" is year -3 + 2000
+(1997) and "+3" is 2003. parse now does the same.
+
 ## 2026-11-16: fix: parse reads a signed fixed width fraction as Go does
 
 - Kind: fix

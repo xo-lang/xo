@@ -18,10 +18,12 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -160,7 +162,59 @@ var generators = map[string]func() string{
 // pinned outputs).
 var checkOnly bool
 
+// noFMA runs this program again with Go's fused multiply-add off
+// (-gcflags=all=-d=fmahash=n) and returns its exit status, or -1 when it
+// is that run (XO_STDCORPUS_NOFMA set). Go may fuse x*y+z on arm64, in
+// the generators and in Go's own math and math/rand/v2, and not on amd64;
+// Xo never fuses (decision 0287), so every Go answer here is computed
+// unfused, the same on every platform (#116, 2026-11-16: random fuzz
+// seeds 17 and 87 drew one ulp apart from Xo on arm64 Go; every committed
+// corpus was unchanged under the flag). gotchas/go-oracle-fma-arm64.md.
+func noFMA() int {
+	if os.Getenv("XO_STDCORPUS_NOFMA") != "" {
+		return -1
+	}
+	cmd := exec.Command("go", append([]string{"run", "-gcflags=all=-d=fmahash=n", "./scripts/stdcorpus"}, os.Args[1:]...)...)
+	cmd.Env = append(os.Environ(), "XO_STDCORPUS_NOFMA=1")
+	cmd.Stdin, cmd.Stdout = os.Stdin, os.Stdout
+	// the compiler reports each fusion it declined, and the package of
+	// each report: those lines are dropped, the rest of stderr kept
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stdcorpus:", err)
+		return 2
+	}
+	cmd.Stderr = pw
+	done := make(chan struct{})
+	go func() {
+		sc := bufio.NewScanner(pr)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		for sc.Scan() {
+			l := sc.Text()
+			if strings.Contains(l, "fmahash triggered") || strings.Contains(l, "[bisect-match ") || (strings.HasPrefix(l, "# ") && !strings.Contains(l[2:], " ")) {
+				continue
+			}
+			fmt.Fprintln(os.Stderr, l)
+		}
+		close(done)
+	}()
+	err = cmd.Run()
+	pw.Close()
+	<-done
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode()
+		}
+		fmt.Fprintln(os.Stderr, "stdcorpus:", err)
+		return 2
+	}
+	return 0
+}
+
 func main() {
+	if rc := noFMA(); rc >= 0 {
+		os.Exit(rc)
+	}
 	check := flag.Bool("check", false, "exit 1 when a corpus differs from its generator's output")
 	flag.Parse()
 	checkOnly = *check

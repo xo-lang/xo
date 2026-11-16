@@ -259,8 +259,17 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
       }
       p = q
     } else if k == YEAR2 {
-      let x = digits_at(v, p, 2)
-      if x < 0 {
+      // Go reads the two bytes with atoi, which takes a sign: "-3" is year -3 + 2000 (#116, timego fuzz seed 20)
+      var x = digits_at(v, p, 2)
+      if x < 0 && p + 1 < v.len() && (Int(v[p]) == 45 || Int(v[p]) == 43) && digit_at(v, p + 1) {
+        x = Int(v[p + 1]) - 48
+        if Int(v[p]) == 45 {
+          x = -x
+        }
+      } else if x < 0 {
+        x = -1000
+      }
+      if x == -1000 {
         bad = "expected 2 digit year"
       } else {
         year = if x >= 69 { x + 1900 } else { x + 2000 }

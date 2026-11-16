@@ -84,3 +84,10 @@ func TestRandomFuzzSeed17(t *testing.T) {
 	t.Setenv("XO_RANDOMFUZZ_SEED", "17")
 	corpusFuzz(t, "random", "RANDOMFUZZ")
 }
+
+// TestRandomFuzzSeed87: a NormFloat64 draw one ulp apart on arm64 Go
+// (scripts/stdcorpus now runs with fusion off, noFMA).
+func TestRandomFuzzSeed87(t *testing.T) {
+	t.Setenv("XO_RANDOMFUZZ_SEED", "87")
+	corpusFuzz(t, "random", "RANDOMFUZZ")
+}

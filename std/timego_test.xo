@@ -49,6 +49,9 @@ test "parse matches Go" {
   }
   let plus = parse("2026-11-06 11:41:44.+56771225", "2006-01-02 15:04:05.000000000", z).or_fault("p6")
   expect(plus) == parse("2026-11-06 11:41:44", "2006-01-02 15:04:05", z).or_fault("p7") + Duration.from_nanos(56771225)
+  // a signed two digit year (Go's atoi; timego fuzz seed 20): "-3" is 1997, "+3" is 2003
+  expect(parse("-3-4-6", "06-1-2", z).or_fault("p8")) == parse("1997-04-06", "2006-01-02", z).or_fault("p9")
+  expect(parse("+3-4-6", "06-1-2", z).or_fault("p10")) == parse("2003-04-06", "2006-01-02", z).or_fault("p11")
 }
 
 test "the layout constants are Go's" {

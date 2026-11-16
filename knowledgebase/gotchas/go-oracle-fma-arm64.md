@@ -37,6 +37,13 @@ blocks. Guarding the generator's own products is not enough when it calls
 Go's math: on arm64 math.Exp is assembly and math.Log is pure Go that
 fuses, so random fuzz seed 17 (2026-11-16) drew one more than Xo even
 after zipfStrict; the generator now calls strictExp and strictLog, the
-guarded copies std/rt/gomath_gen.go has. See also
+guarded copies std/rt/gomath_gen.go has. Seed 87 then found the same in
+math/rand/v2's NormFloat64 (Go's own code, its tables unexported), so
+since 2026-11-16 scripts/stdcorpus runs itself again with fusion off
+(noFMA in main.go: `go run -gcflags=all=-d=fmahash=n`, the compiler's
+notices filtered): every generator and the Go code it calls compute
+unfused. Every committed corpus was unchanged under the flag. A Go
+oracle outside scripts/stdcorpus needs the same flag (brotlioracle has
+it). See also
 go-backend-fma-contraction.md and go-backend-fused-float.md (the same
 fusion in the Go backend's output).
