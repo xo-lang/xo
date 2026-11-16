@@ -1,0 +1,21 @@
+// HPKE takes its randomness as a value (decision 0652): new_sender and
+// seal perform what their Rand performs, so a pure function given a
+// Rand[()] (std/random's seeded source) seals, and the same seed gives
+// the same encapsulated key. Before, both declared `uses rand` and
+// `seal_pure` below was XO0701.
+use std/hpke
+use std/random
+
+fn seal_pure(r: Rand[()], pk: hpke.PublicKey, msg: Bytes) -> Bytes uses () {
+  hpke.seal(r, pk, hpke.Kdf.HkdfSha256, hpke.Aead.ChaCha20Poly1305, b"info", msg).or_fault("seal")
+}
+
+fn main(os: Os) {
+  let k = hpke.Kem.DhkemX25519.generate_key(os.rand)
+  let seed = b"hpke pure rand seed for a test!!"
+  let a = seal_pure(random.seeded(seed), k.public_key(), b"hello")
+  let b = seal_pure(random.seeded(seed), k.public_key(), b"hello")
+  os.stdio.println("same ${a == b} len ${a.len()}")
+  let pt = hpke.open(k, hpke.Kdf.HkdfSha256, hpke.Aead.ChaCha20Poly1305, b"info", a).or_fault("open")
+  os.stdio.println("open ${pt.to_str() ?? "?"}")
+}

@@ -10,14 +10,10 @@
 // client) and tls13srv.xo (the server) run the handshake.
 
 use std/hpke
-use native/llrt/aesgcm
 use native/llrt/asn1
-use native/llrt/chacha
 use native/llrt/hkdf
-use native/llrt/nistec
 use native/llrt/rand
 use native/llrt/sha256
-use native/llrt/x25519
 use native/rt
 
 /// The encrypted_client_hello extension and ECHConfig version (Go's
@@ -517,117 +513,31 @@ pub fn retry_list(keys: List[Key]) -> Bytes {
   vec16(asn1.cat(cs))
 }
 
-/// A client's HPKE context (RFC 9180 5.1, base mode) to the picked
-/// config: the encapsulated key, the AEAD's key and base nonce, and the
-/// sequence number of the next seal. HPKE's own Sender takes a Rand,
-/// which the handshake (pure, with the system's randomness as Go's
-/// crypto/rand) cannot pass, so the client's side is here on the
-/// handshake's primitives; the server opens with std/hpke's Recipient,
-/// so each checks the other.
-pub struct Sender {
-  pub enc: Bytes
-  aead: Int
-  key: Bytes
-  nonce: Bytes
-  seq: Int = 0
-}
-
 /// A KEM the client encapsulates to: DHKEM over X25519 (0x0020), P-256
 /// (0x0010), P-384 (0x0011) and P-521 (0x0012) (RFC 9180 7.1).
 pub fn kem_ok(kem: Int) -> Bool { kem is 0x0010 | 0x0011 | 0x0012 | 0x0020 }
 
-fn kem_hash(kem: Int) -> Int {
-  if kem == 0x0011 {
-    return sha256.HASH_SHA384
-  }
-  if kem == 0x0012 {
-    return sha256.HASH_SHA512
-  }
-  sha256.HASH_SHA256
-}
-
-fn kdf_hash(kdf: Int) -> Int {
-  if kdf == 2 {
-    return sha256.HASH_SHA384
-  }
-  if kdf == 3 {
-    return sha256.HASH_SHA512
-  }
-  sha256.HASH_SHA256
-}
-
-fn labeled_extract(hash: Int, suite: Bytes, salt: Bytes, label: Str, ikm: Bytes) -> Bytes { hkdf.extract(hash, salt, asn1.cat(["HPKE-v1".bytes(), suite, label.bytes(), ikm])) }
-
-fn labeled_expand(hash: Int, suite: Bytes, prk: Bytes, label: Str, info: Bytes, n: Int) -> Bytes { hkdf.expand(hash, prk, asn1.cat([u16(n), "HPKE-v1".bytes(), suite, label.bytes(), info]), n) }
-
 /// The context to the picked config (Go's hpke.NewSender with the
-/// config's info): None and the text when the KEM is not one kem_ok
-/// takes or the key is invalid.
-pub fn sender(p: Picked) -> (Sender?, Str) {
+/// config's info): std/hpke's Sender over the runtime's generator
+/// (rand.Runtime, a pure Rand, decision 0652), so the handshake stays
+/// pure; None and the text when the KEM or suite is not one HPKE takes
+/// here or the key is invalid.
+pub fn sender(p: Picked) -> (hpke.Sender?, Str) {
   let c = p.config
   if !kem_ok(c.kem) {
     return (None, "tls: unsupported ECH KEM")
   }
-  let kdf = p.kdf.id()
-  let aead = p.aead.id()
-  if !(kdf is 1 | 2 | 3) || !(aead is 1 | 2 | 3) {
+  if !(p.kdf.id() is 1 | 2 | 3) || !(p.aead.id() is 1 | 2 | 3) {
     return (None, "tls: unsupported ECH cipher suite")
   }
-  // DHKEM's Encap (RFC 9180 4.1): an ephemeral key, its DH with the
-  // recipient's key, and the shared secret from both public keys
-  let pk_r = c.public_key
-  var priv = b""
-  var enc = b""
-  var dh: Bytes? = None
-  if c.kem == 0x0020 {
-    priv = rand.next_bytes(32)
-    enc = x25519.base(priv)
-    if pk_r.len() == 32 {
-      let sh = x25519.scalar_mult(priv, pk_r)
-      var acc = 0
-      for b in sh {
-        acc = acc | Int(b)
-      }
-      dh = if acc == 0 { None } else { Some(sh) }
-    }
-  } else {
-    let curve = if c.kem == 0x0010 { nistec.P256 } else if c.kem == 0x0011 { nistec.P384 } else { nistec.P521 }
-    priv = nistec.generate(curve)
-    enc = nistec.public_key(curve, priv)
-    dh = nistec.ecdh(curve, priv, pk_r)
+  match hpke.new_sender(rand.Runtime{}, p.pk, p.kdf, p.aead, info(c.raw)) {
+    Ok(x) => (Some(x), "")
+    Err(_) => (None, "tls: invalid ECH public key")
   }
-  let secret = dh ?? return (None, "tls: invalid ECH public key")
-  let kh = kem_hash(c.kem)
-  let kem_suite = asn1.cat(["KEM".bytes(), u16(c.kem)])
-  let eae = labeled_extract(kh, kem_suite, b"", "eae_prk", secret)
-  let ss = labeled_expand(kh, kem_suite, eae, "shared_secret", asn1.cat([enc, pk_r]), sha256.size(kh))
-  // KeySchedule (5.1), mode_base with no PSK
-  let h = kdf_hash(kdf)
-  let suite = asn1.cat(["HPKE".bytes(), u16(c.kem), u16(kdf), u16(aead)])
-  let psk_id_hash = labeled_extract(h, suite, b"", "psk_id_hash", b"")
-  let info_hash = labeled_extract(h, suite, b"", "info_hash", info(c.raw))
-  let ctx = asn1.cat([u8(0), psk_id_hash, info_hash])
-  let sec = labeled_extract(h, suite, ss, "secret", b"")
-  let nk = if aead == 1 { 16 } else { 32 }
-  (Some(Sender{enc: enc, aead: aead, key: labeled_expand(h, suite, sec, "key", ctx, nk), nonce: labeled_expand(h, suite, sec, "base_nonce", ctx, 12)}), "")
 }
 
-/// The next message sealed with aad (RFC 9180 5.2's ContextS.Seal): the
-/// base nonce xor the sequence number.
-pub fn seal(var s: Sender, aad: Bytes, pt: Bytes) -> Bytes {
-  var n = rt.rs_with_cap(12)
-  for i in 0..12 {
-    let shift = (11 - i) * 8
-    let sb = if shift < 64 { (s.seq >> shift) & 255 } else { 0 }
-    n = rt.rs_push_byte(n, Int(s.nonce[i]) ^ sb)
-  }
-  let nonce = n.bytes()
-  s.seq += 1
-  if s.aead == 3 {
-    return chacha.seal(s.key, nonce, pt, aad)
-  }
-  aesgcm.new_gcm(s.key).seal(nonce, pt, aad)
-}
+/// The next message sealed with aad (RFC 9180 5.2's ContextS.Seal).
+pub fn seal(var s: hpke.Sender, aad: Bytes, pt: Bytes) -> Bytes { s.seal(aad, pt).or_fault("tls: ECH seal") }
 
 /// A server's context for an outer extension under key k (Go's
 /// processECHClientHello, one trial): None when the key cannot open it;

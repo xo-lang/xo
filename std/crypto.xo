@@ -554,7 +554,7 @@ struct EcdhPublicKey {}
 /// A new key from r (Curve.GenerateKey): X25519 reads 32 bytes; a NIST
 /// curve samples its scalar as generate_key's ECDSA path, so the same r
 /// gives the same key on every backend.
-fn ecdh_generate_key(r: Rand, c: EcdhCurve) -> EcdhPrivateKey uses rand
+fn ecdh_generate_key(r: Rand, c: EcdhCurve) -> EcdhPrivateKey
 /// Curve.NewPrivateKey: X25519's 32 bytes, or a NIST scalar (big endian,
 /// the order's length) in [1, n); Go's texts (`crypto/ecdh: invalid
 /// private key size`, X25519; `crypto/ecdh: invalid private key`).
@@ -627,7 +627,7 @@ fn (k: MlkemEncapsulationKey) params() -> MlkemParams
 fn (k: MlkemEncapsulationKey) bytes() -> Bytes
 /// (shared key, ciphertext) for a 32 byte message read from r (Go's
 /// mlkemtest.Encapsulate768 with that message).
-fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) uses rand
+fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes)
 // ---- AES block and the CBC and CTR modes (crypto/aes, crypto/cipher, decision 0605) ----
 
 /// An AES key schedule (Go's aes.NewCipher Block): Debug text `<aesblock>`.

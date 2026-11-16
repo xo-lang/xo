@@ -10,6 +10,7 @@
 // and a dummy ChangeCipherSpec, as Go), HelloRetryRequest, an empty
 // client certificate when one is requested, KeyUpdate. Error texts are
 // Go's.
+use std/hpke
 use native/llrt/asn1
 use native/llrt/ct
 use native/llrt/hkdf
@@ -285,7 +286,7 @@ pub struct Client {
   /// (sent again in a second outer hello after a rejecting
   /// HelloRetryRequest), the inner hello's random and transcript, and
   /// what the server did with it; its retry configs when it rejected
-  ech: tlsech.Sender? = None
+  ech: hpke.Sender? = None
   ech_cfg: tlsech.Config? = None
   ech_kdf: Int = 0
   ech_aead: Int = 0
@@ -903,7 +904,7 @@ fn ech_hellos(var c: Client, use_key: Bool, inner: Bool) -> Bytes {
     Some(x) => x
     None => return b""
   }
-  let enc = if use_key { tx.enc } else { b"" }
+  let enc = if use_key { tx.enc() } else { b"" }
   // the AEAD's tag is 16 bytes for each AEAD HPKE has (Go's note)
   let blank = tlsech.outer_ext(cfg.id, c.ech_kdf, c.ech_aead, enc, zeros(encoded.len() + 16))
   let aad = message(HS_CLIENT_HELLO, cat2(outer_head, vec16(asn1.cat([sni_outer, ext(tlsech.EXT_ECH, blank), asn1.cat(block)]))))

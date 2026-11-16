@@ -4916,7 +4916,7 @@ ECDH key agreement (Go's `crypto/ecdh`, decision 0599):
 enum EcdhCurve { X25519, P256, P384, P521 }
 struct EcdhPrivateKey {}   // Debug `<ecdhprivatekey>`
 struct EcdhPublicKey {}    // ==, Debug `<ecdhpublickey>`
-fn ecdh_generate_key(r: Rand, c: EcdhCurve) -> EcdhPrivateKey uses rand
+fn ecdh_generate_key(r: Rand, c: EcdhCurve) -> EcdhPrivateKey   // performs what r performs
 fn ecdh_private_key(c: EcdhCurve, key: Bytes) -> EcdhPrivateKey ! KeyErr
 fn ecdh_public_key(c: EcdhCurve, key: Bytes) -> EcdhPublicKey ! KeyErr
 fn (k: EcdhPrivateKey) curve() -> EcdhCurve
@@ -4963,7 +4963,7 @@ fn (k: MlkemDecapsulationKey) encapsulation_key() -> MlkemEncapsulationKey
 fn (k: MlkemDecapsulationKey) decapsulate(ciphertext: Bytes) -> Bytes ! KeyErr
 fn (k: MlkemEncapsulationKey) params() -> MlkemParams
 fn (k: MlkemEncapsulationKey) bytes() -> Bytes
-fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) uses rand  // (shared key, ciphertext)
+fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes)  // (shared key, ciphertext)
 ```
 
 A decapsulation key is its seed (Go's `NewDecapsulationKey768` form; the
@@ -11592,13 +11592,13 @@ fn (k: PrivateKey) public_key() -> PublicKey
 
 struct Sender {}                              // @move_only: a copy would reuse its nonces
 struct Recipient {}                           // @move_only
-fn new_sender(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes = b"") -> Sender ! HpkeErr uses rand
+fn new_sender(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes = b"") -> Sender ! HpkeErr   // performs what r performs
 fn new_recipient(enc: Bytes, k: PrivateKey, kdf: Kdf, aead: Aead, info: Bytes = b"") -> Recipient ! HpkeErr
 fn (s: Sender) enc() -> Bytes                 // the encapsulated key for the recipient
 fn (var s: Sender) seal(aad: Bytes, plaintext: Bytes) -> Bytes ! HpkeErr
 fn (var r: Recipient) open(aad: Bytes, ciphertext: Bytes) -> Bytes ! HpkeErr
 fn (s: Sender) export(context: Bytes, n: Int) -> Bytes ! HpkeErr   // also Recipient.export
-fn seal(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes, plaintext: Bytes) -> Bytes ! HpkeErr uses rand
+fn seal(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes, plaintext: Bytes) -> Bytes ! HpkeErr
 fn open(k: PrivateKey, kdf: Kdf, aead: Aead, info: Bytes, ciphertext: Bytes) -> Bytes ! HpkeErr
 struct HpkeErr { msg: Str }
 ```

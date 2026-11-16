@@ -1,5 +1,17 @@
 # std/hpke changes
 
+## 2026-11-16: feature: new_sender and seal perform only what their Rand performs
+
+- Kind: feature
+- Commit: this push
+- Found by: task #141 (decision 0652 step 4a): the TLS client's ECH kept its own HPKE because these declared `uses rand`
+- Go reference: none (an effect change; Go has no effects)
+- Test: golden hpke_pure_rand (a pure function seals with a Rand[()]; XO0701 before), tls_ech golden and tls13srv tests unchanged
+- Shipped in: not yet released
+- Timing: none (no code change)
+
+They dropped `uses rand`: given a `Rand[()]` (std/random.seeded or fixed) they are pure (decision 0652).
+
 ## 2026-11-15: feature: std/hpke, Hybrid Public Key Encryption
 
 - Kind: feature

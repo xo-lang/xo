@@ -433,3 +433,30 @@ pub fn next_float() -> Float { Float(next_u64().shr_logical(11)) / 9007199254740
 
 /// `rand.bool()`.
 pub fn next_bool() -> Bool { (next_u64() & 1) == 1 }
+
+/// The runtime's generator as a Rand with no effect (decision 0652, open
+/// question 2): the trusted runtime reads the system's entropy (or a test
+/// world's seeded draws) whatever its callers declare, as llrt's TLS
+/// handshake always has. A runtime module, so only llrt and the native
+/// implementations of std see it; std and user code take a Rand or use
+/// std/random's sources.
+pub struct Runtime {}
+
+pub fn (r: Runtime) int(lo: Int, hi: Int) -> Int { next_int(lo, hi, "rand.Runtime.int") }
+pub fn (r: Runtime) float() -> Float { next_float() }
+pub fn (r: Runtime) bool() -> Bool { next_bool() }
+pub fn (r: Runtime) bytes(n: Int) -> Bytes { next_bytes(n) }
+/// Fisher-Yates from the end, one int a step (std.md 3.4).
+pub fn (r: Runtime) shuffle[T](xs: List[T]) -> List[T] {
+  var out = xs
+  var i = out.len() - 1
+  while i > 0 {
+    let j = next_int(0, i + 1, "rand.Runtime.shuffle")
+    let a = out[i]
+    out[i] = out[j]
+    out[j] = a
+    i -= 1
+  }
+  out
+}
+

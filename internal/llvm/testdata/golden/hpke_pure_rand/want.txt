@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+same true len 53
+open hello
+--- stderr

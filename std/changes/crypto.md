@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-16: feature: ecdh_generate_key and encapsulate perform only what their Rand performs
+
+- Kind: feature
+- Commit: this push
+- Found by: task #141 (decision 0652 step 4a): the TLS client's ECH kept its own HPKE because these declared `uses rand`
+- Go reference: none (an effect change; Go has no effects)
+- Test: golden hpke_pure_rand (a pure function seals with a Rand[()]; XO0701 before), tls_ech golden and tls13srv tests unchanged
+- Shipped in: not yet released
+- Timing: none (no code change)
+
+They dropped `uses rand`: given a `Rand[()]` they are pure (decision 0652).
+
 ## 2026-11-16: fix: SHA-3 and Keccak digests on wasm again
 
 - Kind: fix

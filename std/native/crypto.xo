@@ -2627,7 +2627,7 @@ fn ecdh_nist(c: crypto.EcdhCurve) -> Int {
   }
 }
 
-fn ecdh_generate_key(r: Rand, c: crypto.EcdhCurve) -> EcdhPrivateKey uses rand {
+fn ecdh_generate_key(r: Rand, c: crypto.EcdhCurve) -> EcdhPrivateKey {
   if c == crypto.EcdhCurve.X25519 {
     let d = r.bytes(32)
     return EcdhPrivateKey{crv: c, d: d, public: EcdhPublicKey{crv: c, key: x25519.base(d)}}
@@ -2779,7 +2779,7 @@ fn (k: MlkemEncapsulationKey) params() -> crypto.MlkemParams { k.p }
 
 fn (k: MlkemEncapsulationKey) bytes() -> Bytes { mlkem.enc_bytes(k.e) }
 
-fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) uses rand { mlkem.encaps_with(k.e, r.bytes(32)) }
+fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) { mlkem.encaps_with(k.e, r.bytes(32)) }
 // AES block, CBC and CTR (crypto/aes and crypto/cipher of go1.26,
 // decision 0605): llrt's AES, which TLS and AES-GCM use
 

@@ -526,7 +526,7 @@ fn combine(k: Kem, ss_pq: Bytes, ss_t: Bytes, ct_t: Bytes, ek_t: Bytes) -> Bytes
 /// (shared secret, encapsulated key). The randomness r gives: DHKEM's
 /// ephemeral key (ecdh_generate_key); ML-KEM's 32 byte message; a
 /// hybrid's ML-KEM message first, then its ephemeral curve key.
-fn encap(r: Rand, pk: PublicKey) -> (Bytes, Bytes) ! HpkeErr uses rand {
+fn encap(r: Rand, pk: PublicKey) -> (Bytes, Bytes) ! HpkeErr {
   let k = pk.kem
   if !is_dh(k) && !is_hybrid(k) {
     return Ok((pk.pq ?? fault("hpke: a key without its ML-KEM key")).encapsulate(r))
@@ -667,7 +667,7 @@ pub struct Recipient {
 /// A context to the holder of pk's private key (Go's NewSender): the
 /// encapsulated key the recipient needs is `s.enc()`. Randomness from r
 /// as `encap` reads it.
-pub fn new_sender(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes = b"") -> Sender ! HpkeErr uses rand {
+pub fn new_sender(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes = b"") -> Sender ! HpkeErr {
   let (ss, enc) = encap(r, pk)?
   Ok(Sender{ctx: new_context(ss, pk.kem, kdf, aead, info)?, enc: enc})
 }
@@ -710,7 +710,7 @@ pub fn (r: Recipient) export(context: Bytes, n: Int) -> Bytes ! HpkeErr { export
 
 /// One message to pk's holder (Go's Seal): the encapsulated key, then the
 /// ciphertext.
-pub fn seal(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes, plaintext: Bytes) -> Bytes ! HpkeErr uses rand {
+pub fn seal(r: Rand, pk: PublicKey, kdf: Kdf, aead: Aead, info: Bytes, plaintext: Bytes) -> Bytes ! HpkeErr {
   var s = new_sender(r, pk, kdf, aead, info)?
   let enc = s.enc()
   let ct = s.seal(b"", plaintext)?
