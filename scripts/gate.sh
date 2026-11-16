@@ -1187,7 +1187,9 @@ run_step_body() {
     # fail after 2 s, sleep 60 s, or pass at once
     case $1 in
     selftest-fail) sleep 2; failed=1; echo "selftest-fail: FAIL (on purpose)" ;;
-    selftest-sleep) sleep 60; echo "selftest-sleep: ok" ;;
+    selftest-sleep)
+      echo '--- PASS: TestSelf/first (0.01s)' >"$logs/$1.txt"
+      sleep 60; echo "selftest-sleep: ok" ;;
     *) echo "$1: ok" ;;
     esac ;;
   short)
@@ -1672,13 +1674,40 @@ ff_check() {
     echo "gate.sh: $k stopped (fail fast: $ff_by failed; its output so far: $logs/$k.stopped.txt)"
   done
 }
+# pool_beat: every XO_GATE_HEARTBEAT_S seconds (default 600; 0: off)
+# while jobs run, one line per running job with its test log's size and
+# last finished test, so a long step is not silent and a hung one shows
+# "no new lines" (lead, 2026-11-15: the tier's llvm step printed nothing
+# for 77 minutes, and heavyd marked the lease STALLED after 45, though
+# no test was slower than 387 s)
+pool_beat() {
+  local kp k f n prev last
+  for kp in $jobpids; do
+    k=${kp%%:*}
+    kill -0 "${kp#*:}" 2>/dev/null || continue
+    [ -e "$logs/.job-$k.failed" ] && continue
+    f=$logs/$k.txt n=0 last=""
+    if [ -f "$f" ]; then
+      n=$(wc -l <"$f" | tr -d ' ')
+      last=$(grep -E -- '--- (PASS|FAIL|SKIP): ' "$f" | tail -1 | sed 's/^ *//')
+    fi
+    prev=$(cat "$logs/.job-$k.beat" 2>/dev/null)
+    echo "$n" >"$logs/.job-$k.beat"
+    echo "gate.sh: $k running ($(($(date +%s) - tsteps)) s since the steps began); $k.txt $n lines$([ "$prev" = "$n" ] && echo ', no new lines since the last beat')${last:+; last: $last}"
+  done
+}
 pool_wait() {
-  local k kp alive
+  local k kp alive hb=${XO_GATE_HEARTBEAT_S:-600} beat
+  beat=$(date +%s)
   while :; do
     ff_check
     alive=0
     for kp in $jobpids; do kill -0 "${kp#*:}" 2>/dev/null && { alive=1; break; }; done
     [ "$alive" = 0 ] && break
+    if [ "$hb" -gt 0 ] && [ $(($(date +%s) - beat)) -ge "$hb" ]; then
+      pool_beat
+      beat=$(date +%s)
+    fi
     sleep 2
   done
   ff_check

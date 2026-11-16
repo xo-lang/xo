@@ -298,7 +298,13 @@ yourself.
   `scripts/lead/gate_failfast_test.sh WORKTREE` through heavy.sh (about
   20 s; not in repotest, since its nested gate.sh rebuilds the
   checkout's bin/xo). Gate exit codes: 1 a failure, 2 refused, 3 a
-  stalled xobuild (offload.md "Stalled builds and the seed").
+  stalled xobuild (offload.md "Stalled builds and the seed"). While
+  concurrent steps run, a heartbeat every `XO_GATE_HEARTBEAT_S` (600;
+  0: off) prints `gate.sh: STEP running (N s ...); STEP.txt N lines;
+  last: --- PASS: ...` per step, with `no new lines since the last beat`
+  when its log did not grow: a long llvm step is no longer silent for
+  heavyd's 45 minute STALLED mark, and a hung test shows as a log that
+  stopped growing (2026-11-15).
 - A gate step that hangs or runs far past its usual time (lead,
   2026-11-07): before blaming your change or the gate, run the same
   step at main as a control with a go test `-timeout` a few times its
