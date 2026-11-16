@@ -209,6 +209,25 @@ test "a copied hasher is independent" {
   expect(b.sum()) == digest(crypto.Hash.Sha3_256, b"abcdef")
 }
 
+test "sha3 and keccak one shot digests match a hasher at every length to 300" {
+  // digest's one shot (sha3.sum_once, the state in scratch memory) against
+  // the Sponge a Hasher absorbs into: every tail length of every rate,
+  // whole blocks, and the 0x80 pad byte in the block's last byte
+  var d = BytesBuilder.with_capacity(300)
+  for i in 0..300 {
+    d.write_byte(UInt8((i * 167 + 13) & 255))
+  }
+  let data = d.freeze()
+  for h in [crypto.Hash.Sha3_224, crypto.Hash.Sha3_256, crypto.Hash.Sha3_384, crypto.Hash.Sha3_512, crypto.Hash.Keccak256, crypto.Hash.Keccak512] {
+    for n in 0..301 {
+      var x = hasher(h)
+      x.write(data[0..n / 2])
+      x.write(data[n / 2..n])
+      expect(digest(h, data[0..n])) == x.sum()
+    }
+  }
+}
+
 // Go's encoding/pem (go1.26.1): Decode repeated over the rest, and
 // EncodeToMemory of each block, on pem_test.go's inputs and random ones.
 const PEM: List[(Str, List[(Str, Str, Str, Str)])] = [

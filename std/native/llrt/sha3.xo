@@ -4,6 +4,7 @@
 // read in pieces (Go's crypto/internal/fips140/sha3). Nothing here
 // branches on or indexes by the data.
 use native/llrt/cpu
+use native/llrt/obj
 use native/rt
 
 /// A sponge: the 25 lanes, its rate in bytes, its domain separator
@@ -30,14 +31,11 @@ const RCS: List[Int] = [1, 32898, -9223372036854742902, -9223372034707259392, 32
 /// applied at its end. x86_64 has no rotated operands: there each
 /// rotation is applied where it is made (the plain form). Generated: do
 /// not edit.
-fn keccak(var a: List[Int]) {
-  // the lanes as raw memory at constant offsets (the arm64 backend
-  // checked each index): a write first makes a this call's own
-  if a.len() != 25 {
-    fault("sha3: a state of ${a.len()} lanes")
-  }
-  a[0] = a[0]
-  let la = rt.obj_addr(a).wrapping_add(rt.layout(2))
+///
+/// The 25 lanes are raw memory at la, at constant offsets (the arm64
+/// backend checked each index of a List): a List's elements (keccak)
+/// or the thread's scratch (sum_once).
+fn keccak_at(la: Int) {
   var a0 = rt.mem_load(la, 0, 8)
   var a1 = rt.mem_load(la, 8, 8)
   var a2 = rt.mem_load(la, 16, 8)
@@ -1081,6 +1079,16 @@ fn keccak(var a: List[Int]) {
   rt.mem_store(la, 192, a24, 8)
 }
 
+/// Keccak-f[1600] on a List's 25 lanes (keccak_at on its elements): a
+/// write first makes a this call's own.
+fn keccak(var a: List[Int]) {
+  if a.len() != 25 {
+    fault("sha3: a state of ${a.len()} lanes")
+  }
+  a[0] = a[0]
+  keccak_at(rt.obj_addr(a).wrapping_add(rt.layout(2)))
+}
+
 /// The zero state, copied by a sponge's first write (one allocation and
 /// a copy rather than 25 pushes).
 const ZERO_LANES: List[Int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -1222,6 +1230,15 @@ fn permute(var a: List[Int]) {
   keccak(a)
 }
 
+/// Keccak-f[1600] on the 25 lanes at la (raw memory), as permute.
+fn permute_at(la: Int) {
+  if (cpu.hw() & cpu.HW_SHA3) != 0 {
+    cpu.keccak_f1600(la, rt.obj_addr(RCS).wrapping_add(rt.layout(2)))
+    return
+  }
+  keccak_at(la)
+}
+
 /// XORs byte v into byte i of the state.
 fn xor_byte(var s: Sponge, i: Int, v: Int) {
   let l = i / 8
@@ -1316,17 +1333,61 @@ pub fn next_block(var s: Sponge) -> List[Int] {
 /// The digest of a SHA-3 sponge (its output length: 28, 32, 48 or 64 bytes).
 pub fn sum(var s: Sponge) -> Bytes { read(s, (200 - s.rate) / 2) }
 
-pub fn sha3_256(data: Bytes) -> Bytes {
-  var s = new_sha3_256()
-  write(s, data)
-  sum(s)
+/// The n byte digest (n at most rate) of data with a fresh sponge of
+/// rate and dsbyte, its state in the thread's 256 byte scratch
+/// (obj.scratch, valid until the thread's next system call, which this
+/// makes none of; runtime code, so never preempted): one allocation, the
+/// digest, where a Sponge's lanes, crypto's State and its copy for the
+/// squeeze were three (crypto.digest of a short message, 2026-11-15).
+/// The output is allocated before the state is written, so an
+/// allocation's system call cannot reach the scratch while it is in use.
+pub fn sum_once(rate: Int, dsbyte: Int, data: Bytes, n: Int) -> Bytes {
+  var out = rt.rs_with_cap(n)
+  let la = obj.scratch()
+  for l in 0..25 {
+    rt.mem_store(la, 8 * l, 0, 8)
+  }
+  let len = data.len()
+  var i = 0
+  while len - i >= rate {
+    // a whole block, a lane at a time
+    for l in 0..rate / 8 {
+      rt.mem_store(la, 8 * l, rt.mem_load(la, 8 * l, 8) ^ rt.bytes_word(data, i + 8 * l), 8)
+    }
+    i += rate
+    permute_at(la)
+  }
+  // the tail (shorter than a block): whole lanes, then bytes
+  var p = 0
+  while len - i >= 8 {
+    rt.mem_store(la, p, rt.mem_load(la, p, 8) ^ rt.bytes_word(data, i), 8)
+    p += 8
+    i += 8
+  }
+  while i < len {
+    rt.mem_store(la, p, rt.mem_load(la, p, 1) ^ Int(data[i]), 1)
+    p += 1
+    i += 1
+  }
+  // the padding: the domain separator, then 0x80 at the block's last byte
+  rt.mem_store(la, p, rt.mem_load(la, p, 1) ^ dsbyte, 1)
+  rt.mem_store(la, rate - 1, rt.mem_load(la, rate - 1, 1) ^ 0x80, 1)
+  permute_at(la)
+  var k = 0
+  while n - k >= 8 {
+    out = rt.rs_push_word(out, rt.mem_load(la, k, 8), 8)
+    k += 8
+  }
+  while k < n {
+    out = rt.rs_push_byte(out, rt.mem_load(la, k, 1))
+    k += 1
+  }
+  out.bytes()
 }
 
-pub fn sha3_512(data: Bytes) -> Bytes {
-  var s = new_sha3_512()
-  write(s, data)
-  sum(s)
-}
+pub fn sha3_256(data: Bytes) -> Bytes { sum_once(136, 0x06, data, 32) }
+
+pub fn sha3_512(data: Bytes) -> Bytes { sum_once(72, 0x06, data, 64) }
 
 pub fn shake128(data: Bytes, n: Int) -> Bytes {
   var s = new_shake128()

@@ -160,14 +160,11 @@ fn main(os: Os) {
     r#"/// applied at its end. x86_64 has no rotated operands: there each"#,
     r#"/// rotation is applied where it is made (the plain form). Generated: do"#,
     r#"/// not edit."#,
-    r#"fn keccak(var a: List[Int]) {"#,
-    r#"  // the lanes as raw memory at constant offsets (the arm64 backend"#,
-    r#"  // checked each index): a write first makes a this call's own"#,
-    r#"  if a.len() != 25 {"#,
-    r#"    fault("sha3: a state of ${a.len()} lanes")"#,
-    r#"  }"#,
-    r#"  a[0] = a[0]"#,
-    r#"  let la = rt.obj_addr(a).wrapping_add(rt.layout(2))"#,
+    r#"///"#,
+    r#"/// The 25 lanes are raw memory at la, at constant offsets (the arm64"#,
+    r#"/// backend checked each index of a List): a List's elements (keccak)"#,
+    r#"/// or the thread's scratch (sum_once)."#,
+    r#"fn keccak_at(la: Int) {"#,
   ]
   for i in 0..25 {
     lines.push("  var a${i} = rt.mem_load(la, ${8 * i}, 8)")

@@ -1,5 +1,25 @@
 # std/crypto changes
 
+## 2026-11-15: perf: a SHA-3 or Keccak digest is one shot, its state in scratch memory
+
+- Kind: perf
+- Commit: this push
+- Found by: the SHA3 timing row (bench/perf/sha3 small 1.165x Go's crypto/sha3 on linux/arm64 host 1)
+- Go reference: crypto/sha3 Sum224, Sum256, Sum384, Sum512 (the state on the stack, no allocation but the digest)
+- Test: crypto_test.xo "sha3 and keccak one shot digests match a hasher at every length to 300" (every SHA3 and legacy Keccak size, arm64 and llvm); the go digests (FIPS 202 vectors); twincheck bench/perf/sha3 outputs equal before and after (arm64, llvm)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+`digest` of SHA3-224, 256, 384, 512 and legacy Keccak-256 and 512 went
+through the streaming State: a Sponge whose 25 lanes were a List, the
+State around it, and a copy of it for the squeeze. sha3.sum_once keeps
+the 200 byte state in the thread's 256 byte scratch (obj.scratch, as
+AES-GCM's state since 2026-11-15) and allocates only the digest:
+bench/perf/sha3 small 0.855 of before on linux/arm64 host 1 (xo bench
+--ab, 3 rounds, 0.845 to 0.861). The generated Keccak rounds take the
+lanes' address (keccak_at; scripts/gen/keccaklazy), so a List and the
+scratch share them.
+
 ## 2026-11-15: perf: a BLAKE2b digest of a short message is one shot, with no State
 
 - Kind: perf

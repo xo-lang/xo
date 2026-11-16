@@ -311,6 +311,9 @@ fn digest(h: crypto.Hash, data: Bytes) -> Bytes {
     Blake2b_256 => blake2b.sum(data, 32)
     Blake2b_384 => blake2b.sum(data, 48)
     Blake2b_512 => blake2b.sum(data, 64)
+    // one shot, the state in scratch memory (sha3.sum_once)
+    Sha3_224 | Sha3_256 | Sha3_384 | Sha3_512 => sha3.sum_once(block_of(h), 0x06, data, hash_size(h))
+    Keccak256 | Keccak512 => sha3.sum_once(block_of(h), 0x01, data, hash_size(h))
     _ => finish(absorb(fresh(h), data))
   }
 }
