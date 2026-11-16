@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-16: feature: tab state in the URL (App.with_url_view)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0672's prototype (examples/ui-shop: filters and sort kept in the URL)
+- Go reference: none
+- Test: std/ui tests (the page, a sync and a prediction render the page's query); internal/uiruntime TestSyncSendsPageQuery; headless Chrome ~/xo-lead/notes/stdui/e2e/drive-shop-tab.mjs 12/12 (filter and sort without a full load, back, reload, a shared link, another user's page untouched); every earlier suite (todo 21, morph 3, navigation 17, redeploy 6, pages 14, busy 6, shop 12)
+- Shipped in: not yet released
+
+`App.with_url_view(fn(model, query) -> Html)`: the view also reads the page's query, so tab state (a filter, a sort, a selected row) lives in the URL and survives reload, back and forward and a shared link, rendered by the server on a first load. The runtime sends the page's query with each sync (`Up.query`) and each prediction (`ClientIn.query`).
+
 ## 2026-11-16: perf: with redact, another user's change no longer wakes every viewer
 
 - Kind: perf

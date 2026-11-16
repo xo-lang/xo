@@ -205,3 +205,13 @@ func TestSyncSendsSeenDigest(t *testing.T) {
 		t.Errorf("seen digests sent %q, want d0,d1", r.Before)
 	}
 }
+
+// An App with tab state in the URL renders the view for the page's query:
+// every sync sends it (without the "?"), so a sync's html keeps the filter
+// the tab is on (decision 0672).
+func TestSyncSendsPageQuery(t *testing.T) {
+	r := run(t, "query")
+	if r.Before != "tag=drink&sort=price" {
+		t.Errorf("queries sent %q, want tag=drink&sort=price", r.Before)
+	}
+}

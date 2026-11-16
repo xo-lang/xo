@@ -3,6 +3,7 @@ use std/crypto
 use std/html
 use std/http
 use std/json
+use std/url
 
 // ---- a small app: a shared todo list with a limited resource ----
 
@@ -638,6 +639,41 @@ test "with redact, a live connection hears only of changes to its own view" {
   expect(chb.try_recv()) == Some(3)
   h.unsubscribe(ida)
   h.unsubscribe(idb)
+}
+
+// tab state: the view reads the page's query (decision 0672)
+fn filtered(m: Model, q: url.Values) -> Html {
+  let only = q.get("only") ?? ""
+  var items: List[Html] = []
+  for (_, t) in m.todos {
+    if only == "" || (only == "done") == t.done {
+      items.push(el("li", [], [text(t.title)]))
+    }
+  }
+  el("ul", [], items)
+}
+
+test "with_url_view renders the page's query on the page, a sync and a prediction" {
+  let app = todo_app().with_url_view(filtered)
+  let h = host(app)
+  let r = routes_for(h)
+  h.apply(Msg.Add(id: "a", title: "milk"))
+  h.apply(Msg.Add(id: "b", title: "eggs"))
+  h.apply(Msg.Toggle(id: "b"))
+  let all = r.call(http.new_request("GET", "/")).text() ?? ""
+  expect(all.contains("<li>milk") && all.contains("<li>eggs")) == true
+  let done = r.call(http.new_request("GET", "/?only=done")).text() ?? ""
+  expect(done.contains("<li>eggs")) == true
+  // the page state holds the model; the view leaves milk out
+  expect(done.contains("<li>milk")) == false
+  let s = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(Up{client: "a", ver: 0, msgs: [], query: "only=todo"}), query: "?thin=1")).text() ?? "")?
+  expect(s.html.contains("milk")) == true
+  expect(s.html.contains("eggs")) == false
+  let out = predict(app, ClientIn{model: h.model(), pending: [Msg.Toggle(id: "a")], query: "only=done"})
+  expect(out.html.contains("milk") && out.html.contains("eggs")) == true
+  // a query that does not parse reads as empty; an App without it ignores it
+  expect(predict(app, ClientIn{model: h.model(), pending: [], query: "%zz"}).html.contains("milk")) == true
+  expect(predict(todo_app(), ClientIn{model: h.model(), pending: [], query: "only=done"}).html.contains("milk")) == true
 }
 
 // ---- server Msgs, compaction, sign-in redirect ----

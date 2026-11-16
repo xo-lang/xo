@@ -1,4 +1,5 @@
 use std/ui
+use std/url
 
 test "a cart is bounded by stock and a checkout takes the stock" {
   var m = app().init
@@ -26,4 +27,17 @@ test "redact leaves the viewer's cart only, and allow binds Msgs to the principa
 test "a viewer with no cart yet still sees their own name" {
   let r = redact(app().init, "cy")
   expect(ui.render(view(r)).contains("Cart of cy")) == true
+}
+
+test "the URL filters and sorts the catalog for this viewer only" {
+  let m = redact(app().init, "ann")
+  let drinks = ui.render(view_at(m, url.parse_query("tag=drink")?))
+  expect(drinks.contains("Green tea")) == true
+  expect(drinks.contains("Teapot")) == false
+  let cheap = ui.render(view_at(m, url.parse_query("sort=price&tag=kitchen")?))
+  let mug = cheap.find("Mug") ?? 0
+  let pot = cheap.find("Teapot") ?? 0
+  expect(mug < pot) == true
+  // the links keep the other filter
+  expect(cheap.contains("href=\"?sort=price&amp;tag=drink\"")) == true
 }

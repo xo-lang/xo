@@ -118,6 +118,40 @@ through the one shared log and lock, the model holds every user's cart
 (about 15 bytes per cart line here), the server computes one digest per
 connected principal per change, and tab state is not covered at all.
 
+## Tab state prototyped (2026-11-16)
+
+Built smaller than the draft's part 1, to see how far it goes: tab state
+is the page's query and nothing else. `App.with_url_view(fn(M,
+url.Values) -> Html)`; no `T`, no `TA`, no `tab_update` or `tab_url`. A
+link or a GET form changes it through the page layer (0670: fetch, morph,
+history), the runtime sends the page's query with each sync and each
+prediction, and the server renders it on a first load.
+
+examples/ui-shop filters the catalog by tag and sorts it by price this
+way. Chrome (~/xo-lead/notes/stdui/e2e/drive-shop-tab.mjs) 12/12: filter
+and sort without a full load, the other filter kept by the links, back,
+reload (server rendered), a cart add while filtered, a shared link
+opened by another user (their own cart, the same filter), and the other
+user's page untouched (no sync). A filter showed with the URL change on
+localhost and in 204 ms at 150 ms of added latency: one round trip,
+since even the wasm client fetches the new URL.
+
+What it does not cover, against the draft:
+
+- state that should not be in the URL or history (an open menu, a
+  half-typed field): the morph keeps the DOM's own, which covers most;
+- a tab act that computes from the model (a wizard step that checks
+  stock): the view can read the model, but the next step is a link or
+  form, not an update;
+- a filter without a round trip: the wasm client could render a new
+  query of the same path itself (predict already takes it) and fetch
+  only to confirm. Next experiment: in the runtime's visit, a same-path
+  GET on an App page with a client predicts with the new query and
+  pushes history at once.
+
+So far the query alone holds the shop's tab state, and the typed `T`
+and `TA` of the draft are not needed for it.
+
 ## Open questions for the prototype
 
 - Are two parts (tab and user) worth the type parameters, or is one

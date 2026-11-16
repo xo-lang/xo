@@ -19,7 +19,7 @@ function storage() {
   };
 }
 const local = storage();
-const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [], seen: null, seens: [] };
+const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [], seen: null, seens: [], search: "", queries: [] };
 function receive(up) {
   let a = server.acked.get(up.client) ?? 0;
   for (const e of up.msgs) {
@@ -29,6 +29,7 @@ function receive(up) {
   }
   server.acked.set(up.client, a);
   server.seens.push(up.seen ?? "(none)");
+  server.queries.push(up.query ?? "(none)");
   return { down: { acked: a, reset: null, entries: [] }, ver: server.applied.length, html: "<p>" + server.applied.length + "</p>", build: server.build, seen: server.seen === null ? undefined : "d" + server.applied.length };
 }
 
@@ -55,7 +56,7 @@ function tab() {
       activeElement: null,
     },
     window: { addEventListener: (n, f) => { listeners[n] = f; }, WebSocket: WS },
-    location: { pathname: "/", protocol: "http:", host: "test", reload: () => { server.reloads++; } },
+    location: { pathname: "/", search: server.search, protocol: "http:", host: "test", reload: () => { server.reloads++; } },
     localStorage: local,
     sessionStorage: storage(),
     fetch: async (url, init) => {
@@ -149,6 +150,14 @@ if (scenario === "seen") {
   await click(a, "a1");
   await click(a, "a2");
   extra = { before: server.seens.join(",") };
+}
+if (scenario === "query") {
+  // tab state in the URL (App.with_url_view): each sync names the page's
+  // query, so the server renders the view the tab is on
+  server.search = "?tag=drink&sort=price";
+  const a = tab(); await settle();
+  await click(a, "a1");
+  extra = { before: server.queries.join(",") };
 }
 if (scenario === "pointer") {
   // a sync reply lands while the pointer is down on the view: the view is

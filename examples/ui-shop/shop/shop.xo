@@ -5,6 +5,7 @@
 // per-viewer state. A checkout is confirmed by the server (stock is
 // shared and limited).
 use std/ui
+use std/url
 
 pub struct Product {
   sku: Str
@@ -115,6 +116,32 @@ fn checkout_waits(msg: Msg) -> Bool {
 }
 
 pub fn view(m: Model) -> ui.Html {
+  view_at(m, url.values())
+}
+
+// a link to this page with key set to value and the other filters kept
+fn link(q: url.Values, key: Str, value: Str, label: Str) -> ui.Html {
+  var n = url.values()
+  for k in ["tag", "sort"] {
+    let v = if k == key { value } else { q.get(k) ?? "" }
+    if v != "" {
+      n.set(k, v)
+    }
+  }
+  let href = if n.encode() == "" { "?" } else { "?" + n.encode() }
+  let on = (q.get(key) ?? "") == value
+  ui.el("a", [ui.attr("href", href), ui.attr("class", if on { "on" } else { "" })], [ui.text(label)])
+}
+
+/// The page at a URL: tab state (decision 0672) is the query, `tag`
+/// filters the catalog and `sort` orders it (name or price); other
+/// viewers see nothing of it, and a link or reload keeps it.
+pub fn view_at(m: Model, q: url.Values) -> ui.Html {
+  let tag = q.get("tag") ?? ""
+  var shown = m.products.filter(fn(p) { tag == "" || p.tag == tag })
+  if q.get("sort") == Some("price") {
+    shown = shown.sort_by(fn(p) { p.price })
+  }
   // after redact the only cart is the viewer's
   var user = ""
   var cart: Map[Str, Int] = {}
@@ -123,7 +150,7 @@ pub fn view(m: Model) -> ui.Html {
     cart = c
   }
   var rows: List[ui.Html] = []
-  for p in m.products {
+  for p in shown {
     rows.push(ui.el("li", [ui.attr("data-tag", p.tag)], [
       ui.el("span", [], [ui.text("${p.name} $${p.price} (${p.stock} left)")]),
       ui.el("button", [ui.on("click", Msg.Add(user: user, sku: p.sku))], [ui.text("add")]),
@@ -143,6 +170,7 @@ pub fn view(m: Model) -> ui.Html {
   }
   ui.el("main", [], [
     ui.el("h1", [], [ui.text("Shop")]),
+    ui.el("nav", [ui.attr("class", "filters")], [link(q, "tag", "", "all"), link(q, "tag", "drink", "drinks"), link(q, "tag", "kitchen", "kitchen"), ui.text(" | "), link(q, "sort", "", "by name"), link(q, "sort", "price", "by price")]),
     ui.el("ul", [ui.attr("class", "catalog")], rows),
     ui.el("h2", [], [ui.text("Cart of ${user}")]),
     ui.el("ul", [ui.attr("class", "cart")], lines),
@@ -153,7 +181,7 @@ pub fn view(m: Model) -> ui.Html {
 }
 
 pub fn app() -> ui.App[Model, Msg] {
-  ui.app(Model{products: catalog(), carts: {}, orders: 0}, update, view).confirming(checkout_waits)
+  ui.app(Model{products: catalog(), carts: {}, orders: 0}, update, view).confirming(checkout_waits).with_url_view(view_at)
 }
 
-pub const CSS: Str = "body{font:16px system-ui;max-width:40rem;margin:2rem auto}li{margin:.3rem 0}button{margin-left:.5rem}"
+pub const CSS: Str = "body{font:16px system-ui;max-width:40rem;margin:2rem auto}li{margin:.3rem 0}button{margin-left:.5rem}nav a{margin-right:.6rem}nav a.on{font-weight:bold}"

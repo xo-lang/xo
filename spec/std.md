@@ -11498,9 +11498,10 @@ once; without one it is a thin client (it queues and sends Msgs and
 shows the server's rendered view).
 
 ```
-pub struct App[M, E] { pub init: M, pub update: fn(M, E) -> M, pub view: fn(M) -> Html, pub confirm: fn(E) -> Bool }
+pub struct App[M, E] { pub init: M, pub update: fn(M, E) -> M, pub view: fn(M) -> Html, pub url_view: (fn(M, url.Values) -> Html)?, pub confirm: fn(E) -> Bool }
 pub fn app[M, E](init: M, update: fn(M, E) -> M, view: fn(M) -> Html) -> App[M, E]   // confirm says false
 fn (a: App[M, E]) confirming(confirm: fn(E) -> Bool) -> App[M, E]
+fn (a: App[M, E]) with_url_view(view: fn(M, url.Values) -> Html) -> App[M, E]   // tab state: the view reads the page's query
 
 pub enum Html { Text(s: Str), El(tag: Str, attrs: List[Attr], kids: List[Html]) }
 pub struct Attr { pub name: Str, pub value: Str }
@@ -11509,12 +11510,12 @@ pub fn el(tag: Str, attrs: List[Attr] = [], kids: List[Html] = []) -> Html
 pub fn attr(name: Str, value: Str) -> Attr
 pub fn on[E: Json](event: Str, msg: E) -> Attr       // data-xo-EVENT holding msg as JSON
 pub fn render(h: Html) -> Str
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "") -> Str
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "", query: Str = "") -> Str
 pub fn field(name: Str) -> Str                         // a form value placeholder for a Msg's Str field
 
 pub struct Envelope[E] { pub seq: Int, pub msg: E }                        // derive Json
 pub struct Entry[E] { pub ver: Int, pub client: Str, pub seq: Int, pub msg: E, pub refused: Bool = false }
-pub struct Up[E] { pub client: Str, pub ver: Int, pub msgs: List[Envelope[E]] }
+pub struct Up[E] { pub client: Str, pub ver: Int, pub msgs: List[Envelope[E]], pub seen: Str = "", pub query: Str = "" }
 pub struct Snapshot[M] { pub ver: Int, pub model: M, pub applied: Int }
 pub struct Down[M, E] { pub acked: Int, pub reset: Snapshot[M]?, pub entries: List[Entry[E]], pub refused: Int = 0 }
 pub struct PageState[M] { pub ver: Int, pub model: M }
@@ -11539,7 +11540,7 @@ fn (r: Replica[M, E]) pending() -> Int
 fn (r: Replica[M, E]) outbox() -> Up[E]     // the Msgs the server has not acknowledged
 fn (var r: Replica[M, E]) receive(d: Down[M, E])
 
-pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None }   // derive Json
+pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None, pub same: Bool = false, pub build: Str = "", pub seen: Str = "" }   // derive Json
 pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"",
     auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E]
 fn (h: Host[M, E]) apply(msg: E)
@@ -11548,7 +11549,7 @@ fn (h: Host[M, E]) model() -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
 fn (h: Host[M, E]) live() -> Int                        // open live connections
 
-pub struct ClientIn[M, E] { pub model: M, pub pending: List[E] }            // derive Json
+pub struct ClientIn[M, E] { pub model: M, pub pending: List[E], pub query: Str = "" }   // derive Json
 pub struct ClientOut { pub html: Str, pub awaiting: Int }                   // derive Json
 pub fn predict[M, E](app: App[M, E], input: ClientIn[M, E]) -> ClientOut
 pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str uses stdio
@@ -11684,6 +11685,16 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   catches up through a snapshot. With `auth`, `signin_url` sends a page
   request without a principal to that URL (303) instead of 401; a sync
   still answers 401.
+- Tab state (decision 0672, Proposed; prototype). `with_url_view` gives
+  the App a view that also reads the page's query: a filter, a sort, a
+  selected row or a step lives in the URL, so reload, back and forward
+  and a shared link show it, and the server renders it on a first load.
+  A link or a GET form changes it (the page layer fetches the new URL and
+  morphs the page, keeping the runtime's queue); the shared model is not
+  touched and no other viewer hears of it. The page, each sync (`Up.query`,
+  the page's `location.search` without the "?") and each prediction
+  (`ClientIn.query`) render with that query; a query that does not parse
+  reads as empty, and an App without `url_view` ignores it.
 - Principals and authorization (decision 0664, stage 4a). With `auth`,
   every route asks it for the request's principal (an id string; roles
   live in the model) and answers 401 when it gives None. A client id

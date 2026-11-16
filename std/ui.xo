@@ -25,6 +25,7 @@ use std/html
 use std/http
 use std/json
 use std/task
+use std/url
 use std/websocket
 
 /// A UI program.
@@ -36,6 +37,9 @@ pub struct App[M, E] {
   pub update: fn(M, E) -> M
   /// The page for a model.
   pub view: fn(M) -> Html
+  /// The page for a model and the page's query, when the App keeps tab
+  /// state in the URL (with_url_view); None: view.
+  pub url_view: (fn(M, url.Values) -> Html)?
   /// Whether a Msg needs the server's answer before it shows (a payment, a
   /// booking): a replica never predicts it, and lists it in awaiting()
   /// until the server's log has it.
@@ -44,12 +48,31 @@ pub struct App[M, E] {
 
 /// An App whose Msgs all show at once (confirm says false for each).
 pub fn app[M, E](init: M, update: fn(M, E) -> M, view: fn(M) -> Html) -> App[M, E] {
-  App{init: init, update: update, view: view, confirm: fn(_) { false }}
+  App{init: init, update: update, view: view, url_view: None, confirm: fn(_) { false }}
 }
 
 /// The same App with confirm deciding which Msgs wait for the server.
 pub fn (a: App[M, E]) confirming(confirm: fn(E) -> Bool) -> App[M, E] {
-  App{init: a.init, update: a.update, view: a.view, confirm: confirm}
+  App{init: a.init, update: a.update, view: a.view, url_view: a.url_view, confirm: confirm}
+}
+
+/// The same App whose view also reads the page's query: tab state (a
+/// filter, a sort, a selected row, a step) kept in the URL, so reload,
+/// back and forward and a shared link show it, and the server renders it
+/// on a first load (decision 0672). A link or a GET form changes it (the
+/// page layer of decision 0670 fetches the new URL and morphs the page);
+/// the shared model is not touched, and other viewers see nothing.
+pub fn (a: App[M, E]) with_url_view(view: fn(M, url.Values) -> Html) -> App[M, E] {
+  App{init: a.init, update: a.update, view: a.view, url_view: Some(view), confirm: a.confirm}
+}
+
+// The page for m at a page whose query is query (without the "?"); a
+// query that does not parse reads as empty.
+fn (a: App[M, E]) show(m: M, query: Str) -> Html {
+  match a.url_view {
+    Some(f) => f(m, url.parse_query(query).ok() ?? url.values())
+    None => (a.view)(m)
+  }
 }
 
 // ---- views ----
@@ -212,6 +235,8 @@ pub struct Up[E] {
   /// Host with redact answers `same` when this principal's view did not
   /// change, however far the version moved.
   pub seen: Str = ""
+  /// The page's query (tab state, App.with_url_view), without the "?".
+  pub query: Str = ""
 } derive Json
 
 /// The model at a log version, sent to a client too far behind for the
@@ -472,7 +497,7 @@ pub struct PageState[M] {
 /// for the client runtime at runtime_src, which syncs with sync_url and,
 /// when live_url is not "", listens there for new versions. css,
 /// if any, goes in a `<style>` element in the head.
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "") -> Str {
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "", query: Str = "") -> Str {
   var b = BytesBuilder.new()
   b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
   b.write_str(html.escape_string(title))
@@ -509,7 +534,7 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
     b.write_str(html.escape_string(seen))
   }
   b.write_str("\">")
-  write_html(b, app.view(model))
+  write_html(b, app.show(model, query))
   b.write_str("</div><script type=\"application/json\" id=\"xo-state\">")
   // encode_str does not escape HTML; html_escape writes the JSON's
   // angle brackets and ampersands as escapes, so a model's text cannot
@@ -567,6 +592,8 @@ pub struct Sync[M, E] {
 pub struct ClientIn[M, E] {
   pub model: M
   pub pending: List[E]
+  /// The page's query (tab state, App.with_url_view), without the "?".
+  pub query: Str = ""
 } derive Json
 
 /// What the client program answers: the view of the predicted model, and
@@ -589,7 +616,7 @@ pub fn predict[M, E](app: App[M, E], input: ClientIn[M, E]) -> ClientOut {
       m = (app.update)(m, e)
     }
   }
-  ClientOut{html: render((app.view)(m)), awaiting: awaiting}
+  ClientOut{html: render(app.show(m, input.query)), awaiting: awaiting}
 }
 
 /// The main of an App's client program, built with `--targets=wasip1/wasm`
@@ -864,7 +891,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     }
     let (m0, v) = state.with_read(fn(s) { (s.model(), s.version()) })
     let m = shown(m0, p)
-    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm, build: build, seen: hh.digest(m0, p))).with_header("Content-Type", "text/html; charset=utf-8")
+    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm, build: build, seen: hh.digest(m0, p), query: req.url.to_url().raw_query)).with_header("Content-Type", "text/html; charset=utf-8")
   })
   serve_runtime(r, prefix: prefix)
   r.handle("POST ${sync}", fn(req) -> http.Response ! Never {
@@ -902,7 +929,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     if up.msgs.is_empty() && (up.ver == v || (seen != "" && up.seen == seen)) {
       return http.json(200, Sync{down: down, ver: v, html: "", model: None, same: true, build: build, seen: seen})
     }
-    http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model, build: build, seen: seen})
+    http.json(200, Sync{down: down, ver: v, html: render(app.show(m, up.query)), model: with_model, build: build, seen: seen})
   })
   if !client.is_empty() {
     let gz = h.client_gz
@@ -1099,7 +1126,7 @@ function boot(){
   function predict(){
     if(!mod||stopped)return false;
     var r;
-    try{r=JSON.parse(run(JSON.stringify({model:confirmed,pending:queue.map(function(e){return e.msg;})})));}catch(e){return false;}
+    try{r=JSON.parse(run(JSON.stringify({model:confirmed,pending:queue.map(function(e){return e.msg;}),query:location.search.slice(1)})));}catch(e){return false;}
     show(r.html);
     var h=H();if(r.awaiting>0)h.setAttribute("data-xo-awaiting",String(r.awaiting));else h.removeAttribute("data-xo-awaiting");
     return true;
@@ -1110,7 +1137,7 @@ function boot(){
     if(busy){again=true;return;}
     busy=true;
     var msgs=queue.filter(function(e){return e.seq>acked;});
-    fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs,seen:dg}),credentials:"same-origin"})
+    fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs,seen:dg,query:location.search.slice(1)}),credentials:"same-origin"})
     .then(function(r){
       var h=H();
       if(dead)throw new Error("sync dead");
