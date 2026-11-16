@@ -5176,6 +5176,13 @@ a checkout of the repository, in two steps:
       scripts/seed-cut.sh X.Y.0 /tmp/notes-X.Y.0.txt WORKDIR
     # 3. upload, latest.txt last (a minute)
     scripts/seed-upload.sh WORKDIR
+    # 3b. install on the offload hosts: seed-upload.sh runs
+    #     scripts/lead/seed-place.sh WORKDIR/out itself (arm64 hosts 1 to 4,
+    #     WSL, Windows, windows/arm64; each checked with `xo version`);
+    #     on a failure rerun the line it prints (SEED_PLACE_HOSTS=...).
+    #     Gates pick the newest ancestor seed on a host, so a host left
+    #     out keeps building with the old seed and seedbuild fails
+    #     (2026-11-15: 0.52.0 uploaded, the hosts still on 0.51.1)
     # 4. delete WORKDIR (about 4 GB: the boot stages, the cross and race
     #    builds, the packed tarballs, now in the bucket) and its tree
     #    worktree, by literal path

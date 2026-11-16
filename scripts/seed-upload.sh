@@ -9,7 +9,8 @@
 # uploads them, the .sha256 files, and manifest.txt to
 # seeds/<seed>/, reads the listing back, then writes seeds/latest.txt
 # last (a host whose platform is missing from the newest seed would
-# fail), and reads latest.txt back. A dry run's output is refused.
+# fail), and reads latest.txt back. A dry run's output is refused. Then
+# scripts/lead/seed-place.sh unpacks the seed on every offload host.
 #
 # XO_SEED_BUCKET names the bucket (required; CLAUDE.local.md, decision 0249).
 set -euo pipefail
@@ -51,3 +52,10 @@ aws s3 cp --only-show-errors "$out/latest.txt" "s3://$bucket/seeds/latest.txt"
 back=$(aws s3 cp --only-show-errors "s3://$bucket/seeds/latest.txt" -)
 [ "$back" = "$seed" ] || die "latest.txt reads $back"
 echo "SEED UPLOADED: $seed (seeds/latest.txt)"
+
+# every offload host gets the seed now, or its gates keep picking the old
+# one and seedbuild fails (lead, 2026-11-15: 0.52.0's hosts still had
+# 0.51.1); XO_SEED_PLACE=0 skips it (then run scripts/lead/seed-place.sh)
+if [ "${XO_SEED_PLACE:-1}" != 0 ]; then
+  "$(dirname "$0")/lead/seed-place.sh" "$out" || die "uploaded, but some hosts lack the seed: rerun the line above"
+fi

@@ -259,10 +259,12 @@ not restart; the Mac's known_hosts entry changes with the host key):
 - nodejs, make, gcc, python3, time, flock;
 - the user `xo` (tests run as non-root: as root, the permission goldens
   such as fs_ops_edges print other output);
-- the seed: the 0.37.0 linux-arm64 seed in
-  `/work/seed/xo-0.37.0-linux-arm64` (both arm64 hosts; last verified:
-  2026-11-03); after a minor version bump that seed cannot build,
-  unpack the new seed there and change `OFF_SEED`. The base of a
+- the seeds: each private seed in `/work/seed/xo-SEED-linux-arm64`
+  (newest 0.52.0-38164047 on hosts 1 to 4; last verified: 2026-11-15);
+  a gate's remote builds with the newest seed there that is an ancestor
+  of its commit, and `OFF_SEED` (0.50.1) is the fallback for jobs that
+  name it. seed-upload.sh unpacks each new seed on every host
+  (scripts/lead/seed-place.sh; toolchain.md "Cutting a seed" step 3b). The base of a
   comparison does not follow the seed (2026-11-03): `alloc-split.sh`'s
   base server is built by `ALLOC_BASE_XO` (the Mac build: a darwin xo,
   default `XO_MAC_SEED`, v0.35.0; `ALLOC_BUILD=host2`: required) and
@@ -406,7 +408,7 @@ WSL2 Ubuntu 24.04 distribution for that user (28 CPUs, 62 GB from its
 `.wslconfig`). Its values live in `~/xo-lead/offload-amd64.env` (mode
 600) with `OFF_KIND=wsl` and `OFF_SEED` the WSL path of the 0.37.0
 linux-amd64 seed (`~/xo-ci/seed-0.37.0/xo/bin/xo`; Windows itself uses
-`~/xo-ci/seed-0.37.0/xo/bin/xo.exe`; last verified: 2026-11-03); WSL has clang 18, lld,
+`~/xo-ci/seed-0.37.0/xo/bin/xo.exe`; the private seeds in `~/xo-ci/seed-SEED`, newest 0.52.0-38164047 in WSL and Windows, last verified: 2026-11-15); WSL has clang 18, lld,
 llvm, build-essential, expect and Go 1.26.11 in `~/go-sdk/go` (since 2026-11-13, 1.26.0 kept as
 `~/go-sdk/go.go1.26.0`; last verified: 2026-11-13; on PATH from
 `~/.profile`). Windows' own shell is cmd.exe, so offload.sh sends a job
