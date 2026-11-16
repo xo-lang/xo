@@ -604,13 +604,25 @@ func myfBlocksBy(out, prefix string, lines []string) map[int]string {
 // "cannot unmarshal DNS message" (found by TestDnsFuzz seed 2 cases 36
 // and 48). A TXT record whose string runs past its RDLENGTH fails the
 // lookup, as Go's unpackTXTResource (errCalcLen); std/dns returned the
-// other records (seed 4 case 293). Go's resolver checks the expectations.
+// other records (seed 4 case 293). A REFUSED answer cut inside its
+// first record's data is "server misbehaving" too: Go's checkHeader skips
+// the records without minding errors and parses only the first answer's
+// header; std/dns parsed every record first and said "cannot unmarshal
+// DNS message" (seed 4 case 3977 of the stdproven run, task #115). An SRV
+// answer whose owner name is not a domain name (a control byte in a
+// label) is "SRV header name is invalid", as Go's LookupSRV checks the
+// first SRV answer's name; std/dns returned the record (seed 5 case 3626;
+// seeds 6 and 7 with a byte that is not UTF-8 there).
+// Go's resolver checks the expectations.
 func TestDnsAnswerErrors(t *testing.T) {
 	good := dnfRR(dnfName("@"), dnfTXT, append([]byte{5}, "hello"...))
 	short := dnfRR(dnfName("@"), dnfTXT, append([]byte{5}, "abcde"...))
 	// RDLENGTH (the 2 bytes before the 6 of rdata) 6 to 3: the string
 	// runs past it, into bytes the message has
 	short[len(short)-8], short[len(short)-7] = 0, 3
+	// RDLENGTH 6 to 255: the record runs past the end of the message
+	cut := dnfRR(dnfName("@"), dnfTXT, append([]byte{5}, "hello"...))
+	cut[len(cut)-8], cut[len(cut)-7] = 0, 255
 	cases := []dnfCase{
 		{qtype: dnfMX, rcode: 5},
 		{qtype: dnfTXT, rcode: 4},
@@ -618,6 +630,17 @@ func TestDnsAnswerErrors(t *testing.T) {
 		{qtype: dnfPTR, rcode: 2},
 		{qtype: dnfMX},
 		{qtype: dnfTXT, answers: [][]byte{good, short}},
+		{qtype: dnfSRV, rcode: 5, answers: [][]byte{cut}},
+		// 7 to 9 keep the questions' cycle (MX, TXT, SRV, PTR by index)
+		{qtype: dnfPTR, rcode: 5},
+		{qtype: dnfMX, rcode: 5},
+		{qtype: dnfTXT, rcode: 5},
+		{qtype: dnfSRV, answers: [][]byte{dnfRR([]byte("\x08bad\x07name\x00"), dnfSRV, append([]byte{0, 1, 0, 60, 255, 255}, dnfName("a-b.example.")...))}},
+		{qtype: dnfPTR, rcode: 5},
+		{qtype: dnfMX, rcode: 5},
+		{qtype: dnfTXT, rcode: 5},
+		// a byte that is not UTF-8 in the owner name (seed 6 case 1998)
+		{qtype: dnfSRV, answers: [][]byte{dnfRR([]byte("\x04bad\xec\x00"), dnfSRV, append([]byte{0, 1, 0, 60, 255, 255}, dnfName("a-b.example.")...))}},
 	}
 	server, stop := dnfServe(t, cases)
 	defer stop()
@@ -653,7 +676,7 @@ func TestDnsAnswerErrors(t *testing.T) {
 	}
 	got := myfBlocksBy(dnfNorm(string(out), server), "== ", lines)
 	want := myfBlocksBy(dnfNorm(dnfGo(server, lines), server), "== ", lines)
-	for i, w := range []string{"error server misbehaving\n", "error server misbehaving\n", "error lame referral\n", "error server misbehaving\n", "error no such host\n", "error cannot unmarshal DNS message\n"} {
+	for i, w := range []string{"error server misbehaving\n", "error server misbehaving\n", "error lame referral\n", "error server misbehaving\n", "error no such host\n", "error cannot unmarshal DNS message\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error SRV header name is invalid\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error SRV header name is invalid\n"} {
 		if want[i] != w {
 			t.Fatalf("case %d: Go's net.Resolver says %q, the test expects %q", i, want[i], w)
 		}

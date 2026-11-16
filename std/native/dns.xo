@@ -109,6 +109,12 @@ fn resolver_lookup_srv(r: dns.Resolver, n: Net, service: Str, proto: Str, name: 
       None => return Err(NetErr.Io(msg: "lookup ${target}: cannot unmarshal DNS message"))
     }
   }
+  // Go's LookupSRV: the first SRV answer's owner name (lookupSRV's cname)
+  // must be a domain name, checked before the targets are
+  let cname = ldns.first_owner(m, ldns.TYPE_SRV) ?? ""
+  if cname != "" && !ldns.is_domain_name(cname) {
+    return Err(NetErr.Io(msg: "lookup ${name}: SRV header name is invalid"))
+  }
   if got.is_empty() && bad > 0 {
     return Err(malformed(target))
   }

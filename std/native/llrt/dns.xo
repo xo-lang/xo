@@ -1293,12 +1293,16 @@ pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
   }
   // the answers, then the authorities, then the additional records for
   // the extended RCODE (extractExtendedRCode)
+  // (a record that does not parse ends the skipping: the RCODE is then
+  // the header's, with no additional records, as Go's parser in error)
   let ans_off = off
+  var skipped = true
   var i = 0
   while i < an + ns {
     let (e, _t, _l, _d, _n) = read_rr(m, off)
     if e < 0 {
-      return (KIND_FAIL, addrs)
+      skipped = false
+      break
     }
     off = e
     i += 1
@@ -1306,7 +1310,7 @@ pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
   var rcode = flags & 15
   var has_add = false
   var j = 0
-  while j < ar {
+  while skipped && j < ar {
     let (e, ty, ttl, _d, _n) = read_rr(m, off)
     if e < 0 {
       break
@@ -1321,6 +1325,15 @@ pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
   }
   if rcode == 3 {
     return (KIND_NOTFOUND, addrs)
+  }
+  // only the first answer's header must parse here (checkHeader's
+  // AnswerHeader): a REFUSED reply cut inside its first answer's data is
+  // server misbehaving, not a message that does not parse
+  if an > 0 {
+    let (e, _q) = read_name(m, ans_off)
+    if e < 0 || e + 10 > m.len() {
+      return (KIND_FAIL, addrs)
+    }
   }
   let aa = (flags & 1024) != 0
   let ra = (flags & 128) != 0
@@ -1438,6 +1451,39 @@ pub fn answers(m: Bytes, qtype: Int) -> List[(Int, Int)]? {
     off = e
   }
   Some(out)
+}
+
+/// The owner name of the first answer of type qtype, as text (Go's
+/// goLookupSRV keeps it as the SRV lookup's cname), "" for none; None
+/// when the message does not parse.
+pub fn first_owner(m: Bytes, qtype: Int) -> Str? {
+  let qd = u16(m, 4)
+  let an = u16(m, 6)
+  var off = 12
+  for _ in 0..qd {
+    let (e, _q) = read_name(m, off)
+    if e < 0 || e + 4 > m.len() {
+      return None
+    }
+    off = e + 4
+  }
+  for _ in 0..an {
+    let (e, ty, _l, _d, _n) = read_rr(m, off)
+    if e < 0 {
+      return None
+    }
+    if ty == qtype {
+      let (ne, name) = text_name(m, off)
+      if ne < 0 {
+        return None
+      }
+      // name_text's "" is a name that is not UTF-8: never a domain name
+      // (isDomainName takes ASCII letters, digits, _, - and dots)
+      return Some(if name.is_empty() { "\u{FFFD}" } else { name })
+    }
+    off = e
+  }
+  Some("")
 }
 
 /// An MX record's preference and host; None when it does not parse.

@@ -1,5 +1,32 @@
 # std/dns changes
 
+## 2026-11-16: fix: an SRV answer whose owner name is not a domain name fails the lookup
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (TestDnsFuzz seeds 5 to 7, task #115)
+- Go reference: net lookup.go Resolver.LookupSRV (the cname, the first SRV answer's name, must be isDomainName), dnsclient_unix.go goLookupSRV
+- Test: internal/stdtest TestDnsAnswerErrors cases 10 and 14 (a control byte, and a byte that is not UTF-8, in the owner name)
+- Shipped in: not yet released
+
+`lookup_srv` returned the records of an answer whose first SRV record's owner name was not a domain name (a control byte,
+or a byte that is not UTF-8, in a label). Go's LookupSRV checks that name (lookupSRV's cname) after the records parse and
+before it filters the targets, and fails with "SRV header name is invalid"; std/dns now does.
+
+## 2026-11-16: fix: a reply with an error RCODE cut inside its records is the RCODE's error
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (stdproven fuzz:dns, TestDnsFuzz seed 4 case 3977, task #115)
+- Go reference: net dnsclient_unix.go checkHeader and extractExtendedRCode (go1.26: skipping the records minds no error; only the first answer's header must parse)
+- Test: internal/stdtest TestDnsAnswerErrors case 6 (REFUSED, its one answer running past the end of the message)
+- Shipped in: not yet released
+
+A REFUSED (or other error RCODE) reply whose answer or authority records ran past the end of the message was "cannot
+unmarshal DNS message": std/dns parsed every record before it read the RCODE. Go's checkHeader skips the records without
+minding errors (the RCODE is then the header's, with no OPT record read) and needs only the first answer's header to
+parse, so it is "server misbehaving" (a cut first answer header is still "cannot unmarshal DNS message").
+
 ## 2026-11-16: fix: RCODE and lame referral errors are Go's; a TXT string past its RDLENGTH fails the lookup
 
 - Kind: fix
