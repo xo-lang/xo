@@ -1,5 +1,16 @@
 # std/metrics changes
 
+## 2026-11-15: feature: curried instruments, partial deletes and bucket helpers
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps of prometheus/client_golang (decision 0655)
+- Go reference: prometheus/client_golang v1.23.2 vec.go (CurryWith, DeletePartialMatch) and histogram.go (LinearBuckets, ExponentialBuckets, ExponentialBucketsRange)
+- Test: std/metrics_test.xo (vec_test.go's testCurryVec and testDeletePartialMatch, histogram_test.go's TestBuckets, ported)
+- Shipped in: not yet released
+
+`curry_with(labels)` on Counter, Gauge, Histogram and Summary returns the instrument with those label values fixed, sharing its series; `must_curry_with` faults on an error. `delete_partial_match(labels)` removes every series holding all the pairs and returns how many. `linear_buckets`, `exponential_buckets` and `exponential_buckets_range` build histogram bounds.
+
 ## 2026-11-15: behavior: scrape time readers may use shared state
 
 - Kind: behavior

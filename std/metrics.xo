@@ -9,6 +9,9 @@
 // are Atomic cells in a per-instrument Mutex[Map] keyed by the label
 // values; a series is made on its first use (the write lock) and found
 // afterwards under the read lock.
+//
+// Origin: prometheus (curry_with, delete_partial_match and the bucket
+// helpers, from prometheus/vec.go and histogram.go; THIRD_PARTY_NOTICES).
 
 use std/http
 
@@ -106,22 +109,30 @@ pub fn registry() -> Registry {
 /// A value that only goes up.
 pub struct Counter {
   pub f: Family
+  /// label values fixed by curry_with: (label index, value)
+  pub curry: List[(Int, Str)] = []
 }
 
 /// A value that goes up and down.
 pub struct Gauge {
   pub f: Family
+  /// label values fixed by curry_with: (label index, value)
+  pub curry: List[(Int, Str)] = []
 }
 
 /// Observations counted in buckets, with their count and sum.
 pub struct Histogram {
   pub f: Family
+  /// label values fixed by curry_with: (label index, value)
+  pub curry: List[(Int, Str)] = []
 }
 
 /// Observations summarized as quantiles (within each objective's error),
 /// with their count and sum.
 pub struct Summary {
   pub f: Family
+  /// label values fixed by curry_with: (label index, value)
+  pub curry: List[(Int, Str)] = []
 }
 
 /// A held series (decision 0501, client_golang's WithLabelValues): made
@@ -179,7 +190,8 @@ pub fn (c: Counter) inc(values: List[Str] = []) {
   c.add(1.0, values)
 }
 
-pub fn (c: Counter) add(n: Float, values: List[Str] = []) {
+pub fn (c: Counter) add(n: Float, values0: List[Str] = []) {
+  let values = curried(c.curry, c.f.labels.len(), values0)
   if n < 0.0 {
     fault("metrics: a counter cannot decrease")
   }
@@ -191,13 +203,15 @@ pub fn (c: Counter) add(n: Float, values: List[Str] = []) {
   }
 }
 
-pub fn (g: Gauge) set(v: Float, values: List[Str] = []) {
+pub fn (g: Gauge) set(v: Float, values0: List[Str] = []) {
+  let values = curried(g.curry, g.f.labels.len(), values0)
   if let Some(cells) = cells_of(g.f, values) {
     cells[0].set(v.to_bits())
   }
 }
 
-pub fn (g: Gauge) add(v: Float, values: List[Str] = []) {
+pub fn (g: Gauge) add(v: Float, values0: List[Str] = []) {
+  let values = curried(g.curry, g.f.labels.len(), values0)
   if hit_add(g.f, values, false, v) {
     return
   }
@@ -206,7 +220,8 @@ pub fn (g: Gauge) add(v: Float, values: List[Str] = []) {
   }
 }
 
-pub fn (h: Histogram) observe(v: Float, values: List[Str] = []) {
+pub fn (h: Histogram) observe(v: Float, values0: List[Str] = []) {
+  let values = curried(h.curry, h.f.labels.len(), values0)
   // a hit observes under the share, as hit_add adds
   if values.len() == h.f.labels.len() {
     let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
@@ -237,19 +252,23 @@ pub fn (h: Histogram) observe(v: Float, values: List[Str] = []) {
 /// wrong count is a fault): the series is made if it is new. Past
 /// `max_series` the child counts into a series nothing exposes, and the drop
 /// is counted in `xo_metrics_dropped_total` as `inc` counts it.
-pub fn (c: Counter) child(values: List[Str] = []) -> CounterChild {
+pub fn (c: Counter) child(values0: List[Str] = []) -> CounterChild {
+  let values = curried(c.curry, c.f.labels.len(), values0)
   CounterChild{s: child_series(c.f, values)}
 }
 
-pub fn (g: Gauge) child(values: List[Str] = []) -> GaugeChild {
+pub fn (g: Gauge) child(values0: List[Str] = []) -> GaugeChild {
+  let values = curried(g.curry, g.f.labels.len(), values0)
   GaugeChild{s: child_series(g.f, values)}
 }
 
-pub fn (h: Histogram) child(values: List[Str] = []) -> HistogramChild {
+pub fn (h: Histogram) child(values0: List[Str] = []) -> HistogramChild {
+  let values = curried(h.curry, h.f.labels.len(), values0)
   HistogramChild{s: child_series(h.f, values), bounds: h.f.bounds}
 }
 
-pub fn (s: Summary) child(values: List[Str] = []) -> SummaryChild {
+pub fn (s: Summary) child(values0: List[Str] = []) -> SummaryChild {
+  let values = curried(s.curry, s.f.labels.len(), values0)
   SummaryChild{s: child_series(s.f, values), objectives: s.f.objectives}
 }
 
@@ -300,7 +319,8 @@ pub fn (r: Registry) summary(name: Str, help: Str, labels: List[Str] = [], objec
   Summary{f: make(r, 3, name, help, labels, [], [], sorted, max_age.nanos() / 1000000, age_buckets)}
 }
 
-pub fn (s: Summary) observe(v: Float, values: List[Str] = []) {
+pub fn (s: Summary) observe(v: Float, values0: List[Str] = []) {
+  let values = curried(s.curry, s.f.labels.len(), values0)
   if let Some(x) = series_of(s.f, values) {
     summary_add(x, s.f.objectives, v)
   }
@@ -324,13 +344,13 @@ pub fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[St
 
 /// Removes the series of the label values (DeleteLabelValues): whether
 /// there was one.
-pub fn (c: Counter) remove(values: List[Str]) -> Bool { remove_series(c.f, values) }
+pub fn (c: Counter) remove(values: List[Str]) -> Bool { remove_series(c.f, curried(c.curry, c.f.labels.len(), values)) }
 
-pub fn (g: Gauge) remove(values: List[Str]) -> Bool { remove_series(g.f, values) }
+pub fn (g: Gauge) remove(values: List[Str]) -> Bool { remove_series(g.f, curried(g.curry, g.f.labels.len(), values)) }
 
-pub fn (h: Histogram) remove(values: List[Str]) -> Bool { remove_series(h.f, values) }
+pub fn (h: Histogram) remove(values: List[Str]) -> Bool { remove_series(h.f, curried(h.curry, h.f.labels.len(), values)) }
 
-pub fn (s: Summary) remove(values: List[Str]) -> Bool { remove_series(s.f, values) }
+pub fn (s: Summary) remove(values: List[Str]) -> Bool { remove_series(s.f, curried(s.curry, s.f.labels.len(), values)) }
 
 /// Removes every series (Reset).
 pub fn (c: Counter) reset() { reset_series(c.f) }
@@ -340,6 +360,216 @@ pub fn (g: Gauge) reset() { reset_series(g.f) }
 pub fn (h: Histogram) reset() { reset_series(h.f) }
 
 pub fn (s: Summary) reset() { reset_series(s.f) }
+
+/// An error of curry_with (client_golang's CurryWith texts).
+pub struct MetricsErr {
+  pub msg: Str
+}
+
+pub fn (e: MetricsErr) display() -> Str { e.msg }
+
+/// The instrument with the label values in `labels` fixed (client_golang's
+/// CurryWith): its methods then take the values of the other labels, in
+/// their order. It shares the series with the instrument it came from;
+/// `reset` still removes every series. A label curried already or not one
+/// of the instrument's is an error (`label name "x" is already curried`,
+/// `N unknown label(s) found during currying`).
+pub fn (c: Counter) curry_with(labels: Map[Str, Str]) -> Counter ! MetricsErr {
+  Ok(Counter{f: c.f, curry: curry_labels(c.f.labels, c.curry, labels)?})
+}
+
+pub fn (g: Gauge) curry_with(labels: Map[Str, Str]) -> Gauge ! MetricsErr {
+  Ok(Gauge{f: g.f, curry: curry_labels(g.f.labels, g.curry, labels)?})
+}
+
+pub fn (h: Histogram) curry_with(labels: Map[Str, Str]) -> Histogram ! MetricsErr {
+  Ok(Histogram{f: h.f, curry: curry_labels(h.f.labels, h.curry, labels)?})
+}
+
+pub fn (s: Summary) curry_with(labels: Map[Str, Str]) -> Summary ! MetricsErr {
+  Ok(Summary{f: s.f, curry: curry_labels(s.f.labels, s.curry, labels)?})
+}
+
+/// curry_with, with an error as a fault (MustCurryWith).
+pub fn (c: Counter) must_curry_with(labels: Map[Str, Str]) -> Counter {
+  match c.curry_with(labels) {
+    Ok(x) => x
+    Err(e) => fault("metrics: ${e.msg}")
+  }
+}
+
+pub fn (g: Gauge) must_curry_with(labels: Map[Str, Str]) -> Gauge {
+  match g.curry_with(labels) {
+    Ok(x) => x
+    Err(e) => fault("metrics: ${e.msg}")
+  }
+}
+
+pub fn (h: Histogram) must_curry_with(labels: Map[Str, Str]) -> Histogram {
+  match h.curry_with(labels) {
+    Ok(x) => x
+    Err(e) => fault("metrics: ${e.msg}")
+  }
+}
+
+pub fn (s: Summary) must_curry_with(labels: Map[Str, Str]) -> Summary {
+  match s.curry_with(labels) {
+    Ok(x) => x
+    Err(e) => fault("metrics: ${e.msg}")
+  }
+}
+
+/// Removes every series whose label values include all of `labels`
+/// (DeletePartialMatch): how many. A label curried on this instrument never
+/// matches (call it on the instrument it was curried from), as in
+/// client_golang.
+pub fn (c: Counter) delete_partial_match(labels: Map[Str, Str]) -> Int { delete_partial(c.f, c.curry, labels) }
+
+pub fn (g: Gauge) delete_partial_match(labels: Map[Str, Str]) -> Int { delete_partial(g.f, g.curry, labels) }
+
+pub fn (h: Histogram) delete_partial_match(labels: Map[Str, Str]) -> Int { delete_partial(h.f, h.curry, labels) }
+
+pub fn (s: Summary) delete_partial_match(labels: Map[Str, Str]) -> Int { delete_partial(s.f, s.curry, labels) }
+
+/// `count` bucket bounds from `start`, `width` apart (LinearBuckets); a
+/// count below 1 is a fault.
+pub fn linear_buckets(start: Float, width: Float, count: Int) -> List[Float] {
+  if count < 1 {
+    fault("metrics: linear_buckets needs a positive count")
+  }
+  var out: List[Float] = []
+  var x = start
+  for _ in 0..count {
+    out.push(x)
+    x += width
+  }
+  out
+}
+
+/// `count` bucket bounds from `start`, each `factor` times the one before
+/// (ExponentialBuckets); a count below 1, a start of 0 or less or a factor
+/// of 1 or less is a fault.
+pub fn exponential_buckets(start: Float, factor: Float, count: Int) -> List[Float] {
+  if count < 1 {
+    fault("metrics: exponential_buckets needs a positive count")
+  }
+  if start <= 0.0 {
+    fault("metrics: exponential_buckets needs a positive start value")
+  }
+  if factor <= 1.0 {
+    fault("metrics: exponential_buckets needs a factor greater than 1")
+  }
+  var out: List[Float] = []
+  var x = start
+  for _ in 0..count {
+    out.push(x)
+    x *= factor
+  }
+  out
+}
+
+/// `count` bucket bounds from `min` to `max`, growing by one factor
+/// (ExponentialBucketsRange); a count below 1 or a min of 0 or less is a
+/// fault.
+pub fn exponential_buckets_range(min: Float, max: Float, count: Int) -> List[Float] {
+  if count < 1 {
+    fault("metrics: exponential_buckets_range needs a positive count")
+  }
+  if min <= 0.0 {
+    fault("metrics: exponential_buckets_range needs a min greater than 0")
+  }
+  let growth = (max / min).pow(1.0 / Float(count - 1))
+  var out: List[Float] = []
+  for i in 0..count {
+    out.push(min * growth.pow(Float(i)))
+  }
+  out
+}
+
+/// Go's curryWith over the label names: the new curry list, the old one's
+/// entries kept in label order.
+fn curry_labels(names: List[Str], old: List[(Int, Str)], labels: Map[Str, Str]) -> List[(Int, Str)] ! MetricsErr {
+  var out: List[(Int, Str)] = []
+  var ic = 0
+  for (i, name) in names.indexed() {
+    let v = labels.get(name)
+    if ic < old.len() && old[ic].0 == i {
+      if v != None {
+        return Err(MetricsErr{msg: "label name ${name.quote()} is already curried"})
+      }
+      out.push(old[ic])
+      ic += 1
+    } else if let Some(x) = v {
+      out.push((i, x))
+    }
+  }
+  let unknown = old.len() + labels.len() - out.len()
+  if unknown > 0 {
+    return Err(MetricsErr{msg: "${unknown} unknown label(s) found during currying"})
+  }
+  Ok(out)
+}
+
+/// The label values of a curried instrument's call: its values with the
+/// curried ones put in their places; a wrong count is a fault.
+fn curried(curry: List[(Int, Str)], n: Int, values: List[Str]) -> List[Str] {
+  if curry.is_empty() {
+    return values
+  }
+  if values.len() != n - curry.len() {
+    fault("metrics: ${n - curry.len()} label values expected (${curry.len()} of ${n} curried), got ${values.len()}")
+  }
+  var out: List[Str] = []
+  var ci = 0
+  var vi = 0
+  for i in 0..n {
+    if ci < curry.len() && curry[ci].0 == i {
+      out.push(curry[ci].1)
+      ci += 1
+    } else {
+      out.push(values[vi])
+      vi += 1
+    }
+  }
+  out
+}
+
+/// Go's deleteByLabels with matchPartialLabels: the series whose values
+/// hold every pair of labels, none of them curried here, removed.
+fn delete_partial(f: Family, curry: List[(Int, Str)], labels: Map[Str, Str]) -> Int {
+  var want: List[(Int, Str)] = []
+  for (l, v) in labels {
+    var at = -1
+    for (i, name) in f.labels.indexed() {
+      if name == l {
+        at = i
+      }
+    }
+    if at < 0 || curry.any(fn(c: (Int, Str)) -> Bool { c.0 == at }) {
+      return 0
+    }
+    want.push((at, v))
+  }
+  f.series.with(fn(var st: Store) -> Int {
+    var keep: List[Series] = []
+    var n = 0
+    for x in st.list {
+      if want.all(fn(w: (Int, Str)) -> Bool { x.values[w.0] == w.1 }) {
+        n += 1
+      } else {
+        keep.push(x)
+      }
+    }
+    if n > 0 {
+      var at: Map[Str, Int] = {}
+      for (i, x) in keep.indexed() {
+        at[key_of(x.values)] = i
+      }
+      st = Store{at: at, list: keep}
+    }
+    n
+  })
+}
 
 /// The text exposition: `# HELP` and `# TYPE` lines and the series,
 /// instruments in the order they were made, series sorted by label

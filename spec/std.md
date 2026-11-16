@@ -8412,6 +8412,18 @@ fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(
   label values in the output. `remove(values)` deletes a series and says
   whether there was one (DeleteLabelValues); `reset()` deletes every
   series.
+- `curry_with(labels: Map[Str, Str]) -> T ! MetricsErr` on Counter,
+  Gauge, Histogram and Summary (Go's CurryWith) fixes some label values:
+  the returned instrument shares the series and its methods take the other
+  labels' values, in order. A label curried already or unknown is an error
+  (Go's texts); `must_curry_with` faults instead.
+  `delete_partial_match(labels) -> Int` removes every series holding all
+  the pairs (DeletePartialMatch); a label curried on the instrument it is
+  called on never matches.
+- `linear_buckets(start, width, count)`, `exponential_buckets(start,
+  factor, count)` and `exponential_buckets_range(min, max, count)` give
+  histogram bounds (Go's LinearBuckets, ExponentialBuckets and
+  ExponentialBucketsRange), faulting on Go's panics.
 
 ## 38. std/trace
 

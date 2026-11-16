@@ -1,0 +1,148 @@
+// Tests from Prometheus client_golang v1.23.2's prometheus/vec_test.go
+// (testCurryVec, testDeletePartialMatch) and histogram_test.go
+// (TestBuckets), changed to Xo's API.
+//
+// Origin: prometheus (THIRD_PARTY_NOTICES)
+
+/// How many series the instrument holds.
+fn nseries(f: Family) -> Int { series_snapshot(f).len() }
+
+/// The counter value of the series of the full label values, or -1.
+fn cval(f: Family, values: List[Str]) -> Float {
+  match series_snapshot(f).get(key_of(values)) {
+    Some(s) => counter_value(s.cells)
+    None => -1.0
+  }
+}
+
+fn vec3() -> Counter {
+  registry().counter("test", "helpless", ["one", "two", "three"])
+}
+
+fn two_metrics(c: Counter) {
+  expect(nseries(c.f)) == 2
+  expect(cval(c.f, ["1", "2", "3"])) == 1.0
+  expect(cval(c.f, ["11", "22", "33"])) == 1.0
+}
+
+test "currying with zero labels changes nothing (testCurryVec zero labels)" {
+  let v = vec3()
+  let c1 = v.must_curry_with({})
+  let c2 = v.must_curry_with({})
+  c1.inc(["1", "2", "3"])
+  c2.inc(["11", "22", "33"])
+  two_metrics(v)
+  expect(c1.remove(["1", "2", "3"])) == true
+  expect(c2.remove(["11", "22", "33"])) == true
+  expect(nseries(v.f)) == 0
+}
+
+test "currying the first, middle, last and two labels (testCurryVec)" {
+  for (curry1, rest1, curry2, rest2) in [
+    ({"one": "1"}, ["2", "3"], {"one": "11"}, ["22", "33"]),
+    ({"two": "2"}, ["1", "3"], {"two": "22"}, ["11", "33"]),
+    ({"three": "3"}, ["1", "2"], {"three": "33"}, ["11", "22"]),
+    ({"three": "3", "one": "1"}, ["2"], {"three": "33", "one": "11"}, ["22"]),
+    ({"three": "3", "two": "2", "one": "1"}, [], {"three": "33", "one": "11", "two": "22"}, []),
+  ] {
+    let v = vec3()
+    let c1 = v.must_curry_with(curry1)
+    let c2 = v.must_curry_with(curry2)
+    c1.inc(rest1)
+    c2.inc(rest2)
+    two_metrics(v)
+    if rest1.len() > 0 {
+      expect(c1.remove(rest2)) == false
+      expect(c2.remove(rest1)) == false
+    }
+    expect(c1.remove(rest1)) == true
+    expect(c2.remove(rest2)) == true
+    expect(nseries(v.f)) == 0
+  }
+}
+
+test "a curried instrument curries again (testCurryVec double curry)" {
+  let v = vec3()
+  let c1 = v.must_curry_with({"three": "3"}).must_curry_with({"one": "1"})
+  let c2 = v.must_curry_with({"three": "33"}).must_curry_with({"one": "11"})
+  c1.inc(["2"])
+  c2.inc(["22"])
+  two_metrics(v)
+  expect(c1.remove(["22"])) == false
+  expect(c2.remove(["2"])) == false
+  expect(c1.remove(["2"])) == true
+  expect(c2.remove(["22"])) == true
+  expect(nseries(v.f)) == 0
+}
+
+test "currying a curried label or an unknown one is an error (testCurryVec)" {
+  let v = vec3()
+  match v.must_curry_with({"three": "3"}).curry_with({"three": "33"}) {
+    Ok(_) => fault("currying unexpectedly succeeded")
+    Err(e) => expect(e.msg) == "label name \"three\" is already curried"
+  }
+  match v.curry_with({"foo": "bar"}) {
+    Ok(_) => fault("currying unexpectedly succeeded")
+    Err(e) => expect(e.msg) == "1 unknown label(s) found during currying"
+  }
+  expect(nseries(v.f)) == 0
+}
+
+test "curried gauges, histograms and summaries share the series" {
+  let r = registry()
+  let g = r.gauge("g", "h", ["a", "b"])
+  g.must_curry_with({"b": "x"}).set(4.0, ["y"])
+  expect(r.text().contains("g{a=\"y\",b=\"x\"} 4\n")) == true
+  let h = r.histogram("hh", "h", ["a", "b"], [1.0])
+  h.must_curry_with({"a": "p"}).observe(0.5, ["q"])
+  expect(r.text().contains("hh_count{a=\"p\",b=\"q\"} 1\n")) == true
+  let s = r.summary("ss", "h", ["a"])
+  s.must_curry_with({"a": "z"}).observe(2.0)
+  expect(r.text().contains("ss_sum{a=\"z\"} 2\n")) == true
+}
+
+test "delete_partial_match removes every series holding the pairs (testDeletePartialMatch)" {
+  let v = registry().gauge("test", "helpless", ["l1", "l2", "l3"])
+  expect(v.delete_partial_match({"l1": "v1", "l2": "v2"})) == 0
+  v.add(1.0, ["baseValue1", "baseValue2", "baseValue3"])
+  v.set(42.0, ["multiDeleteV1", "diff1BaseValue2", "v3"])
+  v.set(84.0, ["multiDeleteV1", "diff2BaseValue2", "v3"])
+  v.set(168.0, ["multiDeleteV1", "diff3BaseValue2", "v3"])
+  let c = v.must_curry_with({"l2": "curriedValue2"})
+  c.add(1.0, ["curriedValue1", "curriedValue3"])
+  c.add(1.0, ["curriedValue1", "differentCurriedValue3"])
+  c.add(1.0, ["differentCurriedValue1", "differentCurriedValue3"])
+  expect(c.delete_partial_match({"lx": "curriedValue1"})) == 0
+  expect(c.delete_partial_match({"l1": "badValue1"})) == 0
+  expect(c.delete_partial_match({"l2": "curriedValue2"})) == 0
+  expect(c.delete_partial_match({"l2": "baseValue2"})) == 0
+  expect(c.delete_partial_match({"l1": "curriedValue1"})) == 2
+  expect(v.delete_partial_match({"lx": "curriedValue1"})) == 0
+  expect(v.delete_partial_match({"l1": "baseValue1", "l2": "badValue2"})) == 0
+  expect(v.delete_partial_match({"l2": "curriedValue2"})) == 1
+  expect(v.delete_partial_match({"l1": "multiDeleteV1"})) == 3
+  expect(v.delete_partial_match({"l3": "baseValue3"})) == 1
+  expect(nseries(v.f)) == 0
+}
+
+test "a series kept after a partial delete is still found by its labels" {
+  let v = registry().counter("c", "h", ["a", "b"])
+  v.inc(["1", "x"])
+  v.inc(["2", "y"])
+  v.inc(["3", "x"])
+  expect(v.delete_partial_match({"b": "x"})) == 2
+  v.inc(["2", "y"])
+  expect(cval(v.f, ["2", "y"])) == 2.0
+  expect(nseries(v.f)) == 1
+}
+
+test "linear and exponential buckets (TestBuckets)" {
+  expect(linear_buckets(-15.0, 5.0, 6)) == [-15.0, -10.0, -5.0, 0.0, 5.0, 10.0]
+  expect(exponential_buckets(100.0, 1.2, 3)) == [100.0, 120.0, 144.0]
+  let got = exponential_buckets_range(1.0, 100.0, 10)
+  let want = [1.0, 1.6681, 2.7825, 4.6415, 7.7426, 12.9154, 21.5443, 35.9381, 59.9484, 100.0]
+  expect(got.len()) == want.len()
+  for (i, w) in want.indexed() {
+    expect((got[i] - w).abs() < 1e-4) == true
+  }
+}

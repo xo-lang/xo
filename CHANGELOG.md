@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fix (std/gif, native backends): the `gif: can't recognize format "..."` error quotes the version bytes as Go does (`\a`, `\b`, `\f`, `\v`, printable UTF-8 kept); it wrote `\x07` and escaped UTF-8. Found by the new gif fuzz harness (std/changes/gif.md).
+- Feature (std/metrics, every backend): `curry_with` and `must_curry_with` (client_golang's CurryWith) and `delete_partial_match` on every instrument, and the bucket helpers `linear_buckets`, `exponential_buckets` and `exponential_buckets_range`.
 - Feature (std/ui, Early): the browser predicts: build the App's client program (`fn main(os: Os) ! { ui.client_main(os.stdio, app())? }`) with `--targets=wasip1/wasm` and pass it to `ui.host(app, client: bytes)`; each click shows at once (about 1 to 6 ms), offline too, and confirmed Msgs show as waiting (`data-xo-awaiting`). examples/ui-todo is now a module with todo/, server/ and client/.
 - Fix (std/ui, Early): two tabs of one browser shared a client id, so once a second tab opened, Msgs the tabs sent with the same seq were dropped; each tab is now its own client.
 - Breaking (std/sql, every backend; decision 0662): the callbacks of `each`, `copy_from`, and `open`/`open_driver`'s `on_notice` and `on_trace` are `uses sync` function types, so closures that capture an Atomic or a Mutex pass again (the sql corpus failed XO0701 on main since 0662).

@@ -244,3 +244,20 @@ LICENSE and std/LICENSE.
    License: Mozilla Public License, version 2.0
    (https://mozilla.org/MPL/2.0/). The list's source form is available at
    https://publicsuffix.org/list/public_suffix_list.dat.
+
+10. Prometheus client_golang v1.23.2 [prometheus]
+
+   Source: https://github.com/prometheus/client_golang, prometheus/vec.go
+   (CurryWith, DeletePartialMatch) and histogram.go (LinearBuckets,
+   ExponentialBuckets, ExponentialBucketsRange) ported to std/metrics.xo,
+   with tests from vec_test.go and histogram_test.go ported to
+   std/metrics_test.xo; changed to Xo's API.
+
+   License: Apache License, Version 2.0
+   (https://www.apache.org/licenses/LICENSE-2.0). Its NOTICE:
+
+   Prometheus instrumentation library for Go applications
+   Copyright 2012-2015 The Prometheus Authors
+
+   This product includes software developed at
+   SoundCloud Ltd. (http://soundcloud.com/).
