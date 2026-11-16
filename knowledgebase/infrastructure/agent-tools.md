@@ -1495,11 +1495,18 @@ Last verified: 2026-11-15
     0461's axes): each axis's Proven/Solid/Early counts then and now, the
     marks that moved up or DOWN, new modules, the timeline; MODULE gives
     its marks where they changed. It reads the snapshots in
-    ~/xo-lead/notes/stdcov, which `HEAVY_CLASS=quick heavy.sh NAME
-    scripts/lead/stdcov-snap.sh [REV...]` writes (scripts/stdcov -json at
-    REV, default origin/main, about 15 s; `--site WEBSITE_DIR` reads the
-    website page's history from before scripts/stdcov existed, back to
-    2026-11-03). Last verified: 2026-11-15.
+    ~/xo-lead/notes/stdcov: xw takes one itself when main moves, at most
+    hourly (scripts/lead/stdcov-snap.sh as of origin/main, heavy.sh quick
+    job `xw-stdsnap-SHA-*`), and an axis that falls (Proven to Solid,
+    Solid to Early) between the two newest is an `xw alerts` std-fall
+    naming the commit. By hand: `HEAVY_CLASS=quick heavy.sh NAME
+    scripts/lead/stdcov-snap.sh [REV...]` (about 15 s; `--site
+    WEBSITE_DIR` reads the website page's history back to 2026-11-03).
+    Every `--since` takes days too (2d, 1d12h). Last verified: 2026-11-15.
+  - `xw isdone TERM...` (before assigning; replaces agents/isdone.sh):
+    main commits of 21 days, xw tasks in any state, xw decisions,
+    knowledgebase decisions, std change logs and spec/std.md that hold
+    every term, case-insensitive. Last verified: 2026-11-15.
   - Fire and forget: a down xw never fails heavy.sh, pushq or
     offload-gate (events spool under ~/xo-lead/xw/spool).
   - board.sh stays for claims and a one-line NOW until it becomes a
