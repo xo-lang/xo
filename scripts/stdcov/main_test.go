@@ -101,7 +101,7 @@ func TestPerfHelpers(t *testing.T) {
 // TestMarksJSON: the -json snapshot's shape, which xw std (workstream
 // std.xo) parses.
 func TestMarksJSON(t *testing.T) {
-	data, err := marksJSON("abc", "2026-11-15T18:00:00-05:00", []modMarks{{"std/json", "Proven", "Solid", "Early", "Early"}})
+	data, err := marksJSON("abc", "2026-11-15T18:00:00-05:00", []modMarks{{Module: "std/json", Features: "Proven", Testing: "Solid", Performance: "Early", Overall: "Early"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,5 +112,25 @@ func TestMarksJSON(t *testing.T) {
 	want := map[string]any{"sha": "abc", "at": "2026-11-15T18:00:00-05:00", "modules": []any{map[string]any{"module": "std/json", "features": "Proven", "testing": "Solid", "performance": "Early", "overall": "Early"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// TestMissing: what a module lacks for Proven on each axis below it (xw
+// #93); a Proven axis has no entry.
+func TestMissing(t *testing.T) {
+	rowsByMod = map[string][]string{"zzpart": {"done", "partial", "unaudited"}, "zzdone": {"done"}}
+	pkgsByMod = map[string][]string{"zzpart": {"zzcsv"}}
+	gapsByPkg = map[string][]string{"zzcsv": {"csv.Reader.FieldPos", "csv.Writer.UseCRLF"}}
+	got := missing("zzpart", mark{level: "Solid"}, mark{level: "Early"}, mark{level: "Early", text: "x"})
+	want := map[string][]string{
+		"features":    {"1 partial Go rows", "1 rows without a symbol audit (decision 0655)", "2 open map.txt gaps: csv.Reader.FieldPos, csv.Writer.UseCRLF"},
+		"testing":     {"race evidence", "stress evidence", "fuzz evidence"},
+		"performance": {"no committed row against Go: a Go twin and a timing row"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("missing(zzpart) = %v, want %v", got, want)
+	}
+	if m := missing("zzdone", mark{level: "Proven"}, mark{level: "Proven"}, mark{level: "Proven"}); m != nil {
+		t.Fatalf("missing of an all-Proven module = %v, want nil", m)
 	}
 }

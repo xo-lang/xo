@@ -920,6 +920,73 @@ type modMarks struct {
 	Testing     string `json:"testing"`
 	Performance string `json:"performance"`
 	Overall     string `json:"overall"`
+	// Why: each axis's reason, the marks page's text (xw #93).
+	Why map[string]string `json:"why,omitempty"`
+	// Missing: what each axis below Proven lacks for Proven (xw #93:
+	// a page of what each module needs, with the agent that covers it).
+	Missing map[string][]string `json:"missing,omitempty"`
+}
+
+// missing: what module m lacks for Proven on each axis below it.
+func missing(m string, f, t, p mark) map[string][]string {
+	out := map[string][]string{}
+	if f.level != "Proven" {
+		var xs []string
+		c := count(rowsByMod[m])
+		for _, k := range []string{"partial", "planned", "unaudited"} {
+			if c[k] > 0 {
+				what := map[string]string{"partial": "partial Go rows", "planned": "planned Go rows", "unaudited": "rows without a symbol audit (decision 0655)"}[k]
+				xs = append(xs, fmt.Sprintf("%d %s", c[k], what))
+			}
+		}
+		gs := auditGaps(m)
+		if len(gs) > 0 {
+			shown := gs
+			if len(shown) > 12 {
+				shown = append(append([]string(nil), gs[:12]...), fmt.Sprintf("%d more", len(gs)-12))
+			}
+			xs = append(xs, fmt.Sprintf("%d open map.txt gaps: %s", len(gs), strings.Join(shown, ", ")))
+		}
+		if len(rowsByMod[m]) == 0 {
+			xs = append(xs, "no Go package maps to it: Proven needs a mapping or a beyond-Go audit")
+		}
+		out["features"] = xs
+	}
+	if t.level != "Proven" {
+		e := ev(m)
+		need := []string{"race", "stress", "fuzz"}
+		if _, err := os.Stat(filepath.Join(repo, "std/evidence", m, "review.md")); evidenceReview[m] || err == nil {
+			need = append(need, "review")
+		}
+		var xs []string
+		for _, k := range need {
+			if _, ok := e[k]; !ok {
+				xs = append(xs, k+" evidence")
+			}
+		}
+		out["testing"] = xs
+	}
+	if p.level != "Proven" {
+		var xs []string
+		if pe, ok := ev(m)["perf"]; ok {
+			if mm := reWorst.FindStringSubmatch(pe.hdr["measure"]); mm != nil {
+				xs = append(xs, "worst Xo / Go "+mm[1]+" over 1.05 ("+pe.path+")")
+			} else {
+				xs = append(xs, "perf evidence without a worst Xo / Go figure ("+pe.path+")")
+			}
+		} else if _, ok := perfRows[m]; ok {
+			xs = append(xs, "perf evidence with worst Xo / Go at most 1.05 (std/evidence/"+m+"/perf); now: "+p.text)
+		} else if _, ok := perfHelpers[m]; ok {
+			xs = append(xs, "its users' marks: "+p.text)
+		} else {
+			xs = append(xs, "no committed row against Go: a Go twin and a timing row")
+		}
+		out["performance"] = xs
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // marksJSON: the snapshot `xw std` ingests, the commit it describes (sha
@@ -1046,7 +1113,9 @@ func main() {
 	if *js != "" {
 		var ms []modMarks
 		for _, r := range rows {
-			ms = append(ms, modMarks{r.m, r.f.level, r.t.level, r.p.level, r.lv})
+			ms = append(ms, modMarks{r.m, r.f.level, r.t.level, r.p.level, r.lv,
+				map[string]string{"features": r.f.text, "testing": r.t.text, "performance": r.p.text},
+				missing(r.m, r.f, r.t, r.p)})
 		}
 		data, err := marksJSON(sh("git", "rev-parse", "HEAD"), sh("git", "log", "-1", "--format=%cI"), ms)
 		if err != nil {
