@@ -19,6 +19,10 @@ busy on the host this cold run needed longer than the history's p90.
 
 ## Fix
 
-Rerun with `OFFGATE_HIST=0` (the formula's lease) or an `OFF_MAX_MIN` above
+Since task #121 (2026-11-16) a cold host's history lease is the p90 times
+1.3 plus the build allowance (`OFFGATE_XOBUILD_MIN`, 20), and never under
+the formula; a warm host keeps the history's lease
+(scripts/lead/offload_gate_test.sh, the cold and warm cases). Before that
+fix: rerun with `OFFGATE_HIST=0` (the formula's lease) or an `OFF_MAX_MIN` above
 the formula; never below it (gotcha of the offload budget). A gate chain of
 several cold pushes in a row sets `OFFGATE_HIST=0`.
