@@ -1,6 +1,6 @@
 # 0669: the native Rand draws from a per-thread ChaCha8 keystream seeded by the OS
 
-Status: Proposed (Xo Lang 1, 2026-11-15; the lead approved the direction and the prototype, the owner accepts).
+Status: Accepted (owner, 2026-11-16; proposed by Xo Lang 1, 2026-11-15).
 Stage 1 is on main (06afd1243, the scalar block); if the owner rejects this decision, stage 1 is reverted.
 
 ## Context
