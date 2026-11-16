@@ -19,3 +19,14 @@ test "a decimal fraction Tag(4, [exponent, mantissa]) round trips" {
   let big = item(b"\xc4\x82\x03\x1b\xff\xff\xff\xff\xff\xff\xff\xff")
   expect(cbor.encode(big).ok() ?? b"") == b"\xc4\x82\x03\x1b\xff\xff\xff\xff\xff\xff\xff\xff"
 }
+
+test "duplicate keys: a NaN key, bare or tagged, is never a duplicate (fuzz seed 139); other tagged keys are" {
+  // {22(NaN): "", 22(NaN): 1}: Go map keys holding NaN never compare equal
+  let nan2 = Bytes.from_hex("a2d6fb7ff800000000000060d6fb7ff800000000000001") ?? fault("hex")
+  expect(cbor.decode(nan2, reject_dup_keys: true).is_ok()) == true
+  let nan3 = Bytes.from_hex("a2d6d7f97e0060f97e0001") ?? fault("hex")
+  expect(cbor.decode(nan3, reject_dup_keys: true).is_ok()) == true
+  // {22(1): "", 22(1): 1}
+  let one = Bytes.from_hex("a2d60160d60101") ?? fault("hex")
+  expect(cbor.decode(one, reject_dup_keys: true).is_err()) == true
+}

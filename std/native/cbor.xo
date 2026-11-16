@@ -664,17 +664,22 @@ fn read_text(var d: Dec, ai: Int, n: Int) -> Str ! cbor.CborErr {
   }
 }
 
+/// Whether a map key is a NaN, bare or under tags.
+fn nan_key(v: cbor.Value) -> Bool {
+  match v {
+    cbor.Value.Float(f) => f.is_nan()
+    cbor.Value.Tag(_, inner) => nan_key(inner)
+    _ => false
+  }
+}
+
 fn check_dups(pairs: List[(cbor.Value, cbor.Value)]) -> () ! cbor.CborErr {
   var seen: Set[Str] = #{}
   for p in pairs {
-    match p.0 {
-      cbor.Value.Float(f) => {
-        // a NaN key is never equal to another key (Go's map semantics)
-        if f.is_nan() {
-          continue
-        }
-      }
-      _ => {}
+    // a NaN key, bare or under tags, is never equal to another key (Go's
+    // map semantics: fxamacker's duplicate check keys a Go map)
+    if nan_key(p.0) {
+      continue
     }
     let kb = encode(p.0, true)?
     let h = kb.to_hex()

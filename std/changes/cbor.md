@@ -1,6 +1,18 @@
 # std/cbor changes
 
 
+## 2026-11-16: fix: a tagged NaN map key is not a duplicate
+
+- Kind: fix
+- Commit: this push
+- Found by: stdproven fuzz cbor (TestCborFuzz seed 139, task #27): `decode(reject_dup_keys: true)` refused a map with two `22(NaN)` keys after 685,000 cases agreed with fxamacker
+- Go reference: fxamacker/cbor v2.9.0 decode.go (DupMapKeyEnforcedAPF keys a Go map, where a key holding NaN never equals another)
+- Test: std/native/cbor_test.xo "duplicate keys: a NaN key, bare or tagged, is never a duplicate" (failed before, passes after); fuzz seed 139 passes
+- Timing: none (one match per key on the duplicate check)
+
+A NaN key was exempt from the duplicate key check only bare; under tags (`22(NaN)`, `22(23(NaN))`) two of them were
+refused. Now a key that is NaN through any tags is never a duplicate, as in fxamacker; other tagged keys still are.
+
 ## 2026-11-16: feature: derive Cbor(tag: N, tag_rule: R), fxamacker's TagSet for a derived type
 
 - Kind: feature
