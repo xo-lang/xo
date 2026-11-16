@@ -31,6 +31,7 @@ std/protowire
 std/protodesc
 std/protowkt
 std/protojson
+std/prototext
 std/regexp
 std/textproto
 std/uniclass

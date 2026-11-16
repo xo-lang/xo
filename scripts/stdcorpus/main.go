@@ -144,6 +144,7 @@ var generators = map[string]func() string{
 	"protodesc":    protodescCorpus,
 	"protowkt":     protowktCorpus,
 	"protojson":    protojsonCorpus,
+	"prototext":    prototextCorpus,
 	"yaml":         yamlCorpus,
 	"yamlfuzz":     yamlfuzzCorpus,
 	"jwt":          jwtCorpus,

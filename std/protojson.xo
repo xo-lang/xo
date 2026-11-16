@@ -64,6 +64,10 @@ pub struct MsgInfo {
   pub is_map: Bool
   /// Field numbers of an editions message whose presence is implicit although the message's is explicit.
   pub implicit_nums: List[Int] = []
+  /// Whether its string fields must hold UTF-8 (proto3, and editions' utf8_validation VERIFY), and
+  /// the numbers of the fields that differ from it (an editions field's own feature).
+  pub utf8: Bool = false
+  pub utf8_flip: List[Int] = []
 }
 
 /// A registry of the files (a file's dependencies must be in the list).
@@ -72,15 +76,18 @@ pub fn registry(files: List[protodesc.FileDesc]) -> Registry {
   for f in files {
     let p3 = f.syntax == "proto3"
     let pre = if f.package.is_empty() { "" } else { f.package + "." }
-    for e in f.enum_type {
-      r.enums.put(pre + e.name, e)
-    }
     if f.syntax == "editions" {
       let ff = feat_in(Feat{presence: 1, packed: true, delimited: false}, f.options, 50)
+      for e in f.enum_type {
+        r.enums.put(pre + e.name, e)
+      }
       for m in f.message_type {
         add_msg_ed(r, m, pre, ff)
       }
       continue
+    }
+    for e in f.enum_type {
+      r.enums.put(pre + e.name, e)
     }
     for m in f.message_type {
       add_msg(r, m, pre, p3)
@@ -223,6 +230,7 @@ struct Feat {
   presence: Int
   packed: Bool
   delimited: Bool
+  utf8: Bool = true
 }
 
 fn feat_apply(base: Feat, set: Bytes) -> Feat {
@@ -237,6 +245,8 @@ fn feat_apply(base: Feat, set: Bytes) -> Feat {
       out.packed = f.v == 1
     } else if f.num == 5 && f.v != 0 {
       out.delimited = f.v == 2
+    } else if f.num == 4 && f.v != 0 {
+      out.utf8 = f.v == 2
     }
   }
   out
@@ -275,6 +285,7 @@ fn add_msg_ed(var r: Registry, m0: protodesc.MessageDesc, pre: Str, parent: Feat
   var m = m0
   var fields: List[protodesc.FieldDesc] = []
   var implicit_nums: List[Int] = []
+  var utf8_flip: List[Int] = []
   for fd0 in m0.field {
     var fd = fd0
     let ff = feat_in(mf, fd.options, 21)
@@ -293,11 +304,14 @@ fn add_msg_ed(var r: Registry, m0: protodesc.MessageDesc, pre: Str, parent: Feat
     if mf.presence != 2 && ff.presence == 2 && fd.label != protodesc.LABEL_REPEATED && fd.oneof_index == None {
       implicit_nums.push(fd.number)
     }
+    if ff.utf8 != mf.utf8 {
+      utf8_flip.push(fd.number)
+    }
     fields.push(fd)
   }
   m.field = fields
   let full = pre + m.name
-  r.msgs.put(full, MsgInfo{d: m, full: full, proto3: mf.presence == 2, is_map: msg_is_map(m), implicit_nums: implicit_nums})
+  r.msgs.put(full, MsgInfo{d: m, full: full, proto3: mf.presence == 2, is_map: msg_is_map(m), implicit_nums: implicit_nums, utf8: mf.utf8, utf8_flip: utf8_flip})
   for e in m.enum_type {
     r.enums.put(full + "." + e.name, e)
   }
@@ -308,7 +322,7 @@ fn add_msg_ed(var r: Registry, m0: protodesc.MessageDesc, pre: Str, parent: Feat
 
 fn add_msg(var r: Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
   let full = pre + m.name
-  r.msgs.put(full, MsgInfo{d: m, full: full, proto3: p3, is_map: msg_is_map(m)})
+  r.msgs.put(full, MsgInfo{d: m, full: full, proto3: p3, is_map: msg_is_map(m), utf8: p3})
   for e in m.enum_type {
     r.enums.put(full + "." + e.name, e)
   }

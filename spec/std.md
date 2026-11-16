@@ -11028,6 +11028,35 @@ numbers, rejects unknown fields (skipped with `discard_unknown`), duplicate fiel
 then oneofs), maps in key order. A proto2 `required` field that is missing (or `null`) is an error in both directions, at any depth, as
 protobuf-go's protojson reports it (a message of an `Any` too). Checked against protobuf-go's `protojson` (testdata/corpus/protojson).
 
+### 74.1 std/prototext
+
+Protocol Buffers' text format as protobuf-go's `encoding/prototext` (decision 0683 item 2), driven by the same
+descriptors as std/protojson: a message is its wire bytes and its full name in a `protojson.Registry`; a derive Proto
+value goes in as `protobuf.marshal(v)`.
+
+```xo
+struct TextErr { text: Str }
+struct Opts { multiline: Bool = false, indent: Str = "", emit_ascii: Bool = false, allow_partial: Bool = false,
+              emit_unknown: Bool = false }
+fn marshal(r: protojson.Registry, name: Str, wire: Bytes, o: Opts = Opts{}) -> Str ! TextErr
+fn format(r: protojson.Registry, name: Str, wire: Bytes) -> Str
+```
+
+`marshal` writes the populated fields in declaration order as `name:value` (`name:{...}` for a message), one `name:`
+per element of a repeated field, map entries as `name:{key:K value:V}` in key order, enums by name (a number it does
+not name as the number), floats as Go's `%g` with `nan`, `inf` and `-inf`, strings and bytes quoted with Go's escapes
+(`\xNN` for a byte of invalid UTF-8, `\uNNNN` for U+0080 to U+009F and with `emit_ascii` for every rune past ASCII),
+a group by its message's name, and an `Any` whose type the registry has as `[type URL]:{...}`. A field on the wire
+twice is read as Go's Unmarshal reads it (the last scalar, merged messages, appended lists), and a closed enum's
+unnamed value stays the field's value, as protobuf-go's dynamicpb keeps it. `emit_unknown` writes the fields the
+descriptor does not know by number (varints as numbers, fixed fields as `0x` hex, bytes quoted, groups in braces).
+Compact output puts one space between fields; `multiline` (or a non-empty `indent`) one field a line, with `name: value`
+and a final newline. Go puts one or two spaces at random (detrand) so nobody compares its output byte for byte; this
+writes one. A missing proto2 `required` field is an error unless `allow_partial`; a proto3 or editions string that is
+not UTF-8 is an error (`format` writes it). `format` is Go's Format: multiline, unknown fields, partial, and
+`"<invalid>"` for wire bytes the registry's message cannot hold. Checked against protobuf-go's `prototext`
+(testdata/corpus/prototext). The reader (`prototext.Unmarshal`) is not ported yet.
+
 ## 75. std/image
 
 Go's `image` and `image/color` conversions in one module (decision 0578 step 1): the pixel model enum shared by std/png and

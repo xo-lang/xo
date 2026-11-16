@@ -170,3 +170,14 @@ concrete type at the call), so the caller passes
 `protobuf.descriptor[T]()`. `append` keeps its std/protodesc form, hence
 `append_paths`. The extension rows in map.txt say not planned and point
 to item 3.
+
+## Addendum 2026-11-16 (5): std/prototext's writer (Xo Lang 3, task #102)
+
+std/prototext works over a `protojson.Registry` (std/protodesc files),
+not `protobuf.descriptor[T]()`: the text format names enum values and
+writes map keys by kind, and a derive Proto descriptor has neither an
+enum's value names nor a map's key kind. A derive Proto value goes in as
+`protobuf.marshal(v)` with its file's descriptors. Stage 1 is the writer
+(Marshal, Format); the reader is stage 2. Go's dynamicpb keeps a closed
+enum's unnamed value as the field's value, and the writer does the same.
+

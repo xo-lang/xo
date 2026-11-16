@@ -1,0 +1,836 @@
+// std/prototext: Protocol Buffers' text format as protobuf-go's
+// encoding/prototext (google.golang.org/protobuf v1.36.12; decision 0683
+// item 2), driven by descriptors as std/protojson is: a message is its wire
+// bytes and its full name in a protojson.Registry built from std/protodesc
+// files. A derive Proto value goes in as `protobuf.marshal(v)`.
+//
+// Go's encoder (internal/encoding/text) puts one or two spaces between
+// fields at random (internal/detrand) so that nobody compares its output
+// byte for byte; this one always writes one.
+
+use std/json
+use std/protobuf
+use std/protodesc
+use std/protojson
+use std/protowire as pw
+
+/// A text format error, with protobuf-go's text.
+pub struct TextErr {
+  pub text: Str
+}
+
+pub fn (e: TextErr) display() -> Str { e.text }
+
+/// MarshalOptions: `multiline` writes one field per line indented by
+/// `indent` (two spaces when empty; a non-empty indent is multiline too),
+/// `emit_ascii` escapes every rune past ASCII (EmitASCII), `allow_partial`
+/// lets a proto2 message miss required fields (AllowPartial), and
+/// `emit_unknown` writes the fields the descriptor does not know by number
+/// (EmitUnknown).
+pub struct Opts {
+  pub multiline: Bool = false
+  pub indent: Str = ""
+  pub emit_ascii: Bool = false
+  pub allow_partial: Bool = false
+  pub emit_unknown: Bool = false
+}
+
+/// prototext.Marshal: the text format of the wire bytes of message `name`
+/// (`pkg.Msg`) of `r`. Multiline output ends with a newline.
+pub fn marshal(r: protojson.Registry, name: Str, wire: Bytes, o: Opts = Opts{}) -> Str ! TextErr {
+  marshal_(r, name, wire, o, false)
+}
+
+/// prototext.Format: multiline, with unknown fields, missing required
+/// fields and invalid UTF-8 allowed; a message the wire bytes do not hold
+/// (or a name `r` does not know) is "<invalid>" (Go's Format of an invalid
+/// message is "<nil>"; it never sees wire bytes).
+pub fn format(r: protojson.Registry, name: Str, wire: Bytes) -> Str {
+  let o = Opts{multiline: true, allow_partial: true, emit_unknown: true}
+  match marshal_(r, name, wire, o, true) {
+    Ok(s) => s
+    Err(_) => "<invalid>"
+  }
+}
+
+fn terr(text: Str) -> TextErr { TextErr{text: text} }
+
+// The encoder's last write (internal/encoding/text encType).
+const T_NAME = 1
+const T_SCALAR = 2
+const T_OPEN = 4
+const T_CLOSE = 8
+
+struct Enc {
+  out: StrBuilder
+  last: Int
+  indent: Str
+  indents: Str
+  ascii: Bool
+  o: Opts
+  /// Format's allowInvalidUTF8
+  lax: Bool
+}
+
+fn marshal_(r: protojson.Registry, name: Str, wire: Bytes, o: Opts, lax: Bool) -> Str ! TextErr {
+  var indent = o.indent
+  if o.multiline && indent.is_empty() {
+    indent = "  "
+  }
+  for c in indent.bytes() {
+    if c != 0x20 && c != 0x09 {
+      return Err(terr("indent may only be composed of space and tab characters"))
+    }
+  }
+  let info = match r.msgs.get(name) {
+    Some(i) => i
+    None => return Err(terr("unknown message ${name}"))
+  }
+  var e = Enc{out: StrBuilder.new(), last: 0, indent: indent, indents: "", ascii: o.emit_ascii, o: o, lax: lax}
+  if !(info.full == "google.protobuf.Any" && any_out(e, r, wire, 0)) {
+    msg_fields(e, r, info, wire, 0)?
+  }
+  if !indent.is_empty() && e.out.len() > 0 {
+    e.out.write("\n")
+  }
+  Ok(e.out.freeze())
+}
+
+/// prepareNext: the separator before a write of type `next`.
+fn prep(var e: Enc, next: Int) {
+  if e.indent.is_empty() {
+    if (e.last & (T_SCALAR | T_CLOSE)) != 0 && next == T_NAME {
+      e.out.write(" ")
+    }
+  } else if e.last == T_NAME {
+    e.out.write(" ")
+  } else if e.last == T_OPEN && next != T_CLOSE {
+    e.indents = e.indents + e.indent
+    e.out.write("\n")
+    e.out.write(e.indents)
+  } else if (e.last & (T_SCALAR | T_CLOSE)) != 0 {
+    if next == T_CLOSE {
+      e.indents = e.indents[0..e.indents.len() - e.indent.len()]
+    }
+    e.out.write("\n")
+    e.out.write(e.indents)
+  }
+  e.last = next
+}
+
+fn w_name(var e: Enc, s: Str) {
+  prep(e, T_NAME)
+  e.out.write(s)
+  e.out.write(":")
+}
+
+fn w_lit(var e: Enc, s: Str) {
+  prep(e, T_SCALAR)
+  e.out.write(s)
+}
+
+fn w_open(var e: Enc) {
+  prep(e, T_OPEN)
+  e.out.write("{")
+}
+
+fn w_close(var e: Enc) {
+  prep(e, T_CLOSE)
+  e.out.write("}")
+}
+
+fn w_string(var e: Enc, b: Bytes) {
+  prep(e, T_SCALAR)
+  quote_to(e.out, b, e.ascii)
+}
+
+const HEX = "0123456789abcdef"
+
+fn hex_to(var out: StrBuilder, v: Int, width: Int) {
+  let d = HEX.bytes()
+  var bb = BytesBuilder.with_capacity(width)
+  var i = width - 1
+  while i >= 0 {
+    bb.write_byte(d[(v.shr_logical(4 * i)) & 15])
+    i -= 1
+  }
+  out.write(bb.freeze().to_str_lossy())
+}
+
+/// appendString: `"` and `\` escaped, \n \r \t, other controls, DEL and
+/// each byte of invalid UTF-8 as \xNN, U+0080 to U+009F (every rune past
+/// ASCII with `ascii`) as \uNNNN or \UNNNNNNNN; the rest as it is.
+fn quote_to(var out: StrBuilder, b: Bytes, ascii: Bool) {
+  out.write("\"")
+  var i = 0
+  var run = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    if c >= 0x20 && c != 0x22 && c != 0x5c && c < 0x7f {
+      i += 1
+      continue
+    }
+    if run < i {
+      out.write(b[run..i].to_str_lossy())
+    }
+    if c < 0x80 {
+      if c == 0x22 {
+        out.write("\\\"")
+      } else if c == 0x5c {
+        out.write("\\\\")
+      } else if c == 0x0a {
+        out.write("\\n")
+      } else if c == 0x0d {
+        out.write("\\r")
+      } else if c == 0x09 {
+        out.write("\\t")
+      } else {
+        out.write("\\x")
+        hex_to(out, c, 2)
+      }
+      i += 1
+      run = i
+      continue
+    }
+    let (rr, n) = b.decode_rune(i)
+    let r = Int(rr)
+    if r == 0xfffd && n == 1 {
+      // a byte of invalid UTF-8
+      out.write("\\x")
+      hex_to(out, c, 2)
+      i += 1
+    } else {
+      if ascii || r <= 0x9f {
+        if r <= 0xffff {
+          out.write("\\u")
+          hex_to(out, r, 4)
+        } else {
+          out.write("\\U")
+          hex_to(out, r, 8)
+        }
+      } else {
+        out.write(b[i..i + n].to_str_lossy())
+      }
+      i += n
+    }
+    run = i
+  }
+  if run < b.len() {
+    out.write(b[run..b.len()].to_str_lossy())
+  }
+  out.write("\"")
+}
+
+/// strconv.FormatFloat(x, 'g', -1, bits) from the shortest decimal digits
+/// Xo's own text gives (`s`, as "1.5e-7", "100" or "0.1"): %e when the
+/// exponent is below -4 or at least 6 (Go's shortest %g eprec), else %f.
+fn g_text(s: Str) -> Str {
+  var neg = false
+  var t = s
+  if t.starts_with("-") {
+    neg = true
+    t = t[1..t.len()]
+  }
+  // the digits and the decimal exponent of the text
+  var digits = BytesBuilder.new()
+  var dp = 0
+  var seen_point = false
+  var exp = 0
+  var i = 0
+  let bs = t.bytes()
+  while i < bs.len() {
+    let c = Int(bs[i])
+    if c == 0x2e {
+      seen_point = true
+    } else if c == 0x65 || c == 0x45 {
+      exp = Int.parse(t[i + 1..t.len()].trim_prefix("+")) ?? 0
+      break
+    } else {
+      digits.write_byte(UInt8.wrapping_from(c))
+      if !seen_point {
+        dp += 1
+      }
+    }
+    i += 1
+  }
+  var ds = digits.freeze().to_str_lossy()
+  // leading zeros move the point; trailing zeros are not digits
+  var lead = 0
+  while lead < ds.len() && ds.bytes()[lead] == 0x30 {
+    lead += 1
+  }
+  if lead == ds.len() {
+    return if neg { "-0" } else { "0" }
+  }
+  ds = ds[lead..ds.len()]
+  dp = dp - lead + exp
+  var end = ds.len()
+  while end > 1 && ds.bytes()[end - 1] == 0x30 {
+    end -= 1
+  }
+  ds = ds[0..end]
+  let nd = ds.len()
+  let x = dp - 1
+  var out = StrBuilder.new()
+  if neg {
+    out.write("-")
+  }
+  if x < -4 || x >= 6 {
+    out.write(ds[0..1])
+    if nd > 1 {
+      out.write(".")
+      out.write(ds[1..nd])
+    }
+    out.write("e")
+    out.write(if x < 0 { "-" } else { "+" })
+    let ax = if x < 0 { 0 - x } else { x }
+    if ax < 10 {
+      out.write("0")
+    }
+    out.write("${ax}")
+    return out.freeze()
+  }
+  if dp <= 0 {
+    out.write("0.")
+    var z = dp
+    while z < 0 {
+      out.write("0")
+      z += 1
+    }
+    out.write(ds)
+  } else if dp >= nd {
+    out.write(ds)
+    var z = nd
+    while z < dp {
+      out.write("0")
+      z += 1
+    }
+  } else {
+    out.write(ds[0..dp])
+    out.write(".")
+    out.write(ds[dp..nd])
+  }
+  out.freeze()
+}
+
+fn walk_(b: Bytes) -> List[pw.Fld] ! TextErr {
+  match pw.walk(b) {
+    Ok(l) => Ok(l)
+    Err(e) => Err(terr("proto: ${e.display()}"))
+  }
+}
+
+fn ustr(v: Int) -> Str {
+  if v >= 0 { "${v}" } else { "${UInt64.from_bits(v)}" }
+}
+
+fn i32(v: Int) -> Int {
+  let x = v & 0xFFFFFFFF
+  if x >= 0x80000000 { x - 0x100000000 } else { x }
+}
+
+/// strconv.FormatUint(v, 16): lowercase, no leading zeros.
+fn hex_min(v: Int) -> Str {
+  if v == 0 {
+    return "0"
+  }
+  var n = 1
+  while n < 16 && v.shr_logical(4 * n) != 0 {
+    n += 1
+  }
+  var out = StrBuilder.new()
+  hex_to(out, v, n)
+  out.freeze()
+}
+
+fn trim_dot(s: Str) -> Str { if s.starts_with(".") { s[1..s.len()] } else { s } }
+
+fn is_numeric_kind(k: Int) -> Bool { k != 9 && k != 10 && k != 11 && k != 12 }
+
+fn is_msg(fd: protodesc.FieldDesc) -> Bool { fd.kind == protodesc.TYPE_MESSAGE || fd.kind == protodesc.TYPE_GROUP }
+
+/// The wire type a field of kind k is written with (not packed).
+fn wire_of(k: Int) -> Int {
+  if k == 1 || k == 6 || k == 16 {
+    1
+  } else if k == 2 || k == 7 || k == 15 {
+    5
+  } else if k == 10 {
+    3
+  } else if k == 9 || k == 11 || k == 12 {
+    2
+  } else {
+    0
+  }
+}
+
+fn lookup(r: protojson.Registry, type_name: Str) -> protojson.MsgInfo ! TextErr {
+  let n = trim_dot(type_name)
+  match r.msgs.get(n) {
+    Some(i) => Ok(i)
+    None => Err(terr("unknown message ${n}"))
+  }
+}
+
+/// Whether wire field f is a value of a field the descriptor knows (else
+/// it is an unknown field): its number and a wire type the field's kind is
+/// written with (a packed run for a repeated number).
+fn is_known(info: protojson.MsgInfo, f: pw.Fld) -> Bool {
+  let fds = info.d.field
+  for j in 0..fds.len() {
+    if fds[j].number != f.num {
+      continue
+    }
+    let k = fds[j].kind
+    if f.wire == wire_of(k) {
+      return true
+    }
+    if fds[j].label == protodesc.LABEL_REPEATED && is_numeric_kind(k) && f.wire == 2 {
+      return true
+    }
+    return false
+  }
+  false
+}
+
+/// TextName: a field's name, but a group like field (a group, or an editions
+/// delimited field named as its message's name in lower case) goes by its
+/// message's name.
+fn text_name(fd: protodesc.FieldDesc) -> Str {
+  if fd.kind != protodesc.TYPE_GROUP {
+    return fd.name
+  }
+  let tn = trim_dot(fd.type_name)
+  let parts = tn.split(".")
+  let short = parts[parts.len() - 1]
+  if short.to_lower() == fd.name { short } else { fd.name }
+}
+
+fn is_zero(fd: protodesc.FieldDesc, f: pw.Fld) -> Bool {
+  let k = fd.kind
+  if k == protodesc.TYPE_STRING || k == protodesc.TYPE_BYTES {
+    f.data.is_empty()
+  } else if k == protodesc.TYPE_INT32 || k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_SINT32 || k == protodesc.TYPE_ENUM {
+    (f.v & 0xFFFFFFFF) == 0
+  } else {
+    f.v == 0
+  }
+}
+
+fn float_text(x: Float) -> Str {
+  if x != x {
+    "nan"
+  } else if x > 1.7976931348623157e308 {
+    "inf"
+  } else if x < -1.7976931348623157e308 {
+    "-inf"
+  } else {
+    g_text("${x}")
+  }
+}
+
+fn float32_text(x: Float32) -> Str {
+  let d = Float(x)
+  if d != d {
+    "nan"
+  } else if d > 1.7976931348623157e308 {
+    "inf"
+  } else if d < -1.7976931348623157e308 {
+    "-inf"
+  } else {
+    // json's text of a Float32 is its shortest float32 digits
+    g_text(json.encode_str(x))
+  }
+}
+
+/// A message's fields, in declaration order (order.IndexNameFieldOrder),
+/// then with `emit_unknown` its unknown fields in wire order.
+fn msg_fields(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, wire: Bytes, depth: Int) -> () ! TextErr {
+  if depth > 10000 {
+    return Err(terr("proto: exceeded maximum recursion depth"))
+  }
+  let fl = walk_(wire)?
+  let fds = info.d.field
+  if !e.o.allow_partial {
+    for j in 0..fds.len() {
+      if fds[j].label == protodesc.LABEL_REQUIRED {
+        let num = fds[j].number
+        if !fl.any(fn(f: pw.Fld) -> Bool { f.num == num }) {
+          return Err(terr("proto: required field ${info.full}.${fds[j].name} not set"))
+        }
+      }
+    }
+  }
+  // the member of each oneof set last on the wire wins
+  var win: Map[Int, Int] = {}
+  for f in fl {
+    if !is_known(info, f) {
+      continue
+    }
+    for j in 0..fds.len() {
+      if fds[j].number == f.num && !fds[j].proto3_optional {
+        match fds[j].oneof_index {
+          Some(k) => win.put(k, f.num)
+          None => {}
+        }
+      }
+    }
+  }
+  for j in 0..fds.len() {
+    var real_oneof = false
+    match fds[j].oneof_index {
+      Some(k) => {
+        if !fds[j].proto3_optional {
+          real_oneof = true
+          if (win.get(k) ?? -1) != fds[j].number {
+            continue
+          }
+        }
+      }
+      None => {}
+    }
+    field_out(e, r, info, fds[j], fl, real_oneof, depth)?
+  }
+  if e.o.emit_unknown {
+    unknowns_out(e, info, fl)?
+  }
+  Ok(())
+}
+
+/// Whether the string fields of field number `num` of info must hold UTF-8.
+fn wants_utf8(info: protojson.MsgInfo, num: Int) -> Bool {
+  info.utf8 != info.utf8_flip.contains(num)
+}
+
+fn field_out(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.Fld], real_oneof: Bool, depth: Int) -> () ! TextErr {
+  let num = fd.number
+  var occ: List[pw.Fld] = []
+  for i in 0..fl.len() {
+    if fl[i].num == num {
+      occ.push(fl[i])
+    }
+  }
+  if occ.is_empty() {
+    return Ok(())
+  }
+  let k = fd.kind
+  let name = text_name(fd)
+  let utf8 = wants_utf8(info, num)
+  if fd.label == protodesc.LABEL_REPEATED {
+    if k == protodesc.TYPE_MESSAGE {
+      let entry = lookup(r, fd.type_name)?
+      if entry.is_map {
+        return map_out(e, r, entry, name, occ, depth)
+      }
+    }
+    let w = wire_of(k)
+    let packable = is_numeric_kind(k)
+    for f in occ {
+      if f.wire == 2 && packable {
+        var at = 0
+        let b = f.data
+        while at < b.len() {
+          let (v, n2) = packed_at(b, at, w)?
+          at = n2
+          w_name(e, name)
+          scalar_out(e, r, fd, pw.Fld{num: f.num, wire: w, v: v, data: b"", raw: b""}, utf8)?
+        }
+      } else if f.wire == w {
+        w_name(e, name)
+        if is_msg(fd) {
+          msg_out(e, r, lookup(r, fd.type_name)?, f.data, depth + 1)?
+        } else {
+          scalar_out(e, r, fd, f, utf8)?
+        }
+      }
+    }
+    return Ok(())
+  }
+  // a singular field: the last value (messages merge)
+  var last: List[pw.Fld] = []
+  for f in occ {
+    if f.wire == wire_of(k) {
+      last.push(f)
+    }
+  }
+  if last.is_empty() {
+    return Ok(())
+  }
+  let pick = last[last.len() - 1]
+  let implicit = (info.proto3 || info.implicit_nums.contains(num)) && !is_msg(fd) && !real_oneof && !fd.proto3_optional
+  if implicit && is_zero(fd, pick) {
+    return Ok(())
+  }
+  w_name(e, name)
+  if is_msg(fd) {
+    var data = b""
+    for f in last {
+      data = pw.cat(data, f.data)
+    }
+    return msg_out(e, r, lookup(r, fd.type_name)?, data, depth + 1)
+  }
+  scalar_out(e, r, fd, pick, utf8)
+}
+
+fn packed_at(b: Bytes, at: Int, w: Int) -> (Int, Int) ! TextErr {
+  let res = if w == 0 {
+    match protobuf.read_varint(b, at) {
+      Ok((v, n)) => Ok((v.to_bits(), n))
+      Err(x) => Err(x)
+    }
+  } else if w == 1 {
+    match protobuf.read_fixed64(b, at) {
+      Ok((v, n)) => Ok((v.to_bits(), n))
+      Err(x) => Err(x)
+    }
+  } else {
+    match protobuf.read_fixed32(b, at) {
+      Ok((v, n)) => Ok((Int(v), n))
+      Err(x) => Err(x)
+    }
+  }
+  match res {
+    Ok(p) => Ok(p)
+    Err(x) => Err(terr("proto: ${x.display()}"))
+  }
+}
+
+/// A message value in braces; an Any whose type the registry knows as
+/// `[type URL]:{...}` inside them (marshalAny).
+fn msg_out(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, data: Bytes, depth: Int) -> () ! TextErr {
+  w_open(e)
+  if info.full == "google.protobuf.Any" && any_out(e, r, data, depth) {
+    w_close(e)
+    return Ok(())
+  }
+  msg_fields(e, r, info, data, depth)?
+  w_close(e)
+  Ok(())
+}
+
+/// marshalAny: the message the Any holds, named by its type URL, when the
+/// registry has the URL's message (the name after its last `/`) and the
+/// value marshals; else nothing written and false (the Any's own fields
+/// then).
+fn any_out(var e: Enc, r: protojson.Registry, data: Bytes, depth: Int) -> Bool {
+  let fl = match pw.walk(data) {
+    Ok(l) => l
+    Err(_) => return false
+  }
+  var url = ""
+  var value = b""
+  for f in fl {
+    if f.num == 1 && f.wire == 2 {
+      url = f.data.to_str_lossy()
+    } else if f.num == 2 && f.wire == 2 {
+      value = f.data
+    }
+  }
+  let slash = url.rfind("/")
+  let mname = match slash {
+    Some(i) => url[i + 1..url.len()]
+    None => url
+  }
+  let info = match r.msgs.get(mname) {
+    Some(i) => i
+    None => return false
+  }
+  var o2 = e.o
+  o2.allow_partial = true
+  var e2 = Enc{out: StrBuilder.new(), last: e.last, indent: e.indent, indents: e.indents, ascii: e.ascii, o: o2, lax: e.lax}
+  w_name(e2, "[" + url + "]")
+  w_open(e2)
+  match msg_fields(e2, r, info, value, depth + 1) {
+    Ok(_) => {}
+    Err(_) => return false
+  }
+  w_close(e2)
+  e.out.write(e2.out.freeze())
+  e.last = e2.last
+  e.indents = e2.indents
+  true
+}
+
+fn entry_fields(entry: protojson.MsgInfo) -> (protodesc.FieldDesc, protodesc.FieldDesc) {
+  var kfd = entry.d.field[0]
+  var vfd = entry.d.field[entry.d.field.len() - 1]
+  for f in entry.d.field {
+    if f.number == 1 {
+      kfd = f
+    } else if f.number == 2 {
+      vfd = f
+    }
+  }
+  (kfd, vfd)
+}
+
+/// A map entry's parts: the key and value wire fields (zero when missing)
+/// and a message value's merged bytes.
+fn entry_of(kfd: protodesc.FieldDesc, vfd: protodesc.FieldDesc, data: Bytes) -> (pw.Fld, pw.Fld, Bytes) ! TextErr {
+  var kf = pw.Fld{num: 1, wire: wire_of(kfd.kind), v: 0, data: b"", raw: b""}
+  var vf = pw.Fld{num: 2, wire: wire_of(vfd.kind), v: 0, data: b"", raw: b""}
+  var vdata = b""
+  for g in walk_(data)? {
+    if g.num == 1 && g.wire == wire_of(kfd.kind) {
+      kf = g
+    } else if g.num == 2 && g.wire == wire_of(vfd.kind) {
+      vf = g
+      if is_msg(vfd) {
+        vdata = pw.cat(vdata, g.data)
+      }
+    }
+  }
+  Ok((kf, vf, vdata))
+}
+
+/// A map key's sort key (order.GenericKeyOrder): integers numerically (16
+/// hex digits, a signed one with its sign bit flipped), bool false before
+/// true, strings bytewise.
+fn key_sort(kfd: protodesc.FieldDesc, f: pw.Fld) -> Str {
+  let k = kfd.kind
+  var out = StrBuilder.new()
+  if k == protodesc.TYPE_STRING {
+    return f.data.to_str_lossy()
+  }
+  if k == protodesc.TYPE_BOOL {
+    return if f.v != 0 { "1" } else { "0" }
+  }
+  let sb = Int.min
+  if k == protodesc.TYPE_INT32 || k == protodesc.TYPE_SFIXED32 {
+    hex_to(out, i32(f.v) ^ sb, 16)
+  } else if k == protodesc.TYPE_SINT32 {
+    let u = f.v & 0xFFFFFFFF
+    hex_to(out, i32(u.shr_logical(1) ^ (0 - (u & 1))) ^ sb, 16)
+  } else if k == protodesc.TYPE_INT64 || k == protodesc.TYPE_SFIXED64 {
+    hex_to(out, f.v ^ sb, 16)
+  } else if k == protodesc.TYPE_SINT64 {
+    hex_to(out, (f.v.shr_logical(1) ^ (0 - (f.v & 1))) ^ sb, 16)
+  } else if k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_FIXED32 {
+    hex_to(out, f.v & 0xFFFFFFFF, 16)
+  } else {
+    hex_to(out, f.v, 16)
+  }
+  out.freeze()
+}
+
+/// A map field's entries, the last of a key winning, in key order, each as
+/// `name:{key:K value:V}` (marshalMap writes both, a missing one as its
+/// zero value).
+fn map_out(var e: Enc, r: protojson.Registry, entry: protojson.MsgInfo, name: Str, occ: List[pw.Fld], depth: Int) -> () ! TextErr {
+  let (kfd, vfd) = entry_fields(entry)
+  var rows: Map[Str, (pw.Fld, pw.Fld, Bytes)] = {}
+  for o in occ {
+    if o.wire != 2 {
+      continue
+    }
+    let (kf, vf, vdata) = entry_of(kfd, vfd, o.data)?
+    rows.put(key_sort(kfd, kf), (kf, vf, vdata))
+  }
+  let keys = rows.keys().sort_by(fn(k: Str) -> Str { k })
+  let ku = wants_utf8(entry, 1)
+  let vu = wants_utf8(entry, 2)
+  for key in keys {
+    let (kf, vf, vdata) = match rows.get(key) {
+      Some(t) => t
+      None => continue
+    }
+    w_name(e, name)
+    w_open(e)
+    w_name(e, "key")
+    scalar_out(e, r, kfd, kf, ku)?
+    w_name(e, "value")
+    if is_msg(vfd) {
+      msg_out(e, r, lookup(r, vfd.type_name)?, vdata, depth + 1)?
+    } else {
+      scalar_out(e, r, vfd, vf, vu)?
+    }
+    w_close(e)
+  }
+  Ok(())
+}
+
+fn scalar_out(var e: Enc, r: protojson.Registry, fd: protodesc.FieldDesc, f: pw.Fld, utf8: Bool) -> () ! TextErr {
+  let k = fd.kind
+  if k == protodesc.TYPE_DOUBLE {
+    w_lit(e, float_text(Float.from_bits(f.v)))
+  } else if k == protodesc.TYPE_FLOAT {
+    w_lit(e, float32_text(Float32.from_bits(UInt32.wrapping_from(f.v))))
+  } else if k == protodesc.TYPE_INT64 || k == protodesc.TYPE_SFIXED64 {
+    w_lit(e, "${f.v}")
+  } else if k == protodesc.TYPE_UINT64 || k == protodesc.TYPE_FIXED64 {
+    w_lit(e, ustr(f.v))
+  } else if k == protodesc.TYPE_INT32 || k == protodesc.TYPE_SFIXED32 {
+    w_lit(e, "${i32(f.v)}")
+  } else if k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_FIXED32 {
+    w_lit(e, "${f.v & 0xFFFFFFFF}")
+  } else if k == protodesc.TYPE_SINT32 {
+    let u = f.v & 0xFFFFFFFF
+    w_lit(e, "${i32(u.shr_logical(1) ^ (0 - (u & 1)))}")
+  } else if k == protodesc.TYPE_SINT64 {
+    w_lit(e, "${f.v.shr_logical(1) ^ (0 - (f.v & 1))}")
+  } else if k == protodesc.TYPE_BOOL {
+    w_lit(e, if f.v != 0 { "true" } else { "false" })
+  } else if k == protodesc.TYPE_STRING {
+    if utf8 && !e.lax && f.data.to_str() == None {
+      return Err(terr("proto: field ${fd.name} contains invalid UTF-8"))
+    }
+    w_string(e, f.data)
+  } else if k == protodesc.TYPE_BYTES {
+    w_string(e, f.data)
+  } else if k == protodesc.TYPE_ENUM {
+    let n = i32(f.v)
+    let tn = trim_dot(fd.type_name)
+    var named = false
+    match r.enums.get(tn) {
+      Some(ed) => {
+        for v in ed.value {
+          if v.number == n {
+            w_lit(e, v.name)
+            named = true
+            break
+          }
+        }
+      }
+      None => {}
+    }
+    if !named {
+      w_lit(e, "${n}")
+    }
+  } else {
+    return Err(terr("field ${fd.name}: unsupported kind ${k}"))
+  }
+  Ok(())
+}
+
+/// The unknown fields in wire order (marshalUnknown): a field the
+/// descriptor does not know, or a known number with another wire type.
+/// (A closed enum's value it does not name stays the field's value, as
+/// protobuf-go's dynamicpb reads it.)
+fn unknowns_out(var e: Enc, info: protojson.MsgInfo, fl: List[pw.Fld]) -> () ! TextErr {
+  for f in fl {
+    if !is_known(info, f) {
+      unknown_out(e, f)?
+    }
+  }
+  Ok(())
+}
+
+fn unknown_out(var e: Enc, f: pw.Fld) -> () ! TextErr {
+  w_name(e, "${f.num}")
+  if f.wire == 0 {
+    w_lit(e, ustr(f.v))
+  } else if f.wire == 1 {
+    w_lit(e, "0x" + hex_min(f.v))
+  } else if f.wire == 5 {
+    w_lit(e, "0x" + hex_min(f.v & 0xFFFFFFFF))
+  } else if f.wire == 2 {
+    w_string(e, f.data)
+  } else if f.wire == 3 {
+    w_open(e)
+    for g in walk_(f.data)? {
+      unknown_out(e, g)?
+    }
+    w_close(e)
+  }
+  Ok(())
+}
