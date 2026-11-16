@@ -2118,6 +2118,16 @@ fn (var b: Builder) sql_body(ct: Int, row_ct: Int, rt: Int) {
     b.retv(b.undef(rt))
     return
   }
+  // a `-` field's default: a std struct declared from std's record
+  // (trees_lazy, decision 0388) has none until its trees are joined, so
+  // the build runs again with every tree joined, as derive Json's does
+  // (task #123; gotchas/record-pending-struct-defaults.md)
+  if b.c.tree_pending.contains(obj) {
+    b.trees_missing = true
+    if b.trees_missing_fn.is_empty() {
+      b.trees_missing_fn = "derive SqlRow of ${b.c.mods[b.obj_mod(obj)].path}.${check.text(b.c.objs[obj].name)}"
+    }
+  }
   var vals: List[Int] = []
   let df = b.decl_file(obj)
   for f in b.c.objs[obj].fields {

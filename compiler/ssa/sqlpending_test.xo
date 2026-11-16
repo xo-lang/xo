@@ -1,0 +1,39 @@
+// derive SqlRow's decoder of a std struct whose trees std's record left
+// pending (trees_lazy, decision 0388): its `-` field's default is not
+// there until the trees are joined, so sql_body asks for the build again
+// with every tree joined, as derive Json's decoder does (task #123;
+// gotchas/record-pending-struct-defaults.md). In a program the miss was
+// latent: every Row comes through a std body outside the facts
+// (std/task.is_canceled), which already runs the build again.
+
+use github.com/xo-lang/xo/compiler/check
+
+test "sql_body of a pending std struct asks for its trees" {
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", b"struct Int {}\nstruct Str {}\nstruct Bool {}\nenum Never {}\nenum Option[T] {\n  None\n  Some(v: T)\n}\nenum Result[T, E] {\n  Ok(v: T)\n  Err(e: E)\n}\n")?
+  os.fs.write("std/fix.xo", b"pub struct D {\n  pub tag as \"-\": Str = \"dflt\"\n} derive SqlRow\n")?
+  os.fs.create_dir_all("app")?
+  os.fs.write("app/main.xo", b"use std/fix\n\nfn main() {\n  let _d = fix.D{}\n}\n")?
+  var c = check.new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["app"]) {
+    expect(e) == ""
+  }
+  var d = -1
+  for (i, o) in c.objs.indexed() {
+    if check.text(o.name) == "D" {
+      d = i
+    }
+  }
+  expect(d >= 0) == true
+  // as std's record leaves it: the tree not joined
+  c.tree_pending[d] = ([], -1)
+  let ct = c.mk_named(d, [])
+  var b = new_builder(c, "")
+  let st = b.typ(ct)
+  let it = b.m.intern(SType{kind: Kind.Int, name: "Int"})
+  let rt = b.m.intern(SType{kind: Kind.Enum, name: "Result[D, E]", variants: [SVariant{name: "Ok", fields: [SField{name: "0", ty: st}]}, SVariant{name: "Err", fields: [SField{name: "0", ty: it}]}]})
+  expect(b.trees_missing) == false
+  let _n = b.sql_decode(ct, ct, rt)
+  expect(b.trees_missing) == true
+  expect(b.trees_missing_fn) == "derive SqlRow of std/fix.D"
+}

@@ -37,12 +37,16 @@ The other derives (checked 2026-11-16): Toml decodes through derive Json
 Xml, Yaml and Cbor expand to source in the checker (check derive.xo) and
 build the struct with a literal, whose defaults the checker joins first
 (need_tree before a struct literal). Derive SqlRow's decoder (json.xo
-sql_body) reads a `-` field's default the same way the Json decoder did,
-but no std struct derives SqlRow and the record holds std only, so it
-cannot meet a pending tree today (Anticipated: a std struct deriving
-SqlRow with a defaulted `-` field would decode it as its zero; sql_body
-runs inside add_landings, which is pure, so it can set trees_missing but
-not join the tree).
+sql_body) read a `-` field's default the same way the Json decoder did
+(Observed 2026-11-16, task #123, latent: a std struct deriving SqlRow
+under XO_SEPCOMP with the record reached sql_body pending, its default
+empty; no program printed the zero, because every Row comes through
+std/task.is_canceled, a std body outside the facts, which already runs
+the build again with every tree joined). sql_body now sets trees_missing
+too (it runs inside add_landings, which is pure: it cannot join the tree
+itself). Tests: compiler/ssa sqlpending_test.xo (fails before), and
+internal/arm64 TestStdRecordSqlRowDefaults end to end (a guard: it
+passed before, for the reason above).
 
 How to avoid: SSA code that reads a std object's trees (`default`,
 `fn_decl`, `const_val`) checks `Checker.tree_pending` first.

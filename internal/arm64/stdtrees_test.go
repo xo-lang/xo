@@ -251,6 +251,97 @@ fn main(os: Os) {
 	}
 }
 
+// TestStdRecordSqlRowDefaults: derive SqlRow's decoder of a std struct
+// whose trees the record leaves pending reads a `-` field's default only
+// once the trees are joined. Read before, the field had no default and
+// took its zero ("" for "dflt"), as derive Json's did
+// (gotchas/record-pending-struct-defaults.md, task #123). std has no
+// struct deriving SqlRow, so the test adds one to a copy of std/trace (a
+// module the program uses for nothing else: in std/sql itself,
+// query_one_as joins the module's trees and the default reads right).
+func TestStdRecordSqlRowDefaults(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-stdsqldef-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	std := filepath.Join(work, "std")
+	copyTreeTimes(t, filepath.Join(root, "std"), std)
+	decl := filepath.Join(std, "trace.xo")
+	text, err := os.ReadFile(decl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := "\n/// A test fixture (TestStdRecordSqlRowDefaults).\npub struct DefRow {\n  pub id: Int\n  pub tag as \"-\": Str = \"dflt\"\n} derive SqlRow\n"
+	if err := os.WriteFile(decl, append(text, fixture...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache")
+	base := append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
+	// std/sql uses channels: a record built without concurrency faults
+	// ("concurrency in a build without it")
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=1"))
+	cmd.Env = base
+	paths, err := stdRun(cmd.Output)
+	if err != nil {
+		t.Fatalf("xo dev stdcache: %v", err)
+	}
+	lines := strings.Fields(string(paths))
+	if len(lines) != 2 {
+		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
+	}
+	src := `use std/sql
+use std/trace
+
+fn main(os: Os) ! {
+  let db = sql.memory("CREATE TABLE t (id INT NOT NULL)")?
+  db.exec("INSERT INTO t (id) VALUES (7)")?
+  // row.decode, not query_one_as: a generic std body (query_one_as,
+  // decode_all) is lowered from its tree, which runs the build again with
+  // every tree joined and hid the default read
+  let r = db.query_one("SELECT id FROM t")?.decode[trace.DefRow]()?
+  os.stdio.println("${r.id} [${r.tag}] edit 0")
+}
+`
+	prog := filepath.Join(work, progExe)
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(base, "XO_STD_EXPORT=1", "XO_SEPCOMP=1", "XO_SEPCOMP_STORE="+lines[0], "XO_SEPCOMP_FACTS="+lines[1])
+	// the first build writes std's record, the second declares std from it
+	for edit := 0; edit < 2; edit++ {
+		if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(strings.ReplaceAll(src, "edit 0", "edit "+string(rune('0'+edit)))), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(work, "prog"+string(rune('0'+edit)))
+		b := testtmp.Guard(exec.Command(xo, "build", "-o", out, "."))
+		b.Dir = prog
+		b.Env = env
+		if msgs, err := b.CombinedOutput(); err != nil {
+			t.Fatalf("build %d: %v\n%s", edit, err, msgs)
+		}
+		got, err := testtmp.Guard(exec.Command(out)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %d: %v\n%s", edit, err, got)
+		}
+		if want := "7 [dflt] edit " + string(rune('0'+edit)) + "\n"; string(got) != want {
+			t.Fatalf("run %d printed %q, want %q", edit, got, want)
+		}
+	}
+}
+
 // TestStdRecordBindRetry: a check that restarts for a missing `use c`
 // binding starts again with std's records: the first check's checker no
 // longer holds them, since their list was held to the end of the check
