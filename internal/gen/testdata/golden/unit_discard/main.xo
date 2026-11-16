@@ -1,4 +1,4 @@
-fn run_all(fs: List[fn() -> ()]) {
+fn run_all(fs: List[fn() -> () uses sync]) {
   for f in fs {
     f()
   }

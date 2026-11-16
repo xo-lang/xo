@@ -9394,7 +9394,7 @@ container/heap on random operation sequences, the whole heap array after every o
 
 ```xo
 fn new[T](less: fn(T, T) -> Bool) -> Heap[T]                        // less(a, b): a comes out before b
-fn tracked[T](less: fn(T, T) -> Bool, moved: fn(T, Int)) -> Heap[T]  // moved(x, i): x landed at position i
+fn tracked[T](less: fn(T, T) -> Bool, moved: fn(T, Int) uses sync) -> Heap[T]  // moved(x, i): x landed at position i
 fn from_list[T](items: List[T], less: fn(T, T) -> Bool) -> Heap[T]   // heap.Init, O(n)
 fn (var h: Heap[T]) push(x: T)           // O(log n)
 fn (var h: Heap[T]) pop() -> T?          // the least; None when empty

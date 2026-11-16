@@ -1,5 +1,16 @@
 # std/heap changes
 
+## 2026-11-15: fix: tracked's moved callback may record positions (decision 0662)
+
+- Kind: fix
+- Commit: this commit
+- Found by: the heap corpus failed XO0701 on main after decision 0662 (its moved callback writes the positions to a captured Mutex)
+- Go reference: none
+- Test: internal/stdtest corpus heap ("moved reports each element's position")
+- Shipped in: not yet released
+
+`heap.tracked`'s `moved` is `fn(T, Int) uses sync`: a callback that reports positions has to store them somewhere shared, which decision 0662 made an effect. A pure callback still fits.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

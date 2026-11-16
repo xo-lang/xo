@@ -2,10 +2,10 @@ use github.com/xo-lang/xo/test/stack_list_tail_callee/runtime
 
 pub fn new_storage_challenge_policy(aud: Str, allow: Bool) -> runtime.Bearer {
   let seen = Mutex[List[Str]].new([aud])
-  let on = fn(s: Str) -> Int {
+  let on = fn(s: Str) -> Int uses sync {
     seen.with_read(fn(xs: List[Str]) -> Int { xs.len() + s.len() })
   }
-  let reset = fn(xs: List[Str]) -> Int {
+  let reset = fn(xs: List[Str]) -> Int uses sync {
     seen.reset(xs)
     xs.len()
   }

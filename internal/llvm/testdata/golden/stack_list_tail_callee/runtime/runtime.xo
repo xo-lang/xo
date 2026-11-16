@@ -4,8 +4,8 @@ pub struct Cache {
 }
 
 pub struct Handler {
-  pub on: Option[fn(Str) -> Int] = None
-  pub reset: Option[fn(List[Str]) -> Int] = None
+  pub on: Option[fn(Str) -> Int uses sync] = None
+  pub reset: Option[fn(List[Str]) -> Int uses sync] = None
 }
 
 pub struct Opts {
@@ -16,8 +16,8 @@ pub struct Opts {
 pub struct Bearer {
   pub scopes: List[Str]
   pub cache: Cache
-  pub on: Option[fn(Str) -> Int]
-  pub reset: Option[fn(List[Str]) -> Int]
+  pub on: Option[fn(Str) -> Int uses sync]
+  pub reset: Option[fn(List[Str]) -> Int uses sync]
   pub allow: Bool
 }
 

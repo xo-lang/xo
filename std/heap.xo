@@ -15,7 +15,7 @@
 pub struct Heap[T] {
   _items: List[T]
   _less: fn(T, T) -> Bool
-  _moved: fn(T, Int)
+  _moved: fn(T, Int) uses sync
 }
 
 /// An empty heap; less(a, b) is true when a comes out before b.
@@ -26,7 +26,7 @@ pub fn new[T](less: fn(T, T) -> Bool) -> Heap[T] {
 /// An empty heap that calls moved(x, i) each time an element x lands at
 /// position i (a push, a sift, the element a remove moves into the gap), so
 /// a caller can keep the position of each element for `remove` and `fix`.
-pub fn tracked[T](less: fn(T, T) -> Bool, moved: fn(T, Int)) -> Heap[T] {
+pub fn tracked[T](less: fn(T, T) -> Bool, moved: fn(T, Int) uses sync) -> Heap[T] {
   Heap[T]{_items: [], _less: less, _moved: moved}
 }
 

@@ -13,7 +13,7 @@ import (
 // leakProg leaves blocks live at exit through the one cycle Xo values
 // can form (spec core 5.5): a Mutex storing a closure that captures it.
 const leakProg = `fn main(os: Os) {
-  let m: Mutex[List[fn() -> Int]] = Mutex.new([])
+  let m: Mutex[List[fn() -> Int uses sync]] = Mutex.new([])
   m.with(fn(var l) { l.push(fn() { m.with_read(fn(x) { x.len() }) }) })
   os.stdio.println("stored ${m.with_read(fn(x) { x.len() })}")
 }
@@ -114,7 +114,7 @@ func TestCheckFlagTest(t *testing.T) {
 	}
 	src := t.TempDir()
 	lib := `fn cycle() -> Int {
-  let m: Mutex[List[fn() -> Int]] = Mutex.new([])
+  let m: Mutex[List[fn() -> Int uses sync]] = Mutex.new([])
   m.with(fn(var l) { l.push(fn() { m.with_read(fn(x) { x.len() }) }) })
   m.with_read(fn(x) { x.len() })
 }
