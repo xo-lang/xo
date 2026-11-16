@@ -591,3 +591,51 @@ test "redact shapes the page and every sync, and no log entries are sent" {
   expect(page_ann.contains("ann item")) == true
   expect(page_ann.contains("bob item")) == false
 }
+
+// ---- server Msgs, compaction, sign-in redirect ----
+
+test "a server Msg reaches every replica in order" {
+  let app = todo_app()
+  var s = server(app)
+  var r = replica(app, "c1", app.init, 0)
+  r.send(Msg.Add(id: "a", title: "mine"))
+  s.apply(Msg.Add(id: "s", title: "from the server"))
+  r.receive(s.receive(r.outbox()))
+  expect(r.pending()) == 0
+  expect(r.model()) == s.model()
+  expect(s.model().todos.len()) == 2
+  expect(s.applied(SERVER_CLIENT)) == 1
+}
+
+test "Host.apply changes the page, and a sync may not use the server's id" {
+  let h = host(todo_app())
+  h.apply(Msg.Add(id: "s", title: "loaded"))
+  let r = routes_for(h)
+  expect(r.call(http.new_request("GET", "/")).text()?.contains("loaded")) == true
+  let up = json.encode_str(Up{client: SERVER_CLIENT, ver: 0, msgs: [Envelope{seq: 2, msg: Msg.Remove(id: "s")}]})
+  expect(r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json"}, body: up.bytes())).status) == 400
+  expect(h.model().todos.len()) == 1
+}
+
+test "a host keeps at most twice keep log entries" {
+  let h = host(todo_app(), keep: 5)
+  for i in 0..100 {
+    h.apply(Msg.Add(id: "t${i}", title: "t"))
+  }
+  let n = h.state.with_read(fn(s) { s.log.len() })
+  expect(n < 10) == true
+  expect(h.model().todos.len()) == 100
+  // a page from before the compaction catches up through a snapshot
+  let d = h.state.with_read(fn(s) { s.reply("late", 0) })
+  expect(d.reset.is_some()) == true
+}
+
+test "signin_url sends a page request without a principal there" {
+  let r = routes_for(host(todo_app(), auth: Some(auth_hdr), signin_url: "/login"))
+  let resp = r.call(http.new_request("GET", "/"))
+  expect(resp.status) == 303
+  expect(resp.header("Location")) == Some("/login")
+  // a sync still answers 401: the runtime marks the page signed out
+  let up = json.encode_str(Up[Msg]{client: "c1", ver: 0, msgs: []})
+  expect(r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json"}, body: up.bytes())).status) == 401
+}

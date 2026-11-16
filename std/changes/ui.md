@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: feature: server Msgs, log compaction, sign-in redirect
+
+- Kind: feature
+- Commit: this push
+- Found by: xw-1 (xw's dashboard on std/ui: its model comes from Postgres, not client Msgs)
+- Go reference: none
+- Test: std/ui_test.xo (a server Msg reaches a replica in order with its own pending Msg; Host.apply shows on the page and a sync naming SERVER_CLIENT is 400; a host with keep 5 holds under 10 entries after 100 Msgs and a stale page gets a snapshot; signin_url answers 303 and a sync 401)
+- Shipped in: not yet released
+
+`Host.apply(msg)` and `Server.apply(msg)` apply the server's own Msgs (`SERVER_CLIENT`, logged, live pages woken, `allow` not asked). `host(keep:)` bounds the log (default 10000 entries, compacted at twice that); before, a host's log grew without bound. `host(signin_url:)` redirects a signed-out page request.
+
 ## 2026-11-15: feature: principals, allow and redact (decision 0664, Early)
 
 - Kind: feature

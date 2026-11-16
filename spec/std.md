@@ -10979,6 +10979,7 @@ fn (s: Server[M, E]) model() -> M
 fn (s: Server[M, E]) version() -> Int
 fn (s: Server[M, E]) applied(client: Str) -> Int
 fn (var s: Server[M, E]) receive(up: Up[E]) -> Down[M, E]
+fn (var s: Server[M, E]) apply(msg: E)
 fn (var s: Server[M, E]) receive_as(up: Up[E], principal: Str, allow: fn(M, Str, E) -> Bool) -> Down[M, E]?   // None: another principal's client
 fn (s: Server[M, E]) reply(client: Str, ver: Int) -> Down[M, E]
 fn (var s: Server[M, E]) compact(keep: Int)
@@ -10995,7 +10996,9 @@ fn (var r: Replica[M, E]) receive(d: Down[M, E])
 
 pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None }   // derive Json
 pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"",
-    auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None) -> Host[M, E]
+    auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E]
+fn (h: Host[M, E]) apply(msg: E)
+pub const SERVER_CLIENT = "~server"
 fn (h: Host[M, E]) model() -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
 fn (h: Host[M, E]) live() -> Int                        // open live connections
@@ -11086,6 +11089,16 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   confirmed model; a refused entry advances its version and drops the
   Msg from pending without applying it. Client ids are trusted in this step; per-Msg
   authorization is decision 0659 stage 4.
+- Server Msgs: `Server.apply(msg)` and `Host.apply(msg)` apply a Msg of
+  the server's own (data loaded from a database or queue, a timer) as the
+  next seq of the client id `SERVER_CLIENT` ("~server"), logged like any
+  other, so every replica applies it in order; `allow` is not asked, and
+  `Host.apply` wakes the live pages. A sync naming `SERVER_CLIENT` is 400.
+  A host keeps `keep` log entries (default 10000; 0 keeps all): once the
+  log holds twice that many it compacts, and a page older than the log
+  catches up through a snapshot. With `auth`, `signin_url` sends a page
+  request without a principal to that URL (303) instead of 401; a sync
+  still answers 401.
 - Principals and authorization (decision 0664, stage 4a). With `auth`,
   every route asks it for the request's principal (an id string; roles
   live in the model) and answers 401 when it gives None. A client id

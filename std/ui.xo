@@ -302,6 +302,21 @@ pub fn (var s: Server[M, E]) receive_as(up: Up[E], principal: Str, allow: fn(M, 
   Some(s.reply(up.client, up.ver) with {refused: refused})
 }
 
+/// The client id of the Msgs the server applies itself (Server.apply,
+/// Host.apply). The runtime's ids never take it, and a sync naming it is
+/// refused.
+pub const SERVER_CLIENT = "~server"
+
+/// Applies a Msg of the server's own (data loaded from elsewhere, a
+/// timer): logged as the next seq of SERVER_CLIENT, so every replica
+/// applies it in order; `allow` is not asked.
+pub fn (var s: Server[M, E]) apply(msg: E) {
+  let seq = (s.last_seq.get(SERVER_CLIENT) ?? 0) + 1
+  s.model = s.app.update(s.model, msg)
+  s.last_seq.put(SERVER_CLIENT, seq)
+  s.log.push(Entry{ver: s.version() + 1, client: SERVER_CLIENT, seq: seq, msg: msg})
+}
+
 /// The reply for a client at version ver, without new Msgs.
 pub fn (s: Server[M, E]) reply(client: Str, ver: Int) -> Down[M, E] {
   let acked = s.last_seq.get(client) ?? 0
@@ -594,14 +609,19 @@ pub struct Host[M: Json, E: Json] {
   auth: (fn(http.Request) -> Str? uses sync)?
   allow: (fn(M, Str, E) -> Bool)?
   redact: (fn(M, Str) -> M)?
+  // Where a page request without a principal is sent (303), "" for 401.
+  signin_url: Str
+  // The log entries kept (Server.compact once the log holds twice as
+  // many), 0 to keep every entry.
+  keep: Int
   // The live connections, each told the server's version when it changes.
   subs: Mutex[Map[Int, Chan[Int]]]
   next_sub: Atomic[Int]
 }
 
 /// A host for app starting at app.init.
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None) -> Host[M, E] {
-  Host{app: app, auth: auth, allow: allow, redact: redact, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E] {
+  Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
 }
 
 fn (h: Host[M, E]) subscribe() -> (Int, Chan[Int]) {
@@ -630,6 +650,21 @@ pub fn (h: Host[M, E]) live() -> Int {
 }
 
 /// The server's model now.
+/// Applies a Msg of the server's own (Server.apply) and wakes the live
+/// pages: how data from elsewhere (a database, a queue, a timer) reaches
+/// the model.
+pub fn (h: Host[M, E]) apply(msg: E) {
+  let keep = h.keep
+  let v = h.state.with(fn(var s) {
+    s.apply(msg)
+    if keep > 0 && s.log.len() >= 2 * keep {
+      s.compact(keep)
+    }
+    s.version()
+  })
+  h.notify(v)
+}
+
 pub fn (h: Host[M, E]) model() -> M {
   h.state.with_read(fn(s) { s.model() })
 }
@@ -657,6 +692,8 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   let auth = h.auth
   let allow = h.allow
   let redact = h.redact
+  let signin = h.signin_url
+  let keep = h.keep
   // The principal of req: "" without auth, None when auth refuses it.
   let who = fn(req: http.Request) -> Str? uses sync {
     match auth {
@@ -671,7 +708,15 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     }
   }
   r.handle("GET ${prefix}/{$}", fn(req) -> http.Response ! Never {
-    let p = who(req) ?? return http.text(401, "std/ui: sign in first")
+    let p = match who(req) {
+      Some(x) => x
+      None => {
+        if signin.is_empty() {
+          return http.text(401, "std/ui: sign in first")
+        }
+        return http.Response{status: 303, headers: {"Location": signin}, body: b""}
+      }
+    }
     let (m0, v) = state.with_read(fn(s) { (s.model(), s.version()) })
     let m = shown(m0, p)
     http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm)).with_header("Content-Type", "text/html; charset=utf-8")
@@ -688,12 +733,18 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       Ok(u) => u
       Err(e) => return http.text(400, "std/ui: bad sync: ${e}")
     }
+    if up.client == SERVER_CLIENT {
+      return http.text(400, "std/ui: ${SERVER_CLIENT} is the server's own client id")
+    }
     let p = who(req) ?? return http.text(401, "std/ui: sign in first")
     let checked = auth.is_some() || allow.is_some()
     let ok = allow ?? fn(m: M, q: Str, e: E) -> Bool { true }
     let (dd, m0, v, before) = state.with(fn(var s) {
       let b = s.version()
       let d = if checked { s.receive_as(up, p, ok) } else { Some(s.receive(up)) }
+      if keep > 0 && s.log.len() >= 2 * keep {
+        s.compact(keep)
+      }
       (d, s.model(), s.version(), b)
     })
     let d = dd ?? return http.text(403, "std/ui: this client belongs to another principal")
