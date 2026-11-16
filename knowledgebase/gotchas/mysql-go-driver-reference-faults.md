@@ -104,4 +104,4 @@ with a fraction (`0000-00-00 00:00:00.050000`, seed 31 case 940) is a time
 to go-sql-driver, normalized to `-0001-11-30 00:00:00.05`. Both sides are normalized, and the zero value
 compares without its fraction: the reference rebuilds its digits from
 the column's decimals, which a changed definition can put past 6 (seed
-36 case 4754: 34 decimals, no fraction).
+36 case 4754: 34 decimals, no fraction). The reference also writes a zero value from the column's type, not the server's text, so a zero date and a zero datetime are one value: a DATE column whose changed row held `0000-00-00 00:00:00.000000` came back from Xo as that text and from the reference as `0000-00-00` (seed 126 case 1138).

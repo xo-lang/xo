@@ -494,7 +494,7 @@ var myfDateText = regexp.MustCompile(`Text\(s: "(\d{4})-(\d{2})-(\d{2})(?: (\d{2
 // (go-sql-driver's parseDateTime) and written back in its layout, and a
 // zero value loses its fraction (the reference rebuilds a zero value's
 // digits from the column's decimals, which a changed definition can put
-// past 6: seed 36 case 4754).
+// past 6: seed 36 case 4754, or its type: seed 126 case 1138).
 func myfDateNormalized(got, want string) bool {
 	return got != want && myfDateNorm(got) == myfDateNorm(want)
 }
@@ -515,11 +515,11 @@ func myfDateNorm(text string) string {
 			}
 		}
 		if n(1) == 0 && n(2) == 0 && n(3) == 0 && hh == 0 && mi == 0 && ss == 0 && ns == 0 {
-			// the zero value (a nonzero fraction makes it a time)
-			if p[4] == "" {
-				return `Text(s: "0000-00-00")`
-			}
-			return `Text(s: "0000-00-00 00:00:00")`
+			// the zero value (a nonzero fraction makes it a time), one
+			// form for a date and a datetime: the reference writes it
+			// from the column's type, not the server's text (seed 126
+			// case 1138: a DATE column's "0000-00-00 00:00:00.000000")
+			return `Text(s: "0000-00-00")`
 		}
 		t := time.Date(n(1), time.Month(n(2)), n(3), hh, mi, ss, ns, time.UTC)
 		return `Text(s: "` + t.Format(layout) + `")`
@@ -714,6 +714,14 @@ func TestMysqlFuzzWideCollation(t *testing.T) {
 	// changed column's decimals (34) by the reference
 	if !myfDateNormalized("Row{vals: [Text(s: \"0000-00-00 00:00:00.000\")]}\n", "Row{vals: [Text(s: \"0000-00-00 00:00:00\")]}\n") {
 		t.Errorf("zero value with and without a fraction: not the same")
+	}
+	// seed 126's case 1138: a DATE column's zero datetime text, which the
+	// reference writes as the zero date
+	if !myfDateNormalized("types c0:DATE:-:true\nRow{vals: [Text(s: \"0000-00-00 00:00:00.000000\")]}\n", "types c0:DATE:-:true\nRow{vals: [Text(s: \"0000-00-00\")]}\n") {
+		t.Errorf("zero datetime against zero date: not the same")
+	}
+	if myfDateNormalized("Row{vals: [Text(s: \"0000-00-00 00:00:01\")]}\n", "Row{vals: [Text(s: \"0000-00-00\")]}\n") {
+		t.Errorf("a nonzero time against the zero date: normalized")
 	}
 	if myfDateNormalized("Row{vals: [Text(s: \"0000-06-01\")]}\n", "Row{vals: [Text(s: \"0000-05-31\")]}\n") {
 		t.Errorf("0000-06-01 against 0000-05-31: normalized")
