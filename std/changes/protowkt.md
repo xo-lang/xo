@@ -1,5 +1,22 @@
 # std/protowkt changes
 
+
+## 2026-11-16: feature: protobuf-go's types/known helpers
+
+- Kind: feature
+- Commit: this push
+- Found by: task #102 (std/protobuf features): stdaudit gaps timestamppb.*, durationpb.*, anypb.*, structpb.*, wrapperspb.*, emptypb.*, fieldmaskpb.*
+- Go reference: google.golang.org/protobuf v1.36.12 types/known (timestamppb, durationpb, anypb, fieldmaskpb, structpb)
+- Test: std/protowkt_test.xo, protobuf-go's timestamp_test.go, duration_test.go, field_mask_test.go (TestCombine, TestNormalize) and any_test.go (MessageIs, MessageName) cases, on arm64 and LLVM; the Go backend builds the module (corpus protowkt)
+- Timing: none (no loops over input beyond the paths and JSON values given)
+
+`timestamp_of`, `Timestamp.as_time`, `is_valid`, `check_valid`;
+`duration_from_nanos`, `Duration.as_nanos`, `is_valid`, `check_valid`;
+`pack_any`, `Any.unpack`, `message_is`, `message_name`; `FieldMask.normalize`,
+`union_masks`, `intersect_masks`; `value_from_json`, `struct_from_json`,
+`list_from_json` and `to_json` on Value, Struct and ListValue. Errors are
+`WktErr` with protobuf-go's texts.
+
 ## 2026-11-11: feature: the well known types derive Proto; nanos and the 32 bit wrappers are Int32 and UInt32
 
 - Kind: feature

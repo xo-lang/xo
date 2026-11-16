@@ -1,5 +1,18 @@
 # std/protojson changes
 
+
+## 2026-11-16: feature: multiline output (MarshalOptions Multiline and Indent)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #102 (std/protobuf features): stdaudit gaps protojson.MarshalOptions.Multiline, Indent, Format
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protojson encode.go, internal/encoding/json encode.go (prepareNext)
+- Test: corpus protojson MULTILINE, 120 rows of protobuf-go's Multiline output (default, tab and four space indents) with its random second space after a name removed, on go, arm64 and LLVM; an indent other than spaces and tabs is an error
+- Timing: none (a pass over the compact output)
+
+`Opts{multiline: true}` and `Opts{indent: ...}` write one member per line
+as protobuf-go's Multiline and Indent do.
+
 ## 2026-11-16: perf: marshal writes one builder and keeps field descriptors borrowed
 
 - Kind: perf

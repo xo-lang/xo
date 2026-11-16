@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+id=1 name="src" tags=[a,b,c] inner={a=5 b="keep"} counts={x=1,y=20,z=30} flag=true
+id=0 name="src" tags=[b,c] inner={a=5 b=""} counts={y=20,z=30} flag=false
+id=1 name="dst" tags=[a] inner={a=1 b="keep"} counts={x=1,y=2} flag=true
+size 36 marshal 36
+size 29 marshal 29
+size 0 marshal 0
+size 49 marshal 49
+--- stderr

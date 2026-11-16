@@ -1,5 +1,19 @@
 # std/protobuf changes
 
+
+## 2026-11-16: feature: protobuf.size and protobuf.merge_from (proto.Size, proto.Merge)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #102 (std/protobuf features): stdaudit gaps proto.Size, MarshalOptions.Size, proto.Merge
+- Go reference: google.golang.org/protobuf v1.36.12 proto/size.go, proto/merge.go
+- Test: golden proto_size_merge (go, arm64, LLVM): size equals marshal's length; merge_from with scalars, a zero scalar, a nested message, a list and a map
+- Timing: none (size is marshal's own sizes pass)
+
+`protobuf.size(v)` is the length `marshal(v)` writes, from the derive's sizes
+pass without writing bytes. `protobuf.merge_from(dst, src)` returns dst with
+src's populated fields merged in by proto.Merge's rules.
+
 ## 2026-11-15: feature: field number range (protowire's MinValidNumber, MaxValidNumber, reserved range, Number.IsValid)
 
 - Kind: feature

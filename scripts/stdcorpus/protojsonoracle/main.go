@@ -411,6 +411,29 @@ func compact(b []byte) string {
 	return o.String()
 }
 
+// undetrand drops the second space protobuf-go's multiline encoder adds
+// after a name at random (internal/detrand): outside strings, a ':' is
+// always a name's.
+func undetrand(s string) string {
+	var b strings.Builder
+	in := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		b.WriteByte(c)
+		switch {
+		case in && c == '\\':
+			i++
+			b.WriteByte(s[i])
+		case c == '"':
+			in = !in
+		case !in && c == ':' && i+2 < len(s) && s[i+1] == ' ' && s[i+2] == ' ':
+			b.WriteByte(' ')
+			i += 2
+		}
+	}
+	return b.String()
+}
+
 func q(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
@@ -466,6 +489,7 @@ func main() {
 	var rows []string
 	type unm struct{ name, in, wire string }
 	var umRows []unm
+	var mlRows []string
 	for i := 0; i < 400; i++ {
 		name := names[g.r.Intn(len(names))]
 		d, _ := files.FindDescriptorByName(protoreflect.FullName(name))
@@ -480,6 +504,15 @@ func main() {
 				continue
 			}
 			rows = append(rows, fmt.Sprintf("  (\"%s\", %d, \"%x\", \"%s\"),\n", name, fl, wire, q(compact(js))))
+		}
+		// Multiline with two indents (no random draws, so the rows above stay as they were)
+		if len(mlRows) < 120 {
+			for _, ind := range []string{"", "\t", "    "} {
+				mo := protojson.MarshalOptions{Resolver: resolver, Multiline: true, Indent: ind}
+				if js, err := mo.Marshal(m.Interface()); err == nil {
+					mlRows = append(mlRows, fmt.Sprintf("  (\"%s\", \"%s\", \"%x\", \"%s\"),\n", name, q(ind), wire, q(undetrand(string(js)))))
+				}
+			}
 		}
 		// unmarshal inputs: Go's own output, and the same with a proto name or a number form swapped
 		js, err := opts(0).Marshal(m.Interface())
@@ -711,6 +744,11 @@ func main() {
 	mk(rd, func(m *dynamicpb.Message) {})
 	mk(ld, func(m *dynamicpb.Message) { m.Set(field_(ld, "a"), protoreflect.ValueOfInt32(7)) })
 	mk(ld, func(m *dynamicpb.Message) { m.Set(field_(ld, "b"), protoreflect.ValueOfString("q")) })
+	o.WriteString("]\n\n")
+	o.WriteString("/// (message full name, indent (empty: Multiline's default), wire hex, Go's Multiline protojson output with its random second space after a name removed)\nconst MULTILINE: List[(Str, Str, Str, Str)] = [\n")
+	for _, r := range mlRows {
+		o.WriteString(r)
+	}
 	o.WriteString("]\n")
 	o.WriteString(xoTests)
 	os.Stdout.WriteString(o.String())
@@ -769,6 +807,17 @@ test "marshal of proto2 required fields equals Go's protojson, a missing one an 
       expect("${name} ${wire}: ${got}") == "${name} ${wire}: ${want}"
     }
   }
+}
+
+test "multiline marshal equals Go's protojson Multiline and Indent" {
+  let r = registry()
+  for (name, indent, wire, want) in MULTILINE {
+    let got = protojson.marshal(r, name, unhex(wire), protojson.Opts{multiline: true, indent: indent}).or_fault("marshal " + name)
+    if got != want {
+      expect("${name} ${indent.quote()} ${wire}: ${got}") == "${name} ${indent.quote()} ${wire}: ${want}"
+    }
+  }
+  expect(protojson.marshal(r, "pjt.Scalars", b"", protojson.Opts{indent: "x"}) is Err(_)) == true
 }
 
 test "normalize equals Go's proto.Unmarshal then Marshal, unknown fields kept" {

@@ -31,11 +31,15 @@ pub fn (e: JsonErr) display() -> Str { e.text }
 /// Go's MarshalOptions and UnmarshalOptions: `proto_names` writes the proto field names (UseProtoNames),
 /// `emit_defaults` writes default valued fields (EmitDefaultValues), `enum_numbers` writes enums as numbers
 /// (UseEnumNumbers); `discard_unknown` skips unknown fields and enum names when reading (DiscardUnknown).
+/// `multiline` writes one member per line indented by `indent` (Multiline, Indent; two spaces when
+/// indent is empty, and a non-empty indent is multiline too).
 pub struct Opts {
   pub proto_names: Bool = false
   pub emit_defaults: Bool = false
   pub enum_numbers: Bool = false
   pub discard_unknown: Bool = false
+  pub multiline: Bool = false
+  pub indent: Str = ""
 }
 
 /// The messages and enums of a set of files, by full name (no leading dot).
@@ -90,10 +94,70 @@ pub fn registry_from_set(set: Bytes) -> Registry ! protobuf.ProtoErr {
 
 /// The JSON text (compact, no whitespace) of the wire bytes of message `name` (`pkg.Msg`).
 pub fn marshal(r: Registry, name: Str, wire: Bytes, o: Opts = Opts{}) -> Str ! JsonErr {
-  match r.msgs.get(name) {
-    Some(info) => msg_json(r, info, wire, o, "")
-    None => Err(jerr("unknown message ${name}"))
+  var indent = o.indent
+  if o.multiline && indent.is_empty() {
+    indent = "  "
   }
+  for c in indent.bytes() {
+    if c != 0x20 && c != 0x09 {
+      return Err(jerr("indent may only be composed of space or tab characters"))
+    }
+  }
+  let text = match r.msgs.get(name) {
+    Some(info) => msg_json(r, info, wire, o, "")?
+    None => return Err(jerr("unknown message ${name}"))
+  }
+  if indent.is_empty() { Ok(text) } else { Ok(reindent(text, indent)) }
+}
+
+/// Compact JSON laid out as protobuf-go's multiline encoder writes it (internal/encoding/json
+/// prepareNext): a newline and one more indent after `{` or `[` unless it closes at once, `,` and a
+/// newline between members, a newline and one less indent before a close, `": "` after a name.
+/// Go adds a second space after a name at random (detrand) to keep output unstable; this never does.
+fn reindent(compact: Str, indent: Str) -> Str {
+  let b = compact.bytes()
+  var out = StrBuilder.new()
+  var depth = 0
+  var i = 0
+  let n = b.len()
+  while i < n {
+    let c = b[i]
+    if c == 0x22 {
+      // a string: copy it whole, escapes included
+      var j = i + 1
+      while j < n && b[j] != 0x22 {
+        if b[j] == 0x5c {
+          j += 1
+        }
+        j += 1
+      }
+      out.write(b[i..j + 1].to_str_lossy())
+      i = j + 1
+      continue
+    }
+    if c == 0x7b || c == 0x5b {
+      out.write(b[i..i + 1].to_str_lossy())
+      if i + 1 < n && (b[i + 1] == 0x7d || b[i + 1] == 0x5d) {
+        out.write(b[i + 1..i + 2].to_str_lossy())
+        i += 2
+        continue
+      }
+      depth += 1
+      out.write("\n" + indent.repeat(depth))
+    } else if c == 0x7d || c == 0x5d {
+      depth -= 1
+      out.write("\n" + indent.repeat(depth))
+      out.write(b[i..i + 1].to_str_lossy())
+    } else if c == 0x2c {
+      out.write(",\n" + indent.repeat(depth))
+    } else if c == 0x3a {
+      out.write(": ")
+    } else {
+      out.write(b[i..i + 1].to_str_lossy())
+    }
+    i += 1
+  }
+  out.freeze()
 }
 
 /// The wire bytes (fields in field number order, maps in key order: Go's Deterministic marshaling) of the JSON

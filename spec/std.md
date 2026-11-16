@@ -10227,6 +10227,8 @@ The Protocol Buffers wire format and the runtime of `derive Proto` (decision 053
 open enum ProtoErr { Truncated, Overflow, BadTag, BadWire(wire: Int), EndGroup, Recursion, BadLength, Utf8 }
 fn marshal[T: Proto](v: T) -> Bytes                     // rewritten to the generated proto_marshal__T
 fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr     // as proto.Unmarshal: scalars last wins, messages merge
+fn size[T: Proto](v: T) -> Int                          // proto.Size: marshal(v).len() without writing (proto_size__T)
+fn merge_from[T: Proto](dst: T, src: T) -> T            // proto.Merge: src's populated fields merged into dst (proto_merge_from__T)
 fn append_varint(b: Bytes, v: UInt64) -> Bytes          // the wire functions of protowire, by the same names
 fn append_tag(b: Bytes, num: Int, wire: Int) -> Bytes
 fn append_fixed32(b: Bytes, v: UInt32) -> Bytes
@@ -10250,7 +10252,10 @@ fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! ProtoErr   // gro
   reader; `read_tag` itself accepts what protowire accepts.
 - A struct with `derive Proto` writes its fields in field number order, then oneofs, then unknown fields. A plain
   nested struct is always written (use an Option for presence); a scalar equal to its zero value is omitted.
-- Not yet: proto2, well known types (Timestamp, Duration, Any, Struct), JSON mapping, the `.proto` generator.
+- The well known types are std/protowkt (73), the JSON mapping std/protojson (74), `.proto` parsing std/protoparse.
+  `merge_from` merges as parsing `marshal(src)` onto `dst` does: a populated scalar replaces (a proto3 zero is not
+  populated), a nested message merges, a list appends, a map entry replaces, unknown fields append.
+  Not yet: proto2 extensions, the text format (prototext).
 
 ## 66. std/sqlite
 
@@ -10546,6 +10551,37 @@ codecs written by hand. Checked against protobuf-go's types marshaled for fixed 
 wire it never writes (wide 32 bit varints, `Empty` with unknown fields) (testdata/corpus/protowkt, byte for byte, and
 the decoded values).
 
+The helpers of protobuf-go's `types/known` packages (task #102):
+
+```xo
+struct WktErr { msg: Str }                   // displays as "proto: " + msg, protobuf-go's error text
+fn timestamp_of(t: Time) -> Timestamp        // timestamppb.New (Now: timestamp_of(clock.now()))
+fn (ts: Timestamp) as_time() -> Time?        // AsTime; None outside Time's range (1677 to 2262)
+fn (ts: Timestamp) is_valid() -> Bool
+fn (ts: Timestamp) check_valid() -> () ! WktErr     // seconds in 0001-01-01..9999-12-31, nanos in 0..1e9
+fn duration_from_nanos(ns: Int) -> Duration  // durationpb.New of d.nanos() (this Duration hides the prelude's)
+fn (dp: Duration) as_nanos() -> Int          // AsDuration, saturating at Int.min or Int.max
+fn (dp: Duration) is_valid() -> Bool
+fn (dp: Duration) check_valid() -> () ! WktErr      // at most 10000 years, nanos within a second and with the seconds' sign
+fn pack_any(full_name: Str, value: Bytes) -> Any    // anypb.New of protobuf.marshal(m): "type.googleapis.com/" + full_name
+fn (a: Any) unpack(full_name: Str) -> Bytes ! WktErr  // UnmarshalTo's type check; then protobuf.unmarshal[T]
+fn (a: Any) message_is(full_name: Str) -> Bool
+fn (a: Any) message_name() -> Str            // "" when the URL's last segment is not a full name
+fn (fm: FieldMask) normalize() -> FieldMask
+fn union_masks(masks: List[FieldMask]) -> FieldMask
+fn intersect_masks(masks: List[FieldMask]) -> FieldMask
+fn value_from_json(v: json.Value) -> Value ! WktErr   // structpb.NewValue; an Int becomes its Float
+fn struct_from_json(v: json.Value) -> Struct ! WktErr // NewStruct, of an object
+fn list_from_json(items: List[json.Value]) -> ListValue ! WktErr
+fn (v: Value) to_json() -> json.Value        // AsInterface; also Struct.to_json (AsMap, keys sorted), ListValue.to_json (AsSlice)
+```
+
+A derive Proto type has no descriptor, so `pack_any`, `unpack` and `message_is` take the message's full name
+(`pkg.Msg`), and a field mask's paths are not checked against a message (fieldmaskpb's `New`, `IsValid` and `Append`).
+Error texts are protobuf-go's, with a message written as `field:value` pairs one space apart (prototext puts one or two
+at random). The wrappers' constructors are struct literals (`DoubleValue{value: v}`). Checked with protobuf-go's own
+tests for these helpers (std/protowkt_test.xo).
+
 ## 74. std/protojson
 
 Protocol Buffers' canonical JSON mapping (decision 0546 item 2) as protobuf-go's `encoding/protojson`, driven by descriptors
@@ -10553,14 +10589,16 @@ Protocol Buffers' canonical JSON mapping (decision 0546 item 2) as protobuf-go's
 
 ```xo
 struct JsonErr { text: Str }
-struct Opts { proto_names: Bool = false, emit_defaults: Bool = false, enum_numbers: Bool = false, discard_unknown: Bool = false }
+struct Opts { proto_names: Bool = false, emit_defaults: Bool = false, enum_numbers: Bool = false, discard_unknown: Bool = false,
+              multiline: Bool = false, indent: Str = "" }
 fn registry(files: List[protodesc.FileDesc]) -> Registry
 fn registry_from_set(set: Bytes) -> Registry ! protobuf.ProtoErr
 fn marshal(r: Registry, name: Str, wire: Bytes, o: Opts = Opts{}) -> Str ! JsonErr
 fn unmarshal(r: Registry, name: Str, json: Str, o: Opts = Opts{}) -> Bytes ! JsonErr
 ```
 
-`marshal` writes fields in descriptor order with lowerCamelCase `json_name`s (`proto_names` writes the proto names), 64 bit
+`multiline` (or a non-empty `indent`, two spaces by default; spaces and tabs only) lays the output out as Go's Multiline
+and Indent do, without the random second space Go adds after a name. `marshal` writes fields in descriptor order with lowerCamelCase `json_name`s (`proto_names` writes the proto names), 64 bit
 integers as strings, bytes as standard base64, enums by name (`enum_numbers` writes numbers), `NaN` and `Infinity` as
 strings, maps with sorted keys, only the set member of a oneof, and nothing for an unset or default field unless
 `emit_defaults` (implicit presence scalars, `[]` and `{}`). `Timestamp` and `Duration` are strings, `FieldMask` one

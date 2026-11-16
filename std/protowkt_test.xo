@@ -1,5 +1,7 @@
 // Hand written cases for std/protowkt (decision 0546); the differential against protobuf-go's well known types is
 // internal/stdtest/testdata/corpus/protowkt.
+use std/json
+
 test "timestamp and duration write seconds then nanos" {
   expect(encode_timestamp(Timestamp{seconds: 1, nanos: 2})) == b"\x08\x01\x10\x02"
   expect(encode_duration(Duration{seconds: 1, nanos: 2})) == b"\x08\x01\x10\x02"
@@ -52,4 +54,196 @@ test "a truncated message is an error, never a panic" {
   for cut in 1..whole.len() {
     let _ = decode_any(whole[0..cut]).ignore_err("a truncated message may be refused; only a panic fails")
   }
+}
+
+// The helpers (task #102), with protobuf-go's types/known tests (BSD-3,
+// Copyright 2020 The Go Authors): timestamp_test.go, duration_test.go,
+// field_mask_test.go (TestCombine, TestNormalize), any_test.go.
+
+fn ts_err(s: Int, n: Int) -> Str {
+  match (Timestamp{seconds: s, nanos: Int32.wrapping_from(n)}).check_valid() {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+fn dur_err(s: Int, n: Int) -> Str {
+  match (Duration{seconds: s, nanos: Int32.wrapping_from(n)}).check_valid() {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+test "timestamp_of is timestamppb.New" {
+  let t = timestamp_of(Time.from_unix_nanos(1296012345 * 1000000000 + 940483))
+  expect(t.seconds) == 1296012345
+  expect(t.nanos) == Int32.wrapping_from(940483)
+  expect(timestamp_of(Time.from_unix(-281836800)).seconds) == -281836800
+  // before 1970, nanos stay in 0..1e9 (Go's Unix and Nanosecond)
+  let b = timestamp_of(Time.from_unix_nanos(-1))
+  expect(b.seconds) == -1
+  expect(b.nanos) == Int32.wrapping_from(999999999)
+}
+
+test "timestamp check_valid has protobuf-go's errors" {
+  expect(ts_err(0, 0)) == "ok"
+  expect(ts_err(-1, 1)) == "ok"
+  expect(ts_err(-1, -1)) == "proto: timestamp (seconds:-1 nanos:-1) has out-of-range nanos"
+  expect(ts_err(0, -1)) == "proto: timestamp (nanos:-1) has out-of-range nanos"
+  expect(ts_err(1, -1)) == "proto: timestamp (seconds:1 nanos:-1) has out-of-range nanos"
+  expect(ts_err(-9876543210, -1098765432)) == "proto: timestamp (seconds:-9876543210 nanos:-1098765432) has out-of-range nanos"
+  expect(ts_err(9876543210, 1098765432)) == "proto: timestamp (seconds:9876543210 nanos:1098765432) has out-of-range nanos"
+  expect(ts_err(Int.min, 0)) == "proto: timestamp (seconds:-9223372036854775808) before 0001-01-01"
+  expect(ts_err(Int.max, 999999999)) == "proto: timestamp (seconds:9223372036854775807 nanos:999999999) after 9999-12-31"
+  expect(ts_err(-62135596800, 0)) == "ok"
+  expect(ts_err(-62135596801, 999999999)) == "proto: timestamp (seconds:-62135596801 nanos:999999999) before 0001-01-01"
+  expect(ts_err(253402300799, 999999999)) == "ok"
+  expect(ts_err(253402300800, 0)) == "proto: timestamp (seconds:253402300800) after 9999-12-31"
+  expect(Timestamp{seconds: 1}.is_valid()) == true
+  expect(Timestamp{nanos: -1}.is_valid()) == false
+}
+
+test "timestamp as_time carries nanos as time.Unix does" {
+  expect(Timestamp{seconds: 1, nanos: -1}.as_time()?.unix_nanos()) == 999999999
+  expect(Timestamp{seconds: -1, nanos: 1}.as_time()?.unix_nanos()) == -999999999
+  expect(Timestamp{seconds: 1296012345, nanos: 940483}.as_time()?.format_rfc3339()) == Time.from_unix_nanos(1296012345 * 1000000000 + 940483).format_rfc3339()
+  // outside Time's range (Go's time.Time reaches further)
+  expect(Timestamp{seconds: -62135596800}.as_time() is None) == true
+  expect(Timestamp{seconds: Int.max}.as_time() is None) == true
+}
+
+test "duration_from_nanos is durationpb.New" {
+  let d = duration_from_nanos(-100 * 1000000000 - 987)
+  expect(d.seconds) == -100
+  expect(d.nanos) == Int32.wrapping_from(-987)
+  let e = duration_from_nanos(Int.min)
+  expect(e.seconds) == -9223372036
+  expect(e.nanos) == Int32.wrapping_from(-854775808)
+  expect(duration_from_nanos(1).nanos) == Int32.wrapping_from(1)
+}
+
+test "duration as_nanos saturates as AsDuration does" {
+  let min_s = Int.min / 1000000000
+  let max_s = Int.max / 1000000000
+  let min_n = Int.min - 1000000000 * min_s
+  let max_n = Int.max - 1000000000 * max_s
+  expect(Duration{seconds: -100, nanos: Int32.wrapping_from(-987)}.as_nanos()) == -100000000987
+  expect(Duration{seconds: min_s, nanos: Int32.wrapping_from(min_n)}.as_nanos()) == Int.min
+  expect(Duration{seconds: max_s, nanos: Int32.wrapping_from(max_n)}.as_nanos()) == Int.max
+  expect(Duration{seconds: min_s - 1, nanos: Int32.wrapping_from(min_n)}.as_nanos()) == Int.min
+  expect(Duration{seconds: max_s + 1, nanos: Int32.wrapping_from(max_n)}.as_nanos()) == Int.max
+  expect(Duration{seconds: min_s, nanos: Int32.wrapping_from((min_n - 1))}.as_nanos()) == Int.min
+  expect(Duration{seconds: max_s, nanos: Int32.wrapping_from((max_n + 1))}.as_nanos()) == Int.max
+  expect(Duration{seconds: -123, nanos: Int32.wrapping_from(456)}.as_nanos()) == -122999999544
+  expect(Duration{seconds: Int.min}.as_nanos()) == Int.min
+  expect(Duration{seconds: Int.max}.as_nanos()) == Int.max
+}
+
+test "duration check_valid has protobuf-go's errors" {
+  expect(dur_err(-100, -987)) == "ok"
+  expect(dur_err(-123, 456)) == "proto: duration (seconds:-123 nanos:456) has seconds and nanos with different signs"
+  expect(dur_err(123, -456)) == "proto: duration (seconds:123 nanos:-456) has seconds and nanos with different signs"
+  expect(dur_err(Int.min, 0)) == "proto: duration (seconds:-9223372036854775808) exceeds -10000 years"
+  expect(dur_err(Int.max, 0)) == "proto: duration (seconds:9223372036854775807) exceeds +10000 years"
+  expect(dur_err(-315576000000, -999999999)) == "ok"
+  expect(dur_err(315576000000, 999999999)) == "ok"
+  expect(dur_err(-315576000001, 0)) == "proto: duration (seconds:-315576000001) exceeds -10000 years"
+  expect(dur_err(315576000001, 0)) == "proto: duration (seconds:315576000001) exceeds +10000 years"
+  expect(dur_err(0, 1000000000)) == "proto: duration (nanos:1000000000) has out-of-range nanos"
+}
+
+fn paths(m: FieldMask) -> Str { m.paths.join(",") }
+
+fn masks(xs: List[List[Str]]) -> List[FieldMask] { xs.map(fn(p: List[Str]) -> FieldMask { FieldMask{paths: p} }) }
+
+test "union and intersect are fieldmaskpb's (TestCombine)" {
+  let cases: List[(List[List[Str]], Str, Str)] = [
+    ([[], []], "", ""),
+    ([["a"], []], "a", ""),
+    ([["a"], ["a"]], "a", "a"),
+    ([["a"], ["b"], ["c"]], "a,b,c", ""),
+    ([["a", "b"], ["b.b"], ["b"], ["b", "a.A"], ["b", "c", "c.a", "c.b"]], "a,b,c", "b.b"),
+    ([["a.b", "a.c.d"], ["a"]], "a", "a.b,a.c.d"),
+    ([[], ["a.b", "a.c", "d"]], "a.b,a.c,d", ""),
+  ]
+  for (input, u, i) in cases {
+    expect(paths(union_masks(masks(input)))) == u
+    expect(paths(intersect_masks(masks(input)))) == i
+  }
+}
+
+test "normalize is fieldmaskpb's (TestNormalize)" {
+  let cases: List[(List[Str], Str)] = [
+    ([], ""),
+    (["a"], "a"),
+    (["foo", "foo.bar", "foo.baz"], "foo"),
+    (["foo.bar", "foo.baz"], "foo.bar,foo.baz"),
+    (["", "a.", ".b", "a.b", ".", "", "a.", ".b", "a.b", "."], ",a.,a.b"),
+    (["e.a", "e.b", "e.c", "e.d", "e.f", "e.g", "e.b.a", "e$c", "e.b.c"], "e.a,e.b,e.c,e.d,e.f,e.g,e$c"),
+    (["a", "aa", "aaa", "a$", "AAA", "aA.a", "a.a", "a", "aa", "aaa", "a$", "AAA", "aA.a"], "AAA,a,aA.a,aa,aaa,a$"),
+    (["a.b", "aa.bb.cc", ".", "a$b", "aa", "a.", "a", "b.c.d", ".a", "", "a$", "a$", "a.b", "a", "a.bb", ""], ",a,aa,a$,a$b,b.c.d"),
+  ]
+  for (input, want) in cases {
+    expect(paths(FieldMask{paths: input}.normalize())) == want
+  }
+}
+
+test "pack_any and unpack are anypb's MarshalFrom and UnmarshalTo" {
+  let a = pack_any("google.protobuf.Timestamp", encode_timestamp(Timestamp{seconds: 5}))
+  expect(a.type_url) == "type.googleapis.com/google.protobuf.Timestamp"
+  expect(a.value) == b"\x08\x05"
+  expect(a.message_name()) == "google.protobuf.Timestamp"
+  expect(a.message_is("google.protobuf.Timestamp")) == true
+  expect(a.message_is("protobuf.Timestamp")) == false
+  expect(a.message_is("Timestamp")) == false
+  let t = decode_timestamp(a.unpack("google.protobuf.Timestamp").or_fault("unpack")).or_fault("decode")
+  expect(t.seconds) == 5
+  let e = match a.unpack("google.protobuf.Duration") {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+  expect(e) == "proto: mismatched message type: got \"google.protobuf.Duration\", want \"google.protobuf.Timestamp\""
+  // MessageIs and MessageName on bare and odd URLs (any_test.go)
+  expect(Any{type_url: "foo.MyMessage"}.message_is("foo.MyMessage")) == true
+  expect(Any{type_url: "blah.com/foo.MyMessage"}.message_is("foo.MyMessage")) == true
+  expect(Any{type_url: "blah.com/foo.MyMessage"}.message_name()) == "foo.MyMessage"
+  expect(Any{type_url: "blah.com/foo.MyMessage/"}.message_name()) == ""
+  expect(Any{type_url: "foo.1Bad"}.message_name()) == ""
+  expect(Any{type_url: ""}.message_name()) == ""
+}
+
+test "message_is and message_name follow any_test.go's table" {
+  let n = "goproto.proto.test.TestAllTypes"
+  let cases: List[(Str, Bool, Str)] = [
+    ("", false, ""),
+    ("foo", false, "foo"),
+    ("foo$", false, ""),
+    ("/foo", false, "foo"),
+    ("/bar/foo", false, "foo"),
+    ("google.golang.org/bar/foo", false, "foo"),
+    ("goproto.proto.test.TestAllTypes", true, n),
+    ("goproto.proto.test.TestAllTypes$", false, ""),
+    ("/goproto.proto.test.TestAllTypes", true, n),
+    ("google.golang.org/foo/goproto.proto.test.TestAllTypes", true, n),
+  ]
+  for (url, is, name) in cases {
+    let a = Any{type_url: url}
+    expect(a.message_is(n)) == is
+    expect(a.message_name()) == name
+  }
+}
+
+test "value_from_json and to_json are structpb's NewValue and AsInterface" {
+  let j = json.parse_value("{\"b\":true,\"a\":[1,2.5,\"x\",null],\"n\":{}}").or_fault("parse")
+  let v = value_from_json(j).or_fault("from")
+  if let Value.Object(v: st) = v {
+    expect(st.fields.len()) == 3
+    expect((st.fields.get("b") ?? Value.Unset) is Value.Flag(true)) == true
+  } else {
+    fault("not an object")
+  }
+  expect(v.to_json().encode()) == "{\"a\":[1,2.5,\"x\",null],\"b\":true,\"n\":{}}"
+  expect(value_from_json(json.Value.Int(3)).or_fault("int") is Value.Number(3.0)) == true
+  expect(struct_from_json(json.Value.Int(3)) is Err(_)) == true
+  expect(Value.Unset.to_json() is json.Value.Null) == true
 }

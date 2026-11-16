@@ -1,0 +1,44 @@
+// protobuf.size and protobuf.merge_from (proto.Size and proto.Merge):
+// size is marshal's length; merge_from follows proto.Merge's rules
+// (populated scalars replace, a zero proto3 scalar is not populated,
+// nested messages merge, lists append, map entries replace).
+use std/protobuf
+
+struct Inner {
+  a proto "1": Int = 0
+  b proto "2": Str = ""
+} derive Proto
+
+struct Msg {
+  id proto "1": Int = 0
+  name proto "2": Str = ""
+  tags proto "3": List[Str] = []
+  inner proto "4": Inner? = None
+  counts proto "5": Map[Str, Int] = {}
+  flag proto "6": Bool = false
+} derive Proto
+
+fn show(m: Msg) -> Str {
+  let inner = match m.inner {
+    Some(i) => "{a=${i.a} b=${i.b.quote()}}"
+    None => "none"
+  }
+  var keys: List[Str] = []
+  for (k, _) in m.counts {
+    keys.push(k)
+  }
+  keys.sort_in_place()
+  let cs = keys.map(fn(k: Str) -> Str { "${k}=${m.counts.get(k) ?? 0}" }).join(",")
+  "id=${m.id} name=${m.name.quote()} tags=[${m.tags.join(",")}] inner=${inner} counts={${cs}} flag=${m.flag}"
+}
+
+fn main(os: Os) {
+  let dst = Msg{id: 1, name: "dst", tags: ["a"], inner: Some(Inner{a: 1, b: "keep"}), counts: {"x": 1, "y": 2}, flag: true}
+  let src = Msg{id: 0, name: "src", tags: ["b", "c"], inner: Some(Inner{a: 5}), counts: {"y": 20, "z": 30}}
+  os.stdio.println(show(protobuf.merge_from(dst, src)))
+  os.stdio.println(show(protobuf.merge_from(Msg{}, src)))
+  os.stdio.println(show(protobuf.merge_from(dst, Msg{})))
+  for m in [dst, src, Msg{}, protobuf.merge_from(dst, src)] {
+    os.stdio.println("size ${protobuf.size(m)} marshal ${protobuf.marshal(m).len()}")
+  }
+}

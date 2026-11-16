@@ -14,6 +14,7 @@
 
 use std/protobuf
 use std/protowire as pw
+use std/json
 
 pub struct Timestamp {
   pub seconds proto "1": Int = 0
@@ -223,4 +224,319 @@ fn wfix64(var o: BytesBuilder, num: Int, v: Int) {
   for i in 0..8 {
     o.write_byte(UInt8.wrapping_from(v.shr_logical(8 * i) & 255))
   }
+}
+
+// ---------------------------------------------------------------------------
+// The helpers of protobuf-go's timestamppb, durationpb, anypb, fieldmaskpb
+// and wrapperspb (BSD-3, Copyright 2020 The Go Authors), task #102.
+
+/// Why a well known value is not valid, or an Any did not unpack: displays
+/// as protobuf-go's error text (`proto: timestamp (seconds:-62135596801)
+/// before 0001-01-01`). A message's text is `field:value` pairs with one
+/// space between them, where Go's prototext puts one or two at random.
+pub struct WktErr {
+  pub msg: Str
+}
+
+pub fn (e: WktErr) display() -> Str { "proto: " + e.msg }
+
+fn secs_nanos_text(secs: Int, nanos: Int) -> Str {
+  var parts: List[Str] = []
+  if secs != 0 {
+    parts.push("seconds:${secs}")
+  }
+  if nanos != 0 {
+    parts.push("nanos:${nanos}")
+  }
+  parts.join(" ")
+}
+
+/// timestamppb.New: the seconds and nanoseconds of t since the Unix epoch.
+pub fn timestamp_of(t: Time) -> Timestamp {
+  Timestamp{seconds: t.unix(), nanos: Int32.wrapping_from(t.nanosecond())}
+}
+
+/// timestamppb's AsTime: the instant, None when it is outside Time's range
+/// (1677 to 2262; Go's time.Time reaches further). Nanos outside 0..1e9
+/// carry into the seconds, as time.Unix does.
+pub fn (ts: Timestamp) as_time() -> Time? {
+  let ns = ts.seconds.checked_mul(1000000000)?.checked_add(Int(ts.nanos))?
+  Some(Time.from_unix_nanos(ns))
+}
+
+/// timestamppb's IsValid: CheckValid finds nothing wrong.
+pub fn (ts: Timestamp) is_valid() -> Bool { ts.check_valid() is Ok(_) }
+
+/// timestamppb's CheckValid: seconds from 0001-01-01 to 9999-12-31 and
+/// nanos in 0..1e9.
+pub fn (ts: Timestamp) check_valid() -> () ! WktErr {
+  let text = secs_nanos_text(ts.seconds, Int(ts.nanos))
+  if ts.seconds < -62135596800 {
+    return Err(WktErr{msg: "timestamp (${text}) before 0001-01-01"})
+  }
+  if ts.seconds > 253402300799 {
+    return Err(WktErr{msg: "timestamp (${text}) after 9999-12-31"})
+  }
+  if ts.nanos < 0 || ts.nanos >= 1000000000 {
+    return Err(WktErr{msg: "timestamp (${text}) has out-of-range nanos"})
+  }
+  Ok(())
+}
+
+/// durationpb.New of a Duration's nanoseconds (`duration_from_nanos(d.nanos())`;
+/// this module's Duration hides the prelude's): whole seconds and the
+/// nanoseconds left, both with the sign of ns.
+pub fn duration_from_nanos(ns: Int) -> Duration {
+  let secs = ns / 1000000000
+  Duration{seconds: secs, nanos: Int32.wrapping_from((ns - secs * 1000000000))}
+}
+
+/// durationpb's AsDuration as nanoseconds (`Duration.from_nanos(dp.as_nanos())`
+/// elsewhere), saturating at Int.min or Int.max when it does not fit (by the
+/// seconds' sign).
+pub fn (dp: Duration) as_nanos() -> Int {
+  let secs = dp.seconds
+  let nanos = Int(dp.nanos)
+  let total = match secs.checked_mul(1000000000) {
+    Some(s) => s.checked_add(nanos)
+    None => None
+  }
+  match total {
+    Some(t) => t
+    None => if secs < 0 { Int.min } else { Int.max }
+  }
+}
+
+/// durationpb's IsValid: CheckValid finds nothing wrong.
+pub fn (dp: Duration) is_valid() -> Bool { dp.check_valid() is Ok(_) }
+
+/// durationpb's CheckValid: at most 10000 years either way, nanos within a
+/// second and with the seconds' sign.
+pub fn (dp: Duration) check_valid() -> () ! WktErr {
+  let text = secs_nanos_text(dp.seconds, Int(dp.nanos))
+  if dp.seconds < -315576000000 {
+    return Err(WktErr{msg: "duration (${text}) exceeds -10000 years"})
+  }
+  if dp.seconds > 315576000000 {
+    return Err(WktErr{msg: "duration (${text}) exceeds +10000 years"})
+  }
+  if dp.nanos <= -1000000000 || dp.nanos >= 1000000000 {
+    return Err(WktErr{msg: "duration (${text}) has out-of-range nanos"})
+  }
+  if (dp.seconds > 0 && dp.nanos < 0) || (dp.seconds < 0 && dp.nanos > 0) {
+    return Err(WktErr{msg: "duration (${text}) has seconds and nanos with different signs"})
+  }
+  Ok(())
+}
+
+/// anypb.New and MarshalFrom: a message's wire bytes (`protobuf.marshal(m)`)
+/// under the type URL `type.googleapis.com/` + full_name. A derive Proto
+/// type has no descriptor, so the caller names it (`pkg.Msg`).
+pub fn pack_any(full_name: Str, value: Bytes) -> Any {
+  Any{type_url: "type.googleapis.com/" + full_name, value: value}
+}
+
+/// anypb's UnmarshalTo, its type check: the packed wire bytes when the Any
+/// holds full_name (message_is), for `protobuf.unmarshal[T]`; else Go's
+/// `mismatched message type` error.
+pub fn (a: Any) unpack(full_name: Str) -> Bytes ! WktErr {
+  if !a.message_is(full_name) {
+    return Err(WktErr{msg: "mismatched message type: got ${full_name.quote()}, want ${a.message_name().quote()}"})
+  }
+  Ok(a.value)
+}
+
+/// anypb's MessageIs: the type URL is full_name or ends in `/` + full_name.
+pub fn (a: Any) message_is(full_name: Str) -> Bool {
+  let url = a.type_url
+  if !url.ends_with(full_name) {
+    return false
+  }
+  url.len() == full_name.len() || url.bytes()[url.len() - full_name.len() - 1] == 0x2f
+}
+
+/// anypb's MessageName: the type URL after its last `/`, "" when that is
+/// not a valid full name (dot separated identifiers).
+pub fn (a: Any) message_name() -> Str {
+  let url = a.type_url
+  let name = match url.rfind("/") {
+    Some(i) => url[i + 1..]
+    None => url
+  }
+  if valid_full_name(name) { name } else { "" }
+}
+
+/// protoreflect's FullName.IsValid.
+fn valid_full_name(s: Str) -> Bool {
+  let b = s.bytes()
+  var i = 0
+  var first = true
+  while first || i < b.len() {
+    if !first {
+      if b[i] != 0x2e {
+        return false
+      }
+      i += 1
+    }
+    first = false
+    if i >= b.len() || !ident_start(b[i]) {
+      return false
+    }
+    i += 1
+    while i < b.len() && (ident_start(b[i]) || (b[i] >= 0x30 && b[i] <= 0x39)) {
+      i += 1
+    }
+  }
+  true
+}
+
+fn ident_start(c: UInt8) -> Bool { c == 0x5f || (c >= 0x61 && c <= 0x7a) || (c >= 0x41 && c <= 0x5a) }
+
+/// fieldmaskpb's Normalize: the paths sorted (a `.` before any other byte)
+/// without duplicates and without a path under another one.
+pub fn (fm: FieldMask) normalize() -> FieldMask { FieldMask{paths: normalize_paths(fm.paths)} }
+
+/// fieldmaskpb.Union: every path of the masks, normalized.
+pub fn union_masks(masks: List[FieldMask]) -> FieldMask {
+  var out: List[Str] = []
+  for m in masks {
+    for p in m.paths {
+      out.push(p)
+    }
+  }
+  FieldMask{paths: normalize_paths(out)}
+}
+
+/// fieldmaskpb.Intersect: the paths every mask covers, normalized.
+pub fn intersect_masks(masks: List[FieldMask]) -> FieldMask {
+  var out = union_masks(masks).paths
+  for m in masks {
+    let ss1 = normalize_paths(m.paths)
+    let ss2 = normalize_paths(out)
+    var next: List[Str] = []
+    var i1 = 0
+    var i2 = 0
+    while i1 < ss1.len() && i2 < ss2.len() {
+      let s1 = ss1[i1]
+      let s2 = ss2[i2]
+      if has_path_prefix(s1, s2) {
+        next.push(s1)
+        i1 += 1
+      } else if has_path_prefix(s2, s1) {
+        next.push(s2)
+        i2 += 1
+      } else if less_path(s1, s2) {
+        i1 += 1
+      } else {
+        i2 += 1
+      }
+    }
+    out = next
+  }
+  FieldMask{paths: normalize_paths(out)}
+}
+
+fn normalize_paths(paths: List[Str]) -> List[Str] {
+  let sorted = paths.sort_with(fn(x: Str, y: Str) -> Ordering {
+    if less_path(x, y) { Ordering.Less } else if less_path(y, x) { Ordering.Greater } else { Ordering.Equal }
+  })
+  var out: List[Str] = []
+  for p in sorted {
+    if out.len() > 0 && has_path_prefix(p, out[out.len() - 1]) {
+      continue
+    }
+    out.push(p)
+  }
+  out
+}
+
+fn has_path_prefix(path: Str, prefix: Str) -> Bool {
+  path.starts_with(prefix) && (path.len() == prefix.len() || path.bytes()[prefix.len()] == 0x2e)
+}
+
+/// Go's lessPath: bytes compared after subtracting `.` (mod 256), so `.`
+/// sorts first; a prefix sorts before the longer path.
+fn less_path(x: Str, y: Str) -> Bool {
+  let a = x.bytes()
+  let b = y.bytes()
+  var i = 0
+  while i < a.len() && i < b.len() {
+    if a[i] != b[i] {
+      return (Int(a[i]) - 0x2e + 256) % 256 < (Int(b[i]) - 0x2e + 256) % 256
+    }
+    i += 1
+  }
+  a.len() < b.len()
+}
+
+/// structpb.NewValue over a JSON value: null, a bool, a number (an Int as
+/// its Float, as Go converts integers), text, a list and an object become
+/// the Value kinds (an object's later duplicate key wins, as a Go map keeps
+/// one); any other json.Value is Go's `invalid type` error.
+pub fn value_from_json(v: json.Value) -> Value ! WktErr {
+  match v {
+    json.Value.Null => Ok(Value.Null)
+    json.Value.Bool(b: b) => Ok(Value.Flag(b))
+    json.Value.Int(n: n) => Ok(Value.Number(Float(n)))
+    json.Value.Num(n: n) => Ok(Value.Number(n))
+    json.Value.Str(s: s) => Ok(Value.Text(s))
+    json.Value.List(items: items) => Ok(Value.Array(list_from_json(items)?))
+    json.Value.Object(fields: _) => Ok(Value.Object(struct_from_json(v)?))
+    _ => Err(WktErr{msg: "invalid type: ${v.encode()}"})
+  }
+}
+
+/// structpb.NewStruct: an object's fields as a Struct; Go's `invalid type`
+/// error for a value that is not an object or holds an unsupported one.
+pub fn struct_from_json(v: json.Value) -> Struct ! WktErr {
+  let fields = match v {
+    json.Value.Object(fields: fs) => fs
+    _ => return Err(WktErr{msg: "invalid type: ${v.encode()}"})
+  }
+  var m: Map[Str, Value] = {}
+  for (k, x) in fields {
+    m.put(k, value_from_json(x)?)
+  }
+  Ok(Struct{fields: m})
+}
+
+/// structpb.NewList: the items as a ListValue.
+pub fn list_from_json(items: List[json.Value]) -> ListValue ! WktErr {
+  var out: List[Value] = []
+  for x in items {
+    out.push(value_from_json(x)?)
+  }
+  Ok(ListValue{values: out})
+}
+
+/// structpb's AsInterface as a JSON value: a number is a Num (Go's float64),
+/// an object's fields sorted by key, an unset Value null (Go's nil).
+pub fn (v: Value) to_json() -> json.Value {
+  match v {
+    Unset | Null => json.Value.Null
+    Number(v: n) => json.Value.Num(n)
+    Text(v: s) => json.Value.Str(s)
+    Flag(v: b) => json.Value.Bool(b)
+    Object(v: st) => st.to_json()
+    Array(v: lv) => lv.to_json()
+  }
+}
+
+/// structpb's AsMap as a JSON object, fields sorted by key.
+pub fn (st: Struct) to_json() -> json.Value {
+  var keys: List[Str] = []
+  for (k, _) in st.fields {
+    keys.push(k)
+  }
+  keys.sort_in_place()
+  var fs: List[(Str, json.Value)] = []
+  for k in keys {
+    fs.push((k, (st.fields.get(k) ?? Value.Unset).to_json()))
+  }
+  json.Value.Object(fs)
+}
+
+/// structpb's AsSlice as a JSON list.
+pub fn (lv: ListValue) to_json() -> json.Value {
+  json.Value.List(lv.values.map(fn(x: Value) -> json.Value { x.to_json() }))
 }

@@ -84,3 +84,9 @@ fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! ProtoErr
 fn marshal[T: Proto](v: T) -> Bytes
 /// The `T` that `data` encodes; unknown fields are skipped, a later value of a field wins.
 fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr
+/// proto.Size: the length of `marshal(v)`, from marshal's sizes pass without writing the bytes.
+fn size[T: Proto](v: T) -> Int
+/// proto.Merge: `src`'s populated fields merged into `dst`, as parsing `marshal(src)` onto `dst`
+/// merges them: a scalar replaces, a nested message merges, a list appends, a map entry replaces,
+/// unknown fields append.
+fn merge_from[T: Proto](dst: T, src: T) -> T
