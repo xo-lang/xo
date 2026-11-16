@@ -459,7 +459,7 @@ pub struct PageState[M] {
 /// for the client runtime at runtime_src, which syncs with sync_url and,
 /// when live_url is not "", listens there for new versions. css,
 /// if any, goes in a `<style>` element in the head.
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "") -> Str {
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "") -> Str {
   var b = BytesBuilder.new()
   b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
   b.write_str(html.escape_string(title))
@@ -486,6 +486,10 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
   if wasm_url != "" && safe_url(wasm_url) {
     b.write_str("\" data-xo-wasm=\"")
     b.write_str(html.escape_string(wasm_url))
+  }
+  if build != "" {
+    b.write_str("\" data-xo-build=\"")
+    b.write_str(html.escape_string(build))
   }
   b.write_str("\">")
   write_html(b, app.view(model))
@@ -530,6 +534,10 @@ pub struct Sync[M, E] {
   /// current version, so html is "" and model None, and it keeps what it
   /// shows (an idle poll costs bytes, not the whole page).
   pub same: Bool = false
+  /// The build of the runtime and client this server serves (the stamps
+  /// in their URLs): a page showing another build reloads once nothing
+  /// waits to be sent.
+  pub build: Str = ""
 } derive Json
 
 // ---- the predicting client (decision 0659 stage 3) ----
@@ -572,6 +580,18 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   let input = json.decode_str[ClientIn[M, E]](text).map_err(fn(e) { "${e}" })?
   stdio.print(json.encode_str(predict(app, input)))
   Ok(())
+}
+
+/// The runtime's stamp: a SHA-256 prefix of RUNTIME_JS.
+fn runtime_stamp() -> Str {
+  crypto.sha256(RUNTIME_JS.bytes()).to_hex()[..16]
+}
+
+/// Cache-Control for an asset whose current stamp is v: cached for good
+/// when the request names that stamp (a new build has a new URL), else
+/// revalidated, so an old or missing stamp never pins today's bytes.
+fn cache_control(req: http.Request, v: Str) -> Str {
+  if req.query("v") == Some(v) { "public, max-age=31536000, immutable" } else { "no-cache" }
 }
 
 /// Whether an Accept-Encoding value accepts gzip (a `gzip` or `*` token
@@ -687,11 +707,20 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   let state = h.state
   let title = h.title
   let css = h.css
-  let js = "${prefix}/_xo/ui.js"
+  // The runtime and the client are served at URLs stamped with their
+  // content (?v=SHA-256 prefix) and cached for good; a rebuild changes the
+  // URL, so a browser never runs a stale copy, and the build (both
+  // stamps) tells an open page that it should reload.
+  let js_path = "${prefix}/_xo/ui.js"
+  let js_v = runtime_stamp()
+  let js = "${js_path}?v=${js_v}"
   let sync = "${prefix}/_xo/sync"
   let live = "${prefix}/_xo/live"
   let client = h.client
-  let wasm = if client.is_empty() { "" } else { "${prefix}/_xo/app.wasm" }
+  let wasm_path = "${prefix}/_xo/app.wasm"
+  let wasm_v = if client.is_empty() { "" } else { h.client_tag[1..17] }
+  let wasm = if client.is_empty() { "" } else { "${wasm_path}?v=${wasm_v}" }
+  let build = if wasm_v == "" { js_v } else { "${js_v}.${wasm_v}" }
   let hh = h
   let auth = h.auth
   let allow = h.allow
@@ -723,10 +752,19 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     }
     let (m0, v) = state.with_read(fn(s) { (s.model(), s.version()) })
     let m = shown(m0, p)
-    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm)).with_header("Content-Type", "text/html; charset=utf-8")
+    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm, build: build)).with_header("Content-Type", "text/html; charset=utf-8")
   })
-  r.handle("GET ${js}", fn(req) -> http.Response ! Never {
-    http.text(200, RUNTIME_JS).with_header("Content-Type", "text/javascript; charset=utf-8").with_header("Cache-Control", "no-cache")
+  let js_tag = "\"${js_v}\""
+  let js_gz = compress.gzip(RUNTIME_JS.bytes(), compress.Level.BestCompression)
+  r.handle("GET ${js_path}", fn(req) -> http.Response ! Never {
+    let cc = cache_control(req, js_v)
+    if req.header("If-None-Match") == Some(js_tag) {
+      return http.Response{status: 304, headers: {"ETag": js_tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: b""}
+    }
+    if accepts_gzip(req.header("Accept-Encoding") ?? "") {
+      return http.Response{status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "Content-Encoding": "gzip", "ETag": js_tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: js_gz}
+    }
+    http.Response{status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "ETag": js_tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: RUNTIME_JS.bytes()}
   })
   r.handle("POST ${sync}", fn(req) -> http.Response ! Never {
     let ct = (req.header("Content-Type") ?? "").to_lower()
@@ -760,23 +798,22 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let down = if req.query("thin") == Some("1") || redact.is_some() { Down{acked: d.acked, reset: None, entries: [], refused: d.refused} } else { d }
     let with_model = if req.query("model") == Some("1") { Some(m) } else { None }
     if up.msgs.is_empty() && up.ver == v {
-      return http.json(200, Sync{down: down, ver: v, html: "", model: None, same: true})
+      return http.json(200, Sync{down: down, ver: v, html: "", model: None, same: true, build: build})
     }
-    http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model})
+    http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model, build: build})
   })
   if !client.is_empty() {
     let gz = h.client_gz
     let tag = h.client_tag
-    r.handle("GET ${wasm}", fn(req) -> http.Response ! Never {
-      // no-cache with an ETag: a repeat visit revalidates and gets a 304
-      // instead of the module, and a new build is seen at once
+    r.handle("GET ${wasm_path}", fn(req) -> http.Response ! Never {
+      let cc = cache_control(req, wasm_v)
       if req.header("If-None-Match") == Some(tag) {
-        return http.Response{status: 304, headers: {"ETag": tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}, body: b""}
+        return http.Response{status: 304, headers: {"ETag": tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: b""}
       }
       if accepts_gzip(req.header("Accept-Encoding") ?? "") {
-        return http.Response{status: 200, headers: {"Content-Type": "application/wasm", "Content-Encoding": "gzip", "ETag": tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}, body: gz}
+        return http.Response{status: 200, headers: {"Content-Type": "application/wasm", "Content-Encoding": "gzip", "ETag": tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: gz}
       }
-      http.Response{status: 200, headers: {"Content-Type": "application/wasm", "ETag": tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}, body: client}
+      http.Response{status: 200, headers: {"Content-Type": "application/wasm", "ETag": tag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, body: client}
     })
   }
   r.handle("GET ${live}", fn(req) {
@@ -876,6 +913,8 @@ function boot(){
   var ws=null,wsUp=false,backoff=1000,tick=0;
   var st=JSON.parse(stEl.textContent);
   var wasmUrl=root.getAttribute("data-xo-wasm");
+  var build=root.getAttribute("data-xo-build")||"",stale=false;
+  function editing(){var a=document.activeElement;return !!(a&&root.contains(a)&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")&&a.value!=="");}
   var mod=null,confirmed=st.model;
   var KEY="xo-ui:"+location.pathname+":"+url;
   if(drainers[KEY])drainers[KEY]();
@@ -986,6 +1025,10 @@ function boot(){
       if(!(queue.length&&predict())){if(!s.same)show(s.html);H().removeAttribute("data-xo-awaiting");}
       H().removeAttribute("data-xo-offline");
       save();mark();
+      // a new build is served: reload once nothing waits to be sent and no
+      // input is being typed in (the new page runs the new runtime)
+      if(s.build&&build&&s.build!==build&&!stopped){stale=true;H().setAttribute("data-xo-stale","");}
+      if(stale&&!stopped&&!queue.length&&!editing())location.reload();
     })
     .catch(function(e){if(!/sync (40[13]|dead)/.test(String(e)))H().setAttribute("data-xo-offline","");})
     .then(function(){busy=false;if(again){again=false;sync();}});
@@ -1005,7 +1048,7 @@ function boot(){
   function connect(){
     if(!live||!window.WebSocket)return;
     try{ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+live);}catch(e){return;}
-    ws.onopen=function(){wsUp=true;backoff=1000;};
+    ws.onopen=function(){wsUp=true;backoff=1000;sync();};// catch up on what changed while the socket was down
     ws.onmessage=function(ev){var v=+ev.data;if(v>ver||queue.length)sync();};
     ws.onclose=function(){wsUp=false;if(stopped)return;setTimeout(connect,backoff);backoff=Math.min(backoff*2,30000);};
   }
@@ -1013,7 +1056,7 @@ function boot(){
   on(window,"pagehide",function(){save(true);});
   on(window,"pageshow",function(){save();});
   on(document,"visibilitychange",function(){if(!document.hidden){save();sync();}});
-  iv=setInterval(function(){if(stopped){if(dead||!queue.length){clearInterval(iv);if(drainers[KEY]===kill)delete drainers[KEY];}else sync();return;}tick++;if(tick%15===0)save();if(!document.hidden&&(!wsUp||tick%15===0))sync();},2000);
+  iv=setInterval(function(){if(stopped){if(dead||!queue.length){clearInterval(iv);if(drainers[KEY]===kill)delete drainers[KEY];}else sync();return;}if(stale&&!queue.length&&!editing()){location.reload();return;}tick++;if(tick%15===0)save();if(!document.hidden&&(!wsUp||tick%15===0))sync();},2000);
   connect();
   save();
   mark();
@@ -1055,6 +1098,9 @@ function go(href,push){
     var d=new DOMParser().parseFromString(p.text,"text/html");
     var nr=d.getElementById("xo-ui");
     if(!nr||!d.getElementById("xo-state")||new URL(p.url,location.href).origin!==location.origin)throw 0;
+    // another runtime build: load the page for real so its runtime runs
+    var ob=(document.getElementById("xo-ui").getAttribute("data-xo-build")||"").split(".")[0];
+    if((nr.getAttribute("data-xo-build")||"").split(".")[0]!==ob)throw 0;
     if(push){try{history.replaceState({xo:1,y:window.scrollY},"",location.href);}catch(e){}history.pushState({xo:1,y:0},"",p.url);at=here();}
     if(cur)cur();
     document.title=d.title;

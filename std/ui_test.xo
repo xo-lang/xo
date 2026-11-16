@@ -1,4 +1,5 @@
 use std/compress
+use std/crypto
 use std/html
 use std/http
 use std/json
@@ -371,8 +372,8 @@ test "the host serves the page, the runtime and sync" {
   let p = r.call(http.new_request("GET", "/"))
   expect(p.status) == 200
   let body = p.text()?
-  expect(body.contains("<div id=\"xo-ui\" data-xo-sync=\"/_xo/sync\" data-xo-live=\"/_xo/live\">")) == true
-  expect(body.contains("<script src=\"/_xo/ui.js\" defer></script>")) == true
+  expect(body.contains("<div id=\"xo-ui\" data-xo-sync=\"/_xo/sync\" data-xo-live=\"/_xo/live\" data-xo-build=\"${runtime_stamp()}\">")) == true
+  expect(body.contains("<script src=\"/_xo/ui.js?v=${runtime_stamp()}\" defer></script>")) == true
   let js = r.call(http.new_request("GET", "/_xo/ui.js"))
   expect(js.status) == 200
   expect(js.text()?.contains("data-xo-")) == true
@@ -408,7 +409,7 @@ test "the host mounts under a prefix" {
   host(todo_app()).mount(r, prefix: "/app")
   let body = r.call(http.new_request("GET", "/app/")).text()?
   expect(body.contains("data-xo-sync=\"/app/_xo/sync\"")) == true
-  expect(body.contains("src=\"/app/_xo/ui.js\"")) == true
+  expect(body.contains("src=\"/app/_xo/ui.js?v=${runtime_stamp()}\"")) == true
   expect(r.call(http.new_request("GET", "/app/_xo/ui.js")).status) == 200
 }
 
@@ -461,7 +462,7 @@ test "predict leaves confirmed Msgs out and counts them" {
 test "a host with a client serves its wasm and names it in the page" {
   let r = routes_for(host(todo_app(), client: b"\x00asm\x01\x00\x00\x00"))
   let p = r.call(http.new_request("GET", "/")).text()?
-  expect(p.contains("data-xo-wasm=\"/_xo/app.wasm\"")) == true
+  expect(p.contains("data-xo-wasm=\"/_xo/app.wasm?v=")) == true
   let w = r.call(http.new_request("GET", "/_xo/app.wasm"))
   expect(w.status) == 200
   expect(w.header("Content-Type")) == Some("application/wasm")
@@ -658,4 +659,33 @@ test "an idle sync at the current version answers same, without the page" {
   expect(idle.html) == ""
   expect(idle.model) == None
   expect(idle.ver) == 1
+}
+
+test "the runtime and client are served at stamped URLs, cached for good" {
+  let wasm = b"\x00asm\x01\x00\x00\x00"
+  let h = host(todo_app(), client: wasm)
+  let r = routes_for(h)
+  let wv = crypto.sha256(wasm).to_hex()[..16]
+  let jv = runtime_stamp()
+  let page = r.call(http.new_request("GET", "/")).text()?
+  expect(page.contains("src=\"/_xo/ui.js?v=${jv}\"")) == true
+  expect(page.contains("data-xo-wasm=\"/_xo/app.wasm?v=${wv}\"")) == true
+  expect(page.contains("data-xo-build=\"${jv}.${wv}\"")) == true
+  // the current stamp is cached for good; no stamp or an old one revalidates
+  let js = r.call(http.new_request("GET", "/_xo/ui.js?v=${jv}", headers: {"Accept-Encoding": "gzip"}))
+  expect(js.header("Cache-Control")) == Some("public, max-age=31536000, immutable")
+  expect(js.header("Content-Encoding")) == Some("gzip")
+  expect(compress.gunzip(js.body)?) == RUNTIME_JS.bytes()
+  expect(r.call(http.new_request("GET", "/_xo/ui.js")).header("Cache-Control")) == Some("no-cache")
+  expect(r.call(http.new_request("GET", "/_xo/ui.js?v=old")).header("Cache-Control")) == Some("no-cache")
+  let tag = js.header("ETag") ?? ""
+  expect(r.call(http.new_request("GET", "/_xo/ui.js", headers: {"If-None-Match": tag})).status) == 304
+  expect(r.call(http.new_request("GET", "/_xo/app.wasm?v=${wv}")).header("Cache-Control")) == Some("public, max-age=31536000, immutable")
+  expect(r.call(http.new_request("GET", "/_xo/app.wasm?v=old")).header("Cache-Control")) == Some("no-cache")
+  // sync replies name the build, idle or not
+  let s = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(Up[Msg]{client: "a", ver: 0, msgs: []}), query: "?thin=1")).text()?)?
+  expect(s.build) == "${jv}.${wv}"
+  let idle = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(Up[Msg]{client: "a", ver: 0, msgs: []}), query: "?thin=1")).text()?)?
+  expect(idle.same) == true
+  expect(idle.build) == "${jv}.${wv}"
 }

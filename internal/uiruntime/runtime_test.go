@@ -168,3 +168,29 @@ func TestMorphKeepsNodes(t *testing.T) {
 		}
 	}
 }
+
+// A sync reply naming another build (the server was redeployed) marks the
+// page stale and reloads it, but only once its queue has been sent: an
+// offline page keeps its Msgs until they reach the server.
+func TestNewBuildReloadsAfterQueue(t *testing.T) {
+	r := run(t, "stale")
+	if r.Before != "0,0" || r.Reloads != 1 {
+		t.Errorf("reloads before,offline %q after %d, want 0,0 and 1", r.Before, r.Reloads)
+	}
+	if !reflect.DeepEqual(r.Applied, []string{"a1", "a2"}) {
+		t.Errorf("applied %q, want a1 a2", r.Applied)
+	}
+	if !reflect.DeepEqual(r.Attrs, []string{"data-xo-stale"}) {
+		t.Errorf("attributes %q, want data-xo-stale", r.Attrs)
+	}
+}
+
+// The live socket opening (first, or again after the server restarted)
+// syncs at once: before, a page waited for its 30 s check, so changes made
+// while the socket was down, or a new build, showed up late.
+func TestSocketOpenSyncs(t *testing.T) {
+	r := run(t, "reconnect")
+	if r.Before != "1" || r.Reloads != 2 {
+		t.Errorf("syncs after first open %q, after reopen %d, want 1 and 2", r.Before, r.Reloads)
+	}
+}

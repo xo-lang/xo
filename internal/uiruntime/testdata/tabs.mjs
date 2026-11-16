@@ -19,7 +19,7 @@ function storage() {
   };
 }
 const local = storage();
-const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0 };
+const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [] };
 function receive(up) {
   let a = server.acked.get(up.client) ?? 0;
   for (const e of up.msgs) {
@@ -28,15 +28,16 @@ function receive(up) {
     server.applied.push(e.msg);
   }
   server.acked.set(up.client, a);
-  return { down: { acked: a, reset: null, entries: [] }, ver: server.applied.length, html: "<p>" + server.applied.length + "</p>" };
+  return { down: { acked: a, reset: null, entries: [] }, ver: server.applied.length, html: "<p>" + server.applied.length + "</p>", build: server.build };
 }
 
+class WS { constructor(u) { this.url = u; server.sockets.push(this); } close() {} }
 function tab() {
   const handlers = {};
   const attrs = {};
   const root = {
     innerHTML: "",
-    getAttribute: (k) => (k === "data-xo-sync" ? "/_xo/sync" : null),
+    getAttribute: (k) => (k === "data-xo-sync" ? "/_xo/sync" : k === "data-xo-build" ? server.build || null : k === "data-xo-live" ? server.live : null),
     addEventListener: (n, f) => { handlers[n] = f; },
     contains: () => true,
   };
@@ -52,17 +53,19 @@ function tab() {
       hidden: false,
       activeElement: null,
     },
-    window: { addEventListener: (n, f) => { listeners[n] = f; } },
+    window: { addEventListener: (n, f) => { listeners[n] = f; }, WebSocket: WS },
     location: { pathname: "/", protocol: "http:", host: "test", reload: () => { server.reloads++; } },
     localStorage: local,
     sessionStorage: storage(),
     fetch: async (url, init) => {
+      server.syncs++;
       if (server.down) throw new Error("offline");
       if (server.status !== 200) return { ok: false, status: server.status, json: async () => ({}) };
       const body = receive(JSON.parse(init.body));
       return { ok: true, status: 200, json: async () => body };
     },
     setInterval: () => 0,
+    WebSocket: WS,
     setTimeout: (f) => { timers.push(f); return timers.length; },
     JSON, Math, Date, Error, Promise, Array, Object, String,
   };
@@ -110,6 +113,32 @@ if (scenario === "unauthorized" || scenario === "forbidden") {
   const keys = [];
   for (let i = 0; i < local.length; i++) keys.push(local.key(i));
   extra = { attrs: Object.keys(a.attrs).sort(), reloads: server.reloads, stored: keys.length, session: a.session.length };
+}
+if (scenario === "stale") {
+  // the server is redeployed with a new build: a page that is offline
+  // keeps its queue, and reloads only once the queue has been sent
+  server.build = "v1";
+  const a = tab(); await settle();
+  const r0 = server.reloads;
+  server.build = "v2";
+  server.down = true;
+  await click(a, "a1");
+  const r1 = server.reloads;
+  server.down = false;
+  await click(a, "a2");
+  extra = { attrs: Object.keys(a.attrs).sort(), reloads: server.reloads, before: String(r0) + "," + String(r1) };
+}
+if (scenario === "reconnect") {
+  // the live socket comes back (after a server restart, say): the page
+  // syncs at once instead of at its next 30 s check
+  server.live = "/_xo/live";
+  const a = tab(); await settle();
+  const ws = server.sockets[0];
+  ws.onopen(); await settle();
+  const first = server.syncs;
+  ws.onclose(); a.flush();
+  server.sockets[1].onopen(); await settle();
+  extra = { before: String(first), reloads: server.syncs };
 }
 if (scenario === "pointer") {
   // a sync reply lands while the pointer is down on the view: the view is

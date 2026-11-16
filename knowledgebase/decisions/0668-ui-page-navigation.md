@@ -65,6 +65,37 @@ for an app that needs state across pages.
 - Scripts in a fetched page do not run (the patch inserts parsed nodes);
   std/ui pages carry only the runtime and the state, which is data.
 
+## Amendment: stamped assets and new builds (2026-11-15)
+
+With navigation an open tab no longer reloads, so it kept the runtime
+and wasm client it started with after a redeploy. Now:
+
+- The runtime and the client are served at URLs stamped with a
+  SHA-256 prefix of their content (`/_xo/ui.js?v=…`,
+  `/_xo/app.wasm?v=…`), `Cache-Control: public, max-age=31536000,
+  immutable` when the request names the current stamp and `no-cache`
+  otherwise, with an ETag; the runtime is gzipped too. A rebuild
+  changes the URL.
+- The page's root carries `data-xo-build` (the runtime stamp, plus the
+  client stamp) and every sync reply carries `build`. A page that sees
+  another build sets `data-xo-stale` on the root element and reloads
+  once its queue is sent and no input is being typed in (checked on
+  each sync and every 2 s).
+- A link to a page with another runtime stamp is a full load. A page
+  with another client stamp but the same runtime is swapped in place:
+  its runtime loads the new client from the new URL.
+- The page syncs when its live socket opens: after a server restart the
+  socket reconnected and the page waited for its 30 s check, so changes
+  made meanwhile and a new build showed up late
+  (TestSocketOpenSyncs).
+
+Measured in headless Chrome (~/xo-lead/notes/stdui/e2e/drive-stamp.mjs,
+two builds of a server whose shared app differs, restarted under two
+open tabs; 6/6): an idle page reloads onto the new build 1.1 to 1.3 s
+after the restart; a page with half typed text keeps it and is marked
+stale; it reloads 0.1 s after the input is emptied. The navigation
+(17/17), todo (21/21) and morph (3/3) checks pass.
+
 ## Alternatives
 
 - Option 2 now: see above.

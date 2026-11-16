@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: feature: stamped runtime and client URLs; open pages reload onto a new build; sync on socket reconnect
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: owner (asset caching on rebuilds, after link navigation kept tabs open across deploys); the reconnect gap while testing it
+- Go reference: none
+- Test: std/ui_test.xo (stamped URLs, immutable only for the current stamp, gzip and 304 for the runtime, build in sync replies); internal/uiruntime TestNewBuildReloadsAfterQueue, TestSocketOpenSyncs (fails before: no sync on open); headless Chrome redeploy under open tabs (6/6), navigation 17/17, todo 21/21, morph 3/3
+- Shipped in: not yet released
+
+`/_xo/ui.js` and `/_xo/app.wasm` are served at `?v=` content stamped URLs and cached for good; the runtime is gzipped with an ETag. A page seeing a new build (`Sync.build`) sets `data-xo-stale` and reloads once its queue is sent and nothing is being typed. A page syncs when its live socket opens, so a restart or a dropped socket no longer delays updates by up to 30 s.
+
 ## 2026-11-15: feature: links between std/ui pages without a full load
 
 - Kind: feature

@@ -11222,6 +11222,11 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   modifier key, and a reply that is not a std/ui page, load normally. A
   page left with Msgs not yet acknowledged keeps sending them to its own
   endpoint in the background until they drain.
+- The runtime and the client are served at content stamped URLs
+  (`?v=`), cached for good; the page's `data-xo-build` and each sync
+  reply's `build` name them, and a page that sees another build sets
+  `data-xo-stale` and reloads once nothing waits to be sent and no
+  input is being typed in.
 - A sync that sends no Msgs from a page already at the current version
   answers `same: true` with no HTML and no model, and the page keeps
   what it shows: an idle poll is about 100 bytes, not the whole view.
