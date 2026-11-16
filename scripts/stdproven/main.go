@@ -338,7 +338,8 @@ func notRun(test, out string) string {
 func fuzz(args []string) error {
 	fs := flag.NewFlagSet("fuzz", flag.ExitOnError)
 	cases := fs.Int("cases", 1000000, "cases per backend to reach")
-	hours := fs.Float64("hours", 8, "time limit")
+	hours := fs.Float64("hours", 8, "time limit, over every shard")
+	minutes := fs.Float64("minutes", 0, "this shard's time limit (0: none): stop at a seed boundary and write result: partial, which the next run resumes")
 	batch := fs.Int("batch", 5000, "cases a seed")
 	backends := fs.String("backends", "arm64,llvm", "backends, comma separated")
 	hostLabel := fs.String("host", "", "the host's name in the evidence (no network names: e.g. \"linux/arm64 host 2\")")
@@ -363,53 +364,153 @@ func fuzz(args []string) error {
 		return fmt.Errorf("std, compiler or internal/stdtest has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
 	out := filepath.Join("std", "evidence", module, "fuzz.md")
-	first := 2 // seed 1 is each harness's committed corpus
-	if h, err := readHeader(out); err == nil {
-		if _, last, ok := strings.Cut(h["seeds"], " to "); ok {
-			if n, err := strconv.Atoi(last); err == nil {
-				first = n + 1
+	prev, _ := os.ReadFile(out)
+	st := fuzzResume(string(prev), src)
+	if st.shards > 0 {
+		fmt.Printf("stdproven fuzz: resuming %s from seed %d after %d shard(s), %s\n", module, st.first, st.shards, st.prior.Round(time.Second))
+	}
+	f := fuzzRun{hs: hs, cases: *cases, batch: *batch, backends: *backends,
+		limit: time.Duration(*hours * float64(time.Hour)), shard: time.Duration(*minutes * float64(time.Minute)), run: goTestSeed}
+	if err := f.loop(&st); err != nil {
+		return err
+	}
+	host := *hostLabel
+	if host == "" {
+		host = runtime.GOOS + "/" + runtime.GOARCH
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(out, []byte(f.evidence(st, module, commit, src, host, *hours, *hostLabel, time.Now())), 0o644); err != nil {
+		return err
+	}
+	if !st.pass {
+		fmt.Printf("stdproven fuzz: %s partial at seed %d (%s of %s): run again to resume\n", module, st.seed-1, st.prior.Round(time.Second), f.limit)
+	}
+	return nil
+}
+
+// fuzzState is a fuzz's progress: what earlier shards did (fuzzResume) and
+// what this one adds (fuzzRun.loop).
+type fuzzState struct {
+	first, seed int            // the first seed of the whole run, the next to run
+	ran         map[string]int // cases per backend by harness test
+	prior       time.Duration  // the run's time so far, every shard
+	log         []string       // a line per seed
+	shards      int            // shards before this one
+	pass        bool           // every harness reached its cases, or the run its time
+}
+
+// fuzzResume reads an earlier fuzz.md. A `result: partial` file of the
+// same source resumes: its counts, time, seed lines and shards carry on. Any
+// other file only moves the first seed past its last (seeds stay fresh);
+// none starts at 2, seed 1 being each harness's committed corpus.
+func fuzzResume(prev, src string) fuzzState {
+	st := fuzzState{first: 2, ran: map[string]int{}}
+	h := header{}
+	body := ""
+	for i, l := range strings.Split(prev, "\n") {
+		k, v, ok := strings.Cut(l, ":")
+		if strings.TrimSpace(l) == "" || !ok {
+			body = strings.Join(strings.Split(prev, "\n")[i:], "\n")
+			break
+		}
+		h[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	a, b, ok := strings.Cut(h["seeds"], " to ")
+	if !ok {
+		st.seed = st.first
+		return st
+	}
+	last, err := strconv.Atoi(b)
+	if err != nil {
+		st.seed = st.first
+		return st
+	}
+	st.first, st.seed = last+1, last+1
+	if h["result"] != "partial" || h["source"] != src {
+		return st
+	}
+	if n, err := strconv.Atoi(a); err == nil {
+		st.first = n
+	}
+	for _, kv := range strings.Split(h["ran"], ",") {
+		if t, n, ok := strings.Cut(strings.TrimSpace(kv), "="); ok {
+			if c, err := strconv.Atoi(n); err == nil {
+				st.ran[t] = c
 			}
 		}
 	}
-	start := time.Now()
-	limit := time.Duration(*hours * float64(time.Hour))
-	nb := len(strings.Split(*backends, ","))
-	var log []string
-	ran := map[string]int{}
-	seed := first
+	if s, err := strconv.Atoi(h["elapsed"]); err == nil {
+		st.prior = time.Duration(s) * time.Second
+	}
+	st.shards, _ = strconv.Atoi(h["shards"])
+	for _, l := range strings.Split(body, "\n") {
+		if strings.HasPrefix(l, "- ") {
+			st.log = append(st.log, l)
+		}
+	}
+	return st
+}
+
+// fuzzRun runs seeds of every harness that has not reached its cases.
+type fuzzRun struct {
+	hs           []harness
+	cases, batch int
+	backends     string
+	limit, shard time.Duration // the whole run's time, this shard's (0: none)
+	run          func(h harness, seed, batch int, backends string) ([]byte, error)
+	now          func() time.Time
+}
+
+func goTestSeed(h harness, seed, batch int, backends string) ([]byte, error) {
+	cmd := exec.Command("go", "test", "./internal/stdtest", "-run", "^"+h.test+"$", "-count=1", "-v", "-timeout", "2h")
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("%s_SEED=%d", h.env, seed),
+		fmt.Sprintf("%s_N=%d", h.env, batch),
+		fmt.Sprintf("%s_BACKENDS=%s", h.env, backends))
+	return cmd.CombinedOutput()
+}
+
+// loop runs seeds from st.seed until every harness has its cases (pass), the
+// whole run its time (pass, as decision 0616 counts 8 hours), or this shard
+// its time (partial); st.prior ends as the run's time over every shard.
+func (f fuzzRun) loop(st *fuzzState) error {
+	now := f.now
+	if now == nil {
+		now = time.Now
+	}
+	start := now()
 	for {
 		done := true
-		for _, h := range hs {
-			if ran[h.test] < *cases {
+		for _, h := range f.hs {
+			if st.ran[h.test] < f.cases {
 				done = false
 			}
 		}
-		if done || time.Since(start) >= limit {
+		el := now().Sub(start)
+		if done || st.prior+el >= f.limit {
+			st.pass = true
 			break
 		}
-		for _, h := range hs {
-			if ran[h.test] >= *cases {
+		if f.shard > 0 && el >= f.shard {
+			break
+		}
+		for _, h := range f.hs {
+			if st.ran[h.test] >= f.cases {
 				continue
 			}
-			t0 := time.Now()
-			run := func() ([]byte, error) {
-				cmd := exec.Command("go", "test", "./internal/stdtest", "-run", "^"+h.test+"$", "-count=1", "-v", "-timeout", "2h")
-				cmd.Env = append(os.Environ(),
-					fmt.Sprintf("%s_SEED=%d", h.env, seed),
-					fmt.Sprintf("%s_N=%d", h.env, *batch),
-					fmt.Sprintf("%s_BACKENDS=%s", h.env, *backends))
-				return cmd.CombinedOutput()
-			}
-			b, err := run()
+			t0 := now()
+			b, err := f.run(h, st.seed, f.batch, f.backends)
 			if err != nil && killedUnchecked(string(b)) {
 				// the host killed the seed's test program before it checked a
 				// case (idna seeds 40 and 33 on host 2, 2026-11-14 and 15: each
 				// passed alone at 3 GB): run the seed once more, and say so in
 				// the evidence; a mismatch or a second kill still fails
-				line := fmt.Sprintf("- %s seed %d: killed before any case was checked (the host); run again", h.test, seed)
-				log = append(log, line)
+				line := fmt.Sprintf("- %s seed %d: killed before any case was checked (the host); run again", h.test, st.seed)
+				st.log = append(st.log, line)
 				fmt.Println(line)
-				b, err = run()
+				b, err = f.run(h, st.seed, f.batch, f.backends)
 			}
 			if why := notRun(h.test, string(b)); err == nil && why != "" {
 				err = fmt.Errorf("%s %s", h.test, why)
@@ -419,35 +520,47 @@ func fuzz(args []string) error {
 				if len(tail) > 20000 {
 					tail = tail[len(tail)-20000:]
 				}
-				return fmt.Errorf("%s seed %d (%d cases on %s) failed after %d cases: %v\n%s", h.test, seed, *batch, *backends, ran[h.test], err, tail)
+				return fmt.Errorf("%s seed %d (%d cases on %s) failed after %d cases: %v\n%s", h.test, st.seed, f.batch, f.backends, st.ran[h.test], err, tail)
 			}
-			ran[h.test] += *batch
-			line := fmt.Sprintf("- %s seed %d: %d cases on %s, %s", h.test, seed, *batch, *backends, time.Since(t0).Round(time.Second))
-			log = append(log, line)
+			st.ran[h.test] += f.batch
+			line := fmt.Sprintf("- %s seed %d: %d cases on %s, %s", h.test, st.seed, f.batch, f.backends, now().Sub(t0).Round(time.Second))
+			st.log = append(st.log, line)
 			fmt.Println(line)
 		}
-		seed++
+		st.seed++
 	}
-	el := time.Since(start)
-	var meas []string
-	for _, h := range hs {
-		meas = append(meas, fmt.Sprintf("%s %d cases per backend", h.test, ran[h.test]))
+	st.prior += now().Sub(start)
+	return nil
+}
+
+// evidence is the fuzz.md text: result pass, or partial with what the next
+// shard resumes (ran, elapsed, shards).
+func (f fuzzRun) evidence(st fuzzState, module, commit, src, host string, hours float64, hostLabel string, at time.Time) string {
+	nb := len(strings.Split(f.backends, ","))
+	var meas, ran []string
+	for _, h := range f.hs {
+		meas = append(meas, fmt.Sprintf("%s %d cases per backend", h.test, st.ran[h.test]))
+		ran = append(ran, fmt.Sprintf("%s=%d", h.test, st.ran[h.test]))
 	}
-	host := *hostLabel
-	if host == "" {
-		host = runtime.GOOS + "/" + runtime.GOARCH
+	result := "pass"
+	if !st.pass {
+		result = "partial"
+	}
+	shards := ""
+	if st.shards > 0 || !st.pass {
+		shards = fmt.Sprintf(" in %d shards", st.shards+1)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "kind: fuzz\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
-	fmt.Fprintf(&b, "command: go run ./scripts/stdproven fuzz -cases %d -hours %g -batch %d -backends %s -host %q %s\n", *cases, *hours, *batch, *backends, *hostLabel, module)
-	fmt.Fprintf(&b, "measure: %s, %d backends (%s), %s, 0 mismatches\n", strings.Join(meas, "; "), nb, *backends, el.Round(time.Second))
-	fmt.Fprintf(&b, "seeds: %d to %d\n\n", first, seed-1)
-	fmt.Fprintf(&b, "Long fuzz evidence (decision 0616): every harness that names std/%s, against Go's package, with fresh seeds of %d cases each.\n\n", module, *batch)
-	b.WriteString(strings.Join(log, "\n") + "\n")
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
+	fmt.Fprintf(&b, "kind: fuzz\nmodule: %s\nresult: %s\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, result, commit, src, at.UTC().Format("2006-01-02"), host)
+	fmt.Fprintf(&b, "command: go run ./scripts/stdproven fuzz -cases %d -hours %g -batch %d -backends %s -host %q %s\n", f.cases, hours, f.batch, f.backends, hostLabel, module)
+	fmt.Fprintf(&b, "measure: %s, %d backends (%s), %s%s, 0 mismatches\n", strings.Join(meas, "; "), nb, f.backends, st.prior.Round(time.Second), shards)
+	fmt.Fprintf(&b, "seeds: %d to %d\n", st.first, st.seed-1)
+	if !st.pass || st.shards > 0 {
+		fmt.Fprintf(&b, "ran: %s\nelapsed: %d\nshards: %d\n", strings.Join(ran, ","), int(st.prior.Seconds()), st.shards+1)
 	}
-	return os.WriteFile(out, []byte(b.String()), 0o644)
+	fmt.Fprintf(&b, "\nLong fuzz evidence (decision 0616): every harness that names std/%s, against Go's package, with fresh seeds of %d cases each.\n\n", module, f.batch)
+	b.WriteString(strings.Join(st.log, "\n") + "\n")
+	return b.String()
 }
 
 func gitOut(args ...string) (string, error) {

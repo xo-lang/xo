@@ -915,10 +915,21 @@ the module (scripts/stdproven harnesses) with fresh seeds until 1,000,000
 cases per backend or 8 hours, and writes `fuzz.md`; a seed whose test program the host killed before it checked a case (`signal: killed; 0 passed, 0 failed`) runs once more, logged in `fuzz.md`, and a mismatch or a second kill fails the run (2026-11-15). Long runs go to host 2
 outside the lane: `~/xo-lead/agents/stdproven-offload.sh WORKTREE NAME --
 fuzz -host "linux/arm64 host 2" MODULE` (run it from a commit on main, so
-the evidence names one). Several runs go as one job, on one xo build:
+the evidence names one). A fuzz goes in shards so gates start between
+them (lead, 2026-11-16, #98: an 8 hour run outside the lane holds host 2's
+memory gates off): `SP_SHARD_MIN=55 stdproven-offload.sh WT NAME -- fuzz
+-host "linux/arm64 host 2" MODULE` runs `stdproven fuzz -minutes 55`
+shards, each a lease in the host's lane (OFF_MAX_MIN 75); a shard writes
+`result: partial` with `ran:`, `elapsed:` and `shards:` lines, which the
+loop commits in WT for the next shard to resume (same source hash: the
+counts, time, seeds and log carry on), until `result: pass` at 1,000,000
+cases per backend or 8 hours over every shard. stdcov counts only
+`result: pass`. Several runs go as one job, on one xo build:
 `stdproven-offload.sh WT NAME -- batch fuzz -host "linux/arm64 host 2" url
 + race url + stress url + fuzz html`; every evidence file comes back and a
-failing run does not stop the others. The runner's "commit first" checks
+failing run does not stop the others; a batch is one job under
+offload.sh's 180 minute OFF_MAX_MIN and returns its files only at the end
+(gotchas/stdproven-batch-180-minute-cap.md). The runner's "commit first" checks
 leave std/evidence out, so one worktree serves run after run. The source
 hash follows std modules, their std/native files and module specific
 llrt files, and std/internal.xo, but stops at the runtime (decision 0616
