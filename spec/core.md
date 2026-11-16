@@ -1329,8 +1329,10 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   the options `zigzag` (sint32, sint64), `fixed` (fixed and sfixed types) and
   `unpacked` (a List of numbers, Bools or enums written one key per element,
   proto2's default `repeated` form) after a comma. A field of type Int, Int32, UInt32, UInt64, Float, Float32,
-  Bool, Str, Bytes, an Int valued enum of the same file, or a struct that
-  derives Proto maps to the scalar or message of that name; an Option is a
+  Bool, Str, Bytes, an Int valued enum, or a struct that derives Proto (of
+  any file of the package, or `m.T` of an imported module: its generated
+  functions are m's, so a struct of another package is `pub`) maps to the
+  scalar or message of that name; an Option is a
   field with explicit presence, a List is repeated (numbers and Bool packed
   unless `unpacked`; the reader accepts both forms), and a Map keyed by Int, Str or Bool is a
   map field. An enum with one payload field per variant (`Circle as "2"(r: Int)`)

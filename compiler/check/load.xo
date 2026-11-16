@@ -82,6 +82,13 @@ pub struct Checker {
   /// why the records were not used, for XO_CACHE_STATS ("" when used)
   pub std_export_why: Str = ""
   pub tree_pending: Map[Int, (List[Int], Int)] = {}
+  /// load_dir's files whose derive expansion waits until every file of
+  /// the module is parsed and its imports are loaded (derive Proto reads
+  /// the Int enums of the module's other files and of the modules it
+  /// imports, decision 0683 item 4): (file, parse) per file, while
+  /// defer_on
+  defer_derive: List[(Int, parser.ParseResult)] = []
+  defer_on: Bool = false
   /// decision 0428: a record file's declarations parsed one range at a
   /// time (ensure_decl) while the file stays unloaded, its ast.decls
   /// empty; the driver sets it with trees_lazy unless XO_STD_DECL_PARSE=off
@@ -1509,7 +1516,11 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   // signature file, and its valued enums get their methods like any
   // module's (decision 0269 part 4)
   if !sig || !c.mods[m].c_decl.is_empty() {
-    c.add_derived_file(m, path, f, r)
+    if c.defer_on {
+      c.defer_derive.push((f, r))
+    } else {
+      c.add_derived_file(m, path, f, r)
+    }
   }
 }
 
@@ -1937,6 +1948,10 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
   // whose binding only a build with a C compiler writes; without it the
   // check stopped (gotchas/std-store-build-use-c-module.md)
   let std_native = !c.std_dir.is_empty() && c.abs(dir) == c.abs(join(c.std_dir, "native"))
+  // (nothing loads another module while the files parse, so no outer
+  // load_dir's list is pending here)
+  c.defer_on = true
+  c.defer_derive = []
   for n in names.sort() {
     let p = join(dir, n)
     let src = match c.overlay.get(c.abs(p)) {
@@ -1957,11 +1972,22 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
     }
     c.parse_into(m, p, src, false)
   }
+  let deferred = c.defer_derive
+  c.defer_derive = []
+  c.defer_on = false
   // embed constants become literals before anything reads the module
   // (decision 0304)
   c.expand_embeds(m)
   c.mods[m].state = 1
   c.load_imports(m)
+  // derive expands once the module's files and imports are known (derive
+  // Proto's enums of other files and packages, decision 0683 item 4);
+  // the generated files' imports load after them
+  let n0 = c.mods[m].files.len()
+  for (f, r) in deferred {
+    c.add_derived_file(m, c.files[f].path, f, r)
+  }
+  c.load_imports_from(m, n0)
   c.mods[m].state = 2
   c.order.push(m)
   m
@@ -1969,7 +1995,13 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
 
 /// Resolves each file's `use` declarations, loading modules as needed.
 fn (var c: Checker) load_imports(m: Int) {
-  for f in c.mods[m].files {
+  c.load_imports_from(m, 0)
+}
+
+/// load_imports of module m's files from index from on (the derived
+/// files load_dir adds after the others' imports).
+fn (var c: Checker) load_imports_from(m: Int, from: Int) {
+  for f in c.mods[m].files[from..] {
     for u in c.files[f].ast.imports {
       if u.path.is_empty() {
         continue

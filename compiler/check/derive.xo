@@ -1871,6 +1871,26 @@ fn skip_zero_text(tx: Str) -> Str {
   }
 }
 
+/// The Int valued enums of decls into out, keyed by prefix + name: "open"
+/// with a catch-all variant, else the first variant (derive Proto).
+fn int_enums_into(decls: List[parser.Decl], prefix: Str, var out: Map[Str, Str]) {
+  for d in decls {
+    if let EnumDecl(ed) = d {
+      if let Some(vt) = ed.value_type {
+        if text(vt.name) == "Int" && !ed.variants.is_empty() {
+          var open = false
+          for v in ed.variants {
+            if v.fields != None {
+              open = true
+            }
+          }
+          out["${prefix}${text(ed.name.name)}"] = if open { "open" } else { text(ed.variants[0].name.name) }
+        }
+      }
+    }
+  }
+}
+
 /// How derive Proto writes and reads one element type: wire type, the expression that appends the
 /// value $V to the buffer $B, the reader function, the value from the read result $X, and the test
 /// that $V is not the proto3 default.
@@ -1940,9 +1960,15 @@ fn proto_elem(tx: Str, po: ProtoOpts, enums: Map[Str, Str]) -> ProtoElem? {
   if tx == "Bytes" {
     return Some(ProtoElem{wire: 2, enc: "protobuf.put_bytes($B, $V)", rd: "protobuf.read_bytes", conv: "$X", nonzero: "$V.len() > 0", zero: "b\"\"", packable: false, merge: "", size: "protobuf.size_varint(UInt64.wrapping_from($V.len())) + $V.len()"})
   }
-  if !tx.is_empty() && !tx.contains("[") && tx.bytes()[0] >= 65 && tx.bytes()[0] <= 90 {
-    // a struct deriving Proto (its generated functions must exist; a plain field is always written)
-    return Some(ProtoElem{wire: 2, enc: "proto_cwrite__${tx}($B, $V, sz__, at__)", rd: "protobuf.read_bytes", conv: "proto_mergedepth__${tx}(proto_zero__${tx}(), $X, d__ - 1, du__)?", nonzero: "true", zero: "proto_zero__${tx}()", packable: false, merge: "proto_mergedepth__${tx}($R, $X, d__ - 1, du__)?", size: "proto_csize__${tx}($V, sz__)"})
+  // a struct deriving Proto (its generated functions must exist; a plain
+  // field is always written), of this package or, as `q.T`, of an imported
+  // one, whose generated functions are q's (a pub struct's are pub,
+  // decision 0683 item 4)
+  let dot = tx.find(".") ?? -1
+  let q = if dot > 0 { tx[..dot + 1] } else { "" }
+  let n = if dot > 0 { tx[dot + 1..] } else { tx }
+  if !n.is_empty() && !n.contains("[") && !n.contains(".") && n.bytes()[0] >= 65 && n.bytes()[0] <= 90 && (q.is_empty() || (q.bytes()[0] >= 97 && q.bytes()[0] <= 122)) {
+    return Some(ProtoElem{wire: 2, enc: "${q}proto_cwrite__${n}($B, $V, sz__, at__)", rd: "protobuf.read_bytes", conv: "${q}proto_mergedepth__${n}(${q}proto_zero__${n}(), $X, d__ - 1, du__)?", nonzero: "true", zero: "${q}proto_zero__${n}()", packable: false, merge: "${q}proto_mergedepth__${n}($R, $X, d__ - 1, du__)?", size: "${q}proto_csize__${n}($V, sz__)"})
   }
   None
 }
@@ -2180,7 +2206,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       }
     }
     let el = proto_elem(tx, po, enums) ?? {
-      c.error_at(file, "XO0425", fl.name.span, "`derive Proto` maps an Int, Int32, UInt32, UInt64, Float, Float32, Bool, Str, Bytes, an Int valued enum of the same file or a struct deriving Proto, alone or in an Option or List; `${f}` is not one (decision 0530)")
+      c.error_at(file, "XO0425", fl.name.span, "`derive Proto` maps an Int, Int32, UInt32, UInt64, Float, Float32, Bool, Str, Bytes, an Int valued enum or a struct deriving Proto (of this package, or `m.T` of an imported one), alone or in an Option or List; `${f}` is not one (decision 0530)")
       ok = false
       continue
     }
@@ -2877,23 +2903,28 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
       }
     }
   }
-  // Int valued enums of this file: "open" with a catch-all variant, else the first variant
+  // Int valued enums: "open" with a catch-all variant, else the first
+  // variant; this file's, the module's other files' (load_dir expands
+  // derive after parsing them all) and, as `q.K`, the modules this file
+  // imports (decision 0683 item 4; their files are loaded by then)
   var penums: Map[Str, Str] = {}
-  for d in f.decls {
-    if let EnumDecl(ed) = d {
-      if let Some(vt) = ed.value_type {
-        if text(vt.name) == "Int" && !ed.variants.is_empty() {
-          var open = false
-          for v in ed.variants {
-            if v.fields != None {
-              open = true
-            }
+  if file >= 0 && file < c.files.len() {
+    for (name, imp) in c.files[file].imports {
+      if imp.module >= 0 && imp.module != c.files[file].module {
+        for g in c.mods[imp.module].files {
+          if !c.files[g].generated {
+            int_enums_into(c.files[g].ast.decls, "${text(name)}.", penums)
           }
-          penums[text(ed.name.name)] = if open { "open" } else { text(ed.variants[0].name.name) }
         }
       }
     }
+    for g in c.mods[c.files[file].module].files {
+      if g != file && !c.files[g].generated {
+        int_enums_into(c.files[g].ast.decls, "", penums)
+      }
+    }
   }
+  int_enums_into(f.decls, "", penums)
   for d in f.decls {
     let sd = match d {
       StructDecl(s) => s

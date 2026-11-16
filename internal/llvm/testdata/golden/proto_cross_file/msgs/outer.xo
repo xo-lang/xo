@@ -1,0 +1,17 @@
+use std/protowkt
+
+pub struct Outer {
+  pub name proto "1": Str
+  inner proto "2": Inner
+  pub kind proto "3": Kind
+  pub kinds proto "4": List[Kind]
+  pub at proto "5": protowkt.Timestamp
+} derive Proto
+
+pub fn make(name: Str, n: Int) -> Outer {
+  Outer{name: name, inner: Inner{n: n}, kind: Kind.Two, kinds: [Kind.Zero, Kind.Two], at: protowkt.Timestamp{seconds: 1700000000, nanos: 5}}
+}
+
+pub fn inner_n(o: Outer) -> Int { o.inner.n }
+
+pub fn kind_value(o: Outer) -> Int { o.kind.value() }

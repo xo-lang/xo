@@ -1,0 +1,21 @@
+// derive Proto across files and packages (decision 0683 item 4): msgs's
+// Outer has an Int enum and a non-pub struct of another file of msgs, and
+// a std/protowkt Timestamp (a struct of another package that derives
+// Proto); this file's Wrap holds msgs.Outer values (a struct of another package).
+use std/protobuf
+use github.com/xo-lang/xo/internal/llvm/testdata/golden/proto_cross_file/msgs
+
+struct Wrap {
+  outer proto "1": msgs.Outer
+  more proto "2": List[msgs.Outer]
+} derive Proto
+
+fn main(os: Os) {
+  let o = msgs.make("x", 9)
+  let back = protobuf.unmarshal[msgs.Outer](protobuf.marshal(o)).or_fault("decode")
+  os.stdio.println("${back.name} inner ${msgs.inner_n(back)} kind ${msgs.kind_value(back)} kinds ${back.kinds.len()} at ${back.at.seconds} ${back.at.nanos}")
+  let w = Wrap{outer: o, more: [msgs.make("y", 1), msgs.make("z", 2)]}
+  let bytes = protobuf.marshal(w)
+  let wb = protobuf.unmarshal[Wrap](bytes).or_fault("decode wrap")
+  os.stdio.println("wrap ${bytes.len()} bytes: ${wb.outer.name} ${wb.more.len()} ${wb.more[1].name} ${msgs.inner_n(wb.more[1])}")
+}

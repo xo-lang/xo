@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+x inner 9 kind 2 kinds 2 at 1700000000 5
+wrap 75 bytes: x 2 z 2
+--- stderr

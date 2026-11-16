@@ -1,0 +1,11 @@
+// The types of another file of the msgs package (decision 0683 item 4):
+// before, derive Proto in msgs/outer.xo took an Int enum of its own file
+// only (XO0601 proto_mergedepth__Kind) and a non-pub struct's helpers.
+struct Inner {
+  n proto "1": Int
+} derive Proto
+
+enum Kind: Int {
+  Zero = 0
+  Two = 2
+}

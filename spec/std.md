@@ -10766,8 +10766,9 @@ fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate o
 - `gen_set` generates files that import one another (`xo proto gen` passes every file it is given): a type resolves
   in the file's own package scopes, then in the files it imports (matched by path, or a path ending in `/` and the
   import) and their `import public` files. A field typed by an enum of another file, or by a type outside the set
-  (google/protobuf's well-known types among them), is an error: `derive Proto` takes an enum of the same file and a
-  struct of the same package only.
+  (google/protobuf's well-known types among them), is an error. `derive Proto` itself takes both since decision 0683
+  item 4 (an enum of another file of the package, a struct of an imported package such as std/protowkt's); mapping
+  them in `gen_set` is std/protoparse's follow-up.
 
 ## 71. std/htmltok
 

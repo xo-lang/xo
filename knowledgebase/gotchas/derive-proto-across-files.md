@@ -1,6 +1,6 @@
 # derive Proto across files: private types, enums and other packages
 
-Status: Observed 2026-11-16 (task #102, xo proto gen with imports)
+Status: Observed 2026-11-16 (task #102, xo proto gen with imports); the derive Proto half fixed 2026-11-16 (task #127)
 
 ## Symptom
 
@@ -23,3 +23,22 @@ is never used` in every generated file, a single one included.
 std/protoparse writes `pub` types and fields and no `use` line (cmd/xo TestProtoGenBuilds builds the
 output), and `gen_set` refuses an enum of another file or a type outside the set with a clear error.
 An enum of another file and the well-known types need derive Proto changes in compiler/check/derive.xo.
+
+## Compiler fix (2026-11-16, task #127, decision 0683 item 4)
+
+derive expanded each file as it was parsed, before the module's other
+files and its imports were loaded, so it could only see its own file.
+load_dir (compiler/check/load.xo) now parses all of a module's files,
+loads their imports, then expands derive and loads the generated files'
+imports. derive Proto takes the Int enums of every file of the package,
+and `m.K` / `m.T` of an imported module (its generated `m.proto_*__T`
+functions; a pub struct's are pub). A non-pub struct of another file
+of the same package worked once the enum did (its helpers are package
+members). Golden proto_cross_file (a sub-package with two files and a
+std/protowkt Timestamp field; XO0425 and XO0601 before). Still open:
+std/protoparse's gen_set refuses these types (std's side).
+
+How to avoid: a derive that reads another declaration must not assume
+the declaration is in the same file; derive expansion runs after the
+module's imports load (std modules still expand file by file).
+

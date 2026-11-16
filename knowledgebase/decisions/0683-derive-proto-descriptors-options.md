@@ -139,3 +139,12 @@ left and a DiscardUnknown flag that nested messages inherit. The
 recursion limit itself and its 8,000,000 level test landed earlier with
 #132 (3284ae078). Golden proto_options. Items 4 and 2 are next.
 
+## Addendum 2026-11-16 (2): item 4 landed (Xo Lang 1, task #127)
+
+derive Proto takes an Int enum of any file of the package and a type of an
+imported module (`protowkt.Timestamp`, an imported package's enum as
+`m.K`): load_dir expands derive after the module's files parse and its
+imports load. Golden proto_cross_file. std/protoparse's gen_set still
+refuses these types; mapping `google/protobuf/*.proto` onto std/protowkt
+is std's (Xo Lang 3). Item 2 (the descriptor) is next.
+
