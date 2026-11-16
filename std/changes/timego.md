@@ -1,5 +1,18 @@
 # std/timego changes
 
+## 2026-11-16: fix: parse checks a day of year's range after the text, as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #116, timego fuzz seed 27 (layout "2006 002", input "2023 4345")
+- Go reference: time.Parse stdUnderYearDay/stdZeroYearDay (any one to three digit day; the range is checked after the whole text)
+- Test: std/timego_test.xo "parse matches Go" ("2023 4345" is extra text, "2023 434" is day-of-year out of range; it failed before on arm64)
+- Shipped in: not yet released
+
+A day of year out of range followed by more text gave "day-of-year out
+of range"; Go reports the extra text first. The range check now runs only
+after the whole text is read.
+
 ## 2026-11-16: fix: parse reads a signed two digit year as Go does
 
 - Kind: fix

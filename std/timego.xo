@@ -328,10 +328,10 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
         }
       }
       let (x, q) = getnum3(v, p, k == YDAY_ZERO)
+      // any one to three digit day: Go checks the range after the whole text, so extra text is reported first
+      // (#116, timego fuzz seed 27: "2023 4345" against "2006 002")
       if x < 0 {
         bad = "expected day of year"
-      } else if x < 1 || x > 366 {
-        bad = "day-of-year out of range"
       } else {
         yday = x
         p = q

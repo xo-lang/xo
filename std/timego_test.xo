@@ -52,6 +52,15 @@ test "parse matches Go" {
   // a signed two digit year (Go's atoi; timego fuzz seed 20): "-3" is 1997, "+3" is 2003
   expect(parse("-3-4-6", "06-1-2", z).or_fault("p8")) == parse("1997-04-06", "2006-01-02", z).or_fault("p9")
   expect(parse("+3-4-6", "06-1-2", z).or_fault("p10")) == parse("2003-04-06", "2006-01-02", z).or_fault("p11")
+  // the day of year's range is checked after the text: extra text first (timego fuzz seed 27)
+  match parse("2023 4345", "2006 002", z) {
+    Ok(_) => fault("p12 parsed")
+    Err(e) => expect(e.go_kind) == 2
+  }
+  match parse("2023 434", "2006 002", z) {
+    Ok(_) => fault("p13 parsed")
+    Err(e) => expect(e.go_msg) == "day-of-year out of range"
+  }
 }
 
 test "the layout constants are Go's" {
