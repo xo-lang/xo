@@ -918,7 +918,7 @@ failing run does not stop the others. The runner's "commit first" checks
 leave std/evidence out, so one worktree serves run after run. The source
 hash follows std modules, their std/native files and module specific
 llrt files, and std/internal.xo, but stops at the runtime (decision 0616
-section 3, amended 2026-11-14). Security reviews follow
+section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prelude.xo, std/native/prelude.xo, rt.xo and the llrt core), and its perf evidence comes from the Str, Bytes, List and Map benches scripts/stdproven's perfOwners names (sort, strsplit, bytessearch and the rest; 2026-11-16). Security reviews follow
 [std-security-checklist.md](std-security-checklist.md). Last verified:
 2026-11-14.
 

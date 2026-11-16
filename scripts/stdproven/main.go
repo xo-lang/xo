@@ -244,6 +244,16 @@ func sourceHash(module string) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if module == "prelude" {
+		// the prelude is the runtime's entry: its hash is the runtime the
+		// others stop at (std/prelude.xo, std/native/prelude.xo, rt.xo and
+		// the llrt core), so any runtime change dates its evidence
+		for p := range rt {
+			if _, err := os.Stat(p); err == nil {
+				seen[p] = true
+			}
+		}
+	}
 	if len(seen) == 0 {
 		return "", nil, fmt.Errorf("no std/%s.xo or std/native/%s.xo (run from the repository root)", module, module)
 	}
@@ -938,8 +948,12 @@ func stressCheckOnly(module, dir string, minutes, tasks int, host string) error 
 
 // perfOwners names the module of a bench/perf directory whose name starts
 // with no module's: the primitives of std/crypto (its AEADs, SHA-3, BLAKE2b,
-// ML-KEM and Ed25519) are benched by algorithm.
-var perfOwners = map[string]string{"aead": "crypto", "blake2b": "crypto", "aesgcm": "crypto", "aesmodes": "crypto", "chacha": "crypto", "sha3": "crypto", "mlkem": "crypto", "ed25519": "crypto"}
+// ML-KEM and Ed25519) are benched by algorithm, and the prelude's Str,
+// Bytes, BytesBuilder, List and Map methods and number text by what they do
+// (task #87, 2026-11-16).
+var perfOwners = map[string]string{"aead": "crypto", "blake2b": "crypto", "aesgcm": "crypto", "aesmodes": "crypto", "chacha": "crypto", "sha3": "crypto", "mlkem": "crypto", "ed25519": "crypto",
+	"bytebuf": "prelude", "bytespredicate": "prelude", "bytessearch": "prelude", "bytessplit": "prelude", "bytestransform": "prelude", "mapiter": "prelude",
+	"repeat": "prelude", "sort": "prelude", "strconv": "prelude", "strsplit": "prelude", "trimchars": "prelude", "unicode": "prelude"}
 
 // perfOwner is the std module a bench/perf directory measures: the one
 // perfOwners names, else the longest std module name (std/NAME.xo) its

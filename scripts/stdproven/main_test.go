@@ -59,10 +59,34 @@ func TestSourceHashStopsAtRuntime(t *testing.T) {
 	}
 }
 
+// TestPreludeHash: the prelude's source hash covers the runtime it is the
+// entry of (the other modules' hashes stop there).
+func TestPreludeHash(t *testing.T) {
+	if _, err := os.Stat("std/prelude.xo"); err != nil {
+		// run alone: the package directory, not the root an earlier test moved to
+		if err := os.Chdir("../.."); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, files, err := sourceHash("prelude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := map[string]bool{}
+	for _, f := range files {
+		has[filepath.ToSlash(f)] = true
+	}
+	for _, want := range []string{"std/prelude.xo", "std/native/prelude.xo", "std/native/rt.xo", "std/native/llrt/alloc.xo"} {
+		if !has[want] {
+			t.Errorf("prelude hash files %d, missing %s", len(files), want)
+		}
+	}
+}
+
 // TestPerfOwner: a bench/perf directory is the longest std module's its
 // name starts with, or the one perfOwners names.
 func TestPerfOwner(t *testing.T) {
-	for dir, want := range map[string]string{"html": "html", "htmlparse": "htmlparse", "htmltok": "htmltok", "jsontoken": "json", "timeformat-cache": "time", "url": "url", "aesgcm": "crypto", "ed25519": "crypto"} {
+	for dir, want := range map[string]string{"html": "html", "htmlparse": "htmlparse", "htmltok": "htmltok", "jsontoken": "json", "timeformat-cache": "time", "url": "url", "aesgcm": "crypto", "ed25519": "crypto", "sort": "prelude", "strsplit": "prelude", "bytessearch": "prelude"} {
 		if got := perfOwner(dir); got != want {
 			t.Errorf("perfOwner(%q) = %q, want %q", dir, got, want)
 		}
