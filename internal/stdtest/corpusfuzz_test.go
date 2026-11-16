@@ -60,3 +60,20 @@ func TestHtmlparseFuzz(t *testing.T)    { corpusFuzz(t, "htmlparse", "HTMLPARSEF
 func TestHtmltokFuzz(t *testing.T)      { corpusFuzz(t, "htmltok", "HTMLTOKFUZZ") }
 func TestPublicsuffixFuzz(t *testing.T) { corpusFuzz(t, "publicsuffix", "PUBLICSUFFIXFUZZ") }
 func TestRandomFuzz(t *testing.T)       { corpusFuzz(t, "random", "RANDOMFUZZ") }
+
+// Seeds that found a bug in a generator, kept as tests of their own (#116).
+
+// TestBrotliFuzzSeed182: a quality 10 input whose stream from Go on arm64
+// had a fused multiply-add choose other blocks (the oracle now runs with
+// fusion off, as Go on amd64 and Xo run).
+func TestBrotliFuzzSeed182(t *testing.T) {
+	t.Setenv("XO_BROTLIFUZZ_SEED", "182")
+	corpusFuzz(t, "brotli", "BROTLIFUZZ")
+}
+
+// TestRandomFuzzSeed4: a Zipf imax past Int's range, which the generator
+// wrote as a literal that did not compile.
+func TestRandomFuzzSeed4(t *testing.T) {
+	t.Setenv("XO_RANDOMFUZZ_SEED", "4")
+	corpusFuzz(t, "random", "RANDOMFUZZ")
+}

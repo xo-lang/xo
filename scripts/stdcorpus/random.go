@@ -123,10 +123,17 @@ func randomZipfParams() zipfParams {
 		if r.IntN(10) == 0 {
 			v = r.Float64() * 1.2 // and v < 1
 		}
+		// Xo's zipf takes imax as an Int: a draw past Int's range (a shift
+		// of 0 with the top bit set; seed 4, #116) is halved, with the same
+		// draws taken, so seed 1's corpus is unchanged
+		imax := r.Uint64() >> r.IntN(64)
+		if imax > math.MaxInt64 {
+			imax >>= 1
+		}
 		ps = append(ps, struct {
 			s, v float64
 			imax uint64
-		}{s, v, r.Uint64() >> r.IntN(64)})
+		}{s, v, imax})
 	}
 	return ps
 }

@@ -1,5 +1,20 @@
 # std/timego changes
 
+## 2026-11-16: fix: parse takes an offset in the text over a zone name
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #116, timego fuzz seed 8 (layout "2006-01-02T15:04:05Z07:00 MST", input "2017-02-01T16:26:03-09:30 ZZZ")
+- Go reference: time.parse (zoneOffset is applied before zoneName)
+- Test: std/timego_test.xo "parse matches Go" (the seed 8 case; it failed before on arm64)
+- Shipped in: not yet released
+
+A text with both a numeric offset and a zone name that the location does
+not know used the zone name's rule (a fixed zone with an unknown offset,
+so UTC) and ignored the offset: "16:26:03-09:30 ZZZ" parsed as 16:26:03
+UTC, 9 h 30 min early. Go applies the offset when the text has one and
+reads the name only for the zone's label; parse now does the same.
+
 ## 2026-11-14: perf: format writes one and two byte separators in one store; parse borrows its layout, input and zone (native)
 
 - Kind: perf

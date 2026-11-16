@@ -25,6 +25,14 @@ Compute the reference with each product rounded on its own:
 `float64(a*b)` blocks fusion (Go spec, Floating-point operators). For a
 library function, copy its code into the generator with those
 conversions (scripts/stdcorpus/random.go zipfStrict) and keep the
-committed corpus byte-identical to prove the copy is faithful. See also
+committed corpus byte-identical to prove the copy is faithful. For a
+whole library (a module oracle such as scripts/stdcorpus/brotlioracle),
+build it with fusion off: `go run -gcflags=all=-d=fmahash=n .` (the
+compiler's FMA bisect switch; "n" matches no site, so nothing fuses, and
+it prints "fmahash triggered [DISABLED]" lines on stderr). TestBrotliFuzz
+seed 182 (2026-11-16): a quality 10 stream was 5203 bytes from Go on
+arm64 and 5202 from Go on amd64, from Go on arm64 with fusion off and
+from Xo, all three identical; the encoder's float cost model chose other
+blocks. See also
 go-backend-fma-contraction.md and go-backend-fused-float.md (the same
 fusion in the Go backend's output).

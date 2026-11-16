@@ -553,13 +553,22 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
   if day < 1 || day > days_in(month, year) {
     return Err(perr_go(s, l.text, p, "day out of range", 3, "", "", "day out of range"))
   }
-  if have_off && zname == "" && year >= 1678 && year <= 2261 {
+  // an offset in the text wins over a zone name, as in Go's parse (zoneOffset is checked before zoneName; #116,
+  // timego fuzz seed 8: "-09:30 ZZZ")
+  if have_off && year >= 1678 && year <= 2261 {
     return Ok(unix_time(year, month, day, hour, minute, sec, nsec, off))
   }
   let clock = time.ClockTime{hour: hour, minute: minute, second: sec, nanos: nsec}
   let d = match time.date(year, month, day) {
     Ok(d) => d
     Err(e) => return Err(perr(s, l.text, p, "range: " + e.display()))
+  }
+  if have_off {
+    let t = match time.instant(d, clock, time.utc(), time.Ambiguity.Earlier) {
+      Ok(t) => t
+      Err(e) => return Err(perr(s, l.text, p, "range: " + e.display()))
+    }
+    return Ok(t - Duration.from_secs_int(off))
   }
   if zname != "" {
     // a zone name: the zone's own offset when it was in effect, else a fixed zone with an unknown offset (GMT+N
@@ -587,13 +596,6 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
       secs = (if neg { -x } else { x }) * 3600
     }
     return Ok(t - Duration.from_secs_int(secs))
-  }
-  if have_off {
-    let t = match time.instant(d, clock, time.utc(), time.Ambiguity.Earlier) {
-      Ok(t) => t
-      Err(e) => return Err(perr(s, l.text, p, "range: " + e.display()))
-    }
-    return Ok(t - Duration.from_secs_int(off))
   }
   match time.instant(d, clock, z, time.Ambiguity.Earlier) {
     Ok(t) => Ok(t)
