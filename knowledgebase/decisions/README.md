@@ -661,4 +661,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0669](0669-userspace-chacha8-rand.md): Proposed (Xo Lang 1, 2026-11-15): the native Rand draws from a per-thread ChaCha8 keystream with fast key erasure, seeded and reseeded from the OS (after fork and per thread); std/crypto key generation stays OS-direct
 - [0670](0670-ui-page-layer.md): Accepted (owner, 2026-11-15): std/ui page layer like Turbo Drive: server pages that load the runtime (`ui.plain`, `data-xo-page`), GET forms in place with search as you type, POST forms with 303/422, frames
 - [0671](0671-list-filled.md): Proposed (Xo Lang 3, 2026-11-15): List[T].filled(n, x) makes n copies of x in bulk (Go's make plus a fill) on every backend (stub)
-- [0672](0672-ui-viewer-state.md): Proposed (owner session, 2026-11-15): std/ui per-viewer state, layer 3 (stub)
+- [0672](0672-ui-viewer-state.md): Proposed (owner session, 2026-11-16): std/ui per-viewer state: tab state from the URL (stateless on the server) and user state in a log per principal, beside the shared model; draft, prototype next
