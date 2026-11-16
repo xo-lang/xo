@@ -1,5 +1,19 @@
 # std/dns changes
 
+## 2026-11-16: fix: a name with a "." byte inside a label makes the answer malformed, as Go's dnsmessage says
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (TestDnsFuzz seed 11 case 1440 on linux/arm64 host 3, task #115)
+- Go reference: net.Resolver over golang.org/x/net/dns/dnsmessage (Name.unpack refuses a label holding '.', golang/go#56246: "cannot unmarshal DNS message")
+- Test: internal/stdtest TestDnsAnswerErrors (a PTR and an MX answer whose name has the label "bad_.ame"); TestDnsFuzz
+- Shipped in: not yet released
+
+The name reader took a label's bytes as they came, so an MX, SRV, PTR or TXT answer naming
+`\x08bad_.ame\x07example\x00` was returned as the host "bad_.ame.example.", a text that reads as three
+labels, not two. Go refuses such a name, and with it the message; std/dns now does the same
+("cannot unmarshal DNS message").
+
 ## 2026-11-16: fix: the TCP retry of a truncated answer waits in the task, not the worker thread
 
 - Kind: fix

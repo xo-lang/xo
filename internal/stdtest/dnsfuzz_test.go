@@ -641,6 +641,10 @@ func TestDnsAnswerErrors(t *testing.T) {
 		{qtype: dnfTXT, rcode: 5},
 		// a byte that is not UTF-8 in the owner name (seed 6 case 1998)
 		{qtype: dnfSRV, answers: [][]byte{dnfRR([]byte("\x04bad\xec\x00"), dnfSRV, append([]byte{0, 1, 0, 60, 255, 255}, dnfName("a-b.example.")...))}},
+		// a "." byte inside a label: Go's dnsmessage refuses the name, and
+		// so the message (golang/go#56246; seed 11 case 1440, task #115)
+		{qtype: dnfPTR, answers: [][]byte{dnfRR(dnfName("@"), dnfPTR, []byte("\x08bad_.ame\x07example\x00"))}},
+		{qtype: dnfMX, answers: [][]byte{dnfRR(dnfName("@"), dnfMX, append([]byte{0, 10}, "\x08bad_.ame\x07example\x00"...))}},
 	}
 	server, stop := dnfServe(t, cases)
 	defer stop()
@@ -676,7 +680,7 @@ func TestDnsAnswerErrors(t *testing.T) {
 	}
 	got := myfBlocksBy(dnfNorm(string(out), server), "== ", lines)
 	want := myfBlocksBy(dnfNorm(dnfGo(server, lines), server), "== ", lines)
-	for i, w := range []string{"error server misbehaving\n", "error server misbehaving\n", "error lame referral\n", "error server misbehaving\n", "error no such host\n", "error cannot unmarshal DNS message\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error SRV header name is invalid\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error SRV header name is invalid\n"} {
+	for i, w := range []string{"error server misbehaving\n", "error server misbehaving\n", "error lame referral\n", "error server misbehaving\n", "error no such host\n", "error cannot unmarshal DNS message\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error SRV header name is invalid\n", "error server misbehaving\n", "error server misbehaving\n", "error server misbehaving\n", "error SRV header name is invalid\n", "error cannot unmarshal DNS message\n", "error cannot unmarshal DNS message\n"} {
 		if want[i] != w {
 			t.Fatalf("case %d: Go's net.Resolver says %q, the test expects %q", i, want[i], w)
 		}

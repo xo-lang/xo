@@ -1190,6 +1190,12 @@ fn read_name_as(m: Bytes, off: Int, low: Bool) -> (Int, Bytes) {
     out.write_byte(UInt8(c))
     for k in 0..c {
       let x = Int(m[i + 1 + k])
+      // a "." inside a label: the name has no text form, and Go's
+      // dnsmessage refuses it, and with it the message (golang/go#56246;
+      // TestDnsFuzz seed 11 case 1440, task #115)
+      if x == 46 {
+        return (-1, b"")
+      }
       out.write_byte(UInt8(if low && x >= 65 && x <= 90 { x + 32 } else { x }))
     }
     i += 1 + c
