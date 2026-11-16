@@ -1,5 +1,18 @@
 # std/charset changes
 
+## 2026-11-16: perf: decode builds its Str without a second UTF-8 check
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88, the w1252_decode row of bench/perf/charset over 1.05 (a profile: the to_str check was 28% of the decode)
+- Go reference: golang.org/x/text/encoding/charmap and unicode decoders (they return the bytes they wrote, unchecked)
+- Test: internal/stdtest/testdata/corpus/charset and std/charset_test.xo (decode of every byte and of invalid UTF-16 against x/text)
+- Timing: bench/perf/charset w1252_decode 1.27 of Go before, 0.87 to 0.93 after (Mac, three runs); the other rows 0.61 to 0.83 (host 1 row to follow)
+
+`decode` wrote every rune it made as its UTF-8 encoding (U+FFFD for
+what is invalid) and then checked the result as UTF-8 again. It now
+takes the bytes as they are. The results are the same.
+
 ## 2026-11-15: feature: UTF-8 steps from the end and stream checks (Go's utf8 DecodeLastRune, DecodeLastRuneInString, FullRune, FullRuneInString, RuneStart)
 
 - Kind: feature

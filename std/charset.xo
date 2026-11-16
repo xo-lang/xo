@@ -13,6 +13,8 @@
 // WHATWG windows-1252 index (Go code: Copyright The Go Authors, BSD-style
 // license; THIRD_PARTY_NOTICES).
 
+use native/rt
+
 /// The encodings. `Utf16Le` and `Utf16Be` write and read no byte order mark
 /// (a U+FEFF at the start is an ordinary character, x/text's IgnoreBOM).
 /// `Utf16Bom` reads a mark (FF FE little endian, FE FF big endian) and
@@ -66,7 +68,7 @@ pub fn decode(data: Bytes, cs: Charset, lossy: Bool = false) -> Str ! CharsetErr
         out.write_rune(r)
         i += size
       }
-      Ok(out.freeze().to_str() ?? "")
+      Ok(utf8_str(out))
     }
     Charset.Utf16Le => decode_utf16(data, 0, false, lossy)
     Charset.Utf16Be => decode_utf16(data, 0, true, lossy)
@@ -94,7 +96,7 @@ pub fn decode(data: Bytes, cs: Charset, lossy: Bool = false) -> Str ! CharsetErr
         out.write_byte(UInt8(0xC0 | (Int(b) >> 6)))
         out.write_byte(UInt8(0x80 | (Int(b) & 63)))
       }
-      Ok(out.freeze().to_str() ?? "")
+      Ok(utf8_str(out))
     }
     Charset.Windows1252 => {
       var out = BytesBuilder.with_capacity(data.len() * 2)
@@ -115,7 +117,7 @@ pub fn decode(data: Bytes, cs: Charset, lossy: Bool = false) -> Str ! CharsetErr
           put8(out, w1252_rune(Int(b)))
         }
       }
-      Ok(out.freeze().to_str() ?? "")
+      Ok(utf8_str(out))
     }
   }
 }
@@ -294,7 +296,7 @@ pub fn from_utf16_units(units: List[Int]) -> Str {
     }
     i += 1
   }
-  out.freeze().to_str() ?? ""
+  utf8_str(out)
 }
 
 /// WHATWG's windows-1252 index for the bytes 0x80 to 0x9F.
@@ -348,6 +350,12 @@ fn name_of(cs: Charset) -> Str {
 }
 
 /// cp (0 to 0x10FFFF, not a surrogate) as UTF-8 bytes.
+/// The Str of out, which holds only whole UTF-8 encodings of runes (each
+/// decoder writes every rune it makes as its encoding, U+FFFD for what is
+/// invalid): no second UTF-8 check (to_str's was 28% of a windows-1252
+/// decode, 2026-11-16).
+fn utf8_str(out: BytesBuilder) -> Str { rt.cast[Bytes, Str](out.freeze()) }
+
 fn put8(var out: BytesBuilder, cp: Int) {
   if cp < 0x80 {
     out.write_byte(UInt8(cp))
@@ -417,7 +425,7 @@ fn decode_utf16(data: Bytes, start: Int, big: Bool, lossy: Bool) -> Str ! Charse
     put8(out, u)
     i += 2
   }
-  Ok(out.freeze().to_str() ?? "")
+  Ok(utf8_str(out))
 }
 
 fn put16(var out: BytesBuilder, u: Int, big: Bool) {
