@@ -1,0 +1,46 @@
+// std/base64's and std/base32's Encoding (Go's NewEncoding, WithPadding and
+// Strict): a caller's alphabet and padding, and strict decoding, the same on
+// every backend (task #148).
+use std/base32
+use std/base64
+
+fn show(r: Result[Bytes, base64.DecodeErr]) -> Str {
+  match r {
+    Ok(b) => b.to_hex()
+    Err(e) => "${e}"
+  }
+}
+
+fn show32(r: Result[Bytes, base32.DecodeErr]) -> Str {
+  match r {
+    Ok(b) => b.to_hex()
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) {
+  let data = b"\xfb\xff\xbfany carnal pleas"
+  // the URL alphabet reversed, padded with '.'
+  let e = base64.custom("_-9876543210zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONMLKJIHGFEDCBA", ".")
+  let s = e.encode(data)
+  os.stdio.println("custom64: ${s} back ${e.decode(s) == Ok(data)}")
+  os.stdio.println("custom64 no padding: ${base64.custom("_-9876543210zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONMLKJIHGFEDCBA", "").encode(b"ab")}")
+  for t in ["ZYXW", "ZYX.", "ZY..", "ZY=", "ZY\r\nXW"] {
+    os.stdio.println("custom64 decode ${t.quote()}: ${show(e.decode(t))}")
+  }
+  let std = base64.of(base64.Base64.Std)
+  let strict = std.strict()
+  for t in ["Zm9vYg==", "Zm9vYh==", "Zm9vYmE=", "Zm9vYmF=", "Zm9v\nYmE="] {
+    os.stdio.println("std ${t.quote()}: ${show(std.decode(t))}; strict: ${show(strict.decode(t))}")
+  }
+  os.stdio.println("raw url: ${base64.of(base64.Base64.RawUrl).encode(data)}")
+  // Crockford's base32 alphabet, unpadded
+  let c = base32.custom("0123456789ABCDEFGHJKMNPQRSTVWXYZ", "")
+  let s32 = c.encode(data)
+  os.stdio.println("custom32: ${s32} back ${c.decode(s32) == Ok(data)}")
+  for t in ["CSQPY", "CSQPYRK1", "csqpy", "CSQPYU", "CSQ\r\nPY"] {
+    os.stdio.println("custom32 decode ${t.quote()}: ${show32(c.decode(t))}")
+  }
+  let p = base32.custom("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", "*")
+  os.stdio.println("custom32 padded: ${p.encode(b"foob")} ${show32(p.decode("MZXW6YQ*"))} ${show32(p.decode("MZXW6YQ="))}")
+}

@@ -1,5 +1,18 @@
 # std/amqptest changes
 
+## 2026-11-16: fix: a SQL filter cut short reads "unexpected end of the expression" (task #148)
+
+- Kind: fix (error text)
+- Commit: this push
+- Found by: the amqptest_rules golden written for TestStdAPICovered (task #148)
+- Go reference: none (Service Bus's SQL filter grammar; the text is std/amqptest's own)
+- Test: std/amqptest_test.xo's SQL filter table and add_rule test (fail before: "unexpected the end"); golden amqptest_rules
+- Shipped in: not yet released
+
+The parser's two "unexpected" errors wrote the end of the input as "unexpected the end"; they now
+read "unexpected end of the expression" (an unexpected token is still "unexpected" and its quoted
+text). "expected ... at the end" was already right.
+
 ## 2026-11-16: perf: queue operations update the message list in place
 
 - Kind: perf

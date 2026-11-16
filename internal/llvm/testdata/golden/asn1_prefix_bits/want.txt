@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+der 300a0201071305736576656e30070202fed4130178ff
+first 7 seven, rest 30070202fed4130178ff
+second -300 x, rest ff
+short: Syntax(msg: "data truncated")
+at 0:1 1:0 2:1 7:1 8:1 9:1 10:0 -1:0 16:0
+right_align 0297
+right_align whole 01 ffff
+--- stderr

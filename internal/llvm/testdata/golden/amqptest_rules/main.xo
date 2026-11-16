@@ -1,0 +1,23 @@
+// std/amqptest's subscription rules (Service Bus's rule manager): add,
+// list and remove, with its errors, the same on every backend (task #148).
+use std/amqptest
+
+fn main(os: Os) {
+  let b = amqptest.new(os.clock)
+  b.topic("t")
+  b.subscription("t", "s")
+  let show = fn() {
+    os.stdio.println("rules: ${b.rules("t", "s").map(fn(r) { "${r.0}=${r.1:?}" }).join(", ")}")
+  }
+  show()
+  os.stdio.println("add sql: ${b.add_rule("t", "s", "big", amqptest.RuleFilter.Sql(expr: "size > 10"), "SET flag = 'y'"):?}")
+  os.stdio.println("add corr: ${b.add_rule("t", "s", "eu", amqptest.RuleFilter.Correlation(c: amqptest.CorrelationFilter{subject: Some("eu")})):?}")
+  os.stdio.println("add false: ${b.add_rule("t", "s", "none", amqptest.RuleFilter.False):?}")
+  os.stdio.println("add again: ${b.add_rule("t", "s", "eu", amqptest.RuleFilter.True):?}")
+  os.stdio.println("add bad sql: ${b.add_rule("t", "s", "bad", amqptest.RuleFilter.Sql(expr: "size >")):?}")
+  show()
+  os.stdio.println("remove eu: ${b.remove_rule("t", "s", "eu")}")
+  os.stdio.println("remove eu again: ${b.remove_rule("t", "s", "eu")}")
+  os.stdio.println("remove from another sub: ${b.remove_rule("t", "zz", "big")}")
+  show()
+}

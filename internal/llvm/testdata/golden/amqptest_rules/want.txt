@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+rules: $Default=True
+add sql: Ok(())
+add corr: Ok(())
+add false: Ok(())
+add again: Err("the rule \"eu\" already exists")
+add bad sql: Err("unexpected end of the expression")
+rules: $Default=True, big=Sql(expr: "size > 10"), eu=Correlation(c: CorrelationFilter{correlation_id: None, message_id: None, to: None, reply_to: None, subject: Some("eu"), session_id: None, reply_to_session_id: None, content_type: None, properties: []}), none=False
+remove eu: true
+remove eu again: false
+remove from another sub: false
+rules: $Default=True, big=Sql(expr: "size > 10"), none=False
+--- stderr

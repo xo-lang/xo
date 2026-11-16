@@ -2494,6 +2494,12 @@ fn sql_tok_text(t: SqlTok) -> Str {
   if t.kind == 0 { "the end" } else { t.text.quote() }
 }
 
+/// "unexpected" and the token, or "unexpected end of the expression"
+/// ("unexpected the end" read wrong, task #148).
+fn sql_unexpected(t: SqlTok) -> Str {
+  if t.kind == 0 { "unexpected end of the expression" } else { "unexpected ${t.text.quote()}" }
+}
+
 fn (var p: SqlP) node(n: SqlNode) -> Int {
   p.nodes.push(n)
   p.nodes.len() - 1
@@ -2676,7 +2682,7 @@ fn (var p: SqlP) primary() -> Int ! Str {
     }
     return p.node(SqlNode{op: "prop", sys: sys, name: name.to_lower(), raw: name})
   }
-  Err("unexpected ${sql_tok_text(t)}")
+  Err(sql_unexpected(t))
 }
 
 /// Parses a SQL rule action: statements `SET property = expression` and
@@ -2823,7 +2829,7 @@ fn sql_parse(src: Str) -> SqlFilter ! Str {
   var p = SqlP{toks: sql_lex(src)?, i: 0, nodes: []}
   let root = p.or_expr()?
   if p.peek().kind != 0 {
-    return Err("unexpected ${sql_tok_text(p.peek())}")
+    return Err(sql_unexpected(p.peek()))
   }
   SqlFilter{nodes: p.nodes, root: root}
 }

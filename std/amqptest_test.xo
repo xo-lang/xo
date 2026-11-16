@@ -1012,7 +1012,7 @@ test "SQL filters: comparisons, three valued logic, IN, LIKE, EXISTS, IS NULL an
     ("color = 'red", "error: an unterminated string"),
     ("color == 'red'", "error: unexpected \"=\""),
     ("color NOT 'red'", "error: expected IN or LIKE after NOT at \"red\""),
-    ("qty >", "error: unexpected the end"),
+    ("qty >", "error: unexpected end of the expression"),
     ("newid() = 1", "error: newid() is not supported by the test broker"),
     ("color = 'red' extra", "error: unexpected \"extra\""),
   ]
@@ -1057,7 +1057,7 @@ test "subscription rules decide which subscriptions get a topic's messages" {
   expect(b.remove_rule("orders", "none", "$Default")) == true
   expect(b.rules("orders", "none")) == [("f", RuleFilter.False)]
   expect(b.add_rule("orders", "big", "BIG", RuleFilter.True)) == Err("the rule \"BIG\" already exists")
-  expect(b.add_rule("orders", "big", "bad", RuleFilter.Sql(expr: "qty >"))) == Err("unexpected the end")
+  expect(b.add_rule("orders", "big", "bad", RuleFilter.Sql(expr: "qty >"))) == Err("unexpected end of the expression")
   expect(b.remove_rule("orders", "big", "nope")) == false
   b.put("orders", labelled("a", "sale", 1))
   b.put("orders", labelled("b", "sale", 12))

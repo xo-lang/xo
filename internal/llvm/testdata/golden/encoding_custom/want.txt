@@ -1,0 +1,23 @@
+exit 0
+--- stdout
+custom64: BABAnpGG35yejZGek9-Pk5qejP.. back true
+custom64 no padding: np3
+custom64 decode "ZYXW": 9a7a29
+custom64 decode "ZYX.": 9a7a
+custom64 decode "ZY..": 9a
+custom64 decode "ZY=": illegal base64 data at input byte 2
+custom64 decode "ZY\r\nXW": 9a7a29
+std "Zm9vYg==": 666f6f62; strict: 666f6f62
+std "Zm9vYh==": 666f6f62; strict: illegal base64 data at input byte 6
+std "Zm9vYmE=": 666f6f6261; strict: 666f6f6261
+std "Zm9vYmF=": 666f6f6261; strict: illegal base64 data at input byte 7
+std "Zm9v\nYmE=": 666f6f6261; strict: 666f6f6261
+raw url: -_-_YW55IGNhcm5hbCBwbGVhcw
+custom32: ZFZVYRBEF4G66RBJDSGPR83GDHJP2WR back true
+custom32 decode "CSQPY": 666f6f
+custom32 decode "CSQPYRK1": 666f6f6261
+custom32 decode "csqpy": illegal base32 data at input byte 0
+custom32 decode "CSQPYU": illegal base32 data at input byte 5
+custom32 decode "CSQ\r\nPY": 666f6f
+custom32 padded: MZXW6YQ* 666f6f62 illegal base32 data at input byte 7
+--- stderr

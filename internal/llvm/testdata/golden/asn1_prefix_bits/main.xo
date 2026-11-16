@@ -1,0 +1,42 @@
+// std/asn1's unmarshal_prefix (Go's Unmarshal and the bytes after its
+// value) and BitString.at and right_align, the same on every backend
+// (task #148).
+use std/asn1
+
+struct Pair {
+  n: Int
+  name: Str
+} derive Asn1
+
+fn main(os: Os) {
+  let one = asn1.marshal(Pair{n: 7, name: "seven"}).or_fault("marshal")
+  let two = asn1.marshal(Pair{n: -300, name: "x"}).or_fault("marshal")
+  var b = BytesBuilder.new()
+  for c in one { b.write_byte(c) }
+  for c in two { b.write_byte(c) }
+  b.write_byte(0xff)
+  let all = b.freeze()
+  os.stdio.println("der ${all.to_hex()}")
+  match asn1.unmarshal_prefix[Pair](all) {
+    Ok((p, rest)) => {
+      os.stdio.println("first ${p.n} ${p.name}, rest ${rest.to_hex()}")
+      match asn1.unmarshal_prefix[Pair](rest) {
+        Ok((q, rest2)) => os.stdio.println("second ${q.n} ${q.name}, rest ${rest2.to_hex()}")
+        Err(e) => os.stdio.println("second: ${e:?}")
+      }
+    }
+    Err(e) => os.stdio.println("first: ${e:?}")
+  }
+  match asn1.unmarshal_prefix[Pair](b"\x30\x05\x02\x01") {
+    Ok(_) => os.stdio.println("short: ok")
+    Err(e) => os.stdio.println("short: ${e:?}")
+  }
+  let bs = asn1.BitString{bytes: b"\xa5\xc0", bit_len: 10}
+  var bits = StrBuilder.new()
+  for i in [0, 1, 2, 7, 8, 9, 10, -1, 16] {
+    bits.write("${i}:${bs.at(i)} ")
+  }
+  os.stdio.println("at ${bits.freeze().trim()}")
+  os.stdio.println("right_align ${bs.right_align().to_hex()}")
+  os.stdio.println("right_align whole ${asn1.BitString{bytes: b"\x80", bit_len: 1}.right_align().to_hex()} ${asn1.BitString{bytes: b"\xff\xff", bit_len: 16}.right_align().to_hex()}")
+}
