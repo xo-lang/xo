@@ -1364,6 +1364,17 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     // the fields' errors name this struct (decode_go)
     let d = Dec{src: d.src, tape: d.tape, i: d.i, rt: d.rt, t: d.t, kind: d.kind, gt: d.gt, sname: if b.dec_go { check.text(b.c.objs[obj].name) } else { "" }}
     var fs: List[JField] = []
+    // the fields' defaults: a std struct declared from std's record
+    // (trees_lazy, decision 0388) has none until its trees are joined,
+    // and every defaulted field read as required ("missing field
+    // `trace_id`" for std/trace's Span under XO_SEPCOMP, 2026-11-16):
+    // the build runs again with every tree joined, as body's does
+    if b.c.tree_pending.contains(obj) {
+      b.trees_missing = true
+      if b.trees_missing_fn.is_empty() {
+        b.trees_missing_fn = "derive Json of ${b.c.mods[b.obj_mod(obj)].path}.${check.text(b.c.objs[obj].name)}"
+      }
+    }
     let df = b.decl_file(obj)
     var skipped: List[(Int, List[Expr])] = []
     for f in b.c.objs[obj].fields {

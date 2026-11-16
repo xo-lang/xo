@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fixed: decoding a std struct with derive Json (for example `json.decode_str[trace.Span]`) no longer reports "missing field" for a field with a default when std is compiled separately and declared from its cached record.
 - Feature (std/websocket, every backend; task #89): `WsConn.writer` writes a message in pieces as 4096 byte frames (gorilla's NextWriter), `prepare` and `write_prepared` (PreparedMessage), `on_close` replaces the automatic close reply (SetCloseHandler), `local_addr` and `remote_addr`, and `websocket.is_upgrade(req)` (IsWebSocketUpgrade).
 - Fix (std/yaml): a mapping key with an explicit tag yaml.v3 cannot resolve (`!!bool yes: 1`) is now its error, in decode and to_json, as in yaml.v3. Found by the #98 yaml fuzz.
 - Fix (std/xml): parse and parse_root report a second root element or text outside the root before a syntax error later in the document, as encoding/xml does. Found by the #98 xmlcodec fuzz.

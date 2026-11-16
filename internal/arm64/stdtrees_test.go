@@ -173,6 +173,84 @@ fn main(os: Os) {
 	}
 }
 
+// TestStdRecordJsonDefaults: derive Json's decoder of a std struct whose
+// trees the record leaves pending (std/trace's Span), and std/toml's
+// decoder through it, reads its fields'
+// defaults only once the trees are joined. Read before, every defaulted
+// field was required, and a Span without trace_id failed with "missing
+// field `trace_id`" under XO_SEPCOMP with std's record (aws-43's
+// fecache-span repro, 2026-11-16; gotchas/record-pending-struct-defaults.md).
+func TestStdRecordJsonDefaults(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-stdjsondef-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
+	paths, err := stdRun(cmd.Output)
+	if err != nil {
+		t.Fatalf("xo dev stdcache: %v", err)
+	}
+	lines := strings.Fields(string(paths))
+	if len(lines) != 2 {
+		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
+	}
+	store, facts := lines[0], lines[1]
+	src := `use std/json
+use std/toml
+use std/trace
+
+fn main(os: Os) {
+  let sp = "{\"id\":\"r\",\"name\":\"n\",\"start_ms\":1,\"micros\":2,\"status\":3}"
+  match json.decode_str[trace.Span](sp) {
+    Ok(s) => os.stdio.println("ok ${s.name} [${s.trace_id}] edit 0")
+    Err(e) => os.stdio.println("${e} edit 0")
+  }
+  // std/toml decodes through derive Json (decision 0622)
+  match toml.decode[trace.Span]("id = \"r\"\nname = \"t\"\nstart_ms = 1\nmicros = 2\nstatus = 3\n") {
+    Ok(s) => os.stdio.println("ok ${s.name} [${s.trace_id}] toml")
+    Err(e) => os.stdio.println("${e} toml")
+  }
+}
+`
+	prog := filepath.Join(work, progExe)
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_STD_EXPORT=1",
+		"XO_SEPCOMP=1", "XO_SEPCOMP_FACTS="+facts, "XO_SEPCOMP_STORE="+store)
+	// the first build writes std's record, the second declares std from it
+	for edit := 0; edit < 2; edit++ {
+		if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(strings.ReplaceAll(src, "edit 0", "edit "+string(rune('0'+edit)))), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(work, "prog"+string(rune('0'+edit)))
+		b := testtmp.Guard(exec.Command(xo, "build", "-o", out, "."))
+		b.Dir = prog
+		b.Env = env
+		if msgs, err := b.CombinedOutput(); err != nil {
+			t.Fatalf("build %d: %v\n%s", edit, err, msgs)
+		}
+		got, err := testtmp.Guard(exec.Command(out)).Output()
+		if err != nil {
+			t.Fatalf("run %d: %v", edit, err)
+		}
+		if want := "ok n [] edit " + string(rune('0'+edit)) + "\nok t [] toml\n"; string(got) != want {
+			t.Fatalf("run %d printed %q, want %q", edit, got, want)
+		}
+	}
+}
+
 // TestStdRecordBindRetry: a check that restarts for a missing `use c`
 // binding starts again with std's records: the first check's checker no
 // longer holds them, since their list was held to the end of the check
