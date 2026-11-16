@@ -983,7 +983,7 @@ struct CopyState {
 /// KiB; an error from rows sends CopyFail (the server rolls the COPY back)
 /// and is returned; an error the server raises while the rows are sent
 /// stops the calls to rows and is returned. The result is the rows copied.
-fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
+fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
   if p.broken.get() {
     return Err(conn_err("the connection is broken"))
   }

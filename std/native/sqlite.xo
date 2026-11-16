@@ -447,7 +447,7 @@ fn (c: SqliteConn) ping() -> () ! sql.SqlErr uses fs {
 
 /// A prepared INSERT run per row (SQLite has no COPY), inside the
 /// caller's transaction when there is one.
-fn (c: SqliteConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses fs {
+fn (c: SqliteConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses fs {
   let names = columns.map(fn(n) { quote_ident(n) }).join(", ")
   let marks = columns.map(fn(_) { "?" }).join(", ")
   let q = "INSERT INTO ${quote_ident(table)} (${names}) VALUES (${marks})"
@@ -460,7 +460,7 @@ fn (c: SqliteConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[
   n
 }
 
-fn (c: SqliteConn) copy_rows(st: c3.Sqlite3Stmt, rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync, var n: Int) -> () ! sql.SqlErr uses fs {
+fn (c: SqliteConn) copy_rows(st: c3.Sqlite3Stmt, rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr, var n: Int) -> () ! sql.SqlErr uses fs {
   while let Some(row) = rows()? {
     c.bind(st, row)?
     if c3.sqlite3_step(st) != DONE {
