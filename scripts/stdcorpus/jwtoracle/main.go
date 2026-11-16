@@ -15,10 +15,12 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -119,21 +121,20 @@ type opts struct {
 	noExp    bool // exp not required
 }
 
+// lastErr is the error of category's last Parse (nil when it did not
+// parse), for the fuzz cases' notes.
+var lastErr error
+
 func category(token string, keyName string, o opts) string {
 	// the header's alg, to tell a disallowed algorithm (golang-jwt calls it
 	// an invalid signature) from the rest
+	lastErr = nil
 	if parts := strings.Split(token, "."); len(parts) == 3 {
+		// decoded as golang-jwt decodes it (a repeated key's last value)
 		if hb, err := base64.RawURLEncoding.DecodeString(parts[0]); err == nil {
-			if i := strings.Index(string(hb), `"alg":"`); i >= 0 {
-				rest := string(hb)[i+7:]
-				name := rest[:strings.Index(rest, `"`)]
-				allowed := false
-				for _, a := range o.algs {
-					if a == name {
-						allowed = true
-					}
-				}
-				if !allowed {
+			var h map[string]any
+			if json.Unmarshal(hb, &h) == nil {
+				if name, ok := h["alg"].(string); !ok || !slices.Contains(o.algs, name) {
 					return "alg"
 				}
 			}
@@ -154,6 +155,7 @@ func category(token string, keyName string, o opts) string {
 		popts = append(popts, jwt.WithSubject(o.sub))
 	}
 	_, err := jwt.NewParser(popts...).Parse(token, func(*jwt.Token) (any, error) { return pubKey(keyName), nil })
+	lastErr = err
 	switch {
 	case err == nil:
 		return "ok"
@@ -191,6 +193,13 @@ func flip(seg string) string {
 }
 
 func main() {
+	if len(os.Args) > 3 && os.Args[1] == "fuzz" {
+		crand.Reader = constReader(0x5a)
+		seed, _ := strconv.ParseInt(os.Args[2], 10, 64)
+		n, _ := strconv.Atoi(os.Args[3])
+		fuzzMain(seed, n)
+		return
+	}
 	// PS* and ES* signatures are randomized: jwt-go signs with
 	// crypto/rand.Reader, which a reader of one repeated byte replaces
 	// here (Go 1.26 reads a custom reader only under cryptocustomrand=1,
