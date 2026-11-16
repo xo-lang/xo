@@ -39,6 +39,13 @@ scripts/lead/offload-gate.sh (task #125):
 - a HOSTCHECK-FAIL on disk moves the gate to the next host instead of
   ending it rc 1, so it is not retried on the same host.
 
+scripts/lead/stdproven-offload.sh had the same leak (its
+/work/in/sp-NAME.bundle, put before the lease; azure-1 found it,
+2026-11-16, a loop retrying every 60 s on hosts 2, 3 and 4): its exit
+trap removes the bundle on any rc but 0 and 1, and it asks --has-free
+SP_MIN_FREE_GB (12) before the upload, ending rc 6 on a short host
+(stdproven_offload_test.sh, 4 checks that failed before).
+
 scripts/lead/offload_gate_test.sh covers the four cases (8 checks that
 failed before the fix). A loop that retries offload-gate.sh on rc 5
 should wait for a lease to end instead (heavy.sh --status), as the
