@@ -1,0 +1,86 @@
+// heapidle (decision 0676): a burst of about 64 MB of small blocks (the
+// prefixed classes: 112 to 128 byte and about 1 KiB strings) is made and
+// freed, then the program idles for three of the age pass's periods
+// (pool.xo SCAV_EVERY_NS, 30 s): its resident set (Linux VmRSS) should
+// come back to near its value before the burst. Prints `before KIB`,
+// `peak KIB` and `after KIB`, then `reuse ok` after a second burst that
+// reuses the pages given back; TestRuntimeHeapIdle judges them.
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+/// The burst: the strings are made, summed and dropped here; the resident
+/// set while they are held.
+fn burst(os: Os) -> Int {
+  let small = "s".repeat(100)
+  let big = "b".repeat(1000)
+  var held: List[Str] = []
+  for i in 0..400000 {
+    held.push("${i}${small}")
+  }
+  for i in 0..16000 {
+    held.push("${i}${big}")
+  }
+  var n = 0
+  for s in held {
+    n += s.len()
+  }
+  let peak = rss_kib(os)
+  if n == 0 {
+    return -1
+  }
+  peak
+}
+
+fn main(os: Os) {
+  // one spawn first: the heap is per thread from the program's first spawn
+  // on (pool.xo scope_add_at), so the freed blocks overflow to the central
+  // lists the sweep walks; a program that never spawns keeps them on the
+  // single threaded record, which the sweep leaves (decision 0676 addendum)
+  scope s {
+    let t = s.spawn(fn() {})
+    t.await
+  }
+  let before = rss_kib(os)
+  os.stdio.println("before ${before}")
+  let peak = burst(os)
+  os.stdio.println("peak ${peak}")
+  let secs = Int.parse(os.env.args().get(0) ?? "") ?? 95
+  os.clock.sleep(Duration.from_secs(Float(secs)))
+  os.stdio.println("after ${rss_kib(os)}")
+  // a second burst carves from the units the sweep gave back (the pool):
+  // every string still reads as written
+  os.stdio.println("reuse ${check(os)}")
+}
+
+/// The burst again, each string checked after all are made: "ok" or the
+/// first one that differs.
+fn check(os: Os) -> Str {
+  let small = "s".repeat(100)
+  let big = "b".repeat(1000)
+  var held: List[Str] = []
+  for i in 0..400000 {
+    held.push("${i}${small}")
+  }
+  for i in 0..16000 {
+    held.push("${i}${big}")
+  }
+  for i in 0..400000 {
+    if held[i] != "${i}${small}" {
+      return "bad small ${i}"
+    }
+  }
+  for i in 0..16000 {
+    if held[400000 + i] != "${i}${big}" {
+      return "bad big ${i}"
+    }
+  }
+  "ok"
+}

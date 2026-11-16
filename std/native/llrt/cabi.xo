@@ -312,7 +312,7 @@ fn heap_grow(h: Int, n: Int) -> Int {
     return 0
   }
   if n == AGE {
-    return heapos.age(h != 0)
+    return heapos.age_from(h != 0, false)
   }
   if prof.supported() && n >= SAMPLE {
     return heapprof.sampled(h, rt.mem_load(h, PSAMPLE, 8), n - SAMPLE)

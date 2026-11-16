@@ -1417,7 +1417,18 @@ fn go_idle(p: Int, w: Int) -> Int {
 /// quiet process too.
 fn age_check(p: Int, w: Int) {
   let now = sysio.mono_ns()
-  if now.wrapping_sub(rt.mem_load(w, W_AGE_AT, 8)) < SCAV_EVERY_NS {
+  let at = rt.mem_load(w, W_AGE_AT, 8)
+  if at == 0 {
+    // the first check starts the clock: nothing has aged a period yet
+    // (a pass at once was a whole sweep in a short program's first idle)
+    rt.mem_store(w, W_AGE_AT, now, 8)
+    let _c = rt.slot_cas(p, P_AGE_AT_I, 0, now, RELAXED)
+    // and its idle wait wakes a period on for the first pass (go_idle and
+    // root_idle sleep untimed without W_AGE_MORE)
+    rt.mem_store(w, W_AGE_MORE, 1, 8)
+    return
+  }
+  if now.wrapping_sub(at) < SCAV_EVERY_NS {
     return
   }
   rt.mem_store(w, W_AGE_AT, now, 8)
@@ -2408,6 +2419,14 @@ fn count_main(p: Int) {
 /// (decision 0502).
 fn root_idle(p: Int, w: Int, mf: Int) -> Int {
   count_main(p)
+  // the age passes run on the root too (decision 0676): a program whose
+  // main fiber frees a burst on the root and then waits has no worker
+  // going idle after it, so no pass ran (TestRuntimeHeapIdle, 2026-11-16);
+  // not once main ended (the program is exiting: a pass then was a
+  // whole sweep for nothing, jsonmap small 1.04 to 1.10 of its base)
+  if rt.slot_load(mf, F_ENDED_I, ACQUIRE) == 0 {
+    age_check(p, w)
+  }
   // decision 0324: wait in the network poller when no one does (a
   // program that never spawns has no worker to)
   if rt.slot_load(mf, F_ENDED_I, ACQUIRE) == 0 {
@@ -2441,7 +2460,16 @@ fn root_idle(p: Int, w: Int, mf: Int) -> Int {
   }
   while rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
     stat(ST_IDLE_SLEEP)
-    futex_wait(w.wrapping_add(W_WAKEW), 0)
+    if rt.mem_load(w, W_AGE_MORE, 8) != 0 {
+      // as go_idle: the blocks its last age pass marked go back at the
+      // next one, a period on
+      futex_wait_us(w.wrapping_add(W_WAKEW), 0, SCAV_EVERY_NS / 1000)
+      if rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
+        age_check(p, w)
+      }
+    } else {
+      futex_wait(w.wrapping_add(W_WAKEW), 0)
+    }
   }
   if tracerec.built() && tracerec.on() {
     tracerec.ev(tracerec.K_IDLE, 1, w, 0)

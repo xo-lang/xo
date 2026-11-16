@@ -115,3 +115,99 @@ stage.
   the leak check and the heap profile keep.
 - **Nothing (0533's status).** Leaves sql/stress and long running servers
   2 to 3 times Go's resident set after bursts.
+
+## Addendum 2026-11-16: stage 2 as built (Xo Lang 1)
+
+Stage 2 (heapos.xo sweep, from age on the central pass) differs from the
+text above in four ways, each smaller than the step it replaces:
+
+- **Counts, not a sort.** Chunks are 4 MiB aligned, so the sweep counts
+  each 4 KiB unit's free bytes in an array per 4 MiB window (a window
+  table of 4,096 slots, an array of 1,024 counts per window touched),
+  and a unit is whole free when its count is 4,096. That is one walk of
+  the free blocks with no sort and no SWEEP_MAX: a pass reads every free
+  block, so a unit covered by blocks a capped pass skipped is never
+  missed. Its cost is three walks of the free blocks a pass, on an
+  idle worker only.
+- **The central claimant only, with one table.** The central pass moves
+  between workers, so the previous pass's units live in the central
+  table (words 180 to 183: array, count, capacity, busy flag), and only
+  the worker holding the central claim sweeps: its own record's lists
+  and spare magazines plus every class's central magazines, each chain
+  detached under its class's lock for the walk (an allocation meanwhile
+  carves from its chunk) and put back before what other threads freed
+  there meanwhile. Other workers' lists hold at most two magazines a
+  class and are not swept.
+- **Reuse through 0630's pool.** The units given back go to the central
+  pool of decision 0630 (pool_room, pool_runs; the region release's
+  path), which heap_grow already carves from before mapping a chunk
+  (pool_take). So stage 3's reuse comes with stage 2, and the run list
+  of step 3 is that pool.
+- **Linux first.** As for the region release, the pool's units are
+  advised on Linux only (advise_run), so the sweep runs on Linux; darwin
+  (MADV_FREE_REUSABLE, which a reuse must pair with MADV_FREE_REUSE) is
+  the next step. Under transparent huge pages (Linux's dense default) a
+  unit goes back only from a 2 MiB half window at least half whole
+  free, age_sparse's rule for page blocks.
+
+The proving test (internal/llvm TestRuntimeHeapIdle) also bursts again
+after the idle and checks every string, so a unit given back while a
+list still held one of its blocks shows as a wrong string.
+
+## Addendum 2026-11-16 (2): idle under transparent huge pages, and the root (Xo Lang 1)
+
+Measured on host 4 (linux/arm64, THP `always`, khugepaged
+`max_ptes_none` 511, a scan every 10 s) with internal/llvm's heapidle
+program (an 80 MB burst of small blocks freed, then idle):
+
+- **khugepaged refilled what the sweep gave back.** With the sweep alone,
+  VmRSS fell from 81 MB to 11.8 MB at 45 s and crept back to 47.6 MB in
+  3 minutes (30.2 MB at the default, dense; 9.95 MB with XO_THP=off). A
+  2 MiB range with any page still present is collapsed into a huge page,
+  which faults the advised units back in. So advise_run also advises
+  MADV_NOHUGEPAGE on a run it gives back, and pool_take advises
+  MADV_HUGEPAGE again when the bump reuses the run (dense's rule for a
+  filled range). Both in dense mode only (Linux's default): off maps every
+  chunk MADV_NOHUGEPAGE already, and XO_THP=kernel promises no advice.
+- **The large block cache drops on idle.** The central pass also drops
+  the large block cache to CACHE_DROP_MIN (`age`), the 9 MB left above
+  the start once the units stayed out.
+- Result (hi-sweep6, 2026-11-16): idle VmRSS 3.7 MB at the default (was
+  11.8 and climbing), 1.9 MB with XO_THP=off, from 1.2 MB before the
+  burst; flat from 45 s to 195 s. The cost: 63 mappings against 47 with
+  XO_THP=off, since each advised run splits its VMA.
+- **The root runs the age passes too** (pool.xo root_idle): a program
+  whose main fiber frees a burst on the root and then waits had no
+  worker going idle after it, so no pass ran. Not once main ended (a
+  pass at exit is a whole sweep for nothing), and a record's first check
+  starts its clock (and its timed wake) instead of passing at once.
+- Speed (host 1 `xo bench --ab`, 3 rounds): bench/perf/alloc wall 0.926
+  (better), heap within noise, mapclone 0.909 within noise, jsonmap
+  large 0.978 within noise; jsonmap small 1.028 worse (9.15 to 9.41 ms).
+  Callgrind (linux/arm64 Docker) counts 181,957,651 instructions before
+  and 181,959,636 after for jsonmap small: the 2.8% is code placement,
+  not work. Max RSS unchanged on every row.
+
+What Go does (go1.26 runtime, read 2026-11-16): the scavenger releases
+with MADV_DONTNEED (sysUnusedOS; MADV_FREE only with
+GODEBUG=madvdontneed=0) and gives no huge page advice on the heap. It
+avoids the refill another way: findScavengeCandidate widens a release
+that would break a free, unscavenged huge page to the whole 2 MiB page,
+so no partly present range is left for khugepaged. Its source notes that
+an eager MADV_COLLAPSE was tried and "caused performance issues in
+production environments" (mgcscavenge.go).
+
+Alternatives for the refill:
+- **Release whole 2 MiB ranges only, as Go.** No advice and no VMA
+  splits, but the sweep gives back 4 KiB units of 4 MiB chunks that
+  stay partly in use; whole free 2 MiB ranges are the rare case after a
+  burst of small blocks. Kept as the next step to measure (a sweep
+  variant that widens to the 2 MiB range when its half window is whole
+  free).
+- **XO_THP=off by default.** 1.9 MB idle, but the dense default's
+  speedups (decision 0456) go.
+- **Nothing.** 47.6 MB idle after 3 minutes, most of the burst.
+
+Limits: a solo record (a program that never spawned) is swept from its
+own lists only (gotchas/age-pass-walked-solo-record.md); darwin still
+waits for its MADV_FREE_REUSABLE pairing.

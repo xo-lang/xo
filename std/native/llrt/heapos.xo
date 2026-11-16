@@ -783,6 +783,17 @@ pub fn pool_take(h: Int, n: Int) -> Bool {
   }
   let a = e.wrapping_sub(e & RUN_MAX)
   let len = e & RUN_MAX
+  // a run the sweep gave back was advised MADV_NOHUGEPAGE (advise_run,
+  // dense only): the bump fills it now, so it may take huge pages again
+  // (dense's rule for a filled half)
+  match target.os {
+    TargetOs.Linux => {
+      if thp_mode() == 2 {
+        thp_advise(a, len.wrapping_shl(PUNIT_SH))
+      }
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+  }
   rt.mem_store(h, 24, a, 8)
   rt.mem_store(h, 32, a.wrapping_add(len.wrapping_shl(PUNIT_SH)), 8)
   let _t = rt.slot_add(rt.mem_load(heaps_head(), H_CENTRAL, 8), 141, len, RELAXED)
@@ -1467,6 +1478,17 @@ fn advise_run(a: Int, len: Int) {
   match target.os {
     TargetOs.Linux => {
       let _a = linux.madvise(a, len.wrapping_shl(PUNIT_SH), 4)
+      // and no huge pages for it: khugepaged collapses a 2 MiB range
+      // with any page still present (max_ptes_none 511 by default) and
+      // filled the units advised away back in (host 4, 2026-11-16: 30
+      // MB of 81 refilled within 3 minutes of idle, 9.9 MB with XO_THP=off);
+      // pool_take advises it again when the run is reused. Dense only:
+      // off maps every chunk MADV_NOHUGEPAGE already, and XO_THP=kernel
+      // promises no advice (as Go's scavenger gives none; it releases a
+      // whole huge page instead of breaking one, mgcscavenge.go)
+      if thp_mode() == 2 {
+        let _n = linux.madvise(a, len.wrapping_shl(PUNIT_SH), 15)
+      }
     }
     TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
@@ -1669,7 +1691,12 @@ fn advise(p: Int, cw: Int, v: Int, size: Int, pg: Int) -> Bool {
 /// marked (which the next pass gives back if they stay free) in the low
 /// 32 bits, and the 16 KiB units it gave back above them (pool.xo
 /// age_check counts them for /debug/sched).
-pub fn age(central: Bool) -> Int {
+pub fn age(central: Bool) -> Int { age_from(central, true) }
+
+/// age, from the pool's age_check (own false: possibly an idle worker,
+/// not the thread that owns a solo record) or the calling thread's own
+/// code (own true: a test, the owning thread itself).
+pub fn age_from(central: Bool, own: Bool) -> Int {
   if !pages_on() || sanhook.sanitized() || sanhook.gorace() {
     return 0
   }
@@ -1677,9 +1704,15 @@ pub fn age(central: Bool) -> Int {
     TargetOs.Linux => linux.auxval(linux.AT_PAGESZ)
     _ => 0
   }
-  var h = obj.solo_heap()
-  if h == 0 {
-    h = rt.tlocal_get(TLS_HEAP)
+  // the calling thread's own record, and none while a single threaded
+  // heap is set: an idle worker runs this pass while the program's one
+  // thread allocates from the solo record, whose lists it then walked and
+  // marked (the sweep read a live block as a link there: SIGSEGV in
+  // TestRuntimeHeapIdle's second burst, 2026-11-16)
+  // (a direct call, own, is on the thread that owns it: that record)
+  var h = rt.tlocal_get(TLS_HEAP)
+  if obj.solo_heap() != 0 {
+    h = if own { obj.solo_heap() } else { 0 }
   }
   var k = 0
   var gave = 0
@@ -1703,6 +1736,17 @@ pub fn age(central: Bool) -> Int {
         alloc.central_unlock(hc, c)
       }
     }
+    // the prefixed classes' whole free pages (decision 0676)
+    let sw = sweep(h)
+    k += sw & 4294967295
+    gave += sw.shr_logical(32).wrapping_shl(PUNIT_SH)
+    // the large block cache's mappings of 1 MiB and over, as an explicit
+    // trim drops them (cache_drop): kept, they stayed resident through an
+    // idle minute (host 4, 2026-11-16: 9 MB of the 9.9 MB left with the
+    // sweep's units given back)
+    let cb = cache_bytes()
+    cache_drop(CACHE_DROP_MIN)
+    gave += cb.wrapping_sub(cache_bytes())
   }
   (k & 4294967295) | gave.shr_logical(14).wrapping_shl(32)
 }
@@ -1764,6 +1808,425 @@ fn age_sparse(p: Int) -> Bool {
     q = q.wrapping_add(PAGE)
   }
   free.wrapping_shl(1) >= huge
+}
+
+// ---------------------------------------------------------------------------
+// The page sweep of the prefixed classes (decision 0676 stage 2)
+
+/// The central table's words of the sweep: the previous pass's whole free
+/// units (an array of unit addresses, ascending, mapped by map_os), their
+/// count, the array's capacity in units, and the busy flag.
+const SWP_I = 180
+const SWPN_I = 181
+const SWPC_I = 182
+const SWBUSY_I = 183
+/// A window of the count arrays: 4 MiB (a chunk, CHUNK) of 1,024 units.
+const SW_WIN_SH = 22
+const SW_UNITS = 1024
+/// The window table's slots (a power of two; at most half of them used:
+/// 8 GiB of windows).
+const SW_T = 4096
+const SW_T_SH = 12
+/// A unit's count when this pass gives it back.
+const SW_GIVE = 8192
+
+/// The sweep (decision 0676), on the age pass that holds the central
+/// claim: the free blocks of the prefixed classes (classes 1 to 76) on
+/// record h's lists and spare magazines and on the central lists (each
+/// class's magazines detached under its lock, so the walk owns every
+/// block it reads) are counted per 4 KiB unit; a unit covered by free
+/// blocks alone that the previous pass found the same is given back:
+/// its blocks leave their lists, it is advised away (advise_run) and it
+/// goes to the central pool (decision 0630), where heap_grow carves from
+/// it before mapping a chunk (pool_take). Units found whole free for the
+/// first time wait a pass (as 0533's PSEEN). The units given back above
+/// bit 32, and the units waiting below it (the worker's W_AGE_MORE).
+fn sweep(h: Int) -> Int {
+  let pg = match target.os {
+    TargetOs.Linux => linux.auxval(linux.AT_PAGESZ)
+    _ => 0
+  }
+  // Linux only for now: darwin's pool units are not advised (advise_run)
+  if target.os != TargetOs.Linux || !pool_on(pg) {
+    return 0
+  }
+  let hc = heaps_head()
+  let cen = rt.mem_load(hc, H_CENTRAL, 8)
+  if !rt.slot_cas(cen, SWBUSY_I, 0, 1, ACQUIRE) {
+    return 0
+  }
+  let own = h != 0 && rt.mem_load(h, H_RFLAG, 8) == 0
+  // the central magazines of each class, detached
+  let det = map_os(PAGE_CLASS.wrapping_shl(3))
+  if det == 0 {
+    rt.slot_store(cen, SWBUSY_I, 0, RELEASE)
+    return 0
+  }
+  var nmag = 0
+  for c in 1..PAGE_CLASS {
+    alloc.central_lock(hc, c)
+    let m = rt.slot_load(cen, c, RELAXED)
+    rt.slot_store(cen, c, 0, RELAXED)
+    alloc.central_unlock(hc, c)
+    rt.mem_store(det, c.wrapping_shl(3), m, 8)
+    var q = m
+    while q != 0 {
+      nmag = nmag.wrapping_add(1)
+      q = rt.mem_load(q, 8, 8)
+    }
+  }
+  let ni = PAGE_CLASS.wrapping_shl(1).wrapping_add(nmag)
+  let isz = ni.wrapping_shl(ITEM_SH).wrapping_add(8)
+  let items = map_os(isz)
+  let tsz = SW_T.wrapping_mul(24)
+  let tab = if items == 0 { 0 } else { map_os(tsz) }
+  if tab == 0 {
+    if items != 0 {
+      unmap_os(items, isz)
+    }
+    sw_back(hc, cen, det)
+    unmap_os(det, PAGE_CLASS.wrapping_shl(3))
+    rt.slot_store(cen, SWBUSY_I, 0, RELEASE)
+    return 0
+  }
+  var n = 0
+  if own {
+    for c in 1..PAGE_CLASS {
+      let fl = h.wrapping_add(c.wrapping_shl(3))
+      n = item_put(items, n, rt.mem_load(fl, H_FREE_LISTS, 8), c, IK_FREE, fl)
+      n = item_put(items, n, rt.mem_load(fl, H_MAG, 8), c, IK_MAG, fl)
+    }
+  }
+  for c in 1..PAGE_CLASS {
+    var m = rt.mem_load(det, c.wrapping_shl(3), 8)
+    while m != 0 {
+      let next = rt.mem_load(m, 8, 8)
+      n = item_put(items, n, m, c, IK_CEN, 0)
+      m = next
+    }
+  }
+  // the windows the blocks touch: table keys (window + 1) at tab, their
+  // indices after, the windows by index after that
+  var nw = 0
+  var ok = true
+  var i = 0
+  while i < n && ok {
+    let at = i.wrapping_shl(ITEM_SH)
+    let size = alloc.class_size(rt.mem_load(items, at.wrapping_add(8), 8)).wrapping_add(8)
+    var p = rt.mem_load(items, at, 8)
+    var last = -1
+    while p != 0 && ok {
+      let s0 = p.wrapping_sub(8)
+      var w = s0.shr_logical(SW_WIN_SH)
+      let w1 = s0.wrapping_add(size).wrapping_sub(1).shr_logical(SW_WIN_SH)
+      while w <= w1 && ok {
+        if w != last {
+          if sw_find(tab, w) < 0 {
+            if nw.wrapping_shl(1) >= SW_T {
+              ok = false
+            } else {
+              sw_add(tab, w, nw)
+              nw = nw.wrapping_add(1)
+            }
+          }
+          last = w
+        }
+        w = w.wrapping_add(1)
+      }
+      p = rt.mem_load(p, 0, 8)
+    }
+    i = i.wrapping_add(1)
+  }
+  let asz = nw.wrapping_mul(SW_UNITS).wrapping_shl(3)
+  let arr = if !ok || nw == 0 { 0 } else { map_os(asz) }
+  var gave = 0
+  var wait = 0
+  if arr != 0 {
+    // each unit's free bytes
+    i = 0
+    while i < n {
+      let at = i.wrapping_shl(ITEM_SH)
+      let size = alloc.class_size(rt.mem_load(items, at.wrapping_add(8), 8)).wrapping_add(8)
+      var p = rt.mem_load(items, at, 8)
+      while p != 0 {
+        let s0 = p.wrapping_sub(8)
+        var s = s0
+        let e = s0.wrapping_add(size)
+        while s < e {
+          let ue = s.shr_logical(PUNIT_SH).wrapping_add(1).wrapping_shl(PUNIT_SH)
+          let end = if e < ue { e } else { ue }
+          let x = sw_unit(tab, arr, s)
+          rt.mem_store(x, 0, rt.mem_load(x, 0, 8).wrapping_add(end.wrapping_sub(s)), 8)
+          s = end
+        }
+        p = rt.mem_load(p, 0, 8)
+      }
+      i = i.wrapping_add(1)
+    }
+    // the windows in address order (insertion sort: a few hundred at most)
+    let wins = tab.wrapping_add(SW_T.wrapping_shl(4))
+    var a = 1
+    while a < nw {
+      let v = rt.mem_load(wins, a.wrapping_shl(3), 8)
+      var b = a
+      while b > 0 && rt.mem_load(wins, b.wrapping_sub(1).wrapping_shl(3), 8) > v {
+        rt.mem_store(wins, b.wrapping_shl(3), rt.mem_load(wins, b.wrapping_sub(1).wrapping_shl(3), 8), 8)
+        b = b.wrapping_sub(1)
+      }
+      rt.mem_store(wins, b.wrapping_shl(3), v, 8)
+      a = a.wrapping_add(1)
+    }
+    // the whole free units, ascending; with huge pages possible only those
+    // of 2 MiB halves at least half whole free (age_sparse's reason)
+    let dense = !thp_off()
+    var ncur = 0
+    for wi in 0..nw {
+      let base = sw_base(tab, arr, rt.mem_load(wins, wi.wrapping_shl(3), 8))
+      for half in 0..2 {
+        let hb = base.wrapping_add(half.wrapping_shl(12))
+        var k = 0
+        for u in 0..512 {
+          if rt.mem_load(hb, u.wrapping_shl(3), 8) == PUNIT {
+            k = k.wrapping_add(1)
+          }
+        }
+        if dense && k < 256 {
+          for u in 0..512 {
+            if rt.mem_load(hb, u.wrapping_shl(3), 8) == PUNIT {
+              rt.mem_store(hb, u.wrapping_shl(3), 0, 8)
+            }
+          }
+        } else {
+          ncur = ncur.wrapping_add(k)
+        }
+      }
+    }
+    let csz = (if ncur == 0 { 1 } else { ncur }).wrapping_shl(3)
+    let cur = map_os(csz)
+    if cur != 0 {
+      var nc = 0
+      for wi in 0..nw {
+        let wk = rt.mem_load(wins, wi.wrapping_shl(3), 8)
+        let base = sw_base(tab, arr, wk)
+        for u in 0..SW_UNITS {
+          if rt.mem_load(base, u.wrapping_shl(3), 8) == PUNIT {
+            rt.mem_store(cur, nc.wrapping_shl(3), wk.wrapping_shl(SW_WIN_SH).wrapping_add(u.wrapping_shl(PUNIT_SH)), 8)
+            nc = nc.wrapping_add(1)
+          }
+        }
+      }
+      // the units also whole free on the previous pass: given back
+      let prev = rt.slot_load(cen, SWP_I, RELAXED)
+      let np = rt.slot_load(cen, SWPN_I, RELAXED)
+      var x = 0
+      var y = 0
+      var give = 0
+      while x < nc && y < np {
+        let ua = rt.mem_load(cur, x.wrapping_shl(3), 8)
+        let ub = rt.mem_load(prev, y.wrapping_shl(3), 8)
+        if ua == ub {
+          rt.mem_store(sw_unit(tab, arr, ua), 0, SW_GIVE, 8)
+          give = give.wrapping_add(1)
+          x = x.wrapping_add(1)
+          y = y.wrapping_add(1)
+        } else if ua < ub {
+          x = x.wrapping_add(1)
+        } else {
+          y = y.wrapping_add(1)
+        }
+      }
+      if give > 0 && !pool_room(cen, CPOOL, give) {
+        give = 0
+      }
+      if give > 0 {
+        // the blocks that touch a unit given back leave their lists
+        i = 0
+        while i < n {
+          let at = i.wrapping_shl(ITEM_SH)
+          let size = alloc.class_size(rt.mem_load(items, at.wrapping_add(8), 8)).wrapping_add(8)
+          rt.mem_store(items, at, sw_unlink(tab, arr, rt.mem_load(items, at, 8), size), 8)
+          i = i.wrapping_add(1)
+        }
+        // advised a run at a time and pooled in address order
+        clock(cen, CPOOL_C)
+        let pa = rt.mem_load(cen, CPOOL, 8)
+        var k = rt.mem_load(cen, CPOOL.wrapping_add(8), 8)
+        let k0 = k
+        let room = rt.mem_load(cen, CPOOL.wrapping_add(16), 8)
+        var run = 0
+        var rlen = 0
+        for j in 0..nc {
+          let ua = rt.mem_load(cur, j.wrapping_shl(3), 8)
+          if rt.mem_load(sw_unit(tab, arr, ua), 0, 8) == SW_GIVE {
+            if rlen > 0 && run.wrapping_add(rlen.wrapping_shl(PUNIT_SH)) == ua {
+              rlen = rlen.wrapping_add(1)
+            } else {
+              advise_run(run, rlen)
+              run = ua
+              rlen = 1
+            }
+            // a pool another release filled since pool_room: the unit is
+            // advised but not pooled (its address range stays unused)
+            if k < room {
+              rt.mem_store(pa, k.wrapping_shl(3), ua, 8)
+              k = k.wrapping_add(1)
+            }
+          }
+        }
+        advise_run(run, rlen)
+        k = pool_runs(pa, k0, k)
+        rt.mem_store(cen, CPOOL.wrapping_add(8), k, 8)
+        cunlock(cen, CPOOL_C)
+        let _q = rt.slot_add(cen, POOLED_I, give, RELAXED)
+        gave = give
+      }
+      // the next pass's previous: this pass's whole free units not given back
+      var nk = 0
+      for j in 0..nc {
+        let ua = rt.mem_load(cur, j.wrapping_shl(3), 8)
+        if rt.mem_load(sw_unit(tab, arr, ua), 0, 8) != SW_GIVE {
+          rt.mem_store(cur, nk.wrapping_shl(3), ua, 8)
+          nk = nk.wrapping_add(1)
+        }
+      }
+      if prev != 0 {
+        unmap_os(prev, rt.slot_load(cen, SWPC_I, RELAXED).wrapping_shl(3))
+      }
+      rt.slot_store(cen, SWP_I, cur, RELAXED)
+      rt.slot_store(cen, SWPN_I, nk, RELAXED)
+      rt.slot_store(cen, SWPC_I, csz.shr_logical(3), RELAXED)
+      wait = nk
+    }
+    unmap_os(arr, asz)
+  }
+  // the lists back: the record's (its free lists' counts again), the
+  // central magazines chained per class in their old order onto what the
+  // other threads put there meanwhile
+  i = 0
+  while i < n {
+    let at = i.wrapping_shl(ITEM_SH)
+    let head = rt.mem_load(items, at, 8)
+    let kind = rt.mem_load(items, at.wrapping_add(16), 8)
+    let fl = rt.mem_load(items, at.wrapping_add(24), 8)
+    if kind == IK_FREE {
+      rt.mem_store(fl, H_FREE_LISTS, head, 8)
+      var k = 0
+      var p = head
+      while p != 0 {
+        k = k.wrapping_add(1)
+        p = rt.mem_load(p, 0, 8)
+      }
+      rt.mem_store(fl, H_NFREE, k, 8)
+    } else if kind == IK_MAG {
+      rt.mem_store(fl, H_MAG, head, 8)
+    }
+    i = i.wrapping_add(1)
+  }
+  for c in 1..PAGE_CLASS {
+    rt.mem_store(det, c.wrapping_shl(3), 0, 8)
+  }
+  // each class's chain rebuilt from its items (the tail first: the items
+  // of a class are in chain order, so prepending in reverse keeps it)
+  i = n
+  while i > 0 {
+    i = i.wrapping_sub(1)
+    let at = i.wrapping_shl(ITEM_SH)
+    if rt.mem_load(items, at.wrapping_add(16), 8) == IK_CEN {
+      let head = rt.mem_load(items, at, 8)
+      if head != 0 {
+        let c = rt.mem_load(items, at.wrapping_add(8), 8)
+        rt.mem_store(head, 8, rt.mem_load(det, c.wrapping_shl(3), 8), 8)
+        rt.mem_store(det, c.wrapping_shl(3), head, 8)
+      }
+    }
+  }
+  sw_back(hc, cen, det)
+  unmap_os(det, PAGE_CLASS.wrapping_shl(3))
+  unmap_os(items, isz)
+  unmap_os(tab, tsz)
+  rt.slot_store(cen, SWBUSY_I, 0, RELEASE)
+  gave.wrapping_shl(32) | (wait & 4294967295)
+}
+
+/// The detached chains of det (a head per class) put back on the central
+/// lists, each before what the class's list holds now.
+fn sw_back(hc: Int, cen: Int, det: Int) {
+  for c in 1..PAGE_CLASS {
+    let m = rt.mem_load(det, c.wrapping_shl(3), 8)
+    if m != 0 {
+      var t = m
+      while rt.mem_load(t, 8, 8) != 0 {
+        t = rt.mem_load(t, 8, 8)
+      }
+      alloc.central_lock(hc, c)
+      rt.mem_store(t, 8, rt.slot_load(cen, c, RELAXED), 8)
+      rt.slot_store(cen, c, m, RELAXED)
+      alloc.central_unlock(hc, c)
+    }
+  }
+}
+
+/// The window table's slot for window w (keys at tab, w + 1; 0 empty).
+fn sw_slot(tab: Int, w: Int) -> Int {
+  var i = w.wrapping_mul(-7046029254386353131).shr_logical(64 - SW_T_SH)
+  while true {
+    let k = rt.mem_load(tab, i.wrapping_shl(3), 8)
+    if k == 0 || k == w.wrapping_add(1) {
+      return i
+    }
+    i = i.wrapping_add(1) & (SW_T - 1)
+  }
+  0
+}
+
+/// Window w's index, or -1.
+fn sw_find(tab: Int, w: Int) -> Int {
+  let i = sw_slot(tab, w)
+  if rt.mem_load(tab, i.wrapping_shl(3), 8) == 0 { -1 } else { rt.mem_load(tab, SW_T.wrapping_add(i).wrapping_shl(3), 8) }
+}
+
+/// Window w added with index x (its key also in the windows by index).
+fn sw_add(tab: Int, w: Int, x: Int) {
+  let i = sw_slot(tab, w)
+  rt.mem_store(tab, i.wrapping_shl(3), w.wrapping_add(1), 8)
+  rt.mem_store(tab, SW_T.wrapping_add(i).wrapping_shl(3), x, 8)
+  rt.mem_store(tab, SW_T.wrapping_shl(1).wrapping_add(x).wrapping_shl(3), w, 8)
+}
+
+/// The first count word of window w (one of the table's).
+fn sw_base(tab: Int, arr: Int, w: Int) -> Int { arr.wrapping_add(sw_find(tab, w).wrapping_mul(SW_UNITS).wrapping_shl(3)) }
+
+/// The count word of the unit holding address a (its window in the table).
+fn sw_unit(tab: Int, arr: Int, a: Int) -> Int { sw_base(tab, arr, a.shr_logical(SW_WIN_SH)).wrapping_add((a.shr_logical(PUNIT_SH) & (SW_UNITS - 1)).wrapping_shl(3)) }
+
+/// List p0 (blocks of size bytes with their prefix) without the blocks
+/// that touch a unit given back (SW_GIVE): its new head.
+fn sw_unlink(tab: Int, arr: Int, p0: Int, size: Int) -> Int {
+  var head = 0
+  var tail = 0
+  var p = p0
+  while p != 0 {
+    let next = rt.mem_load(p, 0, 8)
+    let s0 = p.wrapping_sub(8)
+    var keep = true
+    var u = s0.shr_logical(PUNIT_SH)
+    let u1 = s0.wrapping_add(size).wrapping_sub(1).shr_logical(PUNIT_SH)
+    while u <= u1 && keep {
+      if rt.mem_load(sw_unit(tab, arr, u.wrapping_shl(PUNIT_SH)), 0, 8) == SW_GIVE {
+        keep = false
+      }
+      u = u.wrapping_add(1)
+    }
+    if keep {
+      if tail == 0 { head = p } else { rt.mem_store(tail, 0, p, 8) }
+      tail = p
+    }
+    p = next
+  }
+  if tail != 0 {
+    rt.mem_store(tail, 0, 0, 8)
+  }
+  head
 }
 
 /// Takes and releases the cache's lock.
