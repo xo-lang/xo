@@ -127,6 +127,17 @@ var rtPrefix = func() string {
 
 func rtAnchor() {}
 
+// gobindPrefix is the prefix of the `use go` adapters' functions
+// ("xoprog/gobind."), counted as the runtime's in stack traces as they
+// were when the adapters were written into rt (decision 0680).
+var gobindPrefix = strings.TrimSuffix(rtPrefix, "rt.") + "gobind."
+
+// inRuntime reports whether stack frame function fn is the runtime's or
+// an adapter's.
+func inRuntime(fn string) bool {
+	return strings.HasPrefix(fn, rtPrefix) || strings.HasPrefix(fn, gobindPrefix)
+}
+
 // syncWaits are the goroutine states of waits in package sync, which only
 // another goroutine ends.
 var syncWaits = map[string]bool{
@@ -247,7 +258,7 @@ func goParked(g string) bool {
 			// waits for signals (which deadlock detection ignores), the
 			// go test driver
 			return true
-		case strings.HasPrefix(fn, rtPrefix):
+		case inRuntime(fn):
 			if fn == rtPrefix+"osSleep" {
 				// a watcher of the runtime (the replay's, the monitor's,
 				// a test's time limit) sleeping between looks

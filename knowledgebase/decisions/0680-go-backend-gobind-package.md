@@ -83,3 +83,28 @@ needs shares one compiled rt. 0551's savings stay.
   own package, so the generic types would move too; large change.
 - E: the lock alone (decision (1)): each variant compiles once per cache,
   and -short stays at 154 s cold; no structural change.
+
+## Implementation (Xo Lang 2, 2026-11-16)
+
+compiler/gen writes the adapters to `gobind/xo_gobind_*.go` (package
+gobind, importing rt), qualifies a binding's names with `gobind.`, and
+rewrites the `%rt.` placeholders of a binding's call sites to gobind;
+std/rt counts gobind frames as the runtime's in its deadlock stacks. Test:
+internal/gen TestGoBindOwnPackage (failed before: the adapters were in
+rt/), std/rt TestGoParked "parked in an adapter".
+
+Measured on host 4 (linux/arm64, exclusive, a cold Go cache each side:
+xobuild, then `go test -short ./internal/gen ./internal/devgoldens`,
+host memory sampled), main a64db4573 against the change 76c7ee48c, in
+both orders:
+
+| run | main wall | change wall | main peak | change peak |
+|---|---|---|---|---|
+| main first | 315 s | 273 s | 14.1 GB | 17.9 GB |
+| change first | 439 s | 260 s | 39.8 GB | 14.7 GB |
+
+The change is faster in both orders (13% and 41%). The peak of host
+memory varies with how many cold builds overlap (14 to 40 GB for the
+same tree), so the two runs neither show a memory cost nor a memory
+saving; the rt lock (gotchas/go-backend-cold-rt-compiled-per-build.md)
+still bounds the compiles of one variant.

@@ -180,6 +180,9 @@ func TestGoParked(t *testing.T) {
 		{"scheduler settling", "goroutine 18 [syscall]:\nsyscall.Select(0x0)\n\tsyscall/x.go:1 +0x1\n" + rt + "osSleep(0x1)\n\tx/rt/ossleep.go:1 +0x1\n" + rt + "waitGoSettled()\n\tx/rt/gosched.go:1 +0x1\n" + rt + "(*sched).settleLocked(0x1)\n\tx/rt/gosched.go:1 +0x1", false},
 		{"runtime code in time.Sleep", "goroutine 17 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "(*replayer).watch()\n\tx/rt/replay.go:1 +0x1", false},
 		{"running", "goroutine 13 [runnable]:\n" + rt + "x()\n\tx/rt/a.go:1 +0x1", false},
+		// decision 0680: an adapter's frame (package xoprog/gobind) counts as
+		// the runtime's, as it did when the adapters were in rt
+		{"parked in an adapter", "goroutine 19 [chan receive]:\n" + strings.TrimSuffix(rt, "rt.") + "gobind.Go_x_f(0x1)\n\tx/gobind/b.go:1 +0x1\nxoprog/m.F_f()\n\tmain.xo:3 +0x1", true},
 		{"signals", "goroutine 14 [syscall]:\nos/signal.signal_recv()\n\truntime/sigqueue.go:149 +0x108\nos/signal.loop()\n\tos/signal/signal_unix.go:23 +0x1c", true},
 	}
 	for _, c := range cases {

@@ -35,5 +35,9 @@ Four concurrent cold builds of one program: 4 compiles of xoprog/rt in
 shows the count without the lock).
 
 The rt tree differs per program (decision 0551 prunes it), so programs
-using different parts of the runtime still compile it once each; one
-shared tree for all programs is the open design question.
+using different parts of the runtime still compile it once each. Decision
+0680 A (2026-11-16) took the `use go` adapters out of rt into
+xoprog/gobind, so a binding no longer makes its own rt variant: a cold
+`go test -short ./internal/gen ./internal/devgoldens` took 273 and 260 s
+against main's 315 and 439 s on host 4 (the decision's Implementation
+section).

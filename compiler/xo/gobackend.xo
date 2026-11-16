@@ -140,7 +140,7 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   var timers = false
   if (os.env.get("XO_GOTIMERS") ?? "") != "off" {
     for f in prog.files {
-      timers = timers || (f.path.starts_with("rt/xo_gobind_") && f.text.contains("NewGoCallback("))
+      timers = timers || (f.path.starts_with("gobind/xo_gobind_") && f.text.contains("NewGoCallback("))
     }
   }
   let gocmd = go_cmd(os)

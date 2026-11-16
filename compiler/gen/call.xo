@@ -808,7 +808,6 @@ fn (var g: Gen) call_result(fo: Int, sub: Map[Int, Int], call: Str) -> (Str, Int
 
 /// Names a std function or method in the runtime (stdCall).
 fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str]) -> Str {
-  let r = g.rt()
   let o = g.c.objs[fo]
   let prefix = g.std_free_prefix(o.module)
   if o.recv < 0 {
@@ -816,10 +815,12 @@ fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str
       // a bound Go function's body at the call (decision 0441)
       return g.go_site_call(site, "", args)
     }
+    let r = g.std_qual(o.module)
     return "${r}${prefix}${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   }
   let rm = g.omod(o.recv)
   if o.flags.is_static() {
+    let r = g.std_qual(rm)
     return "${r}${g.std_prefix(rm)}${g.oname(o.recv)}_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   }
   if g.method_is_go_method(fo) {
@@ -836,6 +837,7 @@ fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str
   if o.flags.iface() {
     tps = g.c.objs[o.recv].tparams + o.tparams
   }
+  let r = g.std_qual(rm)
   "${r}${g.std_prefix(rm)}${g.oname(o.recv)}_${g.oname(fo)}${g.targs_code(tps, sub)}(tk, ${recv}${prefix_comma(args)})"
 }
 

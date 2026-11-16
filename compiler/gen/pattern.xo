@@ -315,7 +315,7 @@ fn (var g: Gen) payload_type(vr: check.VRef, n: Int) -> Str {
   let vt = g.oname(en) + "_" + check.text(g.c.objs[en].variants[vr.variant].name)
   var name = ""
   if g.ostd(en) {
-    name = g.rt() + g.std_prefix(g.omod(en)) + vt
+    name = g.std_qual(g.omod(en)) + g.std_prefix(g.omod(en)) + vt
   } else {
     name = g.pkg_ref(g.omod(en)) + vt
   }

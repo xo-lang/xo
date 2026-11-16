@@ -72,5 +72,33 @@ fn (var g: Gen) go_site_call(s: GoSite, recv: Str, args: List[Str]) -> Str {
   // the literal's lines back (gobind escaped them): each goes under the
   // call's //line directive (fn.xo line)
   let lit = s.lit.replace("\\\\", "\u{1}").replace("\\n", "\n").replace("\\t", "\t").replace("\u{1}", "\\")
-  "${lit.replace("%rt.", g.rt())}(${(all + args).join(", ")})"
+  "${g.site_qualify(lit)}(${(all + args).join(", ")})"
+}
+
+/// A site literal's `%rt.` placeholders qualified: a binding adapter's
+/// names (Go_<path>_...) with "gobind.", whose package holds them since
+/// decision 0680, the runtime's with its qualifier.
+fn (var g: Gen) site_qualify(lit: Str) -> Str {
+  let parts = lit.split("%rt.")
+  var b = StrBuilder.new()
+  for i in 0..parts.len() {
+    let p = parts[i]
+    if i > 0 {
+      var n = 0
+      for c in p.bytes() {
+        if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+          break
+        }
+        n += 1
+      }
+      if g.gobind_name(p[0..n]) {
+        g.pkgs[g.p].imports["xoprog/gobind"] = "gobind"
+        b.write("gobind.")
+      } else {
+        b.write(g.rt())
+      }
+    }
+    b.write(p)
+  }
+  b.freeze()
 }

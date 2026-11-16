@@ -316,7 +316,7 @@ fn (var g: Gen) run() -> Program {
     }
     goline = go_line_max(goline, m.go_line)
     let prefix = g.std_prefix_go(m.go_path)
-    files.push(GFile{path: "rt/xo_gobind_${prefix.trim_prefix("Go_").trim_suffix("_")}.go", text: m.go_adapter})
+    files.push(GFile{path: "gobind/xo_gobind_${prefix.trim_prefix("Go_").trim_suffix("_")}.go", text: gobind_file(m.go_adapter)})
     for r in m.go_require {
       if !reqs.contains(r) {
         reqs.push(r)
@@ -564,6 +564,45 @@ fn (var g: Gen) pkg_ref(m: Int) -> Str {
   g.pkgs[oi].name + "."
 }
 
+/// A `use go` adapter, which internal/gobind writes in package rt, as a
+/// file of package xoprog/gobind (decision 0680): the adapters made rt a
+/// variant of its own for every program with a binding (30 compiled rt
+/// variants on the 138 internal/gen goldens, 12 without them). rt's names
+/// come in through a dot import, which `var _ *Task` keeps used (an
+/// adapter uses no unexported rt name and declares no method on an rt
+/// type; the import must precede the adapter's own declarations).
+fn gobind_file(text: Str) -> Str {
+  if let Some((head, rest)) = text.cut("\npackage rt\n") {
+    return "${head}\npackage gobind\n\nimport . \"xoprog/rt\"\n${rest}\nvar _ *Task\n"
+  }
+  text
+}
+
+/// The qualifier of module m's declarations: "gobind." for a `use go`
+/// binding (its adapters' package, decision 0680), else the runtime's.
+fn (var g: Gen) std_qual(m: Int) -> Str {
+  if m >= 0 && !g.c.mods[m].go_path.is_empty() {
+    g.pkgs[g.p].imports["xoprog/gobind"] = "gobind"
+    return "gobind."
+  }
+  g.rt()
+}
+
+/// Whether name n, written `%rt.n` in a call site form (decision 0441),
+/// is declared by a `use go` binding's adapter (Go_<path>_...) rather
+/// than by the runtime (Go_Error, Task).
+fn (g: Gen) gobind_name(n: Str) -> Bool {
+  if !n.starts_with("Go_") {
+    return false
+  }
+  for m in g.c.mods {
+    if !m.go_path.is_empty() && n.starts_with(g.std_prefix_go(m.go_path)) {
+      return true
+    }
+  }
+  false
+}
+
 /// The runtime qualifier "rt.", importing the runtime.
 fn (var g: Gen) rt() -> Str {
   if g.pkgs[g.p].in_rt {
@@ -757,7 +796,7 @@ fn (g: Gen) std_prefix_go(gp: Str) -> Str {
 fn (var g: Gen) type_obj_name(o: Int) -> Str {
   let m = g.omod(o)
   if g.is_std_mod(m) {
-    return g.rt() + g.std_prefix(m) + g.oname(o)
+    return g.std_qual(m) + g.std_prefix(m) + g.oname(o)
   }
   g.pkg_ref(m) + g.oname(o)
 }

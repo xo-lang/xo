@@ -852,7 +852,7 @@ func lazyStacks() map[int64]stackInfo {
 			if k := strings.LastIndex(fn, "+0x"); k > 0 {
 				fn = fn[:k]
 			}
-			if top == "" && !strings.HasPrefix(fn, "runtime.") && !strings.HasPrefix(fn, "internal/") && !strings.HasPrefix(fn, "sync.runtime_") && !strings.HasPrefix(fn, rtPrefix) {
+			if top == "" && !strings.HasPrefix(fn, "runtime.") && !strings.HasPrefix(fn, "internal/") && !strings.HasPrefix(fn, "sync.runtime_") && !inRuntime(fn) {
 				top = fn
 			}
 		}
