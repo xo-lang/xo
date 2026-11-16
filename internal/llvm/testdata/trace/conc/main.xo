@@ -4,10 +4,19 @@ fn main(os: Os) {
   let ch = Chan[Int].new(0)
   let done = Chan[Int].new(0)
   let m = Mutex[Int].new(0)
+  // handshakes, so each park happens on a loaded host too (#66: the
+  // sleeps alone raced there): held says _c holds the mutex, fin that
+  // main's last statement in the scope ran
+  let held = Chan[Int].new(0)
+  let fin = Chan[Int].new(0)
   scope s {
-    // a join that waits: this task, started first, still sleeps when the
-    // scope ends (a task not yet started main would run inline instead)
-    let _e = s.spawn(fn() { os.clock.sleep(80ms) })
+    // a join that waits: this task, started first, sleeps after main's
+    // last statement, so the scope's end waits for it (a task not yet
+    // started main would run inline instead)
+    let _e = s.spawn(fn() {
+      let _ = fin.recv()
+      os.clock.sleep(30ms)
+    })
     let _a = s.spawn(fn() {
       for i in 0..200 {
         ch.send(i)
@@ -22,26 +31,30 @@ fn main(os: Os) {
       }
       done.send(sum)
     })
-    // holds the mutex for 20 ms, so main waits for it (a mutex park)
+    // holds the mutex for 30 ms after telling main, so main waits for it
+    // (a mutex park)
     let _c = s.spawn(fn() {
       m.with(fn(var x) {
-        os.clock.sleep(20ms)
+        held.send(1)
+        os.clock.sleep(30ms)
         x += 1
       })
     })
-    os.clock.sleep(5ms)
+    let _ = held.recv()
     m.with(fn(var x) { x += 1 })
     os.stdio.println("sum ${done.recv() ?? -1}")
-    // a select that waits: the sender sleeps first
+    // a select that waits: the sender sleeps first (50 ms, a margin for
+    // a loaded host)
     let late = Chan[Int].new(0)
     let _d = s.spawn(fn() {
-      os.clock.sleep(5ms)
+      os.clock.sleep(50ms)
       late.send(1)
     })
     select {
       v = late.recv() => os.stdio.println("late ${v ?? -1}")
       after 10s => os.stdio.println("timeout")
     }
+    fin.close()
 
   }
   os.stdio.println("count ${m.with_read(fn(x) { x })}")
