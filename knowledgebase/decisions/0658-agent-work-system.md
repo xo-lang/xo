@@ -186,3 +186,26 @@ password ends the user's sessions. Departures and what is left:
   sets a password, so the view is never reachable without one.
 - Pages are preformatted text, not tables; tables and per-agent rows
   are the next step once the owner has used it from the phone.
+
+### Stage 5 and the owner's review (2026-11-15)
+
+Built by xw-1 (#69 and the owner's review of the page, relayed by the
+lead), workstream c1d23ad and after:
+
+- Search: `xw search WORDS`, `/v1/search` and `/search` look over tasks,
+  decisions and owner questions, alerts, failed gate tests, push holds and
+  main's commits. A row matches by Postgres full text (english, ranked) or
+  by holding every word as a substring, so identifiers and hashes are
+  found by any part. Notes, gotchas and decision files are not indexed
+  yet (they live in files, not the database); `xw isdone` still covers
+  the knowledgebase.
+- Tables: `/tasks`, `/gates` and `/std` show tables; the CLI keeps text.
+- Hook inbox: an agent's UserPromptSubmit and Stop hooks print its
+  unacked decisions and assigned tasks into its session once per session
+  (`xw cc-inbox`, migration 19), after every agent missed decision #28
+  for 18 minutes. A Stop blocks once with them; the hook waits at most 4
+  seconds and prints nothing when xw is down.
+- Cards and `xw status`: the newest gate's result, worktrees gated but
+  not pushed (newest gate passed on a HEAD not on main, no push since),
+  and "no task started" when an agent works while its card's task is
+  unstarted.
