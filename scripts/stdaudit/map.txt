@@ -5552,11 +5552,12 @@ protocompile.SourceInfoNone = std/protodesc.build (no SourceCodeInfo, protoc's d
 protocompile.SourceInfoStandard = gap: std/protodesc.build writes no SourceCodeInfo (protoc --include_source_info)
 protocompile.SourceInfoExtraComments = gap: std/protodesc.build writes no SourceCodeInfo
 protocompile.SourceInfoExtraOptionLocations = gap: std/protodesc.build writes no SourceCodeInfo
-protocompile.IsEditionSupported = gap: std/protoparse reads proto2 and proto3, not `edition = "2023"` files
+protocompile.IsEditionSupported = std/protoparse.parse (proto2, proto3 and editions 2023 and 2024, as protoc 36.2)
 # protocompile behavior checklist (decision 0655: what a symbol diff misses; an open item is a gap)
 protocompile.behavior.proto3 = std/protoparse.parse (proto3: fields, maps, oneofs, optional, services, options; std/protodesc byte exact with protoc 36.2 on 47 files)
 protocompile.behavior.proto2 = std/protoparse.parse (labels, required, defaults, groups, extensions ranges, extend)
 protocompile.behavior.errors = std/protoparse.ParseErr (line and column of the first error)
 protocompile.behavior.codegen = std/protoparse.gen_set (xo proto gen: messages and enums across files, unpacked proto2 repeated numbers, the well-known types)
-protocompile.behavior.editions = gap: no `edition = "2023"` (features, field presence by feature)
+protocompile.behavior.editions = std/protoparse.parse (edition 2023 and 2024: features options, presence and repeated encoding in gen; protodesc byte exact with protoc on scripts/protocdesc/testdata/editions2023.proto)
+protocompile.behavior.groups = gap: derive Proto has no group (delimited) encoding, so gen refuses a proto2 group and an editions DELIMITED field
 protocompile.behavior.custom_options = gap: std/protodesc.build leaves out custom options (extensions of descriptor.proto options) and aggregate option values

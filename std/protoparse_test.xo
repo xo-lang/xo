@@ -111,6 +111,31 @@ test "gen writes proto2 repeated numbers, Bools and enums unpacked, as protoc do
   expect(g3.contains("pub b proto \"2\": List[Int]")) == true
 }
 
+test "editions: edition = \"2023\" parses; gen follows field_presence and repeated_field_encoding, file level and per field" {
+  let f = must("edition = \"2023\";\npackage e;\noption features.repeated_field_encoding = EXPANDED;\nmessage M {\n  int32 a = 1;\n  int32 b = 2 [features.field_presence = IMPLICIT];\n  int64 c = 3 [features.field_presence = LEGACY_REQUIRED];\n  repeated int32 d = 4;\n  repeated int32 e = 5 [features.repeated_field_encoding = PACKED];\n  M m = 6;\n  reserved x, y;\n}\n")
+  expect(f.syntax) == "editions"
+  expect(f.edition) == "2023"
+  expect(f.messages[0].reserved_names) == ["x", "y"]
+  let g = gen(f).or_fault("gen")
+  expect(g.contains("pub a proto \"1\": Int32?")) == true
+  expect(g.contains("pub b proto \"2\": Int32\n")) == true
+  expect(g.contains("pub c proto \"3\": Int\n")) == true
+  expect(g.contains("pub d proto \"4,unpacked\": List[Int32]")) == true
+  expect(g.contains("pub e proto \"5\": List[Int32]")) == true
+  expect(g.contains("pub m proto \"6\": M?")) == true
+  let i = must("edition = \"2023\";\noption features.field_presence = IMPLICIT;\nmessage N { int32 a = 1; }\n")
+  expect(gen(i).or_fault("gen i").contains("pub a proto \"1\": Int32\n")) == true
+  expect(parse("edition = \"2023\";\nmessage M { optional int32 a = 1; }").is_err()) == true
+  expect(parse("edition = \"2023\";\nmessage M { required int32 a = 1; }").is_err()) == true
+  expect(parse("edition = \"2023\";\nmessage M { reserved \"x\"; }").is_err()) == true
+  expect(parse("edition = \"2022\";").is_err()) == true
+}
+
+test "gen refuses a group and a DELIMITED message field: derive Proto would write it length prefixed, not with group tags" {
+  expect(gen(must("syntax = \"proto2\";\nmessage M { optional group G = 1 { optional int32 a = 2; } }")).is_err()) == true
+  expect(gen(must("edition = \"2023\";\nmessage M { message I { int32 a = 1; } I i = 1 [features.message_encoding = DELIMITED]; }")).is_err()) == true
+}
+
 test "generator: unknown types are an error" {
   expect(gen(must("message A { B b = 1; }")).is_err()) == true
 }
@@ -170,10 +195,11 @@ test "proto2: labels, required, default, groups, extensions" {
   expect(m.fields[3].typ) == "Res"
   expect(m.nested[0].name) == "Res"
   expect(m.nested[0].fields[0].required) == true
-  let src = gen(f).or_fault("gen")
+  // the group parses, but gen refuses it (derive Proto has no group encoding)
+  expect(gen(f).is_err()) == true
+  let src = gen(must("syntax = \"proto2\";\nmessage M {\n  required int32 a = 1;\n  optional string b = 2 [default = \"x\"];\n}")).or_fault("gen")
   expect(src.contains("a proto \"1\": Int32")) == true
   expect(src.contains("b proto \"2\": Str?")) == true
-  expect(src.contains("res proto \"4\": MRes?")) == true
 }
 
 test "proto2: unlabeled field and a oneof member" {

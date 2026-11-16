@@ -1,5 +1,23 @@
 # std/protoparse changes
 
+## 2026-11-16: feature: editions (2023, 2024); fix: gen refuses a group
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: task #109, the stdaudit gaps protocompile.IsEditionSupported and protocompile.behavior.editions;
+  the group fix while mapping DELIMITED (derive Proto has no group encoding)
+- Go reference: protoc 36.2 and bufbuild/protocompile v0.14.1 (editions grammar), descriptor.proto's FeatureSet
+- Test: protoparse_test.xo "editions: ..." and "gen refuses a group and a DELIMITED message field..."; std/protodesc_test.xo's
+  protoc cases gain scripts/protocdesc/testdata/editions2023.proto (byte exact with protoc)
+- Shipped in: not yet released
+
+`parse` reads `edition = "2023"` (and `"2024"`): `syntax` is `editions`, `edition` the year; `optional`, `required`,
+`group` and string reserved names are errors there, reserved names are identifiers, and `features.NAME` options are
+kept. `gen` follows `features.field_presence` (a singular field is an Option unless IMPLICIT or LEGACY_REQUIRED) and
+`features.repeated_field_encoding` (EXPANDED is `unpacked`), the field's over the file's. Fix: `gen` refused nothing
+for a proto2 group and wrote it as a length prefixed message, which protoc's readers do not take for a group; a group
+and a DELIMITED field are now an error.
+
 ## 2026-11-16: feature: unpacked repeated output, imported enums and the well-known types
 
 - Kind: feature

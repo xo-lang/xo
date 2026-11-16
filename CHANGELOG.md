@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/protoparse, std/protodesc, xo proto gen): `.proto` files in editions 2023 and 2024: parsed (`edition`, `features.NAME` options, identifier reserved names), built into protoc's descriptors byte for byte, and generated with `features.field_presence` and `features.repeated_field_encoding`. Fix: `gen` refuses a proto2 group (and an editions DELIMITED field), which it wrote as a length prefixed message protoc's readers reject for a group.
 - Feature (std/sqlite): the DSN takes mattn/go-sqlite3's other keys (`_txlock`, `_auto_vacuum`, `_cache_size`, `_case_sensitive_like`, `_defer_foreign_keys`, `_ignore_check_constraints`, `_locking_mode`, `_query_only`, `_recursive_triggers`, `_secure_delete`, `_writable_schema`, and `_loc`, which changes nothing); a Server error names every extended result code (`SQLITE_CONSTRAINT_TRIGGER`, was `SQLITE_1811`).
 - Fix (std/sql): `Row.time` reads SQLite's date and time text (`2026-11-16 12:34:56`, with a fraction or offset) and a DATE, DATETIME or TIMESTAMP column's Unix integer, as mattn/go-sqlite3 does; only `YYYY-MM-DD` read before.
 - Fixed (std/timego): `parse` of a two digit year with a sign gives Go's result (`-3` is 1997, `+3` is 2003).

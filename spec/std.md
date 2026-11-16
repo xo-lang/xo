@@ -10742,7 +10742,7 @@ fn gen(f: File) -> Str ! ParseErr
 fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr   // (import path, File) each; one source per file
 fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate option value's (key, value) pairs
 // File { syntax, package, imports, messages: List[Message], enums: List[Enum], services: List[Service], options,
-//        public_imports: List[Str], weak_imports: List[Str], extends: List[Extend] }
+//        public_imports: List[Str], weak_imports: List[Str], extends: List[Extend], edition }
 // Message { name, fields: List[Field], oneofs: List[Str], nested: List[Message], enums: List[Enum], options,
 //           reserved: List[(Int, Int)], reserved_names, extensions: List[(Int, Int)], extension_options, map_at, extends }
 // Field { name, num, typ, key, repeated, optional, required, oneof, group, default_value, json_name, options }
@@ -10762,9 +10762,15 @@ fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate o
   (end included, `max` the largest number), and where each map field sits among the nested messages (`map_at`).
   In a proto2 file every field outside a oneof needs a label (`required`, `optional` or `repeated`, else an error),
   except a `map`, and `required` and `group` are accepted: a group is a nested message plus a field of that type
-  named in lower case (`group`). A proto3 file rejects `required` and `group`. `gen` maps `required` to a plain field and proto2 `optional` to an Option;
-  a repeated number, Bool or enum is written `proto "N,unpacked"` in a proto2 file unless `[packed = true]`, and in
-  proto3 with `[packed = false]`, so the field's bytes are protoc's.
+  named in lower case (`group`). A proto3 file rejects `required` and `group`. An editions file (`edition = "2023"` or
+  `"2024"`; `syntax` is then `editions` and `edition` the year) rejects `optional`, `required`, `group` and string
+  reserved names (its reserved names are identifiers); its `features.NAME` options are kept as options. `gen` maps
+  `required` to a plain field and proto2 `optional` to an Option, and in an editions file a singular field to an
+  Option unless its `features.field_presence` (the field's, else the file's; EXPLICIT by default) is IMPLICIT or
+  LEGACY_REQUIRED; a repeated number, Bool or enum is written `proto "N,unpacked"` in a proto2 file unless
+  `[packed = true]`, in proto3 with `[packed = false]`, and in an editions file when its repeated_field_encoding is
+  EXPANDED, so the field's bytes are protoc's. A group, and an editions field with `features.message_encoding =
+  DELIMITED`, is an error in `gen`: derive Proto writes a message length prefixed, not with group tags.
 - `gen` writes Xo source: a nested type `Inner` of `Outer` is `OuterInner`, a oneof is an enum held in an optional
   field marked `proto "oneof"`, an enum is an open `Int` enum with a catch-all variant. Services are not generated
   here (the stubs of std/grpc come with `xo proto gen`). Types and fields are `pub`, and the output has no `use`
@@ -10855,8 +10861,10 @@ the declared ones, `json_name` (protoc's lowerCamelCase unless given), groups, d
 reserved and extension ranges, and the options descriptor.proto defines (file, message, field, enum, value, service
 and method; `edition_defaults` and `feature_support` aggregates); options it does not define (custom options) and
 source retention options are left out, and an rpc with a `{ }` body gets an empty options message, as protoc's. An
-unknown type is an error at line 0. Checked byte for byte against protoc 36.2 on 47 files: the protoparse corpus
-files protoc compiles, descriptor.proto and the well known types they import, and proto2 and proto3 feature files
+unknown type is an error at line 0. An editions file's descriptor has syntax `editions`, its edition's number
+(EDITION_2023 is 1000) and each `features.NAME` option in a FeatureSet at its options' features field.
+Checked byte for byte against protoc 36.2 on 48 files: the protoparse corpus files protoc compiles, descriptor.proto
+and the well known types they import, and proto2, proto3 and edition 2023 feature files
 (scripts/protocdesc writes those cases into std/protodesc_test.xo; it needs protoc, so it runs by hand).
 
 ## 73. std/protowkt

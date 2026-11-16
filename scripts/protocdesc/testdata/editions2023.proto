@@ -1,0 +1,42 @@
+// edition 2023 features protodesc.build follows protoc on (std/protodesc_test.xo).
+edition = "2023";
+
+package xo.ed;
+
+option features.field_presence = EXPLICIT;
+option features.enum_type = OPEN;
+option go_package = "example.com/xo/ed;edpb";
+
+enum Color {
+  option features.enum_type = CLOSED;
+  COLOR_UNSPECIFIED = 0;
+  RED = 1;
+  GREEN = 2;
+}
+
+message Item {
+  int32 id = 1;
+  string name = 2 [features.field_presence = IMPLICIT];
+  int64 must = 3 [features.field_presence = LEGACY_REQUIRED];
+  repeated int32 packed_nums = 4;
+  repeated int32 loose_nums = 5 [features.repeated_field_encoding = EXPANDED];
+  Color color = 6;
+  Inner inner = 7;
+  Inner delimited = 8 [features.message_encoding = DELIMITED];
+  map<string, int32> counts = 9;
+  oneof choice {
+    string text = 10;
+    int32 num = 11;
+  }
+  string legacy = 12 [default = "x"];
+  reserved 20 to 22;
+  reserved old_name, other_name;
+
+  message Inner {
+    int32 v = 1 [features.field_presence = IMPLICIT];
+  }
+}
+
+service Svc {
+  rpc Get(Item) returns (Item);
+}

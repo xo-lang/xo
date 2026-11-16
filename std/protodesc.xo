@@ -583,6 +583,14 @@ pub fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDe
   let proto3 = f.syntax == "proto3"
   var out = FileDesc{name: name, package: f.package, dependency: f.imports, public_dependency: import_indexes(f.imports, f.public_imports),
     weak_dependency: import_indexes(f.imports, f.weak_imports), syntax: if proto3 { "proto3" } else { "" }}
+  if f.syntax == "editions" {
+    // an editions file: syntax "editions" and the Edition enum's number (EDITION_2023 is 1000)
+    out.syntax = "editions"
+    for pair in EDITIONS.split(",") {
+      let kv = pair.split(":")
+      if kv[0] == "EDITION_${f.edition}" { out.edition = Int.parse(kv[1]) ?? 0 }
+    }
+  }
   for m in f.messages {
     out.message_type.push(b_message(syms, f.package, m, proto3)?)
   }
@@ -843,17 +851,17 @@ const FILE_OPTS: List[(Str, Int, Int, Str)] = [
   ("deprecated", 23, 0, ""), ("java_string_check_utf8", 27, 0, ""), ("cc_enable_arenas", 31, 0, ""),
   ("objc_class_prefix", 36, 1, ""), ("csharp_namespace", 37, 1, ""), ("swift_prefix", 39, 1, ""),
   ("php_class_prefix", 40, 1, ""), ("php_namespace", 41, 1, ""), ("php_metadata_namespace", 44, 1, ""),
-  ("ruby_package", 45, 1, ""),
+  ("ruby_package", 45, 1, ""), ("features", 50, 5, ""),
 ]
 const MESSAGE_OPTS: List[(Str, Int, Int, Str)] = [
   ("message_set_wire_format", 1, 0, ""), ("no_standard_descriptor_accessor", 2, 0, ""), ("deprecated", 3, 0, ""),
-  ("map_entry", 7, 0, ""),
+  ("map_entry", 7, 0, ""), ("features", 12, 5, ""),
 ]
 const FIELD_OPTS: List[(Str, Int, Int, Str)] = [
   ("ctype", 1, 2, "STRING:0,CORD:1,STRING_PIECE:2"), ("packed", 2, 0, ""), ("deprecated", 3, 0, ""), ("lazy", 5, 0, ""),
   ("jstype", 6, 2, "JS_NORMAL:0,JS_STRING:1,JS_NUMBER:2"), ("weak", 10, 0, ""), ("unverified_lazy", 15, 0, ""),
   ("debug_redact", 16, 0, ""), ("retention", 17, 2, "RETENTION_UNKNOWN:0,RETENTION_RUNTIME:1,RETENTION_SOURCE:2"),
-  ("edition_defaults", 20, 4, "EditionDefault"), ("feature_support", 22, 4, "FeatureSupport"),
+  ("edition_defaults", 20, 4, "EditionDefault"), ("feature_support", 22, 4, "FeatureSupport"), ("features", 21, 5, ""),
   ("targets", 19, 2, "TARGET_TYPE_UNKNOWN:0,TARGET_TYPE_FILE:1,TARGET_TYPE_EXTENSION_RANGE:2,TARGET_TYPE_MESSAGE:3,TARGET_TYPE_FIELD:4,TARGET_TYPE_ONEOF:5,TARGET_TYPE_ENUM:6,TARGET_TYPE_ENUM_ENTRY:7,TARGET_TYPE_SERVICE:8,TARGET_TYPE_METHOD:9"),
 ]
 // ExtensionRangeOptions' declaration and verification are source retention options, which protoc leaves out
@@ -871,10 +879,21 @@ fn aggregate_fields(kind: Str) -> List[(Str, Int, Int, Str)] {
   }
 }
 
-const ENUM_OPTS: List[(Str, Int, Int, Str)] = [("allow_alias", 2, 0, ""), ("deprecated", 3, 0, "")]
-const ENUM_VALUE_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 1, 0, ""), ("debug_redact", 3, 0, "")]
-const SERVICE_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 33, 0, "")]
-const METHOD_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 33, 0, ""), ("idempotency_level", 34, 2, "IDEMPOTENCY_UNKNOWN:0,NO_SIDE_EFFECTS:1,IDEMPOTENT:2")]
+const ENUM_OPTS: List[(Str, Int, Int, Str)] = [("allow_alias", 2, 0, ""), ("deprecated", 3, 0, ""), ("features", 7, 5, "")]
+const ENUM_VALUE_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 1, 0, ""), ("debug_redact", 3, 0, ""), ("features", 2, 5, "")]
+const SERVICE_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 33, 0, ""), ("features", 34, 5, "")]
+const METHOD_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 33, 0, ""), ("idempotency_level", 34, 2, "IDEMPOTENCY_UNKNOWN:0,NO_SIDE_EFFECTS:1,IDEMPOTENT:2"), ("features", 35, 5, "")]
+/// FeatureSet's fields an edition file sets with `option features.NAME = VALUE` (kind 5 above: the
+/// `features.` options of a descriptor gathered into one FeatureSet); enforce_naming_style and
+/// default_symbol_visibility are source retention, which protoc leaves out of what it writes.
+const FEATURE_FIELDS: List[(Str, Int, Int, Str)] = [
+  ("field_presence", 1, 2, "FIELD_PRESENCE_UNKNOWN:0,EXPLICIT:1,IMPLICIT:2,LEGACY_REQUIRED:3"),
+  ("enum_type", 2, 2, "ENUM_TYPE_UNKNOWN:0,OPEN:1,CLOSED:2"),
+  ("repeated_field_encoding", 3, 2, "REPEATED_FIELD_ENCODING_UNKNOWN:0,PACKED:1,EXPANDED:2"),
+  ("utf8_validation", 4, 2, "UTF8_VALIDATION_UNKNOWN:0,VERIFY:2,NONE:3"),
+  ("message_encoding", 5, 2, "MESSAGE_ENCODING_UNKNOWN:0,LENGTH_PREFIXED:1,DELIMITED:2"),
+  ("json_format", 6, 2, "JSON_FORMAT_UNKNOWN:0,ALLOW:1,LEGACY_BEST_EFFORT:2"),
+]
 
 /// The options message of the known options in `opts`, fields in number order (protoc serializes the
 /// options message), and whether any was given.
@@ -900,6 +919,8 @@ fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, 
         }
         pw.wtag(o, num, 0)
         pw.wv(o, ev)
+      } else if kind == 5 {
+        continue
       } else if kind == 4 {
         let pairs = protoparse.aggregate_pairs(v)
         if pairs.is_empty() { continue }
@@ -911,6 +932,22 @@ fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, 
         pw.wtag(o, num, 0)
         pw.wv(o, Int.parse(v) ?? 0)
       }
+      parts.push((num, o.freeze()))
+    }
+  }
+  // an edition's `features.NAME` options: one FeatureSet at the options message's features field
+  var feats: List[(Str, Str)] = []
+  for (k, v) in opts {
+    if k.starts_with("features.") { feats.push((k["features.".len()..k.len()], v)) }
+  }
+  if !feats.is_empty() {
+    for (_, num, kind, _) in known {
+      if kind != 5 { continue }
+      let (body, _) = b_opts(feats, FEATURE_FIELDS)
+      var o = BytesBuilder.new()
+      pw.wtag(o, num, 2)
+      pw.wv(o, body.len())
+      o.write(body)
       parts.push((num, o.freeze()))
     }
   }

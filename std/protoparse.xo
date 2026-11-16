@@ -217,6 +217,8 @@ pub struct File {
   pub weak_imports: List[Str] = []
   /// Top level `extend` blocks, in order.
   pub extends: List[Extend] = []
+  /// An editions file's edition (`edition = "2023"`; syntax is then `editions`), else "".
+  pub edition: Str = ""
 }
 
 /// Parses a proto3 or proto2 file. Options are kept as (name, value) pairs on the file, messages,
@@ -234,6 +236,18 @@ pub fn parse(src: Str) -> File ! ParseErr {
       p_expect(p, "=")?
       f.syntax = p_str(p)?
       p.proto2 = f.syntax == "proto2"
+      p_expect(p, ";")?
+    } else if p_is(p, "edition") {
+      p.at += 1
+      p_expect(p, "=")?
+      let ed = p_str(p)?
+      // protoc 36.2 compiles editions 2023 and 2024
+      if !(ed is "2023" | "2024") {
+        return Err(p_err(p, "edition ${ed.quote()} is not supported (2023 and 2024 are)"))
+      }
+      f.syntax = "editions"
+      f.edition = ed
+      p.editions = true
       p_expect(p, ";")?
     } else if p_is(p, "package") {
       p.at += 1
@@ -315,7 +329,8 @@ pub fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr {
       for e in g.enums { enums.push(e.name) }
       for m in g.messages { enums = g_enum_gens("", m, enums) }
     }
-    let pk = GenPack{proto2: f.syntax == "proto2", enums: enums}
+    let pk = GenPack{proto2: f.syntax == "proto2", enums: enums, editions: f.syntax == "editions",
+      presence: g_feature(f.options, "field_presence") ?? "EXPLICIT", repeated: g_feature(f.options, "repeated_field_encoding") ?? "PACKED"}
     var o: List[Str] = []
     for e in f.enums { o = g_enum(e, e.name, o) }
     for m in f.messages { o = g_message(m, scope, "", names, pk, o)? }
@@ -348,6 +363,8 @@ struct P {
   ts: List[Token]
   at: Int
   proto2: Bool
+  /// an editions file: no `optional`, `required` or `group`; reserved names are identifiers
+  editions: Bool = false
 }
 
 fn p_err(p: P, msg: Str) -> ParseErr {
@@ -573,7 +590,10 @@ fn p_ranges_opts(var p: P, max: Int) -> (List[(Int, Int)], List[Str], List[(Str,
   var ns: List[Str] = []
   while true {
     if p.at < p.ts.len() && p.ts[p.at].kind == Kind.Str {
+      if p.editions { return Err(p_err(p, "reserved names are identifiers in editions, not strings")) }
       ns.push(p_str(p)?)
+    } else if p.editions && p.at < p.ts.len() && p.ts[p.at].kind == Kind.Ident {
+      ns.push(p_ident(p)?)
     } else {
       let a = p_int(p)?
       var b = a
@@ -637,10 +657,12 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
       labeled = true
       p.at += 1
     } else if p_is(p, "optional") {
+      if p.editions { return Err(p_err(p, "`optional` is not allowed in editions (presence is features.field_presence)")) }
       optional = true
       labeled = true
       p.at += 1
     } else if p_is(p, "required") {
+      if p.editions { return Err(p_err(p, "`required` is not allowed in editions (use features.field_presence = LEGACY_REQUIRED)")) }
       if !p.proto2 { return Err(p_err(p, "`required` is proto2 only")) }
       required = true
       labeled = true
@@ -653,6 +675,7 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
     }
   }
   if p_is(p, "group") {
+    if p.editions { return Err(p_err(p, "`group` is not allowed in editions (use features.message_encoding = DELIMITED)")) }
     if !p.proto2 { return Err(p_err(p, "`group` is proto2 only")) }
     p.at += 1
     let gname = p_ident(p)?
@@ -910,6 +933,20 @@ fn g_enum(e: Enum, gname: Str, out: List[Str]) -> List[Str] {
 struct GenPack {
   proto2: Bool
   enums: List[Str]
+  /// an editions file, with its file level field_presence and repeated_field_encoding (the
+  /// edition 2023 defaults EXPLICIT and PACKED)
+  editions: Bool = false
+  presence: Str = "EXPLICIT"
+  repeated: Str = "PACKED"
+}
+
+/// The value of the `features.NAME` option in opts, None when not set.
+fn g_feature(opts: List[(Str, Str)], name: Str) -> Str? {
+  var v: Str? = None
+  for (k, x) in opts {
+    if k == "features.${name}" { v = Some(x) }
+  }
+  v
 }
 
 /// The generated names of the enums nested in m, appended to out.
@@ -930,6 +967,9 @@ fn g_unpacked(fl: Field, gtyp: Str, pk: GenPack) -> Bool {
     None => pk.enums.contains(gtyp)
   }
   if !packable { return false }
+  if pk.editions {
+    return (g_feature(fl.options, "repeated_field_encoding") ?? pk.repeated) == "EXPANDED"
+  }
   var packed = !pk.proto2
   for (k, v) in fl.options {
     if k == "packed" { packed = v == "true" }
@@ -963,6 +1003,10 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], pk: 
       o.push("  pub ${fl.oneof} proto \"oneof\": ${g}${g_camel(fl.oneof)}?")
       continue
     }
+    if fl.group || g_feature(fl.options, "message_encoding") == Some("DELIMITED") {
+      // derive Proto writes a message length prefixed; a group's start and end tags would be wrong bytes
+      return Err(ParseErr{line: 0, col: 0, msg: "field `${fl.name}` of `${m.name}` is a group (delimited encoding), which derive Proto does not write"})
+    }
     let ty = g_type(fl.typ, d, names)?
     var tx = ty.0
     if fl.key != "" {
@@ -971,6 +1015,10 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], pk: 
     } else if fl.repeated {
       tx = "List[${tx}]"
     } else if fl.optional {
+      tx = "${tx}?"
+    } else if pk.editions && (g_feature(fl.options, "field_presence") ?? pk.presence) == "EXPLICIT" {
+      // edition 2023: a singular field has presence unless IMPLICIT (or LEGACY_REQUIRED, a plain field
+      // as proto2's required)
       tx = "${tx}?"
     }
     var opts = if fl.key != "" { "" } else { ty.1 }

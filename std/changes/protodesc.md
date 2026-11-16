@@ -1,5 +1,18 @@
 # std/protodesc changes
 
+## 2026-11-16: feature: editions descriptors
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (protocompile.IsEditionSupported)
+- Go reference: protoc 36.2's FileDescriptorProto for an edition 2023 file
+- Test: std/protodesc_test.xo, the protoc case scripts/protocdesc/testdata/editions2023.proto (byte exact)
+- Shipped in: not yet released
+
+`build` of an editions file writes syntax `editions`, the edition's number (EDITION_2023, 1000), and each
+`features.NAME` option as a FeatureSet in the file's, message's, field's, enum's, value's, service's or method's
+options, as protoc does.
+
 ## 2026-11-16: feature: build, descriptors from std/protoparse as protoc writes them
 
 - Kind: feature
