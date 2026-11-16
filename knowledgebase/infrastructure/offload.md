@@ -680,6 +680,16 @@ defaults to none, so it no longer gives up after 10 minutes and bounces
 of waiting); `-move` still takes it to another host's lane that starts it
 at once. A plain gate keeps 10.
 
+Early moves (heavyd, `HEAVYD_MOVE_IDLE`, default 1m, 0 off; xw-1,
+2026-11-15): a `-move=MIN:SPEC` lease (offload-gate.sh's reroute, MIN 5
+for a plain gate) that has waited HEAVYD_MOVE_IDLE moves at once to a lane
+of SPEC with nothing held or waiting and no OFF_NO_LANE run on its host,
+logged `MOVED early lease NAME` in heavyd.log; MIN still applies to a lane
+that is busy but would start it. Before it, 32 leases a day waited the
+whole 5 minutes on host 2 and then started on an idle host with no wait
+(159 minutes a day; host 2's queue was `xw jobs`' top wait reason).
+Last verified: 2026-11-15.
+
 Lease history (offload-gate.sh): every gate that reaches its verdict (rc
 0 or 1) appends a row to `$LEAD/notes/gate-history.tsv` (date, host, the
 sorted steps, cold or warm xo, seconds from its lease's start in
