@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+fields 7 8
+param 7 8
+nested 7 8
+nested2 7 8
+elems 7 8
+ints 7 8
+tuple 7 8
+recv 6 4
+value 7 8
+three 1 2 3
+elemfields 1 2 3
+--- stderr

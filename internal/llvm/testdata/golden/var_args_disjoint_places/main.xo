@@ -1,0 +1,109 @@
+// Disjoint places of one variable as `var` arguments (task #70,
+// 2026-11-15): two fields of a struct, through a `var` parameter, nested
+// fields, two literal list indexes, Int fields, tuple fields, a `var`
+// receiver on one field with a `var` argument from another, a call
+// through a function value, and three fields at once. Each write back
+// stores into the variable as the previous one left it: the native
+// backends stored each from the variable as it was before the call, so
+// only the last argument's new value survived. Decision 0111 refuses the
+// overlapping shapes (XO0503); these are the ones it allows.
+struct S {
+  a: List[Int]
+  b: List[Int]
+}
+
+struct Inner {
+  p: List[Int]
+  q: List[Int]
+}
+
+struct Outer {
+  i: Inner
+  r: List[Int]
+}
+
+fn set_both(var x: List[Int], var y: List[Int]) {
+  x[0] = 7
+  y[0] = 8
+}
+
+fn set_ints(var x: Int, var y: Int) {
+  x = 7
+  y = 8
+}
+
+fn set_s_and_field(var s: S, var y: List[Int]) {
+  s.b[0] = 5
+  y[0] = 9
+}
+
+fn via_param(var s: S) {
+  set_both(s.a, s.b)
+}
+
+struct P {
+  x: Int
+  y: Int
+}
+
+struct T {
+  v: List[Int]
+}
+
+fn (var t: T) swap_in(var y: List[Int]) {
+  t.v[0] = 6
+  y[0] = 4
+}
+
+struct Three {
+  a: Int
+  b: Int
+  c: Int
+}
+
+fn set3(var x: Int, var y: Int, var z: Int) {
+  x = 1
+  y = 2
+  z = 3
+}
+
+struct Holder {
+  t: T
+  w: List[Int]
+}
+
+fn main(os: Os) {
+  var s = S{a: [1], b: [2]}
+  set_both(s.a, s.b)
+  os.stdio.println("fields ${s.a[0]} ${s.b[0]}")
+  var t = S{a: [1], b: [2]}
+  via_param(t)
+  os.stdio.println("param ${t.a[0]} ${t.b[0]}")
+  var o = Outer{i: Inner{p: [1], q: [2]}, r: [3]}
+  set_both(o.i.p, o.r)
+  os.stdio.println("nested ${o.i.p[0]} ${o.r[0]}")
+  set_both(o.i.p, o.i.q)
+  os.stdio.println("nested2 ${o.i.p[0]} ${o.i.q[0]}")
+  var ls: List[List[Int]] = [[1], [2]]
+  set_both(ls[0], ls[1])
+  os.stdio.println("elems ${ls[0][0]} ${ls[1][0]}")
+  var p = P{x: 1, y: 2}
+  set_ints(p.x, p.y)
+  os.stdio.println("ints ${p.x} ${p.y}")
+  var ts = (1, 2)
+  set_ints(ts.0, ts.1)
+  os.stdio.println("tuple ${ts.0} ${ts.1}")
+  var h = Holder{t: T{v: [0]}, w: [0]}
+  h.t.swap_in(h.w)
+  os.stdio.println("recv ${h.t.v[0]} ${h.w[0]}")
+  let f: fn(var List[Int], var List[Int]) = set_both
+  var u = S{a: [1], b: [2]}
+  f(u.a, u.b)
+  os.stdio.println("value ${u.a[0]} ${u.b[0]}")
+  var th = Three{a: 0, b: 0, c: 0}
+  set3(th.a, th.b, th.c)
+  os.stdio.println("three ${th.a} ${th.b} ${th.c}")
+  var lt: List[Three] = [Three{a: 0, b: 0, c: 0}]
+  set3(lt[0].a, lt[0].b, lt[0].c)
+  os.stdio.println("elemfields ${lt[0].a} ${lt[0].b} ${lt[0].c}")
+}

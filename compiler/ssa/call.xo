@@ -423,13 +423,46 @@ fn (var b: Builder) value_call(x: Expr) -> Int {
   // a packed result: the call's result, then each `var` argument's new
   // value, written back as a direct call's are
   let t = b.vty(r)
-  for (i, p0) in places.indexed() {
-    var p = p0
-    let f = b.add(Op.Field, b.m.types[t].elems[i + 1], Aux.I(n: i + 1), [r])
-    b.place_set(p, f)
-  }
+  b.write_back(places, r, t)
   let f0 = b.add(Op.Field, b.m.types[t].elems[0], Aux.I(n: 0), [r])
   b.call_result(f0, x)
+}
+
+/// Stores a call's `var` receiver and arguments back from its packed
+/// result r (of tuple type t: the result, then each place's new value).
+/// A place whose root variable an earlier place of the call already
+/// stored to is read again from that variable: its cached levels hold
+/// the variable as it was before the call, so `set_both(s.a, s.b)` set
+/// s from that old s and lost s.a's new value (task #70, 2026-11-15;
+/// decision 0111 keeps the places themselves apart).
+fn (var b: Builder) write_back(places: List[Place], r: Int, t: Int) {
+  var stored: List[Int] = []
+  for (i, p0) in places.indexed() {
+    var p = p0
+    let root = place_root(p)
+    if root >= 0 && stored.contains(root) {
+      for k in 0..p.cache.len() {
+        p.cache[k] = -1
+        p.taken[k] = -1
+      }
+    }
+    let f = b.add(Op.Field, b.m.types[t].elems[i + 1], Aux.I(n: i + 1), [r])
+    b.place_set(p, f)
+    if root >= 0 {
+      stored.push(root)
+    }
+  }
+}
+
+/// The variable a place starts at, -1 for none.
+fn place_root(p: Place) -> Int {
+  if p.steps.is_empty() {
+    return -1
+  }
+  match p.steps[0] {
+    Var(vo) => vo
+    _ => -1
+  }
 }
 
 /// After a call of a function that never returns, the block ends
@@ -1425,11 +1458,7 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
   let r = b.call(name, t, "", vargs)
   b.check(name)
   b.leave_section(section, impl, span)
-  for (i, p0) in places.indexed() {
-    var p = p0
-    let f = b.add(Op.Field, b.m.types[t].elems[i + 1], Aux.I(n: i + 1), [r])
-    b.place_set(p, f)
-  }
+  b.write_back(places, r, t)
   let f0 = b.add(Op.Field, b.m.types[t].elems[0], Aux.I(n: 0), [r])
   b.call_result(f0, x)
 }
