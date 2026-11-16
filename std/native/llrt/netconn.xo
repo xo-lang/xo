@@ -1467,7 +1467,18 @@ const MSG_PEEK = 2
 /// The first r bytes read into buf as a read's result list (the bytes a
 /// connection read are the program's own data, not text to validate:
 /// decision 0259's one cast of this file).
-fn read_list(buf: Bytes, r: Int, np: Int) -> Int { list_of(rt.cast[Bytes, Str](raw.bytes_len(buf, r)), np) }
+/// The r bytes a read put in buf, as the read's result: buf itself when
+/// they fill at least half of it, else a copy of their size (task #86: a
+/// 300 byte reply to read(65536) kept the 64 KiB buffer as its
+/// capacity). The copy costs r bytes; buf is freed.
+fn read_list(buf: Bytes, r: Int, np: Int) -> Int {
+  if 2 * r < buf.len() {
+    let t = raw.str_at(raw.bytes_addr(buf), r)
+    raw.alive(buf)
+    return list_of(t, np)
+  }
+  list_of(rt.cast[Bytes, Str](raw.bytes_len(buf, r)), np)
+}
 
 /// `c.write(data)` of the n bytes at p: writes every byte.
 pub fn conn_write(cn: Int, p: Int, n: Int) {

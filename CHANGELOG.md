@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - std/ui (Early): a navigation or form that waits marks the page `data-xo-busy` and `aria-busy`, disables a POST form's buttons, and shows a thin progress bar after 150 ms (`--xo-progress` sets its color).
+- Fix (native backends, memory): a short `Conn.read(max)` result no longer keeps a buffer of `max` bytes: a 300 byte reply to `read(65536)` held 64 KiB. A read that fills less than half of `max` is copied to its own size.
 - Perf (native backends; decision 0669): `Rand.int`, `float` and `bool` draw from a per-thread ChaCha8 keystream (Go's math/rand/v2 runtime generator, with fast key erasure) seeded from the operating system, instead of one system call per draw: std/random's normal 380.5 to 18.88 ms for 10^6 draws on linux/arm64 (0.050). A forked child never repeats its parent's values; `Rand.bytes` still reads the operating system's generator on every call.
 - std/ui (Early): server pages can join std/ui navigation (`ui.plain`, or `data-xo-page` with `ui.runtime_url`): GET forms submit in place (`data-xo-submit-on-input` for search as you type), POST forms follow a 303 and show a 422 in place, and `data-xo-frame` updates one region (decision 0670).
 - std/ui (Early): the runtime and wasm client are served at content stamped URLs and cached for good; an open page reloads onto a new build once nothing waits to be sent (`data-xo-stale` meanwhile); a page syncs as soon as its live socket reconnects instead of up to 30 s later.

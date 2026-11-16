@@ -1,0 +1,54 @@
+// A short read keeps no more memory than it holds (task #86, aws-43's sql
+// stress: every c.read(65536) of a 300 byte reply kept a 64 KiB block,
+// 93% of the bytes allocated, RSS 93 to 163 MB against Go's flat 25 MB),
+// run by internal/llvm's TestRuntimeShortRead on both native backends: a
+// client asks 50 times and keeps each 300 byte reply of read(65536); each
+// reply's object holds at most twice its length (std/internal rt_probe
+// "word": a text object's capacity word).
+//
+// Prints "<test>: ok" per test; exit status 0 means every test passed.
+use std/internal
+
+fn main(os: Os) uses stdio, proc, net.dial, net.listen {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  var worst = 0
+  var total = 0
+  scope s {
+    let _srv = s.spawn(fn() -> Int {
+      let c = l.accept().or_fault("accept")
+      var n = 0
+      let reply = "x".repeat(300).bytes()
+      while let Some(_b) = c.read(16).or_fault("server read") {
+        c.write(reply).or_fault("server write")
+        n += 1
+        if n == 50 {
+          break
+        }
+      }
+      c.close()
+      n
+    })
+    let c = os.net.dial(l.addr()).or_fault("dial")
+    var kept: List[Bytes] = []
+    for _ in 0..50 {
+      c.write(b"q").or_fault("write")
+      var got = 0
+      while got < 300 {
+        let b = (c.read(65536).or_fault("read")) ?? fault("eof")
+        got += b.len()
+        let cap = internal.rt_probe("word", internal.obj_word(b), 0, 0, 0)
+        if cap > worst {
+          worst = cap
+        }
+        total += b.len()
+        kept.push(b)
+      }
+    }
+    c.close()
+  }
+  let ok = worst <= 600
+  os.stdio.println(if ok { "short read: ok" } else { "short read: FAIL (a ${total / 50} byte reply kept ${worst} bytes)" })
+  if !ok {
+    os.proc.exit(1)
+  }
+}
