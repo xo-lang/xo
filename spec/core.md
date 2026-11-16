@@ -1326,12 +1326,13 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
 - `derive Proto` (decision 0530, accepted 2026-11-06) generates the Protocol
   Buffers wire codec, read through `protobuf.marshal` and `protobuf.unmarshal`.
   Every field carries its number as a `proto` tag, `name proto "N": T`, with
-  the options `zigzag` (sint32, sint64) and `fixed` (fixed and sfixed types)
-  after a comma. A field of type Int, Int32, UInt32, UInt64, Float, Float32,
+  the options `zigzag` (sint32, sint64), `fixed` (fixed and sfixed types) and
+  `unpacked` (a List of numbers, Bools or enums written one key per element,
+  proto2's default `repeated` form) after a comma. A field of type Int, Int32, UInt32, UInt64, Float, Float32,
   Bool, Str, Bytes, an Int valued enum of the same file, or a struct that
   derives Proto maps to the scalar or message of that name; an Option is a
-  field with explicit presence, a List is repeated (numbers and Bool packed,
-  the reader accepts both forms), and a Map keyed by Int, Str or Bool is a
+  field with explicit presence, a List is repeated (numbers and Bool packed
+  unless `unpacked`; the reader accepts both forms), and a Map keyed by Int, Str or Bool is a
   map field. An enum with one payload field per variant (`Circle as "2"(r: Int)`)
   is a oneof, held in a field tagged `proto "oneof"` of type `Enum?`. One
   `Bytes` field tagged `proto "unknown"` keeps the fields the reader did not

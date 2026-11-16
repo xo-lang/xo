@@ -1,0 +1,9 @@
+// `unpacked` is for a List of numbers, Bools or enums (decision 0530).
+
+struct Bad {
+  one proto "1,unpacked": Int // ERROR XO0422 "proto option `unpacked` of field `one` is for a List of numbers, Bools or enums"
+  names proto "2,unpacked": List[Str] // ERROR XO0422 "proto option `unpacked` of field `names` is for a List of numbers, Bools or enums"
+  ok proto "3,unpacked": List[Int]
+} derive Proto
+
+fn main() {}

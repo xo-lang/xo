@@ -1804,19 +1804,21 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   Some(c.cbor_entries(n, pub_, sp, e))
 }
 
-/// A field's protobuf tag, `proto "N,options"`: the number and the options zigzag and
-/// fixed (decision 0530); bad is the first other option, num 0 when missing.
+/// A field's protobuf tag, `proto "N,options"`: the number and the options zigzag,
+/// fixed and unpacked (decision 0530); bad is the first other option, num 0 when missing.
 struct ProtoOpts {
   /// 0 when missing, -1 for a oneof (`proto "oneof"`), -2 for the unknown field bytes (`proto "unknown"`),
   /// -3 for a field left out (`proto "-"`, decision 0622)
   num: Int
   zigzag: Bool
   fixed: Bool
+  /// a repeated number written one element per key (proto2's default), not packed
+  unpacked: Bool = false
   bad: Str
 }
 
 fn proto_opts(fl: parser.Field) -> ProtoOpts {
-  var o = ProtoOpts{num: 0, zigzag: false, fixed: false, bad: ""}
+  var o = ProtoOpts{num: 0, zigzag: false, fixed: false, unpacked: false, bad: ""}
   for fw in fl.formats {
     if fw.format == b"proto" {
       let parts = text(fw.wire).split(",")
@@ -1826,6 +1828,8 @@ fn proto_opts(fl: parser.Field) -> ProtoOpts {
           o.zigzag = true
         } else if opt == "fixed" {
           o.fixed = true
+        } else if opt == "unpacked" {
+          o.unpacked = true
         } else if o.bad.is_empty() {
           o.bad = opt
         }
@@ -2047,7 +2051,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       continue
     }
     if !po.bad.is_empty() {
-      c.error_at(file, "XO0422", fl.name.span, "unknown proto option `${po.bad}` of field `${f}`; the options are zigzag and fixed (decision 0530)")
+      c.error_at(file, "XO0422", fl.name.span, "unknown proto option `${po.bad}` of field `${f}`; the options are zigzag, fixed and unpacked (decision 0530)")
       ok = false
       continue
     }
@@ -2175,8 +2179,13 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       ok = false
       continue
     }
+    if po.unpacked && !(kind == 2 && el.packable) {
+      c.error_at(file, "XO0422", fl.name.span, "proto option `unpacked` of field `${f}` is for a List of numbers, Bools or enums (decision 0530)")
+      ok = false
+      continue
+    }
     let w = el.wire
-        if kind == 0 {
+    if kind == 0 {
       zeros.push("${f}: ${el.zero}")
       wr.push("  if ${proto_sub(el.nonzero, "", "v.${f}", "")} { b = ${proto_keyed(el.enc, k, w, "v.${f}")} }")
       sz.push("  if ${proto_sub(el.nonzero, "", "v.${f}", "")} { s += ${proto_tag_size(k, w)} + ${proto_sub(el.size, "", "v.${f}", "")} }")
@@ -2196,7 +2205,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = Some(${val})"]))
     } else {
       zeros.push("${f}: []")
-      if el.packable {
+      if el.packable && !po.unpacked {
         // packed: the payload's size, then its elements in place
         let psz = if el.size == "8" || el.size == "4" || el.size == "1" { "v.${f}.len() * ${el.size}" } else { "proto_psize__${n}__${f}(v.${f})" }
         if !(el.size == "8" || el.size == "4" || el.size == "1") {
@@ -2214,10 +2223,14 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
         sz.push("    let ps = ${psz}")
         sz.push("    s += ${proto_tag_size(k, 2)} + protobuf.size_varint(UInt64.wrapping_from(ps)) + ps")
         sz.push("  }")
-        rd.push((" num == ${k} && wire == 2", ["let (x, n2) = protobuf.read_bytes(data, at)?", "at = n2", "var q = 0", "while q < x.len() {", "  let (y, q2) = ${el.rd}(x, q)?", "  q = q2", "  r.${f}.push(${proto_sub(el.conv, "", "", "y")})", "}"]))
       } else {
+        // unpacked (proto2's default for `unpacked`, and every Str, Bytes or message list): a key per element
         wr.push("  for x in v.${f} { b = ${proto_keyed(el.enc, k, w, "x")} }")
         sz.push("  for x in v.${f} { s += ${proto_tag_size(k, w)} + ${proto_sub(el.size, "", "x", "")} }")
+      }
+      if el.packable {
+        // a number list reads both forms, packed and one element per key
+        rd.push((" num == ${k} && wire == 2", ["let (x, n2) = protobuf.read_bytes(data, at)?", "at = n2", "var q = 0", "while q < x.len() {", "  let (y, q2) = ${el.rd}(x, q)?", "  q = q2", "  r.${f}.push(${proto_sub(el.conv, "", "", "y")})", "}"]))
       }
       rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f}.push(${proto_sub(el.conv, "", "", "x")})"]))
     }

@@ -1,0 +1,34 @@
+// `proto "N,unpacked"` writes a repeated number one key per element, as
+// protoc writes a proto2 `repeated int64 xs = 1;` (decision 0530); the
+// reader of a number list takes both forms. The bytes are protobuf-go's
+// proto.Marshal of the same proto2 message.
+use std/protobuf
+
+struct Un {
+  xs proto "1,unpacked": List[Int]
+  fs proto "2,fixed,unpacked": List[UInt32]
+  bs proto "3,unpacked": List[Bool]
+  zs proto "4,zigzag,unpacked": List[Int]
+} derive Proto
+
+struct Pk {
+  xs proto "1": List[Int]
+  fs proto "2,fixed": List[UInt32]
+  bs proto "3": List[Bool]
+  zs proto "4,zigzag": List[Int]
+} derive Proto
+
+fn main(os: Os) uses stdio {
+  let u = Un{xs: [1, 2, 300], fs: [UInt32(1)], bs: [true, false], zs: [-1]}
+  let b = protobuf.marshal(u)
+  os.stdio.println("unpacked ${b.to_hex()} size ${protobuf.size(u)}")
+  let p = Pk{xs: u.xs, fs: u.fs, bs: u.bs, zs: u.zs}
+  let pb = protobuf.marshal(p)
+  os.stdio.println("packed ${pb.to_hex()}")
+  // each reads the other's form
+  let u2 = protobuf.unmarshal[Un](pb).or_fault("unpacked from packed")
+  let p2 = protobuf.unmarshal[Pk](b).or_fault("packed from unpacked")
+  os.stdio.println("${u2.xs} ${u2.fs} ${u2.bs} ${u2.zs}")
+  os.stdio.println("${p2.xs} ${p2.fs} ${p2.bs} ${p2.zs}")
+  os.stdio.println("${protobuf.marshal(Un{xs: [], fs: [], bs: [], zs: []}).len()}")
+}
