@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+"XO_ENVT": "base"
+"XO_ENVT_A": "a"
+"XO_ENVT_AB": "ab"
+"XO_ENVT_ABC": unset
+"XO_ENVT_EMPTY": ""
+"XO_ENVT_EQ": "x=y"
+"": unset
+"xo_envt": "base"
+"XO_ENVT_N00": "v0"
+"XO_ENVT_N39": "v1521"
+found 40 right 40
+--- stderr

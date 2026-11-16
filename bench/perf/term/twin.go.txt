@@ -1,0 +1,106 @@
+// The Go twin of bench/perf/term/main.xo: golang.org/x/term v0.48.0's
+// IsTerminal for the terminal check, the color rules, SGR wrap and strip
+// written as Go programs write them. Same workloads, same output.
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"golang.org/x/term"
+)
+
+func colorEnabled() bool {
+	if v, ok := os.LookupEnv("NO_COLOR"); ok && v != "" {
+		return false
+	}
+	for _, n := range []string{"FORCE_COLOR", "CLICOLOR_FORCE"} {
+		if v, ok := os.LookupEnv(n); ok && v != "" && v != "0" {
+			return true
+		}
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+type painter struct{ on bool }
+
+func (p painter) sgr(code, s string) string {
+	if !p.on || s == "" {
+		return s
+	}
+	return "\x1b[" + code + "m" + s + "\x1b[0m"
+}
+
+func strip(s string) string {
+	if !strings.Contains(s, "\x1b") {
+		return s
+	}
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c != 27 {
+			out = append(out, c)
+			i++
+			continue
+		}
+		if i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && !(s[j] >= 64 && s[j] <= 126) {
+				j++
+			}
+			i = j + 1
+			continue
+		}
+		i += 2
+	}
+	return string(out)
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "tty":
+		for i := 0; i < 200000; i++ {
+			if colorEnabled() {
+				sum++
+			} else {
+				sum += 2
+			}
+		}
+	case "paint":
+		p := painter{on: true}
+		words := []string{"ok", "warning: disk", "error: connection refused", "12 passed"}
+		for i := 0; i < 1000000; i++ {
+			s := words[i%4]
+			switch i % 3 {
+			case 0:
+				sum += len(p.sgr("31", s))
+			case 1:
+				sum += len(p.sgr("1", s))
+			default:
+				sum += len(p.sgr("32", s))
+			}
+		}
+	case "strip":
+		p := painter{on: true}
+		line := p.sgr("1", "PASS") + " " + p.sgr("32", "test/one") + " " + p.sgr("2", "(12 ms)") + " plain text after the colors"
+		for i := 0; i < 200000; i++ {
+			sum += len(strip(line)) + i%2
+		}
+	default:
+		if colorEnabled() {
+			sum = 1
+		} else {
+			sum = 2
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

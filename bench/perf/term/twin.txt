@@ -1,0 +1,6 @@
+# twincheck: term: std/term against golang.org/x/term (IsTerminal) and the same color rules written in Go.
+require golang.org/x/term v0.48.0
+- - none
+- - tty
+- - paint
+- - strip

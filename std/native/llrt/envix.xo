@@ -1,0 +1,8 @@
+// The static word of the environment's index (process.xo env_index), in
+// a module of its own since rt.xo's table gives each module one range
+// (process.xo has 7-9). process.xo reads and writes it.
+use native/rt
+
+/// The index's address, 0 until the first lookup builds it and again
+/// after env_drop.
+pub fn word() -> Int { rt.static_word(109) }

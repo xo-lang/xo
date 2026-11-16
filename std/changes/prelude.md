@@ -11,6 +11,25 @@
 
 The native backends narrowed the Float32 from its double, which quiets a signaling NaN, and to_bits set the quiet bit of any NaN. Both now reinterpret the double's bits (gotchas/float32-signaling-nan-backends.md).
 
+## 2026-11-16: perf: env.get through an index; stdout_is_tty on macOS through ioctl
+
+- Kind: perf
+- Commit: this push
+- Found by: the bench/perf/term Go twin's profile (#88): env_real_at's scan of every entry was 41% of term.color_enabled, the C library's isatty 50%
+- Go reference: syscall.Getenv (the environment copied once into a map), golang.org/x/term IsTerminal
+- Test: internal/llvm/testdata/golden/env_index (45 extra variables, prefix names, an empty value, a value holding '=', the empty name, other case; arm64, llvm, want_windows.txt for case folding) and term_stdio
+- Shipped in: not yet released
+- Timing: Mac, 200,000 calls: env.get("NO_COLOR") in an 82 entry environment 4 ms against Go's LookupEnv 2 ms (was about 11 ms, the profile's 54 ns a lookup); stdout_is_tty 23 ms against x/term's 27 ms (was 49 ms)
+
+The native runtime looks environment variables up in a hash table it
+builds on the first lookup (envix.xo's static word 109; env_drop clears
+it), keeping the first of two entries of one name as the scan did. A
+name holding '=' and the empty name still scan. env.get of a set
+variable no longer copies its one element list (texts returns the list
+when every value is valid UTF-8). Entries a C library's
+setenv adds later are not seen, as in Go. On macOS, stdin_is_tty,
+stdout_is_tty and stderr_is_tty ask TIOCGETA through ioctl directly.
+
 ## 2026-11-15: feature: List.filled
 
 - Kind: feature, perf

@@ -17,6 +17,7 @@
 // testing.run_main the call returns with the context unwinding (decision
 // 0108).
 use native/llrt/checkdef
+use native/llrt/envix
 use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/raw
@@ -306,6 +307,25 @@ pub fn env_real_at(name: Str) -> Int {
   let fold = fold_case()
   let p = raw.data(name)
   let n = name.len()
+  let h = if n > 0 { name_hash(p, n, fold) } else { -1 }
+  if h >= 0 {
+    // the index: a lookup as Go's syscall.Getenv's map, not a scan of
+    // every entry (2026-11-16: term.color_enabled's four names cost 2.7
+    // times Go's in an 82 entry environment)
+    let t = env_index(envp, fold)
+    let mask = rt.mem_load(t, 0, 8).wrapping_sub(1)
+    var i = h & mask
+    while true {
+      let e = rt.mem_load(t, 8 * (i + 1), 8)
+      if e == 0 {
+        return 0
+      }
+      if entry_is(e, p, n, fold) {
+        return e.wrapping_add(n.wrapping_add(1))
+      }
+      i = i.wrapping_add(1) & mask
+    }
+  }
   var k = 0
   while true {
     let e = rt.mem_load(envp, 8 * k, 8)
@@ -318,6 +338,86 @@ pub fn env_real_at(name: Str) -> Int {
     k = k.wrapping_add(1)
   }
   0
+}
+
+/// The hash of the n bytes at p, without ASCII case when fold: never
+/// negative, or -1 when they hold a '=' (a name the index cannot file:
+/// such a lookup scans as the C library's getenv). One pass: a separate
+/// '=' check was as costly as the hash (2026-11-16).
+fn name_hash(p: Int, n: Int, fold: Bool) -> Int {
+  var h = 5381
+  var i = 0
+  while i < n {
+    var b = rt.mem_load(p, i, 1)
+    if b == 61 {
+      return -1
+    }
+    if fold && b >= 65 && b <= 90 {
+      b = b.wrapping_add(32)
+    }
+    h = h.wrapping_mul(33) ^ b
+    i = i.wrapping_add(1)
+  }
+  (h ^ (h >> 17)) & 9223372036854775807
+}
+
+/// The environment's index, made on first use: a word holding the
+/// table's size (a power of two, at least twice the entries) followed by
+/// the entries' addresses filed by name_hash with linear probing, the
+/// first of two entries of one name kept (as a scan finds it). Two
+/// threads that both build it keep the first one stored; the other
+/// table is not freed. Entries a C library's setenv puts in the array
+/// later are not seen (Xo programs do not set variables; Go's runtime
+/// copies the environment once too).
+fn env_index(envp: Int, fold: Bool) -> Int {
+  let w = envix.word()
+  let t = rt.slot_load[Int](w, 0, 1)
+  if t != 0 {
+    return t
+  }
+  var n = 0
+  while rt.mem_load(envp, 8 * n, 8) != 0 {
+    n = n.wrapping_add(1)
+  }
+  var cap = 16
+  while cap < 2 * n {
+    cap = cap * 2
+  }
+  let nt = rt.heap_large(8 * (cap + 1))
+  rt.mem_store(nt, 0, cap, 8)
+  var j = 0
+  while j < cap {
+    rt.mem_store(nt, 8 * (j + 1), 0, 8)
+    j = j.wrapping_add(1)
+  }
+  let mask = cap - 1
+  var k = 0
+  while k < n {
+    let e = rt.mem_load(envp, 8 * k, 8)
+    var m = 0
+    while rt.mem_load(e, m, 1) != 0 && rt.mem_load(e, m, 1) != 61 {
+      m = m.wrapping_add(1)
+    }
+    if m > 0 && rt.mem_load(e, m, 1) == 61 {
+      var i = name_hash(e, m, fold) & mask
+      while true {
+        let o = rt.mem_load(nt, 8 * (i + 1), 8)
+        if o == 0 {
+          rt.mem_store(nt, 8 * (i + 1), e, 8)
+          break
+        }
+        if entry_is(o, e, m, fold) {
+          break
+        }
+        i = i.wrapping_add(1) & mask
+      }
+    }
+    k = k.wrapping_add(1)
+  }
+  if rt.slot_cas[Int](w, 0, 0, nt, 3) {
+    return nt
+  }
+  rt.slot_load[Int](w, 0, 1)
 }
 
 /// Removes the variable name from the process's own environment (the
@@ -353,6 +453,8 @@ pub fn env_drop(name: Str) {
   }
   if j != k {
     rt.mem_store(envp, 8 * j, 0, 8)
+    // the next lookup files the entries left
+    rt.slot_store[Int](envix.word(), 0, 0, 2)
   }
 }
 

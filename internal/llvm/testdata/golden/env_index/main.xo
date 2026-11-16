@@ -1,0 +1,28 @@
+// The process environment's lookups (env_real_at's index, 2026-11-16):
+// 45 extra variables (env.txt) so the table grows past its first size and
+// names collide; names that are prefixes of others, an empty value, a
+// value holding '=', a name never set, the empty name (scanned as the C
+// library's getenv) and a name in other case (case matters off Windows).
+fn show(os: Os, name: Str) uses env, stdio {
+  let v = match os.env.get(name) {
+    Some(s) => s.quote()
+    None => "unset"
+  }
+  os.stdio.println("${name.quote()}: ${v}")
+}
+
+fn main(os: Os) uses env, stdio {
+  for n in ["XO_ENVT", "XO_ENVT_A", "XO_ENVT_AB", "XO_ENVT_ABC", "XO_ENVT_EMPTY", "XO_ENVT_EQ", "", "xo_envt", "XO_ENVT_N00", "XO_ENVT_N39"] {
+    show(os, n)
+  }
+  var sum = 0
+  var found = 0
+  for i in 0..40 {
+    let name = if i < 10 { "XO_ENVT_N0${i}" } else { "XO_ENVT_N${i}" }
+    if let Some(v) = os.env.get(name) {
+      found += 1
+      if v == "v${i * i}" { sum += 1 }
+    }
+  }
+  os.stdio.println("found ${found} right ${sum}")
+}

@@ -26,20 +26,22 @@ pub fn color_enabled(out: Stdio, env: Env) -> Bool uses (stdio, env) {
     }
     None => ()
   }
-  for n in ["FORCE_COLOR", "CLICOLOR_FORCE"] {
-    match env.get(n) {
-      Some(v) => {
-        if v != "" && v != "0" {
-          return true
-        }
-      }
-      None => ()
-    }
+  // two calls, not a loop over a list literal a call would allocate
+  if forced(env, "FORCE_COLOR") || forced(env, "CLICOLOR_FORCE") {
+    return true
   }
   if env.get("TERM") == Some("dumb") {
     return false
   }
   out.stdout_is_tty()
+}
+
+/// Whether the variable name asks for color: set, not empty and not "0".
+fn forced(env: Env, name: Str) -> Bool uses env {
+  match env.get(name) {
+    Some(v) => v != "" && v != "0"
+    None => false
+  }
 }
 
 /// A Painter that colors when `color_enabled(out, env)`.
@@ -99,5 +101,5 @@ fn sgr(p: Painter, code: Str, s: Str) -> Str {
   if !p.on || s == "" {
     return s
   }
-  "\u{1b}[" + code + "m" + s + "\u{1b}[0m"
+  "\u{1b}[${code}m${s}\u{1b}[0m"
 }

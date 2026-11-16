@@ -4010,6 +4010,18 @@ fn fs_read_text(f: Fs, p: Str) -> Str ! FsErr {
 
 /// Each of xs (outside bytes) as scan.text (decision 0259).
 fn texts(xs: List[Str]) -> List[Str] {
+  // valid UTF-8 (nearly always): the list itself, no copy (an env.get of
+  // a set variable allocated a second list, 2026-11-16)
+  var ok = true
+  for x in xs {
+    if !scan.utf8_valid(x.bytes()) {
+      ok = false
+      break
+    }
+  }
+  if ok {
+    return xs
+  }
   var out = List[Str].with_capacity(xs.len())
   for x in xs {
     out.push(scan.text(x))

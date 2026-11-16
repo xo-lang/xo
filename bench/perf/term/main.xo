@@ -1,0 +1,37 @@
+// term: std/term against golang.org/x/term v0.48.0 (twin.go.txt), whose
+// IsTerminal is what color_enabled's terminal check is; the twin writes
+// the rest (the NO_COLOR, FORCE_COLOR, CLICOLOR_FORCE and TERM rules, the
+// SGR wrap and the escape strip) as Go programs do. `tty` decides
+// color_enabled 200,000 times (standard output is a pipe under twincheck);
+// `paint` wraps 1,000,000 strings in red, bold and green with color on
+// (a Painter{on: true}); `strip` removes the escapes of 200,000
+// painted lines; `none` is the setup alone. Usage: `<program>
+// none|tty|paint|strip`. Prints `<workload> <checksum>`; the twin prints the
+// same.
+use std/term
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w == "tty" {
+    for _ in 0..200000 {
+      if term.color_enabled(os.stdio, os.env) { sum += 1 } else { sum += 2 }
+    }
+  } else if w == "paint" {
+    let p = term.Painter{on: true}
+    let words = ["ok", "warning: disk", "error: connection refused", "12 passed"]
+    for i in 0..1000000 {
+      let s = words[i % 4]
+      sum += if i % 3 == 0 { p.red(s) } else if i % 3 == 1 { p.bold(s) } else { p.green(s) }.len()
+    }
+  } else if w == "strip" {
+    let p = term.Painter{on: true}
+    let line = p.bold("PASS") + " " + p.green("test/one") + " " + p.dim("(12 ms)") + " plain text after the colors"
+    for i in 0..200000 {
+      sum += term.strip(line).len() + i % 2
+    }
+  } else {
+    sum = if term.color_enabled(os.stdio, os.env) { 1 } else { 2 }
+  }
+  os.stdio.println("${w} ${sum}")
+}
