@@ -743,12 +743,10 @@ pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", ma
   Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Sub]].new({}), next_sub: Atomic[Int].new(0)}
 }
 
-// A live connection: its principal, its channel, and the digest of the
-// view it was last told about (redact only).
+// A live connection: its principal and its channel.
 struct Sub {
   p: Str
   ch: Chan[Int]
-  last: Str
 }
 
 // What principal p is shown of m.
@@ -770,11 +768,24 @@ fn (h: Host[M, E]) digest(m: M, p: Str) -> Str {
 
 fn (h: Host[M, E]) subscribe(p: Str = "") -> (Int, Chan[Int]) {
   let id = h.next_sub.add(1)
-  // One slot: a client needs only to know that something changed.
+  // One slot: a client needs only to know that something changed, and
+  // versions that come while its connection is busy fold into one.
   let ch = Chan[Int].new(cap: 1)
-  let last = if h.redact.is_some() { h.digest(h.model(), p) } else { "" }
-  h.subs.with(fn(var m) { m.put(id, Sub{p: p, ch: ch, last: last}) })
+  h.subs.with(fn(var m) { m.put(id, Sub{p: p, ch: ch}) })
   (id, ch)
+}
+
+// Whether a new version is news to a live connection of p that was last
+// told of the view with digest last: Some(the new digest) when p's view
+// changed (always without redact), None when it did not. Each connection
+// asks in its own task, so a change costs the request that made it one
+// send per connection, and the digests run outside every lock.
+fn (h: Host[M, E]) news(p: Str, last: Str) -> Str? {
+  if h.redact.is_none() {
+    return Some("")
+  }
+  let d = h.digest(h.model(), p)
+  if d == last { None } else { Some(d) }
 }
 
 fn (h: Host[M, E]) unsubscribe(id: Int) {
@@ -782,32 +793,9 @@ fn (h: Host[M, E]) unsubscribe(id: Int) {
 }
 
 fn (h: Host[M, E]) notify(v: Int) {
-  if h.redact.is_none() {
-    h.subs.with_read(fn(m) {
-      for (_, c) in m {
-        let _sent = c.ch.try_send(v)
-      }
-    })
-    return
-  }
-  // with redact, a connection hears only of a change to its own view: one
-  // digest per principal, and a cart click wakes no other user
-  let now = h.model()
-  h.subs.with(fn(var m) {
-    var dg: Map[Str, Str] = {}
-    var told: List[(Int, Sub)] = []
-    for (id, c) in m {
-      if !dg.contains(c.p) {
-        dg.put(c.p, h.digest(now, c.p))
-      }
-      let d = dg.get(c.p) ?? ""
-      if d != c.last {
-        let _sent = c.ch.try_send(v)
-        told.push((id, Sub{p: c.p, ch: c.ch, last: d}))
-      }
-    }
-    for (id, c) in told {
-      m.put(id, c)
+  h.subs.with_read(fn(m) {
+    for (_, c) in m {
+      let _sent = c.ch.try_send(v)
     }
   })
 }
@@ -957,15 +945,23 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
 fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str) {
   let (id, ch) = h.subscribe(p)
   defer h.unsubscribe(id)
+  // the digest after subscribing: a change in between is seen again and
+  // skipped if this view already holds it (the page syncs on open)
+  let first = h.digest(h.model(), p)
   let now = h.state.with_read(fn(s) { s.version() })
   if conn.write_text("${now}") is Err(_) {
     return
   }
   scope s {
     s.spawn_background(fn() {
+      var last = first
       for v in ch {
-        if conn.write_text("${v}") is Err(_) {
-          break
+        // with redact, only a change to what p is shown
+        if let Some(d) = h.news(p, last) {
+          last = d
+          if conn.write_text("${v}") is Err(_) {
+            break
+          }
         }
       }
     })

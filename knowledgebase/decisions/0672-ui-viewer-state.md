@@ -113,6 +113,15 @@ baseline the view learns who is viewing only through `redact` (the
 shop's redact keeps an empty cart for the viewer so the view can name
 them): the three-argument view of the decision makes that explicit.
 
+The digests' cost on the server (2026-11-16, Mac): with the work on the
+request under the connections' lock, Host.apply took 607 us a change at
+200 live principals and 74.8 ms at 2,000 (std/ui's test App, whose
+redact scans every todo: quadratic). Moved into each connection's task
+(each asks whether its principal's view changed), the request takes 6
+and 56 us and the digests run in parallel, 636 us and 73 ms in all. The
+total is linear when redact is: the shop's (one cart) costs 0.6 us a
+user, 9.8 ms a change at 20,000 users.
+
 What remains for user state after it: every cart click still goes
 through the one shared log and lock, the model holds every user's cart
 (about 15 bytes per cart line here), the server computes one digest per

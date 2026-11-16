@@ -11712,8 +11712,10 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   the redacted model's JSON), which the runtime sends back as `Up.seen`:
   a sync without Msgs whose digest still matches answers `same` with the
   new version, however far the version moved, and a live connection is
-  told of a new version only when its principal's view changed (one
-  digest per principal per change). Another user's change then costs a
+  told of a new version only when its principal's view changed. A change
+  costs the request that made it one channel send per live connection;
+  each connection's own task computes its principal's digest, outside
+  every lock (versions that come while it is busy fold into one). Another user's change then costs a
   viewer nothing (decision 0672's baseline: 199 of 199 viewers woken and
   1.2 KB each at 200 users before, none after). The
   runtime marks the html element `data-xo-signed-out` on a 401 (the queue

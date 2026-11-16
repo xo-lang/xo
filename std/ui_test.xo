@@ -625,20 +625,31 @@ test "with redact, a sync answers same while the principal's view did not change
 test "with redact, a live connection hears only of changes to its own view" {
   let h = host(todo_app(), auth: Some(auth_hdr), redact: Some(mine))
   let r = routes_for(h)
+  var ann = h.digest(h.model(), "ann")
+  var bob = h.digest(h.model(), "bob")
+  // a change costs the request one send per connection...
   let (ida, cha) = h.subscribe("ann")
   let (idb, chb) = h.subscribe("bob")
   sync_as(r, "bob", Up{client: "b", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "b", title: "bob item")}]})?
-  expect(cha.try_recv()) == None
+  expect(cha.try_recv()) == Some(1)
   expect(chb.try_recv()) == Some(1)
+  // ...and each connection's task keeps only news to its principal's view
+  expect(h.news("ann", ann)) == None
+  bob = h.news("bob", bob) ?? return Err("bob's view changed")
   h.apply(Msg.Add(id: "x", title: "ann news"))
-  expect(cha.try_recv()) == Some(2)
-  expect(chb.try_recv()) == None
+  ann = h.news("ann", ann) ?? return Err("ann's view changed")
+  expect(h.news("bob", bob)) == None
   // told once per change of the view, not again for the same view
   h.apply(Msg.Star(id: "b"))
+  expect(h.news("ann", ann)) == None
+  expect(h.news("bob", bob).is_some()) == true
+  // versions that come while a connection is busy fold into one
+  expect(cha.try_recv()) == Some(2)
   expect(cha.try_recv()) == None
-  expect(chb.try_recv()) == Some(3)
   h.unsubscribe(ida)
   h.unsubscribe(idb)
+  // without redact every version is news
+  expect(host(todo_app()).news("x", "")) == Some("")
 }
 
 // tab state: the view reads the page's query (decision 0672)

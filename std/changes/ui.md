@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: perf: with redact, a change no longer computes every viewer's digest on its request
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0672's measurement (the digest work ran under the live connections' lock, on the request of the sync that made the change)
+- Go reference: none
+- Test: std/ui tests (a live connection hears only of changes to its own view; versions fold into one while a connection is busy); headless Chrome shop 12/12, shop tab 12/12 and every earlier suite
+- Timing: Host.apply with 200 and 2,000 live principals (std/ui's todo app, the test's redact): the request's time per change 607 us to 6 us and 74,766 us to 56 us; the connections' digests (now in their own tasks, in parallel) 636 us and 73,111 us in all
+- Shipped in: not yet released
+
+A change now only sends the new version to each live connection's channel, as without redact; each connection's task asks whether its principal's view changed (`news`) and writes only then.
+
 ## 2026-11-16: perf: a filter on a page with the App's client renders without a fetch
 
 - Kind: perf
