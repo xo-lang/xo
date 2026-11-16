@@ -3,6 +3,14 @@
 Status: Accepted (owner, 2026-11-16; the speedup claim still needs its host 1 --ab before landing; proposed by Xo Lang 3, 2026-11-15; the lead asked for the primitive
 for std/brotli's ring buffer writes, after the decoder of decision 0666)
 
+Landed: d18e1c059 (the prelude functions, golden bytesbuilder_write_list,
+internal/arm64 TestWriteListBulk) and std/brotli's ring writes, both on
+2026-11-15, before the owner's acceptance; task #142 (2026-11-16) found
+nothing left to land. The host 1 `--ab` row (ab-host.sh, --release,
+against the decoder before): wall text 0.637 (0.634 to 0.67), html 0.391
+(0.385 to 0.403), mixed 0.656 (0.648 to 0.671), max RSS 1.0, in
+std/changes/brotli.md.
+
 ## Context
 
 A `List[UInt8]` reached a `BytesBuilder` or `Bytes` only through one
