@@ -1520,6 +1520,20 @@ Last verified: 2026-11-15
     text as the commands). Users: `read -rs P; printf '%s\n' "$P" |
     xw user set NAME` (Argon2id; ends NAME's sessions), `xw user list`,
     `xw user rm NAME`. Last verified: 2026-11-15.
+  - Push holds (#64; lead, 2026-11-15: decision #3 held compiler/xo's
+    closure by message only, and a compiler push landed under it): the
+    lead runs `xw hold "PATHS" REASON` (a file, `dir/`, a pattern with
+    `*`, or `closure`: compiler/ but macho and wasm, std/native,
+    std/llrt and scripts/lead/xo-closure.txt's std files, as
+    gatelib.sh `gate_closure_files` lists them; `_test.xo` files never
+    count) and `xw release ID`; `xw holds [--all]` lists them. pushq.sh
+    runs `xw hold-check` on the files its push's own commits change and
+    refuses a held one (exit 4, one `refused: held by xw hold #ID` line),
+    which `xw alerts` raises as push-held for the lead. Only the lead
+    passes `PUSHQ_HOLD_OK=ID[,ID]` (logged). A down or missing xw does not
+    stop a push (a note in pushq.log); `PUSHQ_HOLDS=0` skips the check.
+    Tested by scripts/lead/pushq_hold_test.sh (a stub xw, about 3 s).
+    Last verified: 2026-11-15.
   - Fire and forget: a down xw never fails heavy.sh, pushq or
     offload-gate (events spool under ~/xo-lead/xw/spool).
   - board.sh stays for claims and a one-line NOW until it becomes a
