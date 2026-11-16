@@ -1,5 +1,15 @@
 # std/dns changes
 
+## 2026-11-16: fix: RCODE and lame referral errors are Go's; a TXT string past its RDLENGTH fails the lookup
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/stdtest TestDnsFuzz (task #90): seed 2 cases 36 and 48 (REFUSED), seed 4 case 293 (a TXT RDLENGTH one short)
+- Go reference: net/dnsclient_unix.go checkHeader (errServerMisbehaving, errLameReferral); golang.org/x/net/dns/dnsmessage unpackTXTResource (errCalcLen)
+- Test: internal/stdtest TestDnsAnswerErrors (4 of its 6 cases fail on the old std, all pass now; Go's resolver checks each expectation); TestDnsFuzz seeds 2 to 4, 300 cases each, arm64 and llvm
+- Timing: none (the kinds are classified where they were; one error check per TXT record)
+- Shipped in: not yet released
+
 ## 2026-11-03: perf: a one-query lookup waits on the netpoller while other tasks run or wait
 
 - Kind: perf

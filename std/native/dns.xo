@@ -80,8 +80,15 @@ fn resolver_lookup_txt(r: dns.Resolver, n: Net, name: Str) -> List[Str] ! NetErr
   var out: List[Str] = []
   for (d, l) in xs {
     match ldns.txt_at(m, d, l) {
-      Some(t) => out.push(t)
-      None => {}
+      // a record that is not UTF-8 is left out (a Str is UTF-8)
+      Some(b) => {
+        if let Some(t) = b.to_str() {
+          out.push(t)
+        }
+      }
+      // one that does not parse fails the lookup, as Go's (it kept the
+      // other records: internal/stdtest TestDnsFuzz seed 4 case 293)
+      None => return Err(NetErr.Io(msg: "lookup ${name}: cannot unmarshal DNS message"))
     }
   }
   if out.is_empty() && !xs.is_empty() {

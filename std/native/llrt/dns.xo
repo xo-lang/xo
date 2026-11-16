@@ -1222,7 +1222,7 @@ fn read_rr(m: Bytes, off: Int) -> (Int, Int, Int, Int, Int) {
 /// KIND_NOTFOUND (NXDOMAIN, or no record of the type: no other server
 /// is asked), KIND_NODATA (the name exists without one), or a failure to
 /// try the next server with: KIND_TEMP (SERVFAIL, timeouts, socket
-/// errors), KIND_FAIL (other).
+/// errors), KIND_MISBEHAVE, KIND_LAME, KIND_FAIL (other).
 pub const KIND_OK: Int = 0
 pub const KIND_NOTFOUND: Int = 1
 pub const KIND_NODATA: Int = 2
@@ -1233,6 +1233,25 @@ pub const KIND_FAIL: Int = 4
 pub const KIND_IGNORE: Int = 5
 /// A truncated answer: TCP next.
 pub const KIND_TRUNC: Int = 6
+/// An RCODE other than NOERROR, NXDOMAIN and SERVFAIL (REFUSED, NOTIMP,
+/// ...): the next server; Go's errServerMisbehaving.
+pub const KIND_MISBEHAVE: Int = 7
+/// NOERROR with no answer, no authority bit, no recursion and no
+/// additional records: the next server; Go's errLameReferral.
+pub const KIND_LAME: Int = 8
+
+/// The error text of a record lookup that ended with kind (Go's
+/// DNSError.Err for it): KIND_FAIL is a message that did not parse
+/// (internal/stdtest TestDnsFuzz: REFUSED was "cannot unmarshal DNS
+/// message", Go's is "server misbehaving").
+pub fn kind_text(kind: Int) -> Str {
+  match kind {
+    1 => "no such host"
+    3 | 7 => "server misbehaving"
+    8 => "lame referral"
+    _ => "cannot unmarshal DNS message"
+  }
+}
 
 /// The meaning of response m to the query id, name (rooted), qtype:
 /// (kind, addresses) as checkResponse, checkHeader, skipToAnswer, and
@@ -1307,13 +1326,13 @@ pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
   let ra = (flags & 128) != 0
   if rcode == 0 && !aa && !ra && an == 0 && !has_add {
     // a lame referral: the next server (libresolv's behaviour)
-    return (KIND_FAIL, addrs)
+    return (KIND_LAME, addrs)
   }
   if rcode == 2 {
     return (KIND_TEMP, addrs)
   }
   if rcode != 0 {
-    return (KIND_FAIL, addrs)
+    return (KIND_MISBEHAVE, addrs)
   }
   // the first answer of the type, then every address from it on
   off = ans_off
@@ -1435,18 +1454,19 @@ pub fn mx_at(m: Bytes, d: Int, n: Int) -> (Int, Str)? {
 
 /// A TXT record's character strings joined (goLookupTXT); None when one
 /// runs past the record.
-pub fn txt_at(m: Bytes, d: Int, n: Int) -> Str? {
+pub fn txt_at(m: Bytes, d: Int, n: Int) -> Bytes? {
   var b = BytesBuilder.with_capacity(n)
   var i = d
   while i < d + n {
     let l = Int(m[i])
     if i + 1 + l > d + n {
+      // a string past the RDLENGTH (Go's unpackTXTResource: errCalcLen)
       return None
     }
     b.write(m[i + 1..i + 1 + l])
     i += 1 + l
   }
-  b.freeze().to_str()
+  Some(b.freeze())
 }
 
 /// An SRV record's priority, weight, port and target; None when it does
@@ -2050,7 +2070,7 @@ pub fn lookup(host: Str, family: Int, passive: Bool, state: Int) -> Found {
     for r in try_name(conf, fq, qtypes, offset) {
       if r.0 == KIND_OK {
         addrs = addrs + r.1
-      } else if r.0 == KIND_TEMP || r.0 == KIND_FAIL {
+      } else if r.0 == KIND_TEMP || r.0 == KIND_FAIL || r.0 == KIND_MISBEHAVE || r.0 == KIND_LAME {
         kind = KIND_TEMP
       } else if r.0 == KIND_NODATA && kind != KIND_TEMP {
         kind = KIND_NODATA

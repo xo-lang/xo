@@ -730,13 +730,7 @@ pub fn lookup_records(lists: Str, subject: Str, name: Str, qtype: Int, server: S
     }
     kind = if k == dns.KIND_NODATA { dns.KIND_NOTFOUND } else { k }
   }
-  if kind == dns.KIND_NOTFOUND {
-    fail(4, "lookup ${name}${on}: no such host")
-  } else if kind == dns.KIND_TEMP {
-    fail(4, "lookup ${name}${on}: server misbehaving")
-  } else {
-    fail(4, "lookup ${name}${on}: cannot unmarshal DNS message")
-  }
+  fail(4, "lookup ${name}${on}: ${dns.kind_text(kind)}")
   b""
 }
 

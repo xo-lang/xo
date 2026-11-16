@@ -1,0 +1,33 @@
+// The Xo side of the DNS differential test (internal/stdtest TestDnsFuzz):
+// each lookup on standard input ("mx NAME", "txt NAME", "srv SERVICE
+// PROTO NAME", "addr IP") through std/dns with a Resolver of the server
+// named on the command line, printed as the test prints Go's net.Resolver:
+// the records sorted (Go shuffles equal preferences and weights), or the
+// error.
+use std/dns
+
+fn main(os: Os) ! {
+  let server = os.env.args().first().or_err("usage: dnsdiff HOST:PORT < lookups")?
+  let r = dns.Resolver{server: server}
+  for line in os.stdio.lines()? {
+    let w = line.trim().split(" ")
+    if w.len() < 2 {
+      continue
+    }
+    os.stdio.println("== ${line.trim()}")
+    let out: Result[List[Str], NetErr] = match w[0] {
+      "mx" => r.lookup_mx(os.net, w[1]).map(fn(xs) { xs.map(fn(x) { "mx ${x.pref} ${x.host}" }) })
+      "txt" => r.lookup_txt(os.net, w[1]).map(fn(xs) { xs.map(fn(x) { "txt ${x.bytes().to_hex()}" }) })
+      "srv" => r.lookup_srv(os.net, w[1], w[2], w[3]).map(fn(xs) { xs.map(fn(x) { "srv ${x.priority} ${x.weight} ${x.port} ${x.target}" }) })
+      _ => r.lookup_addr(os.net, w[1]).map(fn(xs) { xs.map(fn(x) { "ptr ${x}" }) })
+    }
+    match out {
+      Ok(xs) => {
+        for l in xs.sort() {
+          os.stdio.println(l)
+        }
+      }
+      Err(e) => os.stdio.println("error ${e}")
+    }
+  }
+}
