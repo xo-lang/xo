@@ -762,30 +762,26 @@ fn (c: HubConn) notices() -> List[sql.Notice] { [] }
 fn (c: HubConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "none")) }
 
 test "Hosts on pg_bus hear each other's appends through NOTIFY" {
-  // os.tasks faults under xo test --std-module, so a scope's group
-  scope s {
-    let g = s.group()
-    let db = sql.open_driver(os.net, HubDriver{hub: Hub{ls: Mutex[List[Chan[sql.Notification]]].new([])}}, "pg")?
-    let st = memory_store()
-    let ba = pg_bus(db, g, os.clock)
-    let a = host_with(todo_app(), st, ba, scope: "room")
-    let bb = pg_bus(db, g, os.clock)
-    let b = host_with(todo_app(), st, bb, scope: "room")
-    expect(b.model().todos.len()) == 0
-    let heard = Chan[Int].new(cap: 16)
-    (bb.subscribe)("room", fn(v: Int) uses sync { let _full = heard.try_send(v) })
-    let (_id, live) = b.subscribe()
-    // b's listener has LISTENed once its -1 arrives (a NOTIFY before that
-    // is lost, which the -1 makes b read the store for)
-    expect(heard.recv()) == Some(-1)
-    a.apply(Msg.Add(id: "x", title: "from a"))
-    expect(heard.recv()) == Some(1)
-    // b's live connections were woken (the channel holds one value and
-    // folds the rest: here the -1 of b's LISTEN, then they check what
-    // changed and send the version they read)
-    expect(live.recv().is_some()) == true
-    expect(b.model().todos.len()) == 1
-  }
+  let db = sql.open_driver(os.net, HubDriver{hub: Hub{ls: Mutex[List[Chan[sql.Notification]]].new([])}}, "pg")?
+  let st = memory_store()
+  let ba = pg_bus(db, os.tasks, os.clock)
+  let a = host_with(todo_app(), st, ba, scope: "room")
+  let bb = pg_bus(db, os.tasks, os.clock)
+  let b = host_with(todo_app(), st, bb, scope: "room")
+  expect(b.model().todos.len()) == 0
+  let heard = Chan[Int].new(cap: 16)
+  (bb.subscribe)("room", fn(v: Int) uses sync { let _full = heard.try_send(v) })
+  let (_id, live) = b.subscribe()
+  // b's listener has LISTENed once its -1 arrives (a NOTIFY before that
+  // is lost, which the -1 makes b read the store for)
+  expect(heard.recv()) == Some(-1)
+  a.apply(Msg.Add(id: "x", title: "from a"))
+  expect(heard.recv()) == Some(1)
+  // b's live connections were woken (the channel holds one value and
+  // folds the rest: here the -1 of b's LISTEN, then they check what
+  // changed and send the version they read)
+  expect(live.recv().is_some()) == true
+  expect(b.model().todos.len()) == 1
 }
 
 test "convergence holds for any seed" for seed: Int {
