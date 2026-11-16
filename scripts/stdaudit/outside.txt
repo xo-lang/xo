@@ -41,3 +41,4 @@ Server-sent events | sse | spec/std.md - | sse
 Go interop values | go | spec/std.md - | go
 AMQP test broker | amqptest | spec/std.md - | amqptest
 Double ended queue | deque | spec/std.md - | deque
+Brotli | brotli | github.com/andybalholm/brotli v1.2.2 | github.com/andybalholm/brotli

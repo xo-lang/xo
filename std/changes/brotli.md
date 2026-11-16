@@ -1,5 +1,33 @@
 # std/brotli changes
 
+
+## 2026-11-16: feature: the streaming decoder, brotli.Decompressor (Go's Reader)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (features Proven): stdaudit's andybalholm/brotli rows NewReader, Reader and Reader.Read were gaps
+- Go reference: andybalholm/brotli v1.2.2 reader.go (Reader.Read: 32 KiB pieces, ErrUnexpectedEOF, errExcessiveInput); the decoding is std/brotli's straight line port of decode.go, resumed per meta-block, not Go's state machine
+- Test: testdata/corpus/brotli: every stream in pieces of 1, 997 and 33,000 bytes and the 900 damaged streams in pieces of 5 and 4,093 bytes give decode's output or error, max_size as decode (go, arm64, llvm); std/brotli_test.xo: 16 MB of output in 64 KiB writes under 4 MB of heap (it caught the output of finished meta-blocks being dropped on a retry)
+- Timing: none (decode keeps its path)
+
+`brotli.decompressor(max_size)` returns a Decompressor with `write` and
+`finish`, as std/compress's. Each meta-block is decoded from a
+checkpoint; one whose input has not all arrived goes back to it (the
+ring bytes it wrote restored) and is retried once the input has doubled.
+
+## 2026-11-16: feature: the streaming encoder, brotli.Compressor (Go's Writer)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (features Proven): stdaudit's andybalholm/brotli rows (pinned in scripts/stdaudit/outside.txt) NewWriter, Writer.Write, Flush and Close were gaps
+- Go reference: andybalholm/brotli v1.2.2 writer.go (Writer, writeChunk) and encode.go (encoderCompressStream, encoderCompressStreamFast, injectBytePaddingBlock, checkFlushComplete)
+- Test: testdata/corpus/brotli's new "the Compressor gives back each stream written with Flush" tests replay the Write sizes and Flush calls of andybalholm's 49 flushed streams (qualities 0 to 11) byte for byte, on go, arm64 and llvm; the encode tests (now on the Encoder) unchanged
+- Timing: none (encode keeps its path: one write and finish)
+
+`brotli.compressor(quality, window)` returns a Compressor with `write`,
+`flush` and `finish`, as std/compress's Compressor. `encode` is now one
+write and a finish on a Compressor.
+
 ## 2026-11-15: port: the encoder (encode, qualities 0 to 11)
 
 - Kind: port

@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/andybalholm/brotli"
@@ -69,6 +70,7 @@ func encode(rg *rand.Rand, data []byte) ([]byte, string) {
 		w = 10 + rg.Intn(15)
 	}
 	flushes := 0
+	var writes []string
 	var buf bytes.Buffer
 	wr := brotli.NewWriterOptions(&buf, brotli.WriterOptions{Quality: q, LGWin: w})
 	rest := data
@@ -78,6 +80,7 @@ func encode(rg *rand.Rand, data []byte) ([]byte, string) {
 			k = rg.Intn(len(rest) + 1)
 		}
 		wr.Write(rest[:k])
+		writes = append(writes, strconv.Itoa(k))
 		rest = rest[k:]
 		if len(rest) > 0 {
 			wr.Flush()
@@ -85,7 +88,8 @@ func encode(rg *rand.Rand, data []byte) ([]byte, string) {
 		}
 	}
 	wr.Close()
-	return buf.Bytes(), fmt.Sprintf("q%d w%d flushes %d", q, w, flushes)
+	// the Write sizes, a Flush between each two: the Compressor replays them
+	return buf.Bytes(), fmt.Sprintf("q%d w%d flushes %d writes %s", q, w, flushes, strings.Join(writes, ","))
 }
 
 func decode(s []byte) ([]byte, string) {
@@ -118,6 +122,7 @@ func main() {
 	// on 34 KB took 69 s, 0.16 s after; 2026-11-15)
 	unflushed := make([]int, len(encodeTests))
 	seen := make([]int, len(encodeTests))
+	flushed := make([]int, len(encodeTests))
 	for i := 0; i < 160; i++ {
 		data := input(rg)
 		s, how := encode(rg, data)
@@ -125,7 +130,7 @@ func main() {
 			panic("andybalholm round trip: " + e)
 		}
 		streams = append(streams, s)
-		if strings.HasSuffix(how, " flushes 0") {
+		if strings.Contains(how, " flushes 0 ") {
 			var q int
 			fmt.Sscanf(how, "q%d", &q)
 			for k, e := range encodeTests {
@@ -137,10 +142,26 @@ func main() {
 				}
 			}
 		}
+		if !strings.Contains(how, " flushes 0 ") {
+			var q int
+			fmt.Sscanf(how, "q%d", &q)
+			for k, e := range encodeTests {
+				if q >= e.lo && q <= e.hi && e.part == 0 {
+					flushed[k]++
+				}
+			}
+		}
 		fmt.Fprintf(&o, "  (%q, \"%x\", %d, %d),\n", how, s, len(data), fnv(data))
 	}
 	o.WriteString("]\n\n/// how many STREAMS written with no Flush each encode test checks (encode\n/// gives each back byte for byte)\nconst UNFLUSHED: List[Int] = [")
 	for k, n := range unflushed {
+		if k > 0 {
+			o.WriteString(", ")
+		}
+		fmt.Fprintf(&o, "%d", n)
+	}
+	o.WriteString("]\n\n/// how many flushed STREAMS each Compressor test checks (the Compressor replays\n/// their Write and Flush calls byte for byte)\nconst FLUSHED: List[Int] = [")
+	for k, n := range flushed {
 		if k > 0 {
 			o.WriteString(", ")
 		}
@@ -180,6 +201,9 @@ func main() {
 			name += fmt.Sprintf(", part %d of %d", e.part+1, e.parts)
 		}
 		fmt.Fprintf(&o, "\ntest \"encode gives back each stream written with no Flush (%s)\" {\n  expect(encode_band(%d, %d, %d, %d)) == (UNFLUSHED[%d], [])\n}\n", name, e.lo, e.hi, e.part, e.parts, k)
+		if e.part == 0 {
+			fmt.Fprintf(&o, "\ntest \"the Compressor gives back each stream written with Flush (%s)\" {\n  expect(flush_band(%d, %d)) == (FLUSHED[%d], [])\n}\n", name, e.lo, e.hi, k)
+		}
 	}
 	os.Stdout.WriteString(o.String())
 }
@@ -218,6 +242,81 @@ test "andybalholm's streams decode to their input" {
   expect(bad) == []
 }
 
+/// what a Decompressor gives for data written step bytes at a time: the
+/// output's length and FNV-1a 64, or the error
+fn stream_outcome(data: Bytes, step: Int, max_size: Int) -> Str {
+  var z = brotli.decompressor(max_size)
+  var out = BytesBuilder.new()
+  var at = 0
+  while at < data.len() {
+    let e = if at + step < data.len() { at + step } else { data.len() }
+    match z.write(data[at..e]) {
+      Ok(b) => out.write(b)
+      Err(er) => return er.display()
+    }
+    at = e
+  }
+  match z.finish() {
+    Ok(b) => out.write(b)
+    Err(er) => return er.display()
+  }
+  let o = out.freeze()
+  "${o.len()} ${fnv(o)}"
+}
+
+fn decode_outcome(data: Bytes, max_size: Int) -> Str {
+  match brotli.decode(data, max_size) {
+    Ok(out) => "${out.len()} ${fnv(out)}"
+    Err(e) => e.display()
+  }
+}
+
+test "the Decompressor gives decode's output, the streams in pieces" {
+  var bad: List[Str] = []
+  for (i, (how, s, _, _)) in STREAMS.indexed() {
+    let data = unhex(s)
+    let want = decode_outcome(data, 1073741824)
+    let steps = if i < 40 { [1, 997, 33000] } else { [997, 33000] }
+    for step in steps {
+      let got = stream_outcome(data, step, 1073741824)
+      if got != want {
+        bad.push("${how} step ${step}: ${got} want ${want}")
+      }
+    }
+  }
+  expect(bad) == []
+}
+
+test "the Decompressor gives decode's output or error on damaged streams in pieces" {
+  var bad: List[Str] = []
+  for (s, _, _, _) in DAMAGED {
+    let data = unhex(s)
+    let want = decode_outcome(data, 1073741824)
+    for step in [5, 4093] {
+      let got = stream_outcome(data, step, 1073741824)
+      if got != want {
+        bad.push("${s[0..(if s.len() < 40 { s.len() } else { 40 })]} step ${step}: ${got} want ${want}")
+      }
+    }
+  }
+  expect(bad[0..(if bad.len() < 8 { bad.len() } else { 8 })]) == []
+}
+
+test "the Decompressor stops at max_size as decode does" {
+  var bad: List[Str] = []
+  for (how, s, n, _) in STREAMS {
+    if n > 1000 {
+      let data = unhex(s)
+      let want = decode_outcome(data, n / 2)
+      let got = stream_outcome(data, 517, n / 2)
+      if got != want {
+        bad.push("${how}: ${got} want ${want}")
+      }
+    }
+  }
+  expect(bad) == []
+}
+
 test "damaged streams give Go's output or error" {
   var bad: List[Str] = []
   for (s, n, h, e) in DAMAGED {
@@ -228,6 +327,39 @@ test "damaged streams give Go's output or error" {
     }
   }
   expect(bad[0..(if bad.len() < 8 { bad.len() } else { 8 })]) == []
+}
+
+/// replay each stream written with Flush at qualities lo to hi on a
+/// Compressor (its Write sizes, a Flush between each two, then Close): how
+/// many there were and the ones whose bytes differ
+fn flush_band(lo: Int, hi: Int) -> (Int, List[Str]) {
+  var bad: List[Str] = []
+  var n = 0
+  for (how, s, _, _) in STREAMS {
+    let f = how.split(" ")
+    let q = Int.parse(f[0].trim_prefix("q")) ?? -1
+    if f[3] != "0" && q >= lo && q <= hi {
+      let w = Int.parse(f[1].trim_prefix("w")) ?? -1
+      let data = brotli.decode(unhex(s)).or_fault("decode")
+      var e = brotli.compressor(q, w)
+      var out = BytesBuilder.new()
+      var at = 0
+      for (i, k) in f[5].split(",").indexed() {
+        let size = Int.parse(k) ?? -1
+        if i > 0 {
+          out.write(e.flush())
+        }
+        out.write(e.write(data[at..at + size]))
+        at += size
+      }
+      out.write(e.finish())
+      if out.freeze().to_hex() != s {
+        bad.push(how)
+      }
+      n += 1
+    }
+  }
+  (n, bad)
 }
 
 /// encode each stream written with no Flush at qualities lo to hi, every

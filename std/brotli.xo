@@ -63,6 +63,216 @@ pub fn decode(data: Bytes, max_size: Int = 1073741824) -> Bytes ! BrotliErr {
   d.out.freeze()
 }
 
+/// A streaming Brotli decoder (andybalholm/brotli's Reader): compressed
+/// bytes in, decoded bytes out, no I/O of its own. `write` returns the
+/// bytes of each meta-block the input so far completes (a meta-block is
+/// returned whole, and its input is held until then); `finish` returns
+/// the rest, or the error `decode` gives for the whole input: the
+/// concatenation of the outputs is `decode`'s, and so is the error, at
+/// the first call that can tell (a malformed stream as soon as its bytes
+/// arrive, `unexpected EOF` at `finish`, input after the last meta-block
+/// at that write). More than max_size bytes of output is an error at
+/// once. After an error each call returns it again.
+/// @move_only
+pub struct Decompressor {
+  d: Dec
+  pending: BytesBuilder
+  started: Bool
+  done: Bool
+  failed: BrotliErr?
+  want: Int
+}
+
+pub fn decompressor(max_size: Int = 1073741824) -> Decompressor {
+  var d = Dec{}
+  d.max_size = max_size
+  d.more = true
+  dec_init(d)
+  Decompressor{d: d, pending: BytesBuilder.new(), started: false, done: false, failed: None, want: 0}
+}
+
+/// Takes the next compressed bytes; returns what they complete.
+pub fn (var z: Decompressor) write(data: Bytes) -> Bytes ! BrotliErr {
+  z.pending.write(data)
+  pump(z, true)
+}
+
+/// Ends the input; returns the rest of the output.
+/// @moves
+pub fn (var z: Decompressor) finish() -> Bytes ! BrotliErr {
+  let out = pump(z, false)?
+  if !z.done {
+    return Err(BrotliErr{msg: "unexpected EOF"})
+  }
+  out
+}
+
+/// Decodes the meta-blocks the input holds. Each starts from a checkpoint;
+/// one that runs out of input (SUSPEND) goes back to it and waits until
+/// the input has grown by as much again as it held (so the retries cost
+/// at most about the decode once more).
+fn pump(var z: Decompressor, more: Bool) -> Bytes ! BrotliErr {
+  if let Some(e) = z.failed {
+    return Err(e)
+  }
+  if z.done {
+    if z.pending.len() > 0 {
+      return fail(z, brotli_err("excessive input"))
+    }
+    return b""
+  }
+  let held = z.d.data.len() + z.pending.len()
+  if more && held < z.want {
+    return b""
+  }
+  if z.pending.len() > 0 {
+    let p = z.pending
+    z.pending = BytesBuilder.new()
+    z.d.data = z.d.data + p.freeze()
+  }
+  z.d.more = more
+  // the output of the meta-blocks done: d.out holds only the current
+  // one's, which a SUSPEND drops
+  var done = BytesBuilder.new()
+  while true {
+    let snap = checkpoint(z.d)
+    let r: Result[Bool, BrotliErr] = if !z.started { start(z.d) } else { meta_block(z.d) }
+    match r {
+      Ok(last) => {
+        if !z.started {
+          z.started = true
+          continue
+        }
+        if last {
+          // input past the stream is an error now, as Go's Read has it
+          if let Err(e) = end_stream(z.d) {
+            return fail(z, e)
+          }
+          z.done = true
+          commit(z, done)
+          break
+        }
+        commit(z, done)
+        rebase(z.d)
+      }
+      Err(e) => {
+        if e.msg != SUSPEND {
+          return fail(z, e)
+        }
+        restore(z.d, snap)
+        let start_byte = snap.bitpos >> 3
+        let span = z.d.data.len() - start_byte
+        z.want = z.d.data.len() + (if span > READ_CHUNK { span } else { READ_CHUNK })
+        break
+      }
+    }
+  }
+  done.freeze()
+}
+
+/// Moves a finished meta-block's output from d.out to done.
+fn commit(var z: Decompressor, var done: BytesBuilder) {
+  let o = z.d.out
+  z.d.out = BytesBuilder.new()
+  let b = o.freeze()
+  z.d.out_base += b.len()
+  done.write(b)
+}
+
+fn fail(var z: Decompressor, e: BrotliErr) -> Bytes ! BrotliErr {
+  z.failed = Some(e)
+  Err(e)
+}
+
+fn start(var d: Dec) -> Bool ! BrotliErr {
+  decode_window_bits(d)?
+  d.max_backward_distance = (1 << d.window_bits) - 16
+  false
+}
+
+/// d without its large lists, which a retry rebuilds (the meta-block's
+/// trees and maps), restores (the ring, from the undo region) or keeps
+/// (the input, the output).
+fn checkpoint(var d: Dec) -> Dec {
+  let ring = d.ring
+  let huff = d.huff
+  let data = d.data
+  let undo = d.undo
+  d.ring = []
+  d.huff = []
+  d.data = b""
+  d.undo = []
+  let snap = d
+  d.ring = ring
+  d.huff = huff
+  d.data = data
+  d.undo = undo
+  snap
+}
+
+/// Back to snap after a SUSPEND: the ring bytes the meta-block wrote put
+/// back, its output dropped, and the bits read again from snap's bitpos.
+fn restore(var d: Dec, snap: Dec) {
+  var ring = d.ring
+  d.ring = []
+  let huff = d.huff
+  let data = d.data
+  let out_base = d.out_base
+  if d.undo_at >= 0 {
+    for (i, x) in d.undo.indexed() {
+      ring[d.undo_at + i] = x
+    }
+  }
+  d = snap
+  d.ring = ring
+  d.huff = huff
+  d.data = data
+  d.out_base = out_base
+  d.out = BytesBuilder.new()
+  d.undo = []
+  d.undo_at = -1
+  // the accumulator may hold zeros for bytes that had not arrived
+  d.acc = 0
+  d.acc_n = 0
+  d.next = d.bitpos >> 3
+  let skip = d.bitpos & 7
+  if skip != 0 {
+    let _ = peek_bits(d, 8)
+    d.acc = d.acc >> skip
+    d.acc_n -= skip
+  }
+}
+
+/// The ring bytes this meta-block may write (its length past pos, the
+/// copies' slack, the wrap's copy to the front), saved when more input
+/// may follow: all of the ring once it would wrap.
+fn save_undo(var d: Dec) {
+  if !d.more {
+    return
+  }
+  let n = d.remaining + RING_SLACK
+  let (from, to) = if d.pos + n >= d.rb_size { (0, d.ring.len()) } else { (d.pos, d.pos + n) }
+  var u = List[UInt8].with_capacity(to - from)
+  for i in from..to {
+    u.push(d.ring[i])
+  }
+  d.undo_at = from
+  d.undo = u
+}
+
+/// Drops the input before the meta-block's start, in whole pieces of
+/// READ_CHUNK so need_bytes' pieces stay where decode has them.
+fn rebase(var d: Dec) {
+  let k = ((d.bitpos >> 3) / READ_CHUNK) * READ_CHUNK
+  if k == 0 {
+    return
+  }
+  d.data = d.data[k..]
+  d.bitpos -= k * 8
+  d.next -= k
+  d.chunk_end -= k
+}
+
 // The decoder (decode.go), straight line rather than andybalholm's
 // resumable state machine: the whole input is at hand. What the state
 // machine makes observable is kept: the ring buffer's size and the points it
@@ -71,6 +281,9 @@ pub fn decode(data: Bytes, max_size: Int = 1073741824) -> Bytes ! BrotliErr {
 // writes the ring buffer out first.
 
 const READ_CHUNK: Int = 32768
+/// need_bytes' message when a Decompressor must wait for more input (it
+/// never reaches a caller)
+const SUSPEND: Str = "brotli: suspend"
 const RING_SLACK: Int = 42
 const MASK32: Int = 4294967295
 const MAX_ALLOWED_DISTANCE: Int = 2147483644
@@ -101,6 +314,13 @@ struct Dec {
   next: Int = 0
   chunk_end: Int = 0
   max_size: Int = 0
+  // a Decompressor's: more input may follow data (need_bytes suspends
+  // instead of failing), the output already returned, and the ring bytes
+  // a meta-block may overwrite, saved at undo_at for a retry
+  more: Bool = false
+  out_base: Int = 0
+  undo_at: Int = -1
+  undo: List[UInt8] = []
   out: BytesBuilder = BytesBuilder.new()
   ring: List[UInt8] = []
   has_ring: Bool = false
@@ -194,6 +414,11 @@ fn need_bytes(var d: Dec, need: Int) -> () ! BrotliErr {
   while need > d.chunk_end {
     if d.has_ring && d.remaining < 0 {
       return Err(brotli_err("BLOCK_LENGTH_1"))
+    }
+    if d.more && d.chunk_end + READ_CHUNK > d.data.len() {
+      // a Decompressor waits for Go's whole next piece (or the end), so
+      // the pieces, and what they decide, are decode's
+      return Err(BrotliErr{msg: SUSPEND})
     }
     if d.chunk_end >= d.data.len() {
       return Err(BrotliErr{msg: "unexpected EOF"})
@@ -729,7 +954,7 @@ fn write_ring_buffer(var d: Dec) -> () ! BrotliErr {
   // byte was 23% of a text decode
   d.out.write_list(d.ring, start, start + to_write)
   d.partial_pos_out += to_write
-  if d.out.len() > d.max_size {
+  if d.out_base + d.out.len() > d.max_size {
     return Err(BrotliErr{msg: "brotli: output exceeds max_size (${d.max_size} bytes)"})
   }
   if d.rb_size == (1 << d.window_bits) && d.pos >= d.rb_size {
@@ -823,6 +1048,7 @@ fn jump_to_byte_boundary(var d: Dec) -> Bool ! BrotliErr {
 
 fn copy_uncompressed(var d: Dec) -> () ! BrotliErr {
   ensure_ring_buffer(d)
+  save_undo(d)
   while true {
     var n = d.remaining
     if d.pos + n > d.rb_size {
@@ -850,6 +1076,13 @@ fn copy_uncompressed(var d: Dec) -> () ! BrotliErr {
 fn decode_stream(var d: Dec) -> () ! BrotliErr {
   decode_window_bits(d)?
   d.max_backward_distance = (1 << d.window_bits) - 16
+  while !meta_block(d)? {}
+  end_stream(d)
+}
+
+/// One meta-block; true for the last.
+fn meta_block(var d: Dec) -> Bool ! BrotliErr {
+  d.undo_at = -1
   while true {
     // decoderStateMetablockBegin
     d.num_block_types = [1, 1, 1]
@@ -874,6 +1107,7 @@ fn decode_stream(var d: Dec) -> () ! BrotliErr {
       } else {
         read_meta_block_header(d)?
         ensure_ring_buffer(d)
+        save_undo(d)
         process_commands(d)?
       }
     }
@@ -885,9 +1119,14 @@ fn decode_stream(var d: Dec) -> () ! BrotliErr {
       if !jump_to_byte_boundary(d)? {
         return Err(brotli_err("PADDING_2"))
       }
-      break
     }
+    return d.is_last
   }
+  false
+}
+
+/// After the last meta-block: the ring buffer's rest, and no input after.
+fn end_stream(var d: Dec) -> () ! BrotliErr {
   if d.has_ring {
     write_ring_buffer(d)?
   }
@@ -2593,61 +2832,171 @@ const ENC_Q0_CMD_CODE: List[Int] = [0xff, 0x77, 0xd5, 0xbf, 0xe7, 0xde, 0xea, 0x
 /// The Writer of qualities 0 and 1 over all of data: Write (every whole
 /// block of 1 << lgwin bytes as it comes), then Close (an empty last
 /// block), as andybalholm's NewWriterOptions, Write and Close.
-fn encode_fast(data: Bytes, quality: Int, window: Int) -> Bytes {
-  var lgwin = if window == 0 { 22 } else { window }
-  if lgwin < 10 {
-    lgwin = 10
-  } else if lgwin > 24 {
-    lgwin = 24
-  }
-  let (lb, lbb) = window_bits(if lgwin < 18 { 18 } else { lgwin })
-  var last_bytes = lb
-  var last_bits = lbb
+fn fast_new() -> FastEnc {
   var code = zero_bytes(512)
   for (i, x) in ENC_Q0_CMD_CODE.indexed() {
     code[i] = UInt8(x)
   }
-  var fe = FastEnc{cmd_depth: ENC_Q0_CMD_DEPTH, cmd_bits: ENC_Q0_CMD_BITS, cmd_code: BitBuf{b: code, ix: 448}}
-  var w = BitBuf{b: [], ix: 0}
-  var out = BytesBuilder.new()
-  let limit = 1 << lgwin
+  FastEnc{cmd_depth: ENC_Q0_CMD_DEPTH, cmd_bits: ENC_Q0_CMD_BITS, cmd_code: BitBuf{b: code, ix: 448}}
+}
+
+/// encoderCompressStreamFast (qualities 0 and 1): each block of up to
+/// 1 << lgwin input bytes is compressed at once from the input itself.
+fn stream_fast(var s: Compressor, data: Bytes, op: Int) {
+  let limit = 1 << s.e.lgwin
   var pos = 0
   var avail = data.len()
-  var finishing = false
   while true {
-    if avail == 0 && !finishing {
-      // Close: the finish operation with no input left
-      finishing = true
+    if s.state == ST_FLUSH_REQUESTED && s.e.last_bytes_bits != 0 {
+      inject_padding(s)
+      continue
     }
-    let block = if avail < limit { avail } else { limit }
-    let is_last = finishing && block == avail
-    let max_out = 2 * block + 503
-    if w.b.len() < max_out {
-      w.b = zero_bytes(max_out)
+    if s.state == ST_PROCESSING && (avail != 0 || op != OP_PROCESS) {
+      let block = if avail < limit { avail } else { limit }
+      let is_last = avail == block && op == OP_FINISH
+      let force_flush = avail == block && op == OP_FLUSH
+      if force_flush && block == 0 {
+        s.state = ST_FLUSH_REQUESTED
+        continue
+      }
+      let max_out = 2 * block + 503
+      var w = s.e.w
+      s.e.w = BitBuf{b: [], ix: 0}
+      if w.b.len() < max_out {
+        w.b = zero_bytes(max_out)
+      }
+      w.ix = s.e.last_bytes_bits
+      w.b[0] = UInt8(s.e.last_bytes & 255)
+      w.b[1] = UInt8((s.e.last_bytes >> 8) & 255)
+      let tsize = hash_table_size(s.quality, block)
+      var table: List[Int] = []
+      for _ in 0..tsize {
+        table.push(0)
+      }
+      if s.quality == 0 {
+        compress_fragment_fast(data, pos, block, is_last, table, tsize, s.fe, w)
+      } else {
+        compress_fragment_two_pass(data, pos, block, is_last, table, tsize, w)
+      }
+      pos += block
+      avail -= block
+      s.e.out.write_list(w.b, 0, w.ix >> 3)
+      s.e.last_bytes = Int(w.b[w.ix >> 3])
+      s.e.last_bytes_bits = w.ix & 7
+      s.e.w = w
+      if force_flush {
+        s.state = ST_FLUSH_REQUESTED
+      }
+      if is_last {
+        s.state = ST_FINISHED
+      }
+      continue
     }
-    w.ix = last_bits
-    w.b[0] = UInt8(last_bytes & 255)
-    w.b[1] = UInt8((last_bytes >> 8) & 255)
-    let tsize = hash_table_size(quality, block)
-    var table: List[Int] = []
-    for _ in 0..tsize {
-      table.push(0)
-    }
-    if quality == 0 {
-      compress_fragment_fast(data, pos, block, is_last, table, tsize, fe, w)
-    } else {
-      compress_fragment_two_pass(data, pos, block, is_last, table, tsize, w)
-    }
-    pos += block
-    avail -= block
-    out.write_list(w.b, 0, w.ix >> 3)
-    last_bytes = Int(w.b[w.ix >> 3])
-    last_bits = w.ix & 7
-    if is_last {
-      break
-    }
+    break
   }
-  out.freeze()
+  check_flush_complete(s)
+}
+
+// The streaming encoder (writer.go Writer, encode.go encoderCompressStream).
+
+const OP_PROCESS: Int = 0
+const OP_FLUSH: Int = 1
+const OP_FINISH: Int = 2
+const ST_PROCESSING: Int = 0
+const ST_FLUSH_REQUESTED: Int = 1
+const ST_FINISHED: Int = 2
+
+/// A streaming Brotli encoder (andybalholm/brotli's Writer): bytes in,
+/// compressed bytes out, no I/O of its own. `write` returns the output
+/// ready so far (often empty: input is compressed a block at a time),
+/// `flush` everything written so far, ending on a byte boundary so a
+/// decoder can decode all of it (Writer.Flush), and `finish` the rest and
+/// the stream's last meta-block (Close). The concatenation of its outputs
+/// is byte identical to the Writer's for the same Write, Flush and Close
+/// calls; one write and finish give `encode`'s bytes.
+/// @move_only
+pub struct Compressor {
+  quality: Int
+  e: Enc
+  fe: FastEnc
+  state: Int
+}
+
+/// An encoder at quality 0 to 11 and a window of 10 to 24 bits (0 picks
+/// 22), as `encode` takes them (Go's NewWriterOptions; NewWriter is
+/// quality 6, NewWriterLevel a quality). An out of range quality or
+/// window is a fault.
+pub fn compressor(quality: Int = 6, window: Int = 0) -> Compressor {
+  if quality < 0 || quality > 11 {
+    fault("brotli.compressor: quality ${quality} is not 0 to 11")
+  }
+  if window != 0 && (window < 10 || window > 24) {
+    fault("brotli.compressor: window ${window} is not 0 or 10 to 24")
+  }
+  Compressor{quality: quality, e: enc_new(quality, window), fe: fast_new(), state: ST_PROCESSING}
+}
+
+/// Compresses data; returns the compressed bytes ready so far.
+pub fn (var s: Compressor) write(data: Bytes) -> Bytes {
+  stream(s, data, OP_PROCESS)
+  drain(s)
+}
+
+/// Compresses everything written so far and pads to a byte boundary with
+/// an empty meta-block; returns the compressed bytes.
+pub fn (var s: Compressor) flush() -> Bytes {
+  stream(s, b"", OP_FLUSH)
+  drain(s)
+}
+
+/// Compresses the rest and ends the stream; returns the last bytes.
+/// @moves
+pub fn (var s: Compressor) finish() -> Bytes {
+  stream(s, b"", OP_FINISH)
+  drain(s)
+}
+
+fn stream(var s: Compressor, data: Bytes, op: Int) {
+  if s.state == ST_FINISHED {
+    fault("brotli: the compressor is finished")
+  }
+  if s.quality <= 1 {
+    stream_fast(s, data, op)
+  } else {
+    stream_slow(s, data, op)
+  }
+}
+
+fn drain(var s: Compressor) -> Bytes {
+  let o = s.e.out
+  s.e.out = BytesBuilder.new()
+  o.freeze()
+}
+
+/// injectBytePaddingBlock: an empty metadata meta-block (is_last 0,
+/// nibbles 11, reserved 0, 00) after the pending bits, to a byte boundary.
+fn inject_padding(var s: Compressor) {
+  var seal = s.e.last_bytes
+  var bits = s.e.last_bytes_bits
+  s.e.last_bytes = 0
+  s.e.last_bytes_bits = 0
+  seal = seal | (6 << bits)
+  bits += 6
+  s.e.out.write_byte(UInt8(seal & 255))
+  if bits > 8 {
+    s.e.out.write_byte(UInt8((seal >> 8) & 255))
+  }
+  if bits > 16 {
+    s.e.out.write_byte(UInt8((seal >> 16) & 255))
+  }
+  // writeOutput's checkFlushComplete
+  check_flush_complete(s)
+}
+
+fn check_flush_complete(var s: Compressor) {
+  if s.state == ST_FLUSH_REQUESTED {
+    s.state = ST_PROCESSING
+  }
 }
 
 /// data as a Brotli stream (RFC 7932) at quality 0 to 11 and a window of
@@ -2661,10 +3010,10 @@ pub fn encode(data: Bytes, quality: Int = 6, window: Int = 0) -> Bytes {
   if window != 0 && (window < 10 || window > 24) {
     fault("brotli.encode: window ${window} is not 0 or 10 to 24")
   }
-  if quality <= 1 {
-    return encode_fast(data, quality, window)
-  }
-  encode_slow(data, quality, window)
+  var s = compressor(quality, window)
+  stream(s, data, OP_PROCESS)
+  stream(s, b"", OP_FINISH)
+  drain(s)
 }
 
 // compress_fragment_two_pass.go (quality 1): commands for a block of up
@@ -6699,41 +7048,53 @@ fn copy_input(var e: Enc, data: Bytes, from: Int, n: Int) {
   }
 }
 
-/// encoderCompressStream with every input byte given at once, and finish
-/// when last (Write, then Close).
-fn compress_stream(var e: Enc, data: Bytes, from0: Int, avail0: Int, finish: Bool) -> Int {
-  var from = from0
-  var avail = avail0
+/// encoderCompressStream (qualities 2 to 11): input fills the ring buffer a
+/// block at a time; a full block, a flush or the finish encodes it.
+fn stream_slow(var s: Compressor, data: Bytes, op: Int) {
+  var from = 0
+  var avail = data.len()
   while true {
-    let delta = e.input_pos - e.last_processed_pos
-    let bs = 1 << e.lgblock
+    let delta = s.e.input_pos - s.e.last_processed_pos
+    let bs = 1 << s.e.lgblock
     let rem = if delta >= bs { 0 } else { bs - delta }
     if rem != 0 && avail != 0 {
       let n = min_i(rem, avail)
-      copy_input(e, data, from, n)
+      copy_input(s.e, data, from, n)
       from += n
       avail -= n
       continue
     }
-    if !e.finished && (rem == 0 || finish) {
-      let is_last = avail == 0 && finish
-      if e.size_hint == 0 {
-        e.size_hint = min_i(delta + avail, 1 << 30)
+    if s.state == ST_FLUSH_REQUESTED && s.e.last_bytes_bits != 0 {
+      inject_padding(s)
+      continue
+    }
+    if s.state == ST_PROCESSING && (rem == 0 || op != OP_PROCESS) {
+      let is_last = avail == 0 && op == OP_FINISH
+      let force_flush = avail == 0 && op == OP_FLUSH
+      // updateSizeHint
+      if s.e.size_hint == 0 {
+        s.e.size_hint = min_i(delta + avail, 1 << 30)
       }
-      if !encode_data(e, is_last, false) {
-        fault("brotli.encode: encodeData refused a block")
+      if !encode_data(s.e, is_last, force_flush) {
+        fault("brotli: encodeData refused a block")
+      }
+      if force_flush {
+        s.state = ST_FLUSH_REQUESTED
       }
       if is_last {
-        e.finished = true
+        s.state = ST_FINISHED
       }
       continue
     }
     break
   }
-  from
+  check_flush_complete(s)
 }
 
-fn encode_slow(data: Bytes, quality: Int, window: Int) -> Bytes {
+/// The encoder state of quality and window (ensureInitialized): window 0
+/// is 22, the rest clamped to 10 to 24; the stream header's window bits
+/// are the first output bits (at least 18 for qualities 0 and 1).
+fn enc_new(quality: Int, window: Int) -> Enc {
   var lgwin = if window == 0 { 22 } else { window }
   if lgwin < 10 {
     lgwin = 10
@@ -6749,9 +7110,9 @@ fn encode_slow(data: Bytes, quality: Int, window: Int) -> Bytes {
     }
   }
   let rb_bits = 1 + max_i(lgwin, lgblock)
-  let (lb, lbb) = window_bits(lgwin)
+  let (lb, lbb) = window_bits(if quality <= 1 && lgwin < 18 { 18 } else { lgwin })
   // chooseDistanceParams: postfix 0, direct 0 (mode generic)
-  var e = Enc{quality: quality, lgwin: lgwin, lgblock: lgblock,
+  Enc{quality: quality, lgwin: lgwin, lgblock: lgblock,
     rb: Rb{size: 1 << rb_bits, mask: (1 << rb_bits) - 1, tail_size: 1 << lgblock, total_size: (1 << rb_bits) + (1 << lgblock), cur_size: 0, pos: 0, buf: []},
     input_pos: 0, last_processed_pos: 0, last_flush_pos: 0, cmds: [], num_literals: 0, last_insert_len: 0,
     dist_cache: [4, 11, 15, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], saved_dist_cache: [4, 11, 15, 16],
@@ -6761,9 +7122,6 @@ fn encode_slow(data: Bytes, quality: Int, window: Int) -> Bytes {
     h_addr: [], h_head: [], h_tiny: [], h_delta: [], h_next: [], h_free: [], h_window_mask: 0, h_invalid: 0, h_forest: [],
     dict_lookups: 0, dict_matches: 0, npostfix: 0, ndirect: 0, dist_alphabet: 16 + (24 << 1), dist_max: (1 << 26) - 4,
     last_block_emitted: false, finished: false, w: BitBuf{b: [], ix: 0}, out: BytesBuilder.new()}
-  let from = compress_stream(e, data, 0, data.len(), false)
-  let _ = compress_stream(e, data, from, 0, true)
-  e.out.freeze()
 }
 
 // Quality 4 and up: block splits (metablock.go's greedy builder and the
