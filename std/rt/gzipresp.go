@@ -12,11 +12,15 @@ import (
 
 // gzipAccepts is whether Accept-Encoding allows gzip: a gzip or *
 // element whose q is not 0.
-func gzipAccepts(v string) bool {
+func gzipAccepts(v string) bool { return codingAccepts(v, "gzip") }
+
+// codingAccepts is whether Accept-Encoding allows want (lower case): a
+// want or * element whose q is not 0.
+func codingAccepts(v, want string) bool {
 	for _, el := range strings.Split(v, ",") {
 		parts := strings.Split(el, ";")
 		token := strings.ToLower(strings.TrimSpace(parts[0]))
-		if token != "gzip" && token != "*" {
+		if token != want && token != "*" {
 			continue
 		}
 		q := 1.0
@@ -85,7 +89,60 @@ func gzipStream(inner func(*Task, Http_BodyWriter) Result[Unit, IoErr], level in
 	}
 }
 
+// coderWriter writes a BodyCoder's output for each write to a BodyWriter.
+type coderWriter struct {
+	tk *Task
+	c  Http_BodyCoder
+	w  Http_BodyWriter
+}
+
+func (g coderWriter) Write(p []byte) (int, error) {
+	out := g.c.F_write(g.tk, Bytes(p)).V
+	if len(out) > 0 {
+		if r := g.w.M_write(g.tk, out); !r.Ok {
+			return 0, ioErrOf(r.E)
+		}
+	}
+	return len(p), nil
+}
+
+type coderFlusher struct {
+	tk  *Task
+	c   Http_BodyCoder
+	out Http_BodyWriter
+}
+
+func (f coderFlusher) Flush() {
+	if b := f.c.F_flush(f.tk).V; len(b) > 0 {
+		f.out.M_write(f.tk, b)
+	}
+	f.out.M_flush(f.tk)
+}
+
+// codedStream is the stream inner with its writes encoded by a coder from
+// mk (http.encoded_responses, decision 0674).
+func codedStream(inner func(*Task, Http_BodyWriter) Result[Unit, IoErr], mk func(*Task) Result[Http_BodyCoder, Never]) func(*Task, Http_BodyWriter) Result[Unit, IoErr] {
+	return func(tk *Task, w Http_BodyWriter) Result[Unit, IoErr] {
+		c := mk(tk).V
+		r := inner(tk, Http_BodyWriter{w: &bodyWriter{w: coderWriter{tk: tk, c: c, w: w}, fl: coderFlusher{tk: tk, c: c, out: w}, tr: w.w.tr}})
+		if b := c.F_finish(tk).V; len(b) > 0 {
+			if wr := w.M_write(tk, b); !wr.Ok && r.Ok {
+				return Err[Unit](wr.E)
+			}
+		}
+		return r
+	}
+}
+
 func gzipResponse(tk *Task, req Http_Request, resp Http_Response, min int64, level int) Http_Response {
+	return encodedResponse(tk, req, resp, "gzip", min, func(b Bytes) Bytes { return Compress_gzip(tk, b, compressLevelOf(level)) }, func(inner func(*Task, Http_BodyWriter) Result[Unit, IoErr]) func(*Task, Http_BodyWriter) Result[Unit, IoErr] {
+		return gzipStream(inner, level)
+	})
+}
+
+// encodedResponse is gzhttp's rules for the Content-Encoding token: whole
+// encodes a buffered body, stream wraps a streamed one.
+func encodedResponse(tk *Task, req Http_Request, resp Http_Response, token string, min int64, whole func(Bytes) Bytes, stream func(func(*Task, Http_BodyWriter) Result[Unit, IoErr]) func(*Task, Http_BodyWriter) Result[Unit, IoErr]) Http_Response {
 	st := resp.F_status
 	if st < 200 || st == 204 || st == 304 || st == 206 {
 		return resp
@@ -117,7 +174,7 @@ func gzipResponse(tk *Task, req Http_Request, resp Http_Response, min int64, lev
 	if v := req.M_header(tk, "Accept-Encoding"); v.Some {
 		ae = v.V
 	}
-	if !gzipAccepts(ae) {
+	if !codingAccepts(ae, token) {
 		return resp
 	}
 	if streamed && ct == "" {
@@ -126,7 +183,7 @@ func gzipResponse(tk *Task, req Http_Request, resp Http_Response, min int64, lev
 	if !streamed && int64(len(resp.F_body)) < min {
 		return resp
 	}
-	resp = resp.M_with_header(tk, "Content-Encoding", "gzip")
+	resp = resp.M_with_header(tk, "Content-Encoding", token)
 	k := textproto.CanonicalMIMEHeaderKey("Content-Length")
 	Map_remove(tk, &resp.F_headers, k)
 	resp.XFields = withoutField(resp.XFields, k)
@@ -137,10 +194,10 @@ func gzipResponse(tk *Task, req Http_Request, resp Http_Response, min int64, lev
 		resp = resp.M_with_header(tk, "ETag", "W/"+et.V)
 	}
 	if !streamed {
-		resp.F_body = Compress_gzip(tk, resp.F_body, compressLevelOf(level))
+		resp.F_body = whole(resp.F_body)
 		return resp
 	}
-	resp.XStream = gzipStream(resp.XStream, level)
+	resp.XStream = stream(resp.XStream)
 	return resp
 }
 
@@ -155,5 +212,17 @@ func Http_gzip_responses(_ *Task, min int64, level Compress_Level) func(*Task, H
 	return func(tk *Task, req Http_Request, next func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
 		r := next(tk, req)
 		return Ok[Http_Response, Never](gzipResponse(tk, req, r.V, min, lv))
+	}
+}
+
+// Http_encoded_responses is `http.encoded_responses(token, min_size, whole,
+// stream)` (decision 0674).
+func Http_encoded_responses(_ *Task, token string, min int64, whole func(*Task, Bytes) Result[Bytes, Never], stream func(*Task) Result[Http_BodyCoder, Never]) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
+	t := strings.ToLower(token)
+	return func(tk *Task, req Http_Request, next func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
+		r := next(tk, req)
+		return Ok[Http_Response, Never](encodedResponse(tk, req, r.V, t, min, func(b Bytes) Bytes { return whole(tk, b).V }, func(inner func(*Task, Http_BodyWriter) Result[Unit, IoErr]) func(*Task, Http_BodyWriter) Result[Unit, IoErr] {
+			return codedStream(inner, stream)
+		}))
 	}
 }

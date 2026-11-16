@@ -34,6 +34,18 @@ const multipartBody = "--BB\r\nContent-Disposition: form-data; name=\"title\"\r\
 	"--BB\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\na\r\n" +
 	"--BB\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nfile body\r\n--BB--\r\n"
 
+// brReqs are http_brotli_responses' requests (decision 0674): br, gzip,
+// both, and neither for each route.
+func brReqs() []goldenReq {
+	var rs []goldenReq
+	for _, p := range []string{"/text", "/small", "/png", "/etag", "/stream"} {
+		for _, ae := range []string{"br", "gzip", "gzip, br", "br;q=0, gzip", "identity"} {
+			rs = append(rs, goldenReq{method: "GET", path: p, hdr: [][2]string{{"Accept-Encoding", ae}}})
+		}
+	}
+	return rs
+}
+
 func gzipReqs() []goldenReq {
 	var rs []goldenReq
 	for _, p := range []string{"/text", "/small", "/html", "/png", "/etag", "/weak", "/coded", "/partial", "/stream"} {
@@ -78,6 +90,10 @@ var componentGoldens = []struct {
 		{method: "GET", path: "/echo", hdr: [][2]string{{"X-Tag", "one"}, {"X-Tag", "two"}, {"Cookie", "a=1; b=2"}}},
 	}},
 	{"http_gzip_responses", "routes()", gzipReqs()},
+	{"http_brotli_responses", "routes()", brReqs()},
+	{"http_brotli_responses", "up_routes()", []goldenReq{
+		gr("GET", "/text"), gr("GET", "/stream"), {method: "GET", path: "/text", hdr: [][2]string{{"Accept-Encoding", "x-up"}}}, {method: "GET", path: "/stream", hdr: [][2]string{{"Accept-Encoding", "x-up"}}},
+	}},
 	{"http_gzip", "routes()", []goldenReq{
 		gr("GET", "/page"), gr("GET", "/always"), gr("GET", "/upper"), gr("GET", "/members"), gr("GET", "/corrupt"), gr("GET", "/truncated"), gr("GET", "/deflate"), gr("GET", "/redirect"),
 	}},

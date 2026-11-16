@@ -48,6 +48,7 @@ fs_files # wasip1 wasip2 # files: WASI has no file modes or locks
 fs_mkdir_mode # wasip1 wasip2 # files: WASI has no file modes or locks: create_dir_all_mode
 fs_ops_edges # wasip1 wasip2 # files: WASI has no times before 1970
 handle_drop_leak # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.spawn)
+http_brotli_responses # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_body_reader # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_connect_pool # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets

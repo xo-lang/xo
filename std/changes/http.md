@@ -1,5 +1,20 @@
 # std/http changes
 
+
+## 2026-11-16: feature: http.encoded_responses and BodyCoder (decision 0674)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89: std/brotli's responses (decision 0666) needed gzip_responses' rules for another Content-Encoding without std/http importing std/brotli
+- Go reference: klauspost/compress gzhttp's rules (as gzip_responses); andybalholm/brotli's HTTPCompressor
+- Test: golden http_brotli_responses (go, arm64, LLVM; a token of its own with a BodyCoder that marks write, flush and finish); golden http_gzip_responses unchanged
+- Timing: none
+
+`http.encoded_responses(token, min_size, whole, stream)` applies
+gzip_responses' rules for any Content-Encoding token, with `whole` for a
+buffered body and a BodyCoder (write, flush, finish; `uses sync`) for a
+stream. gzip_responses is now `encoded_responses("gzip", ...)`.
+
 ## 2026-11-15: fix: callback hooks may record what they see (decision 0662)
 
 - Kind: fix

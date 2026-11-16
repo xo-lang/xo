@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+/text ae="br": 200 ce=br vary=Accept-Encoding etag=- cl=17 text=240 "hello world hello world "
+/text ae="gzip, br": 200 ce=br vary=Accept-Encoding etag=- cl=17 text=240 "hello world hello world "
+/text ae="gzip": 200 ce=gzip vary=Accept-Encoding etag=- cl=39 text=240 "hello world hello world "
+/text ae="br;q=0, gzip": 200 ce=gzip vary=Accept-Encoding etag=- cl=39 text=240 "hello world hello world "
+/text ae="": 200 ce=- vary=Accept-Encoding etag=- cl=240 text=240 "hello world hello world "
+/text ae="*": 200 ce=br vary=Accept-Encoding etag=- cl=17 text=240 "hello world hello world "
+/small ae="br": 200 ce=- vary=Accept-Encoding etag=- cl=4 text=4 "tiny"
+/png ae="br": 200 ce=- vary=- etag=- cl=200 text=200 "xxxxxxxxxxxxxxxxxxxxxxxx"
+/etag ae="br": 200 ce=br vary=Accept-Encoding etag=W/"abc" cl=10 text=100 "eeeeeeeeeeeeeeeeeeeeeeee"
+/stream ae="br": 200 ce=br vary=Accept-Encoding etag=- cl=- text=180 "part one part one part o"
+/stream ae="gzip": 200 ce=gzip vary=Accept-Encoding etag=- cl=- text=180 "part one part one part o"
+/stream ae="identity": 200 ce=- vary=Accept-Encoding etag=- cl=- text=180 "part one part one part o"
+/text ae="x-up": 200 ce=x-up vary=Accept-Encoding etag=- cl=11 text=11 "QUIET WORDS"
+/text ae="gzip": 200 ce=- vary=Accept-Encoding etag=- cl=11 text=11 "quiet words"
+/stream ae="X-UP": 200 ce=x-up vary=Accept-Encoding etag=- cl=- text=13 "ABC|F|DEF|END"
+done
+--- stderr

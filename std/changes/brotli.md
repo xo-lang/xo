@@ -1,6 +1,20 @@
 # std/brotli changes
 
 
+
+## 2026-11-16: feature: brotli.responses, br response compression (HTTPCompressor)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (features Proven): stdaudit's andybalholm/brotli rows HTTPCompressor and HTTPCompressorWithLevel were gaps
+- Go reference: andybalholm/brotli v1.2.2 http.go (HTTPCompressor: br when Accept-Encoding allows it, gzip otherwise); the rules are gzhttp's, as http.gzip_responses (decision 0305)
+- Test: golden http_brotli_responses (go, arm64, LLVM): br, gzip and identity by Accept-Encoding with gzip_responses outside, min_size, compressed types, weak ETags, a stream through a Compressor
+- Timing: none (encode and the Compressor keep their paths)
+
+`brotli.responses(min_size, quality)` is `http.encoded_responses("br",
+...)` (decision 0674). Wrap it inside gzip_responses:
+`r.wrap(http.gzip_responses()).wrap(brotli.responses())`.
+
 ## 2026-11-16: feature: the streaming decoder, brotli.Decompressor (Go's Reader)
 
 - Kind: feature

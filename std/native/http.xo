@@ -310,8 +310,9 @@ const TRAILER_PREFIX = "Trailer:"
 struct BodyWriter {
   /// None on wasm, which writes to wb
   s: rthttp.Sink? = None
-  /// gzip_responses: the compressor between the handler's writes and s
-  gz: Mutex[compress.Compressor]? = None
+  /// encoded_responses (gzip_responses, brotli.responses; decision 0674):
+  /// the coder between the handler's writes and s
+  coder: http.BodyCoder? = None
   /// wasm: the body so far, in place of a sink (http.stream)
   wb: Mutex[Bytes]? = None
   /// wasm: set_trailer's trailers, [name, value, ...]
@@ -2728,8 +2729,8 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
     return Err(IoErr.Canceled)
   }
   var out = data
-  if let Some(m) = w.gz {
-    out = m.with(fn(var c) { c.write(data) })
+  if let Some(c) = w.coder {
+    out = (c.write)(data)
   }
   if !w.put(out) {
     return Err(IoErr.Io(msg: "write: connection closed"))
@@ -2772,8 +2773,8 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
     return Ok(())
   }
   if wasiworld.component() {
-    if let Some(m) = w.gz {
-      let _ = w.put(m.with(fn(var c) { c.flush() }))
+    if let Some(c) = w.coder {
+      let _ = w.put((c.flush)())
     }
     if wasiworld.component() {
       if let Some(o) = w.wo {
@@ -2782,9 +2783,9 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
     }
     return
   }
-  if let Some(m) = w.gz {
+  if let Some(c) = w.coder {
     // Go's Writer.Flush: everything written so far, then the sink's flush
-    let out = m.with(fn(var c) { c.flush() })
+    let out = (c.flush)()
     if !hserve.sink_write(w.sink(), out) {
       return Err(IoErr.Io(msg: "flush: connection closed"))
     }
@@ -2797,13 +2798,13 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
 // ---------------------------------------------------------------------------
 // gzip_responses (std.md 4.7, decision 0305): gzhttp's rules
 
-/// Whether Accept-Encoding allows gzip: a `gzip` or `*` element whose q is
-/// not 0.
-fn accepts_gzip(v: Str) -> Bool {
+/// Whether Accept-Encoding allows `want` (lower case): a `want` or `*`
+/// element whose q is not 0.
+fn accepts_coding(v: Str, want: Str) -> Bool {
   for el in v.split(",") {
     let parts = el.split(";")
     let token = parts[0].trim().to_lower()
-    if token != "gzip" && token != "*" {
+    if token != want && token != "*" {
       continue
     }
     var q = 1.0
@@ -2836,20 +2837,25 @@ fn response_without(r: http.Response, name: Str) -> http.Response {
   rt.cast[Response, http.Response](n with {headers: h, fields: without_field(n.fields, k)})
 }
 
-/// The stream f with its writes compressed into the writer it gets.
-fn gzip_stream(f: fn(BodyWriter) -> () ! IoErr, level: compress.Level) -> fn(BodyWriter) -> () ! IoErr {
-  fn(w: BodyWriter) -> () ! IoErr {
-    let m = Mutex[compress.Compressor].new(compress.compressor(compress.Format.Gzip, level: level))
-    let r = f(w with {gz: Some(m)})
-    let rest = m.with(fn(var c) { c.finish() })
-    if !w.put(rest) {
-      return Err(IoErr.Io(msg: "write: connection closed"))
-    }
-    r
-  }
+/// The stream f with its writes encoded, by a coder from mk, into the
+/// writer it gets.
+fn coded_stream(f: fn(BodyWriter) -> () ! IoErr, mk: fn() -> http.BodyCoder) -> fn(BodyWriter) -> () ! IoErr {
+  fn(w: BodyWriter) -> () ! IoErr { coded_run(f, mk, w) }
 }
 
-fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compress.Level) -> http.Response {
+/// coded_stream's body: a declared function, so calling the coder (which
+/// locks, `uses sync`) leaves the stream's function type pure (core 2.6).
+fn coded_run(f: fn(BodyWriter) -> () ! IoErr, mk: fn() -> http.BodyCoder, w: BodyWriter) -> () ! IoErr {
+  let c = mk()
+  let r = f(w with {coder: Some(c)})
+  let rest = (c.finish)()
+  if !w.put(rest) {
+    return Err(IoErr.Io(msg: "write: connection closed"))
+  }
+  r
+}
+
+fn encoded_response(req: Request, resp0: http.Response, token: Str, min_size: Int, whole: fn(Bytes) -> Bytes, mk: fn() -> http.BodyCoder) -> http.Response {
   let n = rt.cast[http.Response, Response](resp0)
   let status = n.status
   if status < 200 || status == 204 || status == 304 || status == 206 {
@@ -2872,7 +2878,7 @@ fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compr
   if !response_header_values(resp, "Vary").any(fn(v) { v.to_lower().contains("accept-encoding") }) {
     resp = response_add_header(resp, "Vary", "Accept-Encoding")
   }
-  if !accepts_gzip(request_header(req, "Accept-Encoding") ?? "") {
+  if !accepts_coding(request_header(req, "Accept-Encoding") ?? "", token) {
     return resp
   }
   if streamed && ct.is_empty() {
@@ -2882,7 +2888,7 @@ fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compr
   if !streamed && n.body.len() < min_size {
     return resp
   }
-  resp = response_with_header(resp, "Content-Encoding", "gzip")
+  resp = response_with_header(resp, "Content-Encoding", token)
   resp = response_without(resp, "Content-Length")
   if !ct.is_empty() {
     resp = response_with_header(resp, "Content-Type", ct)
@@ -2894,12 +2900,12 @@ fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compr
   }
   let m = rt.cast[http.Response, Response](resp)
   if !streamed {
-    return rt.cast[Response, http.Response](m with {body: compress.gzip(m.body, level: level)})
+    return rt.cast[Response, http.Response](m with {body: whole(m.body)})
   }
   // a wasm stream holds its function, a native one its number (sid)
   if let Some(a) = m.stream {
     if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](a) {
-      return rt.cast[Response, http.Response](m with {stream: Some(rt.any_of(gzip_stream(f, level)))})
+      return rt.cast[Response, http.Response](m with {stream: Some(rt.any_of(coded_stream(f, mk)))})
     }
   }
   let fs = hserve.stream_get(sid(m), false)
@@ -2907,14 +2913,29 @@ fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compr
     return resp
   }
   if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
-    let id = hserve.stream_put(rt.any_of(gzip_stream(f, level)))
+    let id = hserve.stream_put(rt.any_of(coded_stream(f, mk)))
     return rt.cast[Response, http.Response](m with {stream: Some(rt.any_of(id))})
   }
   resp
 }
 
+/// A gzip Compressor as a BodyCoder.
+fn gzip_coder(level: compress.Level) -> http.BodyCoder {
+  let m = Mutex[compress.Compressor].new(compress.compressor(compress.Format.Gzip, level: level))
+  http.BodyCoder{
+    write: fn(b: Bytes) -> Bytes uses sync { m.with(fn(var c) { c.write(b) }) },
+    flush: fn() -> Bytes uses sync { m.with(fn(var c) { c.flush() }) },
+    finish: fn() -> Bytes uses sync { m.with(fn(var c) { c.finish() }) },
+  }
+}
+
 fn gzip_responses(min_size: Int, level: compress.Level) -> fn(http.Request, http.Next) -> http.Response {
-  fn(req: http.Request, next: http.Next) -> http.Response { gzip_response(rt.cast[http.Request, Request](req), next(req), min_size, level) }
+  encoded_responses("gzip", min_size, fn(b: Bytes) -> Bytes { compress.gzip(b, level: level) }, fn() -> http.BodyCoder { gzip_coder(level) })
+}
+
+fn encoded_responses(token: Str, min_size: Int, whole: fn(Bytes) -> Bytes, stream: fn() -> http.BodyCoder) -> fn(http.Request, http.Next) -> http.Response {
+  let t = token.to_lower()
+  fn(req: http.Request, next: http.Next) -> http.Response { encoded_response(rt.cast[http.Request, Request](req), next(req), t, min_size, whole, stream) }
 }
 
 // ---------------------------------------------------------------------------

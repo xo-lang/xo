@@ -1,0 +1,96 @@
+// std/brotli's responses (decision 0674) over a server on 127.0.0.1:0,
+// wrapped inside http.gzip_responses (the later wrap runs first on the
+// response): `br` where Accept-Encoding allows it, gzip where only gzip is, neither otherwise, by gzip_responses' rules
+// (min_size, Vary, weak ETags, compressed types pass); a stream goes
+// through a brotli Compressor, its flush reaching the client mid-stream.
+// http.encoded_responses with a token of its own (x-up: upper case) shows
+// the BodyCoder's write, flush and finish on a stream.
+use std/brotli
+use std/compress
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.wrap(http.gzip_responses(min_size: 64))
+  r.wrap(brotli.responses(min_size: 64))
+  r.handle("GET /text", fn(_req) { http.text(200, "hello world ".repeat(20)) })
+  r.handle("GET /small", fn(_req) { http.text(200, "tiny") })
+  r.handle("GET /png", fn(_req) { http.Response{status: 200, headers: {"Content-Type": "image/png"}, body: "x".repeat(200).bytes()} })
+  r.handle("GET /etag", fn(_req) { http.text(200, "e".repeat(100)).with_header("ETag", "\"abc\"") })
+  r.handle("GET /stream", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write("part one ".repeat(10).bytes())?
+      w.flush()?
+      w.write("part two ".repeat(10).bytes())?
+    }).with_header("Content-Type", "text/plain")
+  })
+  r
+}
+
+fn upper(b: Bytes) -> Bytes { (b.to_str() ?? "").to_upper().bytes() }
+
+/// a coder that upper-cases each write and marks flush and finish
+fn up_coder() -> http.BodyCoder {
+  http.BodyCoder{
+    write: fn(b: Bytes) -> Bytes uses sync { upper(b) },
+    flush: fn() -> Bytes uses sync { b"|F|" },
+    finish: fn() -> Bytes uses sync { b"|END" },
+  }
+}
+
+fn up_routes() -> http.Router {
+  var r = http.router()
+  r.wrap(http.encoded_responses("X-Up", 8, upper, up_coder))
+  r.handle("GET /text", fn(_req) { http.text(200, "quiet words") })
+  r.handle("GET /stream", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write(b"abc")?
+      w.flush()?
+      w.write(b"def")?
+    }).with_header("Content-Type", "text/plain")
+  })
+  r
+}
+
+fn show(os: Os, c: http.Client, addr: Str, path: Str, ae: Str) {
+  var req = http.new_request("GET", "http://${addr}${path}")
+  req = req.with_header("Accept-Encoding", if ae.is_empty() { "identity" } else { ae })
+  match c.send(req) {
+    Ok(resp) => {
+      let ce = resp.header("Content-Encoding") ?? "-"
+      let body = resp.body
+      let text = match ce {
+        "br" => match brotli.decode(body) {
+          Ok(b) => b.to_str() ?? "?"
+          Err(e) => "unbrotli: ${e.msg}"
+        }
+        "gzip" => match compress.gunzip(body) {
+          Ok(b) => b.to_str() ?? "?"
+          Err(e) => "gunzip: ${e}"
+        }
+        _ => body.to_str() ?? "?"
+      }
+      os.stdio.println("${path} ae=${ae.quote()}: ${resp.status} ce=${ce} vary=${resp.header("Vary") ?? "-"} etag=${resp.header("ETag") ?? "-"} cl=${resp.header("Content-Length") ?? "-"} text=${text.len()} ${text[0..(if text.len() < 24 { text.len() } else { 24 })].quote()}")
+    }
+    Err(e) => os.stdio.println("${path}: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, routes())
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv2 = http.server(l2, up_routes())
+  let c = http.client(os.net, timeout: 5s)
+  scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("test server") })
+    s.spawn_background(fn() { srv2.serve().ignore_err("test server 2") })
+    for (path, ae) in [("/text", "br"), ("/text", "gzip, br"), ("/text", "gzip"), ("/text", "br;q=0, gzip"), ("/text", ""), ("/text", "*"), ("/small", "br"), ("/png", "br"), ("/etag", "br"), ("/stream", "br"), ("/stream", "gzip"), ("/stream", "identity")] {
+      show(os, c, l.addr(), path, ae)
+    }
+    for (path, ae) in [("/text", "x-up"), ("/text", "gzip"), ("/stream", "X-UP")] {
+      show(os, c, l2.addr(), path, ae)
+    }
+  }
+  os.stdio.println("done")
+}

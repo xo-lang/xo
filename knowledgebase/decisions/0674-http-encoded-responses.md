@@ -6,7 +6,7 @@ Status: Accepted (lead for the owner, 2026-11-16 overnight; proposed by Xo Lang 
 
 Decision 0666 gives std/brotli `responses(min_size, quality)`, the twin
 of `http.gzip_responses` (decision 0305), so that
-`r.wrap(brotli.responses()).wrap(http.gzip_responses())` serves `br` to
+`r.wrap(http.gzip_responses()).wrap(brotli.responses())` serves `br` to
 clients that accept it and gzip to the rest (andybalholm's
 HTTPCompressor). std/brotli cannot build it today:
 
@@ -74,3 +74,14 @@ fn encoded_responses(token: Str, min_size: Int, whole: fn(Bytes) -> Bytes, strea
 - Expose BodyWriter wrapping (a public BodyWriter constructor from a
   write function): more surface (trailers, flush, connection state) than
   an encoder needs.
+
+## Implementation notes (2026-11-16)
+
+- The wrap order in the Context was first written backwards: the first
+  `wrap` is the outermost middleware, so the later one encodes first.
+  `r.wrap(http.gzip_responses()).wrap(brotli.responses())` serves `br`;
+  the other order serves gzip to a client that takes both
+  (golden http_brotli_responses checks the `br` order).
+- BodyCoder's fields are `uses sync` function types: a coder keeps its
+  compressor behind a Mutex, and a pure function type refuses a closure
+  that locks (XO0701).

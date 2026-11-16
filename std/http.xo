@@ -717,3 +717,23 @@ fn (e: UrlErr) display() -> Str
 /// A middleware that compresses responses with gzip when the request
 /// accepts it (std.md 4.7, decision 0305): `r.wrap(http.gzip_responses())`.
 fn gzip_responses(min_size: Int = 1024, level: compress.Level = compress.Level.Default) -> fn(Request, Next) -> Response
+
+/// A stream encoder for a streamed response body (decision 0674): each
+/// call returns the encoded bytes it made, as std/compress's and
+/// std/brotli's Compressor do (write, flush, finish). The functions may
+/// lock (`uses sync`): a coder keeps its compressor behind a Mutex.
+struct BodyCoder {
+  write: fn(Bytes) -> Bytes uses sync
+  flush: fn() -> Bytes uses sync
+  finish: fn() -> Bytes uses sync
+}
+
+/// A middleware that encodes responses as gzip_responses does, with the
+/// Content-Encoding `token` (decision 0674): the same rules (status, an
+/// existing Content-Encoding or Content-Range, compressed types, Vary,
+/// weak ETags, min_size for a buffered body, no sniffing of a stream),
+/// when Accept-Encoding allows `token` or `*` with q > 0. `whole`
+/// encodes a buffered body; `stream` makes a coder for each streamed
+/// response, which its writes go through (a flush after the coder's).
+/// std/brotli's `responses` is `encoded_responses("br", ...)`.
+fn encoded_responses(token: Str, min_size: Int, whole: fn(Bytes) -> Bytes, stream: fn() -> BodyCoder) -> fn(Request, Next) -> Response
