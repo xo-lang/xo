@@ -46,6 +46,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
@@ -486,6 +487,35 @@ func myfUnsignedDecimal(got, want string, packets [][]byte) bool {
 	return diff
 }
 
+var myfDateText = regexp.MustCompile(`Text\(s: "(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?)?"\)`)
+
+// myfDateNormalized reports whether two answers differ, and are equal once
+// each date or datetime Text of Xo's (got) is normalized as time.Date
+// does (go-sql-driver's parseDateTime) and written back in its layout.
+func myfDateNormalized(got, want string) bool {
+	norm := myfDateText.ReplaceAllStringFunc(got, func(m string) string {
+		p := myfDateText.FindStringSubmatch(m)
+		n := func(i int) int { v, _ := strconv.Atoi(p[i]); return v }
+		if p[2] == "00" && p[3] == "00" && n(1) == 0 {
+			return m // the zero date: both keep it
+		}
+		layout := "2006-01-02"
+		var hh, mi, ss, ns int
+		if p[4] != "" {
+			layout += " 15:04:05"
+			hh, mi, ss = n(4), n(5), n(6)
+			if p[7] != "" {
+				layout += "." + strings.Repeat("0", len(p[7])-1)
+				f, _ := strconv.ParseFloat("0"+p[7], 64)
+				ns = int(f*1e9 + 0.5)
+			}
+		}
+		t := time.Date(n(1), time.Month(n(2)), n(3), hh, mi, ss, ns, time.UTC)
+		return `Text(s: "` + t.Format(layout) + `")`
+	})
+	return got != want && norm == want
+}
+
 func myfBlocks(out string) map[int]string {
 	m := map[int]string{}
 	cur, k := -1, ""
@@ -607,6 +637,14 @@ func TestMysqlFuzz(t *testing.T) {
 				refused["go unsigned decimal"]++
 				continue
 			}
+			if got[i] != want[i] && myfDateNormalized(got[i], want[i]) {
+				// a date outside Time's range stays the server's text in
+				// Xo; the reference can only rebuild it from go-sql-driver's
+				// time.Time, which time.Date normalized (0000-06-00 as
+				// 0000-05-31)
+				refused["go date text"]++
+				continue
+			}
 			if got[i] != want[i] && cases[i].note != "" && strings.HasPrefix(got[i], "error ") && strings.Count(got[i], "\n") == 1 {
 				refused[cases[i].note]++
 				continue
@@ -650,6 +688,13 @@ func TestMysqlFuzzWideCollation(t *testing.T) {
 	def[25] = 0
 	if myfWideCollation([][]byte{{1}, def}) {
 		t.Errorf("collation 63: wide")
+	}
+	// seed 25's case 4659: day 0 of a year outside Time's range
+	if !myfDateNormalized("types c0:DATE:-:true\nRow{vals: [Text(s: \"0000-06-00\")]}\n", "types c0:DATE:-:true\nRow{vals: [Text(s: \"0000-05-31\")]}\n") {
+		t.Errorf("0000-06-00 against 0000-05-31: not normalized")
+	}
+	if myfDateNormalized("Row{vals: [Text(s: \"0000-06-01\")]}\n", "Row{vals: [Text(s: \"0000-05-31\")]}\n") {
+		t.Errorf("0000-06-01 against 0000-05-31: normalized")
 	}
 	// seed 12's case 2175: an UNSIGNED DECIMAL of length 255, precision 254
 	// in Xo (MySQL's) and 253 in go-sql-driver

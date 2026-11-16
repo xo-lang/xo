@@ -85,3 +85,18 @@ Also: a local sweep of many 5000-case seeds on macOS fails from about the
 fourth seed with the reference answering `error conn` for every case
 (ephemeral ports in TIME_WAIT after tens of thousands of short
 connections); sweep on a Linux host.
+
+## A date outside Time's range, as text (2026-11-16)
+
+Observed: TestMysqlFuzz seed 25, case 4659: a DATE of `0000-06-00`
+(a zero day, which MySQL keeps without NO_ZERO_IN_DATE) was that text in
+Xo and `0000-05-31` in the reference.
+
+Cause: Xo keeps a date outside Time's range as the server's text
+(decision 0648 item 8). The reference client can only rebuild the text
+from go-sql-driver's time.Time, which parseDateTime's time.Date already
+normalized. Inside Time's range both normalize the same way.
+
+Fix: the fuzz comparison counts `go date text` when the answers are equal
+once each of Xo's date Texts is normalized as time.Date does
+(myfDateNormalized).
