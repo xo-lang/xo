@@ -537,6 +537,19 @@ func List_concat[T any](_ *Task, lists List[List[T]]) List[T] {
 	return ListOf(out...)
 }
 
+// List_filled is `List.filled(n, x)` (decision 0671): make and a fill.
+func List_filled[T any](_ *Task, n int64, x T) List[T] {
+	if n < 0 {
+		FaultHere("negative length %d for List.filled", n)
+	}
+	out := make([]T, n)
+	for i := range out {
+		out[i] = x
+	}
+	markElems(out)
+	return ListOf(out...)
+}
+
 // List_binary_search is `xs.binary_search(x)` (decision 0592):
 // slices.BinarySearch by the Ord of T.
 func List_binary_search[T any](_ *Task, l List[T], x T) Tuple2[int64, bool] {

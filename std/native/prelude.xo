@@ -1932,6 +1932,66 @@ fn list_concat[T](lists: List[List[T]]) -> List[T] {
   out
 }
 
+/// `List.filled(n, x)` (decision 0671): n copies of x. On the native
+/// targets a List[UInt8] (packed, decision 0369) is set with one mem_set
+/// and a List[Int] cleared with one, or stored a word at a time, from 64
+/// elements; other types, and wasm (a word an element:
+/// gotchas/packed-list-raw-copy-wasm.md), push.
+fn list_filled[T](n: Int, x: T) -> List[T] {
+  if n < 0 {
+    let q = ""
+    fault.raise_str_at("negative length ${n} for List.filled", raw.data(q), 0)
+  }
+  if n >= 64 && target.arch != TargetArch.Wasm32 {
+    if let Some(r) = words_filled(n, x) {
+      return r
+    }
+  }
+  var out: List[T] = List.with_capacity(n)
+  for _ in 0..n {
+    out.push(x)
+  }
+  out
+}
+
+/// list_filled's bulk path when T is UInt8 or Int, else None.
+fn words_filled[T](n: Int, x: T) -> List[T]? {
+  if let Some(v) = rt.any_get[UInt8](rt.any_of[T](x)) {
+    let out = List[UInt8].with_capacity(n)
+    rt.mem_set(rt.obj_addr(out).wrapping_add(rt.layout(2)), Int(v), n)
+    raw_list_set_len(rt.obj_addr(out), n)
+    return rt.any_get[List[T]](rt.any_of[List[UInt8]](out))
+  }
+  if let Some(v) = rt.any_get[Int](rt.any_of[T](x)) {
+    let out = List[Int].with_capacity(n)
+    let a = rt.obj_addr(out).wrapping_add(rt.layout(2))
+    if v == 0 {
+      rt.mem_set(a, 0, n * 8)
+    } else {
+      for i in 0..n {
+        rt.mem_store(a, i * 8, v, 8)
+      }
+    }
+    raw_list_set_len(rt.obj_addr(out), n)
+    return rt.any_get[List[T]](rt.any_of[List[Int]](out))
+  }
+  None
+}
+
+/// Stores n as the length of the list object at o, which a with_capacity
+/// of n or more made and nothing else holds yet (as ints_concat).
+/// Sound on llvm only while rt.mem_store and rt.obj_addr carry no TBAA
+/// or noalias metadata: an untagged store through the captured object may
+/// alias list.new's TBAA_HDR length, so LLVM cannot forward the 0 that
+/// list.new stored past it (Xo Lang 1's review of decision 0671).
+fn raw_list_set_len(o: Int, n: Int) {
+  if rt.layout(6) == 8 {
+    rt.mem_store(o, rt.layout(3), n, 8)
+  } else {
+    rt.mem_store(o, rt.layout(3), n, 4)
+  }
+}
+
 /// `xs.binary_search(x)` (decision 0592): Go's slices.BinarySearch.
 fn list_binary_search[T: Ord](xs: List[T], x: T) -> (Int, Bool) {
   let n = xs.len()

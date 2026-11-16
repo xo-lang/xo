@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-15: feature: List.filled
+
+- Kind: feature, perf
+- Commit: this push
+- Found by: Xo Lang 3's std/brotli encode profile (zero_bytes and zero_ints, push loops, 64% of a quality 6 encode); the lead asked for the primitive (decision 0671)
+- Go reference: `make([]T, n)` and a fill loop, `slices.Repeat([]T{x}, n)` (go1.26)
+- Test: internal/llvm/testdata/golden/list_filled (arm64, llvm, Go parity, wasm); internal/arm64 TestListFilledBulk (instruction ceiling)
+- Shipped in: not yet released
+- Timing: 128 MiB on the Mac, arm64: List[UInt8] 101M instructions against 1.44G pushed, List[Int] zeros 98M against 258M
+
+`List[T].filled(n, x)` makes n copies of x. A List[UInt8] or List[Int]
+of 64 elements or more is filled with one memory write on the native
+targets; other types, and wasm, push.
+
 ## 2026-11-15: feature: BytesBuilder.write_list and Bytes.from_list
 
 - Kind: feature, perf

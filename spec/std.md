@@ -373,6 +373,7 @@ fn (xs: List[T]) group_by[K: Hash](key: fn(T) -> K) -> List[(K, List[T])]   // k
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) clone() -> List[T]          // decision 0592: a buffer of its own (slices.Clone)
 List.concat(lists: List[List[T]]) -> List[T] // slices.Concat, sized once
+List[T].filled(n: Int, x: T) -> List[T]      // n copies of x (make([]T, n) and a fill, decision 0671); a fault for n < 0
 fn (xs: List[T]) binary_search(x: T) -> (Int, Bool) // T Ord, xs sorted: the first index not below x, and whether x is there
 fn (xs: List[T]) max() -> T?                 // T Ord; None when empty; the first of equals; a NaN is the result (slices.Max)
 fn (xs: List[T]) min() -> T?                 // as max (slices.Min)
@@ -7198,7 +7199,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-587 declarations.
+588 declarations.
 
 ### Range
 
@@ -7550,6 +7551,7 @@ fn (var xs: List[T]) sort_in_place_by_desc[K: Ord, E, fx: Effects](key: fn(T) ->
 fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx
 fn (xs: List[T]) clone() -> List[T]
 fn (static: List[T]) concat(lists: List[List[T]]) -> List[T]
+fn (static: List[T]) filled(n: Int, x: T) -> List[T]
 fn (xs: List[T]) binary_search(x: T) -> (Int, Bool)
 fn (xs: List[T]) max() -> T?
 fn (xs: List[T]) min() -> T?

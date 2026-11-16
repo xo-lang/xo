@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (prelude, every backend; decision 0671): `List[T].filled(n, x)` makes n copies of x, as Go's `make([]T, n)` and a fill: a List[UInt8] or List[Int] of 64 elements or more is filled in one memory write on the native targets (128 MiB of bytes in 101M instructions, 1.44G with pushes). std/brotli's encoder uses it for its ring buffer and hash tables.
 - std/ui (Early): a navigation or form that waits marks the page `data-xo-busy` and `aria-busy`, disables a POST form's buttons, and shows a thin progress bar after 150 ms (`--xo-progress` sets its color).
 - Fix (native backends, memory): a short `Conn.read(max)` result no longer keeps a buffer of `max` bytes: a 300 byte reply to `read(65536)` held 64 KiB. A read that fills less than half of `max` is copied to its own size.
 - Perf (native backends; decision 0669): `Rand.int`, `float` and `bool` draw from a per-thread ChaCha8 keystream (Go's math/rand/v2 runtime generator, with fast key erasure) seeded from the operating system, instead of one system call per draw: std/random's normal 380.5 to 18.88 ms for 10^6 draws on linux/arm64 (0.050). A forked child never repeats its parent's values; `Rand.bytes` still reads the operating system's generator on every call.

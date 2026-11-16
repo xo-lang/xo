@@ -914,6 +914,10 @@ fn (xs: List[T]) clone() -> List[T]
 /// decision 0592): `List.concat([a, b, c])`, sized once where `a + b + c`
 /// copies a + b again.
 fn (static: List[T]) concat(lists: List[List[T]]) -> List[T]
+/// n copies of x (Go's make([]T, n) and a fill, decision 0671):
+/// `List[UInt8].filled(n, 0)` allocates once and clears the memory in
+/// bulk where n pushes wrote an element each. A fault for n < 0.
+fn (static: List[T]) filled(n: Int, x: T) -> List[T]
 /// Where x is in a list sorted by the Ord of T, or where it would go, and
 /// whether it is there (Go's slices.BinarySearch, decision 0592): the
 /// first index whose element is not below x.

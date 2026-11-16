@@ -143,13 +143,7 @@ struct Dec {
   copy_length: Int = 0
 }
 
-fn zeros(n: Int) -> List[Int] {
-  var xs = List[Int].with_capacity(n)
-  for _ in 0..n {
-    xs.push(0)
-  }
-  xs
-}
+fn zeros(n: Int) -> List[Int] { List[Int].filled(n, 0) }
 
 fn brotli_err(code: Str) -> BrotliErr {
   BrotliErr{msg: "brotli: " + code}
@@ -711,12 +705,10 @@ fn ensure_ring_buffer(var d: Dec) {
     return
   }
   let n = d.new_rb_size
-  var ring = List[UInt8].with_capacity(n + RING_SLACK)
+  // cleared in bulk (decision 0671), then what the old ring held
+  var ring = List[UInt8].filled(n + RING_SLACK, 0)
   for j in 0..d.pos {
-    ring.push(d.ring[j])
-  }
-  while ring.len() < n + RING_SLACK {
-    ring.push(0)
+    ring[j] = d.ring[j]
   }
   d.ring = ring
   d.has_ring = true
@@ -1223,13 +1215,7 @@ fn write_bits(var w: BitBuf, n: Int, bits: Int) {
   w.ix += n
 }
 
-fn zero_bytes(n: Int) -> List[UInt8] {
-  var l = List[UInt8].with_capacity(n)
-  for _ in 0..n {
-    l.push(0)
-  }
-  l
-}
+fn zero_bytes(n: Int) -> List[UInt8] { List[UInt8].filled(n, 0) }
 
 /// The 8 and 4 byte little endian words of b at i.
 fn ld64(b: Bytes, i: Int) -> Int {
@@ -6396,13 +6382,7 @@ fn store_data_huffman(buf: List[UInt8], start: Int, mask: Int, cmds: List[Cmd], 
   }
 }
 
-fn zero_ints(n: Int) -> List[Int] {
-  var l = List[Int].with_capacity(n)
-  for _ in 0..n {
-    l.push(0)
-  }
-  l
-}
+fn zero_ints(n: Int) -> List[Int] { List[Int].filled(n, 0) }
 
 /// buildHistograms: literal, command and distance counts and totals.
 fn build_histograms(buf: List[UInt8], start: Int, mask: Int, cmds: List[Cmd], var lit: List[Int], var cmd: List[Int], var dist: List[Int]) -> (Int, Int, Int) {
