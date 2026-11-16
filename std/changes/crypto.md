@@ -1,5 +1,19 @@
 # std/crypto changes
 
+## 2026-11-16: perf: HMAC-SHA384 and HMAC-SHA512 in two one shot hashes
+
+- Kind: perf
+- Commit: this push
+- Found by: std/otp's timing row (bench/perf/otp sha512 1.056 of Go on linux/arm64 host 1, #118)
+- Go reference: crypto/hmac New and Sum
+- Test: native/llrt/sha256 "mac is RFC 2104's HMAC built byte by byte" (SHA-384 and SHA-512, keys of 0 to 260 bytes, three messages); crypto module tests; the crypto, xcrypto and otp corpora (arm64, llvm); twincheck bench/perf/otp; xo bench --ab on linux/arm64 host 1: bench/perf/otp sha512 0.879 (0.867 to 0.893), max RSS the same
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+`crypto.hmac(Hash.Sha512, ...)` and Sha384 built two padded keys and a
+State of Hashers a MAC; they now hash the inner pad and the message, then
+the outer pad and the inner digest, with one sum each (sha256.mac).
+
 ## 2026-11-16: perf: HMAC-SHA256's pads read the key in place
 
 - Kind: perf

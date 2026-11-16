@@ -90,3 +90,29 @@ test "a SHA-512 Hasher written in pieces sums as one write" {
     }
   }
 }
+
+test "mac is RFC 2104's HMAC built byte by byte, SHA-384 and SHA-512, keys of 0 to 260 bytes" {
+  var kb = BytesBuilder.with_capacity(260)
+  for i in 0..260 {
+    kb.write_byte(UInt8((i * 53 + 7) & 255))
+  }
+  let keys = kb.freeze()
+  for hash in [HASH_SHA384, HASH_SHA512] {
+    for n in [0, 1, 7, 8, 9, 63, 64, 65, 111, 127, 128, 129, 200, 260] {
+      for msg in [b"", b"message!", keys[0..200]] {
+        let key0 = keys[0..n]
+        let key = if n > 128 { sum(hash, key0) } else { key0 }
+        var ip = BytesBuilder.with_capacity(128 + msg.len())
+        var op = BytesBuilder.with_capacity(128 + 64)
+        for i in 0..128 {
+          let b = if i < key.len() { Int(key[i]) } else { 0 }
+          ip.write_byte(UInt8(b ^ 0x36))
+          op.write_byte(UInt8(b ^ 0x5c))
+        }
+        ip.write(msg)
+        op.write(sum(hash, ip.freeze()))
+        expect(mac(hash, key0, msg)) == sum(hash, op.freeze())
+      }
+    }
+  }
+}

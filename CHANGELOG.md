@@ -13,6 +13,7 @@ the text of every entry is unchanged).
 
 - Feature (std/sql, every backend; decision 0679, task #113): composite and record columns: `Row.fields` and `fields_opt` (each field's text, `None` for NULL), `sql.parse_composite` for a nested field, and the parameter `sql.composite(fields)`.
 
+- Perf (std/crypto, std/otp, native backends): HMAC-SHA384 and HMAC-SHA512 hash in two one shot sums: bench/perf/otp sha512 0.879 of before (host 1 --ab).
 - Perf (std/crypto, std/otp, native backends): HMAC-SHA256 builds its pads from the key in place and `otp.hotp` takes its modulus without a loop: bench/perf/otp sha256 0.897 of before (host 1 --ab).
 - Feature (std/sql, every backend; decision 0679, task #113): Postgres ranges and multiranges: `sql.Range[T]` (`Empty`, `Span(lower, upper)`) with `sql.Edge[T]` (`Inclusive`, `Exclusive`, `Unbounded`), `Row.range_int`, `range_date`, `range_time`, `Row.multirange_int`, `multirange_date`, `multirange_time` (each with `_opt`), and the matching parameters `sql.range_int` and so on.
 

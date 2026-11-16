@@ -657,6 +657,9 @@ fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
     // the same for SHA-1 (sha1.mac; std/otp's default)
     return sha1.mac(key, msg)
   }
+  if h == crypto.Hash.Sha512 || h == crypto.Hash.Sha384 {
+    return sha256.mac(if h == crypto.Hash.Sha512 { sha256.HASH_SHA512 } else { sha256.HASH_SHA384 }, key, msg)
+  }
   var x = hmac_hasher(h, key)
   x.write(msg)
   x.sum()
