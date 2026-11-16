@@ -1,6 +1,6 @@
 # 0687: HTTP/2 extended CONNECT (RFC 8441) and WebSockets over it
 
-Status: Proposed (Xo Lang 3, 2026-11-16; task #89, map.txt's
+Status: Accepted (owner, 2026-11-16, as proposed; proposed by Xo Lang 3, 2026-11-16; task #89, map.txt's
 `http2.SettingEnableConnectProtocol` gap). Changes decision 0121's "no
 extended CONNECT" and 0313's "not now: WebSockets over HTTP/2".
 
