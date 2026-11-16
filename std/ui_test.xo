@@ -671,6 +671,24 @@ test "bucket store: a snapshot inside a batch keeps that batch, and a catch-up c
   expect(k.objs.with_read(fn(m) { m.keys() }).all(fn(key) { key.starts_with("p/s/") })) == true
 }
 
+test "a writer alone on a scope appends at once: one request per change, a list only after a lost race" {
+  let k = bucket()
+  let h = host_with(todo_app(), object_store(k.objects()), local_bus())
+  h.apply(Msg.Add(id: "first", title: "t"))
+  let before = k.calls.get()
+  for i in 0..10 {
+    h.apply(Msg.Add(id: "t${i}", title: "t"))
+  }
+  expect(k.calls.get() - before) == 10
+  // another writer's append makes this copy stale: it loses once, reads,
+  // and appends after it
+  let other = host_with(todo_app(), object_store(k.objects()), local_bus())
+  other.apply(Msg.Add(id: "theirs", title: "t"))
+  h.apply(Msg.Add(id: "mine", title: "t"))
+  expect(h.model().todos.len()) == 13
+  expect(other.model().todos.len()) == 12
+}
+
 test "two Hosts on one SQL store act as one, and a third starts from its snapshot" {
   let db = sql.memory()?
   let st = sql_store(db)?

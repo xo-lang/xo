@@ -244,6 +244,21 @@ kept once (each append is a list, a get per new batch and a conditional
 put). Next: delete covered batches older than a bound no writer's read
 to write gap can reach (S3 LastModified), and leases for hot scopes.
 
+## Optimistic appends (2026-11-16)
+
+Scope.commit read the store before every append, which on S3 is a LIST
+before each PUT. It now appends at once when its copy has been read
+before (the Host keeps it current from the bus), and reads only after a
+lost race; a change that appends nothing (a refusal, a gap in a
+client's seqs) reads first, since no append checks its answer. Real S3,
+4 processes x 100 appends to one scope: 64 s before, 24 s after. The
+first lease prototype (an instance that loses a race takes a lease in
+the store, the others forward syncs to it) was slower on S3 (33 s with
+optimistic appends): the holder appends one sync at a time while racing
+instances overlap. Leases wait for group commit (the holder appending
+every sync queued behind the one in flight as one batch).
+
+## Alternatives
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.

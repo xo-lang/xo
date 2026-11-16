@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: perf: a writer appends at once and reads the store only after a lost race (decision 0686)
+
+- Kind: perf
+- Commit: this push
+- Found by: owner track (leases for hot scopes; measuring them on real S3)
+- Go reference: none
+- Test: std/ui "a writer alone on a scope appends at once": 10 changes cost 10 bucket requests (40 before); a stale copy loses once, reads and appends after the other writer; an answer with no append (a refusal, a gap in a client's seqs) still comes from the store's state (the racing-Scopes tests)
+- Timing: real S3, ca-central-1, 4 processes x 100 appends to one scope: 64 s before, 24 s after (400 of 400 kept both times); LocalStack and the in-memory bucket agree on the request counts
+- Shipped in: not yet released
+
+Scope.commit read the store before every append. A copy the Host keeps current (bus notices, or a writer alone on a scope) now appends at once, and reads the store only after it loses the race; a change that appends nothing reads first, so its answer is never from a stale copy.
+
 ## 2026-11-16: feature: object_store, scoped logs in an S3 style bucket (decision 0686)
 
 - Kind: feature

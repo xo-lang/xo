@@ -560,14 +560,28 @@ const commit_tries = 100
 // Runs change on the Server and appends the entries it logs, as principal;
 // on a lost race, catches up and runs it again.
 fn (var c: Scope[M, E, fx]) commit[T](principal: Str, change: fn(var Server[M, E]) -> T) -> T ! Str uses (sync, fx) {
+  var read = false
   for _ in 0..commit_tries {
-    c.catch_up()?
+    // a copy the Host keeps current (its bus, its lease) appends at once;
+    // a stale one loses the race and reads the store, so a writer alone
+    // on a scope pays one request per append, not two
+    let caught = read || !c.loaded
+    if caught {
+      c.catch_up()?
+    }
+    read = true
     let before = c.s
     let v0 = c.s.version()
     let out = change(c.s)
     let fresh = c.s.log[v0 - c.s.base..].clone()
     if fresh.is_empty() {
-      return Ok(out)
+      if caught {
+        return Ok(out)
+      }
+      // an answer with no append (a refusal, a gap in a client's seqs)
+      // must come from the store's state: read it and run again
+      c.s = before
+      continue
     }
     let data = json.encode_str(fresh.map(fn(e) { Logged{entry: e, principal: principal} })).bytes()
     match (c.store.append)(c.key, Batch{after: v0, count: fresh.len(), data: data}) {
