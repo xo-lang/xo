@@ -31,7 +31,7 @@ func TestShortName(t *testing.T) {
 // path or a prefix of it at a slash.
 func TestPinOf(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "outside.txt")
-	if err := os.WriteFile(f, []byte("# c\ngRPC | grpc | google.golang.org/grpc v1.79.2 | google.golang.org/grpc google.golang.org/grpc/codes\n"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("# c\ngRPC | grpc | google.golang.org/grpc v1.79.2 | google.golang.org/grpc google.golang.org/grpc/codes\nGo time layouts | timego | go go1.26.1 | time\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	old := outsideFile
@@ -42,6 +42,7 @@ func TestPinOf(t *testing.T) {
 		"google.golang.org/grpc/codes": true,
 		"google.golang.org/grpcx":      false,
 		"net/http":                     false,
+		"time":                         false, // a go pin's packages are GOROOT's
 	} {
 		if _, ok := pinOf(pkg); ok != want {
 			t.Errorf("pinOf(%q) = %v, want %v", pkg, ok, want)

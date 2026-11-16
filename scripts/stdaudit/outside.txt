@@ -11,6 +11,9 @@
 # A module with no Go reference names `spec/std.md -` as its module and
 # one PACKAGES word, the key of its map.txt checklist lines: its bar is
 # spec/std.md's declared surface plus that checklist (decision 0655).
+# A row whose reference is a package of Go's standard library names
+# `go GOVERSION` as its module and the GOROOT packages: their API is
+# listed with the coverage table's rows, and their map.txt gaps apply.
 gRPC | grpc | google.golang.org/grpc v1.79.2 | google.golang.org/grpc google.golang.org/grpc/codes google.golang.org/grpc/status google.golang.org/grpc/metadata google.golang.org/grpc/health google.golang.org/grpc/keepalive google.golang.org/grpc/credentials
 Protocol Buffers | protobuf | google.golang.org/protobuf v1.36.12 | google.golang.org/protobuf/proto google.golang.org/protobuf/encoding/protowire google.golang.org/protobuf/encoding/protojson google.golang.org/protobuf/types/known/timestamppb google.golang.org/protobuf/types/known/durationpb google.golang.org/protobuf/types/known/anypb google.golang.org/protobuf/types/known/structpb google.golang.org/protobuf/types/known/wrapperspb google.golang.org/protobuf/types/known/emptypb google.golang.org/protobuf/types/known/fieldmaskpb
 WebSocket | websocket | github.com/gorilla/websocket v1.5.3 | github.com/gorilla/websocket
@@ -44,3 +47,4 @@ Go interop values | go | spec/std.md - | go
 AMQP test broker | amqptest | spec/std.md - | amqptest
 Double ended queue | deque | spec/std.md - | deque
 Brotli | brotli | github.com/andybalholm/brotli v1.2.2 | github.com/andybalholm/brotli
+Go time layouts | timego | go go1.26.1 | time

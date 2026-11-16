@@ -152,6 +152,13 @@ func readOutside(file string) ([]outsidePin, error) {
 // the line's one PACKAGES word; -go lists nothing for it.
 const specPin = "spec/std.md"
 
+// goPin is the MODULE of an outside.txt line whose reference is a package
+// of Go's standard library (the Go time layouts row: Go's time package):
+// its PACKAGES are GOROOT packages, which the coverage table's rows list
+// already, so -go lists nothing more for it, and their map.txt gaps apply
+// to the row.
+const goPin = "go"
+
 // outsideFile is outside.txt (set by main from -outside).
 var outsideFile = "scripts/stdaudit/outside.txt"
 
@@ -780,6 +787,9 @@ func main() {
 		}
 		for _, p := range pins {
 			if p.module == specPin { // no Go reference: map.txt's behavior lines are the audit
+				continue
+			}
+			if p.module == goPin { // GOROOT packages: listed with the table's rows
 				continue
 			}
 			pkgs = append(pkgs, p.pkgs...)
