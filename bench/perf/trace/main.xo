@@ -1,8 +1,14 @@
-// trace: std/trace's ring under load. record makes N ring.record calls
-// on a ring of CAP spans (default 1000) and reads the newest 10 back;
-// `none` makes the spans and reads an empty ring. Usage:
-// `<program> none|record [N] [CAP]`. Prints `<workload> <spans read>`.
-// std/trace has no Go counterpart, so there is no twin.
+// trace: std/trace's ring and recorder under load, against a Go twin
+// (twin.go.txt) of the same ring (a mutex over a slice that grows to
+// twice its cap before dropping its oldest half) and recorder (random hex
+// ids, clock times): Go's standard library has no span ring, and
+// OpenTelemetry's SDK adds exporters and processors std/trace leaves out.
+// record makes N ring.record calls on a ring of CAP spans (default 1000)
+// and reads the newest 10 back; span starts and ends N/4 spans through a
+// recorder with an attribute and reads the newest 10 back; read takes the
+// newest 10 of a full ring N/20 times; `none` makes the spans and reads
+// an empty ring. Usage: `<program> none|record|span|read [N] [CAP]`.
+// Prints `<workload> <spans read>`.
 use std/trace
 
 fn main(os: Os) {
@@ -13,12 +19,28 @@ fn main(os: Os) {
   let ring = trace.ring(cap)
   let t0 = Time.from_unix_millis(1700000000000)
   let d = Duration.from_nanos(250000)
-  for i in 0..n {
-    let id = "r${i % 97}"
-    if w == "record" {
-      ring.record(id, "work", t0, d)
+  var read = 0
+  if w == "span" {
+    let rec = trace.recorder(ring, os.clock, os.rand)
+    for i in 0..n / 4 {
+      let s = rec.start("handler", kind: trace.SpanKind.Server, attributes: [trace.Attr{key: "n", value: trace.AttrValue.Int(i % 97)}])
+      s.end()
+    }
+  } else if w == "read" {
+    for i in 0..cap {
+      ring.record("r${i % 97}", "work", t0, d)
+    }
+    for _ in 0..n / 20 {
+      read += ring.spans(Duration.from_nanos(0), 10).len()
+    }
+  } else {
+    for i in 0..n {
+      let id = "r${i % 97}"
+      if w == "record" {
+        ring.record(id, "work", t0, d)
+      }
     }
   }
   let got = ring.spans(Duration.from_nanos(0), 10)
-  os.stdio.println("${w} ${got.len()}")
+  os.stdio.println("${w} ${got.len() + read}")
 }

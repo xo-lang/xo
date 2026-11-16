@@ -1,5 +1,17 @@
 # std/debug changes
 
+## 2026-11-16: perf: mem_total is one system call
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (performance Early to Proven), the module's first Go twin (bench/perf/debug: mem 19.96 of Go on the Mac)
+- Go reference: none in the standard library; the twin asks sysctl hw.memsize (macOS) or sysinfo(2) (Linux) as std/debug does
+- Test: the debug_routes golden (mem_total the same on two calls, 0 or over 64 MiB); bench/perf/debug twincheck output matches Go
+- Timing: bench/perf/debug mem on the Mac, 5,000,000 reads: 22.3 s to 3.1 s (Go 4.9 s)
+- Shipped in: not yet released
+
+mem_total mapped a page for the system call's record, made the call and unmapped the page each time. The record is now a 128 byte heap buffer (llrt heapos.phys_mem_into); heapos.phys_mem keeps its own mapped page for a caller with no buffer.
+
 ## 2026-11-06: feature: /debug/sched reports heap_aged_bytes
 
 - Kind: feature

@@ -226,7 +226,8 @@ pub fn (r: Rules) use_proxy(addr: Str) -> Bool {
     return false
   }
   var ip: netip.Addr? = None
-  if let Ok(a) = netip.parse_addr(host) {
+  let parsed = if may_be_ip(host) { netip.parse_addr(host).ok() } else { None }
+  if let Some(a) = parsed {
     if a.is_loopback() {
       return false
     }
@@ -246,6 +247,22 @@ pub fn (r: Rules) use_proxy(addr: Str) -> Bool {
     }
   }
   true
+}
+
+/// Whether host can be an IP address (Go's net.ParseIP gives nil for the
+/// rest without building an error): an IPv6 one has a colon, an IPv4 one
+/// only digits and dots. A host name is neither, so it skips
+/// netip.parse_addr and its error text (bench/perf/httpproxy_rules route).
+fn may_be_ip(host: Str) -> Bool {
+  if host.contains(":") {
+    return true
+  }
+  for c in host.bytes() {
+    if c != 46 && (c < 48 || c > 57) {
+      return false
+    }
+  }
+  !host.is_empty()
 }
 
 fn matches(m: Matcher, host: Str, port: Str, ip: netip.Addr?) -> Bool {

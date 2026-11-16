@@ -1,5 +1,17 @@
 # std/trace changes
 
+## 2026-11-16: perf: a root span draws both ids at once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (performance Early to Proven), the module's first Go twin (bench/perf/trace span: 5.45 of Go on the Mac)
+- Go reference: none in the standard library (the twin writes the ring and recorder out over crypto/rand)
+- Test: the std/trace tests (with --real), the trace_spans golden; bench/perf/trace twincheck output matches Go
+- Timing: bench/perf/trace span on the Mac, Xo over Go: 5.450 to 2.824 (twincheck -time 3)
+- Shipped in: not yet released
+
+Recorder.start drew the trace id and the span id from Rand separately, and each draw is a system call. A root span now takes its 24 bytes in one draw; a seeded test Rand gives the same ids as before.
+
 ## 2026-11-15: behavior: the middleware and handler types allow `sync`
 
 - Kind: behavior

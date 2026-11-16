@@ -1,0 +1,3 @@
+# twincheck: migrate: one workload (none is the setup alone); Go is pressly/goose v3.27.3's sqlparser (go/sqlparser, copied from its internal package), both directions per file.
+- - none
+- - parse

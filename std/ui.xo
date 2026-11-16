@@ -98,8 +98,10 @@ fn name_ok(s: Str) -> Bool {
   if s == "" {
     return false
   }
-  for (i, r) in s.runes().indexed() {
-    let ok = (r >= 'a' && r <= 'z') || (i > 0 && ((r >= '0' && r <= '9') || r == '-'))
+  // every allowed character is ASCII, so the bytes are the runes (a
+  // byte of a longer one fails); no list of runes per name
+  for (i, c) in s.bytes().indexed() {
+    let ok = (c >= 97 && c <= 122) || (i > 0 && ((c >= 48 && c <= 57) || c == 45))
     if !ok {
       return false
     }
@@ -154,13 +156,18 @@ fn write_html(var b: BytesBuilder, h: Html) {
         "script" | "style" | "iframe" | "object" | "embed" => fault("std/ui: tag <${tag}> is refused: a view carries no code")
         _ => {}
       }
-      b.write_str("<${tag}")
+      b.write_byte(60)
+      b.write_str(tag)
       for a in attrs {
         if !name_ok(a.name) || a.name.starts_with("on") {
           fault("std/ui: bad attribute name ${a.name:?}")
         }
         let v = if url_attr(a.name) && !safe_url(a.value) { "about:invalid#xo-unsafe" } else { a.value }
-        b.write_str(" ${a.name}=\"${html.escape_string(v)}\"")
+        b.write_byte(32)
+        b.write_str(a.name)
+        b.write_str("=\"")
+        b.write_str(html.escape_string(v))
+        b.write_byte(34)
       }
       b.write_str(">")
       if void_tag(tag) {
@@ -169,7 +176,9 @@ fn write_html(var b: BytesBuilder, h: Html) {
       for k in kids {
         write_html(b, k)
       }
-      b.write_str("</${tag}>")
+      b.write_str("</")
+      b.write_str(tag)
+      b.write_byte(62)
     }
   }
 }

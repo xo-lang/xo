@@ -1,5 +1,17 @@
 # std/httpproxy changes
 
+## 2026-11-16: perf: a host name skips the address parse
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (performance Early to Proven), the module's first Go twin (bench/perf/httpproxy_rules against x/net/http/httpproxy v0.60.0: route 2.053 on the Mac)
+- Go reference: x/net/http/httpproxy useProxy, whose net.ParseIP returns nil for a name without building an error
+- Test: the std/httpproxy tests (NO_PROXY by name, suffix, CIDR, IP and port); bench/perf/httpproxy_rules twincheck output matches Go
+- Timing: bench/perf/httpproxy_rules on the Mac, Xo over Go: route 2.053 to 1.731 (twincheck -time 3)
+- Shipped in: not yet released
+
+use_proxy parsed every host as an IP address, and netip.parse_addr formats its error text for each host name. It now parses only a host that can be an address (a colon, or only digits and dots).
+
 ## 2026-11-12: feature: std/httpproxy, Go's ProxyFromEnvironment rules
 
 - Kind: feature

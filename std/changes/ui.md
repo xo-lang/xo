@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: perf: render checks names over bytes and writes each piece
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (performance Early to Proven), the module's first Go twin (bench/perf/ui against x/net/html v0.60.0's Render: render 1.171 on the Mac)
+- Go reference: golang.org/x/net/html Render
+- Test: the std/ui tests (tag and attribute names refused); bench/perf/ui twincheck output matches Go
+- Timing: bench/perf/ui on the Mac, Xo over Go: render 1.171 to 0.892 (twincheck -time 5)
+- Shipped in: not yet released
+
+render made a list of runes for every tag and attribute name it checked, and built each tag and attribute through string interpolation. A name's allowed characters are ASCII, so the check walks its bytes; the pieces go into the builder one by one.
+
 ## 2026-11-16: feature: busy state and progress bar for navigations and forms
 
 - Kind: feature

@@ -1863,6 +1863,10 @@ struct ZipWriter {
   sum: Int
   done: Bool
   comment: Str = ""
+  /// bytes put but not yet written: Go's zip.Writer writes through a
+  /// 4096 byte bufio.Writer, so a header, a descriptor or a short
+  /// deflate block is not a system call of its own
+  pend: BytesBuilder = BytesBuilder.new()
 }
 
 fn zip_writer(f: File) -> ZipWriter {
@@ -1873,12 +1877,35 @@ fn zip_writer(f: File) -> ZipWriter {
 fn zw_err(e: FsErr) -> archive.ArchiveErr { archive_err("zip_writer: ${e.display()}") }
 
 fn (var w: ZipWriter) put(b: Bytes) -> () ! archive.ArchiveErr uses fs.write {
-  match w.f.write(b) {
-    Ok(_) => ()
-    Err(e) => return Err(zw_err(e))
-  }
   w.pos += b.len()
+  if w.pend.len() == 0 && b.len() >= ZW_BUF {
+    // as bufio.Writer: a large write with nothing waiting goes straight on
+    return w.write_out(b)
+  }
+  w.pend.write(b)
+  if w.pend.len() >= ZW_BUF {
+    return w.flush()
+  }
   Ok(())
+}
+
+const ZW_BUF: Int = 4096
+
+/// Writes the bytes put so far.
+fn (var w: ZipWriter) flush() -> () ! archive.ArchiveErr uses fs.write {
+  if w.pend.len() == 0 {
+    return Ok(())
+  }
+  let b = w.pend.freeze()
+  w.pend = BytesBuilder.new()
+  w.write_out(b)
+}
+
+fn (var w: ZipWriter) write_out(b: Bytes) -> () ! archive.ArchiveErr uses fs.write {
+  match w.f.write(b) {
+    Ok(_) => Ok(())
+    Err(e) => Err(zw_err(e))
+  }
 }
 
 /// Ends the entry being streamed: the last deflate block, the data
@@ -2082,7 +2109,8 @@ fn (var w: ZipWriter) close() -> () ! archive.ArchiveErr uses fs.write {
   }
   w.end_entry()?
   w.done = true
-  w.put(zip_central(w.files, w.pos, w.comment))
+  w.put(zip_central(w.files, w.pos, w.comment))?
+  w.flush()
 }
 
 const ERR_FORMAT: Str = "zip: not a valid zip file"

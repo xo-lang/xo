@@ -1,0 +1,33 @@
+// debug: std/debug's router, called in process, against a Go twin
+// (go/) of the same routes over net/http (httptest recorder,
+// runtime/metrics for the counters, the fd directory listed as std/debug
+// does). refused asks a router whose auth says no 200,000 times; sched
+// reads /sched 20,000 times (counters, fds_open, the heap's footprint);
+// mem reads mem_total and mem_peak 1,000,000 times (Go: sysctl
+// hw.memsize or sysinfo(2), and an atomic load); `none` is the setup alone. Prints the statuses'
+// sum, so both sides agree whatever the counters hold.
+// Usage: `<program> none|refused|sched|mem`. Prints `<workload> <checksum>`.
+use std/debug
+use std/http
+
+fn main(os: Os) uses (stdio, env, clock) {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w == "refused" {
+    let no = debug.router(os.clock, fn(_req) { false })
+    for _ in 0..200000 {
+      sum += no.call(http.new_request("GET", "/sched")).status
+    }
+  } else if w == "sched" {
+    let ok = debug.router(os.clock, fn(_req) { true })
+    for _ in 0..20000 {
+      let r = ok.call(http.new_request("GET", "/sched"))
+      sum += r.status + (if r.body.len() > 100 { 1 } else { 0 })
+    }
+  } else if w == "mem" {
+    for _ in 0..1000000 {
+      sum += (if debug.mem_total() > 0 { 1 } else { 0 }) + (if debug.mem_peak() >= 0 { 1 } else { 0 })
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

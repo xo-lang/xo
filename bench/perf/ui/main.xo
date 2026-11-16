@@ -1,0 +1,40 @@
+// ui: std/ui's render against golang.org/x/net/html's Render (go/,
+// vendored x/net v0.60.0) of the same tree: a table of 200 rows, each a
+// text cell with `&` and `<`, a link with an href and a class, and a span
+// with a data attribute (no void elements: x/net writes `<br/>`). render
+// writes the page 5,000 times; build makes the tree 20,000 times and
+// renders one; `none` is the setup alone. Prints the output lengths.
+// Usage: `<program> none|render|build`. Prints `<workload> <checksum>`.
+use std/ui
+
+fn page(n: Int) -> ui.Html {
+  var rows: List[ui.Html] = []
+  for i in 0..n {
+    rows.push(ui.el("tr", kids: [
+      ui.el("td", kids: [ui.text("row ${i} & co <b>")]),
+      ui.el("td", kids: [ui.el("a", attrs: [ui.attr("href", "/item/${i}"), ui.attr("class", "link")], kids: [ui.text("item ${i}")])]),
+      ui.el("td", kids: [ui.el("span", attrs: [ui.attr("data-id", "${i}")], kids: [ui.text("\"quoted\" 'text'")])]),
+    ]))
+  }
+  ui.el("div", attrs: [ui.attr("id", "root")], kids: [ui.el("table", attrs: [ui.attr("class", "grid")], kids: [ui.el("tbody", kids: rows)])])
+}
+
+fn main(os: Os) uses (stdio, env) {
+  let w = os.env.args().get(0) ?? "none"
+  let p = page(200)
+  var sum = 0
+  if w == "render" {
+    for _ in 0..5000 {
+      sum += ui.render(p).len()
+    }
+  } else if w == "build" {
+    for i in 0..20000 {
+      sum += match page(10 + i % 3) {
+        ui.Html.El(_, _, kids) => kids.len()
+        _ => 0
+      }
+    }
+    sum += ui.render(p).len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

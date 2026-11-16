@@ -1,0 +1,46 @@
+// task: std/task against a Go twin (twin.go.txt): map_concurrent against
+// a goroutine per item with a channel semaphore and ordered results (Go's
+// standard library has no map_concurrent; errgroup's SetLimit is the
+// same shape), Once.get against sync.OnceValues, Semaphore.with against a
+// buffered channel. map runs 200 rounds over 1,000 items, at most 8 at a
+// time, each 200 steps of an LCG; once reads a done Once 2,000,000 times;
+// sem enters a free semaphore 2,000,000 times; `none` is the setup alone.
+// Usage: `<program> none|map|once|sem`. Prints `<workload> <checksum>`.
+use std/task
+
+fn work(x: Int) -> Int {
+  var v = x
+  for _ in 0..200 {
+    v = (v * 1103515245 + 12345) & 0x7fffffff
+  }
+  v % 1009
+}
+
+fn main(os: Os) uses (stdio, env) {
+  let w = os.env.args().get(0) ?? "none"
+  var items: List[Int] = []
+  for i in 0..1000 {
+    items.push(i)
+  }
+  var sum = 0
+  if w == "map" {
+    for _ in 0..200 {
+      for r in task.map_concurrent(items, 8, fn(x) { work(x) }) {
+        if let Ok(v) = r {
+          sum += v
+        }
+      }
+    }
+  } else if w == "once" {
+    let o = task.once[Int, Never]()
+    for i in 0..2000000 {
+      sum += o.get(fn() { 42 }) + i % 2
+    }
+  } else if w == "sem" {
+    let s = task.semaphore(4)
+    for i in 0..2000000 {
+      sum += s.with(fn() -> Int ! Never { i % 7 })
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

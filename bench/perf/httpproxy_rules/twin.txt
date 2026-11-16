@@ -1,0 +1,4 @@
+# twincheck: httpproxy_rules: two workloads (none is the setup alone); Go is golang.org/x/net/http/httpproxy v0.60.0 (go/, vendored), the package std/httpproxy ports.
+- - none
+- - route
+- - rules

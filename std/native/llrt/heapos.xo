@@ -189,32 +189,33 @@ pub fn set_label(p: Int, n: Int) {
 /// The machine's physical memory in bytes, 0 when unknown (decision 0349:
 /// xo's default budget is half of it).
 pub fn phys_mem() -> Int {
+  let b = map(GRAIN)
+  let n = phys_mem_into(b)
+  unmap(b, GRAIN)
+  n
+}
+
+/// phys_mem with b, 128 zeroed bytes the caller owns, for the system
+/// call's record: debug.mem_total passes a heap buffer, so a call is one
+/// system call, not a map and an unmap around it (bench/perf/debug mem).
+pub fn phys_mem_into(b: Int) -> Int {
   match target.os {
     TargetOs.Darwin => {
-      let b = map(GRAIN)
       rt.mem_store(b, 8, 8, 8)
       let name = b"hw.memsize\x00"
       let ok = Int(sys_darwin.sysctlbyname(name, b, b + 8, 0, 0)) == 0
-      let n = if ok { rt.mem_load(b, 0, 8) } else { 0 }
-      unmap(b, GRAIN)
-      n
+      if ok { rt.mem_load(b, 0, 8) } else { 0 }
     }
     TargetOs.Linux => {
-      let b = map(GRAIN)
       let r = linux.sysinfo(b)
       let unit = rt.mem_load(b, 104, 4)
-      let n = if r == 0 { rt.mem_load(b, 32, 8).wrapping_mul(if unit > 0 { unit } else { 1 }) } else { 0 }
-      unmap(b, GRAIN)
-      n
+      if r == 0 { rt.mem_load(b, 32, 8).wrapping_mul(if unit > 0 { unit } else { 1 }) } else { 0 }
     }
     TargetOs.Windows => {
       // MEMORYSTATUSEX: dwLength at 0, ullTotalPhys at 8
-      let b = map(GRAIN)
       rt.mem_store(b, 0, 64, 4)
       let ok = Int(sys_windows.GlobalMemoryStatusEx(b)) != 0
-      let n = if ok { rt.mem_load(b, 8, 8) } else { 0 }
-      unmap(b, GRAIN)
-      n
+      if ok { rt.mem_load(b, 8, 8) } else { 0 }
     }
     TargetOs.Wasi | TargetOs.FreeBSD => 0
   }

@@ -1,0 +1,5 @@
+# twincheck: trace: three workloads (none is the setup alone); Go is a written-out twin of the span ring and recorder (no Go std package).
+- - none
+- - record
+- - span
+- - read

@@ -1,0 +1,4 @@
+# twincheck: amqp: two workloads (none is the setup alone); Go is github.com/Azure/go-amqp v1.7.0 (go/, vendored), the library std/amqp ports.
+- - none
+- - encode
+- - decode

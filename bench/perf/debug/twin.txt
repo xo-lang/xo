@@ -1,0 +1,5 @@
+# twincheck: debug: three workloads (none is the setup alone); Go (go/) mounts the same routes on net/http (httptest) with runtime/metrics counters, and asks the system for physical memory as std/debug does.
+- - none
+- - refused
+- - sched
+- - mem

@@ -1,5 +1,19 @@
 # std/archive changes
 
+## 2026-11-16: perf: zip_writer buffers its writes (Go's 4096 byte bufio)
+
+- Kind: perf
+- Commit: this push
+- Found by: task #101, the zip_writer row of bench/perf/archive over 1.05
+- Go reference: archive/zip Writer (NewWriter wraps the destination in a 4096 byte bufio.Writer)
+- Test: internal/stdtest/testdata/corpus/archive (zip_writer writes what unzip and zip_reader read; zip_writer with comments, stored entries, and an offset writes Go's bytes, small headers and 70000 byte bodies)
+- Timing: bench/perf/archive zip_writer 1.278 to 0.904 of Go (Mac; host 1 row to follow)
+
+A `ZipWriter` wrote each local header, body chunk, and central record
+to its file as its own write call. It now collects them in a 4096 byte
+buffer, as Go's Writer does, writes a chunk of 4096 bytes or more
+straight through, and flushes at `close`. The archive bytes are the same.
+
 ## 2026-11-15: feature: TarWriter.add_fs and ZipWriter.add_fs (Go's Writer.AddFS)
 
 - Kind: feature

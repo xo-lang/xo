@@ -18,6 +18,11 @@ fn main(os: Os) {
   let h = status_of(ok, "/heap")
   os.stdio.println("heap: ${h == 200 || h == 409}")
   os.stdio.println("unknown route: ${status_of(ok, "/nothing")}")
+  // the machine's memory: a plausible size (0 where unknown), the same on
+  // every call (each one a system call into a heap buffer)
+  let m1 = debug.mem_total()
+  let m2 = debug.mem_total()
+  os.stdio.println("mem_total: ${m1 == m2 && (m1 == 0 || m1 > 67108864)}")
   scope t {
     let a = t.spawn(fn() -> (Int, Int) {
       let p = ok.call(http.new_request("GET", "/profile?seconds=1&hz=500"))

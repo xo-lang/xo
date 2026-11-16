@@ -1,0 +1,53 @@
+// httpproxy_rules: std/httpproxy against golang.org/x/net/http/httpproxy
+// (go/, vendored x/net v0.60.0), the package it ports. route resolves 16
+// request URLs (http and https; hosts NO_PROXY matches by domain, suffix,
+// CIDR, IP and port, and hosts it does not) 200,000 times through one
+// proxy_func; rules builds proxy_func from the same Config 300,000 times
+// (NO_PROXY's 9 entries parsed); `none` is the setup alone.
+// Usage: `<program> none|route|rules`. Prints `<workload> <checksum>`.
+use std/http
+use std/httpproxy
+
+const URLS = ["http://example.com/a", "https://example.com/b", "http://api.internal.corp/x", "https://svc.internal.corp:8443/y", "http://10.1.2.3/z", "https://10.9.9.9:443/", "http://192.168.0.5:8080/", "https://192.168.0.5/", "http://localhost:3000/", "https://127.0.0.1/", "http://foo.bar.example.org/", "https://example.org/", "http://[::1]:80/", "https://[2001:db8::1]/", "http://cdn.static.net/i.png", "https://static.net/"]
+
+fn cfg() -> httpproxy.Config {
+  httpproxy.Config{http_proxy: "proxy.corp:3128", https_proxy: "https://secure-proxy.corp:443", no_proxy: "internal.corp,.example.org,10.0.0.0/8,192.168.0.5:8080,static.net,*.cdn.static.net,2001:db8::/32,localhost,1.2.3.4"}
+}
+
+/// The proxy's host and port as Go's URL.Host holds them (host, then
+/// `:port` when the setting gave one).
+fn hostport(p: http.Url) -> Int {
+  p.host.len() + match p.port {
+    Some(n) => "${n}".len() + 1
+    None => 0
+  }
+}
+
+fn main(os: Os) uses (stdio, env) {
+  let w = os.env.args().get(0) ?? "none"
+  var urls: List[http.Url] = []
+  for s in URLS {
+    urls.push(http.parse_url(s).ok() ?? fault("url"))
+  }
+  var sum = 0
+  if w == "route" {
+    let f = cfg().proxy_func()
+    for _ in 0..200000 {
+      for u in urls {
+        sum += match f(u) {
+          Some(p) => hostport(p)
+          None => 1
+        }
+      }
+    }
+  } else if w == "rules" {
+    for i in 0..300000 {
+      let f = cfg().proxy_func()
+      sum += match f(urls[i % 16]) {
+        Some(p) => hostport(p)
+        None => 1
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

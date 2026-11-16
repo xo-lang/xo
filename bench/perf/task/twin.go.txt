@@ -1,0 +1,81 @@
+// Go twin of bench/perf/task: map_concurrent as a goroutine per item under
+// a channel semaphore with results in order, Once as sync.OnceValues, and
+// a semaphore as a buffered channel.
+package main
+
+import (
+	"fmt"
+	"os"
+	"sync"
+)
+
+func work(x int) int {
+	v := x
+	for i := 0; i < 200; i++ {
+		v = (v*1103515245 + 12345) & 0x7fffffff
+	}
+	return v % 1009
+}
+
+func mapConcurrent[T, R any](items []T, limit int, f func(T) (R, error)) []R {
+	out := make([]R, len(items))
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i, it := range items {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, it T) {
+			defer func() { <-sem; wg.Done() }()
+			r, err := f(it)
+			if err == nil {
+				out[i] = r
+			}
+		}(i, it)
+	}
+	wg.Wait()
+	return out
+}
+
+type Semaphore chan struct{}
+
+func (s Semaphore) With(f func() (int, error)) (int, error) {
+	<-s
+	defer func() { s <- struct{}{} }()
+	return f()
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	items := make([]int, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		items = append(items, i)
+	}
+	sum := 0
+	switch w {
+	case "map":
+		for r := 0; r < 200; r++ {
+			for _, v := range mapConcurrent(items, 8, func(x int) (int, error) { return work(x), nil }) {
+				sum += v
+			}
+		}
+	case "once":
+		o := sync.OnceValues(func() (int, error) { return 42, nil })
+		for i := 0; i < 2000000; i++ {
+			v, _ := o()
+			sum += v + i%2
+		}
+	case "sem":
+		s := make(Semaphore, 4)
+		for i := 0; i < 4; i++ {
+			s <- struct{}{}
+		}
+		for i := 0; i < 2000000; i++ {
+			v, _ := s.With(func() (int, error) { return i % 7, nil })
+			sum += v
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

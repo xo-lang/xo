@@ -1,0 +1,46 @@
+// migrate: std/migrate's parse against pressly/goose v3.27.3's SQL parser
+// (go/sqlparser, copied from goose's internal package with its license),
+// both directions of each file as goose reads them. parse reads 40
+// migration files (two statements, a StatementBegin function body, a Down
+// section; every fifth NO TRANSACTION) 2,000 times; `none` is the setup
+// alone. Prints statement counts and bytes, so both sides agree only when
+// the statements are the same.
+// Usage: `<program> none|parse`. Prints `<workload> <checksum>`.
+use std/migrate
+
+fn file(i: Int) -> Str {
+  let notx = if i % 5 == 0 { "-- +goose NO TRANSACTION\n" } else { "" }
+  "${notx}-- +goose Up\nCREATE TABLE t${i} (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL\n);\nINSERT INTO t${i} (id, name) VALUES (1, 'a;b');\n-- +goose StatementBegin\nCREATE FUNCTION f${i}() RETURNS int AS $$\nBEGIN\n  RETURN 1;\nEND;\n$$ LANGUAGE plpgsql;\n-- +goose StatementEnd\n\n-- +goose Down\nDROP FUNCTION f${i};\nDROP TABLE t${i};\n"
+}
+
+fn main(os: Os) uses (stdio, env) {
+  let w = os.env.args().get(0) ?? "none"
+  var files: List[Str] = []
+  for i in 0..40 {
+    files.push(file(i))
+  }
+  var sum = 0
+  if w == "parse" {
+    for _ in 0..2000 {
+      for (i, t) in files.indexed() {
+        match migrate.parse("${i + 1}_m.sql", t) {
+          Ok(m) => {
+            sum += m.up.len() * 7 + m.down.len() * 3 + (if m.tx { 1 } else { 0 })
+            for s in m.up {
+              sum += s.len()
+            }
+            for s in m.down {
+              sum += s.len()
+            }
+          }
+          Err(_) => sum += 100000
+        }
+      }
+    }
+  } else {
+    for t in files {
+      sum += t.len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

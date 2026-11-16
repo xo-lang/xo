@@ -158,19 +158,24 @@ pub fn (r: Recorder) start(name: Str, parent: (Str, Str)? = None, kind: SpanKind
   let t = r.clock.now()
   let ns = unix_nanos(t)
   var tid = ""
+  var sid = ""
   var pid = "root"
   match parent {
     Some((pt, ps)) => {
       tid = pt
       pid = ps
+      sid = rand_hex(r.rand, 8)
     }
     None => {
-      tid = rand_hex(r.rand, 16)
+      // both ids from one draw: each draw is a system call
+      let b = r.rand.bytes(24)
+      tid = hex_id(r.rand, b[0..16])
+      sid = hex_id(r.rand, b[16..24])
     }
   }
   let s = Span{
     id: tid, name: name, start_ms: ns / 1000000, micros: 0, status: 0,
-    trace_id: tid, span_id: rand_hex(r.rand, 8), parent_id: pid, kind: Some(kind),
+    trace_id: tid, span_id: sid, parent_id: pid, kind: Some(kind),
     attributes: merge_attrs([], attributes), start_ns: ns, end_ns: ns, scope: scope, scope_version: scope_version, schema_url: schema_url,
   }
   Active{ring: r.ring, clock: r.clock, span: Mutex[Span].new(s), done: Mutex[Bool].new(false)}
@@ -279,8 +284,12 @@ fn unix_nanos(t: Time) -> Int {
 }
 
 /// n random bytes as hex, never all zero.
-fn rand_hex(rand: Rand, n: Int) -> Str uses rand {
-  var b = rand.bytes(n)
+fn rand_hex(rand: Rand, n: Int) -> Str uses rand { hex_id(rand, rand.bytes(n)) }
+
+/// b as a hex id, drawn again (as rand_hex) when it is all zero.
+fn hex_id(rand: Rand, b0: Bytes) -> Str uses rand {
+  var b = b0
+  let n = b.len()
   var zero = true
   for c in b {
     if c != 0 {

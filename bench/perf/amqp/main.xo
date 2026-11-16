@@ -1,0 +1,51 @@
+// amqp: std/amqp's message encoding against github.com/Azure/go-amqp
+// v1.7.0 (go/, vendored), the library std/amqp ports: encode marshals
+// 300,000 messages (a header, properties, two application properties and
+// a 256 byte data section), decode unmarshals 300,000; `none` is the setup
+// alone. Prints encoded lengths and decoded sizes, so both sides agree
+// only when the bytes do.
+// Usage: `<program> none|encode|decode`. Prints `<workload> <checksum>`.
+use std/amqp
+
+fn msg(i: Int, body: Bytes) -> amqp.Message {
+  amqp.Message{
+    header: Some(amqp.Header{durable: true, priority: 4}),
+    properties: Some(amqp.Properties{message_id: amqp.Value.Str("m-${i}"), to: Some("queue/orders"), subject: Some("order.created"), content_type: Some("application/json"), creation_ms: Some(1763251200000 + i)}),
+    app_properties: Some([("tenant", amqp.Value.Str("acme")), ("attempt", amqp.Value.Long(Int64(i % 5)))]),
+    body: amqp.Body.Data([body]),
+  }
+}
+
+fn main(os: Os) uses (stdio, env) {
+  let w = os.env.args().get(0) ?? "none"
+  var bb = BytesBuilder.new()
+  for k in 0..256 {
+    bb.write_byte(UInt8(k))
+  }
+  let body = bb.freeze()
+  var sum = 0
+  if w == "encode" {
+    for i in 0..300000 {
+      sum += (amqp.encode_message(msg(i, body)).ok() ?? b"").len()
+    }
+  } else if w == "decode" {
+    var enc: List[Bytes] = []
+    for i in 0..100 {
+      enc.push(amqp.encode_message(msg(i, body)).ok() ?? b"")
+    }
+    for i in 0..300000 {
+      match amqp.decode_message(enc[i % 100]) {
+        Ok(m) => {
+          if let amqp.Body.Data(ds) = m.body {
+            sum += ds[0].len()
+          }
+          if let Some(p) = m.properties {
+            sum += (p.subject ?? "").len()
+          }
+        }
+        Err(_) => sum += 100000
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

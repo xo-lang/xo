@@ -1,0 +1,144 @@
+// Go twin of bench/perf/trace: std/trace's span ring and recorder written
+// as Go: a mutex over a slice of spans trimmed to its newest cap once it
+// holds twice that, and spans with crypto/rand hex ids and clock times.
+package main
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"strconv"
+	"sync"
+	"time"
+)
+
+type Attr struct {
+	Key   string
+	Value any
+}
+
+type Span struct {
+	ID, Name                  string
+	StartMs, Micros           int64
+	Status                    int
+	TraceID, SpanID, ParentID string
+	Kind                      int
+	Attributes                []Attr
+	StartNs, EndNs            int64
+}
+
+type Ring struct {
+	mu  sync.Mutex
+	buf []Span
+	cap int
+}
+
+func (r *Ring) push(s Span) {
+	r.mu.Lock()
+	if len(r.buf) >= 2*r.cap {
+		r.buf = append(r.buf[:0:0], r.buf[len(r.buf)-r.cap+1:]...)
+	}
+	r.buf = append(r.buf, s)
+	r.mu.Unlock()
+}
+
+func (r *Ring) Record(id, name string, start time.Time, d time.Duration) {
+	r.push(Span{ID: id, Name: name, StartMs: start.UnixMilli(), Micros: d.Nanoseconds() / 1000})
+}
+
+func (r *Ring) Spans(min time.Duration, n int) []Span {
+	r.mu.Lock()
+	all := r.buf
+	r.mu.Unlock()
+	var out []Span
+	first := 0
+	if len(all) > r.cap {
+		first = len(all) - r.cap
+	}
+	for i := len(all) - 1; i >= first; i-- {
+		if all[i].Micros*1000 >= min.Nanoseconds() {
+			out = append(out, all[i])
+			if n > 0 && len(out) >= n {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+type Active struct {
+	ring *Ring
+	mu   sync.Mutex
+	span Span
+	done bool
+}
+
+func (r *Ring) Start(name string, kind int, attrs []Attr) *Active {
+	ns := time.Now().UnixNano()
+	tid := randHex(16)
+	return &Active{ring: r, span: Span{ID: tid, Name: name, StartMs: ns / 1000000, TraceID: tid, SpanID: randHex(8), Kind: kind, Attributes: attrs, StartNs: ns}}
+}
+
+func (a *Active) End() {
+	a.mu.Lock()
+	if a.done {
+		a.mu.Unlock()
+		return
+	}
+	a.done = true
+	end := time.Now().UnixNano()
+	if end < a.span.StartNs {
+		end = a.span.StartNs
+	}
+	a.span.EndNs = end
+	a.span.Micros = (end - a.span.StartNs) / 1000
+	s := a.span
+	a.mu.Unlock()
+	a.ring.push(s)
+}
+
+func main() {
+	w, n, c := "record", 200000, 1000
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	if len(os.Args) > 2 {
+		n, _ = strconv.Atoi(os.Args[2])
+	}
+	if len(os.Args) > 3 {
+		c, _ = strconv.Atoi(os.Args[3])
+	}
+	ring := &Ring{cap: c}
+	t0 := time.UnixMilli(1700000000000)
+	d := 250 * time.Microsecond
+	read := 0
+	switch w {
+	case "span":
+		for i := 0; i < n/4; i++ {
+			s := ring.Start("handler", 2, []Attr{{Key: "n", Value: int64(i % 97)}})
+			s.End()
+		}
+	case "read":
+		for i := 0; i < c; i++ {
+			ring.Record("r"+strconv.Itoa(i%97), "work", t0, d)
+		}
+		for i := 0; i < n/20; i++ {
+			read += len(ring.Spans(0, 10))
+		}
+	default:
+		for i := 0; i < n; i++ {
+			id := "r" + strconv.Itoa(i%97)
+			if w == "record" {
+				ring.Record(id, "work", t0, d)
+			}
+		}
+	}
+	fmt.Printf("%s %d\n", w, len(ring.Spans(0, 10))+read)
+}

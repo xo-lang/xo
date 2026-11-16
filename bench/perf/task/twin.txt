@@ -1,0 +1,5 @@
+# twincheck: task: three workloads (none is the setup alone); Go is goroutines under a channel semaphore, sync.OnceValues and a buffered channel (no Go std map_concurrent).
+- - none
+- - map
+- - once
+- - sem

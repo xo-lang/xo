@@ -175,7 +175,23 @@ pub fn mem_label(text: Str) {
 
 pub fn mem_mapped() -> Int { heapos.mapped_bytes() }
 
-pub fn mem_total() -> Int { heapos.phys_mem() }
+pub fn mem_total() -> Int {
+  // the system call's record in a heap buffer, not a mapped page per call
+  let buf = raw.bytes_buf(128)
+  let b = raw.bytes_addr(buf)
+  rt.mem_set(b, 0, 128)
+  let n = heapos.phys_mem_into(b)
+  keep_bytes(buf)
+  n
+}
+
+/// A use of b after its last raw access, so reference counting does not
+/// free it while the system call writes it.
+fn keep_bytes(b: Bytes) {
+  if b.len() < 0 {
+    return
+  }
+}
 
 pub fn mem_trim() {
   // the wasm runtime has its own allocator: the native heap's records do
