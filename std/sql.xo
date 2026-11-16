@@ -74,6 +74,14 @@ fn range_time(r: Range[Time]) -> SqlValue
 fn multirange_int(rs: List[Range[Int]]) -> SqlValue
 fn multirange_date(rs: List[Range[time.Date]]) -> SqlValue
 fn multirange_time(rs: List[Range[Time]]) -> SqlValue
+/// A composite or record parameter from its fields' texts, None for
+/// NULL (pgx's CompositeTextBuilder): `(1,"a b",)`; a field that is
+/// empty, has a leading or trailing space, or holds `(),"\` is quoted.
+fn composite(fields: List[Str?]) -> SqlValue
+/// A composite or record's text split into its fields' texts, None for
+/// NULL (pgx's CompositeTextScanner); for a nested record read with
+/// Row.fields.
+fn parse_composite(s: Str) -> List[Str?] ! SqlErr
 
 /// One end of a range (pgx's BoundType with its value).
 enum Edge[T] {
@@ -558,6 +566,12 @@ fn (r: Row) multirange_date(name: Str) -> List[Range[time.Date]] ! SqlErr
 fn (r: Row) multirange_date_opt(name: Str) -> List[Range[time.Date]]? ! SqlErr
 fn (r: Row) multirange_time(name: Str) -> List[Range[Time]] ! SqlErr
 fn (r: Row) multirange_time_opt(name: Str) -> List[Range[Time]]? ! SqlErr
+/// A composite type or record column (`ROW(1, 'a')`, a table's row
+/// type): its fields' texts in order, None for a NULL field; read each
+/// with its type's parser (Int.parse, sql.parse_composite for a nested
+/// one).
+fn (r: Row) fields(name: Str) -> List[Str?] ! SqlErr
+fn (r: Row) fields_opt(name: Str) -> List[Str?]? ! SqlErr
 /// A json or jsonb column (or text) decoded into T; a decode error is
 /// Mismatch(column, msg).
 fn (r: Row) json[T: Json](name: Str) -> T ! SqlErr

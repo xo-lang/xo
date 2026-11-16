@@ -172,9 +172,19 @@ fn main(os: Os) ! {
   let mt = db.query_one("{[\"2026-01-01 10:00:00+00\",\"2026-01-01 11:00:00+00\")}", [])?
   os.stdio.println(show("multirange_time c0", mt.multirange_time("c0").map(fn(rs) { rs.map(fn(r) { tr(r) }) })))
   os.stdio.println(show("range_int_opt null", db.query_one("NULL", [])?.range_int_opt("c0")))
+  // composites: NULL and empty fields, quotes, escapes, a nested record, bad text
+  let cq = ["(1,\"a b\",)", "()", "(\"x\"\"y\",\"back\\\\slash\",\"\")", "(1,\"(2,\"\"q\"\")\")", "1,2", "(1,\"open)"]
+  let cs = db.query_one(cq.join(" ;; "), [])?
+  for c in cs.columns() {
+    os.stdio.println(show("fields ${c}", cs.fields(c)))
+  }
+  let nested = (cs.fields("c3").ok() ?? []).get(1) ?? None
+  os.stdio.println(show("parse_composite nested", sql.parse_composite(nested ?? "")))
+  os.stdio.println(show("parse_composite bad", sql.parse_composite("(1")))
+  os.stdio.println(show("fields_opt null", db.query_one("NULL", [])?.fields_opt("c0")))
   let u = uuid.parse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")?
   let p = netip.parse_prefix("10.1.0.0/16")?
-  let params = [sql.uuid(u), sql.date(time.Date{year: 2026, month: 3, day: 9}), sql.date(time.Date{year: -43, month: 3, day: 15}), sql.time_of_day(time.ClockTime{hour: 7, minute: 5, second: 3, nanos: 120000000}), sql.interval(sql.Interval{months: 14, days: -3, micros: 5000001}), sql.prefix(p), sql.mac(b"\x08\x00\x2b\x01\x02\x03"), sql.hstore({"a": Some("1"), "b": None, "q \"x\"": Some("back\\slash")}), sql.date_bound(sql.Bound.Infinity), sql.date_bound(sql.Bound.Finite(v: time.Date{year: 2026, month: 1, day: 2})), sql.time_bound(sql.Bound.NegInfinity), sql.range_int(sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 5))), sql.range_int(sql.Range.Empty), sql.range_date(sql.Range.Span(lower: sql.Edge.Unbounded, upper: sql.Edge.Inclusive(v: time.Date{year: 2026, month: 1, day: 2}))), sql.range_time(sql.Range.Span(lower: sql.Edge.Inclusive(v: Time.from_unix(0)), upper: sql.Edge.Unbounded)), sql.multirange_int([sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 3)), sql.Range.Span(lower: sql.Edge.Exclusive(v: 5), upper: sql.Edge.Unbounded)]), sql.multirange_int([])]
+  let params = [sql.uuid(u), sql.date(time.Date{year: 2026, month: 3, day: 9}), sql.date(time.Date{year: -43, month: 3, day: 15}), sql.time_of_day(time.ClockTime{hour: 7, minute: 5, second: 3, nanos: 120000000}), sql.interval(sql.Interval{months: 14, days: -3, micros: 5000001}), sql.prefix(p), sql.mac(b"\x08\x00\x2b\x01\x02\x03"), sql.hstore({"a": Some("1"), "b": None, "q \"x\"": Some("back\\slash")}), sql.date_bound(sql.Bound.Infinity), sql.date_bound(sql.Bound.Finite(v: time.Date{year: 2026, month: 1, day: 2})), sql.time_bound(sql.Bound.NegInfinity), sql.range_int(sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 5))), sql.range_int(sql.Range.Empty), sql.range_date(sql.Range.Span(lower: sql.Edge.Unbounded, upper: sql.Edge.Inclusive(v: time.Date{year: 2026, month: 1, day: 2}))), sql.range_time(sql.Range.Span(lower: sql.Edge.Inclusive(v: Time.from_unix(0)), upper: sql.Edge.Unbounded)), sql.multirange_int([sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 3)), sql.Range.Span(lower: sql.Edge.Exclusive(v: 5), upper: sql.Edge.Unbounded)]), sql.multirange_int([]), sql.composite([Some("1"), Some("a b"), None, Some(""), Some(" lead"), Some("q\"(x)\\")]), sql.composite([])]
   for r in db.query("PARAMS", params)? {
     os.stdio.println("param ${r.value("p")?:?}")
   }

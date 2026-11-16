@@ -469,6 +469,20 @@ func typedCell(m *pgtype.Map, kind string, oid uint32, src []byte) string {
 			return "error"
 		}
 		return q(p.String())
+	case "fields":
+		sc := pgtype.NewCompositeTextScanner(m, src)
+		var parts []string
+		for sc.Next() {
+			if b := sc.Bytes(); b == nil {
+				parts = append(parts, "None")
+			} else {
+				parts = append(parts, "Some("+q(string(b))+")")
+			}
+		}
+		if sc.Err() != nil {
+			return "error"
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
 	case "intrange":
 		var r pgtype.Range[pgtype.Int8]
 		if m.Scan(oid, pgtype.TextFormatCode, src, &r) != nil {

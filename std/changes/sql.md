@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: composite and record columns (decision 0679)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #113 (#110's backlog: composite and record types)
+- Go reference: pgx v5.12.0 pgtype/composite.go (CompositeTextScanner, CompositeTextBuilder, quoteCompositeFieldIfNeeded), Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: golden sql_pg_types (go, arm64, LLVM: NULL and empty fields, doubled quotes, backslashes, a nested record, malformed text, the parameter's quoting); scripts/pg-diff.sh TYPED fields (a table row type, a nested record, NULL) and a parameter case, equal to pgx's CompositeTextScanner on postgres:17-alpine and postgres:14-alpine (88 statements)
+- Shipped in: not yet released
+
+`Row.fields` splits a composite or record column into its fields' texts as pgx's CompositeTextScanner does; `sql.parse_composite` does the same for a nested field, and `sql.composite` builds the text with pgx's quoting. pgx's binary composite scanner and builder are not planned (decision 0278's text results); `Conn.LoadType` is a later item.
+
 ## 2026-11-16: feature: ranges and multiranges (decision 0679)
 
 - Kind: feature

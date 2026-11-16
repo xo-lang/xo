@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/sql, every backend; decision 0679, task #113): composite and record columns: `Row.fields` and `fields_opt` (each field's text, `None` for NULL), `sql.parse_composite` for a nested field, and the parameter `sql.composite(fields)`.
+
 - Feature (std/sql, every backend; decision 0679, task #113): Postgres ranges and multiranges: `sql.Range[T]` (`Empty`, `Span(lower, upper)`) with `sql.Edge[T]` (`Inclusive`, `Exclusive`, `Unbounded`), `Row.range_int`, `range_date`, `range_time`, `Row.multirange_int`, `multirange_date`, `multirange_time` (each with `_opt`), and the matching parameters `sql.range_int` and so on.
 
 - Feature (std/sql, every backend; decision 0679, task #113): `sql.named(q, args, strict)` rewrites `@name` placeholders to `$n` and returns the query with its arguments, for any query method (pgx's `NamedArgs` and `StrictNamedArgs`).

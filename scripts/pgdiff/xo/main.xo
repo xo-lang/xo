@@ -225,6 +225,7 @@ fn typed_cell(r: sql.Row, kind: Str, c: Str) -> Str {
     "time" => r.time_of_day_opt(c).map(fn(o) { o.map(fn(t) { t.debug() }) })
     "interval" => r.interval_opt(c).map(fn(o) { o.map(fn(i) { i.debug() }) })
     "inet" => r.prefix_opt(c).map(fn(o) { o.map(fn(p) { p.display().debug() }) })
+    "fields" => r.fields_opt(c).map(fn(o) { o.map(fn(fs) { fs.debug() }) })
     "intrange" => r.range_int_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, fn(n) { "${n}" }) }) })
     "daterange" => r.range_date_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, dtext) }) })
     "timerange" => r.range_time_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, fn(t) { t.format_rfc3339() }) }) })

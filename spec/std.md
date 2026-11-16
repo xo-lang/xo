@@ -4060,6 +4060,7 @@ Results are read in text format and decoded by the column's type:
 | `macaddr`, `macaddr8` | `Text` | `mac` (6 or 8 bytes), `str` |
 | `hstore` | `Text` | `hstore` (a `Map[Str, Str?]`), `str` |
 | `int4range`, `int8range`, `daterange`, `tsrange`, `tstzrange` | `Text` | `range_int`, `range_date`, `range_time` (a `Range[T]`), `str` |
+| a composite type, a table's row type, `record` | `Text` | `fields` (each field's text, `None` for NULL), `str` |
 | the matching multiranges (Postgres 14 and later) | `Text` | `multirange_int`, `multirange_date`, `multirange_time` (a `List[Range[T]]`), `str` |
 | every other type (`numeric`, `timetz`, ranges, enums, ...) | `Text`, the server's text | `str` |
 
@@ -4099,6 +4100,9 @@ enum Range[T] { Empty, Span(lower: Edge[T], upper: Edge[T]) }  // pgx's Range[T]
 fn (r: Row) range_int(name: Str) -> Range[Int] ! SqlErr         // also _opt, range_date, range_time
 fn (r: Row) multirange_int(name: Str) -> List[Range[Int]] ! SqlErr // also _opt, multirange_date, multirange_time
 pub fn range_int(r: Range[Int]) -> SqlValue                     // also range_date, range_time, multirange_int, ...
+fn (r: Row) fields(name: Str) -> List[Str?] ! SqlErr            // also fields_opt: a composite's fields' texts
+pub fn parse_composite(s: Str) -> List[Str?] ! SqlErr           // a nested composite field's text; Syntax error otherwise
+pub fn composite(fields: List[Str?]) -> SqlValue                // `(1,"a b",)`, quoting as Postgres reads it
 ```
 
 `date` reads `infinity` and `-infinity` as Mismatch; `date_bound` and

@@ -5456,3 +5456,110 @@ fn (r: Row) multirange_date(name: Str) -> List[sql.Range[time.Date]] ! sql.SqlEr
 fn (r: Row) multirange_time_opt(name: Str) -> List[sql.Range[Time]]? ! sql.SqlErr { mr_read(r, name, "a time multirange", pg_timestamp) }
 
 fn (r: Row) multirange_time(name: Str) -> List[sql.Range[Time]] ! sql.SqlErr { r.multirange_time_opt(name)?.or_err(mismatch(name, "a time multirange", sql.SqlValue.Null)) }
+
+// Composites and records: pgx v5.12.0 pgtype/composite.go
+// (CompositeTextScanner, CompositeTextBuilder, quoteCompositeFieldIfNeeded),
+// Copyright (c) 2013-2021 Jack Christensen, MIT License.
+
+/// A composite's text split into its fields (pgx's CompositeTextScanner
+/// Next loop), or the reason it is not one.
+fn comp_split(s: Str) -> List[Str?] ! Str {
+  let b = s.bytes()
+  let n = b.len()
+  if n < 2 {
+    return Err("record incomplete")
+  }
+  if b[0] != 40 {
+    return Err("composite text format must start with '('")
+  }
+  if b[n - 1] != 41 {
+    return Err("composite text format must end with ')'")
+  }
+  var out: List[Str?] = []
+  var i = 1
+  while i < n {
+    let c = b[i]
+    if c == 44 || c == 41 {
+      out.push(None)
+      i += 1
+    } else if c == 34 {
+      i += 1
+      var f = ""
+      var start = i
+      while true {
+        if i >= n {
+          return Err("composite text format unterminated quoted field")
+        }
+        let d = b[i]
+        if d == 34 {
+          f = f + s[start..i]
+          i += 1
+          if i < n && b[i] == 34 {
+            start = i
+            i += 1
+          } else {
+            break
+          }
+        } else if d == 92 {
+          f = f + s[start..i]
+          i += 1
+          if i >= n {
+            return Err("composite text format unterminated quoted field")
+          }
+          start = i
+          i += 1
+        } else {
+          i += 1
+        }
+      }
+      out.push(Some(f))
+      i += 1
+    } else {
+      let start = i
+      while b[i] != 44 && b[i] != 41 {
+        i += 1
+      }
+      out.push(Some(s[start..i]))
+      i += 1
+    }
+  }
+  out
+}
+
+fn parse_composite(s: Str) -> List[Str?] ! sql.SqlErr {
+  match comp_split(s) {
+    Ok(fs) => fs
+    Err(m) => Err(sql.SqlErr.Syntax(msg: "${m}: ${s.debug()}"))
+  }
+}
+
+fn comp_quote(f: Str) -> Str {
+  let b = f.bytes()
+  var need = f.len() == 0 || b[0] == 32 || b[b.len() - 1] == 32
+  for c in b {
+    if c == 40 || c == 41 || c == 44 || c == 34 || c == 92 {
+      need = true
+    }
+  }
+  if need {
+    "\"" + f.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+  } else {
+    f
+  }
+}
+
+fn composite(fields: List[Str?]) -> sql.SqlValue {
+  sql.SqlValue.Text(s: "(" + fields.map(fn(f) { f.map(fn(x) { comp_quote(x) }) ?? "" }).join(",") + ")")
+}
+
+fn (r: Row) fields_opt(name: Str) -> List[Str?]? ! sql.SqlErr {
+  match typed_text(r, name, "a composite")? {
+    None => None
+    Some(s) => match comp_split(s) {
+      Ok(fs) => Some(fs)
+      Err(_) => Err(bad_text(name, "a composite", s))
+    }
+  }
+}
+
+fn (r: Row) fields(name: Str) -> List[Str?] ! sql.SqlErr { r.fields_opt(name)?.or_err(mismatch(name, "a composite", sql.SqlValue.Null)) }
