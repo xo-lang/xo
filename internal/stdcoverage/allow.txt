@@ -75,3 +75,7 @@ go.Recv.each	cmd/xo TestUseGoChannels (example.com/chans)
 go.Recv.recv	cmd/xo TestUseGoChannels (example.com/chans)
 go.Recv.try_recv	cmd/xo TestUseGoChannels (example.com/chans)
 go.error	cmd/xo gocallback_test.go's callbacks returning Err(go.error(...)) (example.com/cberr)
+
+# std/ui's wasm client entry reads the browser runtime's input on stdin; a
+# corpus test has no browser (examples/ui-todo/client calls it).
+ui.client_main  the wasm client's entry, run by the browser runtime

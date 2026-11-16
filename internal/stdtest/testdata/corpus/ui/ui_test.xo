@@ -1,0 +1,103 @@
+// std/ui from outside the module: an App, its Server and Replicas, the
+// Host's routes, the predicting client and the page layer (decisions 0659,
+// 0668, 0670). The module's own tests are in std/ui_test.xo.
+use std/http
+use std/ui
+
+struct Count {
+  n: Int
+  who: List[Str]
+} derive Eq, Json, Debug
+
+enum Act {
+  Inc(by: Int)
+  Join(who: Str)
+} derive Eq, Json, Debug
+
+fn step(c: Count, a: Act) -> Count {
+  var m = c
+  match a {
+    Inc(by) => { m.n = m.n + by }
+    Join(who) => { m.who.push(who) }
+  }
+  m
+}
+
+fn show(c: Count) -> ui.Html {
+  ui.el("p", [ui.on("click", Act.Inc(by: 1))], [ui.text("n=${c.n}")])
+}
+
+fn counter() -> ui.App[Count, Act] {
+  ui.app(Count{n: 0, who: []}, step, show)
+}
+
+test "a replica predicts and the server confirms" {
+  let app = counter().confirming(fn(a: Act) -> Bool {
+    match a {
+      Join(_) => true
+      Inc(_) => false
+    }
+  })
+  var s = ui.server(app)
+  var r = ui.replica(app, "a", app.init, 0)
+  r.send(Act.Inc(by: 2))
+  r.send(Act.Join(who: "ann"))
+  expect(r.model().n) == 2
+  expect(r.awaiting().len()) == 1
+  expect(r.confirmed().n) == 0
+  expect(r.pending()) == 2
+  r.receive(s.receive(r.outbox()))
+  expect(r.pending()) == 0
+  expect(r.version()) == 2
+  expect(s.version()) == 2
+  expect(s.applied("a")) == 2
+  expect(r.model()) == s.model()
+  s.apply(Act.Inc(by: 5))
+  r.receive(s.reply("a", r.version()))
+  expect(r.model().n) == 7
+  s.compact(1)
+  expect(s.model().who) == ["ann"]
+}
+
+test "receive_as refuses a Msg its principal may not send" {
+  var s = ui.server(counter())
+  let only_inc = fn(m: Count, p: Str, a: Act) -> Bool {
+    match a {
+      Inc(_) => true
+      Join(_) => false
+    }
+  }
+  let up = ui.Up{client: "c", ver: 0, msgs: [ui.Envelope{seq: 1, msg: Act.Join(who: "bob")}]}
+  expect(s.receive_as(up, "bob", only_inc).is_some()) == true
+  expect(s.model().who.len()) == 0
+}
+
+test "predict renders pending Msgs over the confirmed model" {
+  let out = ui.predict(counter(), ui.ClientIn{model: Count{n: 1, who: []}, pending: [Act.Inc(by: 3)]})
+  expect(out.html.contains("n=4")) == true
+  expect(out.awaiting) == 0
+  expect(ui.field("q").len() > 0) == true
+}
+
+test "the host serves the page and applies server Msgs" {
+  var h = ui.host(counter(), title: "Count")
+  var r = http.router()
+  h.mount(r)
+  let p = r.call(http.new_request("GET", "/"))
+  expect(p.status) == 200
+  expect(p.text()?.contains("n=0")) == true
+  h.apply(Act.Inc(by: 1))
+  expect(h.model().n) == 1
+  expect(h.live()) == 0
+  let page = ui.page(counter(), Count{n: 9, who: []}, 3, title: "Count")
+  expect(page.contains("n=9")) == true
+}
+
+test "a server page and its runtime" {
+  let s = ui.plain("Search", ui.el("form", [ui.attr("method", "get")], []), prefix: "/app")
+  expect(s.contains("data-xo-page")) == true
+  var r = http.router()
+  ui.serve_runtime(r, prefix: "/app")
+  let js = r.call(http.new_request("GET", ui.runtime_url("/app")))
+  expect(js.status) == 200
+}
