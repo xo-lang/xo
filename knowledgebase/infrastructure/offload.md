@@ -701,6 +701,17 @@ whole 5 minutes on host 2 and then started on an idle host with no wait
 (159 minutes a day; host 2's queue was `xw jobs`' top wait reason).
 Last verified: 2026-11-15.
 
+Disk and bundles (offload-gate.sh, task #125, 2026-11-16): before the
+bundle goes up, offload-gate asks the host for OFFGATE_MIN_FREE_GB
+(default 12, 0 skips) free on /work (`offload.sh --has-free GB`, a plain
+ssh, exit 0 or 1). A host short of disk gets no bundle and the gate moves
+to the next untried host of OFFGATE_HOSTS (rc 6 when none is left); a
+HOSTCHECK-FAIL on disk also moves it instead of ending rc 1. A try that
+ends other than 0 or 1 (a lease refused at the cap, rc 5; a cancel; a
+signal) removes its bundle from /work/in on exit
+(gotchas/offload-gate-refused-try-leaks-bundle.md). Last verified:
+2026-11-16.
+
 Lease history (offload-gate.sh): every gate that reaches its verdict (rc
 0 or 1) appends a row to `$LEAD/notes/gate-history.tsv` (date, host, the
 sorted steps, cold or warm xo, seconds from its lease's start in
