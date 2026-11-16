@@ -7389,6 +7389,10 @@ struct Reader {}                                              // tokens one at a
 pub fn reader(text: Str, strict: Bool = true) -> Reader
 pub fn raw_reader(text: Str) -> Reader
 fn (var r: Reader) next() -> Token? ! XmlErr                  // None at the end of the input
+struct Stream[fx: Effects] {}                                 // Go's NewDecoder over an io.Reader
+pub fn stream[fx: Effects](src: fn() -> Bytes? ! Str uses fx, strict: Bool = true) -> Stream[fx]
+pub fn raw_stream[fx: Effects](src: fn() -> Bytes? ! Str uses fx) -> Stream[fx]
+fn (var s: Stream[fx]) next() -> Token? ! XmlErr uses fx      // calls src as it needs bytes
 struct Writer {}                                              // Go's Encoder, tokens one at a time
 pub fn writer(indent: Str = "") -> Writer                     // Indent("", indent)
 fn (var w: Writer) token(t: Token) -> () ! XmlErr             // EncodeToken
@@ -7416,6 +7420,16 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
   program that counts or filters tokens holds the input and one token. At
   the end `next` returns None; after an error every later call returns the
   same error. The input stays a `Str` (the reader holds it).
+- `stream` and `raw_stream` read a document that is not in memory (Go's
+  NewDecoder over an io.Reader): `src` gives the next bytes on each call
+  (any cut, also inside a name or a UTF-8 sequence), None at the end, or
+  a read error's text. The tokens are `reader`'s on the whole document.
+  A source error ends the stream as Go's reader error does: the tokens the
+  bytes before it complete come first, then `next` returns it (line 0)
+  every later call. The stream holds the unread bytes and the token being
+  read; a token cut by the end of the bytes so far is read again once more
+  came (at least twice as many, so a long text is read again a logarithmic
+  number of times).
 - `strict: false` is Go's `Strict = false` with `HTMLAutoClose` and
   `HTMLEntity`: unquoted attribute values, `&nbsp;`, `<br>` without an
   end tag.

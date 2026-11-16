@@ -42,6 +42,21 @@ struct Dec {
   to_close: xml.Name = xml.Name{space: "", local: ""}
   /// Token's nextToken: zero or one
   next: List[xml.Token] = []
+  /// a Stream's decoder: whether a token reached the end of src (more
+  /// may come), the failure the end gives (Eof, or the source's error),
+  /// and whether whole is unset (the fast paths cut src instead)
+  hit_end: Bool = false
+  end: Fail = Fail.Eof
+  cut_src: Bool = false
+}
+
+/// src[a..i] as Str: ASCII bytes only (the fast paths), so a view of
+/// whole, or of src's bytes on a Stream (whole unset).
+fn (d: Dec) cut(a: Int, i: Int) -> Str {
+  if d.cut_src {
+    return d.src[a..i].to_str() ?? ""
+  }
+  d.whole[a..i]
 }
 
 fn nm(space: Str, local: Str) -> xml.Name { xml.Name{space: space, local: local} }
@@ -68,7 +83,8 @@ fn (var d: Dec) getc() -> Int {
     return -1
   }
   if d.pos >= d.src.len() {
-    d.fail = Fail.Eof
+    d.hit_end = true
+    d.fail = d.end
     return -1
   }
   let b = Int(d.src[d.pos])
@@ -113,7 +129,8 @@ fn (var d: Dec) space() {
   }
   d.pos = i
   if i >= n {
-    d.fail = Fail.Eof
+    d.hit_end = true
+    d.fail = d.end
   }
 }
 
@@ -207,7 +224,7 @@ fn (var d: Dec) name() -> Str? {
       let c = Int(d.src[a])
       if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 58 {
         d.pos = i
-        return Some(d.whole[a..i])
+        return Some(d.cut(a, i))
       }
     }
   }
@@ -325,7 +342,7 @@ fn (var d: Dec) text_entities(quote: Int, a: Int, i0: Int, lines0: Int) -> Str? 
       if k == 0 {
         return None
       }
-      sb.write(d.whole[seg..i])
+      sb.write(d.cut(seg, i))
       sb.write(entity_text(d.src, i))
       i += k
       seg = i
@@ -344,7 +361,7 @@ fn (var d: Dec) text_entities(quote: Int, a: Int, i0: Int, lines0: Int) -> Str? 
   }
   let c = Int(d.src[i])
   if (quote < 0 && c == 60) || (quote >= 0 && c == quote) {
-    sb.write(d.whole[seg..i])
+    sb.write(d.cut(seg, i))
     d.pos = if quote >= 0 { i + 1 } else { i }
     d.line += lines
     return Some(sb.freeze())
@@ -377,12 +394,12 @@ fn (var d: Dec) text(quote: Int, cdata: Bool) -> Str? {
       if quote < 0 && c == 60 {
         d.pos = i
         d.line += lines
-        return Some(d.whole[a..i])
+        return Some(d.cut(a, i))
       }
       if quote >= 0 && c == quote {
         d.pos = i + 1
         d.line += lines
-        return Some(d.whole[a..i])
+        return Some(d.cut(a, i))
       }
       if c == 38 && entity_len(d.src, i) > 0 {
         if let Some(t) = d.text_entities(quote, a, i, lines) {
@@ -1094,6 +1111,95 @@ fn (var r: Reader) next() -> xml.Token? ! xml.XmlErr {
       Err(err_of(r.d))
     }
   }
+}
+
+/// xml.Stream: a decoder over the bytes src gives so far. A token that
+/// reaches the end of them is decoded again from where it started once
+/// more bytes came (at least twice the bytes it saw, so a long token is
+/// read again a logarithmic number of times); at src's end, or its
+/// error, the decoder ends as Go's does on io.EOF or the reader's error.
+struct Stream[fx: Effects] {
+  d: Dec
+  raw: Bool
+  src: fn() -> Bytes? ! Str uses fx
+  done: Bool = false
+}
+
+fn stream[fx: Effects](src: fn() -> Bytes? ! Str uses fx, strict: Bool) -> Stream[fx] {
+  Stream{d: Dec{src: b"", whole: "", strict: strict, cut_src: true}, raw: false, src: src}
+}
+
+fn raw_stream[fx: Effects](src: fn() -> Bytes? ! Str uses fx) -> Stream[fx] {
+  Stream{d: Dec{src: b"", whole: "", strict: true, cut_src: true}, raw: true, src: src}
+}
+
+/// Reads from src until the unread bytes are at least want, or src ends
+/// (done, the decoder's end failure its error when it gave one). The
+/// bytes read before d.pos are dropped.
+fn (var s: Stream[fx]) fill(want: Int) uses fx {
+  var b = BytesBuilder.new()
+  b.write(s.d.src[s.d.pos..s.d.src.len()])
+  var empty = 0
+  while !s.done && b.len() < want {
+    match (s.src)() {
+      Ok(Some(chunk)) => {
+        if chunk.is_empty() {
+          // bufio's io.ErrNoProgress after 100 empty reads
+          empty += 1
+          if empty >= 100 {
+            s.done = true
+            s.d.end = Fail.Plain(msg: "multiple Read calls return no data or error")
+          }
+        } else {
+          empty = 0
+          b.write(chunk)
+        }
+      }
+      Ok(None) => s.done = true
+      Err(msg) => {
+        s.done = true
+        s.d.end = Fail.Plain(msg: msg)
+      }
+    }
+  }
+  s.d.src = b.freeze()
+  s.d.pos = 0
+  // the fast paths slice whole (views) when the bytes are UTF-8; a cut
+  // inside a UTF-8 sequence (or bytes that are not UTF-8) cut src
+  match s.d.src.to_str() {
+    Some(w) => {
+      s.d.whole = w
+      s.d.cut_src = false
+    }
+    None => {
+      s.d.whole = ""
+      s.d.cut_src = true
+    }
+  }
+}
+
+fn (var s: Stream[fx]) next() -> xml.Token? ! xml.XmlErr uses fx {
+  while true {
+    let snap = s.d
+    s.d.hit_end = false
+    let t = if s.raw { s.d.raw() } else { s.d.token() }
+    if s.d.hit_end && !s.done {
+      s.d = snap
+      let unread = s.d.src.len() - s.d.pos
+      s.fill(if unread == 0 { 1 } else { 2 * unread })
+      continue
+    }
+    match t {
+      Some(x) => return Ok(Some(x))
+      None => {
+        if s.d.at_eof() {
+          return Ok(None)
+        }
+        return Err(err_of(s.d))
+      }
+    }
+  }
+  Ok(None)
 }
 
 // ---------------------------------------------------------------------------

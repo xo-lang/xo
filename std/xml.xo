@@ -56,6 +56,19 @@ fn raw_reader(text: Str) -> Reader
 /// by every later call.
 fn (var r: Reader) next() -> Token? ! XmlErr
 
+/// A reader of the document src gives (Go's NewDecoder over an
+/// io.Reader): each call of src gives the next bytes, None at the end, or
+/// its read error's text, which next returns (line 0) after the tokens
+/// the bytes before it complete. The tokens are `reader`'s on the whole
+/// document, however src cuts it.
+struct Stream[fx: Effects] {}
+
+fn stream[fx: Effects](src: fn() -> Bytes? ! Str uses fx, strict: Bool = true) -> Stream[fx]
+/// `stream` giving RawToken's tokens, as `raw_reader`.
+fn raw_stream[fx: Effects](src: fn() -> Bytes? ! Str uses fx) -> Stream[fx]
+/// The next token, None after the last; an error again on every later call.
+fn (var s: Stream[fx]) next() -> Token? ! XmlErr uses fx
+
 /// Go's Encoder writing tokens one at a time into text the program takes
 /// as it goes: EncodeToken's checks and errors, Indent("", indent), Close.
 struct Writer {}

@@ -71,7 +71,12 @@ func xmlFirstErr(text string) error {
 // xmlToks is std/rt's tokens or raw_tokens: the tokens' texts joined, or
 // err LINE MSG.
 func xmlToks(text string, strict, raw bool) string {
-	d := xml.NewDecoder(strings.NewReader(text))
+	return xmlToksOf(strings.NewReader(text), strict, raw)
+}
+
+// xmlToksOf is xmlToks over a reader.
+func xmlToksOf(rd io.Reader, strict, raw bool) string {
+	d := xml.NewDecoder(rd)
 	if !strict {
 		d.Strict = false
 		d.AutoClose = xml.HTMLAutoClose
@@ -296,8 +301,117 @@ func xmlCorpus() string {
 	o.WriteString(xmlTests)
 	o.WriteString(xmlWriterCorpus())
 	xmlDeriveCorpus(&o)
+	xmlStreamCorpus(&o)
 	return o.String()
 }
+
+// xmlCutReader gives the first cut bytes of a document n at a time, then
+// fails with "connection reset" (a Stream's source that fails mid-document).
+type xmlCutReader struct {
+	b string
+	n int
+}
+
+func (r *xmlCutReader) Read(p []byte) (int, error) {
+	if len(r.b) == 0 {
+		return 0, errors.New("connection reset")
+	}
+	k := min(r.n, len(p), len(r.b))
+	copy(p, r.b[:k])
+	r.b = r.b[k:]
+	return k, nil
+}
+
+// xmlStreamCorpus writes CUTS: documents whose source fails after a cut,
+// with Go's Decoder's tokens strict and raw over that source (the tokens
+// the bytes before the failure complete, then the failure).
+func xmlStreamCorpus(o *strings.Builder) {
+	r := rand.New(rand.NewSource(17))
+	o.WriteString("\n/// (document, the byte its source fails at, Go's tokens strict and raw over a source giving 3 bytes a read and then the error connection reset)\nconst CUTS: List[(Str, Int, Str, Str)] = [\n")
+	for i := 0; i < 300; i++ {
+		s := xmlDoc(r)
+		if i < len(xmlBadDocs) {
+			s = xmlBadDocs[i]
+		}
+		cut := r.Intn(len(s) + 1)
+		fmt.Fprintf(o, "  (%s, %d, %s, %s),\n", xq(s), cut, xq(xmlToksOf(&xmlCutReader{b: s[:cut], n: 3}, true, false)), xq(xmlToksOf(&xmlCutReader{b: s[:cut], n: 3}, true, true)))
+	}
+	o.WriteString("]\n")
+	o.WriteString(xmlStreamTests)
+}
+
+const xmlStreamTests = `
+/// A Stream's tokens over doc given n bytes a read, as reader_toks shows
+/// them; cut >= 0: the source fails with connection reset after cut bytes.
+fn stream_toks(doc: Str, n: Int, cut: Int, strict: Bool, raw: Bool) -> Str {
+  let b = doc.bytes()
+  let end = if cut < 0 { b.len() } else { cut }
+  let at = Atomic[Int].new(0)
+  let src = fn() -> Bytes? ! Str {
+    let i = at.add(n) - n
+    if i >= end {
+      if cut >= 0 {
+        return Err("connection reset")
+      }
+      return None
+    }
+    Some(b[i..(if i + n < end { i + n } else { end })])
+  }
+  var s = if raw { xml.raw_stream(src) } else { xml.stream(src, strict: strict) }
+  var out: List[Str] = []
+  while true {
+    match s.next() {
+      Ok(Some(t)) => out.push(tok_text(t))
+      Ok(None) => return out.join(" ")
+      Err(e) => {
+        let again = match s.next() {
+          Err(e2) => e2.line == e.line && e2.msg == e.msg
+          _ => false
+        }
+        return if again { "err ${e.line} ${e.msg}" } else { "error not repeated" }
+      }
+    }
+  }
+  ""
+}
+
+test "a Stream gives a Reader's tokens however its source cuts the document" {
+  var bad: List[(Str, Int, Str, Str)] = []
+  for (doc, strict, lenient, raw, _enc) in DOCS {
+    for n in [1, 7, 4096] {
+      let got = stream_toks(doc, n, -1, true, false)
+      if got != strict {
+        bad.push((doc, n, got, strict))
+      }
+      let got2 = stream_toks(doc, n, -1, false, false)
+      if got2 != lenient {
+        bad.push((doc, n, got2, lenient))
+      }
+      let got3 = stream_toks(doc, n, -1, true, true)
+      if got3 != raw {
+        bad.push((doc, n, got3, raw))
+      }
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "a Stream whose source fails gives the tokens before the failure, then the failure" {
+  var bad: List[(Str, Int, Str, Str)] = []
+  for (doc, cut, strict, raw) in CUTS {
+    let got = stream_toks(doc, 3, cut, true, false)
+    if got != strict {
+      bad.push((doc, cut, got, strict))
+    }
+    let got2 = stream_toks(doc, 3, cut, true, true)
+    if got2 != raw {
+      bad.push((doc, cut, got2, raw))
+    }
+  }
+  expect(CUTS.len()) == 300
+  expect(first_bad(bad)) == []
+}
+`
 
 const xmlTests = `
 fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }

@@ -19,6 +19,18 @@ func doc() string {
 	return b.String()
 }
 
+// chunks gives b 4,096 bytes a Read (the source workload's reader).
+type chunks struct{ b string }
+
+func (c *chunks) Read(p []byte) (int, error) {
+	if len(c.b) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, c.b[:min(4096, len(c.b))])
+	c.b = c.b[n:]
+	return n, nil
+}
+
 type item struct {
 	ID   string `xml:"id,attr"`
 	Kind string `xml:"kind,attr"`
@@ -37,9 +49,13 @@ func main() {
 	}
 	t := doc()
 	sum := len(t)
-	if w == "tokens" || w == "stream" {
+	if w == "tokens" || w == "stream" || w == "source" {
 		for p := 0; p < 8; p++ {
-			d := xml.NewDecoder(strings.NewReader(t))
+			var rd io.Reader = strings.NewReader(t)
+			if w == "source" {
+				rd = &chunks{b: t}
+			}
+			d := xml.NewDecoder(rd)
 			for {
 				tk, err := d.Token()
 				if err == io.EOF {

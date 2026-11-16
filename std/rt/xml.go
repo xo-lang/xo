@@ -122,6 +122,68 @@ func (r *Xml_Reader) M_next(_ *Task) Result[Option[Xml_Token], Xml_XmlErr] {
 	return Err[Option[Xml_Token]](xmlErr(r.err))
 }
 
+// xmlSource is an io.Reader over a Stream's src: each Read takes from the
+// chunk src gave last, and calls src again when it is used up (with the
+// task of the next call that reads).
+type xmlSource struct {
+	tk  *Task
+	src func(*Task) Result[Option[Bytes], string]
+	buf string
+}
+
+func (s *xmlSource) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if len(s.buf) == 0 {
+		r := s.src(s.tk)
+		if !r.Ok {
+			return 0, errors.New(r.E)
+		}
+		if !r.V.Some {
+			return 0, io.EOF
+		}
+		s.buf = string(r.V.V)
+	}
+	n := copy(p, s.buf)
+	s.buf = s.buf[n:]
+	return n, nil
+}
+
+// Xml_Stream is `xml.Stream[fx]` (the effect is erased): a Reader whose
+// Decoder reads src through an xmlSource.
+type Xml_Stream struct {
+	Xml_Reader
+	s *xmlSource
+}
+
+func (Xml_Stream) XoDebug(b *strings.Builder) { b.WriteString("<xml.Stream>") }
+
+func xmlStreamOf(src func(*Task) Result[Option[Bytes], string], strict, raw bool) Xml_Stream {
+	s := &xmlSource{src: src}
+	d := xml.NewDecoder(s)
+	if !strict {
+		d.Strict = false
+		d.AutoClose = xml.HTMLAutoClose
+		d.Entity = xml.HTMLEntity
+	}
+	return Xml_Stream{Xml_Reader: Xml_Reader{d: d, raw: raw}, s: s}
+}
+
+func Xml_stream(_ *Task, src func(*Task) Result[Option[Bytes], string], strict bool) Xml_Stream {
+	return xmlStreamOf(src, strict, false)
+}
+
+func Xml_raw_stream(_ *Task, src func(*Task) Result[Option[Bytes], string]) Xml_Stream {
+	return xmlStreamOf(src, true, true)
+}
+
+// M_next is Stream.next: Reader.next with src called on tk.
+func (r *Xml_Stream) M_next(tk *Task) Result[Option[Xml_Token], Xml_XmlErr] {
+	r.s.tk = tk
+	return r.Xml_Reader.M_next(tk)
+}
+
 func Xml_tokens(_ *Task, text string, strict bool) Result[List[Xml_Token], Xml_XmlErr] {
 	ts, err := xmlRead(xmlDecoder(text, strict).Token)
 	if err != nil {

@@ -11,6 +11,23 @@
 
 parse and parse_root read the whole token list before building the tree, so `<a/><b><c></d></b>` reported the bad close tag instead of `xml: more than one root element` (and text outside the root likewise). They now read token by token, as Go does, on every backend (std/rt/xml.go too).
 
+## 2026-11-16: feature: xml.stream, Go's Decoder over an io.Reader
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (std-coverage.md encoding/xml row: streaming missing)
+- Go reference: encoding/xml NewDecoder over an io.Reader, Decoder.Token and RawToken (go1.26.1)
+- Test: xml corpus: every DOCS row read through `stream` and `raw_stream` with 1, 7 and 4,096 bytes a read (Go's tokens of the whole document), and CUTS (300 documents whose source fails at a random byte, Go's tokens over that reader), on go, arm64, llvm
+- Shipped in: not yet released
+
+`stream(src, strict)` and `raw_stream(src)` give `reader`'s tokens of a
+document a source function gives in pieces: None at its end, or an error
+text, which `next` returns (line 0) after the tokens the bytes before it
+complete, as Go's Decoder returns its reader's error. The Go backend runs
+encoding/xml's Decoder over an io.Reader calling src. Native code decodes
+the bytes it has; a token that reaches their end is decoded again from
+its start once at least twice as many bytes came.
+
 ## 2026-11-11: feature: xml.writer, Go's Encoder a token at a time
 
 - Kind: feature

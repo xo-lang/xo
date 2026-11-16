@@ -4426,3 +4426,378 @@ test "decode and encode_value of a derived struct are Go's Unmarshal and Marshal
   }
   expect(first_bad(bad)) == []
 }
+
+/// (document, the byte its source fails at, Go's tokens strict and raw over a source giving 3 bytes a read and then the error connection reset)
+const CUTS: List[(Str, Int, Str, Str)] = [
+  ("<a>", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<a><b></a>", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<a>&nope;</a>", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<a>\u{1}</a>", 7, "err 1 illegal character code U+0001", "err 1 illegal character code U+0001"),
+  ("<a>x</a><b/>", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<a>\n<b>\n<c>&#xD800;</c>\n</b>\n</a>", 7, "err 0 connection reset", "err 0 connection reset"),
+  ("<a b='1' b='2'/>", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("</a>", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<a><![CDATA[x</a>", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("<!-- a -- b --><a/>", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<1a/>", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<a><b></b></a></a>", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q:r xmlns:p=\"x\ty\nz\"/>", 18, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<row xmlns=\"http://e.com/ns\" a=\"&#x42;\"><!-- x -- --><x:y xmlns:ns=\"a&amp;b\" a=\"2\"/><list b=\"v\"/></row>", 81, "err 1 invalid sequence \"--\" not allowed in comments", "err 1 invalid sequence \"--\" not allowed in comments"),
+  ("<!DOCTYPE html>\n<_n>&lt;x&gt;</_n>tail", 26, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><Root />", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<xmlns xmlns:x=\"&nbsp;\"/>", 21, "err 0 connection reset", "err 0 connection reset"),
+  ("<item />", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<a xml:lang=v xml:lang=\"http://e.com/ns\"><![CDATA[a]]b]]><![CDATA[a]]b]]></a><!-- t -->", 13, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<row id=>a &amp; b&#0;</x:y>", 17, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<Root b=\"1\"><a class=\"&lt;\"><é xmlns:ns=\"2\"><p:q id=\"é\"></p:q></ns:el><!-- x -- -->&lt;x&gt;</a></Root>", 83, "err 1 element <é> closed by </el>", "err 1 invalid sequence \"--\" not allowed in comments"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><row a=urn:x x:y=\"http://e.com/ns\">a &amp; b<b xml:lang=\"é\" class=\"&#65;\" /></row>", 66, "err 0 xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil", "err 0 xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<p:q a='&lt;' />", 16, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el></ns:el>", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<list/>", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><b xmlns='2' xmlns:p='&nbsp;'><item b=\"http://e.com/ns\"></item>\n  </b>", 67, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<?xm", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<list xmlns:x=\"v\"><![CDATA[<raw> & ]]></list>", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><ns:el><list>\r\n<row xmlns:ns=\"http://e.com/ns\"></row></list><_n b=\"v\"><![CDATA[<raw> & ]]></_n><p:q a=\"&#xZZ;\" class=\"a&b\"><p:q:r xmlns:p=\"v\"><![CDATA[]]><a b xmlns=\"é\" x:y=\"é\"/><1bad></1bad></p:q:r><?xml version=\"1.0\"?></p:q></ns:el>", 104, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<p:q></p:q> <x/>", 8, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><a.b-c id='x\ty\nz' x:y=\"2\"></a>", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><_n><a></a><xml:lang></xml:lang><![CDATA[x</_n>", 45, "err 0 connection reset", "err 0 connection reset"),
+  ("<é xml:lang=\"v\" class=v />tail", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<list></list>", 10, "err 0 connection reset", "err 0 connection reset"),
+  ("<b>]]><list></list></b>", 19, "err 1 unescaped ]]> not in CDATA section", "err 1 unescaped ]]> not in CDATA section"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><list id=x\ty\nz xmlns:ns='http://e.com/ns'>&lt;x&gt;<![CDATA[x</p:q>", 78, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<?xml version=\"1.1\"?><x:y class='&lt;' xmlns='&lt;'><!-- c --></x:y>", 53, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><xmlns/>", 29, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<a.b-c>a &amp; b<x:y/></a.b-c>", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<row xmlns:p=\"&#65;\"><!-- a--b --><list><![CDATA[<raw> & ]]></list></row><!-- t -->", 33, "err 1 invalid sequence \"--\" not allowed in comments", "err 1 invalid sequence \"--\" not allowed in comments"),
+  ("<list><ns:el a=\"&lt;\" x:y='a&amp;b'>wordword</ns:el><Root", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<p:q></></p:q>", 18, "err 0 connection reset", "err 0 connection reset"),
+  ("<é></é>", 7, "err 0 connection reset", "err 0 connection reset"),
+  ("<row a='v' xml:lang=\"a&amp;b\">word<x:y x:y=http://e.com/ns>a &amp; b<b b='&#xZZ;'/>&#233;</x:y></row>", 52, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<a b a=\"2\" />", 6, "err 1 attribute name without = in element", "err 1 attribute name without = in element"),
+  ("<!-- head --><é a=\"\"></é>", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><row id=\"urn:x\" class='&nbsp;'><i", 29, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<!-- head --><ns:el/>", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q class='2'><row x:y=&#xZZ;/><!----><!----></p:q>", 41, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<b xmlns:ns='a&amp;b' id=&#xZZ;><?xml version=\"1.0\"?></b>", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<é xmlns:ns=\"a&b\" class=\"&#65;\">\r\n<</é>", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<b /> <x/>", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<é>word</é>", 7, "err 0 connection reset", "err 0 connection reset"),
+  ("<b id='&#x42;'/>", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<item a='http://e.com/ns'><a><?target?></a><a.b-c xmlns:ns=\"&lt;\" xmlns:p=\"é\" /></item> <x/>", 62, "err 0 connection reset", "err 0 connection reset"),
+  ("<!-- head --><a></a><!-- t -->", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<list><1bad></1bad></list>", 19, "err 1 invalid XML name: 1bad", "err 1 invalid XML name: 1bad"),
+  ("<é", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><p:q:r id=\"&#x42;\" class=\"1\"/>", 65, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<?xml version=\"1.0\"?>\n<_n x:y=\"x\ty\nz\" xmlns:x=\"http://e.com/ns\"/>tail", 51, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el xmlns:ns=urn:x i", 16, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><b />\n", 23, "err 0 connection reset", "err 0 connection reset"),
+  ("<a.b-c id=\"v\" />", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<list xml:lang=\"http://e.com/ns\"><xml:lang><ns:el xmlns:ns=\"urn:x\" class=urn:x/><é id='http://e.com/ns' id=\"2\">a &amp; b&#x1F600;<?xml-stylesheet href='a'?></é><Root></Root></xml:lang></list>\n", 90, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<a.b-c xmlns:x=\"x\ty\nz\" id=\"&#65;\"/>", 34, "err 0 connection reset", "err 0 connection reset"),
+  ("<_n id='a&b' id='&#65;' />", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<list id=\"x\ty\nz\"/>\n", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root xmlns='2' xml:lang='http://e.com/ns'><!----><?target?></Root>", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<x:y><Root></Root>text</x:y>", 31, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y xmlns:x=\"http://e.com/ns\" b=\"a&amp;b\"><!----><![CDATA[<raw> & ]]></x:y>", 37, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><item ", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><list xmlns:ns=\"1\"/>\n", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><Root />", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("<item a=\"http://e.com/ns\" /> <x/>", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<item><![CDATA[a]]b]]><?target?><![CDATA[]]></item>", 8, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><row xmlns:x=\"2\" xmlns:x=\"2\"><!----></row>\n", 65, "err 0 connection reset", "err 0 connection reset"),
+  ("<a b='http://e.com/ns' a='a<b'><item id=http://e.com/ns b=é /></a>", 65, "err 1 unescaped < inside quoted string", "err 1 unescaped < inside quoted string"),
+  ("<item xmlns:p=\"&#65;\">&#x1F600;< id=\"http://e.com/ns\"/><_n class=\"&#65;\" /></item>", 30, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root a=\"&#x42;\" xmlns:x=\"v\"><x:y></x:y></Root>", 39, "err 0 connection reset", "err 0 connection reset"),
+  ("<é />", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<a xml:lang=\"urn:x\" id='http://e.com/ns'><b x:y=\"\"><Root xmlns=\"\"/><?xml version=\"1.0\"?></b><!-- a--b --><![CDATA[a]]b]]></a>\n", 93, "err 0 connection reset", "err 0 connection reset"),
+  ("<!-- head --><é b='http://e.com/ns' />", 18, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><1bad></1bad>", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><b> <Root><!-- c --><![CDATA[<raw> & ]]><a /></Root></b>", 23, "err 0 connection reset", "err 0 connection reset"),
+  ("<a xmlns:p=''><?xml version=\"1.0\"?>word</a>", 37, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><ns:el id=\"&#65;\" />\n", 47, "err 0 xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil", "err 0 xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<a><list><ns:el id=\"1\" id='&lt;'>&lt;x&gt;<![CDATA[xé日</ns:el></list></é>", 18, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y b=1 class=\"1\"><</x:y>", 16, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><_n>word</_n>", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><xml:lang xmlns:p='&#x42;' id=\"2\" />", 50, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<Root a=&#xZZ;><![CDATA[", 7, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el xmlns:x=\"&#x42;\"/>\n", 14, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><b class=\"a&amp;b\"><!-- a--b --><b id=http://e.com/ns></b></b> <x/>", 42, "err 0 xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil", "err 0 xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<row> text</row", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<row><?pi data?><!", 10, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el id=a&amp;b/>", 15, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<?xml version=\"1.1\"?><a.b-c a=\"é\">\n  </a.b-c> <x/>", 18, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"", 9, "err 0 connection reset", "err 0 connection reset"),
+  ("<xmlns id='&nbsp;'><_n class=\"&#x42;\"><![CDATA[a]]b]]><?xml version=\"1.0\"?></_n><![CDATA[<raw> & ]]></xmlns>", 22, "err 1 invalid character entity &nbsp;", "err 1 invalid character entity &nbsp;"),
+  ("<_n xmlns=\"&lt;\" b=\"v\">text</_n>", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><_", 31, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<ns:el x:y=\"\" xmlns:p=\"é\" />", 38, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y xmlns:p=\"&#x42;\">text</list>", 23, "err 0 connection reset", "err 0 connection reset"),
+  ("<", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><list /><!-- t -->", 40, "err 0 connection reset", "err 0 connection reset"),
+  ("<_n xmlns:x=\"&#x42;\"></_n>", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<row a='2' xmlns:x=\"x\ty\nz\" />", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><é><Root /></é>", 8, "err 0 connection reset", "err 0 connection reset"),
+  ("<xmlns id=\"http://e.com/ns\"> <!-- c --></xmlns>", 26, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el b=\"x\ty\nz\" xml:lang=\"http://e.com/ns\"/><!-- t -->", 10, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><a></a>", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<item xmlns:p='&lt;' />", 17, "err 0 connection reset", "err 0 connection reset"),
+  ("<a><![CDATA[", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<item a=\"a&amp;b\" xmlns:ns=\"http://e.com/ns\"></item>", 43, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><a />", 36, "err 0 connection reset", "err 0 connection reset"),
+  ("<é xmlns:p=\"&lt;\"><ns:el/>\r\n</é>", 32, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><ns:el xml:lang=\"é\" id=\"1\"><xml:lang b=é /><?pi data?></ns:el>", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q id=\"\" id=\"&lt;\"><p:q xmlns:ns=\"v\" xmlns=\"v\"/><list><!----> </list><!-- x -- --></p:q>", 7, "err 0 connection reset", "err 0 connection reset"),
+  ("<item class=\"1\" a='' />", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><item a=\"1\" id='&#65;'></item> <x/>", 60, "err 0 connection reset", "err 0 connection reset"),
+  ("<list id=\"\" xmlns:p=\"é\">a &amp; b<row xmlns=\"http://e.com/ns\" x:y=\"&#x42;\"><![CDATA[]]>&#233;</row></list>", 92, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><_n id=\"urn:x\"/>\n", 14, "err 0 connection reset", "err 0 connection reset"),
+  ("<a.b-c><![CDATA[<raw> & ]]><?xml version=\"1.0\"?></a.b-c>", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<list></list>", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang id=http://e.com/ns/>", 25, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<xml:lang /><!-- t -->", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<item></item>", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<!-- head --><xml:lang />", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<x:y xmlns=&#xZZ;><a xmlns:p=\"1\" xmlns:p=\"urn:x\"><item xmlns:x=\"&nbsp;\">a &amp; b </item></a>< a=a&amp;b></>&lt;x&gt;a & b</x:y>", 61, "err 2 unquoted or missing attribute value in element", "err 2 unquoted or missing attribute value in element"),
+  ("<!-- head --><a.b-c a=\"a&amp;b\"/>", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("<item xml:lang=\"v\" />", 16, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><b xmlns:x='a&amp;b'><!-- c --></b>", 37, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang><![CDATA[x<item xmlns:x=\"1\"></item>text</xml:lang>", 51, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><item><![CDATA[<raw> & ]]>&quot;&apos;<?xml-stylesheet href='a'?></item", 47, "err 0 connection reset", "err 0 connection reset"),
+  ("<><ns:el xml:lang=\"1\"></ns:el></>", 31, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<p:q:r b=\"a&amp;b\"><item /><!-- a--b --><1bad xml:lang=\"v\" xmlns:p=\"a\"b\"><row><b xmlns=\"http://e.com/ns\"/><a.b-c b=\"&nbsp;\" x:y=\"\" /><a/></row>a &amp; b</1bad></p:q:r>\n", 109, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<b xmlns:p=\"x\ty\nz\" xmlns:ns=\"&lt;\"><?xml version=\"1.0\"?><a x:y=é/></b>", 49, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y xmlns:ns=", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el>&quot;&apos;<![CDATA[a]]b]]></ns:el>", 18, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><a.b-c/>tail", 48, "err 0 xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil", "err 0 xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<_n xmlns=\"\" />", 8, "err 0 connection reset", "err 0 connection reset"),
+  ("<row />", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<list>&#x1F600;<xml:lang class=\"urn:x\"><!-- a--b -->&<![CDATA[]]></xml:lang>< id=\"&#65;\"><a b x:y='&#65;' xml:lang=\"é\">text<Root><?xml version=\"1.0\"?><!-- c --></Root><xml:lang b=", 164, "err 1 invalid sequence \"--\" not allowed in comments", "err 1 invalid sequence \"--\" not allowed in comments"),
+  ("<_n> <?target?><p:q>text<x:y class=\"a&b\"><![CDATA[x</list></p:q></_n>", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<list a=\"&nbsp;\" />", 7, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><xml:lang x:y=\"x\ty\nz\">texta & b<xml:lang id=\"http://e.com/ns\" xmlns:p=\"&", 79, "err 2 invalid character entity & (no semicolon)", "err 2 invalid character entity & (no semicolon)"),
+  ("<p:q:r a=\"http://e.com/ns\" xmlns:x=\"v\"></p:q:r>", 19, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<b xml:lang=\"1\"></b>", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("< class=\"urn:x\">]]></>", 22, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<b xmlns:p=\"1\" id='&#65;' />", 8, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<x:y x:y=\"2\">&quot;&apos;text</x:y>", 36, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y x:y='x\ty\nz' /><!-- t -->", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xm", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<é x:y=\"http://e.com/ns\"/>\n", 8, "err 0 connection reset", "err 0 connection reset"),
+  ("<list><!-- x -- --></list>\n", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><Root></Root>", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y xmlns:ns=\"é\" id='a&amp;b'><item xml:lang=\"x\ty\nz\" b=\"\"></item></x:y>", 25, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><b>\r\n</xml:lang>", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<é", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<é class=\"2\"/>", 14, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root></Root>", 10, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root xmlns:p='2'><Root>&#233;<![CDATA[<raw> & ]]></Root>\r\n</Root> <x/>", 39, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q></p:q>", 7, "err 0 connection reset", "err 0 connection reset"),
+  ("<", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<a.b-c x:y='&lt;'/>", 19, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el/>", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang class=\"v\" b=\"x\ty\nz\"><!-- c --> &lt;x&gt;</xml:lang>", 35, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang><row", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<item />tail", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<list xmlns:p=\"a\"b\" />", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<!-- head --><list></list>", 15, "err 0 connection reset", "err 0 connection reset"),
+  ("<item xmlns:ns=\"é\"><_n></_n><item b=\"x\ty\nz\" b=\"a&amp;b\"></item>\r\n</item>", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<b id=\"\" xmlns:p=\"a&amp;b\"><!-- a--b -->&lt;x&gt;&quot;&apos;</x:y>", 27, "err 0 connection reset", "err 0 connection reset"),
+  ("<a xmlns:ns=\"v\"></a>", 15, "err 0 connection reset", "err 0 connection reset"),
+  ("<é class=\"http://e.com/ns\"/>", 10, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><p:q x:y='a<b' />", 52, "err 1 unescaped < inside quoted string", "err 1 unescaped < inside quoted string"),
+  ("<?xml v", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n< id=\"1\"></>", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<!-- head --><a b xmlns:x=\"v\" xmlns:ns='v'><a b xml:lang=\"&#x42;\" /><p:q:r><p:q>é日a & bé日</p:q></p:q:r></a b>", 18, "err 0 connection reset", "err 0 connection reset"),
+  ("<a.b-c xml:lang=\"&#x42;\"><![CDATA[a]]b]]><Root id='&lt;'/></x:y>", 30, "err 0 connection reset", "err 0 connection reset"),
+  ("<list a=\"v\"></list>", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q xmlns:x=\"&#x42;\" x:y=http://e.com/ns /> <x/>", 39, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<a.b-c xmlns:x=http://e.com/ns xmlns:ns=\"&#xZZ;\">&quot;&apos;<!-- x -- --></a.b-c>", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root xmlns:ns=\"http://e.com/ns\"></Root>", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<list></x></", 10, "err 1 element <list> closed by </x>", "err 0 connection reset"),
+  ("<list id=\"a&b\"><b>]]>a & b</row>]]>&quot;&apos;</list>", 47, "err 1 invalid character entity &b (no semicolon)", "err 1 invalid character entity &b (no semicolon)"),
+  ("<?xml version=\"1.1\"?><Root />", 28, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<!-- head --><p:q:r xmlns='v' xmlns:p=\"&lt;\"><x:y></x:y><?pi data?><?pi data?></p:q:r>", 85, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<é b='&#x42;' b='urn:x'/> <x/>", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("<xmlns><?target?><b b=\"v\"/></xmln", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y>\n  </x:y>", 8, "err 0 connection reset", "err 0 connection reset"),
+  ("<row><p:q:r b=\"x\ty\nz\"></p:q:r></row>tail", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><item xmlns:ns=\"1\"/>", 32, "err 0 connection reset", "err 0 connection reset"),
+  ("<list/>", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<list id='v'></list>", 17, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y b=urn:x> </x:y> <x/>", 9, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<ns:el><a.b-c id='' id=\"http://e.com/ns\"></a.b-c></ns:el>", 32, "err 0 connection reset", "err 0 connection reset"),
+  ("<it", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><ns:el>text&#233;<!-- x -- --></ns:el>", 60, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root xmlns=\"1\"/>", 14, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root xmlns:p=\"urn:x\">word&bogus;</Root>", 38, "err 1 invalid character entity &bogus;", "err 1 invalid character entity &bogus;"),
+  ("<xml:lang><item xmlns:p='&#x42;' x:y=\"&#x42;\"></item></xml:lang>", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root xmlns:ns=\"urn:x\"><x:y b=\"a&amp;b\" xmlns:ns=\"a&amp;b\"><!----><ns:el/></a><Root id=\"v\">&#x1F600;&quot;&apos;\r\n</Root></Root>tail", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<x:y xmlns:x=\"x\ty\nz\"/>\n", 33, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y a=\"a\"b\" x:y=\"é\"/>", 9, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<é xmlns='a<b'><?xml-stylesheet href='a'?><p:q xmlns:ns=\"&lt;\" b=\"urn:x\"><list xmlns=\"x\ty\nz\"><!-- x -- --><?xml version=\"1.0\"?></list>\n  &#233;</p:q></é>", 35, "err 2 unescaped < inside quoted string", "err 2 unescaped < inside quoted string"),
+  ("<xml:lang></xml:lang>", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<a.b-c xmlns:p=\"http://e.com/ns\" xmlns:", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<row/>", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<a.b-c />", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang a=\"&lt;\" xml:lang=2/>", 27, "err 0 connection reset", "err 0 connection reset"),
+  ("<a.b-c><list a='&#x42;'><xml:lang id=\"&#xZZ;\" /><![CDATA[x</list></a.b-c>", 28, "err 0 connection reset", "err 0 connection reset"),
+  ("<a class=\"urn:x\">&#x1F600;</a>", 9, "err 0 connection reset", "err 0 connection reset"),
+  ("< xmlns:p=\"&#x42;\" xmlns:x=\"\"><<?xml-stylesheet href='a'?></> <x/>", 13, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<_n />", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<_n />", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("< class=", 4, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<a a=\"x\ty\nz\" />", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<a><![CDATA[<raw> & ]]></a>", 12, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang xmlns=\"x\ty\nz\" xmlns:p=\"\" />", 15, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el b=\"http://e.com/ns\"/>", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<a.b-c b=\"x\ty\nz\" />", 18, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el xmlns:x=\"urn:x\"><![CDATA[xtext&#0;</ns:el>", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<a.b-c><?xml version=\"1.0\"?></a.b-c>", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<list></list>", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<b x:y=\"é\" />", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y id=\"1\"></x:y>", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><a b=http://e.com/ns/>\n", 14, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><item id=\"a&b\"><x:y xmlns=\"&nbsp;\"><!-- a--b --><![CDATA[]]>]]></x:y></item>", 29, "err 0 connection reset", "err 0 connection reset"),
+  ("<xmlns xmlns:x=\"v\" id=\"\">&lt;x&gt;\r\n&nbsp;text</xmlns>", 52, "err 2 invalid character entity &nbsp;", "err 2 invalid character entity &nbsp;"),
+  ("<?xml version=\"1.1\"?><xml:lang b=\"http://e.com/ns\" x:y=''></xml:lang>", 35, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<list></list>", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<é x:y=\"a&amp;b\"><?pi data?><!----><p:q id=&#x42; xmlns:ns=\"v\"></p:q></é>", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<row xmlns:p=http://e.com/ns/> <x/>", 18, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><xml:lang xmlns:ns='http://e.com/ns'>\r\n&#x1F600;</xml:lang>", 9, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root/>", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><row xmlns=\"a&amp;b\"><?target?></row>", 16, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang xmlns=\"&#x42;\"/>", 26, "err 0 connection reset", "err 0 connection reset"),
+  ("< xml:lang=\"v\"><a.b-c id=\"&#x42;\" /> </>", 16, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<é>\r\n</é>", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<?", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang><a xmlns=\"\"><x:y id=\"x\ty\nz\"/>&#x1F600;<list/></a>< class=&#65;> a &amp; b<x:y id=\"urn:x\" xml:lang='http://e.com/ns'>word</x:y></></xml:lang><!-- t -->", 104, "err 2 expected element name after <", "err 2 expected element name after <"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?></>", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><_n xmlns:p=\"é\"><!----></_n>", 48, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<!DOCTYPE html>\n<a b=\"http://e.com/ns\" xmlns=''/>", 17, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml:lang></xml:lang>\n", 58, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q b=\"\" x", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<xmlns/>", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><xml:lang id=\"x\ty\nz\"/>", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<ns:el b=\"&#x42;\" id=\"a&amp;b\">\n  &#x1F600;&#x1F600;</ns:el>", 81, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y xmlns:p=\"\" xmlns:x=\"v\">a &amp; b<!-- c --></x:y><!-- t -->", 17, "err 0 connection reset", "err 0 connection reset"),
+  ("<row b=\"&#xZZ;\" xmlns:x=\"v\"><xml:lang /></row>", 10, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<Ro", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<item", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root id=\"a&amp;b\"><!-- c --></Root>", 25, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang xmlns:x='' b=\"urn:x\"><!-- x -- --><a class=&#xZZ; id=\"a\"b\"><list>]]></list>é日", 10, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><xmlns a='&#65;' />", 39, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y xml:lang=\"a&amp;b\" />", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<é x:y=\"&#65;\" x:y=\"1\">&#233;<!-- x -- --><![CDATA[a]]b]]></é>", 5, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><b class=\"a&amp;b\" xml:lang=\"http://e.com/ns\"></b>", 56, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<list></list>", 1, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang id=\"&#65;\" xmlns:ns=\"1\">\r\n<p:q><![CDATA[a]]b]]>\r\n</p:q></xml:lang>", 53, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q class='v' xmlns:p=\"http://e.com/ns\"/>", 35, "err 0 connection reset", "err 0 connection reset"),
+  ("<list id='x\ty\nz'>\n  <é x:y=\"urn:x\"></_n></list>", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><row><?xml version=\"1.0\"?></row>", 45, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><Root b=\"é\"><1bad id=\"2\"/></x></Root>", 10, "err 0 connection reset", "err 0 connection reset"),
+  ("<é xmlns:x='&#xZZ;' a=\"http://e.com/ns\" />", 38, "err 1 invalid character entity &#x (no semicolon)", "err 1 invalid character entity &#x (no semicolon)"),
+  ("<Root x:y=\"http://e.com/ns\"/><!-- t -->", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("< xmlns:ns=\"é\"/>", 4, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<!DOCTYPE html>\n<xml:lang>&#", 4, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<p:q></p:q>\n", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el x:y=\"&lt;\"></ns:el>", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q class=\"2\" xml:lang=\"&#65;\">a &amp; b</p:q>", 20, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><b>&#233;</b>", 6, "err 0 connection reset", "err 0 connection reset"),
+  ("<b xmlns:p='&nbsp;'/>tail", 22, "err 1 invalid character entity &nbsp;", "err 1 invalid character entity &nbsp;"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><xml:lang xmlns:ns=\"&#x42;\" xmlns='http://e.com/ns'/>", 73, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><list xml:lang=\"&#xZZ;\" xmlns:ns='&lt;'>&<?target?><?target?></list> <x/>", 39, "err 0 connection reset", "err 0 connection reset"),
+  ("<Root xmlns:ns='1' x:y=\"&lt;\"><![CDATA[]]><!-- x -- --></Root>", 47, "err 0 connection reset", "err 0 connection reset"),
+  ("<b id=&#65; xmlns=2><!-- c --><a.b-c xmlns=''/></b>", 24, "err 1 unquoted or missing attribute value in element", "err 1 unquoted or missing attribute value in element"),
+  ("<!-- head --><x:y xml:lang=\"é\" b=\"urn:x\"><![CDATA[<raw> & ]]>&#x1F600;&bogus;</x:y>", 68, "err 0 connection reset", "err 0 connection reset"),
+  ("<é xml:lang=\"a&amp;b\"/>tail", 11, "err 0 connection reset", "err 0 connection reset"),
+  ("<x:y class=\"é\"><!----></x:y>", 25, "err 0 connection reset", "err 0 connection reset"),
+  ("<p:q:r class=\"urn:x\" x:y=''><a.b-c b=\"&lt;\"><!-- x -- --><?target?><!-- x -- --></a.b-c><xmlns><!-- x -- --><row></row></xmlns></p:q:r>", 121, "err 1 expected element name after <", "err 1 expected element name after <"),
+  ("<!DOCTYPE html>\n<_n xml:lang=\"v\" class=\"&#65;\"/>", 17, "err 0 connection reset", "err 0 connection reset"),
+  ("<row xml:lang='&lt;' />", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("<xml:lang><!-- a--b --> </xml:lang>", 21, "err 1 invalid sequence \"--\" not allowed in comments", "err 1 invalid sequence \"--\" not allowed in comments"),
+  ("<Root></Root>", 0, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.0\"?>\n<_n a=\"&#x42;\"></_n>", 34, "err 0 connection reset", "err 0 connection reset"),
+  ("<a><![CDATA[x<?target?>< xml:lang=\"x\ty\nz\"> </></a>", 36, "err 0 connection reset", "err 0 connection reset"),
+  ("<?xml version=\"1.1\"?><row xmlns=\"http://e.com/ns\" id='é' />", 52, "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported", "err 0 xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<_n id=\"urn:x\"></_n>tail", 14, "err 0 connection reset", "err 0 connection reset"),
+  ("<ns:el b='&nbsp;' xmlns='http://e.com/ns' />", 35, "err 1 invalid character entity &nbsp;", "err 1 invalid character entity &nbsp;"),
+  ("<ro", 3, "err 0 connection reset", "err 0 connection reset"),
+  ("<!-- head --><item id=\"a&amp;b\" xmlns='http://e.com/ns'/>", 37, "err 0 connection reset", "err 0 connection reset"),
+  ("<!DOCTYPE html>\n<1bad/>", 2, "err 0 connection reset", "err 0 connection reset"),
+  ("<a xmlns:p=\"&lt;\" xml:lang=1>&quot;&apos;</a><!-- t -->", 13, "err 0 connection reset", "err 0 connection reset"),
+  ("<b b", 3, "err 0 connection reset", "err 0 connection reset"),
+]
+
+/// A Stream's tokens over doc given n bytes a read, as reader_toks shows
+/// them; cut >= 0: the source fails with connection reset after cut bytes.
+fn stream_toks(doc: Str, n: Int, cut: Int, strict: Bool, raw: Bool) -> Str {
+  let b = doc.bytes()
+  let end = if cut < 0 { b.len() } else { cut }
+  let at = Atomic[Int].new(0)
+  let src = fn() -> Bytes? ! Str {
+    let i = at.add(n) - n
+    if i >= end {
+      if cut >= 0 {
+        return Err("connection reset")
+      }
+      return None
+    }
+    Some(b[i..(if i + n < end { i + n } else { end })])
+  }
+  var s = if raw { xml.raw_stream(src) } else { xml.stream(src, strict: strict) }
+  var out: List[Str] = []
+  while true {
+    match s.next() {
+      Ok(Some(t)) => out.push(tok_text(t))
+      Ok(None) => return out.join(" ")
+      Err(e) => {
+        let again = match s.next() {
+          Err(e2) => e2.line == e.line && e2.msg == e.msg
+          _ => false
+        }
+        return if again { "err ${e.line} ${e.msg}" } else { "error not repeated" }
+      }
+    }
+  }
+  ""
+}
+
+test "a Stream gives a Reader's tokens however its source cuts the document" {
+  var bad: List[(Str, Int, Str, Str)] = []
+  for (doc, strict, lenient, raw, _enc) in DOCS {
+    for n in [1, 7, 4096] {
+      let got = stream_toks(doc, n, -1, true, false)
+      if got != strict {
+        bad.push((doc, n, got, strict))
+      }
+      let got2 = stream_toks(doc, n, -1, false, false)
+      if got2 != lenient {
+        bad.push((doc, n, got2, lenient))
+      }
+      let got3 = stream_toks(doc, n, -1, true, true)
+      if got3 != raw {
+        bad.push((doc, n, got3, raw))
+      }
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "a Stream whose source fails gives the tokens before the failure, then the failure" {
+  var bad: List[(Str, Int, Str, Str)] = []
+  for (doc, cut, strict, raw) in CUTS {
+    let got = stream_toks(doc, 3, cut, true, false)
+    if got != strict {
+      bad.push((doc, cut, got, strict))
+    }
+    let got2 = stream_toks(doc, 3, cut, true, true)
+    if got2 != raw {
+      bad.push((doc, cut, got2, raw))
+    }
+  }
+  expect(CUTS.len()) == 300
+  expect(first_bad(bad)) == []
+}

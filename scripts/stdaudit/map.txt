@@ -1328,7 +1328,7 @@ url.* = not planned: error types (UrlErr, EscapeErr) and binary marshalers
 # encoding/xml: std/xml
 xml.Marshal = std/xml.encode_value
 xml.Unmarshal = std/xml.decode
-xml.NewDecoder = std/xml.reader
+xml.NewDecoder = std/xml.stream (over an io.Reader; reader over a whole Str)
 xml.Decoder = std/xml.Reader
 xml.Decoder.Token = std/xml.Reader.next
 xml.Decoder.RawToken = std/xml.raw_reader

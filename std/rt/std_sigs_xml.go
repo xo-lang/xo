@@ -6,23 +6,26 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Xml_XmlErr, *Task) string                                = (*Xml_XmlErr).M_display
-	_ func(*Task, string, bool) Result[List[Xml_Token], Xml_XmlErr]  = Xml_tokens
-	_ func(*Task, string) Result[List[Xml_Token], Xml_XmlErr]        = Xml_raw_tokens
-	_ func(*Task, string, bool) Xml_Reader                           = Xml_reader
-	_ func(*Task, string) Xml_Reader                                 = Xml_raw_reader
-	_ func(*Xml_Reader, *Task) Result[Option[Xml_Token], Xml_XmlErr] = (*Xml_Reader).M_next
-	_ func(*Task, string) Xml_Writer                                 = Xml_writer
-	_ func(*Xml_Writer, *Task, Xml_Token) Result[Unit, Xml_XmlErr]   = (*Xml_Writer).M_token
-	_ func(*Xml_Writer, *Task, Xml_Element) Result[Unit, Xml_XmlErr] = (*Xml_Writer).M_element
-	_ func(*Xml_Writer, *Task) string                                = (*Xml_Writer).M_take
-	_ func(*Xml_Writer, *Task) Result[Unit, Xml_XmlErr]              = (*Xml_Writer).M_close
-	_ func(*Task, string, bool) Result[Xml_Element, Xml_XmlErr]      = Xml_parse
-	_ func(*Xml_Element, *Task, string) Option[string]               = (*Xml_Element).M_attr
-	_ func(*Xml_Element, *Task, string) Option[Xml_Element]          = (*Xml_Element).M_child
-	_ func(*Xml_Element, *Task, string) List[Xml_Element]            = (*Xml_Element).M_children_named
-	_ func(*Xml_Element, *Task) string                               = (*Xml_Element).M_text
-	_ func(*Xml_Element, *Task, string) Result[string, Xml_XmlErr]   = (*Xml_Element).M_encode
-	_ func(*Task, string) string                                     = Xml_escape
-	_ func(*Task, *StrBuilder, string)                               = Xml_escape_to
+	_ func(*Xml_XmlErr, *Task) string                                         = (*Xml_XmlErr).M_display
+	_ func(*Task, string, bool) Result[List[Xml_Token], Xml_XmlErr]           = Xml_tokens
+	_ func(*Task, string) Result[List[Xml_Token], Xml_XmlErr]                 = Xml_raw_tokens
+	_ func(*Task, string, bool) Xml_Reader                                    = Xml_reader
+	_ func(*Task, string) Xml_Reader                                          = Xml_raw_reader
+	_ func(*Xml_Reader, *Task) Result[Option[Xml_Token], Xml_XmlErr]          = (*Xml_Reader).M_next
+	_ func(*Task, func(*Task) Result[Option[Bytes], string], bool) Xml_Stream = Xml_stream
+	_ func(*Task, func(*Task) Result[Option[Bytes], string]) Xml_Stream       = Xml_raw_stream
+	_ func(*Xml_Stream, *Task) Result[Option[Xml_Token], Xml_XmlErr]          = (*Xml_Stream).M_next
+	_ func(*Task, string) Xml_Writer                                          = Xml_writer
+	_ func(*Xml_Writer, *Task, Xml_Token) Result[Unit, Xml_XmlErr]            = (*Xml_Writer).M_token
+	_ func(*Xml_Writer, *Task, Xml_Element) Result[Unit, Xml_XmlErr]          = (*Xml_Writer).M_element
+	_ func(*Xml_Writer, *Task) string                                         = (*Xml_Writer).M_take
+	_ func(*Xml_Writer, *Task) Result[Unit, Xml_XmlErr]                       = (*Xml_Writer).M_close
+	_ func(*Task, string, bool) Result[Xml_Element, Xml_XmlErr]               = Xml_parse
+	_ func(*Xml_Element, *Task, string) Option[string]                        = (*Xml_Element).M_attr
+	_ func(*Xml_Element, *Task, string) Option[Xml_Element]                   = (*Xml_Element).M_child
+	_ func(*Xml_Element, *Task, string) List[Xml_Element]                     = (*Xml_Element).M_children_named
+	_ func(*Xml_Element, *Task) string                                        = (*Xml_Element).M_text
+	_ func(*Xml_Element, *Task, string) Result[string, Xml_XmlErr]            = (*Xml_Element).M_encode
+	_ func(*Task, string) string                                              = Xml_escape
+	_ func(*Task, *StrBuilder, string)                                        = Xml_escape_to
 )

@@ -93,7 +93,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | encoding/csv | std/csv | done | Native port (decision 0164); `parse` in memory, and `csv.reader(file)` streams records from a File (2026-11-03). Records match Go's Reader (FieldsPerRecord -1) on 2,022 texts (2026-10-20); Go's options, error texts, and the Reader's `field_pos` and `input_offset` (FieldPos, InputOffset, 2026-11-15) match Go on the corpus's 2,812 texts. |
 | encoding/pem | std/crypto | done | pem_decode, pem_encode (decision 0285). |
 | encoding/asn1 | std/asn1 (std/native/llrt/asn1.xo for X.509) | done | `parse`, `parse_prefix` and `Value.der` over a Value tree with Go's DER rules (decision 0601 stage 1). Missing: struct marshaling (`derive Asn1`, stage 2). Last verified: 2026-11-15. |
-| encoding/xml | std/xml, std/xmlcodec (derive Xml) | partial | Go's Decoder tokens (strict, HTML-lenient, raw), an element tree, and the Encoder, on every backend (decision 0314, 2026-10-21). Missing: Marshal and Unmarshal of structs (stage 2), streaming. |
+| encoding/xml | std/xml, std/xmlcodec (derive Xml) | done | Go's Decoder tokens (strict, HTML-lenient, raw), an element tree, and the Encoder, on every backend (decision 0314, 2026-10-21); Marshal and Unmarshal of structs (derive Xml, `encode_value` and `decode`); streaming over a source (`stream`, NewDecoder over an io.Reader, 2026-11-16). |
 | encoding/gob | none | not planned | Go specific wire format; Xo programs exchange JSON. |
 | encoding/ascii85 | none | not planned | No backend use (PostScript and PDF). |
 | encoding | none | not planned | Interfaces only; Xo uses derive (Json, SqlRow). |
