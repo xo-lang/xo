@@ -5172,13 +5172,17 @@ a checkout of the repository, in two steps:
     #    runtime builds on the amd64 offload host (Docker Desktop's amd64
     #    emulation failed on 2026-11-10,
     #    gotchas/docker-amd64-emulation-exec-format.md)
-    XO_RACE_REMOTE_LINUX_AMD64=$HOME/xo-lead/agents/race-remote.sh \
+    #    XO_PUSH_LOCK is required (since 2026-11-15): main cannot move
+    #    during the cut, so the seed is built from the commit main gets
+    XO_PUSH_LOCK=$HOME/xo-lead/locks/push \
+      XO_RACE_REMOTE_LINUX_AMD64=$HOME/xo-lead/agents/race-remote.sh \
       scripts/seed-cut.sh X.Y.0 /tmp/notes-X.Y.0.txt WORKDIR
     # 3. upload, latest.txt last (a minute)
     scripts/seed-upload.sh WORKDIR
     # 3b. install on the offload hosts: seed-upload.sh runs
     #     scripts/lead/seed-place.sh WORKDIR/out itself (arm64 hosts 1 to 4,
-    #     WSL, Windows, windows/arm64; each checked with `xo version`);
+    #     WSL, Windows, windows/arm64; each checked with `xo version`,
+    #     then its OFF_SEED pointed at it);
     #     on a failure rerun the line it prints (SEED_PLACE_HOSTS=...).
     #     Gates pick the newest ancestor seed on a host, so a host left
     #     out keeps building with the old seed and seedbuild fails

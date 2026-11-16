@@ -262,8 +262,10 @@ not restart; the Mac's known_hosts entry changes with the host key):
 - the seeds: each private seed in `/work/seed/xo-SEED-linux-arm64`
   (newest 0.52.0-38164047 on hosts 1 to 4; last verified: 2026-11-15);
   a gate's remote builds with the newest seed there that is an ancestor
-  of its commit, and `OFF_SEED` (0.50.1) is the fallback for jobs that
-  name it. seed-upload.sh unpacks each new seed on every host
+  of its commit (by the commit in the directory's name: the host's
+  repository has no tags), and `OFF_SEED` (0.52.0 on the arm64 hosts
+  since 2026-11-15) is the one jobs name. seed-upload.sh unpacks each new
+  seed on every host and points `OFF_SEED` at it
   (scripts/lead/seed-place.sh; toolchain.md "Cutting a seed" step 3b). The base of a
   comparison does not follow the seed (2026-11-03): `alloc-split.sh`'s
   base server is built by `ALLOC_BASE_XO` (the Mac build: a darwin xo,

@@ -19,7 +19,7 @@
 #   3. the gate: xo built from the bump (go run ./scripts/xobuild) builds
 #      and runs hello, and the self rebuild fixed point holds
 #      (scripts/bootstrap-xo.sh, s2 and s3 identical)
-#   4. push the commit to main (refused if main moved: rerun), then the
+#   4. push the commit to main (refused: the cut stops), then the
 #      annotated tag vVERSION with NOTES, pushed (a tag, not a release)
 #   5. darwin-arm64: xo at clang -O2 and ThreadSanitizer's runtime
 #      (scripts/race-runtime.sh, into the tree's lib/xo/race), packed by
@@ -61,11 +61,10 @@
 # containers, checked before anything is built (2026-11-10: Docker
 # Desktop answered "exec format error" and the 0.46.0 cut failed at step 6,
 # gotchas/docker-amd64-emulation-exec-format.md).
-# Without the lock (2026-11-06), a push refused because main moved puts
-# the version commit on the new main in a worktree of its own, checks that
-# it changes only the version files, and pushes that; the tag stays on the
-# gated commit the seed is built from (off main's first parent line then),
-# and its message names the commit main got.
+# A cut of X.Y.0 requires the lock (2026-11-15): without it main moved
+# during the 0.52.0 cut, the version commit was copied onto the newer
+# main, and the seed and tag stayed on the gated commit off main, which
+# the hosts' gates never took. A push refused under the lock stops the cut.
 set -euo pipefail
 
 die() { echo "seed-cut: $*" >&2; exit 1; }
@@ -97,6 +96,13 @@ else
   echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.0$' || die "version $version: want X.Y.0"
   [ -s "$notes" ] || die "$notes: write the tag's message first"
   head -1 "$notes" | grep -qx "Xo v$version" || die "$notes: its first line must be \"Xo v$version\""
+  # the push lock, so main cannot move between step 1 and step 4's push
+  # and the seed is built from the commit main gets (2026-11-15: 0.52.0
+  # ran without it, main moved, and the seed and tag stayed on 454882c7
+  # off main while main got bc8d7e8b; the hosts' gates, which take a seed
+  # only when its commit is an ancestor, kept 0.51.1)
+  [ "$dry" = 1 ] || [ -n "${XO_PUSH_LOCK:-}" ] ||
+    die "set XO_PUSH_LOCK to pushq's push lock (XO_PUSH_LOCK=\$HOME/xo-lead/locks/push): without it main can move during the cut and the seed's commit is not main's"
 fi
 # heavy.sh takes NAME before the command: without it the first heavy step
 # ran `-c` as the command and failed after the 9 minute -short step
@@ -255,29 +261,13 @@ elif [ "$dry" = 1 ]; then
   step "4. dry run: not pushing $commit, no tag"
 else
   step "4. push $commit to main, tag v$version"
-  pushed=$commit
   cp "$notes" "$work/tag-notes.txt"
-  if ! git push -q origin HEAD:main 2>"$log/push.log"; then
-    # main moved since step 1: put the version commit on the new main in a
-    # worktree of its own (the tree stays at $commit, which steps 2 and 3
-    # gated and steps 5 and 6 build), check that it changes only the
-    # version files, and push that; the tag stays on $commit, whose tree
-    # is the one gated and built (a tag needs not be on main's first parent
-    # line), so the seed's source is the tag's, and its message names both
-    [ "$prebumped" = 0 ] || die "push refused and main's version commit was made by hand: rerun with a new WORKDIR"
-    git fetch -q origin
-    onto=$work/push
-    rm -rf "${onto:?}"; git worktree prune
-    git worktree add -q --detach "$onto" origin/main
-    ( cd "$onto" && git cherry-pick "$commit" ) > "$log/push.log" 2>&1 ||
-      { tail "$log/push.log"; die "the version commit does not apply to the new main"; }
-    pushed=$(git -C "$onto" rev-parse HEAD)
-    [ "$(git -C "$onto" diff --name-only origin/main "$pushed" | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo spec/core.md spec/std.md std/VERSION " ] ||
-      die "the rebased version commit changes more than the version files"
-    git -C "$onto" push -q origin HEAD:main || die "push refused twice (main moved again?): rerun with a new WORKDIR"
-    git worktree remove --force "$onto"
-    printf '\nThis tag is %s, the gated commit the seed was built from; main moved during the cut, so its version commit landed on main as %s (the same version files on the newer main).\n' "$commit" "$pushed" >> "$work/tag-notes.txt"
-  fi
+  # under the push lock main cannot move: a refused push means a push
+  # bypassed the lock, and the seed would be built from a commit main
+  # never gets, so the cut stops (no copy of the version commit onto the
+  # newer main since 2026-11-15; see the XO_PUSH_LOCK check)
+  git push -q origin HEAD:main 2>"$log/push.log" ||
+    { cat "$log/push.log" >&2; die "push of $commit refused (main moved under the push lock?): nothing was tagged; rerun with a new WORKDIR"; }
   git tag -a "v$version" -F "$work/tag-notes.txt" "$commit"
   git push -q origin "v$version"
   if [ -n "$locked" ]; then
