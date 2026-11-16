@@ -61,8 +61,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   free (30; 25 on host 1, whose disk is 89 GB), cheapest to lose first:
   ~/.cache/xo build, testcc and testbin, this user's /tmp `Test*`,
   `xo-*` and `go-build*` dirs and `prog-*.o` objects idle 3 hours, backend, gocache, checkout entries (idle 12
-  hours, or past the newest 8), Go's build cache, then `/work/in/*.bundle`
-  files idle 6 hours. Then each cache is held under a cap (gocache 8 GB,
+  hours, or past the newest 8), Go's build cache, then this user's
+  `/work/in` entries (bundles, put files, a job's scratch tree) idle 6
+  hours that no process works in (every entry since 2026-11-16: two
+  scratch trees a killed job left held 36.6 GB of host 1's 89). Then each cache is held under a cap (gocache 8 GB,
   backend 4, testbin 2, testcc 4, build 1, go-build 3; testcc was
   uncapped until 2026-11-16, when it held 16 and 12 GB on hosts 3 and 4).
   On hosts 3 and 4 (containers on the Mac) ~/.cache/xo and /tmp live in
