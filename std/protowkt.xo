@@ -601,6 +601,77 @@ pub fn (fm: FieldMask) is_valid(files: List[protodesc.FileDesc], name: Str) -> B
   valid_paths(mask_messages(files), name, fm.paths) == fm.paths.len()
 }
 
+/// fieldmaskpb.New for a derive Proto message, from its descriptor
+/// (`protowkt.new_field_mask(protobuf.descriptor[T](), paths)`, decision
+/// 0683): `paths` as `new_mask` checks them, the error naming the message's
+/// full name.
+pub fn new_field_mask(md: protobuf.MessageDesc, paths: List[Str]) -> FieldMask ! WktErr {
+  var fm = FieldMask{}
+  fm.append_paths(md, paths)?
+  Ok(fm)
+}
+
+/// fieldmaskpb's Append for a derive Proto message's descriptor
+/// (`protobuf.descriptor[T]()`): adds `paths` up to the first one that is
+/// not a path of the message (as `new_field_mask`), which is the error.
+/// (`append` takes a message of std/protodesc files.)
+pub fn (var fm: FieldMask) append_paths(md: protobuf.MessageDesc, paths: List[Str]) -> () ! WktErr {
+  let n = desc_valid_paths(md, paths)
+  var i = 0
+  while i < n {
+    fm.paths.push(paths[i])
+    i += 1
+  }
+  if n < paths.len() {
+    return Err(WktErr{msg: "invalid path ${paths[n].quote()} for message ${md.full_name.quote()}"})
+  }
+  Ok(())
+}
+
+/// fieldmaskpb's IsValid for a derive Proto message's descriptor
+/// (`protobuf.descriptor[T]()`): every path is a path of the message (as
+/// `new_field_mask`).
+pub fn (fm: FieldMask) is_valid_for(md: protobuf.MessageDesc) -> Bool {
+  desc_valid_paths(md, fm.paths) == fm.paths.len()
+}
+
+/// numValidPaths over a derive Proto descriptor: how many of paths, from
+/// the first, are paths of md. A field is found by its .proto name; a
+/// repeated or map field, or one that holds no message, ends a path.
+fn desc_valid_paths(md: protobuf.MessageDesc, paths: List[Str]) -> Int {
+  var i = 0
+  while i < paths.len() {
+    var cur: protobuf.MessageDesc? = Some(md)
+    for field in paths[i].split(".") {
+      let m = match cur {
+        Some(m) => m
+        None => return i
+      }
+      var found: protobuf.FieldDesc? = None
+      for fd in m.fields {
+        if fd.name == field {
+          found = Some(fd)
+          break
+        }
+      }
+      let fd = match found {
+        Some(fd) => fd
+        None => return i
+      }
+      cur = if fd.cardinality != protobuf.Cardinality.Optional {
+        None
+      } else {
+        match fd.message {
+          Some(f) => Some(f())
+          None => None
+        }
+      }
+    }
+    i += 1
+  }
+  paths.len()
+}
+
 /// The messages of files by full name (`pkg.Outer.Inner`).
 fn mask_messages(files: List[protodesc.FileDesc]) -> Map[Str, protodesc.MessageDesc] {
   var out: Map[Str, protodesc.MessageDesc] = {}

@@ -1,0 +1,118 @@
+// FieldMask against a derive Proto type's descriptor: new_field_mask,
+// append_paths and is_valid_for (fieldmaskpb's New, Append and IsValid
+// with protobuf.descriptor[T], decision 0683). The structs mirror TPROTO,
+// and every path gets the answer new_mask, append and is_valid give on the
+// file std/protoparse parses (fieldmask_test.xo checks those against
+// fieldmaskpb's tables). Written by hand beside the generated wkt_test.xo.
+
+use std/protobuf
+use std/protodesc
+use std/protoparse
+use std/protowkt
+
+const TPROTO = "syntax = \"proto3\";\npackage t;\nmessage Inner { int32 a = 1; Outer back = 2; }\nmessage Outer { int32 n = 1; Inner inner = 2; repeated Inner list = 3; map<string, int32> m = 4; oneof pick { int32 num = 5; Inner sub = 6; } }\n"
+
+struct Inner {
+  a proto "1": Int32
+  back proto "2": Outer?
+} derive Proto(name: "t.Inner")
+
+enum Pick {
+  Num as "5"(v: Int32)
+  Sub as "6"(v: Inner)
+}
+
+struct Outer {
+  n proto "1": Int32
+  inner proto "2": Inner?
+  list proto "3": List[Inner]
+  m proto "4": Map[Str, Int32]
+  pick proto "oneof": Pick?
+} derive Proto(name: "t.Outer")
+
+fn tfiles() -> List[protodesc.FileDesc] {
+  let f = protoparse.parse(TPROTO).or_fault("parse")
+  [protodesc.build(f, "t.proto").or_fault("build")]
+}
+
+const SEGS = ["n", "inner", "list", "m", "num", "sub", "a", "back", "pick", "", "x", "Inner", "N"]
+
+/// Every path of one to three segments from SEGS.
+fn paths() -> List[Str] {
+  var out: List[Str] = []
+  for a in SEGS {
+    out.push(a)
+    for b in SEGS {
+      out.push(a + "." + b)
+      for c in SEGS {
+        out.push(a + "." + b + "." + c)
+      }
+    }
+  }
+  out
+}
+
+test "is_valid_for gives is_valid's answer on every path of up to three segments" {
+  let fs = tfiles()
+  var bad: List[Str] = []
+  var valid = 0
+  for p in paths() {
+    let fm = protowkt.FieldMask{paths: [p]}
+    let want = fm.is_valid(fs, "t.Outer")
+    if want {
+      valid += 1
+    }
+    if fm.is_valid_for(protobuf.descriptor[Outer]()) != want {
+      bad.push(p)
+    }
+    let inner = fm.is_valid(fs, "t.Inner")
+    if fm.is_valid_for(protobuf.descriptor[Inner]()) != inner {
+      bad.push("Inner:" + p)
+    }
+  }
+  expect(bad[0..bad.len().min(4)]) == []
+  expect(valid > 20) == true
+}
+
+test "new_field_mask and append_paths keep what new_mask and append keep, with the same error" {
+  let fs = tfiles()
+  let all = paths()
+  var bad: List[Str] = []
+  var i = 0
+  while i + 3 <= all.len() {
+    let ps = [all[i], all[(i * 7) % all.len()], all[(i * 13 + 5) % all.len()]]
+    let want = protowkt.new_mask(fs, "t.Outer", ps)
+    let got = protowkt.new_field_mask(protobuf.descriptor[Outer](), ps)
+    match (want, got) {
+      (Ok(w), Ok(g)) => {
+        if w.paths != g.paths {
+          bad.push(ps.join(","))
+        }
+      }
+      (Err(w), Err(g)) => {
+        if w.display() != g.display() {
+          bad.push(ps.join(",") + ": " + g.display() + " want " + w.display())
+        }
+      }
+      _ => bad.push(ps.join(",") + ": ok differs")
+    }
+    var wf = protowkt.FieldMask{paths: ["n"]}
+    var gf = protowkt.FieldMask{paths: ["n"]}
+    let we = wf.append(fs, "t.Outer", ps).is_err()
+    let ge = gf.append_paths(protobuf.descriptor[Outer](), ps).is_err()
+    if we != ge || wf.paths != gf.paths {
+      bad.push("append " + ps.join(","))
+    }
+    i += 3
+  }
+  expect(bad[0..bad.len().min(4)]) == []
+}
+
+test "the error names T's full name (New's message)" {
+  match protowkt.new_field_mask(protobuf.descriptor[Outer](), ["n", "inner.back.list", "nope"]) {
+    Ok(_) => fault("want an error")
+    Err(e) => expect(e.display()) == "proto: invalid path \"nope\" for message \"t.Outer\""
+  }
+  expect(protowkt.new_field_mask(protobuf.descriptor[Inner](), ["back.pick"]).is_err()) == true
+  expect(protowkt.new_field_mask(protobuf.descriptor[Inner](), ["back.sub.a", "back.num"]).or_fault("new").paths) == ["back.sub.a", "back.num"]
+}

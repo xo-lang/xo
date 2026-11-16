@@ -10899,6 +10899,9 @@ fn intersect_masks(masks: List[FieldMask]) -> FieldMask
 fn new_mask(files: List[protodesc.FileDesc], name: Str, paths: List[Str]) -> FieldMask ! WktErr  // fieldmaskpb.New
 fn (var fm: FieldMask) append(files: List[protodesc.FileDesc], name: Str, paths: List[Str]) -> () ! WktErr  // the paths before the first invalid one
 fn (fm: FieldMask) is_valid(files: List[protodesc.FileDesc], name: Str) -> Bool
+fn new_field_mask(md: protobuf.MessageDesc, paths: List[Str]) -> FieldMask ! WktErr  // New, by protobuf.descriptor[T]()
+fn (var fm: FieldMask) append_paths(md: protobuf.MessageDesc, paths: List[Str]) -> () ! WktErr
+fn (fm: FieldMask) is_valid_for(md: protobuf.MessageDesc) -> Bool
 fn value_from_json(v: json.Value) -> Value ! WktErr   // structpb.NewValue; an Int becomes its Float
 fn struct_from_json(v: json.Value) -> Struct ! WktErr // NewStruct, of an object
 fn list_from_json(items: List[json.Value]) -> ListValue ! WktErr
@@ -10909,7 +10912,9 @@ A derive Proto type has no descriptor, so `pack_any`, `unpack` and `message_is` 
 (`pkg.Msg`). A field mask's paths are checked against a message of std/protodesc files instead (fieldmaskpb's `New`,
 `IsValid` and `Append`, by the message's full name): each segment a field of the message before it, a repeated or map
 field only last, a group named by its message's name; `new_mask` returns the error alone, where Go's New also returns
-the paths before the invalid one.
+the paths before the invalid one. `new_field_mask`, `append_paths` and `is_valid_for` check the same rules against a
+derive Proto type's descriptor (`protowkt.new_field_mask(protobuf.descriptor[Outer](), ["inner.a"])`, decision 0683;
+a field by its .proto name, a oneof by its members' names).
 Error texts are protobuf-go's, with a message written as `field:value` pairs one space apart (prototext puts one or two
 at random). The wrappers' constructors are struct literals (`DoubleValue{value: v}`). Checked with protobuf-go's own
 tests for these helpers (std/protowkt_test.xo).

@@ -1,5 +1,15 @@
 # std/protowkt changes
 
+## 2026-11-16: feature: field masks against a derive Proto type's descriptor
+
+- Kind: feature
+- Commit: this push
+- Go reference: google.golang.org/protobuf v1.36.12 types/known/fieldmaskpb (New, IsValid, Append; numValidPaths)
+- Test: corpus protowkt fieldmask_typed_test.xo: every path of up to three segments from 13 names gets is_valid's answer on the same message parsed from .proto text (which fieldmask_test.xo checks against fieldmaskpb's tables), and new_mask's and append's paths and errors; arm64, llvm and go
+- Shipped in: not yet released
+
+`new_field_mask(md, paths)`, `FieldMask.append_paths(md, paths)` and `FieldMask.is_valid_for(md)` take `protobuf.descriptor[T]()` (decision 0683 item 2), so a derive Proto type's masks need no .proto file. ADR 0683 named them `new_field_mask[T]`, `is_valid_mask[T]` and `append[T]`: a std function cannot pass its type parameter on to `protobuf.descriptor` (XO0427: derive Proto's functions need the concrete type at the call), so they take the descriptor the caller gets with the type.
+
 ## 2026-11-16: fix: Timestamp.as_time near Int's range, and Value.to_json of NaN and the infinities
 
 - Kind: fix

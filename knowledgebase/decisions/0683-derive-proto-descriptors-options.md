@@ -160,3 +160,13 @@ the oneof's position; a map field's `kind` and `message` are its value's;
 (XO0413). Golden proto_descriptor. The std users (fieldmask, protojson's
 Any, prototext) are Xo Lang 3's.
 
+## Addendum 2026-11-16 (4): fieldmask's functions (Xo Lang 3, task #102)
+
+`protowkt.new_field_mask(md, paths)`, `FieldMask.append_paths(md, paths)`
+and `FieldMask.is_valid_for(md)` take a `protobuf.MessageDesc` rather than
+a type parameter: a std generic cannot hand its `T` to
+`protobuf.descriptor[T]()` (XO0427, derive Proto's functions need the
+concrete type at the call), so the caller passes
+`protobuf.descriptor[T]()`. `append` keeps its std/protodesc form, hence
+`append_paths`. The extension rows in map.txt say not planned and point
+to item 3.
