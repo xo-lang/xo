@@ -1,0 +1,17 @@
+// #107: a `use c` adapter marks its C call inline off Windows (the
+// worker's W_CSEQ_I word through xo_tlocal), not with two calls into the
+// runtime (0675 cost sqlite point 1.020 and scan 1.023 of before).
+
+test "the adapters' C call marks are inline off Windows" {
+  let p = c_mark_prelude()
+  let parts = p.split_n("#else\n", 2)
+  expect(parts.len() == 2)
+  let win = parts[0]
+  let rest = parts[1]
+  expect(win.contains("void xo_x_c_enter(void);"))
+  expect(!rest.is_empty())
+  expect(!rest.contains("xo_x_c_"))
+  expect(rest.contains("xo_tlocal[${CSEQ_TLS_W}]"))
+  expect(rest.contains("&w[${CSEQ_WORD}]"))
+  expect(rest.contains("__ATOMIC_RELAXED"))
+}

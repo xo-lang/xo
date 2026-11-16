@@ -452,8 +452,12 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
   }
   // the runtime's marks around each C call (decision 0675): the worker is
   // in C, so the monitor sends it no preemption signal and hands its slot
-  // to another worker when the call blocks
-  sb.write("int64_t xo_x_cffi_str(int64_t p, int64_t n, int64_t lenp);\nvoid xo_x_c_enter(void);\nvoid xo_x_c_leave(void);\n\n")
+  // to another worker when the call blocks. Inline (#107): the worker
+  // record from the thread's xo_tlocal table (slot CSEQ_TLS_W) and its
+  // W_CSEQ_I word, as llrt pool.xo c_enter and c_leave do; Windows keeps
+  // the runtime's functions (its TLS block needs _tls_index)
+  sb.write("int64_t xo_x_cffi_str(int64_t p, int64_t n, int64_t lenp);\n")
+  sb.write(c_mark_prelude())
   sb.write("static char *xo_cffi_cstr(const char *p, int64_t n) {\n\tchar *s = malloc((size_t)n + 1);\n\tif (!s) {\n\t\tabort();\n\t}\n\tif (n > 0) {\n\t\tmemcpy(s, p, (size_t)n);\n\t}\n\ts[n] = 0;\n\treturn s;\n}\n")
   for f in fns {
     let sym = "xo_${bnd.prefix}${f.xo}"
@@ -520,18 +524,18 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
     }
     match f.ret.kind {
       "void" => {
-        body.push("xo_x_c_enter();")
+        body.push("xo_c_enter();")
         body.push("${call};")
-        body.push("xo_x_c_leave();")
+        body.push("xo_c_leave();")
         for l in post {
           body.push(l)
         }
       }
       "scalar" => {
         ret = word_type(f.ret.sc)
-        body.push("xo_x_c_enter();")
+        body.push("xo_c_enter();")
         body.push("${ret} xo_r = (${ret})${conv_out(f.ret.sc, call)};")
-        body.push("xo_x_c_leave();")
+        body.push("xo_c_leave();")
         for l in post {
           body.push(l)
         }
@@ -540,9 +544,9 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       "str" => {
         ret = "void *"
         params.push("int64_t *xo_len")
-        body.push("xo_x_c_enter();")
+        body.push("xo_c_enter();")
         body.push("const char *xo_c = ${call};")
-        body.push("xo_x_c_leave();")
+        body.push("xo_c_leave();")
         body.push("if (!xo_c) {")
         body.push("\txo_c = \"\";")
         body.push("}")
@@ -555,9 +559,9 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       "bytes" => {
         ret = "void *"
         params.push("int64_t *xo_len")
-        body.push("xo_x_c_enter();")
+        body.push("xo_c_enter();")
         body.push("${f.ret.ct.base} xo_v = ${call};")
-        body.push("xo_x_c_leave();")
+        body.push("xo_c_leave();")
         body.push("const char *xo_c = (const char *)xo_v.${f.ret.bp};")
         body.push("int64_t xo_n = xo_c ? (int64_t)xo_v.${f.ret.bn} : 0;")
         body.push("if (!xo_c || xo_n < 0) {")
@@ -572,9 +576,9 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       }
       "handle" => {
         ret = "int64_t"
-        body.push("xo_x_c_enter();")
+        body.push("xo_c_enter();")
         body.push("int64_t xo_r = (int64_t)(intptr_t)${call};")
-        body.push("xo_x_c_leave();")
+        body.push("xo_c_leave();")
         for l in post {
           body.push(l)
         }
@@ -583,9 +587,9 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       "struct" => {
         let slot = "${sym}_ret"
         sb.write("\nstatic _Thread_local struct ${f.ret.st.tag} ${slot};\n")
-        body.push("xo_x_c_enter();")
+        body.push("xo_c_enter();")
         body.push("${slot} = ${call};")
-        body.push("xo_x_c_leave();")
+        body.push("xo_c_leave();")
         for l in post {
           body.push(l)
         }
@@ -608,4 +612,32 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
     }
   }
   sb.freeze()
+}
+
+/// std/native/llrt's xo_tlocal slot of the worker record (sched.xo TLS_W)
+/// and the word index of its C call sequence (layout.xo W_CSEQ_I), which
+/// the adapters' inline marks use; repotest TestCMarkLayout keeps them in
+/// step with llrt.
+pub const CSEQ_TLS_W = 2
+pub const CSEQ_WORD = 452
+
+/// The adapters' xo_c_enter and xo_c_leave (decision 0675): W_CSEQ_I odd
+/// while the worker is in C, written by its own thread alone. Relaxed
+/// stores: the monitor only reads the word on its tick, nothing is
+/// published through it, and a release store left no race fewer (the
+/// monitor may read the old even value as the call starts either way),
+/// and a release store kept about half the marks' cost (#107's --ab, in
+/// CHANGELOG). A thread that is no worker has slot CSEQ_TLS_W zero and
+/// does nothing.
+fn c_mark_prelude() -> Str {
+  let w = "int64_t *w = (int64_t *)(intptr_t)xo_tlocal[${CSEQ_TLS_W}];"
+  "#if defined(_WIN32)\n" +
+    "void xo_x_c_enter(void);\nvoid xo_x_c_leave(void);\n" +
+    "#define xo_c_enter xo_x_c_enter\n#define xo_c_leave xo_x_c_leave\n" +
+    "#else\n" +
+    "#if defined(__APPLE__)\nextern __thread int64_t xo_tlocal[16];\n" +
+    "#else\nextern __thread int64_t xo_tlocal[16] __attribute__((visibility(\"hidden\"), tls_model(\"initial-exec\")));\n#endif\n" +
+    "static inline void xo_c_enter(void) {\n\t${w}\n\tif (w) {\n\t\t__atomic_store_n(&w[${CSEQ_WORD}], __atomic_load_n(&w[${CSEQ_WORD}], __ATOMIC_RELAXED) + 1, __ATOMIC_RELAXED);\n\t}\n}\n" +
+    "static inline void xo_c_leave(void) {\n\t${w}\n\tif (w) {\n\t\tint64_t s = __atomic_load_n(&w[${CSEQ_WORD}], __ATOMIC_RELAXED);\n\t\tif (s & 1) {\n\t\t\t__atomic_store_n(&w[${CSEQ_WORD}], s + 1, __ATOMIC_RELAXED);\n\t\t}\n\t}\n}\n" +
+    "#endif\n\n"
 }
