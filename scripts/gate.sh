@@ -1041,7 +1041,7 @@ fi
 steps=""
 for step in "$@"; do
   case $step in
-  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit|stdfast)
+  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit|stdfast|checkall)
     # pushq's proving checks: run after the named steps with the ones the
     # change's paths require (gate_plan), each once, and named in the
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
@@ -1522,6 +1522,35 @@ prove_fieldgen() {
   [ "$failed" = 0 ] && ran="$ran fieldgen"
   [ "$f0" = 1 ] && failed=1
 }
+# prove_checkall: `xo check` over every Xo program of the repository,
+# test files included, with this xo and the merge base's
+# (scripts/checkall.sh: test/, cmd/xo/testdata, internal/*/testdata and
+# each std module with tests of its own), failing on an error only this
+# xo reports; check only, about a minute a side (lead, 2026-11-15, #54:
+# decision 0662's checker change broke std/sql's corpus tests, cmd/xo
+# TestCheckFlag's program and the native_sqlite golden, which its gate
+# did not check). Required for compiler/check (gatelib
+# gate_required_steps).
+prove_checkall() {
+  local base T
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  T=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-checkall.XXXXXX")
+  if ! { git worktree add -q --detach "$T/tree" "$base" && (cd "$T/tree" && go run ./scripts/xobuild); } >"$logs/checkall-base.txt" 2>&1 || [ ! -x "$T/tree/bin/xo" ]; then
+    failed=1; echo "checkall: FAIL (the merge base's xo did not build: $logs/checkall-base.txt)"
+  elif scripts/checkall.sh "$T/tree/bin/xo" "$logs/checkall-base-errors.txt" >>"$logs/checkall.txt" 2>&1 &&
+    scripts/checkall.sh "$XO_CLI" "$logs/checkall-head-errors.txt" >>"$logs/checkall.txt" 2>&1; then
+    LC_ALL=C comm -13 "$logs/checkall-base-errors.txt" "$logs/checkall-head-errors.txt" >"$logs/checkall-new.txt"
+    if [ -s "$logs/checkall-new.txt" ]; then
+      failed=1; echo "checkall: FAIL ($(wc -l <"$logs/checkall-new.txt" | tr -d ' ') errors the merge base's xo does not report: $logs/checkall-new.txt)"
+      head -10 "$logs/checkall-new.txt" | cut -c1-200
+    else
+      echo "checkall: ok ($(tail -1 "$logs/checkall.txt"); none new)"; ran="$ran checkall"
+    fi
+  else
+    failed=1; echo "checkall: FAIL ($logs/checkall.txt)"
+  fi
+  git worktree remove --force "$T/tree" >/dev/null 2>&1; rm -rf "${T:?}"
+}
 # the compiler's own xo tests (compiler/..._test.xo) with this xo (lead,
 # 2026-11-12: a parser change broke compiler/parser's test, which only
 # hourly.sh ran); a few seconds
@@ -1720,7 +1749,7 @@ fi
 plan=" $(gate_plan "$req" $named) "
 echo "gate.sh: proving checks:${plan% }${plan:+ }(required by the paths: ${req:-none}; named:${named:- none})"
 if [ "$conc" = 1 ]; then
-  for p in codegen wasm cross fieldgen xounit stdfast; do
+  for p in codegen wasm cross fieldgen xounit stdfast checkall; do
     [[ "$plan" == *" $p "* ]] && job "$p" "prove_$p"
   done
   pool_wait
@@ -1732,13 +1761,13 @@ if [ "$conc" = 1 ]; then
   done
   # PUSHQ_RAN in the serial order
   r2=""
-  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit stdfast; do
+  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit stdfast checkall; do
     [[ " $ran " == *" $p "* ]] && r2="$r2 $p"
   done
   ran=$r2
   echo "gate.sh: steps took $(($(date +%s) - tsteps)) s (concurrent, at most $gjobs jobs)"
 else
-  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit stdfast; do
+  for p in codegen wasm cross selfbuild seedbuild fieldgen xounit stdfast checkall; do
     [[ "$plan" == *" $p "* ]] || continue
     if ff_serial; then ff_skipped="$ff_skipped $p"; continue; fi
     ff_last=$p
