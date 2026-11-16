@@ -1,0 +1,9 @@
+// imported publicly by features3.proto
+syntax = "proto3";
+
+package xo.test;
+
+message Other {
+  string name = 1;
+  map<string, string> labels = 2;
+}

@@ -11,6 +11,7 @@
 // FileDescriptorProto and its messages, read and written by hand.
 
 use std/protobuf
+use std/protoparse
 use std/protowire as pw
 
 /// FieldDescriptorProto.Label.
@@ -547,4 +548,375 @@ fn packed(b: Bytes) -> List[Int] ! protobuf.ProtoErr {
     at = next
   }
   Ok(out)
+}
+
+// Building descriptors from std/protoparse (#109), as protoc's parser and its descriptor
+// builder do: names resolved by protobuf's scoping rules, a map field's entry message, a proto3
+// `optional` field's synthetic oneof, json_name, and the options descriptor.proto defines.
+
+/// The indexes into imports of the paths in marked (public_dependency,
+/// weak_dependency), in import order.
+fn import_indexes(imports: List[Str], marked: List[Str]) -> List[Int] {
+  var out: List[Int] = []
+  for (i, p) in imports.indexed() {
+    if marked.contains(p) {
+      out.push(i)
+    }
+  }
+  out
+}
+
+/// The FileDescriptorProto protoc writes (`--descriptor_set_out`, no source info) for `f` parsed from
+/// the file `name`; `deps` are the descriptors of the files it imports (and theirs), for the names it
+/// uses from them. An unknown type is an error at line 0. Options descriptor.proto does not define
+/// (custom options) and aggregate option values are left out.
+pub fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDesc ! protoparse.ParseErr {
+  var syms: Map[Str, Int] = {}
+  for d in deps {
+    let pre = if d.package.is_empty() { "" } else { d.package + "." }
+    for m in d.message_type { b_syms_desc(syms, pre, m) }
+    for e in d.enum_type { syms[pre + e.name] = TYPE_ENUM }
+  }
+  let pre = if f.package.is_empty() { "" } else { f.package + "." }
+  for m in f.messages { b_syms(syms, pre, m) }
+  for e in f.enums { syms[pre + e.name] = TYPE_ENUM }
+  let proto3 = f.syntax == "proto3"
+  var out = FileDesc{name: name, package: f.package, dependency: f.imports, public_dependency: import_indexes(f.imports, f.public_imports),
+    weak_dependency: import_indexes(f.imports, f.weak_imports), syntax: if proto3 { "proto3" } else { "" }}
+  for m in f.messages {
+    out.message_type.push(b_message(syms, f.package, m, proto3)?)
+  }
+  for e in f.enums {
+    out.enum_type.push(b_enum(e))
+  }
+  for x in f.extends {
+    for fd in b_extend(syms, f.package, x)? { out.extension.push(fd) }
+  }
+  for sv in f.services {
+    var sd = ServiceDesc{name: sv.name}
+    let (so, sset) = b_opts(sv.options, SERVICE_OPTS)
+    sd.options = so
+    sd.options_set = sset
+    for r in sv.rpcs {
+      let (mo, mset) = b_opts(r.options, METHOD_OPTS)
+      sd.method.push(MethodDesc{name: r.name, input_type: b_resolve(syms, f.package, r.req)?.0,
+        output_type: b_resolve(syms, f.package, r.resp)?.0, options: mo, options_set: mset || r.body,
+        client_streaming: r.client_stream, server_streaming: r.server_stream,
+        streaming_set: (if r.client_stream { 1 } else { 0 }) | (if r.server_stream { 2 } else { 0 })})
+    }
+    out.service.push(sd)
+  }
+  let (fo, fset) = b_opts(f.options, FILE_OPTS)
+  out.options = fo
+  out.options_set = fset
+  Ok(out)
+}
+
+fn b_syms(var syms: Map[Str, Int], pre: Str, m: protoparse.Message) {
+  let full = pre + m.name
+  syms[full] = TYPE_MESSAGE
+  for n in m.nested { b_syms(syms, full + ".", n) }
+  for e in m.enums { syms[full + "." + e.name] = TYPE_ENUM }
+}
+
+fn b_syms_desc(var syms: Map[Str, Int], pre: Str, m: MessageDesc) {
+  let full = pre + m.name
+  syms[full] = TYPE_MESSAGE
+  for n in m.nested_type { b_syms_desc(syms, full + ".", n) }
+  for e in m.enum_type { syms[full + "." + e.name] = TYPE_ENUM }
+}
+
+/// The scalar type of a proto keyword, 0 for a named type.
+fn b_scalar(t: Str) -> Int {
+  match t {
+    "double" => TYPE_DOUBLE
+    "float" => TYPE_FLOAT
+    "int64" => TYPE_INT64
+    "uint64" => TYPE_UINT64
+    "int32" => TYPE_INT32
+    "fixed64" => TYPE_FIXED64
+    "fixed32" => TYPE_FIXED32
+    "bool" => TYPE_BOOL
+    "string" => TYPE_STRING
+    "bytes" => TYPE_BYTES
+    "uint32" => TYPE_UINT32
+    "sfixed32" => TYPE_SFIXED32
+    "sfixed64" => TYPE_SFIXED64
+    "sint32" => TYPE_SINT32
+    "sint64" => TYPE_SINT64
+    _ => 0
+  }
+}
+
+/// protobuf's scoping: `.a.B` is absolute; otherwise the innermost scope outward whose
+/// `scope.FIRST` names a symbol or a package prefix decides, and the whole name must then be found
+/// there. The type name with its leading dot, and TYPE_MESSAGE or TYPE_ENUM.
+fn b_resolve(syms: Map[Str, Int], scope: Str, t: Str) -> (Str, Int) ! protoparse.ParseErr {
+  if t.starts_with(".") {
+    return match syms.get(t[1..]) {
+      Some(k) => Ok((t, k))
+      None => Err(protoparse.ParseErr{line: 0, col: 0, msg: "unknown type `${t}`"})
+    }
+  }
+  let first = t.split(".")[0]
+  var sc = scope
+  while true {
+    let cand = if sc.is_empty() { t } else { sc + "." + t }
+    let head = if sc.is_empty() { first } else { sc + "." + first }
+    if syms.contains(head) || b_is_package(syms, head) {
+      match syms.get(cand) {
+        Some(k) => return Ok(("." + cand, k))
+        None => {
+          // protoc goes on outward only past a name that is not a scope (a field's type here)
+          if syms.contains(head) && (syms.get(head) ?? 0) == TYPE_MESSAGE || b_is_package(syms, head) {
+            return Err(protoparse.ParseErr{line: 0, col: 0, msg: "unknown type `${t}` (`${head}` has no `${t}`)"})
+          }
+        }
+      }
+    }
+    if sc.is_empty() { break }
+    sc = match sc.rfind(".") {
+      Some(i) => sc[..i]
+      None => ""
+    }
+  }
+  Err(protoparse.ParseErr{line: 0, col: 0, msg: "unknown type `${t}`"})
+}
+
+fn b_is_package(syms: Map[Str, Int], name: Str) -> Bool {
+  let pre = name + "."
+  for (k, _) in syms {
+    if k.starts_with(pre) { return true }
+  }
+  false
+}
+
+/// protoc's ToJsonName: each `_` dropped and the character after it in upper case.
+fn json_name_of(name: Str) -> Str {
+  var out = StrBuilder.new()
+  var first = true
+  for part in name.split("_") {
+    out.write(if first { part } else { b_cap(part) })
+    first = false
+  }
+  out.freeze()
+}
+
+/// protoc's MapEntryName: the field name in CamelCase and `Entry`.
+fn map_entry_name(field: Str) -> Str {
+  var out = StrBuilder.new()
+  for part in field.split("_") {
+    out.write(b_cap(part))
+  }
+  out.freeze() + "Entry"
+}
+
+/// s with its first byte in upper case (proto names are ASCII).
+fn b_cap(s: Str) -> Str {
+  if s.is_empty() { s } else { s[..1].to_upper() + s[1..] }
+}
+
+fn b_label(f: protoparse.Field) -> Int {
+  if f.required { LABEL_REQUIRED } else if f.repeated { LABEL_REPEATED } else { LABEL_OPTIONAL }
+}
+
+/// The field's type: a scalar, or a message or enum resolved in scope.
+fn b_type(syms: Map[Str, Int], scope: Str, t: Str) -> (Int, Str) ! protoparse.ParseErr {
+  let k = b_scalar(t)
+  if k != 0 { return Ok((k, "")) }
+  let (n, kind) = b_resolve(syms, scope, t)?
+  Ok((kind, n))
+}
+
+fn b_message(syms: Map[Str, Int], scope: Str, m: protoparse.Message, proto3: Bool) -> MessageDesc ! protoparse.ParseErr {
+  let full = if scope.is_empty() { m.name } else { scope + "." + m.name }
+  var d = MessageDesc{name: m.name}
+  for o in m.oneofs { d.oneof_decl.push(OneofDesc{name: o}) }
+  var entries: List[(Int, MessageDesc)] = []
+  var synthetic: List[Str] = []
+  var mi = 0
+  for f in m.fields {
+    var fd = FieldDesc{name: f.name, number: f.num, label: b_label(f), json_name: if f.json_name.is_empty() { json_name_of(f.name) } else { f.json_name },
+      default_value: f.default_value}
+    if !f.key.is_empty() {
+      let en = map_entry_name(f.name)
+      let (vk, vt) = b_type(syms, full, f.typ)?
+      var entry = MessageDesc{name: en, options: b"\x38\x01", options_set: true}
+      entry.field.push(FieldDesc{name: "key", number: 1, label: LABEL_OPTIONAL, kind: b_scalar(f.key), json_name: "key"})
+      entry.field.push(FieldDesc{name: "value", number: 2, label: LABEL_OPTIONAL, kind: vk, type_name: vt, json_name: "value"})
+      entries.push((m.map_at[mi], entry))
+      mi += 1
+      fd.label = LABEL_REPEATED
+      fd.kind = TYPE_MESSAGE
+      fd.type_name = ".${full}.${en}"
+    } else if f.group {
+      fd.kind = TYPE_GROUP
+      fd.type_name = ".${full}.${f.typ}"
+    } else {
+      let (k, tn) = b_type(syms, full, f.typ)?
+      fd.kind = k
+      fd.type_name = tn
+    }
+    if !f.oneof.is_empty() {
+      fd.oneof_index = m.oneofs.index_of(f.oneof)
+    } else if proto3 && f.optional {
+      // a synthetic oneof, after the declared ones; its name `_field`, prefixed with X until unique
+      var on = "_" + f.name
+      while m.oneofs.contains(on) || synthetic.contains(on) || m.fields.any(fn(x: protoparse.Field) -> Bool { x.name == on }) {
+        on = "X" + on
+      }
+      synthetic.push(on)
+      fd.proto3_optional = true
+      fd.oneof_index = Some(m.oneofs.len() + synthetic.len() - 1)
+    }
+    let (fo, fset) = b_opts(f.options, FIELD_OPTS)
+    fd.options = fo
+    fd.options_set = fset
+    d.field.push(fd)
+  }
+  for o in synthetic { d.oneof_decl.push(OneofDesc{name: o}) }
+  // nested messages in source order, each map's entry where its field was
+  var ei = 0
+  var ni = 0
+  while ni < m.nested.len() || ei < entries.len() {
+    if ei < entries.len() && entries[ei].0 <= ni {
+      d.nested_type.push(entries[ei].1)
+      ei += 1
+    } else {
+      d.nested_type.push(b_message(syms, full, m.nested[ni], proto3)?)
+      ni += 1
+    }
+  }
+  for e in m.enums { d.enum_type.push(b_enum(e)) }
+  for x in m.extends {
+    for fd in b_extend(syms, full, x)? { d.extension.push(fd) }
+  }
+  var ri = 0
+  for (a, b) in m.extensions {
+    let ro = if ri < m.extension_options.len() { m.extension_options[ri] } else { [] }
+    let (eo, eset) = b_opts(ro, EXT_RANGE_OPTS)
+    d.extension_range.push(ExtensionRange{start: a, end: b + 1, options: eo, options_set: eset})
+    ri += 1
+  }
+  for (a, b) in m.reserved { d.reserved_range.push(ReservedRange{start: a, end: b + 1}) }
+  d.reserved_name = m.reserved_names
+  let (mo, mset) = b_opts(m.options, MESSAGE_OPTS)
+  d.options = mo
+  d.options_set = mset
+  Ok(d)
+}
+
+/// An `extend` block's fields, the extendee and types resolved in scope.
+fn b_extend(syms: Map[Str, Int], scope: Str, x: protoparse.Extend) -> List[FieldDesc] ! protoparse.ParseErr {
+  let (ext, _) = b_resolve(syms, scope, x.extendee)?
+  var out: List[FieldDesc] = []
+  for f in x.fields {
+    let (k, tn) = b_type(syms, scope, f.typ)?
+    let (fo, fset) = b_opts(f.options, FIELD_OPTS)
+    out.push(FieldDesc{name: f.name, extendee: ext, number: f.num, label: b_label(f), kind: k, type_name: tn,
+      default_value: f.default_value, options: fo, options_set: fset,
+      json_name: if f.json_name.is_empty() { json_name_of(f.name) } else { f.json_name }})
+  }
+  Ok(out)
+}
+
+fn b_enum(e: protoparse.Enum) -> EnumDesc {
+  var d = EnumDesc{name: e.name}
+  for v in e.values {
+    let (vo, vset) = b_opts(v.options, ENUM_VALUE_OPTS)
+    d.value.push(EnumValueDesc{name: v.name, number: v.num, options: vo, options_set: vset})
+  }
+  for (a, b) in e.reserved { d.reserved_range.push(ReservedRange{start: a, end: b}) }
+  d.reserved_name = e.reserved_names
+  let (eo, eset) = b_opts(e.options, ENUM_OPTS)
+  d.options = eo
+  d.options_set = eset
+  d
+}
+
+/// descriptor.proto's options: (name, field number, kind: 0 bool, 1 string, 2 enum (`NAME:N` pairs), 3 int,
+/// 4 an aggregate of the message `aggregate_fields` names).
+const FILE_OPTS: List[(Str, Int, Int, Str)] = [
+  ("java_package", 1, 1, ""), ("java_outer_classname", 8, 1, ""), ("optimize_for", 9, 2, "SPEED:1,CODE_SIZE:2,LITE_RUNTIME:3"),
+  ("java_multiple_files", 10, 0, ""), ("go_package", 11, 1, ""), ("cc_generic_services", 16, 0, ""),
+  ("java_generic_services", 17, 0, ""), ("py_generic_services", 18, 0, ""), ("java_generate_equals_and_hash", 20, 0, ""),
+  ("deprecated", 23, 0, ""), ("java_string_check_utf8", 27, 0, ""), ("cc_enable_arenas", 31, 0, ""),
+  ("objc_class_prefix", 36, 1, ""), ("csharp_namespace", 37, 1, ""), ("swift_prefix", 39, 1, ""),
+  ("php_class_prefix", 40, 1, ""), ("php_namespace", 41, 1, ""), ("php_metadata_namespace", 44, 1, ""),
+  ("ruby_package", 45, 1, ""),
+]
+const MESSAGE_OPTS: List[(Str, Int, Int, Str)] = [
+  ("message_set_wire_format", 1, 0, ""), ("no_standard_descriptor_accessor", 2, 0, ""), ("deprecated", 3, 0, ""),
+  ("map_entry", 7, 0, ""),
+]
+const FIELD_OPTS: List[(Str, Int, Int, Str)] = [
+  ("ctype", 1, 2, "STRING:0,CORD:1,STRING_PIECE:2"), ("packed", 2, 0, ""), ("deprecated", 3, 0, ""), ("lazy", 5, 0, ""),
+  ("jstype", 6, 2, "JS_NORMAL:0,JS_STRING:1,JS_NUMBER:2"), ("weak", 10, 0, ""), ("unverified_lazy", 15, 0, ""),
+  ("debug_redact", 16, 0, ""), ("retention", 17, 2, "RETENTION_UNKNOWN:0,RETENTION_RUNTIME:1,RETENTION_SOURCE:2"),
+  ("edition_defaults", 20, 4, "EditionDefault"), ("feature_support", 22, 4, "FeatureSupport"),
+  ("targets", 19, 2, "TARGET_TYPE_UNKNOWN:0,TARGET_TYPE_FILE:1,TARGET_TYPE_EXTENSION_RANGE:2,TARGET_TYPE_MESSAGE:3,TARGET_TYPE_FIELD:4,TARGET_TYPE_ONEOF:5,TARGET_TYPE_ENUM:6,TARGET_TYPE_ENUM_ENTRY:7,TARGET_TYPE_SERVICE:8,TARGET_TYPE_METHOD:9"),
+]
+// ExtensionRangeOptions' declaration and verification are source retention options, which protoc leaves out
+// of the descriptors it writes; so are FeatureSet's enforce_naming_style and the others marked so.
+const EXT_RANGE_OPTS: List[(Str, Int, Int, Str)] = []
+const EDITIONS: Str = "EDITION_UNKNOWN:0,EDITION_LEGACY:900,EDITION_PROTO2:998,EDITION_PROTO3:999,EDITION_2023:1000,EDITION_2024:1001,EDITION_2026:1002,EDITION_UNSTABLE:9999,EDITION_1_TEST_ONLY:1,EDITION_2_TEST_ONLY:2,EDITION_99997_TEST_ONLY:99997,EDITION_99998_TEST_ONLY:99998,EDITION_99999_TEST_ONLY:99999,EDITION_MAX:2147483647"
+
+/// The fields of the aggregate option values build writes (descriptor.proto's own options).
+fn aggregate_fields(kind: Str) -> List[(Str, Int, Int, Str)] {
+  match kind {
+    "EditionDefault" => [("edition", 3, 2, EDITIONS), ("value", 2, 1, "")]
+    "FeatureSupport" => [("edition_introduced", 1, 2, EDITIONS), ("edition_deprecated", 2, 2, EDITIONS),
+      ("deprecation_warning", 3, 1, ""), ("edition_removed", 4, 2, EDITIONS), ("removal_error", 5, 1, "")]
+    _ => []
+  }
+}
+
+const ENUM_OPTS: List[(Str, Int, Int, Str)] = [("allow_alias", 2, 0, ""), ("deprecated", 3, 0, "")]
+const ENUM_VALUE_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 1, 0, ""), ("debug_redact", 3, 0, "")]
+const SERVICE_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 33, 0, "")]
+const METHOD_OPTS: List[(Str, Int, Int, Str)] = [("deprecated", 33, 0, ""), ("idempotency_level", 34, 2, "IDEMPOTENCY_UNKNOWN:0,NO_SIDE_EFFECTS:1,IDEMPOTENT:2")]
+
+/// The options message of the known options in `opts`, fields in number order (protoc serializes the
+/// options message), and whether any was given.
+fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, Bool) {
+  var parts: List[(Int, Bytes)] = []
+  for (k, v) in opts {
+    for (n, num, kind, enums) in known {
+      if n != k { continue }
+      var o = BytesBuilder.new()
+      if kind == 0 {
+        pw.wtag(o, num, 0)
+        pw.wv(o, if v == "true" { 1 } else { 0 })
+      } else if kind == 1 {
+        pw.wtag(o, num, 2)
+        let b = v.bytes()
+        pw.wv(o, b.len())
+        o.write(b)
+      } else if kind == 2 {
+        var ev = Int.parse(v) ?? 0
+        for pair in enums.split(",") {
+          let kv = pair.split(":")
+          if kv[0] == v { ev = Int.parse(kv[1]) ?? 0 }
+        }
+        pw.wtag(o, num, 0)
+        pw.wv(o, ev)
+      } else if kind == 4 {
+        let pairs = protoparse.aggregate_pairs(v)
+        if pairs.is_empty() { continue }
+        let (body, _) = b_opts(pairs, aggregate_fields(enums))
+        pw.wtag(o, num, 2)
+        pw.wv(o, body.len())
+        o.write(body)
+      } else {
+        pw.wtag(o, num, 0)
+        pw.wv(o, Int.parse(v) ?? 0)
+      }
+      parts.push((num, o.freeze()))
+    }
+  }
+  if parts.is_empty() { return (b"", false) }
+  let sorted = parts.sort_with(fn(a: (Int, Bytes), b: (Int, Bytes)) -> Ordering { a.0.cmp(b.0) })
+  var out = BytesBuilder.new()
+  for (_, b) in sorted { out.write(b) }
+  (out.freeze(), true)
 }

@@ -20,6 +20,21 @@ another file, or by a type outside the set (the google/protobuf well-known
 types), is an error: `derive Proto` takes only an enum of the same file and
 a struct of the same package.
 
+## 2026-11-16: feature and fix: options, ranges and extend kept; a proto2 map field needs no label
+
+- Kind: feature, fix
+- Commit: this push
+- Found by: task #109 (std/protodesc.build against protoc): protoc accepts `map<K, V> f = 1;` in proto2, which parse refused (`proto2 field needs required, optional or repeated`)
+- Go reference: protoc 36.2's parser
+- Test: std/protodesc_test.xo's protoc cases (features2.proto has a proto2 map field, which failed before), std/protoparse_test.xo, arm64 and LLVM
+- Timing: none
+
+`parse` keeps what it read and dropped: options as (name, value) pairs on the file, messages, fields, enums, values,
+services and rpcs (flat aggregates as pairs, `aggregate_pairs`), a field's `default` and `json_name`, `reserved` and
+`extensions` ranges (with their options) and names, `extend` blocks (`Extend`), public and weak imports, whether a
+group field is a group, where each map sits among the nested messages, and whether an rpc has a body. The new fields
+have defaults, so code building these structs is unchanged. A proto2 `map` field no longer needs a label.
+
 ## 2026-11-10: fix: `ParseErr` displays as `LINE:COL: MSG` again
 
 - Kind: fix

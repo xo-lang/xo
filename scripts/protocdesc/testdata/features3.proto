@@ -1,0 +1,80 @@
+// proto3 features protodesc.build follows protoc on (std/protodesc_test.xo).
+syntax = "proto3";
+
+package xo.test;
+
+import "google/protobuf/timestamp.proto";
+import public "other.proto";
+
+option go_package = "example.com/xo/test;testpb";
+option java_package = "com.example.xo";
+option java_multiple_files = true;
+option optimize_for = CODE_SIZE;
+
+message Outer {
+  option deprecated = true;
+
+  message Inner {
+    int64 id = 1;
+    Kind kind = 2;
+  }
+  enum Kind {
+    option allow_alias = true;
+    KIND_UNSPECIFIED = 0;
+    KIND_A = 1;
+    KIND_ALIAS = 1 [deprecated = true];
+    reserved 5 to 9, 100 to max;
+    reserved "KIND_OLD";
+  }
+
+  double d = 1;
+  float f = 2;
+  int32 i32 = 3;
+  int64 i64 = 4;
+  uint32 u32 = 5;
+  uint64 u64 = 6;
+  sint32 s32 = 7;
+  sint64 s64 = 8;
+  fixed32 fx32 = 9;
+  fixed64 fx64 = 10;
+  sfixed32 sf32 = 11;
+  sfixed64 sf64 = 12;
+  bool b = 13;
+  string s = 14 [json_name = "theString"];
+  bytes by = 15;
+  repeated int32 packed_off = 16 [packed = false];
+  repeated Inner inners = 17;
+  map<string, Inner> by_name = 18;
+  message Between { string note = 1; }
+  map<int32, Kind> kinds = 19;
+  Outer.Inner qualified = 20;
+  .xo.test.Other absolute = 21;
+  google.protobuf.Timestamp at = 22;
+  optional int32 maybe = 23;
+  oneof choice {
+    string text = 24;
+    Inner inner = 25;
+  }
+  optional string _hidden = 26;
+  string snake_case_name = 27 [deprecated = true, jstype = JS_STRING];
+  Between between = 28;
+  reserved 30 to 39, 1000 to max;
+  reserved "gone", "old";
+}
+
+enum Top {
+  TOP_UNSPECIFIED = 0;
+  TOP_ONE = 1;
+}
+
+service Svc {
+  option deprecated = true;
+  rpc Unary(Outer) returns (Other);
+  rpc Client(stream Outer) returns (Other);
+  rpc Server(Outer) returns (stream Other) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Bidi(stream Outer.Inner) returns (stream xo.test.Other) {
+    option deprecated = true;
+  }
+}

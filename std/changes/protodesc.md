@@ -1,5 +1,18 @@
 # std/protodesc changes
 
+## 2026-11-16: feature: build, descriptors from std/protoparse as protoc writes them
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (the partial Go row of std/protodesc: building them from protoparse)
+- Go reference: protoc 36.2's descriptor builder (`--descriptor_set_out`); bufbuild/protocompile's shape
+- Test: std/protodesc_test.xo, 47 files byte for byte against protoc (the protoparse corpus files protoc compiles, descriptor.proto and the well known types, proto2 and proto3 feature files; scripts/protocdesc), arm64 and LLVM
+- Timing: none (one pass over the parsed file; a name lookup scans the symbols for a package prefix)
+
+`build(f, name, deps)` gives the FileDescriptorProto protoc writes for a file std/protoparse parsed: names resolved by
+protobuf's scoping, map entry messages, proto3 optional's synthetic oneofs, json_name, groups, defaults, extend blocks,
+reserved and extension ranges, and descriptor.proto's own options (custom and source retention options left out).
+
 ## 2026-11-07: port: std/protodesc, descriptor.proto as Xo values
 
 - Kind: port

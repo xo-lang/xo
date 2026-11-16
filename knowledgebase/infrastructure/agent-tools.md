@@ -533,6 +533,14 @@ yourself.
   -fault-update` records want.txt from the Go backend, whose message and
   position are the oracle: a native backend that says anything else fails
   the test. The Str and Bytes slice cases are spec/core.md 3.6.
+- protoc is the oracle for `protodesc.build` (2026-11-16): `go run
+  ./scripts/protocdesc` compiles scripts/protocdesc/testdata/*.proto and
+  every protoparse corpus file protoc accepts (with the well known types
+  from protoc's include directory) and rewrites the generated block of
+  std/protodesc_test.xo (each file's text and protoc's descriptor). It needs
+  protoc (Homebrew's on the Mac; none on the offload hosts), so it is not a
+  stdcorpus generator, whose `-check` runs in gates: run it by hand after a
+  change to those .proto files.
 - The request head parser has its own differential (2026-10-26):
   `go test ./internal/stdtest -run TestHttpHeadFuzz` generates seeded raw
   header blocks (obs-fold lines, tabs, control bytes, repeated names, LF

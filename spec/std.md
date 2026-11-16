@@ -10731,19 +10731,29 @@ fn tokens(src: Str) -> List[Token] ! ParseErr
 fn parse(src: Str) -> File ! ParseErr
 fn gen(f: File) -> Str ! ParseErr
 fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr   // (import path, File) each; one source per file
-// File { syntax, package, imports, public_imports, messages: List[Message], enums: List[Enum], services: List[Service] }
-// Message { name, fields: List[Field], oneofs: List[Str], nested: List[Message], enums: List[Enum] }
-// Field { name, num, typ, key, repeated, optional, required, oneof }   Rpc { name, req, resp, client_stream, server_stream }
+fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate option value's (key, value) pairs
+// File { syntax, package, imports, messages: List[Message], enums: List[Enum], services: List[Service], options,
+//        public_imports: List[Str], weak_imports: List[Str], extends: List[Extend] }
+// Message { name, fields: List[Field], oneofs: List[Str], nested: List[Message], enums: List[Enum], options,
+//           reserved: List[(Int, Int)], reserved_names, extensions: List[(Int, Int)], extension_options, map_at, extends }
+// Field { name, num, typ, key, repeated, optional, required, oneof, group, default_value, json_name, options }
+// Enum { name, values: List[EnumValue], options, reserved, reserved_names }   EnumValue { name, num, options }
+// Service { name, rpcs, options }   Rpc { name, req, resp, client_stream, server_stream, options, body }
+// Extend { extendee, fields: List[Field] }   options: List[(Str, Str)], (name, value as written)
 ```
 
 - The lexer reads identifiers (dots inside), integers (a `0x` prefix is lexed), floats, string literals (escapes decoded)
   and single symbol characters; `//` and `/* */` comments are dropped.
 - `parse` reads proto3 and proto2: `package`, `import`, messages with fields, `repeated`, `optional`, `map<K, V>`,
-  `oneof`, nested messages and enums, top level enums, `service` with `rpc` and `stream`. Options, `reserved`,
-  `extensions`, field options (`default` included) and `extend` blocks are read and dropped. In a proto2 file every
-  field outside a oneof needs a label (`required`, `optional` or `repeated`, else an error), and `required` and
-  `group` are accepted: a group is a nested message plus a field of that type named in lower case. A proto3 file
-  rejects `required` and `group`. `gen` maps `required` to a plain field and proto2 `optional` to an Option;
+  `oneof`, nested messages and enums, top level enums, `service` with `rpc` and `stream`, and `extend` blocks.
+  Options are kept as (name, value) pairs on the file, messages, fields, enums, values, services and rpcs (a name's
+  tokens joined, `(my.ext).x`; a string value unquoted; an aggregate `{ key: value ... }` without nesting as pairs
+  `aggregate_pairs` reads, one with nesting as `{}`; a oneof's options are dropped), with a field's `default` and
+  `json_name` in their own fields; `reserved` ranges and names and `extensions` ranges with their options are kept
+  (end included, `max` the largest number), and where each map field sits among the nested messages (`map_at`).
+  In a proto2 file every field outside a oneof needs a label (`required`, `optional` or `repeated`, else an error),
+  except a `map`, and `required` and `group` are accepted: a group is a nested message plus a field of that type
+  named in lower case (`group`). A proto3 file rejects `required` and `group`. `gen` maps `required` to a plain field and proto2 `optional` to an Option;
   proto2 repeated numeric fields are unpacked on the wire but `derive Proto` writes them packed (the reader takes
   both), so a generated proto2 message is not byte identical to protoc's output for those fields.
 - `gen` writes Xo source: a nested type `Inner` of `Outer` is `OuterInner`, a oneof is an enum held in an optional
@@ -10821,10 +10831,23 @@ their wire reader and writers are the internal module `std/protowire` (not for p
 ```xo
 fn encode(f: FileDesc) -> Bytes
 fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr
+fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDesc ! protoparse.ParseErr
 ```
 
 `encode` writes fields in field number order, the order protobuf-go's Deterministic marshaling uses; a proto2 file has an
 empty `syntax`. Unknown fields other than a `FieldDesc`'s are dropped.
+
+`build` is protoc's descriptor of a file std/protoparse parsed (`--descriptor_set_out`, no source info), `name` its
+path as imported and `deps` the descriptors of the files it imports and theirs: type names resolved by protobuf's
+scoping (`.a.B` absolute, else the innermost scope outward), a map field's `NameEntry` message (key 1, value 2,
+`map_entry`) among the nested messages where the field is, a proto3 `optional` field's synthetic oneof `_name` after
+the declared ones, `json_name` (protoc's lowerCamelCase unless given), groups, defaults, `extend` blocks,
+reserved and extension ranges, and the options descriptor.proto defines (file, message, field, enum, value, service
+and method; `edition_defaults` and `feature_support` aggregates); options it does not define (custom options) and
+source retention options are left out, and an rpc with a `{ }` body gets an empty options message, as protoc's. An
+unknown type is an error at line 0. Checked byte for byte against protoc 36.2 on 47 files: the protoparse corpus
+files protoc compiles, descriptor.proto and the well known types they import, and proto2 and proto3 feature files
+(scripts/protocdesc writes those cases into std/protodesc_test.xo; it needs protoc, so it runs by hand).
 
 ## 73. std/protowkt
 

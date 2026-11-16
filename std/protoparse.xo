@@ -134,16 +134,35 @@ pub struct Field {
   /// proto2 `required`
   pub required: Bool
   pub oneof: Str
+  /// A proto2 `group`: `typ` is its nested message, `name` that name in lower case.
+  pub group: Bool = false
+  /// The `default` option's value as written (a string unquoted).
+  pub default_value: Str = ""
+  /// The `json_name` option, empty when not given.
+  pub json_name: Str = ""
+  /// The field's other options, (name, value as written) in order.
+  pub options: List[(Str, Str)] = []
+}
+
+/// An `extend NAME { ... }` block: the extended message as written and the extension fields.
+pub struct Extend {
+  pub extendee: Str
+  pub fields: List[Field]
 }
 
 pub struct EnumValue {
   pub name: Str
   pub num: Int
+  pub options: List[(Str, Str)] = []
 }
 
 pub struct Enum {
   pub name: Str
   pub values: List[EnumValue]
+  pub options: List[(Str, Str)] = []
+  /// `reserved` numbers, (start, end) with end included; `max` is 2147483647.
+  pub reserved: List[(Int, Int)] = []
+  pub reserved_names: List[Str] = []
 }
 
 pub struct Message {
@@ -152,6 +171,19 @@ pub struct Message {
   pub oneofs: List[Str]
   pub nested: List[Message]
   pub enums: List[Enum]
+  pub options: List[(Str, Str)] = []
+  /// `reserved` numbers, (start, end) with end included; `max` is 536870911.
+  pub reserved: List[(Int, Int)] = []
+  pub reserved_names: List[Str] = []
+  /// `extensions` ranges, (start, end) with end included.
+  pub extensions: List[(Int, Int)] = []
+  /// Each range's options (those of its `extensions` statement), parallel to `extensions`.
+  pub extension_options: List[List[(Str, Str)]] = []
+  /// For each map field, in field order, how many of `nested` came before it (protoc puts a map's
+  /// entry message among the nested messages where the field is).
+  pub map_at: List[Int] = []
+  /// `extend` blocks inside the message, in order.
+  pub extends: List[Extend] = []
 }
 
 pub struct Rpc {
@@ -160,11 +192,15 @@ pub struct Rpc {
   pub resp: Str
   pub client_stream: Bool
   pub server_stream: Bool
+  pub options: List[(Str, Str)] = []
+  /// The rpc had a `{ ... }` body (protoc then writes its options message, also when empty).
+  pub body: Bool = false
 }
 
 pub struct Service {
   pub name: Str
   pub rpcs: List[Rpc]
+  pub options: List[(Str, Str)] = []
 }
 
 pub struct File {
@@ -176,10 +212,17 @@ pub struct File {
   pub messages: List[Message]
   pub enums: List[Enum]
   pub services: List[Service]
+  pub options: List[(Str, Str)] = []
+  /// the imports marked `import weak` (also in `imports`)
+  pub weak_imports: List[Str] = []
+  /// Top level `extend` blocks, in order.
+  pub extends: List[Extend] = []
 }
 
-/// Parses a proto3 or proto2 file. Options, `reserved`, `extensions`, field options (including
-/// `default`) and `extend` blocks are read and dropped. In proto2 every field outside a oneof needs a
+/// Parses a proto3 or proto2 file. Options are kept as (name, value) pairs on the file, messages,
+/// fields, enums, values, services and rpcs (an aggregate value as `{}`; a oneof's are dropped), with
+/// a field's `default` and `json_name` in their own fields; `reserved` and `extensions` ranges and
+/// names are kept; `extend` blocks are read and dropped. In proto2 every field outside a oneof needs a
 /// label (`required`, `optional` or `repeated`); a `group` becomes a nested message and a field of
 /// that type named in lower case. A proto3 file rejects `required` and `group`.
 pub fn parse(src: Str) -> File ! ParseErr {
@@ -199,16 +242,18 @@ pub fn parse(src: Str) -> File ! ParseErr {
     } else if p_is(p, "import") {
       p.at += 1
       let public = p_is(p, "public")
-      if public || p_is(p, "weak") { p.at += 1 }
+      let weak = !public && p_is(p, "weak")
+      if public || weak { p.at += 1 }
       let path = p_str(p)?
       f.imports.push(path)
       if public { f.public_imports.push(path) }
+      if weak { f.weak_imports.push(path) }
       p_expect(p, ";")?
     } else if p_is(p, "option") {
-      p_skip_stmt(p)?
+      f.options.push(p_option_stmt(p)?)
     } else if p_is(p, "extend") {
       p.at += 1
-      p_skip_block(p)?
+      f.extends.push(p_extend(p)?)
     } else if p_is(p, "message") {
       p.at += 1
       f.messages.push(p_message(p)?)
@@ -388,68 +433,185 @@ fn p_skip_stmt(var p: P) ! ParseErr {
   Err(p_err(p, "unexpected end of file, expected `;`"))
 }
 
-/// Skips an `extend NAME { ... }` block (proto3 allows extensions only to declare custom options).
-fn p_skip_block(var p: P) ! ParseErr {
-  while p.at < p.ts.len() && !p_is(p, "{") {
-    p.at += 1
-  }
-  var depth = 0
-  while p.at < p.ts.len() {
-    let t = p.ts[p.at]
-    p.at += 1
-    if t.kind == Kind.Sym {
-      if t.text == "{" {
-        depth += 1
-      } else if t.text == "}" {
-        depth -= 1
-        if depth == 0 {
-          return Ok(())
-        }
-      }
+/// `extend NAME { fields }` after `extend`: the fields as a message's (a group's message is dropped).
+fn p_extend(var p: P) -> Extend ! ParseErr {
+  let name = p_type(p)?
+  p_expect(p, "{")?
+  var m = Message{name: name, fields: [], oneofs: [], nested: [], enums: []}
+  while !p_is(p, "}") {
+    if p.at >= p.ts.len() { return Err(p_err(p, "unterminated `extend` block")) }
+    if p_is(p, ";") {
+      p.at += 1
+    } else {
+      m = p_field(p, "", m)?
     }
   }
-  Err(p_err(p, "unterminated `extend` block"))
+  p.at += 1
+  Ok(Extend{extendee: name, fields: m.fields})
 }
 
-/// Skips a `[ ... ]` field option list when present.
-fn p_skip_opts(var p: P) ! ParseErr {
-  if !p_is(p, "[") { return Ok(()) }
-  var depth = 0
-  while p.at < p.ts.len() {
-    let t = p.ts[p.at]
+/// `option NAME = VALUE;`: (NAME, VALUE as written; an aggregate `{ ... }` is `{}`).
+fn p_option_stmt(var p: P) -> (Str, Str) ! ParseErr {
+  p.at += 1
+  let o = p_option(p)?
+  p_expect(p, ";")?
+  Ok(o)
+}
+
+/// `NAME = VALUE` of an option: NAME's tokens joined (`(my.ext).field`), VALUE a constant (a string
+/// unquoted, a negative number with its sign) or an aggregate `{ key: value ... }`, kept as `{`, then
+/// each key and value separated by U+1F and the pairs by U+1E, then `}` (`aggregate_pairs` reads
+/// it); an aggregate holding another one is `{}`.
+fn p_option(var p: P) -> (Str, Str) ! ParseErr {
+  var name = ""
+  while p.at < p.ts.len() && !p_is(p, "=") {
+    name = name + p.ts[p.at].text
     p.at += 1
-    if t.kind == Kind.Sym {
-      if t.text == "[" { depth += 1 }
-      if t.text == "]" {
-        depth -= 1
-        if depth == 0 { return Ok(()) }
+  }
+  p_expect(p, "=")?
+  if p_is(p, "{") {
+    p.at += 1
+    var pairs: List[Str] = []
+    var flat = true
+    while !p_is(p, "}") {
+      if p.at >= p.ts.len() { return Err(p_err(p, "unterminated option value")) }
+      if p_is(p, ",") || p_is(p, ";") {
+        p.at += 1
+        continue
       }
+      let key = p_ident(p)?
+      if p_is(p, ":") { p.at += 1 }
+      if p_is(p, "{") {
+        // a nested aggregate: skipped, and the whole value left out
+        flat = false
+        var depth = 0
+        while p.at < p.ts.len() {
+          let t = p.ts[p.at]
+          p.at += 1
+          if t.kind == Kind.Sym && t.text == "{" { depth += 1 }
+          if t.kind == Kind.Sym && t.text == "}" {
+            depth -= 1
+            if depth == 0 { break }
+          }
+        }
+        continue
+      }
+      pairs.push(key + "\u{1f}" + p_constant(p)?)
+    }
+    p.at += 1
+    return Ok((name, if flat { "{" + pairs.join("\u{1e}") + "}" } else { "{}" }))
+  }
+  Ok((name, p_constant(p)?))
+}
+
+/// The (key, value) pairs of an aggregate option value as `p_option` keeps it.
+pub fn aggregate_pairs(v: Str) -> List[(Str, Str)] {
+  var out: List[(Str, Str)] = []
+  if v.len() < 3 || !v.starts_with("{") || !v.ends_with("}") { return out }
+  for pair in v[1..v.len() - 1].split("\u{1e}") {
+    let kv = pair.split_n("\u{1f}", 2)
+    if kv.len() == 2 { out.push((kv[0], kv[1])) }
+  }
+  out
+}
+
+/// A constant: a string (adjacent ones joined, unquoted), or one token with an optional sign.
+fn p_constant(var p: P) -> Str ! ParseErr {
+  if p.at < p.ts.len() && p.ts[p.at].kind == Kind.Str {
+    return p_str(p)
+  }
+  var v = ""
+  if p_is(p, "-") || p_is(p, "+") {
+    if p_is(p, "-") { v = "-" }
+    p.at += 1
+  }
+  if p.at >= p.ts.len() { return Err(p_err(p, "expected an option value")) }
+  v = v + p.ts[p.at].text
+  p.at += 1
+  Ok(v)
+}
+
+/// A `[ ... ]` option list when present.
+fn p_opts(var p: P) -> List[(Str, Str)] ! ParseErr {
+  var out: List[(Str, Str)] = []
+  if !p_is(p, "[") { return Ok(out) }
+  p.at += 1
+  while true {
+    out.push(p_option(p)?)
+    if p_is(p, ",") {
+      p.at += 1
+    } else {
+      break
     }
   }
-  Err(p_err(p, "unterminated `[`"))
+  p_expect(p, "]")?
+  Ok(out)
+}
+
+/// `reserved` or `extensions` ranges (`1, 5 to 9, 20 to max`), or reserved names (`"a", "b"`), up to `;`.
+fn p_ranges(var p: P, max: Int) -> (List[(Int, Int)], List[Str]) ! ParseErr {
+  let (rs, ns, _) = p_ranges_opts(p, max)?
+  Ok((rs, ns))
+}
+
+/// p_ranges, and the statement's `[ ... ]` options.
+fn p_ranges_opts(var p: P, max: Int) -> (List[(Int, Int)], List[Str], List[(Str, Str)]) ! ParseErr {
+  p.at += 1
+  var rs: List[(Int, Int)] = []
+  var ns: List[Str] = []
+  while true {
+    if p.at < p.ts.len() && p.ts[p.at].kind == Kind.Str {
+      ns.push(p_str(p)?)
+    } else {
+      let a = p_int(p)?
+      var b = a
+      if p_is(p, "to") {
+        p.at += 1
+        if p_is(p, "max") {
+          p.at += 1
+          b = max
+        } else {
+          b = p_int(p)?
+        }
+      }
+      rs.push((a, b))
+    }
+    if p_is(p, ",") {
+      p.at += 1
+    } else {
+      break
+    }
+  }
+  let opts = p_opts(p)?
+  p_expect(p, ";")?
+  Ok((rs, ns, opts))
 }
 
 fn p_enum(var p: P) -> Enum ! ParseErr {
   let name = p_ident(p)?
   p_expect(p, "{")?
-  var vals: List[EnumValue] = []
+  var e = Enum{name: name, values: []}
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated enum `${name}`")) }
-    if p_is(p, "option") || p_is(p, "reserved") {
-      p_skip_stmt(p)?
+    if p_is(p, "option") {
+      e.options.push(p_option_stmt(p)?)
+    } else if p_is(p, "reserved") {
+      let (rs, ns) = p_ranges(p, 2147483647)?
+      for r in rs { e.reserved.push(r) }
+      for n in ns { e.reserved_names.push(n) }
     } else if p_is(p, ";") {
       p.at += 1
     } else {
       let vn = p_ident(p)?
       p_expect(p, "=")?
       let n = p_int(p)?
-      p_skip_opts(p)?
+      let opts = p_opts(p)?
       p_expect(p, ";")?
-      vals.push(EnumValue{name: vn, num: n})
+      e.values.push(EnumValue{name: vn, num: n, options: opts})
     }
   }
   p.at += 1
-  Ok(Enum{name: name, values: vals})
+  Ok(e)
 }
 
 fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
@@ -472,7 +634,9 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
       labeled = true
       p.at += 1
     }
-    if p.proto2 && !labeled {
+    // a map field takes no label in proto2 either
+    let is_map = p_is(p, "map") && p.at + 1 < p.ts.len() && p.ts[p.at + 1].text == "<"
+    if p.proto2 && !labeled && !is_map {
       return Err(p_err(p, "proto2 field needs `required`, `optional` or `repeated`, found `${p_peek(p)}`"))
     }
   }
@@ -482,9 +646,9 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
     let gname = p_ident(p)?
     p_expect(p, "=")?
     let gn = p_int(p)?
-    p_skip_opts(p)?
+    let (opts, dv, jn) = field_opts(p_opts(p)?)
     m.nested.push(p_message_body(p, gname)?)
-    m.fields.push(Field{name: gname.to_lower(), num: gn, typ: gname, key: "", repeated: repeated, optional: optional, required: required, oneof: oneof})
+    m.fields.push(Field{name: gname.to_lower(), num: gn, typ: gname, key: "", repeated: repeated, optional: optional, required: required, oneof: oneof, group: true, default_value: dv, json_name: jn, options: opts})
     return Ok(m)
   }
   var key = ""
@@ -501,10 +665,30 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
   let name = p_ident(p)?
   p_expect(p, "=")?
   let n = p_int(p)?
-  p_skip_opts(p)?
+  let (opts, dv, jn) = field_opts(p_opts(p)?)
   p_expect(p, ";")?
-  m.fields.push(Field{name: name, num: n, typ: typ, key: key, repeated: repeated, optional: optional, required: required, oneof: oneof})
+  if !key.is_empty() {
+    m.map_at.push(m.nested.len())
+  }
+  m.fields.push(Field{name: name, num: n, typ: typ, key: key, repeated: repeated, optional: optional, required: required, oneof: oneof, default_value: dv, json_name: jn, options: opts})
   Ok(m)
+}
+
+/// A field's options without the `default` and `json_name` pseudo options, and those two.
+fn field_opts(all: List[(Str, Str)]) -> (List[(Str, Str)], Str, Str) {
+  var opts: List[(Str, Str)] = []
+  var dv = ""
+  var jn = ""
+  for (k, v) in all {
+    if k == "default" {
+      dv = v
+    } else if k == "json_name" {
+      jn = v
+    } else {
+      opts.push((k, v))
+    }
+  }
+  (opts, dv, jn)
 }
 
 fn p_message(var p: P) -> Message ! ParseErr {
@@ -523,11 +707,21 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
     } else if p_is(p, "enum") {
       p.at += 1
       m.enums.push(p_enum(p)?)
-    } else if p_is(p, "option") || p_is(p, "reserved") || p_is(p, "extensions") {
-      p_skip_stmt(p)?
+    } else if p_is(p, "option") {
+      m.options.push(p_option_stmt(p)?)
+    } else if p_is(p, "reserved") {
+      let (rs, ns) = p_ranges(p, 536870911)?
+      for r in rs { m.reserved.push(r) }
+      for n in ns { m.reserved_names.push(n) }
+    } else if p_is(p, "extensions") {
+      let (rs, _, opts) = p_ranges_opts(p, 536870911)?
+      for r in rs {
+        m.extensions.push(r)
+        m.extension_options.push(opts)
+      }
     } else if p_is(p, "extend") {
       p.at += 1
-      p_skip_block(p)?
+      m.extends.push(p_extend(p)?)
     } else if p_is(p, "oneof") {
       p.at += 1
       let on = p_ident(p)?
@@ -556,10 +750,11 @@ fn p_service(var p: P) -> Service ! ParseErr {
   let name = p_ident(p)?
   p_expect(p, "{")?
   var rpcs: List[Rpc] = []
+  var sopts: List[(Str, Str)] = []
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated service `${name}`")) }
     if p_is(p, "option") {
-      p_skip_stmt(p)?
+      sopts.push(p_option_stmt(p)?)
     } else if p_is(p, ";") {
       p.at += 1
     } else {
@@ -582,26 +777,30 @@ fn p_service(var p: P) -> Service ! ParseErr {
       }
       let resp = p_type(p)?
       p_expect(p, ")")?
-      if p_is(p, "{") {
-        // rpc options block: skip to the matching brace
-        var depth = 0
-        while p.at < p.ts.len() {
-          let t = p.ts[p.at]
-          p.at += 1
-          if t.kind == Kind.Sym && t.text == "{" { depth += 1 }
-          if t.kind == Kind.Sym && t.text == "}" {
-            depth -= 1
-            if depth == 0 { break }
+      var ropts: List[(Str, Str)] = []
+      let body = p_is(p, "{")
+      if body {
+        // the rpc's options block
+        p.at += 1
+        while !p_is(p, "}") {
+          if p.at >= p.ts.len() { return Err(p_err(p, "unterminated rpc `${rn}`")) }
+          if p_is(p, "option") {
+            ropts.push(p_option_stmt(p)?)
+          } else if p_is(p, ";") {
+            p.at += 1
+          } else {
+            return Err(p_err(p, "unexpected `${p_peek(p)}` in rpc `${rn}`"))
           }
         }
+        p.at += 1
       } else {
         p_expect(p, ";")?
       }
-      rpcs.push(Rpc{name: rn, req: req, resp: resp, client_stream: cs, server_stream: ss})
+      rpcs.push(Rpc{name: rn, req: req, resp: resp, client_stream: cs, server_stream: ss, options: ropts, body: body})
     }
   }
   p.at += 1
-  Ok(Service{name: name, rpcs: rpcs})
+  Ok(Service{name: name, rpcs: rpcs, options: sopts})
 }
 
 fn g_camel(s: Str) -> Str {

@@ -1,0 +1,37 @@
+// proto2 features protodesc.build follows protoc on (std/protodesc_test.xo).
+syntax = "proto2";
+
+package xo.test2;
+
+message Msg {
+  required int32 id = 1;
+  optional string name = 2 [default = "anon"];
+  optional int64 big = 3 [default = -42];
+  optional double ratio = 4 [default = 1.5];
+  optional bool on = 5 [default = true];
+  optional Color color = 6 [default = GREEN];
+  repeated int32 nums = 7 [packed = true];
+  optional group Result = 8 {
+    required string url = 9;
+    optional int32 rank = 10;
+  }
+  repeated group Item = 11 {
+    optional string key = 12;
+  }
+  optional Msg next = 13;
+  oneof pick {
+    int32 a = 14;
+    string b = 15;
+  }
+  extensions 100 to 199;
+  extensions 1000 to max;
+  enum Color {
+    RED = 1;
+    GREEN = 2;
+  }
+}
+
+message Plain {
+  optional Msg.Color c = 1;
+  map<string, Msg> msgs = 2;
+}

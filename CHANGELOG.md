@@ -57,6 +57,7 @@ the text of every entry is unchanged).
 
 - Feature (std/protowkt): `new_mask`, `FieldMask.append` and `FieldMask.is_valid`, fieldmaskpb's New, Append and IsValid, checking a field mask's paths against a std/protodesc message.
 - Feature (std/multipart): a streaming `Writer` (`writer(boundary)`, `create_part`, `create_form_field`, `create_form_file`, `write_field`, `close`) and `file_content_disposition`, Go's multipart.Writer, for multipart bodies such as multipart/mixed responses sent part by part.
+- Feature (std/protodesc): `build(f, name, deps)`, the FileDescriptorProto protoc writes for a file std/protoparse parsed (byte for byte on 47 files). std/protoparse keeps options, ranges, `extend` blocks and public and weak imports; a proto2 `map` field no longer needs a label (it was an error).
 - Feature (std/json, std/big): `json.Number`, a JSON number kept as its text (Go's json.Number), usable as a field and as a `derive Json(via: json.Number)` proxy; std/big's BigInt encodes and decodes as Go's bare JSON number (decision 0673).
 - Feature (std/log, every backend; decision 0678): groups, as log/slog's: `log.group(fields)` as a field value and `Logger.with_group(name)`; text records write dotted keys (`req.method=GET`), JSON records nested objects, a handler sees `Value.Group` in `Record.values` and dotted keys in `Record.fields`. Breaking for a `match` on `log.Value` with no `_` arm: add a `Group(fields)` arm (recurse, or read `Record.fields`).
 
