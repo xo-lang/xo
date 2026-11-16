@@ -344,7 +344,9 @@ fn (var r: Reader) continued(check: Bool) -> Bytes ! TextErr {
     buf.write_byte(' ')
     match r.line_bytes() {
       Some(l) => buf.write(trim_bytes(l))
-      None => break
+      // spaces then the end of the input: Go's readLineSlice is io.EOF
+      // there, and so the whole line (it returned the line)
+      None => return Err(TextErr.Eof)
     }
   }
   Ok(buf.freeze())
@@ -463,40 +465,43 @@ fn grouped(keys: List[Str], fk: List[Int], fv: List[Str]) -> Header {
 /// three digits of at least 100 (the code is then 0 or what parsed), Code
 /// when the code does not match expect (1 to 9 its first digit, 10 to 99
 /// its first two, 100 to 999 all of it; 0 or less any).
+/// The errors quote the line's own bytes, as Go's %q of its string (an
+/// invalid byte \xHH; they quoted its lossy text, U+FFFD).
 struct CodeLine {
   code: Int
   more: Bool
   msg: Str
+  raw: Bytes = b""
   err: TextErr?
 }
 
-fn code_line(line: Str, expect: Int) -> CodeLine {
-  let b = line.bytes()
+fn code_line(b: Bytes, expect: Int) -> CodeLine {
   if b.len() < 4 || (b[3] != ' ' && b[3] != '-') {
-    return CodeLine{code: 0, more: false, msg: "", err: Some(TextErr.Protocol(msg: "short response: ${line.quote()}"))}
+    return CodeLine{code: 0, more: false, msg: "", err: Some(TextErr.Protocol(msg: "short response: ${b.quote()}"))}
   }
   let more = b[3] == '-'
-  let parsed = Int.parse(line[0..3])
+  let parsed = Int.parse(b[0..3].to_str_lossy())
   let code = parsed ?? 0
   if parsed.is_none() || code < 100 {
-    return CodeLine{code: code, more: more, msg: "", err: Some(TextErr.Protocol(msg: "invalid response code: ${line.quote()}"))}
+    return CodeLine{code: code, more: more, msg: "", err: Some(TextErr.Protocol(msg: "invalid response code: ${b.quote()}"))}
   }
-  let msg = line[4..]
+  let msg = b[4..].to_str_lossy()
   if (1 <= expect && expect < 10 && code / 100 != expect) || (10 <= expect && expect < 100 && code / 10 != expect) || (100 <= expect && expect < 1000 && code != expect) {
-    return CodeLine{code: code, more: more, msg: msg, err: Some(TextErr.Code(code: code, msg: msg))}
+    return CodeLine{code: code, more: more, msg: msg, raw: b[4..], err: Some(TextErr.Code(code: code, msg: msg))}
   }
-  CodeLine{code: code, more: more, msg: msg, err: None}
+  CodeLine{code: code, more: more, msg: msg, raw: b[4..], err: None}
 }
 
 /// One reply line (ReadCodeLine): its code and message; a line that
 /// says more lines follow is a Protocol error.
 pub fn (var r: Reader) read_code_line(expect: Int) -> (Int, Str) ! TextErr {
-  let cl = code_line(r.read_line()?, expect)
+  let lb = r.line_bytes() ?? return Err(TextErr.Eof)
+  let cl = code_line(lb, expect)
   if let Some(e) = cl.err {
     return Err(e)
   }
   if cl.more {
-    return Err(TextErr.Protocol(msg: "unexpected multi-line response: ${cl.msg.quote()}"))
+    return Err(TextErr.Protocol(msg: "unexpected multi-line response: ${cl.raw.quote()}"))
   }
   Ok((cl.code, cl.msg))
 }
@@ -507,16 +512,17 @@ pub fn (var r: Reader) read_code_line(expect: Int) -> (Int, Str) ! TextErr {
 /// first line's error is returned after the whole reply is read; for a
 /// reply of several lines it becomes Code with the whole message.
 pub fn (var r: Reader) read_response(expect: Int) -> (Int, Str) ! TextErr {
-  let first = code_line(r.read_line()?, expect)
+  let lb = r.line_bytes() ?? return Err(TextErr.Eof)
+  let first = code_line(lb, expect)
   var more = first.more
   var msg = StrBuilder.new()
   msg.write(first.msg)
   while more {
-    let line = r.read_line()?
+    let line = r.line_bytes() ?? return Err(TextErr.Eof)
     msg.write("\n")
     let cl = code_line(line, 0)
     if cl.err.is_some() || cl.code != first.code {
-      msg.write(line.trim_end_chars("\r\n"))
+      msg.write(line.to_str_lossy().trim_end_chars("\r\n"))
       more = true
     } else {
       msg.write(cl.msg)

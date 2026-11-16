@@ -113,6 +113,7 @@ var harnesses = map[string][]harness{
 	"xmlcodec":     {{"TestXmlcodecFuzz", "XO_XMLCODECFUZZ"}},
 	"log":          {{"TestLogFuzz", "XO_LOGFUZZ"}},
 	"tabwriter":    {{"TestTabwriterFuzz", "XO_TABWRITERFUZZ"}},
+	"textproto":    {{"TestTextprotoFuzz", "XO_TEXTPROTOFUZZ"}},
 	"archive":      {{"TestArchiveFuzz", "XO_ARCHIVEFUZZ"}},
 	"timego":       {{"TestTimegoFuzz", "XO_TIMEGOFUZZ"}},
 	"xml":          {{"TestXmlFuzz", "XO_XMLFUZZ"}},

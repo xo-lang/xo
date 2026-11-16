@@ -57,3 +57,17 @@ A new merged, pure module: canonical_key, trim, Header (every value, field order
 - Shipped in: not yet released
 
 `trim` stripped spaces and tabs only. Go's TrimString strips ASCII space, tab, carriage return and line feed from both ends.
+
+## 2026-11-16: fix: spaces at the end of the input after a line are EOF, and reply line errors quote the line's bytes
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (TestTextprotoFuzz, task #115: net/textproto go1.26.11 against std/textproto)
+- Go reference: net/textproto reader.go readContinuedLineSlice (a continuation's readLineSlice error is returned), parseCodeLine and readCodeLine (%q of the line's string)
+- Test: native/textproto "spaces at the end of the input after a line are io.EOF, as Go's readLineSlice there", "a reply line's errors quote its bytes, as Go's %q"
+- Shipped in: not yet released
+
+`read_continued_line` (and so `read_header`) on a line followed by spaces or tabs at the end of the input returned the line;
+Go's continuation read there is io.EOF, which ReadContinuedLine returns and ReadMIMEHeader returns with the fields before it
+(the field in progress dropped). `read_code_line` and `read_response` quoted a reply line's lossy text in their errors
+(U+FFFD for each invalid byte), where Go's `%q` of the line shows `\xHH`; they now quote the line's bytes.

@@ -1,0 +1,248 @@
+// textproto stress program (decision 0616 section 2): TASKS tasks each
+// make line protocol text from a seeded generator and check what
+// std/textproto promises of it: a header block written with folded
+// values reads back as its fields (keys canonical, values in order, a
+// repeated key's values together); a reply of several lines reads back as
+// its code and its messages joined; bytes dot-encoded read back as
+// themselves (\n for \r\n) and as their lines; a key's canonical form is
+// canonical; the Header's add, set and del agree with a list model. A
+// background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: no mismatch, no
+// fault, and the resident set at the end within 10% or 4 MB of its sample
+// at 5 minutes.
+//
+//   main [MINUTES (30); 0: 20,000 operations per task] [TASKS (32)]
+use std/textproto
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn key(x: Int) -> Str { ["content-type", "X-ID", "accept-encoding", "subject", "Received", "x-a-b-c", "WWW-AUTHENTICATE", "foo_bar"][(x >> 30) % 8] }
+
+fn word(x: Int) -> Str {
+  var b = StrBuilder.new()
+  for j in 0..(x >> 20) % 12 {
+    b.write(["a", "b", "z", "0", "9", "=", ";", ",", "~", "/", ".", "-"][(x >> (j * 3 % 40)) % 12])
+  }
+  b.freeze()
+}
+
+/// The canonical form of k, written out (Go's rule for a token).
+fn canon_model(k: Str) -> Str {
+  var parts: List[Str] = []
+  for p in k.split("-") {
+    parts.push(if p.is_empty() { p } else { p[0..1].to_upper() + p[1..].to_lower() })
+  }
+  parts.join("-")
+}
+
+fn header_op(t: Int, k: Int, x0: Int) -> () ! Str {
+  var x = x0
+  var text = StrBuilder.new()
+  var fields: List[(Str, Str)] = []
+  for _ in 0..1 + (x >> 40) % 9 {
+    x = next(x)
+    let kk = key(x)
+    let v = word(next(x))
+    let folded = (x >> 50) % 4 == 0 && !v.is_empty()
+    if folded {
+      let cut = v.len() / 2
+      let (a, b) = (v[0..cut], v[cut..])
+      text.write("${kk}: ${a}\r\n\t${b}\r\n")
+      fields.push((canon_model(kk), if a.is_empty() { b } else if b.is_empty() { a } else { "${a} ${b}" }))
+    } else {
+      text.write("${kk}:${if (x >> 45) % 2 == 0 { " " } else { "" }}${v}\r\n")
+      fields.push((canon_model(kk), v))
+    }
+  }
+  text.write("\r\nbody")
+  var r = textproto.reader(text.freeze().bytes())
+  let h = r.read_header().map_err(fn(e) { "task ${t} op ${k}: read_header: ${e.display()}" })?
+  if r.rest() != b"body" || r.header_truncated() {
+    return Err("task ${t} op ${k}: the header block did not end at its blank line")
+  }
+  for (kk, _) in fields {
+    var want: List[Str] = []
+    for (k2, v2) in fields {
+      if k2 == kk {
+        want.push(v2.trim())
+      }
+    }
+    if h.values(kk) != want {
+      return Err("task ${t} op ${k}: ${kk} is ${h.values(kk)}, want ${want}")
+    }
+  }
+  Ok(())
+}
+
+fn reply_op(t: Int, k: Int, x0: Int) -> () ! Str {
+  var x = x0
+  let code = [250, 220, 354, 550][(x >> 30) % 4]
+  let n = 1 + (x >> 40) % 5
+  var text = StrBuilder.new()
+  var msgs: List[Str] = []
+  for i in 0..n {
+    x = next(x)
+    let m = word(x)
+    msgs.push(m)
+    text.write("${code}${if i < n - 1 { "-" } else { " " }}${m}\r\n")
+  }
+  var r = textproto.reader(text.freeze().bytes())
+  let (c, m) = r.read_response(code / 100).map_err(fn(e) { "task ${t} op ${k}: read_response: ${e.display()}" })?
+  if c != code || m != msgs.join("\n") {
+    return Err("task ${t} op ${k}: reply ${c} ${m.quote()}, want ${code} ${msgs.join("\n").quote()}")
+  }
+  Ok(())
+}
+
+fn dot_op(t: Int, k: Int, x0: Int) -> () ! Str {
+  var x = x0
+  var lines: List[Str] = []
+  for _ in 0..(x >> 40) % 8 {
+    x = next(x)
+    lines.push(["", ".", "..", ".x", "x.", " ."][(x >> 30) % 6] + word(x))
+  }
+  var body = StrBuilder.new()
+  for l in lines {
+    body.write("${l}\n")
+  }
+  // nothing written is a line end (Go's DotWriter closed at once writes
+  // "\r\n.\r\n")
+  let src = body.freeze().bytes()
+  let enc = textproto.dot_encode(src)
+  let b = if lines.is_empty() { b"\n" } else { src }
+  if lines.is_empty() {
+    lines.push("")
+  }
+  var r = textproto.reader(enc + b"after")
+  let back = r.read_dot_bytes().map_err(fn(e) { "task ${t} op ${k}: read_dot_bytes: ${e.display()}" })?
+  if back != b || r.rest() != b"after" {
+    return Err("task ${t} op ${k}: ${b.quote()} dot-encoded reads back as ${back.quote()}")
+  }
+  var r2 = textproto.reader(enc)
+  let ls = r2.read_dot_lines().map_err(fn(e) { "task ${t} op ${k}: read_dot_lines: ${e.display()}" })?
+  if ls != lines {
+    return Err("task ${t} op ${k}: dot lines ${ls}, want ${lines}")
+  }
+  Ok(())
+}
+
+fn header_model_op(t: Int, k: Int, x0: Int) -> () ! Str {
+  var x = x0
+  var h = textproto.header()
+  var m: List[(Str, List[Str])] = []
+  for _ in 0..1 + (x >> 40) % 12 {
+    x = next(x)
+    let kk = key(x)
+    let ck = canon_model(kk)
+    let v = word(next(x))
+    var at = -1
+    for i in 0..m.len() {
+      if m[i].0 == ck {
+        at = i
+      }
+    }
+    match (x >> 50) % 4 {
+      0 => {
+        h = h.set(kk, v)
+        if at < 0 { m.push((ck, [v])) } else { m[at] = (ck, [v]) }
+      }
+      1 => {
+        h = h.del(kk)
+        if at >= 0 { m.remove_at(at) }
+      }
+      _ => {
+        h = h.add(kk, v)
+        if at < 0 { m.push((ck, [v])) } else { m[at] = (ck, m[at].1 + [v]) }
+      }
+    }
+  }
+  var keys: List[Str] = []
+  for (ck, vs) in m {
+    keys.push(ck)
+    if h.values(ck) != vs || textproto.canonical_key(ck) != ck {
+      return Err("task ${t} op ${k}: ${ck} is ${h.values(ck)}, want ${vs}")
+    }
+  }
+  if h.keys() != keys {
+    return Err("task ${t} op ${k}: keys ${h.keys()}, want ${keys}")
+  }
+  Ok(())
+}
+
+fn worker(os: Os, t: Int, end: Time, passes: Int) -> Int ! Str uses clock {
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    let x = next(t * 1000003 + k)
+    match k % 4 {
+      0 => header_op(t, k, x)?
+      1 => reply_op(t, k, x)?
+      2 => dot_op(t, k, x)?
+      _ => header_model_op(t, k, x)?
+    }
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 20000 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let total = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, t, end, passes) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("textproto stress: ${total} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

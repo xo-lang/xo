@@ -1,0 +1,110 @@
+// The Xo side of the textproto differential test (internal/stdtest
+// TestTextprotoFuzz): each line on standard input is a case, its arguments "x"
+// then hex, printed as the test prints Go's net/textproto:
+//   s IN OP...   a Reader of IN, then each OP: line, cont, hdr, code:N,
+//                resp:N, dotb, dotl; the first error ends the case; then
+//                the bytes not read
+//   canon K      canonical_key(K) (CanonicalMIMEHeaderKey)
+//   trim S       trim(S) (TrimString)
+//   dotenc B     dot_encode(B) (a DotWriter given B, then closed)
+//   hops OP...   a Header, then each a:K:V (Add), s:K:V (Set), d:K (Del),
+//                g:K (Get and Values); then every key and its values
+use std/textproto
+
+fn arg(h: Str) -> Bytes ! Str { Bytes.from_hex(h.trim_prefix("x")).or_err("bad hex ${h}") }
+
+fn text(h: Str) -> Str ! Str { arg(h)?.to_str().or_err("not UTF-8: ${h}") }
+
+fn hx(s: Str) -> Str { s.bytes().to_hex() }
+
+fn err_text(e: textproto.TextErr) -> Str {
+  match e {
+    textproto.TextErr.Protocol(m) => "err proto ${hx(m)}"
+    textproto.TextErr.Code(c, m) => "err code ${c} ${hx(m)}"
+    textproto.TextErr.Eof => "err eof"
+    textproto.TextErr.UnexpectedEof => "err ueof"
+  }
+}
+
+fn vals(xs: List[Str]) -> Str {
+  var out: List[Str] = []
+  for x in xs {
+    out.push(hx(x))
+  }
+  "[${out.join(",")}]"
+}
+
+fn show(h: textproto.Header) -> Str {
+  var parts: List[Str] = []
+  for k in h.keys().sort() {
+    parts.push("${hx(k)}=${vals(h.values(k))}")
+  }
+  parts.join(";")
+}
+
+/// The result of one reader op, and whether the case goes on.
+fn step(var r: textproto.Reader, op: Str) -> (Str, Bool) {
+  let (name, n) = match op.find(":") {
+    Some(i) => (op[0..i], Int.parse(op[i + 1..]) ?? 0)
+    None => (op, 0)
+  }
+  let res = match name {
+    "line" => r.read_line().map(fn(s) { "ok ${hx(s)}" })
+    "cont" => r.read_continued_line().map(fn(s) { "ok ${hx(s)}" })
+    "hdr" => r.read_header().map(fn(h) { "ok ${if r.header_truncated() { "trunc" } else { "end" }} ${show(h)}" })
+    "code" => r.read_code_line(n).map(fn(x) { "ok ${x.0} ${hx(x.1)}" })
+    "resp" => r.read_response(n).map(fn(x) { "ok ${x.0} ${hx(x.1)}" })
+    "dotb" => r.read_dot_bytes().map(fn(b) { "ok ${b.to_hex()}" })
+    _ => r.read_dot_lines().map(fn(ls) { "ok ${vals(ls)}" })
+  }
+  match res {
+    Ok(s) => ("${name} ${s}", true)
+    Err(e) => ("${name} ${err_text(e)}", false)
+  }
+}
+
+fn main(os: Os) ! {
+  for line in os.stdio.lines()? {
+    let w = line.trim().split(" ")
+    if w.len() < 2 {
+      continue
+    }
+    os.stdio.println("== ${line.trim()}")
+    match w[0] {
+      "s" => {
+        var r = textproto.reader(arg(w[1])?)
+        for op in w[2..] {
+          let (s, more) = step(r, op)
+          os.stdio.println(s)
+          if !more {
+            break
+          }
+        }
+        os.stdio.println("rest ${r.rest().to_hex()}")
+      }
+      "canon" => os.stdio.println("v " + hx(textproto.canonical_key(text(w[1])?)))
+      "trim" => os.stdio.println("v " + hx(textproto.trim(text(w[1])?)))
+      "dotenc" => os.stdio.println("v " + textproto.dot_encode(arg(w[1])?).to_hex())
+      _ => {
+        var h = textproto.header()
+        for op in w[1..] {
+          let f = op.split(":")
+          match f[0] {
+            "a" => h = h.add(text(f[1])?, text(f[2])?)
+            "s" => h = h.set(text(f[1])?, text(f[2])?)
+            "d" => h = h.del(text(f[1])?)
+            _ => {
+              let k = text(f[1])?
+              let g = match h.get(k) {
+                Some(v) => hx(v)
+                None => "none"
+              }
+              os.stdio.println("get ${hx(k)} ${g} ${vals(h.values(k))}")
+            }
+          }
+        }
+        os.stdio.println("all ${show(h)}")
+      }
+    }
+  }
+}

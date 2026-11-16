@@ -268,3 +268,26 @@ test "read_header groups interleaved and repeated keys in first-seen order, also
   expect(h2.values("K7").len() == 50)
   expect(h2.values("K7")[49] == "49007")
 }
+
+test "spaces at the end of the input after a line are io.EOF, as Go's readLineSlice there" {
+  var x = reader(b"A : v\r\n \t")
+  expect(x.read_continued_line()) == Err(TextErr.Eof)
+  var h = reader(b"K: 1\r\nL: 2\r\n  ")
+  // the field in progress is dropped: Go's ReadMIMEHeader gives K with io.EOF
+  match h.read_header() {
+    Ok(got) => {
+      expect(got.keys()) == ["K"]
+      expect(h.header_truncated()) == true
+    }
+    Err(e) => fault("${e.display()}")
+  }
+}
+
+test "a reply line's errors quote its bytes, as Go's %q" {
+  var x = reader(b"25\xff ok\r\n")
+  expect(x.read_code_line(0)) == Err(TextErr.Protocol(msg: "invalid response code: \"25\\xff ok\""))
+  var y = reader(b"\xffx\r\n")
+  expect(y.read_response(0)) == Err(TextErr.Protocol(msg: "short response: \"\\xffx\""))
+  var z = reader(b"250-a\xff\r\n")
+  expect(z.read_code_line(0)) == Err(TextErr.Protocol(msg: "unexpected multi-line response: \"a\\xff\""))
+}
