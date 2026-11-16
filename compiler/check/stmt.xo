@@ -431,9 +431,11 @@ fn (var c: Checker) parse_body_words(fo: Int) -> Bool {
 
 /// Checks the body of fo when it waits for check_lazy (decision 0247),
 /// as run would have, and returns the errors it reported (none for a
-/// std that TestStdChecks checks in full). The flow passes, effect
-/// obligations, and unused name reports of run are not run for it: they
-/// only report diagnostics, which an eager check of std already has.
+/// std that TestStdChecks checks in full). A dependency's body (decision
+/// 0517) gets the flow passes; a runtime body does not (decision 0247).
+/// The effect obligations and unused name reports of run are not run
+/// for it: they only report diagnostics, which an eager check of std, or
+/// the dependency's own `xo check`, already has.
 pub fn (var c: Checker) check_lazy(fo: Int) -> List[Diag] uses fs.read {
   if !c.force_body(fo) {
     // its syntax errors, without a check of the body that did not parse
@@ -453,9 +455,20 @@ pub fn (var c: Checker) check_lazy(fo: Int) -> List[Diag] uses fs.read {
   c.cur_mod = c.objs[fo].module
   c.set_file(c.objs[fo].decl_file)
   c.check_fn_decl(c.objs[fo].fn_decl[0], fo)
-  // the flow pass ran: nothing reads the body's BodyRef, which would
-  // keep its tree past unparse_body
+  // the flow pass ran: a dependency's body gets its flow checks here
+  // (decision 0517: a reached body's diagnostics stop the build; a lost
+  // update, XO0520, in one was reported only by an eager check or the go
+  // backend, task #75, 2026-11-15); a runtime body skips them (decision
+  // 0247: TestStdChecks checks std whole, and `xo test --std-module`
+  // checks the module under test in full). Nothing reads the BodyRef
+  // after, which would keep its tree past unparse_body
   if c.flowed {
+    if c.dep_lazy_mod(c.objs[fo].module) {
+      for b in c.bodies {
+        c.flow_body(b)
+      }
+      c.set_file(c.objs[fo].decl_file)
+    }
     c.bodies = []
   }
   // the whole-program passes ran: its xml.encode_value and xml.decode

@@ -70,6 +70,27 @@ func TestDepLazyBodies(t *testing.T) {
 	}
 }
 
+// TestDepLazyFlow (decision 0517): a dependency's reached body gets the
+// flow checks too. A lost update in it (`var j = xs[0]; j += 1`, never
+// stored) built natively and failed only with --backend=go or an eager
+// check (task #75, 2026-11-15): check_lazy ran no flow pass.
+func TestDepLazyFlow(t *testing.T) {
+	ws := t.TempDir()
+	modtest.WriteFiles(t, ws, map[string]string{
+		"xo.work":          "xo preview\nuse ./app\nuse ./lib\n",
+		"app/xo.mod":       "module example.com/app\nedition preview\n",
+		"app/main/main.xo": "use example.com/lib/lost\n\nfn main(os: Os) {\n  os.stdio.println(\"${lost.first([1])}\")\n}\n",
+		"lib/xo.mod":       "module example.com/lib\nedition preview\n",
+		"lib/lost/l.xo":    "pub fn first(xs: List[Int]) -> Int {\n  var j = xs[0]\n  j += 1\n  xs[0]\n}\n",
+	})
+	setenv(t, "XO_WORK", filepath.Join(ws, "xo.work"))
+	setenv(t, "XO_DEP_LAZY", "")
+	r := xo(t, "build", "--json", "-o", filepath.Join(ws, "bin"), filepath.Join(ws, "app", "main")).want(1)
+	if !strings.Contains(r.out+r.err, "XO0520") || !strings.Contains(r.out+r.err, "l.xo") {
+		t.Errorf("build with a lost update in a reached dependency body: want XO0520 in l.xo:\n%s%s", r.out, r.err)
+	}
+}
+
 // TestDepLazySyntaxError (decision 0517): with XO_DEP_LAZY=1 a dependency's
 // bodies are parsed as the build reaches them. A syntax error in a reached
 // body is reported as itself, at its file and line, and fails the build;

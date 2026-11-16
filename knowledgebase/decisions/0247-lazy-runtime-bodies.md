@@ -73,6 +73,15 @@ The checker's share of a build is large. Profiles
   the builder reaches it), so checker objects and types are numbered in
   a different order; nothing the builder emits depends on those numbers
   (the comparison above).
+- Addendum (lead, 2026-11-15, task #75): a lost update (XO0520) or
+  another flow error in a runtime body is not reported by a build or a
+  lazy `xo check`, since a lazy body skips the flow passes; only the
+  eager check (TestStdChecks, `XO_CHECK_EAGER=1`, `xo check --no-gc`),
+  `xo test --std-module=M` for the module under test (checked in full
+  as a root module) and a `--backend=go` build report it. The skip stays
+  for runtime bodies; a dependency's lazily checked body (decision 0517)
+  runs the flow passes, since 0517 has a reached body's diagnostics stop
+  the build. Gotcha lazy-bodies-skip-flow-checks.md.
 
 ## Alternatives
 

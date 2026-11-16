@@ -901,18 +901,7 @@ fn (var c: Checker) flow_bodies() {
   let saved_mod = c.cur_mod
   let saved_path = c.path
   for b in c.bodies {
-    c.set_file(b.file)
-    let nodes = all_nodes(b.body)
-    let sites = flow_walk(b.body)
-    // the move walk acts only at identifiers of move only locals
-    if c.names_move_only(sites) {
-      c.check_moves(b.body)
-    }
-    c.lost_updates(sites, nodes)
-    c.stored_updates(sites, nodes)
-    c.split_critical_sections(nodes)
-    c.dit_sections(nodes)
-    c.undone_writes(nodes)
+    c.flow_body(b)
   }
   // read once: the trees go with the files and declarations that hold
   // them, not with this list (check_lazy keeps it empty from here)
@@ -923,6 +912,25 @@ fn (var c: Checker) flow_bodies() {
   }
   c.cur_mod = saved_mod
   c.path = saved_path
+}
+
+/// The flow checks of one body (flow.go flowBody): moves, lost and
+/// stored updates (XO0520), split critical sections, constant time
+/// sections, undone writes. Run by flow_bodies, and by check_lazy for a
+/// body it checks after flow_bodies ran.
+fn (var c: Checker) flow_body(b: BodyRef) {
+  c.set_file(b.file)
+  let nodes = all_nodes(b.body)
+  let sites = flow_walk(b.body)
+  // the move walk acts only at identifiers of move only locals
+  if c.names_move_only(sites) {
+    c.check_moves(b.body)
+  }
+  c.lost_updates(sites, nodes)
+  c.stored_updates(sites, nodes)
+  c.split_critical_sections(nodes)
+  c.dit_sections(nodes)
+  c.undone_writes(nodes)
 }
 
 // ---------------------------------------------------------------------------
