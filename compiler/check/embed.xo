@@ -17,6 +17,22 @@ pub struct EmbedFile {
   pub col: Int = 0
 }
 
+/// A package that `embed.build` builds (decision 0663): its import path,
+/// the target, the directory of its sources, and, once built, the SHA-256
+/// of the output.
+pub struct EmbedBuild {
+  pub pkg: Str
+  pub target: Str
+  pub dir: Str
+  pub sha: Str = ""
+  /// The source files the build read (its `--list-inputs`), so a cache
+  /// keyed on the program's inputs sees an edit to the built package.
+  pub inputs: List[Str] = []
+}
+
+/// The targets embed.build allows (decision 0663 stage 1).
+const EMBED_BUILD_TARGETS = ["wasip1/wasm"]
+
 /// The largest embed, and all of a program's embeds together.
 const EMBED_MAX = 64 * 1024 * 1024
 const EMBED_TOTAL_MAX = 256 * 1024 * 1024
@@ -27,6 +43,9 @@ pub fn (c: Checker) embed_digest(f: Int) -> Str {
   var b = StrBuilder.new()
   for e in c.embeds.get(f) ?? [] {
     b.write("embed ${e.rel} ${e.sha}\n")
+  }
+  for e in c.embed_built.get(f) ?? [] {
+    b.write("embed.build ${e.pkg} ${e.target} ${e.sha}\n")
   }
   b.freeze()
 }
@@ -39,6 +58,15 @@ pub fn (c: Checker) embedded_paths() -> List[Str] {
     let dir = dir_of_path(c.files[f].path)
     for e in es {
       out.push(join(dir, e.rel))
+    }
+  }
+  for (_, bs) in c.embed_built.entries() {
+    for b in bs {
+      for p in b.inputs {
+        if !out.contains(p) {
+          out.push(p)
+        }
+      }
     }
   }
   out.sort()
@@ -137,6 +165,10 @@ fn (var c: Checker) expand_embeds(m: Int) uses fs.read {
         ConstDecl(d: x) => x
         _ => continue
       }
+      if let Some(r) = embed_build_call(cd.value) {
+        c.expand_embed_build(f, di, cd, r)
+        continue
+      }
       let pat = match embed_call(cd.value) {
         None => continue
         Some(Err(why)) => {
@@ -203,6 +235,84 @@ fn (var c: Checker) expand_embeds(m: Int) uses fs.read {
       c.embed_replace(f, di, cd, lit)
     }
   }
+}
+
+/// The package and target of `embed.build("pkg", "target")`, if e is
+/// such a call: Some(Ok(...)), or Some(Err(why)) when its arguments are
+/// not two plain string literals.
+fn embed_build_call(e: Expr) -> Result[(Str, Str), Str]? {
+  let (fun, args) = match e {
+    CallExpr(fun: fun, args: args, ..) => (fun, args)
+    _ => return None
+  }
+  match fun {
+    SelectorExpr(x: Ident(id: x), sel: sel, ..) => {
+      if x.name != b"embed" || sel.name != b"build" {
+        return None
+      }
+    }
+    _ => return None
+  }
+  if args.len() != 2 {
+    return Some(Err("embed.build takes two string literals: the package's import path and the target"))
+  }
+  let pkg = plain_lit(args[0].value) ?? return Some(Err("embed.build's package must be a plain string literal"))
+  let target = plain_lit(args[1].value) ?? return Some(Err("embed.build's target must be a plain string literal"))
+  Some(Ok((pkg, target)))
+}
+
+/// Replaces `const NAME: Bytes = embed.build(pkg, target)` (decision
+/// 0663) with the output the driver built, or records the build it needs.
+fn (var c: Checker) expand_embed_build(f: Int, di: Int, cd: parser.ConstDecl, r: Result[(Str, Str), Str]) {
+  let sp = parser.expr_span(cd.value)
+  let (pkg, target) = match r {
+    Ok(x) => x
+    Err(why) => return c.embed_build_fail(f, di, cd, why)
+  }
+  if embed_type_text(cd.typ) != "Bytes" {
+    return c.embed_build_fail(f, di, cd, "an embed.build constant is `Bytes`: write `const ${text(cd.name.name)}: Bytes = embed.build(\"${pkg}\", \"${target}\")`")
+  }
+  if c.embed_build_nested {
+    return c.embed_build_fail(f, di, cd, "embed.build(\"${pkg}\") is in a package that embed.build builds: one level only (decision 0663)")
+  }
+  if !EMBED_BUILD_TARGETS.contains(target) {
+    return c.embed_build_fail(f, di, cd, "embed.build builds for ${EMBED_BUILD_TARGETS.join(", ")}, not `${target}`")
+  }
+  let here = c.mods[c.files[f].module].path
+  let root = c.owner_root(here) ?? return c.embed_build_fail(f, di, cd, "embed.build needs the declaring file in a module with an xo.mod")
+  if !pkg.starts_with("${root.path}/") || pkg.split("/").any(fn(s) { s == ".." || s == "." || s.is_empty() }) {
+    return c.embed_build_fail(f, di, cd, "embed.build(\"${pkg}\"): the package must be in this module, `${root.path}/...`")
+  }
+  if pkg == here {
+    return c.embed_build_fail(f, di, cd, "embed.build(\"${pkg}\") names the package that declares it")
+  }
+  let dir = join(root.dir, pkg[root.path.len() + 1..])
+  let key = "${pkg}\n${target}"
+  var built: List[EmbedBuild] = c.embed_built.get(f) ?? []
+  match c.embed_builds.get(key) {
+    Some(b) => {
+      if b.len() > EMBED_MAX || c.embed_total + b.len() > EMBED_TOTAL_MAX {
+        return c.embed_build_fail(f, di, cd, "embed.build(\"${pkg}\") is ${b.len()} bytes: an embed may be up to ${EMBED_MAX} bytes and a program's embeds ${EMBED_TOTAL_MAX} together")
+      }
+      c.embed_total += b.len()
+      built.push(EmbedBuild{pkg: pkg, target: target, dir: dir, sha: crypto.sha256(b).to_hex(), inputs: c.embed_build_inputs.get(key) ?? []})
+      c.embed_built[f] = built
+      c.embed_replace(f, di, cd, Expr.BytesLit(span: sp, value: b))
+    }
+    None => {
+      if !c.embed_build_want.any(fn(w) { w.pkg == pkg && w.target == target }) {
+        c.embed_build_want.push(EmbedBuild{pkg: pkg, target: target, dir: dir})
+      }
+      c.embed_replace(f, di, cd, embed_placeholder("Bytes", sp))
+    }
+  }
+}
+
+/// Reports XO1519 at an embed.build constant and gives it an empty value.
+fn (var c: Checker) embed_build_fail(f: Int, di: Int, cd: parser.ConstDecl, why: Str) {
+  let sp = parser.expr_span(cd.value)
+  c.error_at(f, "XO1519", sp, why)
+  c.embed_replace(f, di, cd, embed_placeholder("Bytes", sp))
 }
 
 /// Declaration di of file f, the constant cd, with value v.

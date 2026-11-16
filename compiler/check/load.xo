@@ -119,6 +119,17 @@ pub struct Checker {
   /// the program's embedded bytes so far.
   pub embeds: Map[Int, List[EmbedFile]] = {}
   embed_total: Int = 0
+  /// embed.build (decision 0663): the outputs the driver built, by
+  /// "package\ntarget"; the builds the run met that are not there (each
+  /// replaced by an empty Bytes, so the driver builds them and checks
+  /// again); each file's builds with their outputs' SHA-256 (embed_digest);
+  /// and whether this check is itself such a build, where embed.build is
+  /// refused (one level only).
+  pub embed_builds: Map[Str, Bytes] = {}
+  pub embed_build_inputs: Map[Str, List[Str]] = {}
+  pub embed_build_want: List[EmbedBuild] = []
+  pub embed_built: Map[Int, List[EmbedBuild]] = {}
+  pub embed_build_nested: Bool = false
   /// The paths each embed.Dir constant holds, by "module\nname"
   /// (XO1511).
   embed_dir_keys: Map[Str, List[Str]] = {}

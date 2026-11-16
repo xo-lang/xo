@@ -472,3 +472,61 @@ func TestWholeBuildOutputDir(t *testing.T) {
 		t.Fatalf("verify build -o g/prog: want its entry found and checked, got\n%s", last)
 	}
 }
+
+// TestWholeBuildWasm: a wasip1/wasm build is stored in the run cache as a
+// native one is (decision 0360), so an unchanged program's second build
+// is a hit with the same module, and an edit misses. Before, the wasm
+// path stored no entry and every warm build ran the backend (0.20 s
+// against 0.01 s on the Mac Studio for examples/ui-todo's client, which
+// embed.build builds with every server build, decision 0663).
+func TestWholeBuildWasm(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	tmp := t.TempDir()
+	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
+	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
+	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(tmp, "backend"))
+	setenv(t, "XO_WHOLE_BUILD", "on")
+	dir := filepath.Join(tmp, "prog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("xo.mod", "module wholewasm\n")
+	write("main.xo", "fn main(os: Os) {\n  os.stdio.println(\"one\")\n}\n")
+	out := filepath.Join(tmp, "prog.wasm")
+	build := func(what string, wantHit bool) []byte {
+		t.Helper()
+		var so, se bytes.Buffer
+		if code := run(t, []string{"build", "--phase-times", "--targets=wasip1/wasm", "-o", out, dir}, &so, &se); code != 0 {
+			t.Fatalf("%s: exit %d\n%s%s", what, code, so.String(), se.String())
+		}
+		hit := strings.Contains(se.String(), "phase run_cache ")
+		if hit != wantHit {
+			t.Fatalf("%s: run cache hit %v, want %v\n%s", what, hit, wantHit, se.String())
+		}
+		b, err := os.ReadFile(out)
+		if err != nil || !bytes.HasPrefix(b, []byte("\x00asm")) {
+			t.Fatalf("%s: %s is not a wasm module (%v)", what, out, err)
+		}
+		return b
+	}
+	first := build("first build", false)
+	if err := os.Remove(out); err != nil {
+		t.Fatal(err)
+	}
+	if again := build("unchanged", true); !bytes.Equal(again, first) {
+		t.Errorf("the hit wrote another module")
+	}
+	write("main.xo", "fn main(os: Os) {\n  os.stdio.println(\"two, longer\")\n}\n")
+	if edited := build("edited", false); bytes.Equal(edited, first) {
+		t.Errorf("an edit built the same module")
+	}
+}

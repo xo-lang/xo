@@ -811,6 +811,9 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   var tc = os.clock.now()
   var c = check.new_checker(os.fs, o.std)
   c.overlay = ov
+  c.embed_builds = o.embed_builds
+  c.embed_build_inputs = o.embed_build_inputs
+  c.embed_build_nested = (os.env.get("XO_EMBED_BUILD_NESTED") ?? "") == "1"
   c.parse_cache = o.parse_cache
   c.native = native
   c.clib = !o.lib.is_empty()
@@ -1045,6 +1048,16 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   }
   if !c.unsupported.is_empty() {
     fail_unsupported(os, "unsupported: ${c.unsupported}")
+  }
+  // embed.build (decision 0663): the packages the check met are built,
+  // and the program is checked again with their outputs; not after
+  // errors, which are reported first
+  if !c.embed_build_want.is_empty() && !blocks(c.diags, o.holes) {
+    var o2 = o
+    let (outs, ins) = embed_build_outputs(os, o, c.embed_build_want)
+    o2.embed_builds = outs
+    o2.embed_build_inputs = ins
+    return check_program_ov(os, o2, native, ov)
   }
   // the generated tests' diagnostics apart from the user's
   var gen_ds: List[check.Diag] = []
@@ -1479,6 +1492,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     if tests {
       return finish(os, ctx, o, c, root, [("${wtarget}/wasm", wout)], tests, ts)
+    }
+    if !o.run_key.is_empty() && !ctx.run_cache.is_empty() && !wout.is_empty() {
+      // the run cache's entry, as a native build's (decision 0360): a
+      // warm wasm build was 0.20 s against a native one's 0.02 s, and
+      // embed.build runs one per server build (decision 0663)
+      var wc = ctx
+      wc.bin_cache = ctx.run_cache
+      run_store(os, wc, o.run_key, c, o.std, o.wd, wout, [], RunOut{output: kept_output(ctx), outs: if o.cmd == "build" { [("${wtarget}/wasm", wout)] } else { [] }, out_dir: out_dir_free(os, o)}, o.run_start)
     }
     return Native{bins: if wout.is_empty() { [] } else { [("${wtarget}/wasm", wout)] }, pc: c.parse_cache}
   }
@@ -4019,4 +4040,51 @@ fn list_inputs(os: Os, o: Opts, backend: Str) {
   for r in rows {
     os.stdio.println(r.0)
   }
+}
+
+/// The outputs of the packages embed.build names (decision 0663): each
+/// a nested `xo build --targets=TARGET` of the package's directory, with
+/// its own caches, into the user cache's embedbuild directory; o's
+/// earlier outputs are kept. A failed build ends the command with its
+/// diagnostics. With each output, the files its build read
+/// (`--list-inputs`), for the run cache's input list.
+fn embed_build_outputs(os: Os, o: Opts, want: List[check.EmbedBuild]) -> (Map[Str, Bytes], Map[Str, List[Str]]) {
+  var out = o.embed_builds
+  var ins = o.embed_build_inputs
+  let xo_bin = check.executable(os.env, os.fs)
+  let base = user_cache_dir(os, host_os(os))
+  let dir = if base.is_empty() { "${o.wd}/.xo/embedbuild" } else { "${base}/xo/embedbuild" }
+  os.fs.create_dir_all(dir).ignore_err("the nested build reports a directory it cannot write")
+  for w in want {
+    let name = crypto.sha256("${w.dir}\n${w.target}".bytes()).to_hex()[..24]
+    let bin = "${dir}/${name}.wasm"
+    let args = ["build", "--targets=${w.target}", "-o", bin, w.dir]
+    let r = match os.proc.cmd(xo_bin, args).dir(o.wd).set_env("PWD", o.wd).set_env("XO_STD", o.std).set_env("XO_EMBED_BUILD_NESTED", "1").merge_stderr().output() {
+      Ok(x) => x
+      Err(e) => fail(os, "embed.build(\"${w.pkg}\", \"${w.target}\"): ${e}")
+    }
+    if r.code != 0 {
+      fail(os, "embed.build(\"${w.pkg}\", \"${w.target}\"): the build of ${w.dir} failed:\n${r.stdout.to_str() ?? ""}")
+    }
+    let b = match os.fs.read(bin) {
+      Ok(x) => x
+      Err(e) => fail(os, "embed.build(\"${w.pkg}\", \"${w.target}\"): ${e}")
+    }
+    out["${w.pkg}\n${w.target}"] = b
+    let li = match os.proc.cmd(xo_bin, ["build", "--list-inputs", "--targets=${w.target}", w.dir]).dir(o.wd).set_env("PWD", o.wd).set_env("XO_STD", o.std).set_env("XO_EMBED_BUILD_NESTED", "1").output() {
+      Ok(x) => x
+      Err(e) => fail(os, "embed.build(\"${w.pkg}\", \"${w.target}\"): ${e}")
+    }
+    if li.code != 0 {
+      fail(os, "embed.build(\"${w.pkg}\", \"${w.target}\"): listing the inputs of ${w.dir} failed:\n${li.stderr.to_str() ?? ""}")
+    }
+    let paths = (li.stdout.to_str() ?? "").split("\n").filter(fn(l) { !l.is_empty() })
+    // read here too: the run cache (decision 0360) keys a build on the
+    // files this process reads, and the nested build read them in its own
+    for p in paths {
+      os.fs.read(abs_path(o.wd, p)).ignore_err("a file gone since the nested build changes the key anyway")
+    }
+    ins["${w.pkg}\n${w.target}"] = paths
+  }
+  (out, ins)
 }

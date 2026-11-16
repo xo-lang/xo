@@ -144,6 +144,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_PLAY_RECORD":          {"none", ""}, // --play only (decision 0583 (b)): std from a declaration record; the playground has no code cache and the output is byte identical
 	"XO_PLAY_RECORD_OUT":      {"none", ""}, // --play only: writes the record after a check
 	"XO_PLAY_TIMES":           {"none", ""},
+	"XO_EMBED_BUILD_NESTED":   {"none", ""}, // decision 0663: set for embed.build's nested build, which then refuses an embed.build (an error, never other code)
 	"XO_DUMP_FN":              {"none", ""}, // writes a function's SSA and MIR to a file; the code is the same
 	"XO_RC_CHECK":             {"none", ""}, // decision 0322's checks: marks Reuse values in the SSA bodies every cache key hashes
 	"XO_DUMP_DIR":             {"none", ""}, // where those files go

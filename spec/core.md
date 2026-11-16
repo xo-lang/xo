@@ -1477,6 +1477,21 @@ const DEFAULT = Config{port: 8080}
   constant (or a literal `.sub` of one) with a literal path it does not
   hold is the warning `XO1511`, with the key that ends with the path as a
   fix. A path computed at run time is not checked.
+- A top-level `Bytes` constant may hold a package of the same module
+  built for another target (decision 0663):
+  `const CLIENT: Bytes = embed.build("example.com/app/client", "wasip1/wasm")`.
+  The package is a `main` package named by its import path and the
+  target a string literal; `wasip1/wasm` is the one target allowed. The
+  driver builds it (a nested build with its own caches) and the
+  constant is a literal of the output, which counts against the embed
+  limits; the output's SHA-256 joins the declaring module's keys and the
+  nested build's source files join the program's inputs, so an edit to
+  the built package rebuilds the program. The built package may not
+  itself use `embed.build` (one level). Errors: `XO1519` (another target,
+  a package outside the module or the declaring one, a constant not
+  typed `Bytes`, a nested `embed.build`); a failed nested build ends the
+  command with its diagnostics. Editors check without building: the
+  constant is empty there.
 - Unused local bindings, local constants, and imports are errors (`XO0110`). Not covered:
   function and closure parameters, names starting with `_`, and `_` itself.
   `xo fix` renames an unused binding or local constant to `_name` (removing
@@ -4195,6 +4210,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1516` | error | build | a program built for wasip2/wasm whose main never calls `http.serve_component` (decision 0447); no longer reported since stage 3 (2026-11-02), when such a program became a `wasi:cli/command` component |
 | `XO1517` | error | build | a windows program's resource input that cannot be used: the `--versioninfo` JSON cannot be read or parsed, an `--icon` file cannot be read or is not an icon, a `--manifest` file cannot be read; the message carries goversioninfo's text (decision 0560) |
 | `XO1518` | error | checker | a function's `as c "name"` clause breaks a C export rule: a method, not `pub fn`, generic, a `var` parameter, a Bool or function type parameter, more than 8 integer parameter words, a Bytes, Str, Bool or function type result, a name that is not a C identifier or starts with `xo_` (decision 0574) |
+| `XO1519` | error | checker | `embed.build` breaks a rule: a target other than `wasip1/wasm`, a package outside the declaring module (or the declaring package itself), arguments that are not two plain string literals, a constant not typed `Bytes`, or an `embed.build` in a package that `embed.build` builds (decision 0663) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

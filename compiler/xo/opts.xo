@@ -14,6 +14,10 @@ use github.com/xo-lang/xo/compiler/hostpath
 /// Everything a command line sets.
 struct Opts {
   cmd: Str = ""
+  /// embed.build's outputs (decision 0663), by "package\ntarget": built
+  /// after a check that met them, then given to the check again
+  embed_builds: Map[Str, Bytes] = {}
+  embed_build_inputs: Map[Str, List[Str]] = {}
   std: Str = "std"
   wd: Str = ""
   cc: Str = ""

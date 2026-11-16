@@ -86,6 +86,36 @@ always built from the same source.
 - `TestCodegenInputsClassified` and the watch loops must learn the new
   input (the nested build's sources); `embedded_paths` lists them.
 
+## As built (2026-11-15)
+
+- The checker has no hook (a function field would carry the nested
+  build's effects into every checker entry point). Instead
+  `expand_embeds` replaces an `embed.build` constant with the output
+  from `Checker.embed_builds` ("package\ntarget" to bytes) when the
+  driver gave it, else records the build in `embed_build_want` and puts
+  an empty Bytes there. The driver's `check_program_ov`, after a check
+  without errors that wants builds, runs each (`xo build
+  --targets=wasip1/wasm -o <user cache>/xo/embedbuild/HASH.wasm DIR` with
+  `XO_EMBED_BUILD_NESTED=1`, where `embed.build` is XO1519), then checks
+  again with the outputs. Editors and the LSP never fill the map, so the
+  constant is empty there, as point 2 allowed.
+- The run cache (decision 0360) keys a build on the files the process
+  reads; the nested build reads in its own, so a warm server build kept
+  the old client after an edit to the client alone. The driver now lists
+  the nested build's inputs (`--list-inputs`) and reads them through its
+  own recorded file system (TestEmbedBuild fails without it).
+- The wasm path stored no run cache entry, so every warm wasm build ran
+  the backend: 0.20 s against 0.01 s now (TestWholeBuildWasm; main's xo
+  at 95b2f061 missed on both builds of an unchanged program).
+- Measured (Mac Studio, examples/ui-todo, 3 rounds): a server build
+  after an edit to the App's file is 0.83 to 1.05 s with `embed.build`
+  and 0.42 to 0.44 s without; a warm build 0.02 s either way. The cost
+  left is the second check, the nested build and its `--list-inputs`
+  (a third process).
+- Next: have the nested build write its input list itself (one process
+  less), and skip the first check's wasted half when the previous run's
+  builds are still current (a record of the last run's wants).
+
 ## Alternatives
 
 - **Status quo: two builds, the server reads a file.** Works today; two

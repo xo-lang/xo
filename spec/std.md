@@ -11141,8 +11141,9 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   sync, for the app's CSS.
 - The predicting client (decision 0659 stage 3): an App's client program
   is a `main` that calls `client_main(os.stdio, app)`, built with
-  `--targets=wasip1/wasm` and passed to `host(client: bytes)` (read from
-  a file or `embed`). `mount` then serves it at `GET prefix/_xo/app.wasm`
+  `--targets=wasip1/wasm` and passed to `host(client: bytes)`: built with
+  the server by `embed.build(package, "wasip1/wasm")` (decision 0663),
+  or read from a file. `mount` then serves it at `GET prefix/_xo/app.wasm`
   and the page's root carries `data-xo-wasm`. The runtime compiles it
   once and, on each event and each sync reply, runs it with a `ClientIn`
   (the server's model from `?model=1` and the queued Msgs) and shows the
