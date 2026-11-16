@@ -1,0 +1,59 @@
+// zero_val.T and the landings (2026-11-16). A front end cache replay
+// does not run a body's finish_fn, so zero_val.T of a large result could
+// still be unmade when the landings ran: the exit's finish_fn made it
+// there, past the end of the may_fault list the pass reads (raises
+// faulted on golden net_only), and the cleanup cache, whose key left its
+// presence out, restored another program's exit calling it (the arm64
+// backend's "runtime call `zero_val.xo.MapLogK[Str]`", golden
+// http_client_responses on linux/amd64).
+
+use github.com/xo-lang/xo/compiler/check
+
+/// g faults; f calls g and returns a struct of FAULT_ZERO_FIELDS Ints
+/// (large enough for zero_val.T), and no zero_val.S is made yet.
+fn zv_module() -> Module {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  var fs: List[SField] = []
+  for i in 0..FAULT_ZERO_FIELDS {
+    fs.push(SField{name: "f${i}", ty: it})
+  }
+  let st = m.intern(SType{kind: Kind.Struct, name: "S", fields: fs})
+  let gi = m.new_func("g", [], [])
+  var g = m.funcs[gi]
+  let _flt = g.add(0, Op.Fault, -1, Aux.None, [])
+  m.funcs[gi] = g
+  let fi = m.new_func("f", [], [st])
+  var f = m.funcs[fi]
+  let _c = f.add(0, Op.Call, -1, Aux.S(s: "g"), [])
+  var zs: List[Int] = []
+  for _ in 0..FAULT_ZERO_FIELDS {
+    zs.push(f.add(0, Op.Const, it, Aux.I(n: 0), []))
+  }
+  let s = f.add(0, Op.Struct, st, Aux.None, zs)
+  let _r = f.add(0, Op.Return, -1, Aux.None, [s])
+  m.funcs[fi] = f
+  m
+}
+
+test "add_landings makes no zero_val.T for an unwind exit" {
+  var b = new_builder(check.new_checker(os.fs, ""), "")
+  b.m = zv_module()
+  let n = b.m.funcs.len()
+  b.add_landings()
+  expect(b.m.func_index("zero_val.S")) == -1
+  expect(b.m.funcs.len()) == n
+  // the exit it made returns an inline zero
+  let f = b.m.funcs[b.m.func_index("f")]
+  expect(f.unwind_exit >= 0) == true
+}
+
+test "a cln key says whether a result's zero_val.T is there" {
+  var m = zv_module()
+  let fi = m.func_index("f")
+  let k0 = cln_key(m, fi, m.may_fault(), type_keys(m), "xo-id", "fl", ClnFacts{})
+  let st = m.funcs[fi].results[0]
+  let _z = m.new_func("zero_val.S", [], [st])
+  let k1 = cln_key(m, fi, m.may_fault(), type_keys(m), "xo-id", "fl", ClnFacts{})
+  expect(k0 == k1) == false
+}

@@ -72,6 +72,19 @@ pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, f
       }
     }
   }
+  // whether each result's shared zero (zero_val.T) is there: the unwind
+  // exit add_landings makes calls it if so and writes the zero inline if
+  // not (fault_zero), and the body does not name it before then. Left
+  // out, an entry made where it was there stood in for a body where it
+  // was not (a front end cache replay made no zero_val.T), and the
+  // restored exit called a function the build did not have (arm64
+  // "runtime call `zero_val.xo.MapLogK[Str]`", golden
+  // http_client_responses after other programs, 2026-11-16)
+  for t in f.results {
+    if t >= 0 && t < m.types.len() && m.func_index("zero_val.${m.types[t].name}") >= 0 {
+      b.write_str("zero_val ${t}\n")
+    }
+  }
   crypto.sha256(b.freeze()).to_hex()
 }
 

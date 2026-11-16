@@ -823,7 +823,9 @@ fn (var b: Builder) unwind_exit() -> Int {
   }
   b.s.unwind_b = b.s.f.new_block()
   let cur = b.s.cur
-  b.finish_fn()
+  // not finish_fn: no zero_val.T made here (finish_unwind)
+  b.seal_conts()
+  b.finish_unwind()
   b.s.cur = cur
   b.s.f.unwind_exit
 }

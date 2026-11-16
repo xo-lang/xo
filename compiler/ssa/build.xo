@@ -4726,6 +4726,19 @@ fn (var b: Builder) finish_fn() {
   for t in b.s.f.results {
     b.zero_val_of(t)
   }
+  b.finish_unwind()
+}
+
+/// The unwind block of finish_fn, without making zero_val.T: what
+/// add_landings' unwind_exit runs. A function made there is past the end
+/// of the may_fault list the pass reads (raises faulted, index 5066 of a
+/// List of length 5066, golden net_only, 2026-11-16). It was unmade there
+/// after a front end cache replay, which does not run finish_fn;
+/// fault_zero then writes the zero inline (and the cleanup cache's key
+/// says whether zero_val.T is there, clncache.xo cln_key). A build
+/// without the cache made every zero_val.T at its body's finish_fn, so
+/// its output is unchanged.
+fn (var b: Builder) finish_unwind() {
   if b.s.unwind_b < 0 {
     return
   }
