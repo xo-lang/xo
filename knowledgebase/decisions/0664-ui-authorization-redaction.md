@@ -1,6 +1,6 @@
 # 0664: std/ui authorization and per-principal views (decision 0659 stage 4)
 
-Status: Proposed (owner session, 2026-11-15).
+Status: Accepted (owner, 2026-11-15; the prototype lands as stage 4a; an effect parameter for `auth`, so a session can be read from a database, is left for review).
 
 ## Context
 

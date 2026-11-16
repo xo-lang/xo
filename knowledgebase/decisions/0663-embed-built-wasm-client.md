@@ -1,6 +1,6 @@
 # 0663: Embedding a package built for wasm (a std/ui App's client)
 
-Status: Proposed (owner session, 2026-11-15).
+Status: Accepted (owner, 2026-11-15). The implementation also gives the wasm build a whole-output cache hit, so a warm server build stays a key lookup (Consequences).
 
 ## Context
 
