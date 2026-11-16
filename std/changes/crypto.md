@@ -1,5 +1,20 @@
 # std/crypto changes
 
+## 2026-11-16: perf: a BLAKE2b digest's short last block is compressed where it lies
+
+- Kind: perf
+- Commit: this push
+- Found by: the BLAKE2b timing row (bench/perf/blake2b small 1.241 and keyed 1.245 of x/crypto on linux/arm64 host 1, #100); XO_PROF: the padded copy of the last block 6.5% of a short digest's samples
+- Go reference: golang.org/x/crypto v0.58.0 blake2b checkSum and digest.Sum (the padded block on the stack)
+- Test: native/llrt/blake2b and crypto module tests; the xcrypto corpus (arm64, llvm, go: digests at every block boundary from 0 to 1000 bytes against x/crypto); twincheck bench/perf/blake2b (5 cases); xo bench --ab on linux/arm64 host 1, 9 rounds: small 0.882 (0.868 to 0.904), keyed 0.934 (0.918 to 0.948), big 1.006 (within noise); max RSS 1952 to 2024 KiB on small
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+The final block of a digest (one shot `digest` and a Hasher's `sum`) was
+copied into a new zero padded 128 byte block before its compression.
+digest_tables.blake2b_compress_n compresses the n bytes where they lie and
+reads the bytes past them as zeros (one test more for a whole block).
+
 ## 2026-11-15: perf: a SHA-3 or Keccak digest is one shot, its state in scratch memory
 
 - Kind: perf

@@ -128,7 +128,7 @@ fn final_words(s: State) -> List[Int] {
   var h = s.h
   // a copy: the compression's index stores copy the shared words
   h[0] = h[0]
-  digest_tables.blake2b_compress(h, padded(s.block, 0, s.offset), 0, s.t.wrapping_add(s.offset), true)
+  digest_tables.blake2b_compress_n(h, s.block, 0, s.offset, s.t.wrapping_add(s.offset), true)
   h
 }
 
@@ -162,7 +162,7 @@ pub fn sum(data: Bytes, size: Int) -> Bytes {
   if n - i == BLOCK {
     digest_tables.blake2b_compress(h, data, i, n, true)
   } else {
-    digest_tables.blake2b_compress(h, padded(data, i, n), 0, n, true)
+    digest_tables.blake2b_compress_n(h, data, i, n - i, n, true)
   }
   le_out(h, size)
 }

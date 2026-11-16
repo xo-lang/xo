@@ -955,23 +955,80 @@ pub fn blake2b_iv() -> List[Int] { [7640891576956012808, -4942790177534073029, 4
 /// BLAKE2b's compression F (RFC 7693 3.2) of the 128 byte block of blk
 /// at i into h, the offset counter t0 (the low word; the high one is 0
 /// here), the final block when last.
-pub fn blake2b_compress(var h: List[Int], blk: Bytes, i: Int, t0: Int, last: Bool) {
-  let m0 = rt.bytes_word(blk, i + 0)
-  let m1 = rt.bytes_word(blk, i + 8)
-  let m2 = rt.bytes_word(blk, i + 16)
-  let m3 = rt.bytes_word(blk, i + 24)
-  let m4 = rt.bytes_word(blk, i + 32)
-  let m5 = rt.bytes_word(blk, i + 40)
-  let m6 = rt.bytes_word(blk, i + 48)
-  let m7 = rt.bytes_word(blk, i + 56)
-  let m8 = rt.bytes_word(blk, i + 64)
-  let m9 = rt.bytes_word(blk, i + 72)
-  let m10 = rt.bytes_word(blk, i + 80)
-  let m11 = rt.bytes_word(blk, i + 88)
-  let m12 = rt.bytes_word(blk, i + 96)
-  let m13 = rt.bytes_word(blk, i + 104)
-  let m14 = rt.bytes_word(blk, i + 112)
-  let m15 = rt.bytes_word(blk, i + 120)
+pub fn blake2b_compress(var h: List[Int], blk: Bytes, i: Int, t0: Int, last: Bool) { blake2b_compress_n(h, blk, i, 128, t0, last) }
+
+/// The little endian word of the n bytes of b at at (0 to 8 of them; the
+/// bytes past n read as zeros).
+fn word_n(b: Bytes, at: Int, n: Int) -> Int {
+  if n >= 8 {
+    return rt.bytes_word(b, at)
+  }
+  var w = 0
+  var k = 0
+  while k < n {
+    w = w | Int(b[at + k]).wrapping_shl(8 * k)
+    k += 1
+  }
+  w
+}
+
+/// blake2b_compress of the n bytes of blk at i (0 to 128), the bytes
+/// past them read as zeros: a short last block is compressed where it
+/// lies, not copied into a padded one (Go's checkSum pads on its stack;
+/// the copy was a 128 byte allocation a short message, bench/perf/blake2b
+/// small 1.241 of Go, 2026-11-16). A whole block takes one test more.
+pub fn blake2b_compress_n(var h: List[Int], blk: Bytes, i: Int, n: Int, t0: Int, last: Bool) {
+  var m0 = 0
+  var m1 = 0
+  var m2 = 0
+  var m3 = 0
+  var m4 = 0
+  var m5 = 0
+  var m6 = 0
+  var m7 = 0
+  var m8 = 0
+  var m9 = 0
+  var m10 = 0
+  var m11 = 0
+  var m12 = 0
+  var m13 = 0
+  var m14 = 0
+  var m15 = 0
+  if n >= 128 {
+    m0 = rt.bytes_word(blk, i + 0)
+    m1 = rt.bytes_word(blk, i + 8)
+    m2 = rt.bytes_word(blk, i + 16)
+    m3 = rt.bytes_word(blk, i + 24)
+    m4 = rt.bytes_word(blk, i + 32)
+    m5 = rt.bytes_word(blk, i + 40)
+    m6 = rt.bytes_word(blk, i + 48)
+    m7 = rt.bytes_word(blk, i + 56)
+    m8 = rt.bytes_word(blk, i + 64)
+    m9 = rt.bytes_word(blk, i + 72)
+    m10 = rt.bytes_word(blk, i + 80)
+    m11 = rt.bytes_word(blk, i + 88)
+    m12 = rt.bytes_word(blk, i + 96)
+    m13 = rt.bytes_word(blk, i + 104)
+    m14 = rt.bytes_word(blk, i + 112)
+    m15 = rt.bytes_word(blk, i + 120)
+  } else {
+    m0 = word_n(blk, i + 0, n - 0)
+    m1 = word_n(blk, i + 8, n - 8)
+    m2 = word_n(blk, i + 16, n - 16)
+    m3 = word_n(blk, i + 24, n - 24)
+    m4 = word_n(blk, i + 32, n - 32)
+    m5 = word_n(blk, i + 40, n - 40)
+    m6 = word_n(blk, i + 48, n - 48)
+    m7 = word_n(blk, i + 56, n - 56)
+    m8 = word_n(blk, i + 64, n - 64)
+    m9 = word_n(blk, i + 72, n - 72)
+    m10 = word_n(blk, i + 80, n - 80)
+    m11 = word_n(blk, i + 88, n - 88)
+    m12 = word_n(blk, i + 96, n - 96)
+    m13 = word_n(blk, i + 104, n - 104)
+    m14 = word_n(blk, i + 112, n - 112)
+    m15 = word_n(blk, i + 120, n - 120)
+  }
   let h0 = h[0]
   var v0 = h0
   let h1 = h[1]
