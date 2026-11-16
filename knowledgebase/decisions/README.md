@@ -660,3 +660,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0668](0668-ui-page-navigation.md): Accepted (owner, 2026-11-15): the std/ui runtime follows a same-origin link to another std/ui page itself (fetch, patch, history, a runtime per page; a left page's queue drains to its own endpoint); URL routing in one App waits
 - [0669](0669-userspace-chacha8-rand.md): Proposed (Xo Lang 1, 2026-11-15): the native Rand draws from a per-thread ChaCha8 keystream with fast key erasure, seeded and reseeded from the OS (after fork and per thread); std/crypto key generation stays OS-direct
 - [0670](0670-ui-page-layer.md): Proposed (owner session, 2026-11-15): std/ui page layer: plain pages, forms and frames without full loads (stub)
+- [0671](0671-list-filled.md): Proposed (Xo Lang 3, 2026-11-15): List[T].filled(n, x) makes n copies of x in bulk (Go's make plus a fill) on every backend (stub)
