@@ -33,13 +33,22 @@ backend std/rt's client is net/http itself, so Go's hooks are at hand.
    `WroteRequest(err)`, `GotFirstResponseByte`, `Got100Continue`,
    `PutIdleConn(err)`. A `TraceEvent` also carries `at: Time`, the
    instant the transport saw it.
-2. Native backends record each event's kind, time and fields in the
-   exchange's record as llrt reaches it; std/http calls `on` for each,
-   in order, when the exchange returns (or fails). The times are the
-   transport's, so durations are exact; only the moment the function
-   runs is later than Go's.
-3. The Go backend calls `on` from Go's ClientTrace hooks as they fire,
-   with the same events and `at`.
+2. Every backend records each event's kind, time and fields as the
+   transport reaches it, and std/http calls `on` for the recorded
+   events in order at the same delivery points on every backend (no
+   backend calls `on` live):
+   - when `send` returns, or `open` returns the response head (or either
+     fails): every event up to then, GetConn through GotFirstResponseByte;
+   - when a streamed body (`Client.open`) is read to its end or closed:
+     the events after the head, PutIdleConn (the connection back in the
+     pool, or its error) last. For `send`, which reads the whole body
+     before it returns, PutIdleConn is in the first delivery.
+   The times are the transport's, so durations are exact; only the moment
+   `on` runs is later than Go's.
+3. Native backends record in the exchange's llrt record (http1.xo
+   client_do, hclient.xo cl_start). The Go backend records from Go's
+   ClientTrace hooks into a list kept with the request and delivers it at
+   the same points, so `on` runs at the same moments everywhere.
 4. std/metrics' `instrument_round_tripper_trace` and `InstrumentTrace`
    map onto `with_trace`: an observer per event kind, fed the time since
    the request started.
@@ -53,6 +62,10 @@ backend std/rt's client is net/http itself, so Go's hooks are at hand.
   connection the moment it is chosen) is not possible on native backends:
   events arrive after the exchange. Go's own tests check order and
   fields, which this keeps.
+- A golden test runs one exchange per case (a fresh connection, a reused
+  one, a failed dial, a TLS connection, a streamed body read then closed)
+  on every backend and checks the event order, the fields, and at which
+  delivery point each event arrives.
 - WroteHeaderField, Wait100Continue and Got1xxResponse are left out at
   first (no promhttp observer uses them); they can be added as variants.
 
