@@ -81,7 +81,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   hour, with under 20% of either read back), so an age prune before the
   job found nothing old while one gate filled the disk. /work job
   directories are never touched. Tests: scripts/lead/offload-prune_test.sh
-  (a tmpfs tree in a local Linux container). Last verified: 2026-11-16.
+  (a tmpfs tree in a local Linux container). A full walk that leaves /work
+  under its target and frees under 1 GB writes `~/.cache/xo/.prune-dry`;
+  for the next 60 minutes (OFF_PRUNE_DRY_MIN) jobs skip the walk unless
+  free space fell by 1 GB (OFF_PRUNE_DRY_MB) since, and only files it
+  removed count toward a pass's goal
+  (gotchas/offload-prune-unreachable-target-walks-every-job.md).
+  Last verified: 2026-11-16.
   The arm64 container runs 2 jobs at once (OFF_SLOTS=2 in offload.env;
   owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
   `/work/offload.lock.2`. A job that measures time or memory sets
