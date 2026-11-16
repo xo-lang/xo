@@ -1,6 +1,6 @@
 # 0682: derive SqlRow gains an encode half; sql.named_args (task #124)
 
-Status: Proposed (Xo Lang 3, 2026-11-16; the lead asked for it before the
+Status: Accepted (owner, 2026-11-16; proposed by Xo Lang 3, 2026-11-16; the lead asked for it before the
 code; Xo Lang 1 reviews the compiler part).
 
 ## Context
