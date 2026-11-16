@@ -490,10 +490,17 @@ func myfUnsignedDecimal(got, want string, packets [][]byte) bool {
 var myfDateText = regexp.MustCompile(`Text\(s: "(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?)?"\)`)
 
 // myfDateNormalized reports whether two answers differ, and are equal once
-// each date or datetime Text of Xo's (got) is normalized as time.Date
-// does (go-sql-driver's parseDateTime) and written back in its layout.
+// each date or datetime Text is normalized as time.Date does
+// (go-sql-driver's parseDateTime) and written back in its layout, and a
+// zero value loses its fraction (the reference rebuilds a zero value's
+// digits from the column's decimals, which a changed definition can put
+// past 6: seed 36 case 4754).
 func myfDateNormalized(got, want string) bool {
-	norm := myfDateText.ReplaceAllStringFunc(got, func(m string) string {
+	return got != want && myfDateNorm(got) == myfDateNorm(want)
+}
+
+func myfDateNorm(text string) string {
+	return myfDateText.ReplaceAllStringFunc(text, func(m string) string {
 		p := myfDateText.FindStringSubmatch(m)
 		n := func(i int) int { v, _ := strconv.Atoi(p[i]); return v }
 		layout := "2006-01-02"
@@ -508,12 +515,15 @@ func myfDateNormalized(got, want string) bool {
 			}
 		}
 		if n(1) == 0 && n(2) == 0 && n(3) == 0 && hh == 0 && mi == 0 && ss == 0 && ns == 0 {
-			return m // the zero value: both keep it (a fraction makes it a time)
+			// the zero value (a nonzero fraction makes it a time)
+			if p[4] == "" {
+				return `Text(s: "0000-00-00")`
+			}
+			return `Text(s: "0000-00-00 00:00:00")`
 		}
 		t := time.Date(n(1), time.Month(n(2)), n(3), hh, mi, ss, ns, time.UTC)
 		return `Text(s: "` + t.Format(layout) + `")`
 	})
-	return got != want && norm == want
 }
 
 func myfBlocks(out string) map[int]string {
@@ -699,6 +709,11 @@ func TestMysqlFuzzWideCollation(t *testing.T) {
 	}
 	if myfDateNormalized("Row{vals: [Text(s: \"0000-00-00 00:00:00.000000\")]}\n", "Row{vals: [Text(s: \"-0001-11-30 00:00:00.000000\")]}\n") {
 		t.Errorf("the zero value: normalized")
+	}
+	// seed 36's case 4754: the zero value's digits, rebuilt from a
+	// changed column's decimals (34) by the reference
+	if !myfDateNormalized("Row{vals: [Text(s: \"0000-00-00 00:00:00.000\")]}\n", "Row{vals: [Text(s: \"0000-00-00 00:00:00\")]}\n") {
+		t.Errorf("zero value with and without a fraction: not the same")
 	}
 	if myfDateNormalized("Row{vals: [Text(s: \"0000-06-01\")]}\n", "Row{vals: [Text(s: \"0000-05-31\")]}\n") {
 		t.Errorf("0000-06-01 against 0000-05-31: normalized")

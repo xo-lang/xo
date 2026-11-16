@@ -101,4 +101,7 @@ Fix: the fuzz comparison counts `go date text` when the answers are equal
 once each of Xo's date Texts is normalized as time.Date does
 (myfDateNormalized). Only the whole zero value stays as it is: a zero date
 with a fraction (`0000-00-00 00:00:00.050000`, seed 31 case 940) is a time
-to go-sql-driver, normalized to `-0001-11-30 00:00:00.05`.
+to go-sql-driver, normalized to `-0001-11-30 00:00:00.05`. Both sides are normalized, and the zero value
+compares without its fraction: the reference rebuilds its digits from
+the column's decimals, which a changed definition can put past 6 (seed
+36 case 4754: 34 decimals, no fraction).
