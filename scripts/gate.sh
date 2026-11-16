@@ -1503,7 +1503,12 @@ prove_seedbuild() {
     # library on Linux
     [ "$(uname -s)" = Linux ] && [ -z "$nolibc" ] && nolibc=0
     rm -rf "${sb:?}" && mkdir -p "$sb"
-    if XO_NOLIBC=$nolibc XO_INLINE_STRICT=1 XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_BUILD_DIR="$sb/build" XO_RTOBJ_CACHE="$sb/rtobj" \
+    # first the seed's check of compiler/xo with this std, as xotool
+    # CheckXo runs before every build of xo from a seed: it reads all of
+    # std/native, the build below only compiler/xo's closure (#57)
+    if ! gate_seed_check "$XO_SEED" "$wt" "$logs/seedcheck.txt"; then
+      failed=1; echo "seedbuild: FAIL (the seed's check, XO_STD=$wt/std $XO_SEED check compiler/xo: $logs/seedcheck.txt: $(grep -m1 -E ' error |^error|: error' "$logs/seedcheck.txt" || tail -1 "$logs/seedcheck.txt")) with $("$XO_SEED" version 2>/dev/null)"
+    elif XO_NOLIBC=$nolibc XO_INLINE_STRICT=1 XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_BUILD_DIR="$sb/build" XO_RTOBJ_CACHE="$sb/rtobj" \
       XO_BACKEND_CACHE_DIR="$sb/backend" "$XO_SEED" build --std="$wt/std" -o "$sb/xo" ./compiler/xo >"$logs/seedbuild.txt" 2>&1; then
       echo "seedbuild: $(($(date +%s) - t1)) s with $("$XO_SEED" version 2>/dev/null)"; ran="$ran seedbuild"
     else

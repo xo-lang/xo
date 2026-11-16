@@ -1462,7 +1462,13 @@ Last verified: 2026-11-15
   a98d1d71c passed a gate whose xo came from a cached ancestor build and
   failed s1 on the hosts); gate.sh prints its time and the seed's
   version. It runs only on an offload host: `offload-gate.sh WORKTREE
-  seedbuild`. Last verified: 2026-11-08.
+  seedbuild`. Since 2026-11-15 (#57) it first runs the seed's check
+  that internal/xotool CheckXo runs before every build of xo from a
+  seed, `XO_STD=WT/std SEED check WT/compiler/xo` (gatelib
+  gate_seed_check, log seedcheck.txt): it reads all of std/native, the
+  build only compiler/xo's closure (638f2f645's `uses sync` in
+  std/native passed seedbuild and broke main's build from the 0.51.1
+  seed). Last verified: 2026-11-15.
 - Status and work queue: xw (ADR 0658; server org.xolang.xw on
   127.0.0.1:7480, private repo xo-lang/workstream). Run as yourself:
   `XW_AS=NAME ~/xo-lead/xw/bin/xw ...` (your token is XW_TOKEN_NAME in
