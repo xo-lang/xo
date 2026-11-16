@@ -227,3 +227,14 @@ test "binary rows: each type as the text protocol's text" {
   expect(parse_binary_row(hex("0000"), [bcol(TYPE_LONG, 0, 0)]).is_err()) == true
   expect(parse_binary_row(hex("000001ff"), [bcol(TYPE_TINY, 0, 0)]).is_err()) == true
 }
+
+test "read_size: what the next packet lacks, 4096 to 1 MiB" {
+  expect(read_size(b"")) == 4096
+  expect(read_size(b"\x05\x00\x00")) == 4096
+  // a 300 byte packet with 10 bytes in hand: the floor
+  expect(read_size(b"\x2c\x01\x00\x00" + b"x".repeat(6))) == 4096
+  // a 100,000 byte packet with 4 in hand: the rest
+  expect(read_size(b"\xa0\x86\x01\x00")) == 100000
+  // the largest packet: capped
+  expect(read_size(b"\xff\xff\xff\x00")) == 1048576
+}

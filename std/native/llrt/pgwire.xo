@@ -239,6 +239,17 @@ fn fields(var r: Rd) -> Map[Str, Str] ! WireErr {
 
 /// The length of the next whole message at the start of `buf` (type byte
 /// and length included), or None when more bytes are needed.
+/// The bytes to ask a read for when buf holds the start of the stream's
+/// next messages: what the first message still lacks, at least 4096 and at
+/// most 1 MiB (a read's buffer is as large as it asks; mysqlwire.read_size).
+pub fn read_size(buf: Bytes) -> Int {
+  if buf.len() < 5 {
+    return 4096
+  }
+  let need = 1 + get32(buf, 1) - buf.len()
+  if need < 4096 { 4096 } else if need > 1048576 { 1048576 } else { need }
+}
+
 pub fn frame_len(buf: Bytes) -> Int? ! WireErr {
   if buf.len() < 5 { return None }
   let n = get32(buf, 1)

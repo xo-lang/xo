@@ -889,3 +889,13 @@ test "md5 password: pgconn's md5 auth" {
   // python: "md5" + md5(md5(b"secret" + b"bob").hexdigest().encode() + bytes([1,2,3,4])).hexdigest()
   expect(md5_password("bob", "secret", Bytes.from_hex("01020304") ?? b"")) == "md5f21dfe33ff3a9e03dbc3e008251fe5cc"
 }
+
+test "read_size: what the next message lacks, 4096 to 1 MiB" {
+  expect(read_size(b"")) == 4096
+  expect(read_size(b"D\x00\x00")) == 4096
+  // a DataRow of length 200 with 5 bytes in hand: the floor
+  expect(read_size(b"D\x00\x00\x00\xc8")) == 4096
+  // a message of length 100,000 with 5 in hand: the rest
+  expect(read_size(b"D\x00\x01\x86\xa0")) == 99996
+  expect(read_size(b"D\x10\x00\x00\x00")) == 1048576
+}

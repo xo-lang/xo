@@ -398,7 +398,7 @@ fn (p: PgConn) next_msg(idle: Bool) -> pgwire.Backend ! sql.SqlErr uses net.dial
         return Err(conn_err("${e}"))
       }
     }
-    match p.c.read(65536) {
+    match p.c.read(pgwire.read_size(p.buf.with(fn(b) { b }))) {
       Ok(Some(more)) => p.buf.with(fn(var b) { b = b + more })
       Ok(None) => {
         p.broken.set(true)

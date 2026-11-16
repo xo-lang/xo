@@ -9,10 +9,10 @@
 // transaction with a query inside, and checks every value against the one
 // computed here. The pools are shared by 8 tasks each, so tasks wait for
 // connections. A background task samples the resident set every 10 s
-// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// (Linux /proc/self/status) and prints it each minute. Pass: no mismatch, no fault, and the resident
 // set at the end within 10% or 4 MB of its sample at 5 minutes.
 //
-//   main [MINUTES (30)] [TASKS (64)]
+//   main [MINUTES (30)] [TASKS (64)] [LIFETIME_SECONDS (2; 0: none)]
 use std/sql
 
 /// x as n little-endian bytes.
@@ -143,7 +143,9 @@ fn read_packet(c: ServerConn, buf: Bytes) -> (Bytes, Bytes)? ! NetErr uses net.l
         return Some((have[4..4 + n], have[4 + n..have.len()]))
       }
     }
-    match c.read(65536)? {
+    // what the next packet lacks, as the driver reads (4 KiB to 1 MiB)
+    let size = if have.len() < 4 { 4096 } else { (4 + (Int(have[0]) | Int(have[1]) << 8 | Int(have[2]) << 16) - have.len()).max(4096).min(1048576) }
+    match c.read(size)? {
       Some(more) => have = have + more
       None => return None
     }
@@ -229,6 +231,8 @@ fn main(os: Os) ! {
   let args = os.env.args()
   let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
   let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  // a pool connection's lifetime in seconds (0: no limit)
+  let life = if args.len() > 2 { Int.parse(args[2]) ?? 2 } else { 2 }
   let clock = os.clock
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
@@ -246,13 +250,18 @@ fn main(os: Os) ! {
     // open pings the server, so the pools are opened once it accepts
     var dbs: List[sql.Db] = []
     for _ in 0..pools {
-      dbs.push(sql.open(os.net, "mysql", dsn, max_open: 4, max_idle: 4, max_lifetime: 2s)?)
+      dbs.push(sql.open(os.net, "mysql", dsn, max_open: 4, max_idle: 4, max_lifetime: Duration.from_secs(Float(life)))?)
     }
     s.spawn_background(fn() {
       var marked = false
+      var ticks = 0
       while true {
         clock.sleep(10s)
         let r = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && r > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${r / 1024} MB")
+        }
         let now_marked = !marked && clock.now() >= mark
         samples.with(fn(var t) {
           let (m, _, p) = t

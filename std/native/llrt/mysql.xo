@@ -485,7 +485,7 @@ fn (p: MyConn) recv() -> Bytes ! sql.SqlErr uses net.dial {
     if p.cfg.read_timeout.nanos() > 0 {
       deadline(p.x.raw, 1, p.cfg.read_timeout.nanos())
     }
-    match p.c.read(65536) {
+    match p.c.read(w.read_size(p.buf.with(fn(b) { b }))) {
       Ok(Some(more)) => p.buf.with(fn(var b) { b = b + more })
       Ok(None) => {
         p.broken.set(true)

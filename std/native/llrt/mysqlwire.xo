@@ -499,6 +499,20 @@ pub struct Column {
   pub decimals: Int
 }
 
+/// The bytes to ask a read for when buf holds the start of the stream's
+/// next packets: what the first packet still lacks, at least 4096 (as
+/// go-sql-driver's buffer) and at most 1 MiB. A read's buffer is as large
+/// as it asks, whatever arrives, so 64 KiB per read of a 300 byte answer
+/// churned 64 KiB blocks (the sql stress program's resident set grew 46%
+/// in 30 min where Go's twin stayed flat).
+pub fn read_size(buf: Bytes) -> Int {
+  if buf.len() < 4 {
+    return 4096
+  }
+  let need = 4 + (Int(buf[0]) | Int(buf[1]) << 8 | Int(buf[2]) << 16) - buf.len()
+  if need < 4096 { 4096 } else if need > 1048576 { 1048576 } else { need }
+}
+
 pub fn parse_column(p: Bytes) -> Column ! WireErr {
   var r = reader(p)
   let _ = r.lenenc_text()?
