@@ -145,8 +145,32 @@ func mlMutate(r *rand.Rand, s string) string {
 	return string(b)
 }
 
+// mlAddrText: the name, the address and the text of a, the name as std/mail
+// holds it: a decoded utf-8 word's byte that is not UTF-8 is U+FFFD each
+// (decision 0259; Go keeps the byte), so the text encodes that name (seed
+// 28 case 3318: =?utf-8?q?Ann_L.C3=A9e?=, a lone 0xA9).
 func mlAddrText(a *mail.Address) string {
-	return fmt.Sprintf("%x|%x|%x", a.Name, a.Address, a.String())
+	x := *a
+	x.Name = mlLossy(a.Name)
+	return fmt.Sprintf("%x|%x|%x", x.Name, x.Address, x.String())
+}
+
+// mlLossy: s with each byte of an invalid UTF-8 sequence as U+FFFD.
+func mlLossy(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && n == 1 {
+			b.WriteRune(utf8.RuneError)
+		} else {
+			b.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
 }
 
 func mlAnswer(c *mlCase) {
