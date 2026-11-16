@@ -88,15 +88,17 @@ pub fn unframe(data: Bytes, at: Int, max_len: Int = 4194304) -> (Bool, Bytes, In
     return Err(FrameErr.Truncated)
   }
   let flag = Int(data[at])
-  if flag > 1 {
-    return Err(FrameErr.BadFlag(flag: flag))
-  }
   let n = (Int(data[at + 1]) << 24) | (Int(data[at + 2]) << 16) | (Int(data[at + 3]) << 8) | Int(data[at + 4])
+  // the length, then the whole payload, then the flag, as grpc-go's recvMsg and checkRecvPayload (TestGrpcFuzz,
+  // task #115)
   if n > max_len {
     return Err(FrameErr.TooLarge(len: n))
   }
   if at + 5 + n > data.len() {
     return Err(FrameErr.Truncated)
+  }
+  if flag > 1 {
+    return Err(FrameErr.BadFlag(flag: flag))
   }
   (flag == 1, data[at + 5..at + 5 + n], at + 5 + n)
 }
@@ -388,6 +390,10 @@ pub fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, 
     Ok(s) => s
     Err(e) => return Err(from_client_err(e))
   }
+  if let Some(e) = head_status(st.head()) {
+    st.close()
+    return Err(e)
+  }
   let data = match st.read_all() {
     Ok(b) => b
     Err(e) => {
@@ -509,6 +515,12 @@ pub fn (c: ClientCall) recv() -> Bytes? ! Status uses net.dial {
     if s.stream.is_none() {
       match c.head.recv() {
         Some((Some(st), _)) => {
+          // a response that is not gRPC ends the call at its head (grpc-go's operateHeaders, task #115)
+          if let Some(e) = head_status(st.head()) {
+            st.close()
+            s.failed = Some(e)
+            return Err(e)
+          }
           s.stream = Some(st)
           s.recv = s.recv with {gzip: (st.head().headers.get("Grpc-Encoding") ?? "") == "gzip"}
         }
@@ -538,8 +550,17 @@ pub fn (c: ClientCall) recv() -> Bytes? ! Status uses net.dial {
         Ok(msg)
       }
       Err(e) => {
-        s.failed = Some(e)
-        Err(e)
+        // a stream cut short whose trailers carry a grpc-status that does not parse: that error, as grpc-go,
+        // whose transport queues it after the data (TestGrpcFuzz, task #115)
+        let err = if e.message == "unexpected EOF" {
+          let fin = final_status(stream)
+          if fin.message.starts_with("transport: malformed grpc-status") { fin } else { e }
+        } else {
+          e
+        }
+        stream.close()
+        s.failed = Some(err)
+        Err(err)
       }
     }
   })
@@ -730,19 +751,118 @@ fn http_to_code(status: Int) -> Code {
   }
 }
 
-/// The call's status from a finished stream: its trailers, or the head of a trailers only response.
+/// Whether ct is a gRPC content-type (grpc-go's grpcutil.ContentSubtype): `application/grpc`, alone or followed
+/// by `+` or `;`, compared as written (case and all).
+fn grpc_content_type(ct: Str) -> Bool {
+  if !ct.starts_with("application/grpc") {
+    return false
+  }
+  if ct.len() == 16 {
+    return true
+  }
+  let c = ct.bytes()[16]
+  c == 43 || c == 59
+}
+
+/// s as Go's %q writes an ASCII string.
+fn go_quote(s: Str) -> Str {
+  let hex = "0123456789abcdef"
+  var b = BytesBuilder.new()
+  b.write_byte(34)
+  for c in s.bytes() {
+    let n = Int(c)
+    if n == 34 || n == 92 {
+      b.write_byte(92)
+      b.write_byte(c)
+    } else if n < 32 || n == 127 {
+      b.write("\\x".bytes())
+      b.write(hex.bytes()[n / 16..n / 16 + 1])
+      b.write(hex.bytes()[n % 16..n % 16 + 1])
+    } else {
+      b.write_byte(c)
+    }
+  }
+  b.write_byte(34)
+  b.freeze().to_str() ?? s
+}
+
+/// The status of a response that is not gRPC, None for one that is (grpc-go's operateHeaders): a response whose
+/// content-type is not gRPC's ends the call with the code of its HTTP status (Unknown for one with none, 200
+/// among them) and grpc-go's text, whatever its grpc-status says, and with no message read; a gRPC response's
+/// HTTP status is not looked at.
+fn head_status(head: http.ResponseHead) -> Status? {
+  // a grpc-status that does not parse ends the call first, whatever else the head says
+  if let Some(gs) = head.headers.get("Grpc-Status") {
+    if let Err(e) = parse_int32(gs) {
+      return Some(malformed_status(gs, e))
+    }
+  }
+  let ct_err = match head.headers.get("Content-Type") {
+    Some(ct) => {
+      if grpc_content_type(ct) {
+        return None
+      }
+      "transport: received unexpected content-type ${go_quote(ct)}"
+    }
+    None => "malformed header: missing HTTP content-type"
+  }
+  Some(status_new(http_to_code(head.status), "unexpected HTTP status code received from server: ${head.status} (${http.status_text(head.status)}); ${ct_err}"))
+}
+
+/// Go's strconv.ParseInt(s, 10, 32): the value, or the error's text after `parsing "S": `.
+fn parse_int32(s: Str) -> Int ! Str {
+  let b = s.bytes()
+  var i = 0
+  var neg = false
+  if b.len() > 0 && (b[0] == 43 || b[0] == 45) {
+    neg = b[0] == 45
+    i = 1
+  }
+  if i == b.len() {
+    return Err("invalid syntax")
+  }
+  var n = 0
+  var big = false
+  while i < b.len() {
+    let c = Int(b[i])
+    if c < 48 || c > 57 {
+      return Err("invalid syntax")
+    }
+    if !big {
+      n = n * 10 + (c - 48)
+      if n > 2147483648 {
+        big = true
+      }
+    }
+    i += 1
+  }
+  if big || (!neg && n > 2147483647) {
+    return Err("value out of range")
+  }
+  Ok(if neg { -n } else { n })
+}
+
+/// The call's status from a finished stream (its head already found to be gRPC's): its trailers, or the head of
+/// a trailers only response, as grpc-go reads them: no grpc-status is Unknown with the grpc-message, one that
+/// ParseInt refuses is Unknown with its error, and a number past the 17 codes is Unknown (grpc-go keeps the
+/// number as its code; Code has no case for it).
 fn final_status(st: http.ClientStream) -> Status {
   let head = st.head()
-  if head.status != 200 {
-    return status_new(http_to_code(head.status), "unexpected HTTP status code received from server: ${head.status}")
+  if let Some(e) = head_status(head) {
+    return e
   }
   let tr = st.trailers()
-  let gs = tr.get("Grpc-Status") ?? (head.headers.get("Grpc-Status") ?? "")
-  if gs == "" {
-    return status_new(Code.Internal, "server closed the stream without sending trailers")
+  let msg = decode_message(tr.get("Grpc-Message") ?? (head.headers.get("Grpc-Message") ?? ""))
+  let gs = match tr.get("Grpc-Status") ?? head.headers.get("Grpc-Status") {
+    Some(v) => v
+    None => return status_new(Code.Unknown, msg)
   }
-  let n = Int.parse(gs) ?? -1
-  let code = code_from(n) ?? Code.Unknown
-  let msg = tr.get("Grpc-Message") ?? (head.headers.get("Grpc-Message") ?? "")
-  Status{code: code, message: decode_message(msg), details: b""}
+  match parse_int32(gs) {
+    Ok(n) => Status{code: code_from(n) ?? Code.Unknown, message: msg, details: b""}
+    Err(e) => malformed_status(gs, e)
+  }
+}
+
+fn malformed_status(gs: Str, e: Str) -> Status {
+  status_new(Code.Unknown, "transport: malformed grpc-status: strconv.ParseInt: parsing ${go_quote(gs)}: ${e}")
 }

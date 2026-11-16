@@ -1,5 +1,30 @@
 # std/grpc changes
 
+## 2026-11-16: fix: the client reads a response as grpc-go does (task #115)
+
+- Kind: fix (behavior change)
+- Commit: this commit
+- Found by: TestGrpcFuzz (internal/stdtest/grpcfuzz_test.go), a differential of `Client.call` against grpc-go v1.79.2: both clients call a raw HTTP/2 server (grpcref's `cannedserve`) that answers seeded heads, frames cut at seeded points, trailers, trailers only responses
+- Go reference: grpc-go internal/transport/http2_client.go operateHeaders, rpc_util.go recvMsg and checkRecvPayload, grpcutil.ContentSubtype
+- Test: std/grpc_test.xo "the client answers a response's head as grpc-go does" and "a frame's length is checked before its flag" (both fail before the fix); TestGrpcFuzz seeds 2 to 7 (5000 calls each on amd64 and llvm, all equal)
+
+- A response whose content-type is not `application/grpc`, alone or followed by `+` or `;` (compared as written:
+  `Application/GRPC` is not gRPC), ends the call at its head, before any message, with the code grpc-go gives its HTTP
+  status (Unknown for one with none, 200 among them) and grpc-go's text, `unexpected HTTP status code received from
+  server: 200 (OK); transport: received unexpected content-type "text/html"`. It read the grpc-status of such a
+  response, or read its body as frames.
+- A gRPC response's HTTP status is not looked at: a 429 with grpc-status 0 is OK (it was Unavailable).
+- No grpc-status is Unknown with the grpc-message (it was Internal, "server closed the stream without sending
+  trailers").
+- A grpc-status that strconv.ParseInt refuses is Unknown, `transport: malformed grpc-status: strconv.ParseInt: parsing
+  " 0": invalid syntax`; one in the head ends the call before its content-type is looked at; one in the trailers of a
+  stream cut short replaces "unexpected EOF".
+- A frame's length is checked first (ResourceExhausted), then its whole payload (Truncated), then its flag.
+
+Departures, modeled by the fuzz: a grpc-status past the 17 codes is Unknown (grpc-go keeps the number; `Code` has no
+case for it); a stream that ends inside a message's 5 byte header is Internal "unexpected EOF" (grpc-go's
+Stream.ReadMessageHeader drops the bytes read before the end and takes the trailers' status).
+
 ## 2026-11-15: feature: `FrameErr` is an open enum (decision 0649)
 
 - Kind: feature

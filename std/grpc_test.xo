@@ -1,4 +1,6 @@
 // Vectors from grpc-go (rpc_util.go, http_util.go encodeTimeout and encodeGrpcMessage, codes).
+use std/http
+use std/testing
 test "frame and unframe" {
   let f = frame(b"abc")
   expect(f) == b"\x00\x00\x00\x00\x03abc"
@@ -111,4 +113,49 @@ test "binary metadata is unpadded base64 and reads padded or not" {
     let data = b.freeze()
     expect(bin_decode(bin_encode(data))) == Some(data)
   }
+}
+
+fn canned_status(os: testing.TestOs, path: Str, status: Int, headers: List[(Str, Str)]) -> Str uses net.dial {
+  os.net.handle("POST https://g.test${path}", fn(_r: http.Request) -> http.Response {
+    var resp = http.text(status, "")
+    for (k, v) in headers {
+      resp = resp.with_header(k, v)
+    }
+    resp
+  })
+  let c = client(http.client(os.net), "https://g.test")
+  let got = c.call(path, {}, None, fn(cc) -> List[Str] ! Status {
+    cc.close_send()
+    var out: List[Str] = []
+    while let Some(m) = cc.recv()? {
+      out.push(m.to_hex())
+    }
+    Ok(out)
+  })
+  match got {
+    Ok(ms) => "ok ${ms}"
+    Err(e) => "${e.code.number()} ${e.message}"
+  }
+}
+
+test "the client answers a response's head as grpc-go does (TestGrpcFuzz, task #115)" {
+  // not gRPC (its content-type): the HTTP status's code and grpc-go's text, whatever grpc-status says
+  expect(canned_status(os, "/a", 200, [("Content-Type", "text/html"), ("Grpc-Status", "10")])) == "2 unexpected HTTP status code received from server: 200 (OK); transport: received unexpected content-type \"text/html\""
+  expect(canned_status(os, "/b", 503, [])) == "14 unexpected HTTP status code received from server: 503 (Service Unavailable); transport: received unexpected content-type \"text/plain; charset=utf-8\""
+  expect(canned_status(os, "/c", 200, [("Content-Type", "Application/GRPC"), ("Grpc-Status", "0")]).starts_with("2 unexpected HTTP status code")) == true
+  // gRPC: the HTTP status is not looked at, grpc-status is
+  expect(canned_status(os, "/d", 429, [("Content-Type", "application/grpc+proto"), ("Grpc-Status", "0")])) == "ok []"
+  // no grpc-status: Unknown with the message; one that does not parse: Unknown with ParseInt's text
+  expect(canned_status(os, "/e", 200, [("Content-Type", "application/grpc"), ("Grpc-Message", "a%20b")])) == "2 a b"
+  expect(canned_status(os, "/f", 200, [("Content-Type", "application/grpc;x=y"), ("Grpc-Status", " 0")])) == "2 transport: malformed grpc-status: strconv.ParseInt: parsing \" 0\": invalid syntax"
+  // a head's grpc-status that does not parse comes before its content-type
+  expect(canned_status(os, "/h", 400, [("Content-Type", "Application/GRPC"), ("Grpc-Status", "x")])) == "2 transport: malformed grpc-status: strconv.ParseInt: parsing \"x\": invalid syntax"
+  expect(canned_status(os, "/g", 200, [("Content-Type", "application/grpc"), ("Grpc-Status", "4294967296")])) == "2 transport: malformed grpc-status: strconv.ParseInt: parsing \"4294967296\": value out of range"
+}
+
+test "a frame's length is checked before its flag, as grpc-go (TestGrpcFuzz, task #115)" {
+  expect(unframe(b"\x07\x7f\xff\xff\xff", 0)) == Err(FrameErr.TooLarge(len: 2147483647))
+  expect(unframe(b"\x07\x00\x00\x00\x00", 0)) == Err(FrameErr.BadFlag(flag: 7))
+  // a payload cut short is Truncated whatever the flag
+  expect(unframe(b"\x40\x00\x00\x00\x02a", 0)) == Err(FrameErr.Truncated)
 }

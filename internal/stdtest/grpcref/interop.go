@@ -203,6 +203,11 @@ func interopMain() bool {
 		interopServe()
 	case "client":
 		interopClient(os.Args[2])
+	case "cannedserve":
+		cannedServe(os.Args[2])
+	case "cannedclient":
+		n, _ := strconv.Atoi(os.Args[3])
+		cannedClient(os.Args[2], n)
 	default:
 		return false
 	}

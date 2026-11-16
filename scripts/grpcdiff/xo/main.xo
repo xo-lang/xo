@@ -1,0 +1,50 @@
+// The Xo side of the grpc differential test (internal/stdtest TestGrpcFuzz):
+// `main ADDR N` makes calls 0 to N-1 to the canned server at ADDR (grpcref
+// cannedserve, which answers the call whose x-case metadata is K with its
+// case K), each a stream closed for sending at once and read to its end,
+// and prints for each "== ", "m HEX" per message, "s CODE" and "x HEX"
+// (the status's code number and the hex of its message), as grpcref
+// cannedclient prints grpc-go's.
+use std/grpc
+use std/http
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  if args.len() < 2 {
+    return Err("usage: main ADDR N")
+  }
+  let n = Int.parse(args[1]) ?? 0
+  let c = grpc.client(http.client(os.net, timeout: 30s), "http://${args[0]}")
+  for i in 0..n {
+    os.stdio.println("== ")
+    let got = c.call("/f.S/M", {"x-case": "${i}"}, None, fn(cc) -> List[Str] ! grpc.Status {
+      cc.close_send()
+      var out: List[Str] = []
+      while true {
+        match cc.recv() {
+          Ok(Some(m)) => out.push("m ${m.to_hex()}")
+          Ok(None) => break
+          Err(e) => {
+            out.push("s ${e.code.number()}")
+            out.push("x ${e.message.bytes().to_hex()}")
+            return Ok(out)
+          }
+        }
+      }
+      out.push("s 0")
+      out.push("x ")
+      Ok(out)
+    })
+    match got {
+      Ok(lines) => {
+        for l in lines {
+          os.stdio.println(l)
+        }
+      }
+      Err(e) => {
+        os.stdio.println("s ${e.code.number()}")
+        os.stdio.println("x ${e.message.bytes().to_hex()}")
+      }
+    }
+  }
+}
