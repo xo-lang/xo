@@ -78,25 +78,36 @@ pub fn sha256(data: Bytes) -> Bytes {
 /// longer than a block): two blocks, in one Bytes.
 fn hmac_pads(key: Bytes) -> Bytes {
   let k = if key.len() > 64 { sha256(key) } else { key }
-  var kp = rt.rs_append_bytes(rt.rs_with_cap(64), k, 0, k.len(), 0)
-  var z = k.len()
-  while z < 64 {
-    kp = rt.rs_push_word(kp, 0, if 64 - z < 8 { 64 - z } else { 8 })
-    z += 8
-  }
-  let kb = kp.bytes()
+  // the key's words read in place, zeros past its end (a zero padded copy
+  // of the key first was a second allocation and a push loop: 14% of
+  // std/otp's HMAC of an 8 byte counter, 2026-11-16)
   var pads = rt.rs_with_cap(128)
   var j = 0
   while j < 64 {
-    pads = rt.rs_push_word(pads, rt.bytes_word(kb, j) ^ 0x3636363636363636, 8)
+    pads = rt.rs_push_word(pads, key_word(k, j) ^ 0x3636363636363636, 8)
     j += 8
   }
   j = 0
   while j < 64 {
-    pads = rt.rs_push_word(pads, rt.bytes_word(kb, j) ^ 0x5c5c5c5c5c5c5c5c, 8)
+    pads = rt.rs_push_word(pads, key_word(k, j) ^ 0x5c5c5c5c5c5c5c5c, 8)
     j += 8
   }
   pads.bytes()
+}
+
+/// The 8 bytes of k from j as a little endian word, zeros past k's end.
+fn key_word(k: Bytes, j: Int) -> Int {
+  let n = k.len()
+  if j + 8 <= n {
+    return rt.bytes_word(k, j)
+  }
+  var w = 0
+  var i = n - 1
+  while i >= j {
+    w = w.wrapping_shl(8) | Int(k[i])
+    i -= 1
+  }
+  w
 }
 
 /// The states after the inner and outer padded key of HMAC: 16 words.

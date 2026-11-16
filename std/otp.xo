@@ -284,11 +284,19 @@ fn uint_or(s: Str, d: Int) -> Int {
 }
 
 fn pow10(n: Int) -> Int {
-  var p = 1
-  for _ in 0..n {
-    p *= 10
+  // the decimal codes' 6 to 8 digits (check_params) without a loop a code
+  match n {
+    6 => 1000000
+    7 => 10000000
+    8 => 100000000
+    _ => {
+      var p = 1
+      for _ in 0..n {
+        p *= 10
+      }
+      p
+    }
   }
-  p
 }
 
 // ---- Key.image: a QR code of the URI (pquerna/otp's Key.Image) ----

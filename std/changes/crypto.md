@@ -1,5 +1,18 @@
 # std/crypto changes
 
+## 2026-11-16: perf: HMAC-SHA256's pads read the key in place
+
+- Kind: perf
+- Commit: this push
+- Found by: std/otp's timing row (bench/perf/otp sha256 1.066 of Go on linux/arm64 host 1 after f539d8fc3, #118); XO_PROF: hmac_pads 14% of a MAC of an 8 byte counter
+- Go reference: crypto/hmac New (the pads XORed from the key)
+- Test: native/llrt/digest "hmac_sha256 is RFC 2104's HMAC built byte by byte" (keys of 0 to 130 bytes); crypto module tests; the crypto, xcrypto and otp corpora (arm64, llvm); twincheck bench/perf/otp; xo bench --ab on linux/arm64 host 1 (with std/otp's pow10 change): bench/perf/otp sha256 0.897 (0.877 to 0.925), max RSS the same
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+HMAC-SHA256 copied its key into a zero padded block before building the
+two pads; the pads now read the key's words in place, zeros past its end.
+
 ## 2026-11-16: perf: one pass HMAC-SHA1, and HMAC-SHA256 without a regrown state
 
 - Kind: perf

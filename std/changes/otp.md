@@ -1,5 +1,18 @@
 # std/otp changes
 
+## 2026-11-16: perf: a decimal code's modulus without a loop
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/otp (#118); XO_PROF: pow10 4.5% of a code
+- Go reference: github.com/pquerna/otp v1.5.0 hotp.GenerateCodeCustom (math.Pow10 of the digits)
+- Test: the otp corpus (go, arm64, llvm); twincheck bench/perf/otp; xo bench --ab on linux/arm64 host 1 with the HMAC-SHA256 pads change: bench/perf/otp sha256 0.897
+- Shipped in: not yet released
+- Timing: bench/perf/otp (std/evidence/otp/perf.md)
+
+`hotp` computed 10 to the power of its 6 to 8 digits with a loop on each
+code; it now picks the constant.
+
 ## 2026-11-15: fix: uri escapes as pquerna/otp does; feature: hotp_uri
 
 - Kind: fix, feature
