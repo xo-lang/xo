@@ -262,7 +262,10 @@ pub const W_AGE_AT = 3592
 /// it then sleeps at most a period when idle, so the next pass runs even
 /// in a quiet process, and at most once more.
 pub const W_AGE_MORE = 3600
-pub const W_SIZE = 3608
+/// The worker thread's Rand state (rand.xo, decision 0669): 0 none yet,
+/// -1 none possible, else its address.
+pub const W_RAND = 3608
+pub const W_SIZE = 3616
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after

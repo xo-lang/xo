@@ -1,0 +1,7 @@
+# twincheck: random: five workloads (none is the setup alone); the draws are random on both sides, so only the workload and the draw count are compared.
+compare fields 2
+- - none
+- - normal
+- - exp
+- - perm
+- - zipf

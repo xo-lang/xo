@@ -39,6 +39,7 @@ use native/llrt/sigsub
 use native/llrt/prof
 use native/llrt/pool
 use native/llrt/process
+use native/llrt/rand
 use native/llrt/raw
 use native/llrt/rtsec
 use native/llrt/rtstats
@@ -725,6 +726,10 @@ fn on_crash_veh(e: Int) -> Int { crash.on_crash_veh(e) }
 
 /// Windows' crash report watchdog thread (crash.xo on_watch).
 fn on_crash_watch(r: Int) -> Int { crash.on_watch(r) }
+
+/// macOS's pthread_atfork child handler (rand.xo, decision 0669): the
+/// forking thread's Rand state unseeded in the child.
+fn on_fork_child() { rand.fork_child() }
 
 /// SIGURG's handler (decision 0318, pool.xo async_install): asynchronous
 /// preemption.

@@ -53,6 +53,11 @@ fn tcsetattr(fd: Int, act: Int, t: Int) -> Int32
 fn clock_gettime(clock: Int, ts: Int) -> Int32
 /// getentropy(2): n (at most 256) random bytes to the address buf.
 fn getentropy(buf: Int, n: Int) -> Int32
+/// pthread_atfork(3): handlers (C function addresses, 0 none) run around
+/// fork(2); rand.xo's child handler (decision 0669).
+fn pthread_atfork(prepare: Int, parent: Int, child: Int) -> Int32
+/// fork(2): 0 in the child, the child's pid, or -1 (rand.xo's fork test).
+fn fork() -> Int32
 /// exit(3): ends the process with status code (atexit handlers run).
 fn exit(code: Int)
 /// The address of the calling thread's errno (a C int).

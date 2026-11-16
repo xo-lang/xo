@@ -10,10 +10,13 @@
 use native/llrt/darwin
 use native/llrt/ints
 use native/llrt/freebsd
+use native/llrt/layout
 use native/llrt/linux
+use native/llrt/raw
 use native/llrt/testworld
 use native/llrt/windows
 use native/rt
+use native/sys_darwin
 
 /// The generator of the target: 1 Linux getrandom, 2 macOS getentropy,
 /// 3 Windows BCryptGenRandom, 4 FreeBSD getrandom, 0 none (wasm32: a WASI module's Rand is
@@ -77,7 +80,369 @@ pub fn next_u64() -> Int {
   if testworld.seeded() {
     return testworld.rand_u64()
   }
-  rt.bytes_word(entropy(8), 0)
+  let st = state()
+  if st == 0 {
+    return rt.bytes_word(entropy(8), 0)
+  }
+  draw(st)
+}
+
+// ---------------------------------------------------------------------------
+// The words of Rand.int, float and bool (decision 0669): a ChaCha8
+// keystream per worker thread, Go's internal/chacha8rand (the runtime
+// generator behind math/rand/v2's top-level functions), seeded from the
+// system's generator. One system call a draw (plus an 8 byte Bytes) was 60
+// to 354 times Go's draws (bench/perf/random, 2026-11-15). Rand.bytes,
+// which std/crypto's keys and nonces read, stays the system's generator
+// (next_bytes).
+//
+// Go's design: each refill computes four ChaCha8 blocks (counters c to c +
+// 3) into 32 words; after four refills the last four words of the buffer,
+// never handed out, become the next key (fast key erasure: a later state
+// does not give the earlier words). The state lives in the worker's record
+// (layout.W_RAND), so no two threads share one, and a new thread seeds its
+// own on its first draw. A forked child must not repeat the parent's words:
+// on Linux the state's page is MADV_WIPEONFORK and on FreeBSD
+// INHERIT_ZERO (the child sees zeros: unseeded), on macOS a pthread_atfork
+// child handler zeroes the forking thread's state (cabi.xo
+// on_fork_child). Runtime code is never preempted (decision 0318), so a
+// draw or a refill is not interleaved with another fiber's on its worker.
+
+/// The state's bytes: seeded (1, 0 after a fork wiped it), the next word,
+/// the words this buffer hands out, the block counter, the key (4 words),
+/// the buffer (32 words).
+const ST_SEEDED = 0
+const ST_I = 8
+const ST_N = 16
+const ST_C = 24
+const ST_KEY = 32
+const ST_BUF = 64
+const ST_BYTES = 320
+/// sched.xo TLS_W: the thread's worker record (0 on a thread that is not
+/// a worker: the system's generator then).
+const TLS_W = 2
+/// rt.static_word 108: whether macOS's atfork handler is registered.
+const STATIC_ATFORK = 108
+
+/// The calling worker's seeded state, or 0 when the thread has none (not
+/// a worker, or no wipe on fork on this system).
+fn state() -> Int {
+  let w = rt.tlocal_get(TLS_W)
+  if w == 0 {
+    return 0
+  }
+  var st = rt.mem_load(w, layout.W_RAND, 8)
+  if st == 0 {
+    st = state_new()
+    rt.mem_store(w, layout.W_RAND, st, 8)
+  }
+  if st == -1 {
+    return 0
+  }
+  if rt.mem_load(st, ST_SEEDED, 8) == 0 {
+    let k = entropy(32)
+    seed(st, rt.bytes_word(k, 0), rt.bytes_word(k, 8), rt.bytes_word(k, 16), rt.bytes_word(k, 24))
+  }
+  st
+}
+
+/// A state's memory that a forked child does not inherit (-1 when this
+/// system gives none).
+fn state_new() -> Int {
+  match source() {
+    1 | 4 => {
+      // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+      let a = linux.mmap(0, 4096, 3, 0x22, -1, 0)
+      if a < 0 {
+        return -1
+      }
+      // Linux MADV_WIPEONFORK (18, since 4.14); FreeBSD minherit (250)
+      // INHERIT_ZERO (3)
+      let r = if source() == 4 { rt.sys6(250, a, 4096, 3, 0, 0, 0) } else { linux.madvise(a, 4096, 18) }
+      if r != 0 {
+        let _u = linux.munmap(a, 4096)
+        return -1
+      }
+      a
+    }
+    2 => {
+      // MAP_PRIVATE | MAP_ANON
+      let a = sys_darwin.mmap(0, 4096, 3, 0x1002, -1, 0)
+      if a == -1 {
+        return -1
+      }
+      if rt.slot_cas[Int](rt.static_word(STATIC_ATFORK), 0, 0, 1, 4) {
+        if Int(sys_darwin.pthread_atfork(0, 0, rt.fn_addr("on_fork_child"))) != 0 {
+          rt.mem_store(rt.static_word(STATIC_ATFORK), 0, 0, 8)
+          return -1
+        }
+      }
+      a
+    }
+    3 => {
+      // no fork on Windows
+      let a = rt.heap_large(ST_BYTES)
+      rt.mem_set(a, 0, ST_BYTES)
+      a
+    }
+    _ => -1
+  }
+}
+
+/// macOS's pthread_atfork child handler (cabi.xo on_fork_child): the
+/// forking thread's state, the one the child runs on, made unseeded.
+pub fn fork_child() {
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    let st = rt.mem_load(w, layout.W_RAND, 8)
+    if st != 0 && st != -1 {
+      rt.mem_set(st, 0, ST_BYTES)
+    }
+  }
+}
+
+/// Go's State.Init64: the key, the first buffer.
+fn seed(st: Int, k0: Int, k1: Int, k2: Int, k3: Int) {
+  rt.mem_store(st, ST_KEY, k0, 8)
+  rt.mem_store(st, ST_KEY + 8, k1, 8)
+  rt.mem_store(st, ST_KEY + 16, k2, 8)
+  rt.mem_store(st, ST_KEY + 24, k3, 8)
+  block(st, 0)
+  rt.mem_store(st, ST_C, 0, 8)
+  rt.mem_store(st, ST_I, 0, 8)
+  rt.mem_store(st, ST_N, 32, 8)
+  rt.mem_store(st, ST_SEEDED, 1, 8)
+}
+
+/// Go's Next and Refill: the next word of the buffer, refilled when
+/// spent.
+fn draw(st: Int) -> Int {
+  var i = rt.mem_load(st, ST_I, 8)
+  if i >= rt.mem_load(st, ST_N, 8) {
+    refill(st)
+    i = 0
+  }
+  rt.mem_store(st, ST_I, i + 1, 8)
+  rt.mem_load(st, ST_BUF + 8 * (i & 31), 8)
+}
+
+fn refill(st: Int) {
+  var c = rt.mem_load(st, ST_C, 8) + 4
+  if c == 16 {
+    // the next key: the last four words, which were not handed out
+    for k in 0..4 {
+      rt.mem_store(st, ST_KEY + 8 * k, rt.mem_load(st, ST_BUF + 8 * (28 + k), 8), 8)
+    }
+    c = 0
+  }
+  rt.mem_store(st, ST_C, c, 8)
+  block(st, c)
+  rt.mem_store(st, ST_I, 0, 8)
+  rt.mem_store(st, ST_N, if c == 12 { 28 } else { 32 }, 8)
+}
+
+const M32 = 0xFFFFFFFF
+
+fn add32(x: Int, y: Int) -> Int { x.wrapping_add(y) & M32 }
+
+/// Go's block: four ChaCha8 blocks of the key with counters ctr to ctr +
+/// 3 and a zero nonce, word k of block b at the buffer's 32 bit word 4k +
+/// b (Go's layout: the arm64 and amd64 vector kernels' order); the key
+/// words added back, the constants, counter and nonce words not.
+fn block(st: Int, ctr: Int) {
+  let kw0 = rt.mem_load(st, ST_KEY, 8)
+  let kw1 = rt.mem_load(st, ST_KEY + 8, 8)
+  let kw2 = rt.mem_load(st, ST_KEY + 16, 8)
+  let kw3 = rt.mem_load(st, ST_KEY + 24, 8)
+  let k0 = kw0 & M32
+  let k1 = kw0.shr_logical(32)
+  let k2 = kw1 & M32
+  let k3 = kw1.shr_logical(32)
+  let k4 = kw2 & M32
+  let k5 = kw2.shr_logical(32)
+  let k6 = kw3 & M32
+  let k7 = kw3.shr_logical(32)
+  let o = st + ST_BUF
+  for b in 0..4 {
+    var x0 = 0x61707865
+    var x1 = 0x3320646e
+    var x2 = 0x79622d32
+    var x3 = 0x6b206574
+    var x4 = k0
+    var x5 = k1
+    var x6 = k2
+    var x7 = k3
+    var x8 = k4
+    var x9 = k5
+    var x10 = k6
+    var x11 = k7
+    var x12 = (ctr + b) & M32
+    var x13 = 0
+    var x14 = 0
+    var x15 = 0
+    for _ in 0..4 {
+      x0 = add32(x0, x4)
+      x12 = (x12 ^ x0).rotate_right32(16)
+      x8 = add32(x8, x12)
+      x4 = (x4 ^ x8).rotate_right32(20)
+      x0 = add32(x0, x4)
+      x12 = (x12 ^ x0).rotate_right32(24)
+      x8 = add32(x8, x12)
+      x4 = (x4 ^ x8).rotate_right32(25)
+      x1 = add32(x1, x5)
+      x13 = (x13 ^ x1).rotate_right32(16)
+      x9 = add32(x9, x13)
+      x5 = (x5 ^ x9).rotate_right32(20)
+      x1 = add32(x1, x5)
+      x13 = (x13 ^ x1).rotate_right32(24)
+      x9 = add32(x9, x13)
+      x5 = (x5 ^ x9).rotate_right32(25)
+      x2 = add32(x2, x6)
+      x14 = (x14 ^ x2).rotate_right32(16)
+      x10 = add32(x10, x14)
+      x6 = (x6 ^ x10).rotate_right32(20)
+      x2 = add32(x2, x6)
+      x14 = (x14 ^ x2).rotate_right32(24)
+      x10 = add32(x10, x14)
+      x6 = (x6 ^ x10).rotate_right32(25)
+      x3 = add32(x3, x7)
+      x15 = (x15 ^ x3).rotate_right32(16)
+      x11 = add32(x11, x15)
+      x7 = (x7 ^ x11).rotate_right32(20)
+      x3 = add32(x3, x7)
+      x15 = (x15 ^ x3).rotate_right32(24)
+      x11 = add32(x11, x15)
+      x7 = (x7 ^ x11).rotate_right32(25)
+      x0 = add32(x0, x5)
+      x15 = (x15 ^ x0).rotate_right32(16)
+      x10 = add32(x10, x15)
+      x5 = (x5 ^ x10).rotate_right32(20)
+      x0 = add32(x0, x5)
+      x15 = (x15 ^ x0).rotate_right32(24)
+      x10 = add32(x10, x15)
+      x5 = (x5 ^ x10).rotate_right32(25)
+      x1 = add32(x1, x6)
+      x12 = (x12 ^ x1).rotate_right32(16)
+      x11 = add32(x11, x12)
+      x6 = (x6 ^ x11).rotate_right32(20)
+      x1 = add32(x1, x6)
+      x12 = (x12 ^ x1).rotate_right32(24)
+      x11 = add32(x11, x12)
+      x6 = (x6 ^ x11).rotate_right32(25)
+      x2 = add32(x2, x7)
+      x13 = (x13 ^ x2).rotate_right32(16)
+      x8 = add32(x8, x13)
+      x7 = (x7 ^ x8).rotate_right32(20)
+      x2 = add32(x2, x7)
+      x13 = (x13 ^ x2).rotate_right32(24)
+      x8 = add32(x8, x13)
+      x7 = (x7 ^ x8).rotate_right32(25)
+      x3 = add32(x3, x4)
+      x14 = (x14 ^ x3).rotate_right32(16)
+      x9 = add32(x9, x14)
+      x4 = (x4 ^ x9).rotate_right32(20)
+      x3 = add32(x3, x4)
+      x14 = (x14 ^ x3).rotate_right32(24)
+      x9 = add32(x9, x14)
+      x4 = (x4 ^ x9).rotate_right32(25)
+    }
+    let ob = o + 4 * b
+    rt.mem_store(ob, 0, x0, 4)
+    rt.mem_store(ob, 16, x1, 4)
+    rt.mem_store(ob, 32, x2, 4)
+    rt.mem_store(ob, 48, x3, 4)
+    rt.mem_store(ob, 64, add32(x4, k0), 4)
+    rt.mem_store(ob, 80, add32(x5, k1), 4)
+    rt.mem_store(ob, 96, add32(x6, k2), 4)
+    rt.mem_store(ob, 112, add32(x7, k3), 4)
+    rt.mem_store(ob, 128, add32(x8, k4), 4)
+    rt.mem_store(ob, 144, add32(x9, k5), 4)
+    rt.mem_store(ob, 160, add32(x10, k6), 4)
+    rt.mem_store(ob, 176, add32(x11, k7), 4)
+    rt.mem_store(ob, 192, x12, 4)
+    rt.mem_store(ob, 208, x13, 4)
+    rt.mem_store(ob, 224, x14, 4)
+    rt.mem_store(ob, 240, x15, 4)
+  }
+}
+
+/// Word k (from 0) of the generator seeded with the 32 bytes of key, for
+/// the known answer test (std/internal rt_probe "rand_kat": Go's
+/// chacha8rand TestOutput vector). A state of its own, not a worker's.
+pub fn kat_word(key: Str, k: Int) -> Int {
+  let sb = raw.bytes_buf(ST_BYTES)
+  let st = raw.bytes_addr(sb)
+  rt.mem_set(st, 0, ST_BYTES)
+  let d = raw.data(key)
+  seed(st, rt.mem_load(d, 0, 8), rt.mem_load(d, 8, 8), rt.mem_load(d, 16, 8), rt.mem_load(d, 24, 8))
+  raw.alive_str(key)
+  var w = 0
+  for _ in 0..k + 1 {
+    w = draw(st)
+  }
+  raw.alive(sb)
+  w
+}
+
+/// Whether a forked child's next word differs from its parent's
+/// (std/internal rt_probe "rand_fork"): the child draws one word and
+/// writes it to a pipe, the parent draws its next one and compares. 1
+/// differ, 0 the same (a child repeating its parent's stream), 2 when
+/// this system or thread has no state (nothing to repeat), -1 when a
+/// system call failed.
+pub fn fork_differs() -> Int {
+  if testworld.seeded() || source() == 3 || source() == 0 {
+    return 2
+  }
+  let st = state()
+  if st == 0 {
+    return 2
+  }
+  // spend most of a buffer so the child's word comes from the same one
+  let _w = draw(st)
+  let fb = raw.bytes_buf(16)
+  let bb = raw.bytes_buf(8)
+  let fds = raw.bytes_addr(fb)
+  let buf = raw.bytes_addr(bb)
+  var r = -1
+  if source() == 2 {
+    if Int(sys_darwin.pipe(fds)) == 0 {
+      let rd = rt.mem_load(fds, 0, 4)
+      let wr = rt.mem_load(fds, 4, 4)
+      let pid = Int(sys_darwin.fork())
+      if pid == 0 {
+        rt.mem_store(buf, 0, next_u64(), 8)
+        let _n = sys_darwin.write(wr, buf, 8)
+        sys_darwin.exit(0)
+      }
+      let mine = next_u64()
+      if pid > 0 && sys_darwin.read(rd, buf, 8) == 8 {
+        r = if rt.mem_load(buf, 0, 8) == mine { 0 } else { 1 }
+        let _s = sys_darwin.waitpid(pid, 0, 0)
+      }
+      let _a = sys_darwin.close(rd)
+      let _b = sys_darwin.close(wr)
+    }
+  } else if linux.pipe2(fds, 0) == 0 {
+    let rd = rt.mem_load(fds, 0, 4)
+    let wr = rt.mem_load(fds, 4, 4)
+    let pid = linux.fork()
+    if pid == 0 {
+      rt.mem_store(buf, 0, next_u64(), 8)
+      let _n = linux.write_at(wr, buf, 8)
+      let _e = linux.exit_group(0)
+    }
+    let mine = next_u64()
+    if pid > 0 && linux.read_at(rd, buf, 8) == 8 {
+      r = if rt.mem_load(buf, 0, 8) == mine { 0 } else { 1 }
+      let _s = linux.wait4(pid, 0)
+    }
+    let _a = linux.close(rd)
+    let _b = linux.close(wr)
+  }
+  raw.alive(fb)
+  raw.alive(bb)
+  r
 }
 
 /// `rand.bytes(n)`: n random bytes (none when n <= 0); seeded, one draw
@@ -101,15 +466,18 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
     rt.fault_raise("rand.int(${lo}, ${hi}): the range is empty", at)
   }
   // as UInt64s: span = hi - lo, limit = MAX - MAX % span; draws at or
-  // above limit are rejected
+  // above limit are rejected. The limit is at least 2^64 - span, so a draw
+  // below that is kept without computing it (its division was 36% of
+  // random.normal's time); the same draws are kept as before.
   let span = hi.wrapping_sub(lo)
-  let limit = (-1).wrapping_sub(max_rem(span))
+  let m = span.wrapping_sub(1)
+  let pow2 = (span & m) == 0
   let flip = Int.min
+  let sure = (0).wrapping_sub(span) ^ flip
   while true {
     let v = next_u64()
-    if (v ^ flip) < (limit ^ flip) {
-      // both below 2^63 (the common case): the signed remainder, inline
-      let r = if v >= 0 && span > 0 { v % span } else { ints.u64_rem(v, span) }
+    if (v ^ flip) < sure || (v ^ flip) < ((-1).wrapping_sub(max_rem(span)) ^ flip) {
+      let r = if pow2 { v & m } else if v >= 0 && span > 0 { v % span } else { ints.u64_rem(v, span) }
       return lo.wrapping_add(r)
     }
   }

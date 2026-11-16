@@ -99,7 +99,11 @@ fn list_swap_both(xs: List[Int], ys: List[Int], zs: List[Int])
 /// workers alive and CPUs), "inherited" (evloop.c's test of a pipe a
 /// child holds after its registration was freed: 1 when run, 2 off
 /// Linux), "io_chunk" (the most bytes one read(2) or write(2) asks for:
-/// a, so a test makes every transfer many chunks; 0 restores 1 GiB). An
+/// a, so a test makes every transfer many chunks; 0 restores 1 GiB),
+/// "rand_kat" (word a of the native Rand's ChaCha8 generator seeded with
+/// Go's chacha8rand test seed, decision 0669), "rand_fork" (1 when a
+/// forked child's next Rand word differs from its parent's, 0 when it
+/// repeats it, 2 with no generator state, -1 on a failed call). An
 /// unknown op faults, and
 /// every op faults on the Go backend.
 fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int

@@ -16,6 +16,7 @@ use native/llrt/libcstr
 use native/llrt/linux
 use native/llrt/lz4
 use native/llrt/mlkem
+use native/llrt/rand
 use native/llrt/raw
 use native/llrt/mutex
 use native/llrt/obj
@@ -259,6 +260,15 @@ fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
       r
     }
     "chunks" => heapos.chunks()
+    "rand_kat" => {
+      // word a of the native Rand's ChaCha8 generator seeded with Go's
+      // chacha8rand test seed (decision 0669)
+      rand.kat_word("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456", a)
+    }
+    "rand_fork" => {
+      // whether a forked child's next Rand word differs from its parent's
+      rand.fork_differs()
+    }
     "io_chunk" => {
       // the chunk size of one read(2) or write(2) (raw.io_len): a for
       // tests (small, to make every transfer many chunks), 0 back to 1 GiB

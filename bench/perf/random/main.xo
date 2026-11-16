@@ -1,0 +1,57 @@
+// std/random against Go's math/rand/v2: 10^6 draws of normal and exp,
+// 2,000 permutations of 1,000, and 10^6 Zipf draws (s 1.5, v 1, imax
+// 1000), each from the program's own Rand (the operating system's
+// generator; Go's top-level functions draw from its runtime generator);
+// `none` is the setup alone. Usage: `<program> none|normal|exp|perm|zipf`.
+// Prints `<workload> <draws> <statistic>`: the draws match the twin; the
+// statistic (a share to two places) agrees with overwhelming probability
+// and is printed so the draws are used, not compared (twin.txt).
+use std/random
+
+fn share(k: Int, n: Int) -> Str {
+  let c = (k * 100 + n / 2) / n
+  "0.${if c < 10 { "0" } else { "" }}${c}"
+}
+
+fn main(os: Os) uses stdio, env, rand {
+  let w = os.env.args().get(0) ?? "none"
+  let n = 1000000
+  if w == "normal" {
+    var k = 0
+    for _ in 0..n {
+      let x = random.normal(os.rand)
+      if x > -1.0 && x < 1.0 {
+        k += 1
+      }
+    }
+    os.stdio.println("normal ${n} ${share(k, n)}")
+  } else if w == "exp" {
+    var k = 0
+    for _ in 0..n {
+      if random.exp(os.rand) < 1.0 {
+        k += 1
+      }
+    }
+    os.stdio.println("exp ${n} ${share(k, n)}")
+  } else if w == "perm" {
+    var k = 0
+    for _ in 0..2000 {
+      let p = random.perm(os.rand, 1000)
+      if p[0] < 500 {
+        k += 1
+      }
+    }
+    os.stdio.println("perm ${2000 * 1000} ${share(k * 10, 20000) }")
+  } else if w == "zipf" {
+    let z = random.zipf(1.5, 1.0, 1000) ?? fault("zipf")
+    var k = 0
+    for _ in 0..n {
+      if z.draw(os.rand) == 0 {
+        k += 1
+      }
+    }
+    os.stdio.println("zipf ${n} ${share(k, n)}")
+  } else {
+    os.stdio.println("none 0 0.00")
+  }
+}
