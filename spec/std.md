@@ -1257,6 +1257,11 @@ let weather = weather.client(api)   // the library can reach api.example.com onl
 
 ### 3.3 Clock (`uses clock`)
 
+`interface Clock[fx: Effects]`: each method `uses fx`, so the effect is
+the value's (decision 0652, core 6.3): `os.clock` and a test's fake clock
+perform `clock` (`Clock[clock]`); `time.virtual(start)` (section 13) is a
+`Clock[()]` and keeps its caller pure.
+
 ```
 fn (c: Clock) now() -> Time
 enum ClockErr { Canceled }
@@ -5345,11 +5350,22 @@ fn (w: Weekday) number() -> Int                    // ISO 8601: Monday 1 to Sund
 fn weekday_from(n: Int) -> Weekday?                // None outside 1 to 7
 fn truncate(t: Time, d: Duration) -> Time          // Go's Time.Truncate
 fn round(t: Time, d: Duration) -> Time             // Go's Time.Round, halves up
-struct Ticker { clock: Clock, period: Duration, next_ns: Atomic[Int] }
-fn ticker(clock: Clock, period: Duration) -> Ticker uses clock
+struct Ticker { clock: Clock[clock], period: Duration, next_ns: Atomic[Int] }
+fn ticker(clock: Clock[clock], period: Duration) -> Ticker uses clock
 fn (t: Ticker) wait() -> Time uses clock
 fn (t: Ticker) reset(period: Duration) -> Ticker uses clock
+struct Virtual { ns: Atomic[Int] }                 // a Clock[()] (decision 0652)
+fn virtual(start: Time) -> Virtual                 // its time starts at start
+fn (c: Virtual) now() -> Time
+fn (c: Virtual) sleep(d: Duration)                 // moves the time d forward, returns at once
+fn (c: Virtual) sleep_or_cancel(d: Duration) -> () ! ClockErr   // as sleep; never canceled
+fn (c: Virtual) since(t: Time) -> Duration
+fn (c: Virtual) advance(d: Duration)               // as sleep (nothing for d <= 0)
 ```
+
+`Virtual`'s time moves only by `sleep` and `advance`, so a simulation or
+a sans-I/O state machine runs its timers without waiting; its methods
+perform nothing, so code given one stays pure. Copies share the time.
 
 - `truncate` and `round` count multiples of `d` from the zero time
   (January 1 of year 1, UTC), as Go does, so for a `d` that divides a
@@ -8342,10 +8358,10 @@ fn only(self, hosts: List[Str]) -> Net
 ### Clock
 
 ```
-fn now(self) -> Time uses clock
-fn sleep(self, d: Duration) uses clock
-fn sleep_or_cancel(self, d: Duration) -> () ! ClockErr uses clock
-fn since(self, t: Time) -> Duration uses clock
+fn now(self) -> Time uses fx
+fn sleep(self, d: Duration) uses fx
+fn sleep_or_cancel(self, d: Duration) -> () ! ClockErr uses fx
+fn since(self, t: Time) -> Duration uses fx
 ```
 
 ### Rand

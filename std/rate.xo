@@ -35,7 +35,7 @@ pub struct LimitState {
 /// A handle: copies share the bucket, and tasks may use it at once.
 pub struct Limiter {
   pub st: Mutex[LimitState]
-  pub clock: Clock
+  pub clock: Clock[clock]
 }
 
 /// The tokens an event reserved and when it may happen (rate.Reservation).
@@ -67,7 +67,7 @@ pub fn (e: RateErr) display() -> Str {
 
 /// A limiter of limit tokens a second and a bucket of burst, full
 /// (rate.NewLimiter); limit 0 with burst 0 allows nothing, INF everything.
-pub fn new(limit: Float, burst: Int, clock: Clock) -> Limiter {
+pub fn new(limit: Float, burst: Int, clock: Clock[clock]) -> Limiter {
   // Go's zero Time, year 1, is where a new limiter's times start
   let st = LimitState{limit: limit, burst: burst, tokens: Float(burst), last: go_zero(), last_event: go_zero()}
   Limiter{st: Mutex[LimitState].new(st), clock: clock}
@@ -375,12 +375,12 @@ pub struct Sometimes {
   pub every: Int
   pub interval: Duration
   pub st: Mutex[SometimesState]
-  pub clock: Clock
+  pub clock: Clock[clock]
 }
 
 /// A Sometimes reading `clock` for `interval` (rate.Sometimes{First,
 /// Every, Interval}); 0 leaves a rule off.
-pub fn sometimes(clock: Clock, first: Int = 0, every: Int = 0, interval: Duration = 0s) -> Sometimes {
+pub fn sometimes(clock: Clock[clock], first: Int = 0, every: Int = 0, interval: Duration = 0s) -> Sometimes {
   Sometimes{first: first, every: every, interval: interval, st: Mutex[SometimesState].new(SometimesState{count: 0, last: Time.UNIX_EPOCH}), clock: clock}
 }
 

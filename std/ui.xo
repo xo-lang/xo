@@ -1079,7 +1079,7 @@ fn local_bus_of(first: List[fn(Str, Int) uses sync]) -> Bus[sync] {
 /// to the scope's subscribers. After every LISTEN (the first and each
 /// reconnect, a second apart while the database is away) the subscribers
 /// hear -1 and read the store, since notices sent meanwhile are lost.
-pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, channel: Str = "xo_ui") -> Bus[(sync, net.dial, fx, clock)] {
+pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock[clock], channel: Str = "xo_ui") -> Bus[(sync, net.dial, fx, clock)] {
   let subs = Mutex[List[fn(Str, Int) uses sync]].new([])
   let started = Atomic[Int].new(0)
   // 1 while a LISTEN connection is up: a subscriber that joins then hears

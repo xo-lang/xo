@@ -1640,7 +1640,7 @@ pub fn (r: Registry) handler(offer: List[Compression] = [Compression.Gzip, Compr
 }
 
 /// handler, each scrape passing the clock's time to text (summaries age).
-pub fn (r: Registry) handler_at(clock: Clock, offer: List[Compression] = [Compression.Gzip, Compression.Identity], open_metrics: Bool = false) -> fn(http.Request) -> http.Response uses (clock, sync) {
+pub fn (r: Registry) handler_at(clock: Clock[clock], offer: List[Compression] = [Compression.Gzip, Compression.Identity], open_metrics: Bool = false) -> fn(http.Request) -> http.Response uses (clock, sync) {
   fn(req) -> http.Response {
     let now = Some(clock.now())
     if wants_pb(req) {
@@ -1726,7 +1726,7 @@ fn negotiate(accept: Str, offer: List[Compression]) -> Compression {
 /// InstrumentHandlerRequestSize and InstrumentHandlerResponseSize, in
 /// `size_buckets()`. A handler returns its whole response, so the time
 /// to the header is `http_request_seconds` (InstrumentHandlerTimeToWriteHeader).
-pub fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str, sizes: Bool = false, exemplar_of: (fn(http.Request) -> Map[Str, Str])? = None) -> fn(http.Request, http.Next) -> http.Response uses (clock, sync) {
+pub fn (r: Registry) middleware(clock: Clock[clock], label: fn(http.Request) -> Str, sizes: Bool = false, exemplar_of: (fn(http.Request) -> Map[Str, Str])? = None) -> fn(http.Request, http.Next) -> http.Response uses (clock, sync) {
   let reqs = r.counter("http_requests_total", "Requests by method, route and status.", ["method", "route", "status"])
   let lat = r.histogram("http_request_seconds", "Request latency in seconds.", ["route"], latency_buckets())
   let inflight = r.gauge("http_in_flight", "Requests being served.")
@@ -1791,7 +1791,7 @@ pub struct ProcessCollector {
   pub max_rss: Atomic[Int]
 }
 
-pub fn (r: Registry) process_collector(clock: Clock, namespace: Str = "") -> ProcessCollector uses clock {
+pub fn (r: Registry) process_collector(clock: Clock[clock], namespace: Str = "") -> ProcessCollector uses clock {
   let pc = ProcessCollector{cpu_ns: Atomic[Int].new(0), max_rss: Atomic[Int].new(0)}
   let ns = if namespace.is_empty() { "" } else { "${namespace}_" }
   let start = Float(clock.now().unix_millis()) / 1000.0
@@ -1947,7 +1947,7 @@ fn request_size(req: http.Request) -> Int {
 /// RoundTripperFunc): `http_client_requests_total{method,code}` (code is
 /// the status, or `error` when the send failed),
 /// `http_client_request_seconds{method}` and `http_client_in_flight`.
-pub fn (r: Registry) client_send(clock: Clock) -> fn(http.Client, http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
+pub fn (r: Registry) client_send(clock: Clock[clock]) -> fn(http.Client, http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
   let reqs = r.counter("http_client_requests_total", "Client requests by method and status.", ["method", "code"])
   let lat = r.histogram("http_client_request_seconds", "Client request latency in seconds.", ["method"], latency_buckets())
   let inflight = r.gauge("http_client_in_flight", "Client requests in flight.")
@@ -1997,7 +1997,7 @@ pub struct InstrumentTrace {
 /// wall clock's, so clock is the system's (a fake clock's start is not on
 /// the same scale). The observers run when send returns (std/http's
 /// delivery), not during the exchange.
-pub fn instrument_round_tripper_trace(it: InstrumentTrace, clock: Clock) -> fn(http.Client, http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
+pub fn instrument_round_tripper_trace(it: InstrumentTrace, clock: Clock[clock]) -> fn(http.Client, http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
   fn(c: http.Client, req: http.Request) -> http.Response ! http.ClientErr uses (clock, net.dial, sync) {
     let t0 = clock.now()
     let on = fn(e: http.TraceEvent) uses sync {

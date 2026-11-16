@@ -158,13 +158,31 @@ fn round(t: Time, d: Duration) -> Time
 /// slow caller missed are dropped, as Go's channel of one drops them, and
 /// the phase is kept (decision 0414). Copies share the schedule.
 struct Ticker {
-  clock: Clock
+  clock: Clock[clock]
   period: Duration
   next_ns: Atomic[Int]
 }
+/// A virtual clock (decision 0652): `now` is its own time, which `sleep`
+/// and `advance` move forward and nothing else does, so a simulation or a
+/// sans-I/O state machine runs timers without waiting. Its methods
+/// perform no effect: it is a `Clock[()]`, which keeps its caller pure.
+/// Copies share the time; safe across tasks.
+struct Virtual {
+  ns: Atomic[Int]
+}
+/// A virtual clock at start.
+fn virtual(start: Time) -> Virtual
+fn (c: Virtual) now() -> Time
+/// Moves the time d forward (nothing for d of 0 or less) and returns.
+fn (c: Virtual) sleep(d: Duration)
+/// As sleep; a virtual clock is never cancelled.
+fn (c: Virtual) sleep_or_cancel(d: Duration) -> () ! ClockErr
+fn (c: Virtual) since(t: Time) -> Duration
+/// Moves the time d forward, as sleep (a test's or a scheduler's call).
+fn (c: Virtual) advance(d: Duration)
 /// A ticker whose first tick is one period from now; faults for a period
 /// of 0 or less (Go's NewTicker panics).
-fn ticker(clock: Clock, period: Duration) -> Ticker uses clock
+fn ticker(clock: Clock[clock], period: Duration) -> Ticker uses clock
 fn (t: Ticker) wait() -> Time uses clock
 /// Restarts the schedule: the next tick one (new) period from now.
 fn (t: Ticker) reset(period: Duration) -> Ticker uses clock

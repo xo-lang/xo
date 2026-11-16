@@ -36,9 +36,9 @@
             "span": {
               "file": "main.xo",
               "line": 1,
-              "col": 30,
+              "col": 37,
               "end_line": 1,
-              "end_col": 37
+              "end_col": 44
             },
             "replace": "uses clock"
           },
@@ -46,9 +46,9 @@
             "span": {
               "file": "main.xo",
               "line": 5,
-              "col": 29,
+              "col": 36,
               "end_line": 5,
-              "end_col": 36
+              "end_col": 43
             },
             "replace": "uses clock"
           },
@@ -56,9 +56,9 @@
             "span": {
               "file": "main.xo",
               "line": 13,
-              "col": 33,
+              "col": 40,
               "end_line": 13,
-              "end_col": 40
+              "end_col": 47
             },
             "replace": "uses clock"
           }

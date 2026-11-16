@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+virtual: 5 tries, 31 ms
+shared: 90 s, unix 1700000090
+sleep_or_cancel ok true, since 100 s
+os: 2 tries, waited true
+--- stderr

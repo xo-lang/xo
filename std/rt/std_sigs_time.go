@@ -46,6 +46,12 @@ var (
 	_ func(*Task, int64) Option[Time_Weekday]                                                       = Time_weekday_from
 	_ func(*Task, Time, Duration) Time                                                              = Time_truncate
 	_ func(*Task, Time, Duration) Time                                                              = Time_round
+	_ func(*Task, Time) Time_Virtual                                                                = Time_virtual
+	_ func(*Time_Virtual, *Task) Time                                                               = (*Time_Virtual).M_now
+	_ func(*Time_Virtual, *Task, Duration)                                                          = (*Time_Virtual).M_sleep
+	_ func(*Time_Virtual, *Task, Duration) Result[Unit, ClockErr]                                   = (*Time_Virtual).M_sleep_or_cancel
+	_ func(*Time_Virtual, *Task, Time) Duration                                                     = (*Time_Virtual).M_since
+	_ func(*Time_Virtual, *Task, Duration)                                                          = (*Time_Virtual).M_advance
 	_ func(*Task, Clock, Duration) Time_Ticker                                                      = Time_ticker
 	_ func(*Time_Ticker, *Task) Time                                                                = (*Time_Ticker).M_wait
 	_ func(*Time_Ticker, *Task, Duration) Time_Ticker                                               = (*Time_Ticker).M_reset

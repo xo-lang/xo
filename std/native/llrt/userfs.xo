@@ -359,7 +359,7 @@ pub interface UserOs {
 pub struct OsFields {
   net_v: Net
   fs_v: Fs
-  clock_v: Clock
+  clock_v: Clock[clock]
   rand_v: Rand[rand]
   env_v: Env
   proc_v: Proc

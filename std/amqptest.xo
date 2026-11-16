@@ -154,7 +154,7 @@ pub struct BrokerState {
 /// A broker. A handle: copies share it.
 pub struct Broker {
   pub st: Mutex[BrokerState]
-  pub clock: Clock
+  pub clock: Clock[clock]
 }
 
 /// A link of one connection. Internal.
@@ -217,7 +217,7 @@ pub struct SvConn {
 }
 
 /// A new broker; `clock` times message locks, scheduled messages and token expiry.
-pub fn new(clock: Clock) -> Broker {
+pub fn new(clock: Clock[clock]) -> Broker {
   Broker{st: Mutex[BrokerState].new(BrokerState{}), clock: clock}
 }
 

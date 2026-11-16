@@ -3,7 +3,7 @@
 use std/grpc
 use std/http
 
-fn handlers(clock: Clock) -> grpc.Server {
+fn handlers(clock: Clock[clock]) -> grpc.Server {
   var srv = grpc.server(clock)
   srv.unary("/t.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
     if call.metadata.get("x-fail") == Some("1") {

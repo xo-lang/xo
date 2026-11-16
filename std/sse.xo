@@ -489,7 +489,7 @@ pub fn (e: SourceErr[E]) display() -> Str {
 /// off by the break is dropped.
 pub struct Source[E, fx: Effects] {
   connect: fn(Str) -> Attempt[E, fx] uses fx
-  clock: Clock
+  clock: Clock[clock]
   retry_ms: Int
   max_retries: Int
   max_line: Int
@@ -505,7 +505,7 @@ pub struct Source[E, fx: Effects] {
 /// A Source calling connect with the last event ID ("" for none) for each
 /// connection. max_retries: the failed attempts in a row (Retry, or a
 /// stream that ended without an event) after which next gives up; -1 never.
-pub fn source[E, fx: Effects](clock: Clock, connect: fn(Str) -> Attempt[E, fx] uses fx, retry_ms: Int = 3000, max_retries: Int = -1, last_event_id: Str = "", max_line: Int = MAX_LINE) -> Source[E, fx] {
+pub fn source[E, fx: Effects](clock: Clock[clock], connect: fn(Str) -> Attempt[E, fx] uses fx, retry_ms: Int = 3000, max_retries: Int = -1, last_event_id: Str = "", max_line: Int = MAX_LINE) -> Source[E, fx] {
   if retry_ms < 0 {
     fault("sse: retry_ms must not be negative")
   }
@@ -596,7 +596,7 @@ pub fn (s: Source[E, fx]) retry_ms() -> Int { s.retry_ms }
 /// one, and headers. A response other than 200 with a text/event-stream
 /// content type fails it (Protocol with the status), 204 stops it; a
 /// connection that fails, or a body cut short, is retried.
-pub fn subscribe(c: http.Client, clock: Clock, url: Str, headers: Map[Str, Str] = {}, retry_ms: Int = 3000, max_retries: Int = -1, last_event_id: Str = "") -> Source[http.ClientErr, net.dial] {
+pub fn subscribe(c: http.Client, clock: Clock[clock], url: Str, headers: Map[Str, Str] = {}, retry_ms: Int = 3000, max_retries: Int = -1, last_event_id: Str = "") -> Source[http.ClientErr, net.dial] {
   source(clock, fn(id: Str) -> Attempt[http.ClientErr, net.dial] uses net.dial {
     var req = http.new_request("GET", url, headers).with_header("Accept", "text/event-stream").with_header("Cache-Control", "no-cache")
     if !id.is_empty() {

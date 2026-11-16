@@ -368,6 +368,34 @@ func Time_round(_ *Task, t Time, d Duration) Time {
 	return Time(goTimeOf(t).Round(time.Duration(d)).UnixNano())
 }
 
+// Time_virtual is `time.virtual(start)`: a virtual clock (decision 0652)
+// whose time moves only by sleep and advance; copies share it.
+func Time_virtual(tk *Task, start Time) Time_Virtual {
+	return Time_Virtual{F_ns: Atomic_new(tk, int64(start))}
+}
+
+// M_now is `c.now()`.
+func (c Time_Virtual) M_now(tk *Task) Time { return Time(c.F_ns.M_get(tk)) }
+
+// M_advance is `c.advance(d)`: the time d forward, nothing for d <= 0.
+func (c Time_Virtual) M_advance(tk *Task, d Duration) {
+	if d > 0 {
+		Atomic_add(tk, c.F_ns, int64(d))
+	}
+}
+
+// M_sleep is `c.sleep(d)`: advance, no wait.
+func (c Time_Virtual) M_sleep(tk *Task, d Duration) { c.M_advance(tk, d) }
+
+// M_sleep_or_cancel is `c.sleep_or_cancel(d)`: never cancelled.
+func (c Time_Virtual) M_sleep_or_cancel(tk *Task, d Duration) Result[Unit, ClockErr] {
+	c.M_advance(tk, d)
+	return Ok[Unit, ClockErr](Unit{})
+}
+
+// M_since is `c.since(t)`.
+func (c Time_Virtual) M_since(tk *Task, t Time) Duration { return Duration(c.M_now(tk) - t) }
+
 // Time_ticker is `time.ticker(clock, period)`.
 func Time_ticker(tk *Task, clock Clock, period Duration) Time_Ticker {
 	if period <= 0 {

@@ -5,7 +5,7 @@
 // Content-Type sniffed as Go's server does.
 use std/http
 
-fn routes(clock: Clock, stdio: Stdio, msg: Str) -> http.Router {
+fn routes(clock: Clock[clock], stdio: Stdio, msg: Str) -> http.Router {
   var r = http.router()
   r.wrap(http.timeout_handler(clock, 300ms, msg: msg))
   r.handle("GET /fast", fn(_req: http.Request) -> http.Response { http.text(201, "quick").with_header("X-Own", "kept") })

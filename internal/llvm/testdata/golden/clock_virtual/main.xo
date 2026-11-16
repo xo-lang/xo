@@ -1,0 +1,33 @@
+// time.virtual (decision 0652): a Clock[()] whose time moves only by
+// sleep and advance, so a sans-I/O retry loop runs its waits without
+// waiting and stays pure; copies share the time; the same code given the
+// OS clock performs clock.
+use std/time
+
+/// Retries until attempt `ok`, sleeping 2^n ms between tries, and returns
+/// the attempts and the time spent; pure when its Clock is.
+fn retry(c: Clock, ok: Int) -> (Int, Duration) {
+  let start = c.now()
+  var n = 0
+  while n < ok {
+    c.sleep(Duration.from_millis(1 << n))
+    n += 1
+  }
+  (n, c.since(start))
+}
+
+fn pure_sim() -> (Int, Duration) uses () { retry(time.virtual(Time.from_unix(1700000000)), 5) }
+
+fn main(os: Os) {
+  let (n, spent) = pure_sim()
+  os.stdio.println("virtual: ${n} tries, ${spent.nanos() / 1000000} ms")
+  let v = time.virtual(Time.from_unix(1700000000))
+  let copy = v
+  v.advance(Duration.from_secs_int(90))
+  copy.sleep(Duration.from_millis(-5))
+  os.stdio.println("shared: ${(copy.now() - Time.from_unix(1700000000)).nanos() / 1000000000} s, unix ${v.now().unix_nanos() / 1000000000}")
+  let r = v.sleep_or_cancel(Duration.from_secs_int(10))
+  os.stdio.println("sleep_or_cancel ok ${r.is_ok()}, since ${v.since(Time.from_unix(1700000000)).nanos() / 1000000000} s")
+  let (m, real) = retry(os.clock, 2)
+  os.stdio.println("os: ${m} tries, waited ${real.nanos() >= 3000000}")
+}

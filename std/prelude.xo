@@ -1348,7 +1348,7 @@ fn (s: Secret[T]) reveal() -> T
 struct Os {
   net: Net
   fs: Fs
-  clock: Clock
+  clock: Clock[clock]
   rand: Rand[rand]
   env: Env
   proc: Proc
@@ -1771,13 +1771,18 @@ interface Net {
   fn only(self, hosts: List[Str]) -> Net
 }
 
-interface Clock {
-  fn now(self) -> Time uses clock
-  fn sleep(self, d: Duration) uses clock
+/// A source of time. Its effect is the value's (decision 0652): the OS
+/// clock is a `Clock[clock]`, a value whose methods perform nothing (a
+/// virtual clock in a simulation, time.virtual) a `Clock[()]`, which
+/// keeps its caller pure. A `Clock` written without the argument takes
+/// the caller's (core 6.2).
+interface Clock[fx: Effects] {
+  fn now(self) -> Time uses fx
+  fn sleep(self, d: Duration) uses fx
   /// Like sleep, but cancellation is an error instead of an unwind
   /// (core 7.2, decision 0088).
-  fn sleep_or_cancel(self, d: Duration) -> () ! ClockErr uses clock
-  fn since(self, t: Time) -> Duration uses clock
+  fn sleep_or_cancel(self, d: Duration) -> () ! ClockErr uses fx
+  fn since(self, t: Time) -> Duration uses fx
 }
 
 /// A source of randomness. Its effect is the value's (decision 0652):

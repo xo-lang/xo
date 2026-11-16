@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-16: feature: time.virtual, a pure Clock
+
+- Kind: feature
+- Commit: this push
+- Found by: task #141 (decision 0652 step 3): sans-I/O timers
+- Go reference: none (Go's tests use fake clocks of their own)
+- Test: golden clock_virtual (arm64, LLVM, wasm, Go parity): a retry loop pure with a virtual clock, shared copies, sleep_or_cancel; errorcheck clock_effect_arg
+- Shipped in: not yet released
+- Timing: none (no hot path)
+
+`time.virtual(start)` is a `Clock[()]` whose time moves only by `sleep` and `advance`. `Ticker`'s clock and `ticker`'s parameter are `Clock[clock]`.
+
 ## 2026-11-16: behavior: Date's JSON is its text
 
 - Kind: behavior (breaking)

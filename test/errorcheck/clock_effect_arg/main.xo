@@ -1,0 +1,34 @@
+// Decision 0652: Clock takes its effect as a parameter. The OS clock is
+// a Clock[clock], so its callers still perform clock; a pure Clock[()]
+// (time.virtual) keeps its caller pure; a value whose methods use clock
+// is not a Clock[()].
+use std/time
+
+struct Wall {
+  n: Int
+}
+
+fn (w: Wall) now() -> Time uses clock { Time.UNIX_EPOCH }
+fn (w: Wall) sleep(d: Duration) uses clock {}
+fn (w: Wall) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { Ok(()) }
+fn (w: Wall) since(t: Time) -> Duration uses clock { Duration.from_nanos(0) }
+
+pub fn exact(c: Clock[clock]) -> Time { c.now() } // ERROR XO0701 "performs `clock`"
+
+/// An omitted argument is the caller's: no `uses` needed here.
+pub fn any_clock(c: Clock) -> Time { c.now() }
+
+pub fn pure_caller(c: Clock[clock]) -> Time { any_clock(c) } // ERROR XO0701 "performs `clock`"
+
+pub fn wall_caller() -> Time { any_clock(Wall{n: 1}) } // ERROR XO0701 "performs `clock`"
+
+pub fn wants_pure(c: Clock[()]) -> Time { c.now() }
+
+pub fn wall_as_pure() -> Time { wants_pure(Wall{n: 1}) } // ERROR XO0701 "`Wall.now` performs `clock`"
+
+/// time.virtual is a Clock[()]: pure.
+pub fn virtual_now() -> Time { wants_pure(time.virtual(Time.UNIX_EPOCH)) }
+
+fn main(os: Os) {
+  os.stdio.println("${any_clock(os.clock) > Time.UNIX_EPOCH} ${virtual_now() == Time.UNIX_EPOCH}")
+}

@@ -1009,7 +1009,7 @@ test "a silent peer fails the connection after idle_timeout_ms" uses (net, clock
 // It is not a gate. XO_AMQP_INTEROP_USER and _PASSWORD default to artemis / artemis, the login of
 // apache/activemq-artemis; knowledgebase/infrastructure/amqp-interop.md has the docker command.
 
-fn interop_opts(os_env: Env, clk: Clock) -> ConnOptions uses (env, clock) {
+fn interop_opts(os_env: Env, clk: Clock[clock]) -> ConnOptions uses (env, clock) {
   let user = os_env.get("XO_AMQP_INTEROP_USER") ?? "artemis"
   let pass = os_env.get("XO_AMQP_INTEROP_PASSWORD") ?? "artemis"
   ConnOptions{container_id: "xo-interop", clock: Some(clk), timeout_ms: 10000, idle_timeout_ms: 30000,

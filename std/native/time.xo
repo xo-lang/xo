@@ -610,7 +610,21 @@ fn round(t: Time, d: Duration) -> Time {
   t + Duration.from_nanos(dn - r)
 }
 
-fn ticker(clock: Clock, period: Duration) -> time.Ticker uses clock {
+fn virtual(start: Time) -> time.Virtual { time.Virtual{ns: Atomic[Int].new(ns_of(start))} }
+fn virtual_now(c: time.Virtual) -> Time { Time.from_unix_nanos(c.ns.get()) }
+fn virtual_advance(c: time.Virtual, d: Duration) {
+  if d.nanos() > 0 {
+    let _ = c.ns.add(d.nanos())
+  }
+}
+fn virtual_sleep(c: time.Virtual, d: Duration) { virtual_advance(c, d) }
+fn virtual_sleep_or_cancel(c: time.Virtual, d: Duration) -> () ! ClockErr {
+  virtual_advance(c, d)
+  Ok(())
+}
+fn virtual_since(c: time.Virtual, t: Time) -> Duration { virtual_now(c) - t }
+
+fn ticker(clock: Clock[clock], period: Duration) -> time.Ticker uses clock {
   if period.nanos() <= 0 {
     fault("time: non-positive interval for ticker")
   }

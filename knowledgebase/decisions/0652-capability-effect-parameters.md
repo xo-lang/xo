@@ -288,3 +288,23 @@ Next: step 2b, std/random's `fixed` and `seeded` (`Rand[()]`), the
 llrt-private pure runtime Rand (open question 2), then HPKE's sender
 back to a Rand and tlsech.xo's copy removed (step 4).
 
+## Addendum 2026-11-16: steps 2b to 4a and Clock (Xo Lang 1, task #141)
+
+- 2b: `random.seeded(seed)` (Go's ChaCha8, its words equal to Go's for a
+  seed) and `random.fixed(data)`, pure Rand sources in std/random.
+- 4a: hpke `new_sender`/`seal` and crypto `ecdh_generate_key`/
+  `encapsulate` drop `uses rand`; llrt's `rand.Runtime` (the runtime's
+  generator as a pure Rand, llrt only, open question 2) lets the TLS
+  client's ECH use std/hpke, so tlsech.xo's copy of HPKE is gone.
+- A method's implicit effect parameter is the call's own variable, as a
+  function's (found by the backoff corpora: `Backoff.delay` given a Rand
+  whose methods use rand failed as a `Rand[()]`).
+- Clock (step 3): `interface Clock[fx: Effects]`, `os.clock:
+  Clock[clock]`, and `time.virtual(start)` a `Clock[()]` (the name the
+  plan proposed as `clock.virtual`; std/time is its home). Fields that
+  keep the OS clock and the parameters stored into them are pinned to
+  `Clock[clock]`: backoff, rate, sse, grpc, otlp, trace, metrics, time,
+  amqp, amqptest, http's timeout_handler, ui's pg_bus. A program helper
+  that stores an implicit `Clock` into one of those fields writes
+  `Clock[clock]` (CHANGELOG).
+

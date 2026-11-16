@@ -300,12 +300,12 @@ pub struct Server {
   pub routes: http.Router
   pub max_recv: Int
   pub methods: List[Str]
-  pub clock: Clock
+  pub clock: Clock[clock]
 }
 
 /// A server with grpc-go's 4 MiB receive limit. `clock` times the deadlines clients send: a handler still running at
 /// its `grpc-timeout` is cancelled and the call ends with `DeadlineExceeded`.
-pub fn server(clock: Clock) -> Server {
+pub fn server(clock: Clock[clock]) -> Server {
   Server{routes: http.router(), max_recv: 4194304, methods: [], clock: clock}
 }
 

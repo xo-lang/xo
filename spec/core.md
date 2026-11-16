@@ -3031,7 +3031,7 @@ fn main(os: Os) ! {
 }
 ```
 
-`Os` has fields `net: Net`, `fs: Fs`, `clock: Clock`, `rand: Rand[rand]`, `env: Env`,
+`Os` has fields `net: Net`, `fs: Fs`, `clock: Clock[clock]`, `rand: Rand[rand]`, `env: Env`,
 `proc: Proc`, `stdio: Stdio`, and `tasks: task.Group` (program lifetime task
 group, core 7.1). Each capability type is a predeclared interface,
 so test fakes and attenuated versions satisfy it. Their methods are in
@@ -3051,8 +3051,11 @@ without naming it in its `uses`. A struct field or enum variant field of
 type `Rand` written without the argument is a `Rand[rand]`, as `Os`'s own
 field (decision 0690): it holds `os.rand` or any pure source; a
 struct whose field should carry its value's effect names a parameter
-(`struct C[fx: Effects] { r: Rand[fx] }`). Clock, Env, Fs, Net, Stdio and Proc follow in
-later steps (decision 0652).
+(`struct C[fx: Effects] { r: Rand[fx] }`). `Clock` follows the same rules
+(`interface Clock[fx: Effects]`): `os.clock` is a `Clock[clock]`, std's
+`time.virtual` a `Clock[()]`, and a field written `Clock` is a
+`Clock[clock]`. Env, Fs, Net, Stdio and Proc follow in later steps
+(decision 0652).
 
 `os.fs` is rooted at the filesystem root and accepts absolute paths
 (`/home/me/a`, `C:/data`). Relative paths given to `os.fs` resolve against the

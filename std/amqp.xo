@@ -374,7 +374,7 @@ pub struct ConnOptions {
   pub tls_roots: tls.Roots? = None
   pub tls_verify: tls.Verify = tls.Verify.Full
   /// the clock timeouts and heartbeats run on (None: neither is used)
-  pub clock: Clock? = None
+  pub clock: Clock[clock]? = None
   /// the longest wait for the peer's next bytes during a call, in milliseconds, 0 for none (needs `clock`)
   pub timeout_ms: Int = 0
 }
@@ -404,7 +404,7 @@ pub struct ConnState {
   pub pending: List[Frame] = []
   pub closed: Bool = false
   /// timeouts and heartbeats (see ConnOptions); the times are Unix milliseconds
-  pub clock: Clock? = None
+  pub clock: Clock[clock]? = None
   pub timeout_ms: Int = 0
   pub idle_timeout_ms: Int = 0
   pub last_recv_ms: Int = 0

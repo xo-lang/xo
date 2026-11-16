@@ -8,7 +8,7 @@ fn text(m: amqp.Message) -> Str {
 
 fn msg(t: Str) -> amqp.Message { amqp.Message{body: amqp.Body.Data(sections: [t.bytes()])} }
 
-fn opts(clk: Clock) -> amqp.ConnOptions {
+fn opts(clk: Clock[clock]) -> amqp.ConnOptions {
   amqp.ConnOptions{container_id: "tester", clock: Some(clk), sasl: amqp.Sasl.Anonymous, timeout_ms: 5000}
 }
 
@@ -97,7 +97,7 @@ fn key(ps: List[(amqp.Value, amqp.Value)], k: Str) -> amqp.Value {
   amqp.Value.Null
 }
 
-fn dial_broker(n: Net, clk: Clock, l: Listener) -> amqp.Connection uses (net, clock) {
+fn dial_broker(n: Net, clk: Clock[clock], l: Listener) -> amqp.Connection uses (net, clock) {
   amqp.dial(n, l.addr(), opts(clk)).or_fault("dial")
 }
 

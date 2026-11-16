@@ -1,16 +1,16 @@
-fn leaf(clock: Clock) -> Int uses () {
+fn leaf(clock: Clock[clock]) -> Int uses () {
   clock.now().unix()
 }
 
-fn mid(clock: Clock) -> Int uses () {
+fn mid(clock: Clock[clock]) -> Int uses () {
   leaf(clock) + 1
 }
 
-fn helper(clock: Clock) -> Int {
+fn helper(clock: Clock[clock]) -> Int {
   mid(clock)
 }
 
-pub fn top(clock: Clock) -> Int uses () {
+pub fn top(clock: Clock[clock]) -> Int uses () {
   helper(clock) * 2
 }
 
