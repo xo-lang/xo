@@ -40,7 +40,16 @@ pub fn base(p: Str) -> Str {
     return "."
   }
   let b = p.bytes()
-  var e = b.len()
+  let n = b.len()
+  if b[n - 1] != 47 {
+    // no trailing slash (the common case): the bytes after the last one
+    let i = last_slash(p)
+    if i < 0 {
+      return p
+    }
+    return cut(p, i + 1, n)
+  }
+  var e = n
   while e > 0 && b[e - 1] == 47 {
     e -= 1
   }
@@ -50,9 +59,6 @@ pub fn base(p: Str) -> Str {
   var i = e - 1
   while i >= 0 && b[i] != 47 {
     i -= 1
-  }
-  if i < 0 && e == b.len() {
-    return p
   }
   cut(p, i + 1, e)
 }

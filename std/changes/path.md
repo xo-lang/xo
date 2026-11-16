@@ -1,5 +1,18 @@
 # std/path changes
 
+## 2026-11-16: perf: base finds the last slash first
+
+- Kind: perf
+- Commit: this push
+- Found by: task #101, the parts row of bench/perf/path over 1.05
+- Go reference: path.Base (strip trailing slashes, then strings.LastIndex)
+- Test: internal/stdtest/testdata/corpus/path (clean, dir, base and ext are Go's: Go's basetests and seeded random paths)
+- Timing: bench/perf/path parts 1.03 to 1.09 of Go before, 0.89 to 1.00 after (Mac, three runs each; host 1 row to follow)
+
+`path.base` of a path without a trailing slash, the common case, now
+takes the bytes after the last slash in one backward scan, without the
+trailing slash loop first. The results are the same.
+
 ## 2026-11-15: feature: eval_symlinks (Go's filepath.EvalSymlinks)
 
 - Kind: feature
