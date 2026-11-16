@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-11-16: fix: Float32.from_bits and to_bits keep a signaling NaN
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-43's amqp fuzz (0x7f800043 read back as 0x7fc00043 on amd64 and LLVM; the Go backend was right), task #143
+- Go reference: math.Float32frombits, math.Float32bits (go1.26)
+- Test: internal/llvm/testdata/golden/float_nan_bits (arm64, LLVM, wasm, Go parity): signaling and quiet NaNs, both signs, an infinity, a subnormal, 1.0, -0.0, and Float's NaN bits
+- Shipped in: not yet released
+
+The native backends narrowed the Float32 from its double, which quiets a signaling NaN, and to_bits set the quiet bit of any NaN. Both now reinterpret the double's bits (gotchas/float32-signaling-nan-backends.md).
+
 ## 2026-11-15: feature: List.filled
 
 - Kind: feature, perf

@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+f32 7f800043 -> 7f800043 same true
+f32 7fc00043 -> 7fc00043 same true
+f32 ff800001 -> ff800001 same true
+f32 7fbfffff -> 7fbfffff same true
+f32 7f800000 -> 7f800000 same true
+f32 1 -> 1 same true
+f32 3f800000 -> 3f800000 same true
+f32 80000000 -> 80000000 same true
+f64 7ff0000000000043 same true nan true
+f64 7ff8000000000043 same true nan true
+f64 -fffffffffffff same true nan true
+f64 7ff0000000000000 same true nan false
+--- stderr

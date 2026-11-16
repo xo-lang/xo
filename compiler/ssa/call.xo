@@ -1630,6 +1630,12 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   if raw {
     return rv
   }
+  if name is "f32_from_double_bits" | "f32_double_bits" {
+    // a Float32 is its widened double on every backend: these are
+    // float_from_bits and float_bits typed with Float32, a reinterpret
+    // with no rt.f32_round, which quiets a signaling NaN (#143)
+    return b.rt(if name == "f32_from_double_bits" { "float_from_bits" } else { "float_bits" }, nt, vs)
+  }
   if b.wasm && b.tests && name is "env_get" | "env_vars" {
     // a WASI test module's environment is the test world's (a FakeEnv,
     // as on the native targets: process.env_get), not the runner's

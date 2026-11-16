@@ -344,3 +344,9 @@ arm64 wasi_sock_shutdown the wasi:sockets command runtime is wasm only (compiler
 llvm wasi_sock_peer the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
 llvm wasi_sock_conn_local the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
 llvm wasi_sock_shutdown the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
+arm64 f32_double_bits the SSA builder lowers it as rt.float_bits or rt.float_from_bits typed Float32 (compiler/ssa call.xo, #143); no backend sees the name
+arm64 f32_from_double_bits the SSA builder lowers it as rt.float_bits or rt.float_from_bits typed Float32 (compiler/ssa call.xo, #143); no backend sees the name
+llvm f32_double_bits the SSA builder lowers it as rt.float_bits or rt.float_from_bits typed Float32 (compiler/ssa call.xo, #143); no backend sees the name
+llvm f32_from_double_bits the SSA builder lowers it as rt.float_bits or rt.float_from_bits typed Float32 (compiler/ssa call.xo, #143); no backend sees the name
+wasm f32_double_bits the SSA builder lowers it as rt.float_bits or rt.float_from_bits typed Float32 (compiler/ssa call.xo, #143); no backend sees the name
+wasm f32_from_double_bits the SSA builder lowers it as rt.float_bits or rt.float_from_bits typed Float32 (compiler/ssa call.xo, #143); no backend sees the name

@@ -140,6 +140,15 @@ fn sym_present(name: Str) -> Bool
 fn float_bits(f: Float) -> Int
 /// The Float of the IEEE 754 bits b (lowered inline).
 fn float_from_bits(b: Int) -> Float
+
+/// The Float32 whose double (a Float32 is held as its widened double on
+/// every backend) has the bits b, with no narrowing: float_from_bits typed
+/// Float32 (ssa call.xo). A narrowing (rt.f32_round) quiets a signaling
+/// NaN (#143).
+fn f32_from_double_bits(b: Int) -> Float32
+
+/// The bits of f's double, float_bits typed from Float32 (no widening).
+fn f32_double_bits(f: Float32) -> Int
 /// The 8 bytes of b from i as a word, the first lowest (lowered inline
 /// to one load). Unchecked: the caller makes sure 0 <= i and i + 8 <=
 /// b.len().

@@ -1,0 +1,17 @@
+// Float32.from_bits and to_bits keep a NaN's bits as they are, a
+// signaling NaN's quiet bit clear included (#143: amqp's fuzz decoded
+// 0x7f800043 as 0x7fc00043 on the native backends, where the Go backend
+// keeps it), and so do Float's.
+fn hex32(n: UInt32) -> Str { Int(n).to_str_base(16) }
+
+fn main(os: Os) {
+  for b in [0x7f800043, 0x7fc00043, 0xff800001, 0x7fbfffff, 0x7f800000, 0x00000001, 0x3f800000, 0x80000000] {
+    let f = Float32.from_bits(UInt32(b))
+    let back = f.to_bits()
+    os.stdio.println("f32 ${hex32(UInt32(b))} -> ${hex32(back)} same ${Int(back) == b}")
+  }
+  for b in [0x7ff0000000000043, 0x7ff8000000000043, -0x000fffffffffffff, 0x7ff0000000000000] {
+    let f = Float.from_bits(b)
+    os.stdio.println("f64 ${b.to_str_base(16)} same ${f.to_bits() == b} nan ${f.is_nan()}")
+  }
+}

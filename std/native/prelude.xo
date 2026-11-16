@@ -6873,16 +6873,20 @@ fn float_from_bits(b: Int) -> Float { rt.float_from_bits(b) }
 /// The binary32 bits of f (Float32frombits' inverse) from its widened
 /// double, which is exact: the exponent rebiased, the mantissa cut to 23
 /// bits, a double below the binary32 normal range shifted into a
-/// subnormal; infinities and NaNs keep their top payload bits.
+/// subnormal; infinities and NaNs keep their top payload bits and quiet
+/// bit.
 fn float32_to_bits(f: Float32) -> UInt32 {
-  let d = Float(f).to_bits()
+  // f's double as it is: a signaling NaN keeps its quiet bit clear (#143)
+  let d = rt.f32_double_bits(f)
   let sign = (d >> 63) & 1
   let e = (d >> 52) & 0x7FF
   let m = d & 0xFFFFFFFFFFFFF
   var bits = 0
   if e == 0x7FF {
     bits = 0x7F800000 | (m >> 29)
-    if m != 0 {
+    if m != 0 && (m >> 29) == 0 {
+      // a NaN whose payload sits below binary32's 23 bits stays a NaN;
+      // otherwise its bits are its own, the quiet bit as set or clear
       bits = bits | 0x400000
     }
   } else if e == 0 {
@@ -6923,7 +6927,9 @@ fn float32_from_bits(b: UInt32) -> Float32 {
   if sign == 1 {
     d = d | (1).wrapping_shl(63)
   }
-  Float32(Float.from_bits(d))
+  // no narrowing (Float32(...) is rt.f32_round, which quiets a signaling
+  // NaN, #143): the double is exact for every binary32
+  rt.f32_from_double_bits(d)
 }
 
 fn int_leading_zeros(n: Int) -> Int { rt.clz(n) }

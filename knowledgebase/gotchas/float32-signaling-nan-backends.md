@@ -1,6 +1,6 @@
 # A Float32 signaling NaN keeps its payload on the Go backend and is quieted natively
 
-Status: Observed (2026-11-06)
+Status: Observed (2026-11-06); fixed 2026-11-16 (#143)
 
 ## Symptom
 
@@ -20,3 +20,25 @@ other value agree on all backends.
 Do not use a signaling NaN as an expected value across backends: the protobuf corpus generator now sets the quiet bit of
 a random Float32 NaN (scripts/stdcorpus/protobuf.go). Code that needs the exact bits of a signaling NaN must carry them
 as a `UInt32`.
+
+## Traced and fixed (2026-11-16, task #143)
+
+aws-43's amqp fuzz hit it again (0x7f800043 decoded as 0x7fc00043 on
+amd64 and LLVM). The cause was in std/native/prelude.xo, not a backend:
+every native backend holds a Float32 as its widened double, and
+`float32_from_bits` built the exact double and then wrote
+`Float32(Float.from_bits(d))`, a narrowing (`rt.f32_round`: fcvt on
+arm64, fptrunc/fpext on LLVM) that quiets a signaling NaN;
+`float32_to_bits` widened with `Float(f)` and set the quiet bit of any
+NaN by hand. Both now reinterpret: `rt.f32_from_double_bits` and
+`rt.f32_double_bits` (std/native/rt.xo), which the SSA builder lowers as
+`rt.float_from_bits` and `rt.float_bits` typed Float32, so no backend
+sees them (internal/repotest intrinsic_gaps.txt says so). Golden
+float_nan_bits round trips signaling NaNs on arm64, LLVM, wasm and the
+Go backend. Float (64 bit) already kept its bits. The protobuf corpus
+generator's quiet bit (above) can go; a Float32 arithmetic result is
+still a quiet NaN, as on the hardware.
+
+How to avoid: a Float32 is a double inside the native backends; never
+convert through `Float32(...)` where the bits must survive.
+
