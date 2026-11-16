@@ -140,8 +140,13 @@ test "column definitions and text rows" {
   b.write_le(FLAG_NOT_NULL | FLAG_UNSIGNED, 2)
   b.write_byte(0)
   b.write(b"\x00\x00")
-  let c = parse_column(b.freeze()) ?? e => fault(e.msg)
+  let def = b.freeze()
+  let c = parse_column(def) ?? e => fault(e.msg)
   expect((c.schema, c.table, c.org_table, c.name, c.charset, c.length, c.kind, c.flags)) == ("shop", "o", "orders", "id", 63, 20, TYPE_LONGLONG, 33)
+  // the fixed fields' length is 12: 0xfc there (TestMysqlFuzz seed 10,
+  // case 606) read as a 2 byte length shifted every field after it
+  let n = def.len() - 13
+  expect(parse_column(def[0..n] + b"\xfc" + def[n + 1..def.len()]).is_err()) == true
   expect(parse_text_row(b"\x011\xfb\x03abc", 3)) == Ok([Some(b"1"), None, Some(b"abc")])
   expect(parse_text_row(b"\x011", 2).is_err()) == true
   // bytes after the last value are refused, as go-sql-driver master's

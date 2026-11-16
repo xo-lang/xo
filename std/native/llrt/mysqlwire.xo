@@ -507,7 +507,14 @@ pub fn parse_column(p: Bytes) -> Column ! WireErr {
   let org_table = r.lenenc_text()?
   let name = r.lenenc_text()?
   let org_name = r.lenenc_text()?
-  let _ = r.lenenc()?
+  // the fixed fields' length, 12 in every ColumnDefinition41: another
+  // value is a malformed definition, whose fields would be misread
+  // (go-sql-driver skips the byte and reads on)
+  match r.lenenc()? {
+    Some(12) => {}
+    Some(n) => return Err(bad("a column definition's fixed fields are ${n} bytes, not 12"))
+    None => return Err(bad("a column definition's fixed fields length is NULL"))
+  }
   let charset = r.u(2)?
   let length = r.u(4)?
   let kind = r.u(1)?

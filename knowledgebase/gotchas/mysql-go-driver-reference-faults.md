@@ -51,3 +51,17 @@ binary types and values read as text (BLOB as TEXT, VARBINARY as VARCHAR,
 BINARY as CHAR, a Blob value as a Text value): myfWideCollation and
 myfSameButBinary, TestMysqlFuzzWideCollation. Seed 4's case 707 (0x383f)
 differs in the values' kind too, not only the types line.
+
+## A column definition's fixed-fields length (2026-11-15)
+
+Observed: TestMysqlFuzz seed 10, case 606 (a `byte` change of the 0x0c
+before a definition's fixed fields to 0xfc): Xo typed an INT column
+DECIMAL and returned its values as Text; go-sql-driver typed it INT.
+
+Cause: Xo read the length as a length-encoded integer, so 0xfc took two
+more bytes and shifted every fixed field after it; it never checked the
+value. go-sql-driver skips the byte (a filler) and reads on.
+
+Fix: parse_column refuses a fixed-fields length other than 12, the
+value every ColumnDefinition41 carries (mysqlwire_test.xo "column
+definitions and text rows").
