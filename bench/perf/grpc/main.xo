@@ -1,0 +1,66 @@
+// std/grpc against google.golang.org/grpc: a server and a client in one
+// program over loopback h2c (HTTP/2 with prior knowledge), messages as
+// raw bytes (no protobuf on either side): 20,000 sequential unary echo
+// calls of a 100 byte message (`unary`), and one server stream of 100,000
+// messages of 32 bytes (`stream`); `none` starts the server and makes one
+// call. Usage: `<program> none|unary|stream`. Prints `<workload>
+// <checksum>`; the twin (twin.go.txt) prints the same.
+use std/grpc
+use std/http
+
+fn handlers(clock: Clock) -> grpc.Server {
+  var srv = grpc.server(clock)
+  srv.unary("/b.S/Echo", fn(_call, req) -> Bytes ! grpc.Status { Ok(req) })
+  srv.stream("/b.S/Count", fn(_call, recv, send) -> () ! grpc.Status {
+    let m = recv.next()? ?? b"0"
+    let n = Int.parse(m.to_str() ?? "0") ?? 0
+    let msg = "x".repeat(32).bytes()
+    for _ in 0..n {
+      send.send(msg)?
+    }
+  })
+  srv
+}
+
+fn run(w: Str, c: grpc.Client) -> Int ! grpc.Status uses net.dial {
+  let msg = "a".repeat(100).bytes()
+  var sum = c.unary("/b.S/Echo", msg)?.len()
+  if w == "unary" {
+    for _ in 0..20000 {
+      sum += c.unary("/b.S/Echo", msg)?.len()
+    }
+  } else if w == "stream" {
+    sum += c.call("/b.S/Count", {}, None, fn(cc) -> Int ! grpc.Status {
+      cc.send(b"100000")?
+      cc.close_send()
+      var n = 0
+      while true {
+        match cc.recv()? {
+          Some(m) => n += m.len()
+          None => break
+        }
+      }
+      n
+    })?
+  }
+  Ok(sum)
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "unary"
+  let l = os.net.listen("127.0.0.1:0").ok() ?? fault("listen")
+  let hs = http.server(l, handlers(os.clock).router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() {
+      match hs.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let hc = http.client(os.net, timeout: 60s)
+    match run(w, grpc.client(hc, "http://${hs.addr()}")) {
+      Ok(sum) => os.stdio.println("${w} ${sum}")
+      Err(e) => os.stdio.println("${w} failed: ${e.display()}")
+    }
+  }
+}

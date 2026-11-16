@@ -1,0 +1,5 @@
+# twincheck: grpc: three workloads (none starts the server and makes one call); Go is google.golang.org/grpc (Apache-2.0), built from the module cache.
+require google.golang.org/grpc v1.85.0
+- - none
+- - unary
+- - stream

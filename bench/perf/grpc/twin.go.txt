@@ -1,0 +1,115 @@
+// The Go twin of main.xo: google.golang.org/grpc's server and client in
+// one program over loopback (insecure credentials: h2c with prior
+// knowledge), messages as raw bytes through a pass-through codec.
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"strconv"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding"
+)
+
+type rawCodec struct{}
+
+func (rawCodec) Marshal(v any) ([]byte, error) { return *(v.(*[]byte)), nil }
+func (rawCodec) Unmarshal(data []byte, v any) error {
+	*(v.(*[]byte)) = append([]byte(nil), data...)
+	return nil
+}
+func (rawCodec) Name() string { return "raw" }
+
+func echo(srv any, ctx context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+	var in []byte
+	if err := dec(&in); err != nil {
+		return nil, err
+	}
+	return &in, nil
+}
+
+func count(srv any, st grpc.ServerStream) error {
+	var in []byte
+	if err := st.RecvMsg(&in); err != nil {
+		return err
+	}
+	n, _ := strconv.Atoi(string(in))
+	msg := bytes.Repeat([]byte{'x'}, 32)
+	for i := 0; i < n; i++ {
+		if err := st.SendMsg(&msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var desc = grpc.ServiceDesc{
+	ServiceName: "b.S",
+	HandlerType: (*any)(nil),
+	Methods:     []grpc.MethodDesc{{MethodName: "Echo", Handler: echo}},
+	Streams:     []grpc.StreamDesc{{StreamName: "Count", Handler: count, ServerStreams: true}},
+}
+
+func main() {
+	w := "unary"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	encoding.RegisterCodec(rawCodec{})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	s := grpc.NewServer(grpc.ForceServerCodec(rawCodec{}))
+	s.RegisterService(&desc, struct{}{})
+	go s.Serve(l)
+	cc, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{})))
+	if err != nil {
+		panic(err)
+	}
+	ctx := context.Background()
+	msg := bytes.Repeat([]byte{'a'}, 100)
+	unary := func() int {
+		var out []byte
+		if err := cc.Invoke(ctx, "/b.S/Echo", &msg, &out); err != nil {
+			panic(err)
+		}
+		return len(out)
+	}
+	sum := unary()
+	switch w {
+	case "unary":
+		for i := 0; i < 20000; i++ {
+			sum += unary()
+		}
+	case "stream":
+		st, err := cc.NewStream(ctx, &desc.Streams[0], "/b.S/Count")
+		if err != nil {
+			panic(err)
+		}
+		req := []byte("100000")
+		if err := st.SendMsg(&req); err != nil {
+			panic(err)
+		}
+		st.CloseSend()
+		for {
+			var m []byte
+			if err := st.RecvMsg(&m); err == io.EOF {
+				break
+			} else if err != nil {
+				panic(err)
+			}
+			sum += len(m)
+		}
+	}
+	fmt.Println(w, sum)
+	cc.Close()
+	s.Stop()
+}
