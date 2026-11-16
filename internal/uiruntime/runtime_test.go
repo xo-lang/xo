@@ -43,6 +43,10 @@ type report struct {
 	Sent    []string `json:"sent"`
 	Applied []string `json:"applied"`
 	Clients int      `json:"clients"`
+	Attrs   []string `json:"attrs"`
+	Reloads int      `json:"reloads"`
+	Stored  int      `json:"stored"`
+	Session int      `json:"session"`
 }
 
 func run(t *testing.T, scenario string) report {
@@ -81,5 +85,30 @@ func TestClosedTabQueueIsAdopted(t *testing.T) {
 	r := run(t, "reopen")
 	if !reflect.DeepEqual(r.Applied, r.Sent) {
 		t.Errorf("server applied %q, tabs sent %q", r.Applied, r.Sent)
+	}
+}
+
+// A sync answered 401 (decision 0664: no principal) marks the page signed
+// out, not offline, and keeps the queue for when the user signs in.
+func TestSignedOutKeepsQueue(t *testing.T) {
+	r := run(t, "unauthorized")
+	if !reflect.DeepEqual(r.Attrs, []string{"data-xo-pending", "data-xo-signed-out"}) {
+		t.Errorf("attributes %q, want pending and signed-out only", r.Attrs)
+	}
+	if r.Reloads != 0 || r.Stored != 1 {
+		t.Errorf("reloads %d stored %d, want 0 and the tab's queue", r.Reloads, r.Stored)
+	}
+}
+
+// A sync answered 403 (the client id belongs to another principal) drops
+// the tab's queue and id, so the old principal's Msgs are never sent as
+// the new one's, and reloads.
+func TestForbiddenDropsQueue(t *testing.T) {
+	r := run(t, "forbidden")
+	if r.Reloads != 1 || r.Stored != 0 || r.Session != 0 {
+		t.Errorf("reloads %d stored %d session %d, want 1, 0, 0", r.Reloads, r.Stored, r.Session)
+	}
+	if len(r.Applied) != 0 {
+		t.Errorf("server applied %q", r.Applied)
 	}
 }

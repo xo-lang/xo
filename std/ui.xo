@@ -188,6 +188,9 @@ pub struct Entry[E] {
   pub client: Str
   pub seq: Int
   pub msg: E
+  /// The server refused msg (`allow`, decision 0664): it takes a version
+  /// and leaves the model as it was, so the sender drops it from pending.
+  pub refused: Bool = false
 } derive Json
 
 /// A client's sync: its Msgs the server has not acknowledged, and the log
@@ -214,6 +217,9 @@ pub struct Down[M, E] {
   pub acked: Int
   pub reset: Snapshot[M]?
   pub entries: List[Entry[E]]
+  /// Msgs of this sync the server refused (`allow`, decision 0664):
+  /// acknowledged, so the client stops sending them, and not applied.
+  pub refused: Int = 0
 } derive Json
 
 /// The authority: the model, the log, and each client's last seq.
@@ -228,6 +234,8 @@ pub struct Server[M, E] {
   log: List[Entry[E]]
   last_seq: Map[Str, Int]
   max_batch: Int
+  // Each client id's principal, from its first receive_as (decision 0664).
+  owners: Map[Str, Str] = {}
 }
 
 /// A server at the app's initial model. A reply carries at most
@@ -241,7 +249,8 @@ pub fn (s: Server[M, E]) model() -> M {
   s.model
 }
 
-/// The log version of the model: the number of Msgs applied.
+/// The log version of the model: the number of Msgs logged (applied, or
+/// refused by `allow`).
 pub fn (s: Server[M, E]) version() -> Int {
   s.base + s.log.len()
 }
@@ -264,6 +273,33 @@ pub fn (var s: Server[M, E]) receive(up: Up[E]) -> Down[M, E] {
     }
   }
   s.reply(up.client, up.ver)
+}
+
+/// receive for a client acting as principal (decision 0664): a client id
+/// belongs to the principal of its first call, and None answers another
+/// principal using it. Each next Msg that allow refuses is acknowledged,
+/// counted in the reply's refused and logged as refused, not applied.
+pub fn (var s: Server[M, E]) receive_as(up: Up[E], principal: Str, allow: fn(M, Str, E) -> Bool) -> Down[M, E]? {
+  match s.owners.get(up.client) {
+    Some(o) => if o != principal { return None }
+    None => s.owners.put(up.client, principal)
+  }
+  var refused = 0
+  for e in up.msgs {
+    let last = s.last_seq.get(up.client) ?? 0
+    if e.seq == last + 1 {
+      s.last_seq.put(up.client, e.seq)
+      if allow(s.model, principal, e.msg) {
+        s.model = s.app.update(s.model, e.msg)
+        s.log.push(Entry{ver: s.version() + 1, client: up.client, seq: e.seq, msg: e.msg})
+      } else {
+        // logged, so a replica whose reply was lost still learns of it
+        s.log.push(Entry{ver: s.version() + 1, client: up.client, seq: e.seq, msg: e.msg, refused: true})
+        refused += 1
+      }
+    }
+  }
+  Some(s.reply(up.client, up.ver) with {refused: refused})
 }
 
 /// The reply for a client at version ver, without new Msgs.
@@ -290,7 +326,9 @@ pub fn (var s: Server[M, E]) compact(keep: Int) {
   }
   let drop = s.log.len() - k
   for e in s.log[0..drop] {
-    s.base_model = s.app.update(s.base_model, e.msg)
+    if !e.refused {
+      s.base_model = s.app.update(s.base_model, e.msg)
+    }
     s.base_seqs.put(e.client, e.seq)
   }
   s.base = s.base + drop
@@ -372,7 +410,9 @@ pub fn (var r: Replica[M, E]) receive(d: Down[M, E]) {
   }
   for e in d.entries {
     if e.ver == r.ver + 1 {
-      r.confirmed = r.app.update(r.confirmed, e.msg)
+      if !e.refused {
+        r.confirmed = r.app.update(r.confirmed, e.msg)
+      }
       r.ver = e.ver
       if e.client == r.client {
         r.drop_through(e.seq)
@@ -549,14 +589,19 @@ pub struct Host[M: Json, E: Json] {
   // client gzipped once, and its ETag (a quoted SHA-256 prefix)
   client_gz: Bytes
   client_tag: Str
+  // Decision 0664: the principal of a request (None: 401), who may send
+  // which Msg, and what each principal sees.
+  auth: (fn(http.Request) -> Str? uses sync)?
+  allow: (fn(M, Str, E) -> Bool)?
+  redact: (fn(M, Str) -> M)?
   // The live connections, each told the server's version when it changes.
   subs: Mutex[Map[Int, Chan[Int]]]
   next_sub: Atomic[Int]
 }
 
 /// A host for app starting at app.init.
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"") -> Host[M, E] {
-  Host{app: app, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None) -> Host[M, E] {
+  Host{app: app, auth: auth, allow: allow, redact: redact, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Chan[Int]]].new({}), next_sub: Atomic[Int].new(0)}
 }
 
 fn (h: Host[M, E]) subscribe() -> (Int, Chan[Int]) {
@@ -609,8 +654,26 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   let client = h.client
   let wasm = if client.is_empty() { "" } else { "${prefix}/_xo/app.wasm" }
   let hh = h
+  let auth = h.auth
+  let allow = h.allow
+  let redact = h.redact
+  // The principal of req: "" without auth, None when auth refuses it.
+  let who = fn(req: http.Request) -> Str? uses sync {
+    match auth {
+      Some(f) => f(req)
+      None => Some("")
+    }
+  }
+  let shown = fn(m: M, p: Str) -> M {
+    match redact {
+      Some(f) => f(m, p)
+      None => m
+    }
+  }
   r.handle("GET ${prefix}/{$}", fn(req) -> http.Response ! Never {
-    let (m, v) = state.with_read(fn(s) { (s.model(), s.version()) })
+    let p = who(req) ?? return http.text(401, "std/ui: sign in first")
+    let (m0, v) = state.with_read(fn(s) { (s.model(), s.version()) })
+    let m = shown(m0, p)
     http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm)).with_header("Content-Type", "text/html; charset=utf-8")
   })
   r.handle("GET ${js}", fn(req) -> http.Response ! Never {
@@ -625,14 +688,21 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       Ok(u) => u
       Err(e) => return http.text(400, "std/ui: bad sync: ${e}")
     }
-    let (d, m, v, before) = state.with(fn(var s) {
+    let p = who(req) ?? return http.text(401, "std/ui: sign in first")
+    let checked = auth.is_some() || allow.is_some()
+    let ok = allow ?? fn(m: M, q: Str, e: E) -> Bool { true }
+    let (dd, m0, v, before) = state.with(fn(var s) {
       let b = s.version()
-      (s.receive(up), s.model(), s.version(), b)
+      let d = if checked { s.receive_as(up, p, ok) } else { Some(s.receive(up)) }
+      (d, s.model(), s.version(), b)
     })
+    let d = dd ?? return http.text(403, "std/ui: this client belongs to another principal")
     if v != before {
       hh.notify(v)
     }
-    let down = if req.query("thin") == Some("1") { Down{acked: d.acked, reset: None, entries: []} } else { d }
+    let m = shown(m0, p)
+    // with redact a log entry may hold what this principal must not see
+    let down = if req.query("thin") == Some("1") || redact.is_some() { Down{acked: d.acked, reset: None, entries: [], refused: d.refused} } else { d }
     let with_model = if req.query("model") == Some("1") { Some(m) } else { None }
     http.json(200, Sync{down: down, ver: v, html: render(app.view(m)), model: with_model})
   })
@@ -652,6 +722,9 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     })
   }
   r.handle("GET ${live}", fn(req) {
+    if who(req).is_none() {
+      return http.text(401, "std/ui: sign in first")
+    }
     websocket.upgrade(req, fn(conn) { serve_live(hh, conn) })
   })
 }
@@ -779,9 +852,15 @@ function sync(){
   busy=true;
   var msgs=queue.filter(function(e){return e.seq>acked;});
   fetch(url+(mod?"?thin=1&model=1":"?thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs}),credentials:"same-origin"})
-  .then(function(r){if(!r.ok)throw new Error("sync "+r.status);return r.json();})
+  .then(function(r){
+    var h=document.documentElement;
+    if(r.status===403){try{localStorage.removeItem(KEY+"|"+client);sessionStorage.removeItem(KEY);}catch(e){}location.reload();throw new Error("sync 403");}
+    if(r.status===401){h.setAttribute("data-xo-signed-out","");throw new Error("sync 401");}
+    h.removeAttribute("data-xo-signed-out");
+    if(!r.ok)throw new Error("sync "+r.status);return r.json();})
   .then(function(s){
     if(s.down.acked>acked)acked=s.down.acked;
+    if(s.down.refused>0)document.documentElement.setAttribute("data-xo-refused",String(s.down.refused));else document.documentElement.removeAttribute("data-xo-refused");
     queue=queue.filter(function(e){return e.seq>acked;});
     ver=s.ver;
     if(s.model!=null)confirmed=s.model;
@@ -789,7 +868,7 @@ function sync(){
     document.documentElement.removeAttribute("data-xo-offline");
     save();mark();
   })
-  .catch(function(){document.documentElement.setAttribute("data-xo-offline","");})
+  .catch(function(e){if(!/sync 40[13]/.test(String(e)))document.documentElement.setAttribute("data-xo-offline","");})
   .then(function(){busy=false;if(again){again=false;sync();}});
 }
 function handler(ev,name){

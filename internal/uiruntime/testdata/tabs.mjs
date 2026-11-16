@@ -19,7 +19,7 @@ function storage() {
   };
 }
 const local = storage();
-const server = { acked: new Map(), applied: [], down: false };
+const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0 };
 function receive(up) {
   let a = server.acked.get(up.client) ?? 0;
   for (const e of up.msgs) {
@@ -51,13 +51,14 @@ function tab() {
       activeElement: null,
     },
     window: { addEventListener: (n, f) => { listeners[n] = f; } },
-    location: { pathname: "/", protocol: "http:", host: "test" },
+    location: { pathname: "/", protocol: "http:", host: "test", reload: () => { server.reloads++; } },
     localStorage: local,
     sessionStorage: storage(),
     fetch: async (url, init) => {
       if (server.down) throw new Error("offline");
+      if (server.status !== 200) return { ok: false, status: server.status, json: async () => ({}) };
       const body = receive(JSON.parse(init.body));
-      return { ok: true, json: async () => body };
+      return { ok: true, status: 200, json: async () => body };
     },
     setInterval: () => 0,
     setTimeout: () => 0,
@@ -70,6 +71,8 @@ function tab() {
       handlers.click({ target: t, preventDefault() {} });
     },
     pagehide() { listeners.pagehide?.(); },
+    attrs,
+    session: ctx.sessionStorage,
   };
 }
 const settle = () => new Promise((r) => setTimeout(r, 20));
@@ -94,4 +97,13 @@ if (scenario === "two-tabs") {
   const b = tab(); await settle();
   await click(b, "b1");
 }
-console.log(JSON.stringify({ sent, applied: server.applied.map((m) => m.Add.title), clients: server.acked.size }));
+let extra = {};
+if (scenario === "unauthorized" || scenario === "forbidden") {
+  const a = tab(); await settle();
+  server.status = scenario === "unauthorized" ? 401 : 403;
+  await click(a, "a1");
+  const keys = [];
+  for (let i = 0; i < local.length; i++) keys.push(local.key(i));
+  extra = { attrs: Object.keys(a.attrs).sort(), reloads: server.reloads, stored: keys.length, session: a.session.length };
+}
+console.log(JSON.stringify({ sent, applied: server.applied.map((m) => m.Add.title), clients: server.acked.size, ...extra }));

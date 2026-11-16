@@ -10968,10 +10968,10 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
 pub fn field(name: Str) -> Str                         // a form value placeholder for a Msg's Str field
 
 pub struct Envelope[E] { pub seq: Int, pub msg: E }                        // derive Json
-pub struct Entry[E] { pub ver: Int, pub client: Str, pub seq: Int, pub msg: E }
+pub struct Entry[E] { pub ver: Int, pub client: Str, pub seq: Int, pub msg: E, pub refused: Bool = false }
 pub struct Up[E] { pub client: Str, pub ver: Int, pub msgs: List[Envelope[E]] }
 pub struct Snapshot[M] { pub ver: Int, pub model: M, pub applied: Int }
-pub struct Down[M, E] { pub acked: Int, pub reset: Snapshot[M]?, pub entries: List[Entry[E]] }
+pub struct Down[M, E] { pub acked: Int, pub reset: Snapshot[M]?, pub entries: List[Entry[E]], pub refused: Int = 0 }
 pub struct PageState[M] { pub ver: Int, pub model: M }
 
 pub fn server[M, E](app: App[M, E], max_batch: Int = 256) -> Server[M, E]
@@ -10979,6 +10979,7 @@ fn (s: Server[M, E]) model() -> M
 fn (s: Server[M, E]) version() -> Int
 fn (s: Server[M, E]) applied(client: Str) -> Int
 fn (var s: Server[M, E]) receive(up: Up[E]) -> Down[M, E]
+fn (var s: Server[M, E]) receive_as(up: Up[E], principal: Str, allow: fn(M, Str, E) -> Bool) -> Down[M, E]?   // None: another principal's client
 fn (s: Server[M, E]) reply(client: Str, ver: Int) -> Down[M, E]
 fn (var s: Server[M, E]) compact(keep: Int)
 
@@ -10993,7 +10994,8 @@ fn (r: Replica[M, E]) outbox() -> Up[E]     // the Msgs the server has not ackno
 fn (var r: Replica[M, E]) receive(d: Down[M, E])
 
 pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None }   // derive Json
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"") -> Host[M, E]
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"",
+    auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None) -> Host[M, E]
 fn (h: Host[M, E]) model() -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
 fn (h: Host[M, E]) live() -> Int                        // open live connections
@@ -11081,8 +11083,22 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   snapshot includes.
 - A replica applies only the entry after its version, drops its own
   confirmed Msgs from pending, and shows pending Msgs folded over the
-  confirmed model. Client ids are trusted in this step; per-Msg
+  confirmed model; a refused entry advances its version and drops the
+  Msg from pending without applying it. Client ids are trusted in this step; per-Msg
   authorization is decision 0659 stage 4.
+- Principals and authorization (decision 0664, stage 4a). With `auth`,
+  every route asks it for the request's principal (an id string; roles
+  live in the model) and answers 401 when it gives None. A client id
+  belongs to the principal of its first sync (`receive_as`); a sync for
+  it under another principal is 403. `allow(model, principal, msg)`, pure,
+  runs before `update`: a refused Msg is acknowledged, logged as a
+  refused entry (it takes a version and leaves the model as it was) and
+  counted in the reply's `refused`. `redact(model, principal)`, pure,
+  shapes every model and view a principal receives (the page, a sync's
+  `model` and `html`); a host with `redact` sends no log entries. The
+  runtime marks the html element `data-xo-signed-out` on a 401 (the queue
+  is kept), drops its queue and client id and reloads on a 403, and sets
+  `data-xo-refused` to a reply's refused count.
 - Tested by std/ui_test.xo: escaping, URL and page cases, prediction and
   confirmation, duplicates and gaps, an overturned prediction (four
   clients reserving three seats offline), a snapshot after compaction,

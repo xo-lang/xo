@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/ui, Early, decision 0664): `ui.host(app, auth:, allow:, redact:)` puts an App behind sign-in: `auth` names each request's principal (401 without one; a client id stays with its first principal, 403 otherwise), `allow(model, principal, msg)` refuses Msgs before update (an overturned prediction for the sender; `data-xo-refused`), and `redact(model, principal)` shapes what each principal sees.
 - Perf (std/ui, Early): a predicting client's module is served gzipped with an ETag (304 on a repeat visit), preloaded from the page head and compiled while it streams: prediction is ready in about half the time on a slow network (721 ms instead of 1,566 ms on slow 4G for examples/ui-todo).
 - Fix (std/otp): `uri` escapes as pquerna/otp does (`issuer=Snake%20Oil`, not `Snake+Oil`; a `/` in the label stays). Authenticator apps read both forms.
 - Feature (std/otp): `hotp_uri`, the `otpauth://hotp/` key URI.

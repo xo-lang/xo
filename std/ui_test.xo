@@ -264,7 +264,10 @@ fn random_msg(var g: Rng, client: Int, n: Int, m: Model) -> Msg {
 
 /// clients, ticks of activity; drop and offline in permille; the server
 /// compacts its log to `keep` entries every 50 ticks.
-fn simulate(seed: Int, clients: Int, ticks: Int, drop: Int, offline: Int, keep: Int) -> Bool {
+fn simulate(seed: Int, clients: Int, ticks: Int, drop: Int, offline: Int, keep: Int, refuse: Bool = false) -> Bool {
+  // with refuse, clients alternate between principals p0 and p1, and p1
+  // may not remove (decision 0664)
+  let allow = fn(m: Model, p: Str, e: Msg) -> Bool { !refuse || p == "p0" || !(e is Msg.Remove(_)) }
   let app = todo_app()
   let r0 = seed % 2147483646
   var g = Rng{s: (if r0 < 0 { -r0 } else { r0 }) + 1}
@@ -306,8 +309,8 @@ fn simulate(seed: Int, clients: Int, ticks: Int, drop: Int, offline: Int, keep: 
     for f in due {
       match f.p {
         ToServer(up) => {
-          let d = s.receive(up)
           let who = Int.parse(up.client[1..]) ?? 0
+          let d = s.receive_as(up, "p${who % 2}", allow) ?? s.reply(up.client, up.ver)
           if heal || g.int(1000) >= drop {
             net.push(Flight{at: t + (if heal { 1 } else { 1 + g.int(12) }), p: Packet.ToClient(to: who, down: d)})
           }
@@ -323,12 +326,20 @@ fn simulate(seed: Int, clients: Int, ticks: Int, drop: Int, offline: Int, keep: 
   }
   let total = sent.fold(0, fn(a, n) { a + n })
   let sm = s.model()
+  // every Msg sent is in the log, applied or refused
   total == s.version() && rs.all(fn(r) { r.pending() == 0 && r.model() == sm && r.confirmed() == sm })
 }
 
 test "replicas converge over a lossy, reordering network" {
   for seed in 1..=20 {
     expect(simulate(seed * 7919, 5, 300, 300, 30, 1000000)) == true
+  }
+}
+
+test "replicas converge when the server refuses some Msgs (decision 0664)" {
+  for seed in 1..=20 {
+    expect(simulate(seed * 15485863, 5, 300, 300, 30, 1000000, refuse: true)) == true
+    expect(simulate(seed * 32452843, 5, 300, 300, 30, 10, refuse: true)) == true
   }
 }
 
@@ -510,4 +521,73 @@ test "a page with a client preloads its module in the head" {
   let head = p.split("</head>")[0]
   expect(head.contains("<link rel=\"preload\" href=\"/_xo/app.wasm\" as=\"fetch\" type=\"application/wasm\" crossorigin=\"anonymous\">")) == true
   expect(page(todo_app(), todo_app().init, 0).contains("rel=\"preload\"")) == false
+}
+
+// ---- decision 0664: principals, allow, redact ----
+
+test "receive_as binds a client to its principal and refuses others" {
+  var s = server(todo_app())
+  let all = fn(m: Model, p: Str, e: Msg) -> Bool { true }
+  let up = Up{client: "c1", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}]}
+  expect(s.receive_as(up, "ann", all).is_some()) == true
+  let stolen = Up{client: "c1", ver: 1, msgs: [Envelope{seq: 2, msg: Msg.Remove(id: "x")}]}
+  expect(s.receive_as(stolen, "bob", all)) == None
+  expect(s.model().todos.len()) == 1
+}
+
+test "a refused Msg is acknowledged, counted and not applied" {
+  var s = server(todo_app())
+  // only ann may remove
+  let allow = fn(m: Model, p: Str, e: Msg) -> Bool { p == "ann" || !(e is Msg.Remove(_)) }
+  s.receive_as(Up{client: "a", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}]}, "ann", allow)
+  let d = s.receive_as(Up{client: "b", ver: 1, msgs: [Envelope{seq: 1, msg: Msg.Remove(id: "x")}, Envelope{seq: 2, msg: Msg.Star(id: "x")}]}, "bob", allow)?
+  expect(d.refused) == 1
+  expect(d.acked) == 2
+  expect(s.model().todos.len()) == 1
+  expect(s.model().todos.get_or_fault("x", "added by ann").stars) == 1
+  // the refused Remove is logged as refused, before the star (b synced after the add)
+  expect(s.version()) == 3
+  expect(d.entries.map(fn(e) { e.refused })) == [true, false]
+}
+
+fn auth_hdr(req: http.Request) -> Str? uses sync {
+  req.header("X-User")
+}
+
+test "a host with auth answers 401 without a principal and 403 for another's client" {
+  let r = routes_for(host(todo_app(), auth: Some(auth_hdr)))
+  expect(r.call(http.new_request("GET", "/")).status) == 401
+  expect(r.call(http.new_request("GET", "/", headers: {"X-User": "ann"})).status) == 200
+  let up = json.encode_str(Up{client: "c1", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}]})
+  expect(r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json"}, body: up.bytes())).status) == 401
+  expect(r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json", "X-User": "ann"}, body: up.bytes())).status) == 200
+  expect(r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json", "X-User": "bob"}, body: up.bytes())).status) == 403
+}
+
+test "redact shapes the page and every sync, and no log entries are sent" {
+  // each principal sees only the todos whose title starts with its name
+  let mine = fn(m: Model, p: Str) -> Model {
+    var n = m
+    n.todos = {}
+    for (id, t) in m.todos.entries() {
+      if t.title.starts_with(p) {
+        n.todos.put(id, t)
+      }
+    }
+    n
+  }
+  let r = routes_for(host(todo_app(), auth: Some(auth_hdr), redact: Some(mine)))
+  let add = fn(user: Str, seq: Int, id: Str) -> http.Response {
+    let up = json.encode_str(Up{client: user, ver: 0, msgs: [Envelope{seq: seq, msg: Msg.Add(id: id, title: "${user} item")}]})
+    r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json", "X-User": user}, body: up.bytes()))
+  }
+  add("ann", 1, "a")
+  let resp = add("bob", 1, "b")
+  let s = json.decode_str[Sync[Model, Msg]](resp.text()?)?
+  expect(s.down.entries.len()) == 0
+  expect(s.html.contains("bob item")) == true
+  expect(s.html.contains("ann item")) == false
+  let page_ann = r.call(http.new_request("GET", "/", headers: {"X-User": "ann"})).text()?
+  expect(page_ann.contains("ann item")) == true
+  expect(page_ann.contains("bob item")) == false
 }

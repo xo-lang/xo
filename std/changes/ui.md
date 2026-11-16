@@ -1,5 +1,16 @@
 # std/ui changes
 
+## 2026-11-15: feature: principals, allow and redact (decision 0664, Early)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0659 stage 4
+- Go reference: none
+- Test: std/ui_test.xo (a client bound to its principal; a refused Msg acknowledged, counted, logged as refused and not applied; 401 and 403 from the host; redact on the page and every sync with no log entries; 5 replicas converge with refusals over a lossy network, 40 seeds with and without compaction); internal/uiruntime (401 keeps the queue, 403 drops it and reloads); the 21 headless Chrome checks of examples/ui-todo
+- Shipped in: not yet released
+
+`ui.host(app, auth:, allow:, redact:)`: `auth` gives each request a principal (401 without one) and a client id stays with its first principal (403 otherwise); `allow(model, principal, msg)` refuses a Msg before update (acknowledged, logged as a refused entry, `Down.refused`); `redact(model, principal)` shapes everything a principal receives. `Server.receive_as`, `Entry.refused`; `Server.version()` counts refused entries too.
+
 ## 2026-11-15: perf: the client module loads in about half the time
 
 - Kind: perf
