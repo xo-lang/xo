@@ -99,6 +99,15 @@ headless Chrome checks of examples/ui-todo (no auth) pass unchanged.
 token check and a session table behind a Mutex; a session read from a
 database needs an effect parameter on Host, left for review.
 
+Cost of redact (2026-11-15, Mac Studio, one process, in-memory router,
+4,000 syncs per row, 3 rounds, `?thin=1&model=1`, 50 todos split over 4
+principals; a cost check, not a speed claim): no auth 64 to 117 us per
+sync, auth only 64 to 130 us, auth plus redact 19 to 23 us. Redacting
+runs `redact` and renders per sync either way; each principal's smaller
+model makes the JSON and HTML smaller, so here it is cheaper. A redact
+that keeps most of the model costs its own run on top (one filter over
+the model). Script in the std/ui session's notes, not in the repo.
+
 ## Consequences
 
 - A std/ui app can be put behind sign-in and have per-person data
