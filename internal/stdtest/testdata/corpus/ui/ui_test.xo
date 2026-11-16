@@ -4,6 +4,7 @@
 use std/http
 use std/sql
 use std/ui
+use std/url
 
 struct Count {
   n: Int
@@ -145,4 +146,19 @@ test "a Postgres bus is made from a database, a task group and a clock" {
     }
     expect(v) == 1
   }
+}
+
+test "a URL view renders from the page's query" {
+  let app = counter().with_url_view(fn(m: Count, q: url.Values) -> ui.Html {
+    ui.text("n=${m.n} sort=${q.get("sort") ?? "none"}")
+  })
+  let page = ui.page(app, Count{n: 0, who: []}, 0, query: "sort=new")
+  expect(page.contains("n=0 sort=new")) == true
+}
+
+test "a SQL store keeps a scope's log in tables" {
+  let st = ui.sql_store(sql.memory()?)?
+  expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == true
+  expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == false
+  expect((st.read)("k", 0)?.len()) == 1
 }
