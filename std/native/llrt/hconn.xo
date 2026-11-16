@@ -203,6 +203,12 @@ pub fn conn_me(hc: Int) -> Int {
 /// twrun.me_read or me_write of n bytes at p on end me with deadline
 /// (monotonic ns, 0 none, 1 passed: a read that does not wait).
 fn me_io(me: Int, p: Int, n: Int, deadline: Int, write: Bool) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    // conn_me is 0 there, but the call stays reachable, and twrun's
+    // waits reach the fiber switch WASI 0.2 has not (rt.stack_switch):
+    // every wasip2 program serving HTTP failed to build (c118e017e)
+    return -1
+  }
   let w = raw.bytes_buf(8)
   let dlp = raw.bytes_addr(w)
   rt.mem_store(dlp, 0, deadline, 8)
