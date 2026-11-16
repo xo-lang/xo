@@ -1672,7 +1672,15 @@ Last verified: 2026-11-15
     a lone or paired word ("testing Early to Proven") does not count
     (#96). /std lists the modules below Proven no open task names, and
     from 07:00 local a daily `std-uncovered` alert to the lead lists
-    them. Last verified: 2026-11-16.
+    them. `xw std --next` (#150) lists the modules that lack only
+    testing evidence (race, stress, fuzz) for Proven, fewest pieces
+    first, then the cheapest (stress, then race, then fuzz), with the
+    tasks naming each: what to run next when a host lane is free. An
+    `evidence-stall` alert to the lead names those whose missing list
+    has not changed for 6 h while an evidence lane (pass2, pass3, pass4)
+    has a free slot, with each module's kinds and wait and the free
+    lanes. The `xw digest` text folds long-wait and lease-blocked alerts
+    into one line each (#147). Last verified: 2026-11-16.
   - Owner questions (2026-11-15, replacing OWNER-MORNING.md and todo.md's
     OWNER lines): `xw ask TEXT` (anyone) opens one; the lead records the
     owner's word with `xw answer ID --by owner TEXT`; `xw decisions
