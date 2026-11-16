@@ -3271,7 +3271,14 @@ fn (n: FakeNet) requests() -> List[http.Request]     // every request seen, incl
   `serve` has not started yet waits until it starts, like a connection in
   a real socket's backlog (a test that never serves it reports a deadlock
   naming the wait); after `serve` returns, requests fail with
-  `ClientErr.Connect`.
+  `ClientErr.Connect`. A serving `http.server` also accepts the raw
+  connections `os.net.dial` makes to its listener and serves each as a
+  real connection (HTTP/1.1 requests, an upgrade's hand-off included, so
+  `websocket.dial` reaches a `websocket.upgrade` route), as net/http's
+  Server serves every connection its listener accepts (task #120). On the
+  Go backend these connections are served in tasks of the server's scope,
+  not net/http's goroutines, since an in memory connection is read through
+  its task.
 - `Client.send` reaches a handler or a served router as one call, and
   the whole response comes back, an `http.stream` body made in full
   (2026-11-07: a `handle` handler's stream came back empty natively).

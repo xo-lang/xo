@@ -42,6 +42,7 @@ use native/llrt/stop
 use native/llrt/tasks
 use native/llrt/tlssrv
 use native/llrt/tracerec
+use native/llrt/twrun
 use native/llrt/x509cert as x509
 use native/rt
 use native/rthttp
@@ -476,9 +477,18 @@ pub fn srv_wait(s: rthttp.Srv) {
 fn close_conn(hc: Int) {
   if target.arch == TargetArch.Wasm32 {
     rt.wasi_sock_close(rt.obj_at[Conn](ld(hc, hconn.HC_CONN)))
+  } else if hconn.conn_me(hc) != 0 {
+    twrun.me_close(hconn.conn_me(hc))
   } else {
     poll.pd_close(hconn.conn_pd(hc))
   }
+}
+
+/// The host of a host:port address ("[::1]:80" is "::1").
+fn addr_ip(a: Str) -> Str {
+  let i = a.rfind(":") ?? return a
+  let h = a[0..i]
+  if h.starts_with("[") && h.ends_with("]") { h[1..h.len() - 1] } else { h }
 }
 
 pub fn srv_close(s: rthttp.Srv) {
@@ -609,10 +619,14 @@ pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
   rc.inc(cn)
   st(hc, hconn.HC_SRV, a)
   st(hc, hconn.HC_CONN, cn)
-  // on wasm R1's connection (no poll descriptor, decision 0447 R2a)
-  let pd = if wasm { 0 } else { hconn.conn_pd(hc) }
+  // on wasm R1's connection (no poll descriptor, decision 0447 R2a); a
+  // test world's in memory connection has none either (task #120)
+  let me = hconn.conn_me(hc)
+  let pd = if wasm || me != 0 { 0 } else { hconn.conn_pd(hc) }
   if wasm {
     hconn.set_ip(hc, netwasi.peer_ip(rt.obj_at[Conn](cn)))
+  } else if me != 0 {
+    hconn.set_ip(hc, addr_ip(twrun.me_addr(me, true)))
   } else {
     hconn.set_ip(hc, hconn.peer_ip(rt.mem_load(pd, 8, 4)))
   }
@@ -633,6 +647,8 @@ pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
   if hconn.stopping_at(a) {
     if wasm {
       rt.wasi_sock_close(rt.obj_at[Conn](cn))
+    } else if me != 0 {
+      twrun.me_close(me)
     } else {
       poll.pd_close(pd)
     }
@@ -747,8 +763,14 @@ pub fn hc_free(hc: Int) {
   let cn = ld(hc, hconn.HC_CONN)
   if target.arch != TargetArch.Wasm32 {
     // on wasm the connection's own free entry closes it (rt9.xo
-    // $sk_conn_free)
-    poll.pd_close(hconn.conn_pd(hc))
+    // $sk_conn_free); an in memory one is closed here and freed with
+    // its Conn (netconn's me_free)
+    let me = hconn.conn_me(hc)
+    if me != 0 {
+      twrun.me_close(me)
+    } else {
+      poll.pd_close(hconn.conn_pd(hc))
+    }
   }
   tasks.h_release(cn)
   tasks.h_release(ld(hc, hconn.HC_SRV))

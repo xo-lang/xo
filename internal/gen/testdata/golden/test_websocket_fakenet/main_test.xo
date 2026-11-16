@@ -1,0 +1,55 @@
+use std/http
+use std/websocket
+
+fn echo(c: websocket.WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => {
+        if c.write(m) is Err(_) {
+          return
+        }
+      }
+      Err(_) => return
+    }
+  }
+}
+
+// task #120: http.server on FakeNet serves the raw connections a client
+// dials (websocket.dial writes its own handshake), on the Go backend as
+// natively (std/websocket_test.xo); it deadlocked before.
+test "a websocket client on FakeNet reaches http.server's upgrade route" {
+  var r = http.router()
+  r.handle("GET /echo", fn(req) { websocket.upgrade(req, echo) })
+  r.handle("GET /plain", fn(_req) { http.text(200, "plain") })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = websocket.dial(os.net, "ws://${addr}/echo").or_fault("dial")
+    c.write_text("hello").or_fault("write")
+    expect(c.read().or_fault("read").data.to_str_lossy()) == "hello"
+    // a reader task and a writer task on one connection
+    scope t {
+      let h = t.spawn(fn() -> Str { c.read().or_fault("read 2").data.to_str_lossy() })
+      c.write_text("again").or_fault("write 2")
+      expect(h.await) == "again"
+    }
+    c.close().or_fault("close")
+    // a raw HTTP/1.1 request on its own connection
+    let raw = os.net.dial(addr).or_fault("raw dial")
+    raw.write("GET /plain HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n".bytes()).or_fault("raw write")
+    var got = b""
+    while true {
+      match raw.read(4096).or_fault("raw read") {
+        Some(b) => got = got + b
+        None => break
+      }
+    }
+    let text = got.to_str_lossy()
+    expect(text.starts_with("HTTP/1.1 200")) == true
+    expect(text.ends_with("\r\n\r\nplain")) == true
+    let resp = http.client(os.net).get("http://${addr}/plain").or_fault("get")
+    expect(resp.text()) == Some("plain")
+  }
+}

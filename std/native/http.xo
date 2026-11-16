@@ -3264,7 +3264,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   // only the test world makes in memory listeners (folded elsewhere,
   // decision 0246)
   if testworld.on() && twrun.mem_listener(s.l) {
-    serve_mem(s.l, s.r)
+    serve_mem(s.l, s.r, s.h2, http1.Limits{read_ns: s.read_ns, head_ns: s.head_ns, idle_ns: s.idle_ns, max_head: s.max_head, max_body: s.max_body})
     return Ok(())
   }
   if s.tls_on && s.tls.is_empty() {
@@ -3353,13 +3353,39 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
 /// Serves an in memory listener of a test (decision 0083, std/rt's
 /// memListener.serve): requests reach r in process until a stop is
 /// requested (then the requests in flight finish) or the task is
-/// canceled.
-fn serve_mem(l: Listener, r: Router) {
+/// canceled. The raw connections FakeNet.dial makes to it (a WebSocket
+/// client writes its own handshake) are served as a real server serves
+/// its connections, through serve_conn on an in memory HConn, as Go's
+/// http.Server serves every connection its listener accepts (task #120:
+/// they waited in the backlog, unaccepted).
+fn serve_mem(l: Listener, r: Router, h2: fn(rthttp.HConn, Int, Router) -> Bool, lim: http1.Limits) {
   twrun.mem_serve(l, rt.any_of(r))
   defer twrun.mem_unserve(l)
-  if task.stopping().recv() is None {
-    twrun.mem_unserve(l)
-    twrun.mem_drain(l)
+  let srv = hserve.srv_new()
+  defer hserve.srv_close(srv)
+  scope cs {
+    let conns = hserve.srv_group(srv)
+    scope sc {
+      if target.arch != TargetArch.Wasm32 {
+        sc.spawn_background(fn() {
+          while {
+            match l.accept() {
+              Ok(c) => {
+                let hc = hserve.hc_new(srv, c)
+                conns.spawn_background(fn() { serve_conn_isolated(hc, r, h2, lim) })
+              }
+              Err(_) => break
+            }
+          }
+        })
+      }
+      if task.stopping().recv() is None {
+        twrun.mem_unserve(l)
+        twrun.mem_drain(l)
+      }
+    }
+    hserve.srv_stop(srv)
+    hserve.srv_wait(srv)
   }
 }
 

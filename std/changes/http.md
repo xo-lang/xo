@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-11-16: fix: http.server on FakeNet serves raw connections
+
+- Kind: fix
+- Commit: this push
+- Found by: task #120 (aws-43's #90 race work): a websocket.dial to an http.server on an in memory listener deadlocked
+- Go reference: net/http Server.Serve (every accepted connection is served)
+- Test: std/websocket_test.xo "a websocket client on FakeNet reaches http.server's upgrade route" (XO-F001 deadlock before, passes on arm64 and LLVM); golden internal/gen test_websocket_fakenet on the Go backend (faulted at dial before: "an in memory connection is read and written through its task"), with a reader and a writer task on one connection and a raw HTTP/1.1 request
+- Timing: none
+
+A served in memory listener routed client requests in process but left
+the raw connections `os.net.dial` made to it in the backlog, so a
+WebSocket client, which writes its own handshake, waited forever. The
+server now accepts them and serves each through the real HTTP/1.1 path
+(llrt hconn reads and writes the test world's in memory end). On the
+Go backend they are served by an HTTP/1.1 loop in tasks of the server's
+scope (std/rt memserve.go), and std/websocket's connections over FakeNet
+read and write through the task using them, so `websocket.dial` on
+FakeNet works there at all.
+
 ## 2026-11-16: feature: dump_request, dump_request_out, dump_response (httputil Dump*)
 
 - Kind: feature

@@ -37,8 +37,11 @@ type wsConn struct {
 	max    int64
 	proto  string
 
-	rmu     sync.Mutex
-	br      *bufio.Reader
+	rmu sync.Mutex
+	br  *bufio.Reader
+	// rtk is the task reading (readMessage's): an in memory connection's
+	// reads wait on the test scheduler as it (task #120)
+	rtk     *Task
 	readErr *Websocket_WsErr
 
 	wmu       sync.Mutex
@@ -145,7 +148,7 @@ func wsCloseMessage(code int64, text string) []byte {
 }
 
 // writeFrame writes one final frame (masked from a client).
-func (c *wsConn) writeFrame(op int, data []byte) *Websocket_WsErr {
+func (c *wsConn) writeFrame(tk *Task, op int, data []byte) *Websocket_WsErr {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	if c.writeErr != nil {
@@ -184,7 +187,7 @@ func (c *wsConn) writeFrame(op int, data []byte) *Websocket_WsErr {
 	if op == wsClose {
 		c.closeSent = true
 	}
-	if _, err := c.conn.Write(hdr); err != nil {
+	if err := memConnWrite(tk, c.conn, hdr); err != nil {
 		e := wsNetErr(err)
 		c.writeErr = &e
 		return &e
@@ -193,22 +196,22 @@ func (c *wsConn) writeFrame(op int, data []byte) *Websocket_WsErr {
 }
 
 // writeControl is gorilla's WriteControl: at most 125 bytes.
-func (c *wsConn) writeControl(op int, data []byte) *Websocket_WsErr {
+func (c *wsConn) writeControl(tk *Task, op int, data []byte) *Websocket_WsErr {
 	if len(data) > 125 {
 		e := wsProtocolErr("invalid control frame")
 		return &e
 	}
-	return c.writeFrame(op, data)
+	return c.writeFrame(tk, op, data)
 }
 
 // protocolError is gorilla's handleProtocolError: close code (1002) with
 // msg, then the error.
-func (c *wsConn) protocolError(code int64, msg string) *Websocket_WsErr {
+func (c *wsConn) protocolError(tk *Task, code int64, msg string) *Websocket_WsErr {
 	data := wsCloseMessage(code, msg)
 	if len(data) > 125 {
 		data = data[:125]
 	}
-	c.writeControl(wsClose, data)
+	c.writeControl(tk, wsClose, data)
 	e := wsProtocolErr(msg)
 	return &e
 }
@@ -244,6 +247,7 @@ func (c *wsConn) readN(n int64) ([]byte, *Websocket_WsErr) {
 // readMessage reads frames up to a whole message (NextReader and its
 // messageReader), handling control frames between them.
 func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
+	c.rtk = tk
 	kind := 0
 	var data []byte
 	checked := 0
@@ -293,7 +297,7 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 			errs = append(errs, "bad MASK")
 		}
 		if len(errs) > 0 {
-			return Websocket_Message{}, c.protocolError(1002, strings.Join(errs, ", "))
+			return Websocket_Message{}, c.protocolError(tk, 1002, strings.Join(errs, ", "))
 		}
 		switch n {
 		case 126:
@@ -322,7 +326,7 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 		if op == wsText || op == wsBinary || op == wsContinuation {
 			length += n
 			if length < 0 || (c.max > 0 && length > c.max) {
-				c.writeControl(wsClose, wsCloseMessage(1009, ""))
+				c.writeControl(tk, wsClose, wsCloseMessage(1009, ""))
 				e := wsTooBig(c.max)
 				return Websocket_Message{}, &e
 			}
@@ -355,7 +359,7 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 				data = append(data, piece...)
 				cut, ok := wsUTF8Prefix(data[checked:])
 				if !ok {
-					return Websocket_Message{}, c.protocolError(1007, "invalid UTF-8 in text frame")
+					return Websocket_Message{}, c.protocolError(tk, 1007, "invalid UTF-8 in text frame")
 				}
 				checked += cut
 				got += int64(len(piece))
@@ -388,7 +392,7 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 				h(tk, Bytes(payload))
 				continue
 			}
-			if e := c.writeControl(wsPong, payload); e != nil && !c.isCloseSent(e) {
+			if e := c.writeControl(tk, wsPong, payload); e != nil && !c.isCloseSent(e) {
 				return Websocket_Message{}, e
 			}
 			continue
@@ -398,14 +402,14 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 			if len(payload) >= 2 {
 				code = int64(binary.BigEndian.Uint16(payload))
 				if !wsValidCloseCode(code) {
-					return Websocket_Message{}, c.protocolError(1002, "bad close code "+strconv.FormatInt(code, 10))
+					return Websocket_Message{}, c.protocolError(tk, 1002, "bad close code "+strconv.FormatInt(code, 10))
 				}
 				text = string(payload[2:])
 				if !utf8.ValidString(text) {
-					return Websocket_Message{}, c.protocolError(1002, "invalid utf8 payload in close frame")
+					return Websocket_Message{}, c.protocolError(tk, 1002, "invalid utf8 payload in close frame")
 				}
 			}
-			c.writeControl(wsClose, wsCloseMessage(code, ""))
+			c.writeControl(tk, wsClose, wsCloseMessage(code, ""))
 			e := wsClosed(code, text)
 			return Websocket_Message{}, &e
 		case wsText, wsBinary:
@@ -418,13 +422,13 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 			// fragment, an incomplete one at the end waits for the next
 			cut, ok := wsUTF8Prefix(data[checked:])
 			if !ok {
-				return Websocket_Message{}, c.protocolError(1007, "invalid UTF-8 in text frame")
+				return Websocket_Message{}, c.protocolError(tk, 1007, "invalid UTF-8 in text frame")
 			}
 			checked += cut
 		}
 		if readFinal {
 			if checked != len(data) && kind == wsText {
-				return Websocket_Message{}, c.protocolError(1007, "invalid UTF-8 in text frame")
+				return Websocket_Message{}, c.protocolError(tk, 1007, "invalid UTF-8 in text frame")
 			}
 			return Websocket_Message{F_kind: Websocket_Kind{Tag: kind}, F_data: Bytes(data)}, nil
 		}
@@ -478,7 +482,7 @@ func (w Websocket_WsConn) M_write(tk *Task, m Websocket_Message) Result[Unit, We
 	if m.F_kind.Tag == 1 {
 		op = wsText
 	}
-	if e := w.c.writeFrame(op, []byte(m.F_data)); e != nil {
+	if e := w.c.writeFrame(tk, op, []byte(m.F_data)); e != nil {
 		return Err[Unit](*e)
 	}
 	return Ok[Unit, Websocket_WsErr](Unit{})
@@ -486,7 +490,7 @@ func (w Websocket_WsConn) M_write(tk *Task, m Websocket_Message) Result[Unit, We
 
 // M_write_text is `c.write_text(s)`.
 func (w Websocket_WsConn) M_write_text(tk *Task, s string) Result[Unit, Websocket_WsErr] {
-	if e := w.c.writeFrame(wsText, []byte(s)); e != nil {
+	if e := w.c.writeFrame(tk, wsText, []byte(s)); e != nil {
 		return Err[Unit](*e)
 	}
 	return Ok[Unit, Websocket_WsErr](Unit{})
@@ -494,7 +498,7 @@ func (w Websocket_WsConn) M_write_text(tk *Task, s string) Result[Unit, Websocke
 
 // M_ping is `c.ping(data)`.
 func (w Websocket_WsConn) M_ping(tk *Task, data Bytes) Result[Unit, Websocket_WsErr] {
-	if e := w.c.writeControl(wsPing, []byte(data)); e != nil {
+	if e := w.c.writeControl(tk, wsPing, []byte(data)); e != nil {
 		return Err[Unit](*e)
 	}
 	return Ok[Unit, Websocket_WsErr](Unit{})
@@ -513,7 +517,7 @@ func (w Websocket_WsConn) M_close(tk *Task, code int64, reason string) Result[Un
 		sent := c.closeSent
 		c.wmu.Unlock()
 		if !sent {
-			e = c.writeControl(wsClose, wsCloseMessage(code, reason))
+			e = c.writeControl(tk, wsClose, wsCloseMessage(code, reason))
 		}
 	}
 	c.conn.Close()
@@ -542,7 +546,7 @@ func (w Websocket_WsConn) M_on_pong(tk *Task, f func(*Task, Bytes) Result[Unit, 
 
 // M_pong is `c.pong(data)`: a pong control frame.
 func (w Websocket_WsConn) M_pong(tk *Task, data Bytes) Result[Unit, Websocket_WsErr] {
-	if e := w.c.writeControl(wsPong, []byte(data)); e != nil {
+	if e := w.c.writeControl(tk, wsPong, []byte(data)); e != nil {
 		return Err[Unit](*e)
 	}
 	return Ok[Unit, Websocket_WsErr](Unit{})
@@ -656,10 +660,11 @@ func Websocket_upgrade(tk *Task, req Http_Request, f func(*Task, Websocket_WsCon
 			b.WriteString("Sec-WebSocket-Protocol: " + proto + "\r\n")
 		}
 		b.WriteString("\r\n")
-		if _, err := conn.Write([]byte(b.String())); err != nil {
+		if err := memConnWrite(tk, conn, []byte(b.String())); err != nil {
 			return Ok[Unit, IoErr](Unit{})
 		}
 		c := &wsConn{server: true, conn: conn, br: brw.Reader, max: maxMessage, proto: proto}
+		c.br = wsMemReader(c, c.br)
 		f(tk, Websocket_WsConn{c: c})
 		return Ok[Unit, IoErr](Unit{})
 	}}
@@ -756,11 +761,17 @@ func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string],
 		b.WriteString(k + ": " + v + "\r\n")
 	}
 	b.WriteString("\r\n")
-	if _, err := conn.Write([]byte(b.String())); err != nil {
+	if err := memConnWrite(tk, conn, []byte(b.String())); err != nil {
 		conn.Close()
 		return Err[Websocket_WsConn](wsNetErr(err))
 	}
-	br := bufio.NewReader(conn)
+	var br *bufio.Reader
+	if e, ok := conn.(*memEnd); ok {
+		// a FakeNet connection is read through the task (task #120)
+		br = bufio.NewReader(memTaskIO{e, tk})
+	} else {
+		br = bufio.NewReader(conn)
+	}
 	resp, err := http.ReadResponse(br, &http.Request{Method: "GET"})
 	if err != nil {
 		conn.Close()
@@ -771,5 +782,6 @@ func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string],
 		return Err[Websocket_WsConn](wsHandshakeErr(int64(resp.StatusCode), "websocket: bad handshake"))
 	}
 	c := &wsConn{conn: conn, br: br, max: maxMessage, proto: resp.Header.Get("Sec-Websocket-Protocol")}
+	c.br = wsMemReader(c, c.br)
 	return Ok[Websocket_WsConn, Websocket_WsErr](Websocket_WsConn{c: c})
 }

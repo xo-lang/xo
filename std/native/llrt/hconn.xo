@@ -110,6 +110,8 @@ const IP_MAX = 45
 /// The xo_conn record's poll descriptor (xo_rt.c, asserted), and the
 /// descriptor's fd (poll.xo D_FD, a C int).
 const CN_PD = 16
+/// netconn's C_MEM: the in memory end of a test world connection
+const CN_MEM = 32
 const D_FD = layout.D_FD
 /// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
 const NOSIGNAL = 16384
@@ -186,6 +188,28 @@ pub fn take(hc: Int) -> rthttp.HConn {
 
 /// The poll descriptor of record hc's net.Conn.
 pub fn conn_pd(hc: Int) -> Int { ld(ld(hc, HC_CONN), CN_PD) }
+
+/// The test world's in memory end (twrun's ME record, decision 0292) of
+/// record hc's net.Conn, or 0 for a socket: a raw FakeNet connection an
+/// http.server on an in memory listener serves (task #120), read and
+/// written through twrun instead of a poll descriptor.
+pub fn conn_me(hc: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 || !twflags.on() {
+    return 0
+  }
+  ld(ld(hc, HC_CONN), CN_MEM)
+}
+
+/// twrun.me_read or me_write of n bytes at p on end me with deadline
+/// (monotonic ns, 0 none, 1 passed: a read that does not wait).
+fn me_io(me: Int, p: Int, n: Int, deadline: Int, write: Bool) -> Int {
+  let w = raw.bytes_buf(8)
+  let dlp = raw.bytes_addr(w)
+  rt.mem_store(dlp, 0, deadline, 8)
+  let r = if write { twrun.me_write(me, p, n, dlp) } else { twrun.me_read(me, p, n, dlp) }
+  raw.alive(w)
+  r
+}
 
 /// The fd of poll descriptor pd.
 fn pd_fd(pd: Int) -> Int {
@@ -383,7 +407,8 @@ pub fn park_ready(h: rthttp.HConn, h2: Bool = false) -> Bool {
   }
   let hc = rec(h)
   let s = ld(hc, HC_SRV)
-  if s == 0 || (ld(hc, HC_H2) != 0 && !h2) || ld(hc, HC_PEEK) != 0 || stopping_at(s) || poll.canceled() {
+  if s == 0 || (ld(hc, HC_H2) != 0 && !h2) || ld(hc, HC_PEEK) != 0 || stopping_at(s) || poll.canceled() || conn_me(hc) != 0 {
+    // an in memory connection has no descriptor to park on: its task reads
     return false
   }
   let tls = ld(hc, HC_TLS)
@@ -483,6 +508,12 @@ fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
     set_idle(hc, false)
     return k
   }
+  let me = conn_me(hc)
+  if me != 0 {
+    let k = me_io(me, p, cap, deadline, false)
+    set_idle(hc, false)
+    return if k >= 0 { k } else if k == -4 { -2 } else { -1 }
+  }
   var r = -1
   let tls = ld(hc, HC_TLS)
   if target.arch != TargetArch.Wasm32 && poll.canceled() {
@@ -543,6 +574,10 @@ pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
   if target.arch == TargetArch.Wasm32 {
     return netwasi.hc_send(ld(hc, HC_CONN), p, n, 0) == 0
   }
+  let me = conn_me(hc)
+  if me != 0 {
+    return me_io(me, p, n, 0, true) == 0
+  }
   let pd = conn_pd(hc)
   if !poll.pd_begin(pd) {
     return false
@@ -582,6 +617,11 @@ pub fn send_until(h: rthttp.HConn, p: Int, n: Int, deadline: Int) -> Int {
     return -1
   }
   let hc = rec(h)
+  let me = conn_me(hc)
+  if me != 0 {
+    let k = me_io(me, p, n, deadline, true)
+    return if k == 0 { 0 } else if k == -4 { -2 } else { -1 }
+  }
   let tls = ld(hc, HC_TLS)
   if tls != 0 {
     let _d = rt.call_c2(tls_op(TO_SET_DEADLINE), tls, deadline)
@@ -655,6 +695,11 @@ pub fn shut_wr(h: rthttp.HConn) {
     // a new connection between the load and the shutdown (a WebSocket
     // tunnel's last shut_wr once half-closed the next accepted
     // connection: gotchas/shutdown-of-a-reused-fd.md)
+    let me = conn_me(hc)
+    if me != 0 {
+      twrun.me_close_write(me)
+      return
+    }
     let pd = conn_pd(hc)
     if poll.pd_begin(pd) {
       let _r = sock.shutdown(pd_fd(pd), SHUT_WR)
@@ -712,6 +757,12 @@ pub fn h2_read(h: rthttp.HConn, p: Int, cap: Int) -> Int {
   // plain (h2c): -2 when nothing is there
   if target.arch == TargetArch.Wasm32 {
     return netwasi.hc_try_recv(ld(hc, HC_CONN), p, cap)
+  }
+  let me = conn_me(hc)
+  if me != 0 {
+    // a passed deadline: what is there, or -4 at once
+    let k = me_io(me, p, cap, 1, false)
+    return if k >= 0 { k } else if k == -4 { -2 } else { -1 }
   }
   let pd = conn_pd(hc)
   var r = -1

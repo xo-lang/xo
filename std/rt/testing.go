@@ -1305,6 +1305,8 @@ func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] 
 	l.sc = sc
 	l.mu.Unlock()
 	defer func() { sc.Close(nil, true, 0) }()
+	// the raw connections dialed to it are served too (task #120)
+	l.memServeRaw(tk, sc, r)
 	l.served.fire()
 	l.ready.fire()
 	stopped := false

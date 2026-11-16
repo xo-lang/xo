@@ -1,0 +1,37 @@
+use std/http
+
+fn echo(c: WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => {
+        if c.write(m) is Err(_) {
+          return
+        }
+      }
+      Err(_) => return
+    }
+  }
+}
+
+// task #120: http.server on FakeNet serves the raw connections a client
+// dials (websocket.dial writes its handshake itself), as Go's http.Server
+// serves every connection its listener accepts; it served routed requests
+// only, so the handshake waited in the listener's backlog forever.
+test "a websocket client on FakeNet reaches http.server's upgrade route" {
+  var r = http.router()
+  r.handle("GET /echo", fn(req) { upgrade(req, echo) })
+  r.handle("GET /plain", fn(_req) { http.text(200, "plain") })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = dial(os.net, "ws://${addr}/echo").or_fault("dial")
+    c.write_text("hello").or_fault("write")
+    expect(c.read().or_fault("read").data.to_str_lossy()) == "hello"
+    c.close().or_fault("close")
+    // a routed request still works beside it
+    let resp = http.client(os.net).get("http://${addr}/plain").or_fault("get")
+    expect(resp.text()) == Some("plain")
+  }
+}
