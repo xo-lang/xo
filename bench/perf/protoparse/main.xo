@@ -1,0 +1,75 @@
+// std/protoparse against github.com/bufbuild/protocompile's parser (its
+// AST, no descriptors on either side): a proto3 file of about 120 KB (300
+// messages of ten fields, a map, a oneof of two and a nested enum, 20
+// enums, 5 services of 10 rpcs, with comments and options) parsed 100
+// times (`parse`); `none` builds the text alone. Usage:
+// `<program> none|parse`. Prints `<workload> <checksum>`; the twin
+// (twin.go.txt) prints the same. protocompile's AST keeps every token and
+// comment with its position (for its error messages and source info), which
+// std/protoparse's File does not.
+use std/protoparse
+
+fn source() -> Str {
+  var o = StrBuilder.new()
+  o.write("// A generated file for the protoparse twin.\nsyntax = \"proto3\";\n\npackage bench.v1;\n\nimport \"google/protobuf/timestamp.proto\";\n\noption go_package = \"example.com/bench\";\n\n")
+  let types = ["int32", "int64", "uint32", "string", "bytes", "bool", "double", "float", "sint64", "fixed32"]
+  for i in 0..300 {
+    o.write("// Message ${i} carries ten fields.\nmessage Msg${i} {\n")
+    o.write("  enum State${i} {\n    STATE_UNSPECIFIED = 0;\n    STATE_ON = 1;\n    STATE_OFF = 2;\n  }\n")
+    for j in 0..10 {
+      let rep = if j % 4 == 3 { "repeated " } else { "" }
+      o.write("  ${rep}${types[(i + j) % 10]} field_${j} = ${j + 1};\n")
+    }
+    o.write("  map<string, int64> counts = 11 [deprecated = true];\n")
+    o.write("  oneof choice {\n    string text = 12;\n    Msg${(i + 1) % 300} next = 13;\n  }\n")
+    o.write("  State${i} state = 14;\n}\n\n")
+  }
+  for e in 0..20 {
+    o.write("enum Kind${e} {\n  KIND${e}_UNSPECIFIED = 0;\n  KIND${e}_A = 1;\n  KIND${e}_B = 2;\n  KIND${e}_C = 3;\n}\n\n")
+  }
+  for s in 0..5 {
+    o.write("service Svc${s} {\n")
+    for r in 0..10 {
+      let m = s * 10 + r
+      let stream = if r % 3 == 0 { "stream " } else { "" }
+      o.write("  rpc Call${r}(${stream}Msg${m}) returns (Msg${m + 1});\n")
+    }
+    o.write("}\n\n")
+  }
+  o.freeze()
+}
+
+fn count(f: protoparse.File) -> Int {
+  var sum = f.messages.len() * 1000 + f.enums.len() * 100 + f.services.len() * 10
+  for m in f.messages {
+    sum += m.fields.len() + m.enums.len()
+    for x in m.fields {
+      sum += x.num
+    }
+    for e in m.enums {
+      sum += e.values.len()
+    }
+  }
+  for e in f.enums {
+    sum += e.values.len()
+  }
+  for s in f.services {
+    sum += s.rpcs.len()
+  }
+  sum
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "parse"
+  let src = source()
+  var sum = src.len()
+  if w == "parse" {
+    for _ in 0..100 {
+      match protoparse.parse(src) {
+        Ok(f) => sum += count(f)
+        Err(e) => fault(e.display())
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

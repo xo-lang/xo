@@ -1,0 +1,4 @@
+# twincheck: protoparse: two workloads (none builds the text alone); Go is github.com/bufbuild/protocompile (Apache-2.0) parser.
+require github.com/bufbuild/protocompile v0.14.1
+- - none
+- - parse

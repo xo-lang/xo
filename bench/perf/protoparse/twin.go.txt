@@ -1,0 +1,119 @@
+// The Go twin of main.xo: github.com/bufbuild/protocompile's parser.Parse
+// (the AST alone; no linking or descriptors), the same counts read off it.
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/bufbuild/protocompile/ast"
+	"github.com/bufbuild/protocompile/parser"
+	"github.com/bufbuild/protocompile/reporter"
+)
+
+func source() string {
+	var o strings.Builder
+	o.WriteString("// A generated file for the protoparse twin.\nsyntax = \"proto3\";\n\npackage bench.v1;\n\nimport \"google/protobuf/timestamp.proto\";\n\noption go_package = \"example.com/bench\";\n\n")
+	types := []string{"int32", "int64", "uint32", "string", "bytes", "bool", "double", "float", "sint64", "fixed32"}
+	for i := 0; i < 300; i++ {
+		is := strconv.Itoa(i)
+		o.WriteString("// Message " + is + " carries ten fields.\nmessage Msg" + is + " {\n")
+		o.WriteString("  enum State" + is + " {\n    STATE_UNSPECIFIED = 0;\n    STATE_ON = 1;\n    STATE_OFF = 2;\n  }\n")
+		for j := 0; j < 10; j++ {
+			rep := ""
+			if j%4 == 3 {
+				rep = "repeated "
+			}
+			o.WriteString("  " + rep + types[(i+j)%10] + " field_" + strconv.Itoa(j) + " = " + strconv.Itoa(j+1) + ";\n")
+		}
+		o.WriteString("  map<string, int64> counts = 11 [deprecated = true];\n")
+		o.WriteString("  oneof choice {\n    string text = 12;\n    Msg" + strconv.Itoa((i+1)%300) + " next = 13;\n  }\n")
+		o.WriteString("  State" + is + " state = 14;\n}\n\n")
+	}
+	for e := 0; e < 20; e++ {
+		es := strconv.Itoa(e)
+		o.WriteString("enum Kind" + es + " {\n  KIND" + es + "_UNSPECIFIED = 0;\n  KIND" + es + "_A = 1;\n  KIND" + es + "_B = 2;\n  KIND" + es + "_C = 3;\n}\n\n")
+	}
+	for s := 0; s < 5; s++ {
+		o.WriteString("service Svc" + strconv.Itoa(s) + " {\n")
+		for r := 0; r < 10; r++ {
+			m := s*10 + r
+			stream := ""
+			if r%3 == 0 {
+				stream = "stream "
+			}
+			o.WriteString("  rpc Call" + strconv.Itoa(r) + "(" + stream + "Msg" + strconv.Itoa(m) + ") returns (Msg" + strconv.Itoa(m+1) + ");\n")
+		}
+		o.WriteString("}\n\n")
+	}
+	return o.String()
+}
+
+func enumValues(e *ast.EnumNode) int {
+	n := 0
+	for _, d := range e.Decls {
+		if _, ok := d.(*ast.EnumValueNode); ok {
+			n++
+		}
+	}
+	return n
+}
+
+func count(f *ast.FileNode) int {
+	msgs, enums, svcs := 0, 0, 0
+	sum := 0
+	for _, d := range f.Decls {
+		switch x := d.(type) {
+		case *ast.MessageNode:
+			msgs++
+			for _, md := range x.Decls {
+				switch y := md.(type) {
+				case *ast.FieldNode:
+					sum += 1 + int(y.Tag.Val)
+				case *ast.MapFieldNode:
+					sum += 1 + int(y.Tag.Val)
+				case *ast.OneofNode:
+					for _, od := range y.Decls {
+						if fd, ok := od.(*ast.FieldNode); ok {
+							sum += 1 + int(fd.Tag.Val)
+						}
+					}
+				case *ast.EnumNode:
+					sum += 1 + enumValues(y)
+				}
+			}
+		case *ast.EnumNode:
+			enums++
+			sum += enumValues(x)
+		case *ast.ServiceNode:
+			svcs++
+			for _, sd := range x.Decls {
+				if _, ok := sd.(*ast.RPCNode); ok {
+					sum++
+				}
+			}
+		}
+	}
+	return sum + msgs*1000 + enums*100 + svcs*10
+}
+
+func main() {
+	w := "parse"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	src := source()
+	sum := len(src)
+	if w == "parse" {
+		for i := 0; i < 100; i++ {
+			f, err := parser.Parse("bench.proto", strings.NewReader(src), reporter.NewHandler(nil))
+			if err != nil {
+				panic(err)
+			}
+			sum += count(f)
+		}
+	}
+	fmt.Println(w, sum)
+}
