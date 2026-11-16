@@ -84,7 +84,7 @@ pub struct StdFileRec {
   pub ranges: List[parser.DeclRange] = []
 }
 
-const EXPORT_VERSION = "xo std export v13 (an enum's open flag, decision 0649)"
+const EXPORT_VERSION = "xo std export v14 (a std struct's @internal flag and hint, decision 0440)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -448,6 +448,8 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
   w.sv(x.body_eff)
   w.bool(x.flags.moves())
   w.bool(x.flags.move_only())
+  w.bool(x.flags.std_internal())
+  w.str(x.internal_hint)
   w.bool(x.flags.realtime())
   w.uv(x.realtime_span.len())
   for s in x.realtime_span {
@@ -588,6 +590,8 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
   x.body_eff = r.sv()
   x.flags.set_moves(r.bool())
   x.flags.set_move_only(r.bool())
+  x.flags.set_std_internal(r.bool())
+  x.internal_hint = r.str()
   x.flags.set_realtime(r.bool())
   for _ in 0..r.uv() {
     x.realtime_span.push(r.span())

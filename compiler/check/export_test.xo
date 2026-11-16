@@ -162,3 +162,29 @@ test "a std file written after the build started gives a header that never holds
   expect(h2.files.is_empty()) == false
   expect(header_holds(os.fs, h2)) == true
 }
+
+test "a std struct's @internal flag and hint come back from the export (decision 0440)" {
+  // the XO0605 note on std/uuid's Uuid named no public way when uuid was
+  // read from the export: neither was written (2026-11-16)
+  let _c = export_checker(os)?
+  os.fs.write("std/ux.xo", b"/// A thing.\n/// @internal: use `ux.make()`\nstruct U {\n  a: Int\n}\n\nfn make() -> U { U{a: 1} }\n")?
+  os.fs.write("app/main.xo", b"use std/ux\n\nfn main() {\n  let _u = ux.make()\n}\n")?
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["app"]) {
+    expect(e) == ""
+  }
+  match decode_std_export(encode_std_export(c.std_export())) {
+    Some(e) => {
+      var found = 0
+      for o in e.objs {
+        if o.name == b"U" {
+          found += 1
+          expect(o.flags.std_internal()) == true
+          expect(o.internal_hint) == "use `ux.make()`"
+        }
+      }
+      expect(found) == 1
+    }
+    None => expect("decoded") == "None"
+  }
+}
