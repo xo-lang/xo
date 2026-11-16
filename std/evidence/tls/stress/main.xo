@@ -1,0 +1,207 @@
+// tls stress program (decision 0616 section 2): a TLS echo server on
+// loopback (a TlsListener; a self-signed P-256 certificate made at start)
+// and TASKS clients that connect over and over, each at most 4 times a
+// second. Each connection takes TLS 1.2 or
+// 1.3 in turn, a fresh session or one resumed from the client's session
+// cache, checks the version, resumption and peer certificate, sends
+// messages of 0 to 40000 bytes and reads each back in full, then
+// close_writes and expects the server's end of stream. A background task
+// samples the resident set every 10 s (Linux /proc/self/status) and prints
+// it each minute. Pass: no mismatch, no fault, every second connection
+// resumed, and the resident set at the end within 10% or 4 MB of its
+// sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 20 connections per client] [TASKS (64)]
+use std/tls
+use std/x509
+
+const TLS12 = 771
+const TLS13 = 772
+
+/// Message k of a connection: (t * 131 + c * 17 + k * 4099) % 40001 bytes.
+fn message(t: Int, c: Int, k: Int) -> Bytes {
+  let n = (t * 131 + c * 17 + k * 4099) % 40001
+  var b = BytesBuilder.with_capacity(n)
+  for j in 0..n {
+    b.write_byte(UInt8((t + c + k + j * 7) & 255))
+  }
+  b.freeze()
+}
+
+/// Reads exactly n bytes, or fails.
+fn read_full(conn: tls.TlsConn, n: Int) -> Bytes ! Str uses net.dial {
+  var b = BytesBuilder.with_capacity(n)
+  while b.len() < n {
+    match conn.read(n - b.len()).map_err(fn(e) { "read: ${e}" })? {
+      Some(part) => b.write(part)
+      None => return Err("end of stream after ${b.len()} of ${n} bytes")
+    }
+  }
+  Ok(b.freeze())
+}
+
+/// One connection of client t: (bytes echoed, resumed).
+fn connection(os: Os, addr: Str, roots: tls.Roots, cache: tls.SessionCache, t: Int, c: Int) -> (Int, Bool) ! Str uses net.dial {
+  let version = if (t + c / 2) % 2 == 0 { TLS13 } else { TLS12 }
+  let conn = tls.dial_config(os.net, addr, tls.ClientConfig{
+    server_name: "127.0.0.1",
+    roots: Some(roots),
+    min_version: version,
+    max_version: version,
+    session_cache: Some(cache),
+  }).map_err(fn(e) { "dial ${t}/${c}: ${e}" })?
+  conn.handshake().map_err(fn(e) { "handshake ${t}/${c}: ${e}" })?
+  let st = conn.state()
+  if st.version != version || !st.handshake_complete {
+    conn.close()
+    return Err("connection ${t}/${c}: version ${st.version}, want ${version}")
+  }
+  if st.peer_certificates.len() != 1 {
+    conn.close()
+    return Err("connection ${t}/${c}: ${st.peer_certificates.len()} peer certificates")
+  }
+  var echoed = 0
+  for k in 0..4 {
+    let m = message(t, c, k)
+    conn.write(m).map_err(fn(e) { "write ${t}/${c}/${k}: ${e}" })?
+    let back = read_full(conn, m.len()).map_err(fn(e) { "connection ${t}/${c} message ${k}: ${e}" })?
+    if back != m {
+      conn.close()
+      return Err("connection ${t}/${c} message ${k}: ${m.len()} bytes came back different")
+    }
+    echoed += m.len()
+  }
+  conn.close_write().map_err(fn(e) { "close_write ${t}/${c}: ${e}" })?
+  match conn.read(1).map_err(fn(e) { "read at the end ${t}/${c}: ${e}" })? {
+    Some(b) => {
+      conn.close()
+      return Err("connection ${t}/${c}: ${b.len()} bytes after close_write, want the end")
+    }
+    None => {}
+  }
+  conn.close()
+  Ok((echoed, st.did_resume))
+}
+
+/// Client t: (connections, bytes echoed, resumed), or the first failure.
+fn client(os: Os, addr: Str, roots: tls.Roots, t: Int, end: Time, passes: Int) -> (Int, Int, Int) ! Str uses (net.dial, clock) {
+  let cache = tls.lru_session_cache(4)
+  var c = 0
+  var bytes = 0
+  var resumed = 0
+  while if passes > 0 { c < passes } else { os.clock.now() < end } {
+    let (n, r) = connection(os, addr, roots, cache, t, c)?
+    bytes += n
+    if r {
+      resumed += 1
+    }
+    c += 1
+    if passes == 0 {
+      // about 250 connections a second over 64 clients, so closed ones'
+      // TIME_WAIT never uses up the loopback ports
+      os.clock.sleep(250ms)
+    }
+  }
+  Ok((c, bytes, resumed))
+}
+
+/// The server's side of one connection: echo until the client's end.
+fn serve(conn: tls.TlsServerConn) uses net.listen {
+  while true {
+    match conn.read(65536) {
+      Ok(Some(b)) => {
+        if conn.write(b).is_err() {
+          break
+        }
+      }
+      _ => break
+    }
+  }
+  conn.close()
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn two(n: Int) -> Str { if n < 10 { "0${n}" } else { "${n}" } }
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let passes = if minutes == 0 { 20 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let (cert_pem, key_pem) = x509.self_signed(os.rand, ["127.0.0.1"], start)?
+  let roots = tls.roots(cert_pem)?
+  let config = tls.ServerConfig{certificates: [tls.cert(cert_pem, key_pem)?]}
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  // a TlsListener, whose automatic ticket keys let clients resume
+  let ln = tls.listen(os.net, "127.0.0.1:0", config)?
+  let addr = ln.addr()
+  let (conns, bytes, resumed) = scope s {
+    s.spawn_background(fn() {
+      while let Ok(c) = ln.accept() {
+        s.spawn_background(fn() { serve(c) })
+      }
+    })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && r > 0 {
+          os.stdio.println("rss ${two(ticks / 6)} min: ${r / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[(Int, Int, Int), Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> (Int, Int, Int) ! Str { client(os, addr, roots, t, end, passes) }))
+    }
+    var conns = 0
+    var bytes = 0
+    var resumed = 0
+    for h in hs {
+      let (a, b, r) = h.await.map_err(fn(e) { "a client: ${e}" })?
+      conns += a
+      bytes += b
+      resumed += r
+    }
+    ln.close()
+    s.cancel()
+    (conns, bytes, resumed)
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  // every connection after a client's first of each version can resume
+  let resume_ok = resumed * 2 >= conns - 2 * tasks
+  os.stdio.println("tls stress: ${conns} connections (${resumed} resumed), ${bytes / 1048576} MiB echoed by ${tasks} clients in ${minutes} min, 0 mismatches, ${mem}, ${if mem_ok && resume_ok { "pass" } else if !resume_ok { "FAIL (resumption)" } else { "FAIL (memory grew)" }}")
+  if !resume_ok {
+    return Err("${resumed} of ${conns} connections resumed")
+  }
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
