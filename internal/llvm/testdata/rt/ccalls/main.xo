@@ -1,0 +1,67 @@
+// C calls and the scheduler (decision 0675, task #94; TestRuntimeCCalls).
+// "sleep": 8 tasks call a C nanosleep(100 ms) 10 times beside 8 spinning
+// tasks; asynchronous preemption's SIGURG cut them short (EINTR), 80 of
+// 80 at XO_THREADS=4. "wait": more tasks than threads wait in C for a
+// flag a task spawned after them sets; with the waiters holding every
+// worker the setter never ran until they timed out.
+use c "cc.h" link "cc.c"
+
+fn sleeps(os: Os) {
+  let early = Atomic.new(0)
+  let stop = Atomic.new(0)
+  scope s {
+    for _ in 0..8 {
+      s.spawn_background(fn() {
+        var x = 0
+        while stop.get() == 0 {
+          x += 1
+        }
+        x
+      })
+    }
+    var hs: List[Task[(), Never]] = []
+    for _ in 0..8 {
+      hs.push(s.spawn(fn() {
+        for _ in 0..10 {
+          early.add(cc.cc_sleep(100))
+        }
+      }))
+    }
+    for h in hs {
+      h.await
+    }
+    stop.set(1)
+  }
+  os.stdio.println("sleep: early ${early.get()} of 80")
+}
+
+fn waits(os: Os) {
+  let got = Atomic.new(0)
+  scope s {
+    var hs: List[Task[(), Never]] = []
+    for _ in 0..6 {
+      hs.push(s.spawn(fn() {
+        got.add(cc.cc_wait(4000))
+      }))
+    }
+    hs.push(s.spawn(fn() {
+      cc.cc_set()
+    }))
+    for h in hs {
+      h.await
+    }
+  }
+  os.stdio.println("wait: ${got.get()} of 6 saw the flag")
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let what = if args.len() > 0 { args[0] } else { "" }
+  if what == "sleep" {
+    sleeps(os)
+  } else if what == "wait" {
+    waits(os)
+  } else {
+    os.stdio.println("usage: ccalls sleep|wait")
+  }
+}

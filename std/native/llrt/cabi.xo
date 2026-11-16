@@ -586,6 +586,12 @@ fn cffi_str(p: Int, n: Int, lenp: Int) -> Int {
   obj.rs_append(obj.rs_with_cap(n), 0, p, n)
 }
 
+/// Around each C call of a `use c` adapter (compiler/cli/bind gen.xo,
+/// decision 0675): the worker is in C (pool.xo c_enter, c_leave).
+fn c_enter() { pool.c_enter() }
+
+fn c_leave() { pool.c_leave() }
+
 // ---------------------------------------------------------------------------
 // The event loop's timer heap (zero-C audit B22 stage 1, poll.xo): t is a
 // timer record (poll.xo T_*); the event loop's lock is held.

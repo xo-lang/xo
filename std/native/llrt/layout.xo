@@ -265,7 +265,14 @@ pub const W_AGE_MORE = 3600
 /// The worker thread's Rand state (rand.xo, decision 0669): 0 none yet,
 /// -1 none possible, else its address.
 pub const W_RAND = 3608
-pub const W_SIZE = 3616
+/// The worker's C call sequence (a word index, byte 3616; decision 0675):
+/// pool.xo c_enter and c_leave add one around each `use c` call, so it is
+/// odd while the worker is in C; only its own thread writes it.
+pub const W_CSEQ_I = 452
+/// W_CSEQ_I as the monitor's previous tick saw it (pool.xo mon_scan): odd and
+/// unchanged, the worker has been in one C call a tick or more.
+pub const W_CSEEN = 3624
+pub const W_SIZE = 3632
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after
@@ -281,7 +288,11 @@ pub const P_TRIM_EPOCH_I = 4372
 pub const P_AGE_AT_I = 4373
 /// The bytes the age passes gave back (a word index; pool.xo aged_bytes).
 pub const P_AGE_BYTES_I = 4374
-pub const P_SIZE = 35000
+/// The workers the monitor saw blocked in a C call while work waited (a
+/// word index; pool.xo mon_scan, decision 0675): worker_cap allows that
+/// many more, so a worker in C does not hold a slot of XO_THREADS.
+pub const P_CEXTRA_I = 4375
+pub const P_SIZE = 35008
 
 /// xo_node, a cancellation node (pool.xo; xo_rt.c before; ctx.xo makes the
 /// context's, twrun.xo and pool.xo the others): its parent, first child,

@@ -127,6 +127,9 @@ const W_RUNF = layout.W_RUNF
 const W_SIZE = layout.W_SIZE
 const W_NETWAIT = layout.W_NETWAIT
 const W_IDX = layout.W_IDX
+const W_CSEQ_I = layout.W_CSEQ_I
+const W_CSEEN = layout.W_CSEEN
+const P_CEXTRA_I = layout.P_CEXTRA_I
 const MAXW = 4096
 
 /// ctx.xo C_TRACE: the context's trace word.
@@ -571,9 +574,33 @@ fn workers(p: Int) -> Int {
 /// most N threads running tasks, the root that helps (decision 0077) one
 /// of them), never below one worker, so a root blocked in the system
 /// still leaves a thread (XO_THREADS=1 keeps its worker beside the root).
+/// The workers the monitor saw blocked in C (P_CEXTRA_I, decision 0675)
+/// are allowed beside them.
 fn worker_cap(p: Int, n: Int) -> Int {
-  let k = n.wrapping_sub(rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOOPS, SEQ_CST))
+  let k = n.wrapping_sub(rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOOPS, SEQ_CST)).wrapping_add(rt.slot_load(p, P_CEXTRA_I, RELAXED))
   if k < 1 { 1 } else { k }
+}
+
+/// A `use c` adapter's call starts (cabi.xo c_enter, decision 0675): the
+/// calling worker's W_CSEQ_I goes odd, so the monitor sends it no SIGURG
+/// (nanosleep returned EINTR) and hands off its slot when the call blocks.
+/// A thread that is no worker does nothing.
+pub fn c_enter() {
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    rt.slot_store(w, W_CSEQ_I, rt.slot_load(w, W_CSEQ_I, RELAXED).wrapping_add(1), RELEASE)
+  }
+}
+
+/// The adapter's C call returned (cabi.xo c_leave): W_CSEQ_I even again.
+pub fn c_leave() {
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    let s = rt.slot_load(w, W_CSEQ_I, RELAXED)
+    if s & 1 == 1 {
+      rt.slot_store(w, W_CSEQ_I, s.wrapping_add(1), RELEASE)
+    }
+  }
 }
 
 /// The workers awake: alive and not on the idle list (decision 0377).
@@ -3698,6 +3725,7 @@ fn mon_scan(p: Int) -> Int {
   let now = sysio.mono_ns()
   var pending = false
   var acted = false
+  var blocked = 0
   // work waits, no worker is idle to take it, and no other can start
   // (wakep wakes or starts one then: preempting then only moved the waiting task
   // onto the long runner's thread, TestRuntimeTasks' magazines, whose
@@ -3714,6 +3742,14 @@ fn mon_scan(p: Int) -> Int {
     let w = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
     let ra = rt.slot_load(w, W_RUN_AT_I, RELAXED)
     let ask = rt.slot_load(w, W_PREEMPT_I, RELAXED)
+    // in a `use c` call (decision 0675): never asked to yield or signaled,
+    // and blocked when in the same call as at the last tick
+    let cs = rt.slot_load(w, W_CSEQ_I, ACQUIRE)
+    let in_c = cs & 1 == 1
+    if in_c && rt.mem_load(w, W_CSEEN, 8) == cs {
+      blocked = blocked.wrapping_add(1)
+    }
+    rt.mem_store(w, W_CSEEN, cs, 8)
     // a fiber SIGURG preempted waits for its own worker (decision 0318),
     // which no other worker can help: work waits for it alone (a plain
     // read of the worker's word, a hint)
@@ -3730,13 +3766,13 @@ fn mon_scan(p: Int) -> Int {
       // an ask not served in a slice (the worker blocked, or no work
       // waits any more) is withdrawn: while any is out every worker's
       // polls call the stub
-      if (!waiting || now.wrapping_sub(ask) >= SLICE_NS) && rt.slot_cas(w, W_PREEMPT_I, ask, 0, RELAXED) {
+      if (in_c || !waiting || now.wrapping_sub(ask) >= SLICE_NS) && rt.slot_cas(w, W_PREEMPT_I, ask, 0, RELAXED) {
         let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
       } else if async {
         // the handler declined (runtime code, a lock held): again
         async_kick(w)
       }
-    } else if waiting && ra != 0 {
+    } else if waiting && ra != 0 && !in_c {
       pending = true
       if cpu.ticks_ns(cpu.ticks().wrapping_sub(ra)) >= SLICE_NS && rt.slot_cas(w, W_PREEMPT_I, 0, now, RELAXED) {
         acted = true
@@ -3763,6 +3799,22 @@ fn mon_scan(p: Int) -> Int {
       }
     }
     i = i.wrapping_add(1)
+  }
+  // workers blocked in C (decision 0675, Go's handoffp): while work waits
+  // and no worker is idle they leave their slots of the cap, and wakep
+  // starts or wakes a worker for the work; the allowance follows the
+  // count each tick, and keeps the monitor ticking while one is in C
+  let extra = rt.slot_load(p, P_CEXTRA_I, RELAXED)
+  let want = if blocked > 0 && any_work(p) != 0 && rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 { blocked } else if blocked > 0 && extra > 0 { if extra < blocked { extra } else { blocked } } else { 0 }
+  if want != extra {
+    rt.slot_store(p, P_CEXTRA_I, want, SEQ_CST)
+  }
+  if blocked > 0 {
+    pending = true
+  }
+  if want > extra {
+    acted = true
+    wakep(p)
   }
   if acted { 2 } else if pending { 1 } else { 0 }
 }

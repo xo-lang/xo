@@ -450,7 +450,10 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
   } else {
     sb.write("#include <${bnd.header}>\n\n")
   }
-  sb.write("int64_t xo_x_cffi_str(int64_t p, int64_t n, int64_t lenp);\n\n")
+  // the runtime's marks around each C call (decision 0675): the worker is
+  // in C, so the monitor sends it no preemption signal and hands its slot
+  // to another worker when the call blocks
+  sb.write("int64_t xo_x_cffi_str(int64_t p, int64_t n, int64_t lenp);\nvoid xo_x_c_enter(void);\nvoid xo_x_c_leave(void);\n\n")
   sb.write("static char *xo_cffi_cstr(const char *p, int64_t n) {\n\tchar *s = malloc((size_t)n + 1);\n\tif (!s) {\n\t\tabort();\n\t}\n\tif (n > 0) {\n\t\tmemcpy(s, p, (size_t)n);\n\t}\n\ts[n] = 0;\n\treturn s;\n}\n")
   for f in fns {
     let sym = "xo_${bnd.prefix}${f.xo}"
@@ -517,14 +520,18 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
     }
     match f.ret.kind {
       "void" => {
+        body.push("xo_x_c_enter();")
         body.push("${call};")
+        body.push("xo_x_c_leave();")
         for l in post {
           body.push(l)
         }
       }
       "scalar" => {
         ret = word_type(f.ret.sc)
+        body.push("xo_x_c_enter();")
         body.push("${ret} xo_r = (${ret})${conv_out(f.ret.sc, call)};")
+        body.push("xo_x_c_leave();")
         for l in post {
           body.push(l)
         }
@@ -533,7 +540,9 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       "str" => {
         ret = "void *"
         params.push("int64_t *xo_len")
+        body.push("xo_x_c_enter();")
         body.push("const char *xo_c = ${call};")
+        body.push("xo_x_c_leave();")
         body.push("if (!xo_c) {")
         body.push("\txo_c = \"\";")
         body.push("}")
@@ -546,7 +555,9 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       "bytes" => {
         ret = "void *"
         params.push("int64_t *xo_len")
+        body.push("xo_x_c_enter();")
         body.push("${f.ret.ct.base} xo_v = ${call};")
+        body.push("xo_x_c_leave();")
         body.push("const char *xo_c = (const char *)xo_v.${f.ret.bp};")
         body.push("int64_t xo_n = xo_c ? (int64_t)xo_v.${f.ret.bn} : 0;")
         body.push("if (!xo_c || xo_n < 0) {")
@@ -561,7 +572,9 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       }
       "handle" => {
         ret = "int64_t"
+        body.push("xo_x_c_enter();")
         body.push("int64_t xo_r = (int64_t)(intptr_t)${call};")
+        body.push("xo_x_c_leave();")
         for l in post {
           body.push(l)
         }
@@ -570,7 +583,9 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
       "struct" => {
         let slot = "${sym}_ret"
         sb.write("\nstatic _Thread_local struct ${f.ret.st.tag} ${slot};\n")
+        body.push("xo_x_c_enter();")
         body.push("${slot} = ${call};")
+        body.push("xo_x_c_leave();")
         for l in post {
           body.push(l)
         }

@@ -20,3 +20,11 @@ makes the mixup easy.
 Fix: pass the field's address and index 0, `rt.slot_load[Int](p +
 P_NCPU, 0, ACQUIRE)`, as budget.xo and tasks.xo do; keep byte offsets
 and word indexes in differently named constants (pool.xo's *_I names).
+
+Observed again 2026-11-16 (decision 0675, task #94): pool.xo's mon_scan read
+a new worker word through `rt.slot_load(w, W_CSEQ, ...)` with the byte
+offset 3616, 8x past the 3632 byte record; xo built with it crashed in
+`xo dev stdobj --conc=0` 2 of 6 runs (SIGBUS, SIGSEGV) while the new test
+passed on LLVM. The name now carries the index form (`W_CSEQ_I = 452`):
+give every word an `rt.slot_*` touches an `_I` constant, and run the
+compiler a few times after a runtime layout change.
