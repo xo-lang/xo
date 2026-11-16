@@ -1,0 +1,5 @@
+# twincheck: protowire: three workloads (none is the setup alone); Go is google.golang.org/protobuf/encoding/protowire (BSD-3).
+require google.golang.org/protobuf v1.36.12
+- - none
+- - write
+- - walk

@@ -1,0 +1,62 @@
+version: "2"
+linters:
+  enable:
+    - dogsled
+    - dupl
+    - errorlint
+    - exhaustive
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - goheader
+    - gomoddirectives
+    - gomodguard_v2
+    - gosec
+    - importas
+    - makezero
+    - misspell
+    - nestif
+    - nolintlint
+    - prealloc
+    - predeclared
+    - promlinter
+    - revive
+    - staticcheck
+    - tagliatelle
+    - thelper
+    - unparam
+    - whitespace
+  settings:
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+        - unnamedResult
+        - hugeParam
+      enabled-tags:
+        - performance
+        - diagnostic
+        - experimental
+        - opinionated
+    gosec:
+      excludes:
+        - G404
+    govet:
+      enable:
+        - fieldalignment
+    nestif:
+      min-complexity: 8
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - cmd
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports

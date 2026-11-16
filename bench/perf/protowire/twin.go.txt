@@ -1,0 +1,118 @@
+// The Go twin of main.xo: the same message written with
+// google.golang.org/protobuf/encoding/protowire's Append functions and
+// walked with its Consume functions into a slice of fields, as
+// std/protowire.walk returns a List of its Fld; a string field's bytes are
+// checked as UTF-8 as protowire.text does.
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"unicode/utf8"
+
+	"google.golang.org/protobuf/encoding/protowire"
+)
+
+type fld struct {
+	num  int
+	wire int
+	v    int
+	data []byte
+	raw  []byte
+}
+
+func doc() []byte {
+	o := make([]byte, 0, 256*1024)
+	for i := 0; i < 10000; i++ {
+		if v := i * i * 37; v != 0 {
+			o = protowire.AppendTag(o, 1, protowire.VarintType)
+			o = protowire.AppendVarint(o, uint64(v))
+		}
+		s := "record " + strconv.Itoa(i)
+		o = protowire.AppendTag(o, 2, protowire.BytesType)
+		o = protowire.AppendString(o, s)
+		v := i % 3
+		if i%7 == 0 {
+			v = -i
+		}
+		o = protowire.AppendTag(o, 3, protowire.VarintType)
+		o = protowire.AppendVarint(o, uint64(v))
+	}
+	return o
+}
+
+func walkFields(b []byte) []fld {
+	var out []fld
+	at := 0
+	for at < len(b) {
+		start := at
+		num, typ, n := protowire.ConsumeTag(b[at:])
+		if n < 0 {
+			panic(protowire.ParseError(n))
+		}
+		at += n
+		f := fld{num: int(num), wire: int(typ)}
+		switch typ {
+		case protowire.VarintType:
+			x, m := protowire.ConsumeVarint(b[at:])
+			if m < 0 {
+				panic(protowire.ParseError(m))
+			}
+			f.v = int(x)
+			at += m
+		case protowire.BytesType:
+			d, m := protowire.ConsumeBytes(b[at:])
+			if m < 0 {
+				panic(protowire.ParseError(m))
+			}
+			f.data = d
+			at += m
+		default:
+			m := protowire.ConsumeFieldValue(num, typ, b[at:])
+			if m < 0 {
+				panic(protowire.ParseError(m))
+			}
+			at += m
+		}
+		f.raw = b[start:at]
+		out = append(out, f)
+	}
+	return out
+}
+
+func walk(b []byte) int {
+	fs := walkFields(b)
+	sum := len(fs)
+	for _, f := range fs {
+		if f.wire == 0 {
+			sum++
+		} else if f.wire == 2 {
+			if !utf8.Valid(f.data) {
+				panic("text")
+			}
+			sum += len(f.data)
+		}
+	}
+	return sum
+}
+
+func main() {
+	w := "walk"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	data := doc()
+	sum := len(data)
+	switch w {
+	case "write":
+		for i := 0; i < 300; i++ {
+			sum += len(doc())
+		}
+	case "walk":
+		for i := 0; i < 300; i++ {
+			sum += walk(data)
+		}
+	}
+	fmt.Println(w, sum)
+}

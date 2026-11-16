@@ -1,0 +1,50 @@
+// The Go twin of main.xo: github.com/cenkalti/backoff/v4's
+// ExponentialBackOff with its defaults (MaxElapsedTime 0, no limit),
+// NextBackOff 50 times and Reset per schedule, from math/rand's
+// top-level generator.
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/cenkalti/backoff/v4"
+)
+
+func main() {
+	w := "schedule"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	runs, per := 20000, 50
+	switch w {
+	case "schedule":
+		b := backoff.NewExponentialBackOff()
+		b.RandomizationFactor = 0
+		b.MaxElapsedTime = 0
+		sum := int64(0)
+		for r := 0; r < runs; r++ {
+			b.Reset()
+			for a := 0; a < per; a++ {
+				sum += b.NextBackOff().Milliseconds()
+			}
+		}
+		fmt.Println("schedule", runs*per, sum)
+	case "jitter":
+		b := backoff.NewExponentialBackOff()
+		b.MaxElapsedTime = 0
+		k := 0
+		for r := 0; r < runs; r++ {
+			b.Reset()
+			for a := 0; a < per; a++ {
+				if b.NextBackOff() <= 60*time.Second {
+					k++
+				}
+			}
+		}
+		fmt.Println("jitter", runs*per, (k*100+runs*per/2)/(runs*per))
+	default:
+		fmt.Println("none 0 0")
+	}
+}

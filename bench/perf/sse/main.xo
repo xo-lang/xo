@@ -1,0 +1,48 @@
+// std/sse against github.com/tmaxmax/go-sse: 100,000 events (an id
+// each, the type `tick` on every third, two data lines) encoded one by one
+// (`encode`, the text's length summed), and the stream of them parsed in
+// 32 KiB chunks 10 times (`parse`, the events, the `tick` events and the
+// data bytes counted); `none` is the setup alone. Usage:
+// `<program> none|encode|parse`. Prints `<workload> <checksum>`; the twin
+// (twin.go.txt) prints the same.
+use std/sse
+
+fn event(i: Int) -> Str {
+  sse.encode("line a ${i}\nline b", event: if i % 3 == 0 { "tick" } else { "" }, id: Some("${i}"))
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "parse"
+  let n = 100000
+  if w == "encode" {
+    var sum = 0
+    for i in 0..n {
+      sum += event(i).len()
+    }
+    os.stdio.println("encode ${sum}")
+  } else if w == "parse" {
+    var o = StrBuilder.new()
+    for i in 0..n {
+      o.write(event(i))
+    }
+    let stream = o.freeze().bytes()
+    var sum = 0
+    for _ in 0..10 {
+      var p = sse.parser()
+      var at = 0
+      while at < stream.len() {
+        let end = if at + 32768 < stream.len() { at + 32768 } else { stream.len() }
+        for e in p.feed(stream[at..end]).ok() ?? fault("feed") {
+          sum += 1 + e.data.len()
+          if e.event == "tick" {
+            sum += 1000
+          }
+        }
+        at = end
+      }
+    }
+    os.stdio.println("parse ${sum}")
+  } else {
+    os.stdio.println("none 0")
+  }
+}

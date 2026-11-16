@@ -1,0 +1,63 @@
+// The Go twin of main.xo: github.com/tmaxmax/go-sse's Message (AppendData,
+// MarshalText) and Read (over a bytes.Reader, which go-sse's parser reads
+// through its own buffer).
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"strconv"
+
+	sse "github.com/tmaxmax/go-sse"
+)
+
+func event(i int) []byte {
+	m := &sse.Message{ID: sse.ID(strconv.Itoa(i))}
+	if i%3 == 0 {
+		m.Type = sse.Type("tick")
+	}
+	m.AppendData("line a " + strconv.Itoa(i) + "\nline b")
+	b, err := m.MarshalText()
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func main() {
+	w := "parse"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	n := 100000
+	switch w {
+	case "encode":
+		sum := 0
+		for i := 0; i < n; i++ {
+			sum += len(event(i))
+		}
+		fmt.Println("encode", sum)
+	case "parse":
+		var o bytes.Buffer
+		for i := 0; i < n; i++ {
+			o.Write(event(i))
+		}
+		stream := o.Bytes()
+		sum := 0
+		for r := 0; r < 10; r++ {
+			for e, err := range sse.Read(bytes.NewReader(stream), nil) {
+				if err != nil {
+					panic(err)
+				}
+				sum += 1 + len(e.Data)
+				if e.Type == "tick" {
+					sum += 1000
+				}
+			}
+		}
+		fmt.Println("parse", sum)
+	default:
+		fmt.Println("none 0")
+	}
+}

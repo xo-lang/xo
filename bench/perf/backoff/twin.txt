@@ -1,0 +1,5 @@
+# twincheck: backoff: three workloads (none is the setup alone); Go is github.com/cenkalti/backoff/v4 (MIT). The jitter draws are random on both sides; its statistic is a share that agrees with overwhelming probability.
+require github.com/cenkalti/backoff/v4 v4.3.0
+- - none
+- - schedule
+- - jitter

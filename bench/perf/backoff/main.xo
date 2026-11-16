@@ -1,0 +1,38 @@
+// std/backoff against github.com/cenkalti/backoff/v4's ExponentialBackOff:
+// 20,000 schedules of 50 delays each (the defaults: 500ms, times 1.5, at
+// most 60s), without jitter (`schedule`, the delays summed in
+// milliseconds) and with the default jitter of 0.5 (`jitter`, a share of
+// the delays at most 60s); `none` is the setup alone. Usage:
+// `<program> none|schedule|jitter`. Prints `<workload> <delays> <statistic>`;
+// the twin (twin.go.txt) prints the same. Go's schedule calls NextBackOff
+// in turn and Reset between schedules; Xo's is delay(attempt).
+use std/backoff
+
+fn main(os: Os) uses stdio, env, rand {
+  let w = os.env.args().get(0) ?? "schedule"
+  let runs = 20000
+  let per = 50
+  if w == "schedule" {
+    let b = backoff.Backoff{randomization: 0.0, max_elapsed: 0s}
+    var sum = 0
+    for _ in 0..runs {
+      for a in 0..per {
+        sum += b.delay(a, os.rand).millis()
+      }
+    }
+    os.stdio.println("schedule ${runs * per} ${sum}")
+  } else if w == "jitter" {
+    let b = backoff.Backoff{max_elapsed: 0s}
+    var k = 0
+    for _ in 0..runs {
+      for a in 0..per {
+        if b.delay(a, os.rand) <= 60s {
+          k += 1
+        }
+      }
+    }
+    os.stdio.println("jitter ${runs * per} ${(k * 100 + runs * per / 2) / (runs * per)}")
+  } else {
+    os.stdio.println("none 0 0")
+  }
+}

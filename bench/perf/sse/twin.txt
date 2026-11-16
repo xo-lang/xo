@@ -1,0 +1,5 @@
+# twincheck: sse: three workloads (none is the setup alone); Go is github.com/tmaxmax/go-sse (MIT).
+require github.com/tmaxmax/go-sse v0.12.0
+- - none
+- - encode
+- - parse

@@ -1,0 +1,5 @@
+# twincheck: protojson: three workloads (none is the setup alone); Go is google.golang.org/protobuf (BSD-3) with the protoc-gen-go messages of bench/perf/protobuf (govendor links to that bench's govendor).
+require google.golang.org/protobuf v1.36.12
+- - none
+- - marshal
+- - unmarshal
