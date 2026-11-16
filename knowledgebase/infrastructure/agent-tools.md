@@ -1663,6 +1663,18 @@ Last verified: 2026-11-15
     output as OFFLOAD-FREE-MB, xwhook.sh's xw_host_disk sends it).
     retry-storm: one lease name (not a .sh default) started over 5 times
     in 30 min. Last verified: 2026-11-16.
+  - Main-failure bisect (#137, owner 2026-11-16): when the hourly main
+    check (hourly.sh) or ctier fails a test, it starts `mainbisect.sh
+    --from-log LOG GOOD BAD` detached: the first failed top-level test of
+    the log is bisected over GOOD..BAD's first-parent line on host 2
+    (mainbisect-remote.sh: xo built and that one test run at each point,
+    at most MB_MAX points, default 9, in one lease of at most MB_MAX_MIN
+    minutes, default 120). Its `bisect.done` event becomes a `bisect`
+    alert to the first bad commit's owner (by the push that carried it,
+    else its task), or to the lead with a narrowed range. By hand:
+    `mainbisect.sh GOOD BAD ./PKG TestName`; MAINBISECT=0 turns the
+    automatic run off; logs in $LEAD/notes/bisect/. Last verified:
+    2026-11-16.
   - `xw isdone TERM...` (before assigning; replaces agents/isdone.sh):
     main commits of 21 days, xw tasks in any state, xw decisions,
     knowledgebase decisions, std change logs and spec/std.md that hold
