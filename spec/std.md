@@ -6231,7 +6231,27 @@ pub enum WordEncoding { B, Q }
 pub fn encode_word(s: Str, charset: Str = "utf-8", encoding: WordEncoding = WordEncoding.Q) -> Str
 pub fn decode_word(word: Str) -> Str ! MimeErr
 pub fn decode_header(header: Str) -> Str ! MimeErr
+pub fn decode_word_with[fx: Effects](word: Str, reader: fn(Str, Bytes) -> Str ! MimeErr uses fx) -> Str ! MimeErr uses fx
+pub fn decode_header_with[fx: Effects](header: Str, reader: fn(Str, Bytes) -> Str ! MimeErr uses fx) -> Str ! MimeErr uses fx
+pub fn qp_encode(data: Bytes, binary: Bool = false) -> Bytes   // Go's quotedprintable.Writer, then Close
+pub fn qp_decode(data: Bytes) -> Bytes ! MimeErr              // Go's quotedprintable.Reader, read to the end
 ```
+
+- `qp_encode` and `qp_decode` are Go's mime/quotedprintable (RFC 2045
+  6.7) over the whole of data. Encoding writes lines of at most 76 bytes
+  with soft line breaks (`=` CRLF), `=XX` for `=` and bytes outside `!`
+  to `~` but space and tab, a line break as CRLF, and a space or tab at
+  a line's end as `=20` or `=09`; with `binary` (Go's `Writer.Binary`)
+  CR and LF are encoded as other bytes. Decoding takes `=XX` in either
+  case, `=` with CRLF or LF (spaces and tabs before it) as a soft break,
+  drops a line's trailing spaces, tabs and CR, keeps a `=` not followed
+  by two hex digits unless the line ends there, accepts a soft break at
+  the end and bytes from 128 up, and fails with Go's texts
+  (`quotedprintable: invalid unescaped byte 0x00 in body`, `... invalid
+  hex byte 0x0d`, `... invalid bytes after =: "\r"`, `unexpected EOF`),
+  and `bufio: buffer full` for a line of 4096 bytes or more before its
+  LF, as Go's Reader does (its bufio buffer); a line's bad byte before
+  that limit is the error first.
 
 - `encode_word`, `decode_word` and `decode_header` are Go's RFC 2047
   `WordEncoder.Encode`, `WordDecoder.Decode` and `DecodeHeader` with no
@@ -6243,7 +6263,11 @@ pub fn decode_header(header: Str) -> Str ! MimeErr
   errors (`mime: invalid RFC 2047 encoded-word`, `illegal base64 data at
   input byte N`, `mime: invalid hex byte 0x..`, `mime: unhandled charset
   "x"`). `decode_header` drops white space between two encoded words and
-  keeps a word that does not decode as written.
+  keeps a word that does not decode as written. `decode_word_with` and
+  `decode_header_with` are the same with Go's `CharsetReader`: a word in
+  another charset goes to `reader` with the charset in lower case and
+  the word's bytes, and its text or error is the result (std/charset's
+  converters fit it).
 
 - `parse_media_type` is `mime.ParseMediaType`: the type before any `;`
   (lower cased, `type/subtype` or a single token, else `mime: no media

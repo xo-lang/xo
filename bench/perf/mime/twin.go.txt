@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"mime"
+	"mime/quotedprintable"
 	"net/http"
 	"os"
 )
@@ -33,6 +36,12 @@ func main() {
 		[]byte("\x00\x01\x02\x03\x04\x05\x06\x07"),
 	}
 	params := map[string]string{"charset": "utf-8", "q": "a b"}
+	qtext := []byte("Grüße aus Köln, café = 3 € \tand a line long enough that the writer has to break it with a soft line break somewhere around here.\r\nNext line  \r\n")
+	var qb bytes.Buffer
+	qw := quotedprintable.NewWriter(&qb)
+	qw.Write(qtext)
+	qw.Close()
+	qenc := qb.Bytes()
 	sum := 0
 	for i := 0; i < 200000; i++ {
 		switch w {
@@ -56,6 +65,15 @@ func main() {
 			sum += len(mime.TypeByExtension(exts[i%8]))
 		case "detect":
 			sum += len(http.DetectContentType(heads[i%7]))
+		case "qpenc":
+			var b bytes.Buffer
+			w := quotedprintable.NewWriter(&b)
+			w.Write(qtext)
+			w.Close()
+			sum += b.Len()
+		case "qpdec":
+			out, _ := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(qenc)))
+			sum += len(out)
 		default:
 			sum += len(values[i%6]) + len(exts[i%8])
 		}

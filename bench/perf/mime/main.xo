@@ -1,8 +1,9 @@
 // mime: std/mime against Go's mime package and net/http's
 // DetectContentType (twin.go.txt): parse_media_type over six values (one
 // malformed), format_media_type, type_by_extension and
-// detect_content_type over seven headers, 200,000 passes each; `none` is
-// the loop alone. Usage: `<program> none|parse|format|ext|detect`. Prints
+// detect_content_type over seven headers, qp_encode and qp_decode of a
+// 160 byte text (Go's mime/quotedprintable), 200,000 passes each; `none` is
+// the loop alone. Usage: `<program> none|parse|format|ext|detect|qpenc|qpdec`. Prints
 // `<workload> <checksum>`; the twin prints the same.
 use std/mime
 
@@ -29,6 +30,8 @@ fn main(os: Os) uses stdio, env {
     b"\x00\x01\x02\x03\x04\x05\x06\x07",
   ]
   let params: Map[Str, Str] = {"charset": "utf-8", "q": "a b"}
+  let qtext = "Grüße aus Köln, café = 3 € \tand a line long enough that the writer has to break it with a soft line break somewhere around here.\r\nNext line  \r\n".bytes()
+  let qenc = mime.qp_encode(qtext)
   var sum = 0
   for i in 0..200000 {
     if w == "parse" {
@@ -47,6 +50,10 @@ fn main(os: Os) uses stdio, env {
       sum += (mime.type_by_extension(EXTS[i % 8]) ?? "").len()
     } else if w == "detect" {
       sum += mime.detect_content_type(heads[i % 7]).len()
+    } else if w == "qpenc" {
+      sum += mime.qp_encode(qtext).len()
+    } else if w == "qpdec" {
+      sum += (mime.qp_decode(qenc).ok() ?? b"").len()
     } else {
       sum += VALUES[i % 6].len() + EXTS[i % 8].len()
     }

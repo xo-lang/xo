@@ -792,6 +792,12 @@ pub fn encode_word(s: Str, charset: Str = "utf-8", encoding: WordEncoding = Word
 /// encoded-word`, base64's `illegal base64 data at input byte N`, `mime:
 /// invalid hex byte 0x..`, `mime: unhandled charset "x"`.
 pub fn decode_word(word: Str) -> Str ! MimeErr {
+  let (charset, content) = word_parts(word)?
+  convert_charset(charset, content)
+}
+
+/// An encoded word's charset (as written) and decoded bytes.
+fn word_parts(word: Str) -> (Str, Bytes) ! MimeErr {
   let b = word.bytes()
   if b.len() < 8 || !word.starts_with("=?") || !word.ends_with("?=") || count_q(b) != 4 {
     return Err(err(INVALID_WORD))
@@ -805,8 +811,18 @@ pub fn decode_word(word: Str) -> Str ! MimeErr {
   if enc.len() != 1 {
     return Err(err(INVALID_WORD))
   }
-  let content = word_content(enc.bytes()[0], text)?
-  convert_charset(charset, content)
+  (charset, word_content(enc.bytes()[0], text)?)
+}
+
+/// decode_word with Go's WordDecoder.CharsetReader: a charset other than
+/// UTF-8, ISO-8859-1 and US-ASCII goes to reader, in lower case, with the
+/// word's bytes, and its text (or error) is the result.
+pub fn decode_word_with[fx: Effects](word: Str, reader: fn(Str, Bytes) -> Str ! MimeErr uses fx) -> Str ! MimeErr uses fx {
+  let (charset, content) = word_parts(word)?
+  match known_charset(charset, content) {
+    Some(t) => Ok(t)
+    None => reader(charset.to_lower(), content)
+  }
 }
 
 /// A header with its encoded words decoded (WordDecoder.DecodeHeader):
@@ -814,6 +830,18 @@ pub fn decode_word(word: Str) -> Str ! MimeErr {
 /// word that does not decode is kept as written; an unhandled charset is
 /// the error, as decode_word's.
 pub fn decode_header(header: Str) -> Str ! MimeErr {
+  decode_header_by(header, fn(charset: Str, _content: Bytes) -> Str ! MimeErr { Err(err("mime: unhandled charset ${charset.quote()}")) })
+}
+
+/// decode_header with Go's WordDecoder.CharsetReader (decode_word_with's
+/// reader for the other charsets).
+pub fn decode_header_with[fx: Effects](header: Str, reader: fn(Str, Bytes) -> Str ! MimeErr uses fx) -> Str ! MimeErr uses fx {
+  decode_header_by(header, fn(charset: Str, content: Bytes) -> Str ! MimeErr { reader(charset.to_lower(), content) })
+}
+
+/// DecodeHeader with other's text for a charset the three are not (given
+/// as the word wrote it).
+fn decode_header_by[fx: Effects](header: Str, other: fn(Str, Bytes) -> Str ! MimeErr uses fx) -> Str ! MimeErr uses fx {
   let first = match header.find("=?") {
     Some(i) => i
     None => return header
@@ -854,7 +882,10 @@ pub fn decode_header(header: Str) -> Str ! MimeErr {
         if start > 0 && (!between || has_non_ws(h[0..start])) {
           buf.write(h[0..start])
         }
-        buf.write(convert_charset(charset, content)?)
+        buf.write(match known_charset(charset, content) {
+          Some(t) => t
+          None => other(charset, content)?
+        })
         h = h[end..]
         between = true
       }
@@ -1036,25 +1067,34 @@ fn hex_byte(b: UInt8) -> Str {
 }
 
 fn convert_charset(charset: Str, content: Bytes) -> Str ! MimeErr {
+  match known_charset(charset, content) {
+    Some(t) => Ok(t)
+    None => Err(err("mime: unhandled charset ${charset.quote()}"))
+  }
+}
+
+/// content in UTF-8, ISO-8859-1 or US-ASCII as text; None for another
+/// charset.
+fn known_charset(charset: Str, content: Bytes) -> Str? {
   let l = charset.to_lower()
   if l == "utf-8" {
-    return to_text(content)
+    return Some(to_text(content))
   }
   if l == "iso-8859-1" {
     var out = StrBuilder.new()
     for c in content {
       out.write("${Rune(Int(c))}")
     }
-    return out.freeze()
+    return Some(out.freeze())
   }
   if l == "us-ascii" {
     var out = StrBuilder.new()
     for c in content {
       out.write(if c >= 128 { "\u{FFFD}" } else { "${Rune(Int(c))}" })
     }
-    return out.freeze()
+    return Some(out.freeze())
   }
-  Err(err("mime: unhandled charset ${charset.quote()}"))
+  None
 }
 
 /// content as UTF-8, a U+FFFD for each byte that is not.
@@ -1136,4 +1176,256 @@ fn b64_bad_at(src: Bytes) -> Int {
     }
   }
   n
+}
+
+// Quoted-printable (RFC 2045 section 6.7): Go's mime/quotedprintable
+// (go1.26 reader.go and writer.go), its Writer over all of data and then
+// Close, and its Reader over all of data.
+
+/// Go's quotedprintable.Writer: data in quoted-printable, lines of at most
+/// 76 bytes broken by a soft line break (`=` CRLF), `=` and the bytes
+/// outside `!` to `~` (but space and tab) as `=XX`, a line break as CRLF,
+/// and a space or tab before a line break or at the end as `=20` or
+/// `=09`. With binary (Go's Writer.Binary) CR and LF are bytes like any
+/// other (`=0D`, `=0A`).
+pub fn qp_encode(data: Bytes, binary: Bool = false) -> Bytes {
+  var w = QpWriter{out: BytesBuilder.with_capacity(data.len() + data.len() / 8 + 8), col: 0, pend: -1, cr: false}
+  let n = data.len()
+  var i = 0
+  while i < n {
+    let b = data[i]
+    if qp_plain(b) {
+      // a run of plain bytes goes out as slices of what fits on the line
+      var j = i + 1
+      while j < n && qp_plain(data[j]) {
+        j += 1
+      }
+      w.run(data, i, j)
+      i = j
+      continue
+    }
+    if qp_ws(b) || !binary && (b == 10 || b == 13) {
+      w.put(b)
+    } else {
+      w.encode(b)
+    }
+    i += 1
+  }
+  w.check_last()
+  w.out.freeze()
+}
+
+/// Go's quotedprintable.Reader over all of data: `=XX` (upper or lower
+/// case hex) is the byte, a soft line break (`=` then CRLF or LF, spaces
+/// and tabs between) is nothing, a line's trailing spaces, tabs and CR are
+/// dropped (its LF or CRLF kept), and a `=` not followed by two hex digits
+/// is itself unless the line ends there. Bytes from 128 up pass through.
+/// Go's errors: `quotedprintable: invalid unescaped byte 0x00 in body`,
+/// `quotedprintable: invalid hex byte 0x0d`, `quotedprintable: invalid
+/// bytes after =: "\r"`, `unexpected EOF`, and `bufio: buffer full` for a
+/// line of 4096 bytes or more before its LF (the Reader's bufio buffer).
+pub fn qp_decode(data: Bytes) -> Bytes ! MimeErr {
+  var out = BytesBuilder.with_capacity(data.len())
+  var at = 0
+  let n = data.len()
+  while at < n {
+    // ReadSlice('\n') over a 4096 byte bufio.Reader
+    var end = at
+    while end < n && data[end] != 10 {
+      end += 1
+    }
+    // a line of 4096 bytes before its LF fills the buffer: its first
+    // 4096 bytes are read, then the error
+    let full = end - at >= 4096
+    let has_lf = end < n && !full
+    let stop = if full { at + 4096 } else if has_lf { end + 1 } else { end }
+    let whole = data[at..stop]
+    at = stop
+    // ReadSlice's io.EOF: the last line, without an LF
+    let eof = !has_lf && !full
+    var k = whole.len()
+    while k > 0 && (whole[k - 1] == 32 || whole[k - 1] == 9 || whole[k - 1] == 13 || whole[k - 1] == 10) {
+      k -= 1
+    }
+    var line = whole[0..k]
+    var tail = b""
+    var after: List[MimeErr] = if full { [err("bufio: buffer full")] } else { [] }
+    if k > 0 && whole[k - 1] == 61 {
+      var j = k
+      while j < whole.len() && (whole[j] == 32 || whole[j] == 9) {
+        j += 1
+      }
+      let rest = whole[j..]
+      line = whole[0..k - 1]
+      let crlf_next = rest.len() >= 1 && rest[0] == 10 || rest.len() >= 2 && rest[0] == 13 && rest[1] == 10
+      if !crlf_next && !(rest.len() == 0 && line.len() > 0 && eof) {
+        after = [err("quotedprintable: invalid bytes after =: ${qp_quote(rest)}")]
+      }
+    } else if has_lf {
+      tail = if whole.len() >= 2 && whole[whole.len() - 2] == 13 { b"\r\n" } else { b"\n" }
+    }
+    let l = if tail.len() == 0 { line } else { line + tail }
+    var i = 0
+    while i < l.len() {
+      let b = l[i]
+      if b == 61 {
+        let hb = if i + 1 < l.len() { qp_hex(l[i + 1]) } else { -2 }
+        let lb = if i + 2 < l.len() { qp_hex(l[i + 2]) } else { -2 }
+        if hb >= 0 && lb >= 0 {
+          out.write_byte(UInt8(hb * 16 + lb))
+          i += 3
+          continue
+        }
+        if i + 1 < l.len() && l[i + 1] != 13 && l[i + 1] != 10 {
+          // a = not followed by two hex digits is itself
+          out.write_byte(b)
+          i += 1
+          continue
+        }
+        if i + 2 >= l.len() {
+          return Err(err("unexpected EOF"))
+        }
+        let bad = if hb < 0 { l[i + 1] } else { l[i + 2] }
+        return Err(err("quotedprintable: invalid hex byte 0x${qp_hex2(bad)}"))
+      }
+      if !(b == 9 || b == 13 || b == 10 || b >= 128) && (b < 32 || b > 126) {
+        return Err(err("quotedprintable: invalid unescaped byte 0x${qp_hex2(b)} in body"))
+      }
+      out.write_byte(b)
+      i += 1
+    }
+    if !after.is_empty() {
+      return Err(after[0])
+    }
+  }
+  out.freeze()
+}
+
+/// Go's Writer, with its line held as what went out: col bytes of the
+/// line so far, the last of them a space or tab not yet written when pend
+/// is that byte (checkLastByte may encode it), and whether the last byte
+/// was CR.
+struct QpWriter {
+  out: BytesBuilder
+  col: Int
+  pend: Int
+  cr: Bool
+}
+
+fn qp_ws(b: UInt8) -> Bool { b == 32 || b == 9 }
+
+/// Go's batched bytes: `!` to `~` but `=`.
+fn qp_plain(b: UInt8) -> Bool { b >= 33 && b <= 126 && b != 61 }
+
+/// The held space or tab, as itself.
+fn (var w: QpWriter) release() {
+  if w.pend >= 0 {
+    w.out.write_byte(UInt8(w.pend))
+    w.pend = -1
+  }
+}
+
+/// Go's write of data[i..j], all plain: as many as fit before column 75,
+/// then a soft line break, as Go's byte loop does.
+fn (var w: QpWriter) run(data: Bytes, i: Int, j: Int) {
+  w.release()
+  var at = i
+  while at < j {
+    if w.col == 75 {
+      w.soft_break()
+    }
+    let k = if j - at < 75 - w.col { j } else { at + 75 - w.col }
+    w.out.write(data[at..k])
+    w.col += k - at
+    at = k
+  }
+  w.cr = false
+}
+
+/// Go's write, one byte: a line break, or a space or tab (held) after a
+/// soft line break at 75.
+fn (var w: QpWriter) put(b: UInt8) {
+  if b == 10 || b == 13 {
+    // the CRLF of a CR LF pair went out with the CR
+    if w.cr && b == 10 {
+      w.cr = false
+      return
+    }
+    if b == 13 {
+      w.cr = true
+    }
+    w.check_last()
+    w.crlf()
+    return
+  }
+  if w.col == 75 {
+    w.soft_break()
+  }
+  w.release()
+  w.pend = Int(b)
+  w.col += 1
+  w.cr = false
+}
+
+fn (var w: QpWriter) encode(b: UInt8) {
+  if 75 - w.col < 3 {
+    w.soft_break()
+  }
+  w.release()
+  w.out.write_byte(61)
+  w.out.write_byte(qp_upper_hex(Int(b) >> 4))
+  w.out.write_byte(qp_upper_hex(Int(b) & 15))
+  w.col += 3
+}
+
+/// checkLastByte: a space or tab at the end of a line is encoded.
+fn (var w: QpWriter) check_last() {
+  if w.pend >= 0 {
+    let b = UInt8(w.pend)
+    w.pend = -1
+    w.col -= 1
+    w.encode(b)
+  }
+}
+
+fn (var w: QpWriter) soft_break() {
+  w.release()
+  w.out.write_byte(61)
+  w.crlf()
+}
+
+fn (var w: QpWriter) crlf() {
+  w.release()
+  w.out.write_byte(13)
+  w.out.write_byte(10)
+  w.col = 0
+}
+
+/// Go's upperhex digit of d (0 to 15).
+fn qp_upper_hex(d: Int) -> UInt8 { UInt8(if d < 10 { 48 + d } else { 55 + d }) }
+
+fn qp_hex(c: UInt8) -> Int {
+  if c >= 48 && c <= 57 {
+    Int(c) - 48
+  } else if c >= 65 && c <= 70 {
+    Int(c) - 55
+  } else if c >= 97 && c <= 102 {
+    Int(c) - 87
+  } else {
+    -1
+  }
+}
+
+fn qp_hex2(b: UInt8) -> Str {
+  let h = "0123456789abcdef"
+  h[Int(b) >> 4..(Int(b) >> 4) + 1] + h[Int(b) & 15..(Int(b) & 15) + 1]
+}
+
+/// Go's %q of the bytes after a soft break's =: spaces, tabs, CR and LF.
+fn qp_quote(b: Bytes) -> Str {
+  var s = "\""
+  for c in b {
+    s += if c == 13 { "\\r" } else if c == 10 { "\\n" } else if c == 9 { "\\t" } else { " " }
+  }
+  s + "\""
 }

@@ -83,6 +83,7 @@ var generators = map[string]func() string{
 	"mail":         mailCorpus,
 	"metrics":      metricsCorpus,
 	"mime":         mimeCorpus,
+	"qp":           qpCorpus,
 	"multipart":    multipartCorpus,
 	"template":     templateCorpus,
 	"strconv":      strconvCorpus,

@@ -1373,3 +1373,131 @@ test "builtin_type answers every BUILTIN extension, as BUILTIN does" {
   expect(type_by_extension(".HTML")) == Some("text/html; charset=utf-8")
   expect(type_by_extension(".nope")) == None
 }
+
+// Quoted-printable: Go's mime/quotedprintable tests (go1.26, BSD-3-Clause, Copyright 2015 The Go Authors).
+
+/// Go's TestReader (go1.26 mime/quotedprintable reader_test.go): input, output, error ("" for none)
+const QP_READ: List[(Bytes, Bytes, Str)] = [
+  (b"", b"", ""),
+  (b"foo bar", b"foo bar", ""),
+  (b"foo bar=3D", b"foo bar=", ""),
+  (b"foo bar=3d", b"foo bar=", ""),
+  (b"foo bar=\n", b"foo bar", ""),
+  (b"foo bar\n", b"foo bar\n", ""),
+  (b"foo bar=0", b"foo bar=0", ""),
+  (b"foo bar=0D=0A", b"foo bar\r\n", ""),
+  (b" A B        \r\n C ", b" A B\r\n C", ""),
+  (b" A B =\r\n C ", b" A B  C", ""),
+  (b" A B =\n C ", b" A B  C", ""),
+  (b"foo=\nbar", b"foobar", ""),
+  (b"foo\x00bar", b"foo", "quotedprintable: invalid unescaped byte 0x00 in body"),
+  (b"foo bar\xff", b"foo bar\xff", ""),
+  (b"=3D30\n", b"=30\n", ""),
+  (b"=00=FF0=\n", b"\x00\xff0", ""),
+  (b"foo  \n", b"foo\n", ""),
+  (b"foo  \n\nfoo =\n\nfoo=20\n\n", b"foo\n\nfoo \nfoo \n\n", ""),
+  (b"foo\nbar", b"foo\nbar", ""),
+  (b"foo\rbar", b"foo\rbar", ""),
+  (b"foo\r\nbar", b"foo\r\nbar", ""),
+  (b"foo=\r\nbar", b"foobar", ""),
+  (b"foo=\nbar", b"foobar", ""),
+  (b"foo=\rbar", b"foo", "quotedprintable: invalid hex byte 0x0d"),
+  (b"foo=\r\r\r \nbar", b"foo", "quotedprintable: invalid bytes after =: \"\\r\\r\\r \\n\""),
+  (b"foo=", b"foo", ""),
+  (b"=", b"", "quotedprintable: invalid bytes after =: \"\""),
+  (b"Now's the time =\nfor all folk to come=\n to the aid of their country.", b"Now's the time for all folk to come to the aid of their country.", ""),
+  (b"accept UTF-8 right quotation mark: \xe2\x80\x99", b"accept UTF-8 right quotation mark: \xe2\x80\x99", ""),
+  (b"foo= \r\nbar", b"foobar", ""),
+  (b"foo=\t \r\nbar", b"foobar", ""),
+]
+
+/// Go's testWriter (writer_test.go): input, text output, Binary output ("" when it is the text one)
+const QP_WRITE: List[(Bytes, Bytes, Bytes)] = [
+  (b"", b"", b""),
+  (b"foo bar", b"foo bar", b""),
+  (b"foo bar=", b"foo bar=3D", b""),
+  (b"foo bar\r", b"foo bar\r\n", b"foo bar=0D"),
+  (b"foo bar\r\r", b"foo bar\r\n\r\n", b"foo bar=0D=0D"),
+  (b"foo bar\n", b"foo bar\r\n", b"foo bar=0A"),
+  (b"foo bar\r\n", b"foo bar\r\n", b"foo bar=0D=0A"),
+  (b"foo bar\r\r\n", b"foo bar\r\n\r\n", b"foo bar=0D=0D=0A"),
+  (b"foo bar ", b"foo bar=20", b""),
+  (b"foo bar\t", b"foo bar=09", b""),
+  (b"foo bar  ", b"foo bar =20", b""),
+  (b"foo bar \n", b"foo bar=20\r\n", b"foo bar =0A"),
+  (b"foo bar \r", b"foo bar=20\r\n", b"foo bar =0D"),
+  (b"foo bar \r\n", b"foo bar=20\r\n", b"foo bar =0D=0A"),
+  (b"foo bar  \n", b"foo bar =20\r\n", b"foo bar  =0A"),
+  (b"foo bar  \n ", b"foo bar =20\r\n=20", b"foo bar  =0A=20"),
+  (b"\xc2\xa1Hola Se\xc3\xb1or!", b"=C2=A1Hola Se=C3=B1or!", b""),
+  (b"\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~", b"\t !\"#\$%&'()*+,-./ :;<>?@[\\]^_`{|}~", b""),
+  (b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", b""),
+  (b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\r\na", b""),
+  (b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=3D", b""),
+  (b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\r\n=3D", b""),
+  (b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\r\n=3D", b""),
+  (b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\r\n=3D", b""),
+  (b"                                                                         ", b"                                                                        =20", b""),
+  (b"                                                                          ", b"                                                                         =\r\n=20", b""),
+  (b"                                                                           ", b"                                                                          =\r\n=20", b""),
+  (b"                                                                            ", b"                                                                           =\r\n=20", b""),
+  (b"                                                                             ", b"                                                                           =\r\n =20", b""),
+]
+
+test "qp_decode gives Go's quotedprintable.Reader output and errors" {
+  for (input, want, e) in QP_READ {
+    match qp_decode(input) {
+      Ok(got) => {
+        expect(e) == ""
+        expect(got) == want
+      }
+      Err(x) => expect(x.msg) == e
+    }
+  }
+}
+
+test "qp_encode gives Go's quotedprintable.Writer output, text and Binary" {
+  for (input, want, want_b) in QP_WRITE {
+    expect(qp_encode(input)) == want
+    expect(qp_encode(input, binary: true)) == if want_b.len() == 0 { want } else { want_b }
+  }
+}
+
+test "qp round trip: what qp_encode writes qp_decode reads back" {
+  var all = BytesBuilder.new()
+  for i in 0..256 {
+    all.write_byte(UInt8(i))
+  }
+  let bytes = all.freeze()
+  let long = b"x".repeat(200) + b" \t" + bytes + b"=".repeat(90)
+  expect(qp_decode(qp_encode(long, binary: true))) == Ok(long)
+  // text mode writes line breaks as CRLF
+  expect(qp_decode(qp_encode(b"a\nb \nc"))) == Ok(b"a\r\nb \r\nc")
+}
+
+test "qp_decode: a line of 4096 bytes or more is bufio: buffer full, after its bad bytes" {
+  expect(qp_decode(b"a".repeat(4095) + b"\n")) == Ok(b"a".repeat(4095) + b"\n")
+  expect(qp_decode(b"a".repeat(4095))) == Ok(b"a".repeat(4095))
+  expect(qp_decode(b"a".repeat(4096)) is Err(MimeErr{msg: "bufio: buffer full"})) == true
+  expect(qp_decode(b"\x01" + b"a".repeat(5000)) is Err(MimeErr{msg: "quotedprintable: invalid unescaped byte 0x01 in body"})) == true
+}
+
+// Go's TestCharsetDecoder and TestCharsetDecoderError (encodedword_test.go):
+// a charset reader sees the other charsets in lower case with the words'
+// bytes; the three built in ones never reach it.
+test "decode_header_with and decode_word_with hand other charsets to the reader, as Go's CharsetReader" {
+  let show = fn(charset: Str, content: Bytes) -> Str ! MimeErr { Ok("<${charset}:${content.to_hex()}>") }
+  expect(decode_header_with("=?utf-8?b?Q2Fmw6k=?=", show)) == Ok("Café")
+  expect(decode_header_with("=?ISO-8859-1?Q?caf=E9?=", show)) == Ok("café")
+  expect(decode_header_with("=?US-ASCII?Q?foo_bar?=", show)) == Ok("foo bar")
+  expect(decode_header_with("=?utf-8?Q?=?=", show)) == Ok("=?utf-8?Q?=?=")
+  expect(decode_header_with("=?utf-8?Q?=A?=", show)) == Ok("=?utf-8?Q?=A?=")
+  expect(decode_header_with("=?ISO-8859-15?Q?f=F5=F6?=  =?windows-1252?Q?b=E0r?=", show)) == Ok("<iso-8859-15:66f5f6><windows-1252:62e072>")
+  expect(decode_word_with("=?KOI8-R?B?8sXT?=", show)) == Ok("<koi8-r:f2c5d3>")
+  expect(decode_word_with("=?utf-8?q?a_b?=", show)) == Ok("a b")
+  // without a reader the charset is unhandled, as the word wrote it
+  expect(decode_word("=?KOI8-R?B?8sXT?=")) == Err(MimeErr{msg: "mime: unhandled charset \"KOI8-R\""})
+  let fail = fn(_c: Str, _b: Bytes) -> Str ! MimeErr { Err(MimeErr{msg: "Test error"}) }
+  expect(decode_header_with("=?charset?Q?foo?=", fail)) == Err(MimeErr{msg: "Test error"})
+  expect(decode_word_with("=?charset?Q?foo?=", fail)) == Err(MimeErr{msg: "Test error"})
+}

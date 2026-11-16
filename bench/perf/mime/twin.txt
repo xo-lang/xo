@@ -1,6 +1,8 @@
-# twincheck: mime: five workloads (none is the loop alone), the same names on both sides.
+# twincheck: mime: seven workloads (none is the loop alone), the same names on both sides.
 - - none
 - - parse
 - - format
 - - ext
 - - detect
+- - qpenc
+- - qpdec

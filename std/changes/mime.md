@@ -1,5 +1,25 @@
 # std/mime changes
 
+## 2026-11-16: feature: decode_word_with and decode_header_with (Go's WordDecoder.CharsetReader)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (std Proven; scripts/stdaudit/map.txt mime.WordDecoder.CharsetReader gap row)
+- Go reference: go1.26 mime/encodedword.go (convert: the charset in lower case to CharsetReader, its error returned)
+- Test: std/mime_test.xo, Go's TestCharsetDecoder and TestCharsetDecoderError, arm64, llvm and go (mime corpus unchanged)
+- Timing: none (decode_word and decode_header take the same path; the reader runs only for another charset)
+- Shipped in: not yet released
+
+## 2026-11-16: feature: quoted-printable, qp_encode and qp_decode (Go's mime/quotedprintable)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (std Proven; scripts/stdaudit/map.txt quotedprintable gap row)
+- Go reference: go1.26 mime/quotedprintable reader.go and writer.go (ported, BSD-3-Clause); its 4096 byte bufio limit on a line kept
+- Test: std/mime_test.xo (Go's TestReader and testWriter tables, a round trip, the line limit); corpus internal/stdtest/testdata/corpus/qp (scripts/stdcorpus qp.go: 412 decodes and 204 encodes of random inputs against Go's package, 12 and 6 of them lines past 4090 bytes), arm64, llvm and go
+- Timing: bench/perf/mime against Go's package, host 1, xo bench --ab 15 rounds, Xo / Go wall: qpenc 0.856 (0.782 to 0.895; 2.08 before plain runs went out as slices instead of a byte at a time through a line buffer), qpdec 0.262 (Go allocates a Reader and its bufio buffer a pass), none 1.12 (about 1 ms); max RSS 0.08. std/mail and std/multipart keep their own decoders
+- Shipped in: not yet released
+
 ## 2026-11-15: feature: RFC 2047 encoded words
 
 - Kind: feature
