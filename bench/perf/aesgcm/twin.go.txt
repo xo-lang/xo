@@ -58,16 +58,10 @@ func main() {
 	case "open", "open1":
 		s := a.Seal(nil, nonce, pt, aad)
 		dst := make([]byte, 0, len(pt))
-		// Xo's internal.crypto_op("aes.open") returns a 1 byte status then
-		// the plaintext (std/native/llrt/aesgcm.xo), so open's checksum
-		// counts one more byte a record than Go's Open does; open*N
-		// returns the last record's plaintext only, as here. Without the
-		// +1 the two sides' open checksums never agreed (twincheck,
-		// 2026-10-24).
-		extra := 0
-		if w == "open" {
-			extra = 1
-		}
+		// Xo's open uses internal.crypto_op("aes.open_pt"), the plaintext
+		// alone as Open returns it (2026-11-16; "aes.open" put a status
+		// byte before it, a copy of every record crypto's AeadKey.open
+		// does not make, and this loop counted one more byte a record)
 		for i := 0; i < n; i++ {
 			g := a
 			if w == "open" {
@@ -77,7 +71,7 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			sum += len(r) + extra
+			sum += len(r)
 		}
 	}
 	fmt.Println(w, sum)

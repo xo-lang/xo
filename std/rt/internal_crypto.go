@@ -600,6 +600,12 @@ func cryptoAES(what string, a, b, c, d Bytes) (Bytes, bool) {
 			return "\x00", true
 		}
 		return "\x01" + Bytes(p), true
+	case "open_pt":
+		p, err := g.Open(nil, []byte(b), []byte(c), []byte(d))
+		if err != nil {
+			return "", true
+		}
+		return Bytes(p), true
 	}
 	return "", false
 }

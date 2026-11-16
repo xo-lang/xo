@@ -1662,7 +1662,8 @@ pub fn open(key: Bytes, nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? { new
 /// 16 byte block b), seal (key a, nonce b, plaintext c, additional data
 /// d), open (key a, nonce b, ciphertext and tag c, additional data d; a
 /// 1 byte then the plaintext, or a 0 byte when the tag does not match),
-/// decrypt (key a, the 16 byte block b), cbc_encrypt and cbc_decrypt
+/// decrypt (key a, the 16 byte block b), open_pt (open's plaintext alone,
+/// empty when the tag fails), cbc_encrypt and cbc_decrypt
 /// (key a, IV b, data c, a multiple of 16 bytes); seal*N and open*N
 /// (seal's and open's arguments): N records under one key, the last
 /// one's result (bench/perf/aesgcm's loop over the records, not the key
@@ -1680,6 +1681,10 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
         None => rt.rs_push_byte(rt.rs_with_cap(1), 0).bytes()
       }
     }
+    // the plaintext alone, empty when the tag fails (bench/perf/aesgcm's
+    // open: open's status byte copied every record behind it, a cost
+    // crypto's AeadKey.open has not)
+    "open_pt" => open(a, b, c, d) ?? b""
     _ => {
       if !(what.starts_with("seal*") || what.starts_with("open*")) {
         return None

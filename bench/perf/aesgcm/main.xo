@@ -36,7 +36,7 @@ fn main(os: Os) {
     "open" => {
       let s = internal.crypto_op("aes.seal", key, nonce, pt, aad)
       for _ in 0..n {
-        let r = internal.crypto_op("aes.open", key, nonce, s, aad)
+        let r = internal.crypto_op("aes.open_pt", key, nonce, s, aad)
         sum += r.len()
       }
     }
