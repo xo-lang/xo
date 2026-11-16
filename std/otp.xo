@@ -124,24 +124,45 @@ pub fn generate_secret(r: Rand, len: Int = 20) -> Bytes uses rand {
 }
 
 /// The Key URI Format of an authenticator app (Google Authenticator wiki,
-/// pquerna/otp's Key.URL): `otpauth://totp/ISSUER:ACCOUNT?algorithm=SHA1&digits=6&issuer=ISSUER&period=30&secret=BASE32`,
-/// the parameters sorted, the label and values percent encoded, the secret
-/// unpadded base32.
+/// pquerna/otp's totp.Generate): `otpauth://totp/ISSUER:ACCOUNT?algorithm=SHA1&digits=6&issuer=ISSUER&period=30&secret=BASE32`,
+/// the parameters sorted, the label escaped as a URL path (a `/` stays)
+/// and the values as path segments (a space is `%20`, as pquerna's
+/// EncodeQuery writes it), the secret unpadded base32.
 pub fn uri(issuer: Str, account: Str, secret: Bytes, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str {
   check_params(digits, algo)
-  let name = match algo {
+  key_uri("totp", issuer, account, [("algorithm", algo_name(algo)), ("digits", "${digits}"), ("issuer", issuer), ("period", "${period}"), ("secret", base32.encode(secret, base32.Base32.RawStd))])
+}
+
+/// The Key URI of an HOTP key (pquerna/otp's hotp.Generate):
+/// `otpauth://hotp/ISSUER:ACCOUNT?algorithm=SHA1&digits=6&issuer=ISSUER&secret=BASE32`,
+/// escaped as `uri` escapes it. The counter is not in it, as in pquerna's
+/// (an app starts at 0).
+pub fn hotp_uri(issuer: Str, account: Str, secret: Bytes, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str {
+  check_params(digits, algo)
+  key_uri("hotp", issuer, account, [("algorithm", algo_name(algo)), ("digits", "${digits}"), ("issuer", issuer), ("secret", base32.encode(secret, base32.Base32.RawStd))])
+}
+
+fn algo_name(algo: crypto.Hash) -> Str {
+  match algo {
     Sha256 => "SHA256"
     Sha512 => "SHA512"
     _ => "SHA1"
   }
-  let label = url.path_escape(issuer) + ":" + url.path_escape(account)
-  var q = url.values()
-  q.set("algorithm", name)
-  q.set("digits", "${digits}")
-  q.set("issuer", issuer)
-  q.set("period", "${period}")
-  q.set("secret", base32.encode(secret, base32.Base32.RawStd))
-  "otpauth://totp/" + label + "?" + q.encode()
+}
+
+/// url.URL{Scheme: "otpauth", Host: kind, Path: "/ISSUER:ACCOUNT",
+/// RawQuery: EncodeQuery(params)}.String(); params come sorted by name.
+fn key_uri(kind: Str, issuer: Str, account: Str, params: List[(Str, Str)]) -> Str {
+  var q = StrBuilder.new()
+  for (k, v) in params {
+    if q.len() > 0 {
+      q.write("&")
+    }
+    q.write(url.path_escape(k))
+    q.write("=")
+    q.write(url.path_escape(v))
+  }
+  url.Url{scheme: "otpauth", host: kind, path: "/" + issuer + ":" + account, raw_query: q.freeze()}.display()
 }
 
 fn check_params(digits: Int, algo: crypto.Hash, encoder: Encoder = Encoder.Decimal) {

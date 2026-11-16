@@ -9446,6 +9446,7 @@ fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: crypt
 fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = Sha1, skew: Int = 1) -> Int?
 fn generate_secret(r: Rand, len: Int = 20) -> Bytes uses rand
 fn uri(issuer: Str, account: Str, secret: Bytes, period: Int = 30, digits: Int = 6, algo: crypto.Hash = Sha1) -> Str
+fn hotp_uri(issuer: Str, account: Str, secret: Bytes, digits: Int = 6, algo: crypto.Hash = Sha1) -> Str   // otpauth://hotp/, no counter (pquerna's hotp.Generate)
 enum Encoder { Decimal, Steam }                   // pquerna/otp's Encoder: hotp, totp, verify take encoder: Encoder = Decimal
 struct Key { uri: Str, kind: Str, issuer: Str, account: Str, secret: Str, period: Int, digits: Int, algo: crypto.Hash, encoder: Encoder }
 fn parse_uri(s: Str) -> Key ! OtpErr                // NewKeyFromURL and Key's methods

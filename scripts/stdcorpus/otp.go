@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"hash"
 	"math/rand"
+	"sort"
 	"net/url"
 	"strconv"
 	"strings"
@@ -106,8 +107,25 @@ func otpCorpus() string {
 		q.Set("issuer", is)
 		q.Set("period", fmt.Sprint(per))
 		q.Set("secret", base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sec))
-		u := "otpauth://totp/" + url.PathEscape(is) + ":" + url.PathEscape(ac) + "?" + q.Encode()
+		u := otpKeyURI("totp", is, ac, q)
 		o.WriteString(fmt.Sprintf("  (%s, %s, %q, %d, %d, %q, %s),\n", xq(is), xq(ac), hex.EncodeToString(sec), per, d, a, xq(u)))
+	}
+	// hotp.Generate's URI, on its own seed so the sections after keep theirs
+	hg := rand.New(rand.NewSource(58))
+	o.WriteString("]\n\n/// (issuer, account, secret hex, digits, algo, pquerna/otp's hotp.Generate URI)\nconst HOTP_URIS: List[(Str, Str, Str, Int, Str, Str)] = [\n")
+	for i := 0; i < 40; i++ {
+		sec := make([]byte, hg.Intn(25))
+		hg.Read(sec)
+		is, ac := names[hg.Intn(len(names))], names[hg.Intn(len(names))]
+		d := 6 + hg.Intn(3)
+		a := algos[hg.Intn(3)]
+		q := url.Values{}
+		q.Set("algorithm", strings.ToUpper(a))
+		q.Set("digits", fmt.Sprint(d))
+		q.Set("issuer", is)
+		q.Set("secret", base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sec))
+		u := otpKeyURI("hotp", is, ac, q)
+		o.WriteString(fmt.Sprintf("  (%s, %s, %q, %d, %q, %s),\n", xq(is), xq(ac), hex.EncodeToString(sec), d, a, xq(u)))
 	}
 	o.WriteString("]\n\n/// (secret hex, counter, letters, algo, the Steam Guard code; pquerna/otp's EncoderSteam)\nconst STEAMS: List[(Str, Int, Int, Str, Str)] = [\n")
 	algos4 := []string{"Sha1", "Sha256", "Sha512"}
@@ -174,12 +192,24 @@ test "totp matches the independent implementation" {
   expect(bad) == []
 }
 
-test "uri matches net/url's layout" {
+test "uri matches pquerna/otp's totp.Generate URI" {
   var bad: List[Int] = []
   var i = 0
   for (is, ac, s, p, d, a, want) in URIS {
     i += 1
     if otp.uri(is, ac, hex(s), p, d, algo(a)) != want {
+      bad.push(i)
+    }
+  }
+  expect(bad) == []
+}
+
+test "hotp_uri matches pquerna/otp's hotp.Generate URI" {
+  var bad: List[Int] = []
+  var i = 0
+  for (is, ac, s, d, a, want) in HOTP_URIS {
+    i += 1
+    if otp.hotp_uri(is, ac, hex(s), d, algo(a)) != want {
       bad.push(i)
     }
   }
@@ -454,4 +484,26 @@ test "image is pquerna's Key.Image (boombuler's QR code at level M, scaled)" {
 func sha256Of(s string) []byte {
 	h := sha256.Sum256([]byte(s))
 	return h[:]
+}
+
+// otpKeyURI is pquerna/otp's Generate URI: url.URL{Scheme: "otpauth",
+// Host: kind, Path: "/ISSUER:ACCOUNT", RawQuery: internal.EncodeQuery(v)}
+// with EncodeQuery's sorted keys and url.PathEscape on keys and values.
+func otpKeyURI(kind, issuer, account string, v url.Values) string {
+	keys := make([]string, 0, len(v))
+	for k := range v {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var q strings.Builder
+	for _, k := range keys {
+		for _, x := range v[k] {
+			if q.Len() > 0 {
+				q.WriteByte('&')
+			}
+			q.WriteString(url.PathEscape(k) + "=" + url.PathEscape(x))
+		}
+	}
+	u := url.URL{Scheme: "otpauth", Host: kind, Path: "/" + issuer + ":" + account, RawQuery: q.String()}
+	return u.String()
 }

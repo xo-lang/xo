@@ -1,5 +1,22 @@
 # std/otp changes
 
+## 2026-11-15: fix: uri escapes as pquerna/otp does; feature: hotp_uri
+
+- Kind: fix, feature
+- Commit: this push
+- Found by: the stdaudit gaps of pquerna/otp (hotp.Generate); porting pquerna's TestGenerate, whose `issuer=Snake%20Oil` uri did not write
+- Go reference: github.com/pquerna/otp v1.5.0 totp.Generate, hotp.Generate, internal.EncodeQuery
+- Test: internal/stdtest/testdata/corpus/otp (scripts/stdcorpus otp): the 80 totp URIs now built as pquerna builds them (42 failed before the fix) and 40 hotp URIs (go, arm64, llvm)
+- Shipped in: not yet released
+- Timing: none
+
+`uri` escaped its parameters as a query (`issuer=Ex+ample`) and each
+label part as a path segment (`a%2Fb`). pquerna/otp escapes the values
+with url.PathEscape (`issuer=Ex%20ample`) and the label as the URL's
+path (a `/` stays). `uri` now writes pquerna's bytes; apps read both.
+`hotp_uri` writes hotp.Generate's `otpauth://hotp/` URI (algorithm,
+digits, issuer, secret; no counter).
+
 ## 2026-11-15: feature: Key.image, a QR code of the URI
 
 - Kind: feature
