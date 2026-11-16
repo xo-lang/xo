@@ -19,6 +19,7 @@ use std/json
 use std/time
 use std/uuid
 use std/netip
+use std/big
 
 /// A query parameter. `$1` is `args[0]`.
 enum SqlValue {
@@ -78,6 +79,40 @@ fn multirange_time(rs: List[Range[Time]]) -> SqlValue
 /// NULL (pgx's CompositeTextBuilder): `(1,"a b",)`; a field that is
 /// empty, has a leading or trailing space, or holds `(),"\` is quoted.
 fn composite(fields: List[Str?]) -> SqlValue
+/// A numeric parameter: its display text (decision 0681).
+fn numeric(n: Numeric) -> SqlValue
+/// numrange and nummultirange parameters.
+fn range_num(r: Range[Numeric]) -> SqlValue
+fn multirange_num(rs: List[Range[Numeric]]) -> SqlValue
+/// A numeric's text (pgx's parseNumericString and
+/// parseScientificNumericString): `1.50`, `-3`, `1e-3`, `NaN`,
+/// `Infinity`, `-Infinity`; a Syntax error for anything else or an
+/// exponent past Postgres's range.
+fn parse_numeric(s: Str) -> Numeric ! SqlErr
+
+/// A Postgres numeric (pgx's pgtype.Numeric, decision 0681): the value
+/// coef * 10^exp, NaN, or an infinity. Read from text as pgx reads it:
+/// `1.50` is coefficient 150 and exponent -2 (the scale survives), and
+/// an integer's trailing zeros go into the exponent (`100` is 1, 2).
+/// Equality is structural, so `1.50` and `1.5` differ; compare values
+/// with to_rat.
+enum Numeric {
+  Finite(coef: big.BigInt, exp: Int)
+  NaN
+  Infinity
+  NegInfinity
+} derive Eq
+
+/// Postgres's text (pgx's encodeText): `1.50`, `-0.003`, `100`, `NaN`,
+/// `Infinity`, `-Infinity`.
+fn (n: Numeric) display() -> Str
+/// The exact value; None for NaN and the infinities.
+fn (n: Numeric) to_rat() -> big.BigRat?
+/// The nearest Float (pgx's Float64Value): NaN and the infinities as
+/// Float's.
+fn (n: Numeric) to_float() -> Float
+/// The value when it is an integer in Int's range (pgx's Int64Value).
+fn (n: Numeric) to_int() -> Int?
 /// A composite or record's text split into its fields' texts, None for
 /// NULL (pgx's CompositeTextScanner); for a nested record read with
 /// Row.fields.
@@ -572,6 +607,15 @@ fn (r: Row) multirange_time_opt(name: Str) -> List[Range[Time]]? ! SqlErr
 /// one).
 fn (r: Row) fields(name: Str) -> List[Str?] ! SqlErr
 fn (r: Row) fields_opt(name: Str) -> List[Str?]? ! SqlErr
+/// A numeric column (decision 0681); an integer column reads as its
+/// value with exponent 0 (pgx's ScanInt64), a float column is a Mismatch.
+fn (r: Row) numeric(name: Str) -> Numeric ! SqlErr
+fn (r: Row) numeric_opt(name: Str) -> Numeric? ! SqlErr
+/// A numrange or nummultirange column.
+fn (r: Row) range_num(name: Str) -> Range[Numeric] ! SqlErr
+fn (r: Row) range_num_opt(name: Str) -> Range[Numeric]? ! SqlErr
+fn (r: Row) multirange_num(name: Str) -> List[Range[Numeric]] ! SqlErr
+fn (r: Row) multirange_num_opt(name: Str) -> List[Range[Numeric]]? ! SqlErr
 /// A json or jsonb column (or text) decoded into T; a decode error is
 /// Mismatch(column, msg).
 fn (r: Row) json[T: Json](name: Str) -> T ! SqlErr

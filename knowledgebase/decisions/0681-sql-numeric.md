@@ -73,3 +73,13 @@ on every backend (std/rt/std_gen_big.go).
   only as a conversion, as `to_float` does here.
 - Keep `Text`: the status quo, which leaves the 22 rows and numeric
   ranges as gaps.
+
+## Implementation notes
+
+- 2026-11-16 (Xo Lang 3): landed as decided, with two corrections.
+  `to_float` returns `Float` rather than `Float?` (pgx's Float64Value
+  gives NaN and the infinities as floats, and a value past Float's
+  range is the infinity, as Go's ParseFloat gives it). Item 2's "Row.float
+  keeps refusing a numeric column" was wrong about the existing driver:
+  `Row.float` already read a numeric Text that parses as a Float
+  (spec/std.md 10.9) and still does; nothing changed there.

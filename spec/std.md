@@ -4062,7 +4062,9 @@ Results are read in text format and decoded by the column's type:
 | `int4range`, `int8range`, `daterange`, `tsrange`, `tstzrange` | `Text` | `range_int`, `range_date`, `range_time` (a `Range[T]`), `str` |
 | a composite type, a table's row type, `record` | `Text` | `fields` (each field's text, `None` for NULL), `str` |
 | the matching multiranges (Postgres 14 and later) | `Text` | `multirange_int`, `multirange_date`, `multirange_time` (a `List[Range[T]]`), `str` |
-| every other type (`numeric`, `timetz`, ranges, enums, ...) | `Text`, the server's text | `str` |
+| `numeric` | `Text` | `numeric` (a `Numeric`, decision 0681), `float`, `str` |
+| `numrange`, `nummultirange` | `Text` | `range_num`, `multirange_num`, `str` |
+| every other type (`timetz`, enums, ...) | `Text`, the server's text | `str` |
 
 NULL is `Null` everywhere. Accessors convert where no information is
 lost: `float` reads `Integer` and a `numeric` Text that parses as a
@@ -4101,6 +4103,11 @@ fn (r: Row) range_int(name: Str) -> Range[Int] ! SqlErr         // also _opt, ra
 fn (r: Row) multirange_int(name: Str) -> List[Range[Int]] ! SqlErr // also _opt, multirange_date, multirange_time
 pub fn range_int(r: Range[Int]) -> SqlValue                     // also range_date, range_time, multirange_int, ...
 fn (r: Row) fields(name: Str) -> List[Str?] ! SqlErr            // also fields_opt: a composite's fields' texts
+enum Numeric { Finite(coef: big.BigInt, exp: Int), NaN, Infinity, NegInfinity }  // pgx's Numeric
+fn (r: Row) numeric(name: Str) -> Numeric ! SqlErr              // also numeric_opt, range_num, multirange_num
+pub fn parse_numeric(s: Str) -> Numeric ! SqlErr                // 1.50, 1e-3, NaN, Infinity; Syntax error otherwise
+pub fn numeric(n: Numeric) -> SqlValue                          // also range_num, multirange_num
+fn (n: Numeric) display() -> Str                                // also to_rat, to_float, to_int
 pub fn parse_composite(s: Str) -> List[Str?] ! SqlErr           // a nested composite field's text; Syntax error otherwise
 pub fn composite(fields: List[Str?]) -> SqlValue                // `(1,"a b",)`, quoting as Postgres reads it
 ```
@@ -4109,8 +4116,10 @@ pub fn composite(fields: List[Str?]) -> SqlValue                // `(1,"a b",)`,
 `time_bound` read them. A range keeps the edges the server sent (an
 int4range or daterange comes back as `[a,b)`); a range bound that is
 `infinity` is a Mismatch (read the column with `str`), and a `tsrange`
-reads as UTC, as a `timestamp` column does. Numeric ranges wait for the
-numeric type. A `timetz`'s offset is read with `str`.
+reads as UTC, as a `timestamp` column does. A `Numeric` keeps the
+scale the server sent (`1.50` is 150 and -2, an integer's trailing zeros
+go into the exponent as pgx does), so equality is structural and
+`to_rat` compares values; an integer column reads as `Finite(n, 0)`. A `timetz`'s offset is read with `str`.
 
 The values and accessors are 10.2 and 10.4's.
 

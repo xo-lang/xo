@@ -88,6 +88,18 @@ fields c5: column c5: expected a composite, found text
 parse_composite nested: [Some("2"), Some("q")]
 parse_composite bad: syntax error: composite text format must end with ')': "(1"
 fields_opt null: None
+numeric c0: "1.50"
+numeric c1: "-0.003"
+numeric c2: "100"
+numeric c3: "NaN"
+numeric c4: "-Infinity"
+numeric c5: "7"
+numeric c6: column c6: expected a numeric, found text
+numeric c7: column c7: expected a numeric, found a float
+range_num c0: "inclusive 1.5 .. exclusive 2.25"
+range_num c1: "unbounded .. inclusive 0"
+multirange_num c2: ["inclusive 1 .. exclusive 2.5", "inclusive 3 .. unbounded"]
+numeric parts Finite(coef: 12340, exp: -3) int None float 12.34
 param Text(s: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
 param Text(s: "2026-03-09")
 param Text(s: "0044-03-15 BC")
@@ -107,4 +119,6 @@ param Text(s: "{[1,3),(5,)}")
 param Text(s: "{}")
 param Text(s: "(1,a b,,\"\",\" lead\",\"q\\\"(x)\\\\\")")
 param Text(s: "()")
+param Text(s: "-1.250")
+param Text(s: "[NaN,)")
 --- stderr

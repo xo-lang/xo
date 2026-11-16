@@ -1,6 +1,7 @@
 // The memory driver's indexes and in place writes (decision 0528): the
 // same rows, order and errors as a full scan of a copied table.
 use std/sql
+use std/big
 
 fn ids(rows: List[sql.Row]) -> List[Int] {
   var out: List[Int] = []
@@ -309,4 +310,92 @@ test "named's query and arguments run on a database" {
   db.exec(q, a)?
   let (q2, a2) = sql.named("SELECT name FROM t WHERE id = @id AND name <> '@id'", {"id": sql.int(3)}, strict: true)?
   expect(db.query_one(q2, a2)?.str("name")?) == "ann"
+}
+
+// sql.Numeric (decision 0681): pgx v5.12.0 pgtype/numeric_test.go
+// (TestNumericScanScientificPreservesPrecision,
+// TestNumericScanScientificErrors, TestNumericFloat64Valuer,
+// TestNumericInt64Valuer, and TestNumericCodec's text values), Copyright
+// (c) 2013-2021 Jack Christensen, MIT License.
+
+/// A Numeric as coefficient and exponent, or its error.
+fn nparts(s: Str) -> Str {
+  match sql.parse_numeric(s) {
+    Ok(Finite(c, e)) => "${c.text()}e${e}"
+    Ok(n) => n.display()
+    Err(e) => "error: ${e}"
+  }
+}
+
+test "parse_numeric reads scientific text without losing digits, as pgx's ScanScientific" {
+  expect(nparts("1234567890123456789e0")) == "1234567890123456789e0"
+  expect(nparts("1.234567890123456789e5")) == "1234567890123456789e-13"
+  expect(nparts("1e131071")) == "1e131071"
+  expect(nparts("1.50")) == "150e-2"
+  expect(nparts("100")) == "1e2"
+  expect(nparts("-100")) == "-1e2"
+  expect(nparts("0")) == "0e0"
+  expect(nparts("-0")) == "0e0"
+  expect(nparts("1e+3")) == "1e3"
+  expect(nparts("NaN")) == "NaN"
+  expect(nparts("-Infinity")) == "-Infinity"
+}
+
+test "parse_numeric's errors name the text, as pgx's ScanScientific" {
+  for (s, want) in [
+    ("1e", "1e is not a number"),
+    ("1e+", "1e+ is not a number"),
+    ("1e1.5", "1e1.5 is not a number"),
+    ("1e5e5", "1e5e5 is not a number"),
+    ("1.2.3e4", "1.2.3e4 is not a number"),
+    ("e5", "e5 is not a number"),
+    ("1.2.3", "1.2.3 is not a number"),
+    ("1e99999999999999999999", "1e99999999999999999999 exponent out of range"),
+    ("1000e2147483647", "1000e2147483647 exponent out of range"),
+    ("1e131072", "1e131072 exponent out of range"),
+    ("1e-32768", "1e-32768 exponent out of range"),
+    ("", " is not a number"),
+    ("infinity", "infinity is not a number"),
+  ] {
+    expect(nparts(s)) == "error: syntax error: ${want}"
+  }
+}
+
+test "a Numeric's display is Postgres's text and round trips, as pgx's encodeText" {
+  let huge = "4237234789234789289347892374324872138321894178943189043890124832108934.43219085471578891547854892438945012347981"
+  let tiny = "0." + "0".repeat(180) + "123"
+  let wide = "67" + "0".repeat(44535) + ".0"
+  for s in ["1", "3.14159", "100010001", "100010001.0001", huge, tiny, wide, "-0.003", "1.50", "-100", "NaN", "Infinity", "-Infinity"] {
+    expect(sql.parse_numeric(s)?.display()) == s
+  }
+  expect(sql.Numeric.Finite(coef: big.from_int(2437), exp: 3).display()) == "2437000"
+  expect(sql.Numeric.Finite(coef: big.from_int(-5), exp: -3).display()) == "-0.005"
+  expect(sql.numeric(sql.parse_numeric("1.50")?)) == sql.SqlValue.Text(s: "1.50")
+}
+
+test "a Numeric's to_float and to_int, as pgx's Float64Value and Int64Value" {
+  expect(sql.parse_numeric("1")?.to_float()) == 1.0
+  expect(sql.parse_numeric("0.0000000000000000001")?.to_float()) == 0.0000000000000000001
+  expect(sql.parse_numeric("-99999999999")?.to_float()) == -99999999999.0
+  expect(sql.Numeric.Infinity.to_float().is_inf()) == true
+  expect(sql.Numeric.NegInfinity.to_float() < 0.0) == true
+  expect(sql.Numeric.NaN.to_float().is_nan()) == true
+  expect(sql.parse_numeric("1e400")?.to_float().is_inf()) == true
+  expect(sql.parse_numeric("1")?.to_int()) == Some(1)
+  expect(sql.parse_numeric("-99999999999")?.to_int()) == Some(-99999999999)
+  expect(sql.parse_numeric("0")?.to_int()) == Some(0)
+  expect(sql.parse_numeric("12.00")?.to_int()) == Some(12)
+  expect(sql.parse_numeric("12.5")?.to_int()) == None
+  expect(sql.parse_numeric("9223372036854775807")?.to_int()) == Some(9223372036854775807)
+  expect(sql.parse_numeric("9223372036854775808")?.to_int()) == None
+  expect(sql.Numeric.NaN.to_int()) == None
+  expect(sql.Numeric.Infinity.to_int()) == None
+}
+
+test "a Numeric's to_rat is its exact value, and equality keeps the scale" {
+  expect(sql.parse_numeric("1.50")?.to_rat()) == Some(big.rat(big.from_int(3), big.from_int(2)))
+  expect(sql.parse_numeric("1.50")?.to_rat()) == sql.parse_numeric("1.5")?.to_rat()
+  expect(sql.parse_numeric("1.50")? == sql.parse_numeric("1.5")?) == false
+  expect(sql.parse_numeric("2e3")?.to_rat()) == Some(big.rat_from_int(2000))
+  expect(sql.Numeric.NaN.to_rat()) == None
 }

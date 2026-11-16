@@ -86,3 +86,8 @@ SELECT $1::int4range AS a, $2::daterange AS b, $3::tstzrange AS c, $4::int4multi
 CREATE TABLE IF NOT EXISTS pair (n int, s text, t text)
 TYPED fields SELECT ROW(1, 'a b', NULL)::pair AS a, ROW(2, 'q"x\y', '')::pair AS b, ROW(3, ' sp', '(p,q)')::pair AS c, ROW(4, ROW(5, 'in', 'x')::pair, NULL) AS rec, NULL::pair AS n
 SELECT ($1::pair).s AS s, ($1::pair).t IS NULL AS tnull, ($2::pair).s AS q ;; T:(1,"a b",) | T:(2,"(x, y)",)
+TYPED numeric SELECT 1.50::numeric AS a, -0.003::numeric AS b, 100::numeric AS c, 0::numeric AS z, 'NaN'::numeric AS nan, 1234567890123456789012345678901234567890.123456789::numeric AS big, 0.000000000000000000000000000000123::numeric AS tiny, 12.3400::numeric(10,4) AS scaled, NULL::numeric AS n
+TYPED numeric SELECT 'Infinity'::numeric AS i, '-Infinity'::numeric AS ni, 7::int8 AS int
+TYPED numrange SELECT '[1.5,2.25)'::numrange AS a, '(,0]'::numrange AS u, 'empty'::numrange AS e, NULL::numrange AS n
+TYPED nummulti SELECT '{[1,2.5),[3,)}'::nummultirange AS a
+SELECT $1::numeric AS a, $2::numeric * 2 AS b, $3::numrange AS c ;; T:-1.250 | T:1e-3 | T:[NaN,)

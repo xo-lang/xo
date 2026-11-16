@@ -15,6 +15,7 @@ use std/sql
 use std/time
 use std/uuid
 use std/netip
+use std/big
 use std/task
 use native/rt
 use native/rtsql
@@ -5563,3 +5564,202 @@ fn (r: Row) fields_opt(name: Str) -> List[Str?]? ! sql.SqlErr {
 }
 
 fn (r: Row) fields(name: Str) -> List[Str?] ! sql.SqlErr { r.fields_opt(name)?.or_err(mismatch(name, "a composite", sql.SqlValue.Null)) }
+
+// Numeric (decision 0681): pgx v5.12.0 pgtype/numeric.go
+// (parseNumericString, parseScientificNumericString, numberTextBytes,
+// encodeNumericText, toBigInt, Float64Value), Copyright (c) 2013-2021
+// Jack Christensen, MIT License.
+
+/// pgx's minNumericExponent and maxNumericExponent.
+/// Whether t is an optional sign and then one or more ASCII digits.
+fn num_digits(t: Str) -> Bool {
+  let b = t.bytes()
+  var i = 0
+  if b.len() > 0 && (b[0] == 43 || b[0] == 45) {
+    i = 1
+  }
+  if i >= b.len() {
+    return false
+  }
+  while i < b.len() {
+    if b[i] < 48 || b[i] > 57 {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+fn num_exp_ok(e: Int) -> Bool { e >= -32767 && e <= 32767 * 4 + 3 }
+
+/// A plain numeric text (pgx's parseNumericString): an integer's
+/// trailing zeros move into the exponent; a fraction's digits set it.
+fn num_plain(s: Str) -> sql.Numeric? {
+  var digits = s
+  var exp = 0
+  match s.find(".") {
+    None => {
+      while digits.len() > 1 && digits.ends_with("0") && !digits.ends_with("-0") {
+        digits = digits[0..digits.len() - 1]
+        exp += 1
+      }
+    }
+    Some(i) => {
+      exp = -(s.len() - i - 1)
+      digits = s[0..i] + s[i + 1..s.len()]
+    }
+  }
+  match big.parse(digits, 10) {
+    Ok(c) => Some(sql.Numeric.Finite(coef: c, exp: exp))
+    Err(_) => None
+  }
+}
+
+/// A numeric's text as pgx's text scan and ScanScientific read it, or
+/// the reason it is not one.
+fn num_parse(s: Str) -> sql.Numeric ! Str {
+  match s {
+    "NaN" => return sql.Numeric.NaN
+    "Infinity" => return sql.Numeric.Infinity
+    "-Infinity" => return sql.Numeric.NegInfinity
+    _ => {}
+  }
+  let b = s.bytes()
+  var e = -1
+  for i in 0..b.len() {
+    if e < 0 && (b[i] == 101 || b[i] == 69) {
+      e = i
+    }
+  }
+  if e < 0 {
+    return num_plain(s).or_err("${s} is not a number")
+  }
+  let es = s[e + 1..s.len()]
+  let x = match Int.parse(es) {
+    Some(x) => x
+    // Go's ParseInt: digits past the range are ErrRange
+    None => return Err(if num_digits(es) { "${s} exponent out of range" } else { "${s} is not a number" })
+  }
+  if x < -2147483648 || x > 2147483647 {
+    return Err("${s} exponent out of range")
+  }
+  match num_plain(s[0..e]) {
+    Some(Finite(c, m)) => {
+      if !num_exp_ok(m + x) {
+        return Err("${s} exponent out of range")
+      }
+      sql.Numeric.Finite(coef: c, exp: m + x)
+    }
+    _ => Err("${s} is not a number")
+  }
+}
+
+fn parse_numeric(s: Str) -> sql.Numeric ! sql.SqlErr {
+  match num_parse(s) {
+    Ok(n) => n
+    Err(m) => Err(sql.SqlErr.Syntax(msg: m))
+  }
+}
+
+fn pg_numeric(s: Str) -> sql.Numeric? { num_parse(s).ok() }
+
+fn pow10(e: Int) -> big.BigInt { big.from_int(10).exp(big.from_int(e)) }
+
+fn numeric_display(n: sql.Numeric) -> Str {
+  match n {
+    NaN => "NaN"
+    Infinity => "Infinity"
+    NegInfinity => "-Infinity"
+    Finite(c, exp) => {
+      var digits = c.text()
+      var sign = ""
+      if digits.starts_with("-") {
+        sign = "-"
+        digits = digits[1..digits.len()]
+      }
+      if exp > 0 {
+        sign + digits + "0".repeat(exp)
+      } else if exp < 0 {
+        if digits.len() <= -exp {
+          sign + "0." + "0".repeat(-exp - digits.len()) + digits
+        } else {
+          let dp = digits.len() + exp
+          sign + digits[0..dp] + "." + digits[dp..digits.len()]
+        }
+      } else {
+        sign + digits
+      }
+    }
+  }
+}
+
+fn numeric_to_rat(n: sql.Numeric) -> big.BigRat? {
+  match n {
+    Finite(c, exp) => {
+      if exp >= 0 {
+        Some(big.rat(c.mul(pow10(exp)), big.from_int(1)))
+      } else {
+        Some(big.rat(c, pow10(-exp)))
+      }
+    }
+    _ => None
+  }
+}
+
+fn numeric_to_float(n: sql.Numeric) -> Float {
+  match n {
+    NaN => Float.parse("NaN") ?? 0.0
+    Infinity => Float.parse("+Inf") ?? 0.0
+    NegInfinity => Float.parse("-Inf") ?? 0.0
+    Finite(c, exp) => match Float.parse("${c.text()}e${exp}") {
+      Some(f) => f
+      // past Float's range (Go's ParseFloat gives the infinity with
+      // ErrRange)
+      None => if exp > 0 { Float.parse(if c.sign() < 0 { "-Inf" } else { "+Inf" }) ?? 0.0 } else { 0.0 }
+    }
+  }
+}
+
+fn numeric_to_int(n: sql.Numeric) -> Int? {
+  match n {
+    Finite(c, exp) => {
+      if exp >= 0 {
+        return c.mul(pow10(exp)).to_int()
+      }
+      let (q, r) = c.quo_rem(pow10(-exp))
+      if r.sign() != 0 {
+        return None
+      }
+      q.to_int()
+    }
+    _ => None
+  }
+}
+
+fn numeric(n: sql.Numeric) -> sql.SqlValue { sql.SqlValue.Text(s: numeric_display(n)) }
+
+fn range_num(r: sql.Range[sql.Numeric]) -> sql.SqlValue { sql.SqlValue.Text(s: rg_text(r, numeric_display)) }
+
+fn multirange_num(rs: List[sql.Range[sql.Numeric]]) -> sql.SqlValue { sql.SqlValue.Text(s: "{" + rs.map(fn(r) { rg_text(r, numeric_display) }).join(",") + "}") }
+
+fn (r: Row) numeric_opt(name: Str) -> sql.Numeric? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    Integer(n) => Some(sql.Numeric.Finite(coef: big.from_int(n), exp: 0))
+    Text(s) => match pg_numeric(s) {
+      Some(v) => Some(v)
+      None => Err(bad_text(name, "a numeric", s))
+    }
+    v => Err(mismatch(name, "a numeric", v))
+  }
+}
+
+fn (r: Row) numeric(name: Str) -> sql.Numeric ! sql.SqlErr { r.numeric_opt(name)?.or_err(mismatch(name, "a numeric", sql.SqlValue.Null)) }
+
+fn (r: Row) range_num_opt(name: Str) -> sql.Range[sql.Numeric]? ! sql.SqlErr { rg_read(r, name, "a numeric range", pg_numeric) }
+
+fn (r: Row) range_num(name: Str) -> sql.Range[sql.Numeric] ! sql.SqlErr { r.range_num_opt(name)?.or_err(mismatch(name, "a numeric range", sql.SqlValue.Null)) }
+
+fn (r: Row) multirange_num_opt(name: Str) -> List[sql.Range[sql.Numeric]]? ! sql.SqlErr { mr_read(r, name, "a numeric multirange", pg_numeric) }
+
+fn (r: Row) multirange_num(name: Str) -> List[sql.Range[sql.Numeric]] ! sql.SqlErr { r.multirange_num_opt(name)?.or_err(mismatch(name, "a numeric multirange", sql.SqlValue.Null)) }

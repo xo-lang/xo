@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/sql, every backend; decision 0681, task #113): Postgres numeric as `sql.Numeric` (`Finite(coef: big.BigInt, exp)`, `NaN`, `Infinity`, `NegInfinity`), keeping the scale: `Row.numeric`, `numeric_opt`, `sql.parse_numeric`, `sql.numeric`, `Numeric.display`, `to_rat`, `to_float`, `to_int`, and numeric ranges (`Row.range_num`, `multirange_num`, `sql.range_num`, `multirange_num`).
+
 - Feature (std/sql, every backend; decision 0679, task #113): composite and record columns: `Row.fields` and `fields_opt` (each field's text, `None` for NULL), `sql.parse_composite` for a nested field, and the parameter `sql.composite(fields)`.
 
 - Perf (std/crypto, std/otp, native backends): HMAC-SHA256 builds its pads from the key in place and `otp.hotp` takes its modulus without a loop: bench/perf/otp sha256 0.897 of before (host 1 --ab).

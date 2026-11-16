@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-16: feature: numeric as sql.Numeric, numeric ranges (decision 0681)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #113 (#110's backlog: exact numeric)
+- Go reference: pgx v5.12.0 pgtype/numeric.go (parseNumericString, parseScientificNumericString, numberTextBytes, encodeNumericText, toBigInt, Float64Value, Int64Value) and numeric_test.go, Copyright (c) 2013-2021 Jack Christensen, MIT License
+- Test: std/native/sql_test.xo (pgx's ScanScientific precision and error cases, Float64Value, Int64Value, TestNumericCodec's text values as display round trips, to_rat; arm64 and LLVM); std/rt/sqlnumeric_test.go (the same on the Go backend); golden sql_pg_types; scripts/pg-diff.sh TYPED numeric, numrange, nummulti and a parameter case, equal to pgx's coefficient and exponent on postgres:17-alpine and postgres:14-alpine (93 statements)
+- Shipped in: not yet released
+
+`Row.numeric` reads a numeric column as `sql.Numeric` with pgx's coefficient and exponent, so the scale survives (`1.50` displays as `1.50`); `to_rat` is exact, `to_float` and `to_int` follow pgx's Float64Value and Int64Value. `sql.parse_numeric` also takes the `1e-3` form. Numeric ranges use `Range[Numeric]`.
+
 ## 2026-11-16: feature: composite and record columns (decision 0679)
 
 - Kind: feature

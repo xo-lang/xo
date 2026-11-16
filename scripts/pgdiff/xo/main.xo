@@ -212,6 +212,14 @@ fn rtext[T](r: sql.Range[T], f: fn(T) -> Str) -> Str {
   }
 }
 
+/// A numeric as the reference prints it: COEFeEXP, NaN, Infinity.
+fn nparts(n: sql.Numeric) -> Str {
+  match n {
+    Finite(c, e) => "${c.text()}e${e}"
+    other => other.display()
+  }
+}
+
 fn dtext(d: time.Date) -> Str {
   let m = if d.month < 10 { "0${d.month}" } else { "${d.month}" }
   let dd = if d.day < 10 { "0${d.day}" } else { "${d.day}" }
@@ -226,6 +234,9 @@ fn typed_cell(r: sql.Row, kind: Str, c: Str) -> Str {
     "interval" => r.interval_opt(c).map(fn(o) { o.map(fn(i) { i.debug() }) })
     "inet" => r.prefix_opt(c).map(fn(o) { o.map(fn(p) { p.display().debug() }) })
     "fields" => r.fields_opt(c).map(fn(o) { o.map(fn(fs) { fs.debug() }) })
+    "numeric" => r.numeric_opt(c).map(fn(o) { o.map(fn(n) { nparts(n) }) })
+    "numrange" => r.range_num_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, nparts) }) })
+    "nummulti" => r.multirange_num_opt(c).map(fn(o) { o.map(fn(rs) { "{" + rs.map(fn(v) { rtext(v, nparts) }).join(",") + "}" }) })
     "intrange" => r.range_int_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, fn(n) { "${n}" }) }) })
     "daterange" => r.range_date_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, dtext) }) })
     "timerange" => r.range_time_opt(c).map(fn(o) { o.map(fn(v) { rtext(v, fn(t) { t.format_rfc3339() }) }) })

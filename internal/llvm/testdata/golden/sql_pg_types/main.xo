@@ -46,7 +46,7 @@ fn (c: FakeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql
   var vals: List[sql.SqlValue] = []
   for (i, t) in q.split(" ;; ").indexed() {
     cols.push("c${i}")
-    vals.push(if t == "NULL" { sql.null() } else if t == "INT" { sql.int(7) } else { sql.str(t) })
+    vals.push(if t == "NULL" { sql.null() } else if t == "INT" { sql.int(7) } else if t == "FLOAT" { sql.float(1.5) } else { sql.str(t) })
   }
   sql.DriverRows{columns: cols, rows: [vals]}
 }
@@ -82,6 +82,22 @@ fn (c: FakeConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> L
 }
 
 /// A time range with its bounds as RFC 3339 text.
+/// A numeric range with its bounds' display text.
+fn nrange(r: sql.Range[sql.Numeric]) -> Str {
+  match r {
+    Empty => "empty"
+    Span(lo, hi) => "${nedge(lo)} .. ${nedge(hi)}"
+  }
+}
+
+fn nedge(e: sql.Edge[sql.Numeric]) -> Str {
+  match e {
+    Inclusive(n) => "inclusive ${n.display()}"
+    Exclusive(n) => "exclusive ${n.display()}"
+    Unbounded => "unbounded"
+  }
+}
+
 fn tr(r: sql.Range[Time]) -> Str {
   match r {
     Empty => "empty"
@@ -182,9 +198,20 @@ fn main(os: Os) ! {
   os.stdio.println(show("parse_composite nested", sql.parse_composite(nested ?? "")))
   os.stdio.println(show("parse_composite bad", sql.parse_composite("(1")))
   os.stdio.println(show("fields_opt null", db.query_one("NULL", [])?.fields_opt("c0")))
+  // numeric: scale, sign, NaN, infinities, an integer column, bad text, a float
+  let nq = db.query_one("1.50 ;; -0.003 ;; 100 ;; NaN ;; -Infinity ;; INT ;; 1.2.3 ;; FLOAT", [])?
+  for c in nq.columns() {
+    os.stdio.println(show("numeric ${c}", nq.numeric(c).map(fn(n) { n.display() })))
+  }
+  let nr = db.query_one("[1.5,2.25) ;; (,0] ;; {[1,2.5),[3,)}", [])?
+  os.stdio.println(show("range_num c0", nr.range_num("c0").map(fn(r) { nrange(r) })))
+  os.stdio.println(show("range_num c1", nr.range_num("c1").map(fn(r) { nrange(r) })))
+  os.stdio.println(show("multirange_num c2", nr.multirange_num("c2").map(fn(rs) { rs.map(fn(r) { nrange(r) }) })))
+  let np = sql.parse_numeric("12.340")?
+  os.stdio.println("numeric parts ${np:?} int ${np.to_int():?} float ${np.to_float()}")
   let u = uuid.parse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")?
   let p = netip.parse_prefix("10.1.0.0/16")?
-  let params = [sql.uuid(u), sql.date(time.Date{year: 2026, month: 3, day: 9}), sql.date(time.Date{year: -43, month: 3, day: 15}), sql.time_of_day(time.ClockTime{hour: 7, minute: 5, second: 3, nanos: 120000000}), sql.interval(sql.Interval{months: 14, days: -3, micros: 5000001}), sql.prefix(p), sql.mac(b"\x08\x00\x2b\x01\x02\x03"), sql.hstore({"a": Some("1"), "b": None, "q \"x\"": Some("back\\slash")}), sql.date_bound(sql.Bound.Infinity), sql.date_bound(sql.Bound.Finite(v: time.Date{year: 2026, month: 1, day: 2})), sql.time_bound(sql.Bound.NegInfinity), sql.range_int(sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 5))), sql.range_int(sql.Range.Empty), sql.range_date(sql.Range.Span(lower: sql.Edge.Unbounded, upper: sql.Edge.Inclusive(v: time.Date{year: 2026, month: 1, day: 2}))), sql.range_time(sql.Range.Span(lower: sql.Edge.Inclusive(v: Time.from_unix(0)), upper: sql.Edge.Unbounded)), sql.multirange_int([sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 3)), sql.Range.Span(lower: sql.Edge.Exclusive(v: 5), upper: sql.Edge.Unbounded)]), sql.multirange_int([]), sql.composite([Some("1"), Some("a b"), None, Some(""), Some(" lead"), Some("q\"(x)\\")]), sql.composite([])]
+  let params = [sql.uuid(u), sql.date(time.Date{year: 2026, month: 3, day: 9}), sql.date(time.Date{year: -43, month: 3, day: 15}), sql.time_of_day(time.ClockTime{hour: 7, minute: 5, second: 3, nanos: 120000000}), sql.interval(sql.Interval{months: 14, days: -3, micros: 5000001}), sql.prefix(p), sql.mac(b"\x08\x00\x2b\x01\x02\x03"), sql.hstore({"a": Some("1"), "b": None, "q \"x\"": Some("back\\slash")}), sql.date_bound(sql.Bound.Infinity), sql.date_bound(sql.Bound.Finite(v: time.Date{year: 2026, month: 1, day: 2})), sql.time_bound(sql.Bound.NegInfinity), sql.range_int(sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 5))), sql.range_int(sql.Range.Empty), sql.range_date(sql.Range.Span(lower: sql.Edge.Unbounded, upper: sql.Edge.Inclusive(v: time.Date{year: 2026, month: 1, day: 2}))), sql.range_time(sql.Range.Span(lower: sql.Edge.Inclusive(v: Time.from_unix(0)), upper: sql.Edge.Unbounded)), sql.multirange_int([sql.Range.Span(lower: sql.Edge.Inclusive(v: 1), upper: sql.Edge.Exclusive(v: 3)), sql.Range.Span(lower: sql.Edge.Exclusive(v: 5), upper: sql.Edge.Unbounded)]), sql.multirange_int([]), sql.composite([Some("1"), Some("a b"), None, Some(""), Some(" lead"), Some("q\"(x)\\")]), sql.composite([]), sql.numeric(sql.parse_numeric("-1.250")?), sql.range_num(sql.Range.Span(lower: sql.Edge.Inclusive(v: sql.Numeric.NaN), upper: sql.Edge.Unbounded))]
   for r in db.query("PARAMS", params)? {
     os.stdio.println("param ${r.value("p")?:?}")
   }

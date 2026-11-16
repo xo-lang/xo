@@ -483,6 +483,25 @@ func typedCell(m *pgtype.Map, kind string, oid uint32, src []byte) string {
 			return "error"
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
+	case "numeric":
+		var n pgtype.Numeric
+		if m.Scan(oid, pgtype.TextFormatCode, src, &n) != nil {
+			return "error"
+		}
+		s, _ := pgNumParts(n)
+		return s
+	case "numrange":
+		var r pgtype.Range[pgtype.Numeric]
+		if m.Scan(oid, pgtype.TextFormatCode, src, &r) != nil {
+			return "error"
+		}
+		return rangeText(r, pgNumParts)
+	case "nummulti":
+		var mr pgtype.Multirange[pgtype.Range[pgtype.Numeric]]
+		if m.Scan(oid, pgtype.TextFormatCode, src, &mr) != nil {
+			return "error"
+		}
+		return multiText(mr, pgNumParts)
 	case "intrange":
 		var r pgtype.Range[pgtype.Int8]
 		if m.Scan(oid, pgtype.TextFormatCode, src, &r) != nil {
@@ -650,4 +669,18 @@ func pgTstzText(t pgtype.Timestamptz) (string, bool) {
 		return "", false
 	}
 	return t.Time.UTC().Format(time.RFC3339Nano), true
+}
+
+// pgNumParts is a numeric as both sides print it: COEFeEXP, NaN,
+// Infinity, -Infinity.
+func pgNumParts(n pgtype.Numeric) (string, bool) {
+	switch {
+	case n.NaN:
+		return "NaN", true
+	case n.InfinityModifier == pgtype.Infinity:
+		return "Infinity", true
+	case n.InfinityModifier == pgtype.NegativeInfinity:
+		return "-Infinity", true
+	}
+	return n.Int.String() + "e" + strconv.Itoa(int(n.Exp)), true
 }
