@@ -773,7 +773,18 @@ host, as user xo (`OFFLOAD_ENV=offload.env`, `offload-arm64b.env`, `offload-arm6
 `offload-arm64d.env`): `go mod tidy` with the proxy in a probe module that
 imports the twin's packages, then a build of it with `GOPROXY=off`, which
 proves the offline build works.
-Last verified: 2026-11-16 (hosts 1 to 4: both versions build offline)
+
+The fuzz references that build a Go module with `GOPROXY=off` need theirs
+the same way: github.com/jackc/pgx/v5 v5.11.0 (scripts/pgdiff/gopgx,
+TestPgFuzz of stdproven fuzz:sql) and github.com/gorilla/websocket v1.5.3
+(scripts/wsdiff/gorilla, TestWsFuzz of fuzz:websocket), with their own
+requirements, are on all four hosts since 2026-11-16 (`go mod download all`
+in a copy of the module, then a `GOPROXY=off` build of it, per host: the
+fuzz:sql and fuzz:websocket runs before failed on host 2 for want of
+them). A reference that vendors its module (scripts/amqptestdiff/go, go-amqp)
+needs nothing on the host.
+Last verified: 2026-11-16 (hosts 1 to 4: both x/crypto versions, pgx v5.11.0
+and gorilla/websocket v1.5.3 build offline)
 
 ## The Windows arm64 VM (owner, 2026-11-09)
 
