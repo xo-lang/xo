@@ -78,6 +78,7 @@ var harnesses = map[string][]harness{
 	"websocket":    {{"TestWsFuzz", "XO_WSFUZZ"}},
 	"dns":          {{"TestDnsFuzz", "XO_DNSFUZZ"}},
 	"json":         {{"TestJsonFuzz", "XO_JSONFUZZ"}},
+	"otp":          {{"TestOtpFuzz", "XO_OTPFUZZ"}},
 	"time":         {{"TestTimeFuzz", "XO_TIMEFUZZ"}},
 	"multipart":    {{"TestMultipartFuzz", "XO_MULTIPARTFUZZ"}},
 	"http":         {{"TestHttpHeadFuzz", "XO_HEADFUZZ"}, {"TestHttpResponseFuzz", "XO_RESPFUZZ"}, {"TestHttpUrlFuzz", "XO_URLFUZZ"}},

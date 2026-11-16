@@ -1,0 +1,168 @@
+// otp stress program (decision 0616 section 2): TASKS tasks each make
+// keys from a seeded generator (secrets of 0 to 100 bytes, Sha1, Sha256
+// and Sha512, 6 to 8 digits or 1 to 8 Steam letters, times and periods
+// to large values) and check, for each, the identities std/otp promises:
+// totp is hotp of the step; verify finds the step of a code within its
+// skew and nothing for a changed code; uri and hotp_uri parse back with
+// parse_uri to the issuer, account, period, digits, algorithm and secret
+// they were made from; every 64th key's image is the size asked. A
+// background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: no identity
+// broken, no fault, and the resident set at the end within 10% or 4 MB
+// of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 3,000 keys per task] [TASKS (32)]
+use std/crypto
+use std/otp
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn bytes_of(x0: Int, n: Int) -> Bytes {
+  var x = x0
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    if i % 8 == 0 {
+      x = next(x)
+    }
+    b.write_byte(UInt8((x >> (i % 8 * 7)) & 255))
+  }
+  b.freeze()
+}
+
+fn check(t: Int, k: Int) -> () ! Str {
+  let at = "task ${t} key ${k}"
+  var x = next(t * 1000003 + k)
+  let secret = bytes_of(x, (x >> 40) % 101)
+  x = next(x)
+  let algo = match (x >> 30) % 3 {
+    0 => crypto.Hash.Sha1
+    1 => crypto.Hash.Sha256
+    _ => crypto.Hash.Sha512
+  }
+  let steam = (x >> 33) % 4 == 0
+  let enc = if steam { otp.Encoder.Steam } else { otp.Encoder.Decimal }
+  let digits = if steam { 1 + (x >> 36) % 8 } else { 6 + (x >> 36) % 3 }
+  x = next(x)
+  let period = if (x >> 20) % 4 == 0 { 1 + (x >> 24) % 100000 } else { 30 }
+  let unix = if (x >> 50) % 8 == 0 { x } else { 1500000000 + (x >> 10) % 2000000000 }
+  let step = unix / period
+  let code = otp.totp(secret, unix, period, digits, algo, enc)
+  if code != otp.hotp(secret, step, digits, algo, enc) || code.len() != digits {
+    return Err("${at}: totp ${code} is not hotp of step ${step}")
+  }
+  let skew = (x >> 40) % 3
+  // a code of a step within the skew is found, at that step
+  let off = (x >> 44) % (2 * skew + 1) - skew
+  if step + off >= 0 {
+    let c2 = otp.hotp(secret, step + off, digits, algo, enc)
+    match otp.verify(secret, c2, unix, period, digits, algo, skew, enc) {
+      Some(s) => {
+        if otp.hotp(secret, s, digits, algo, enc) != c2 || s < step - skew || s > step + skew {
+          return Err("${at}: verify of the code of step ${step + off} gives step ${s}")
+        }
+      }
+      None => return Err("${at}: verify does not find the code of step ${step + off}")
+    }
+  }
+  // a code with a character not of its alphabet matches nothing
+  let bad = "-" + code.bytes()[1..].to_str().or_fault("ascii")
+  if otp.verify(secret, bad, unix, period, digits, algo, skew, enc) != None {
+    return Err("${at}: verify accepts ${bad}")
+  }
+  let issuer = "Issuer ${t}"
+  let account = "user${k}@example.com"
+  let hotp_kind = (x >> 48) % 2 == 0
+  let u = if hotp_kind { otp.hotp_uri(issuer, account, secret, if steam { 6 } else { digits }, algo) } else { otp.uri(issuer, account, secret, period, if steam { 6 } else { digits }, algo) }
+  let key = otp.parse_uri(u).map_err(fn(e) { "${at}: ${u} does not parse: ${e}" })?
+  let want_digits = if steam { 6 } else { digits }
+  if key.kind != (if hotp_kind { "hotp" } else { "totp" }) || key.issuer != issuer || key.account != account || key.digits != want_digits || key.algo != algo || (!hotp_kind && key.period != period) {
+    return Err("${at}: ${u} parses to another key")
+  }
+  match key.secret_bytes() {
+    Ok(b) => {
+      if b != secret {
+        return Err("${at}: ${u} gives another secret")
+      }
+    }
+    Err(e) => return Err("${at}: ${u}: ${e}")
+  }
+  if k % 64 == 0 {
+    let img = key.image(240, 200).map_err(fn(e) { "${at}: image: ${e}" })?
+    if img.width != 240 || img.height != 200 || img.pix.len() != 240 * 200 {
+      return Err("${at}: image ${img.width}x${img.height}")
+    }
+  }
+  Ok(())
+}
+
+fn worker(os: Os, t: Int, end: Time, passes: Int) -> Int ! Str uses clock {
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    check(t, k)?
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let passes = if minutes == 0 { 3000 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let total = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { worker(os, t, end, passes) }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("otp stress: ${total} keys by ${tasks} tasks in ${minutes} min, 0 identities broken, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}

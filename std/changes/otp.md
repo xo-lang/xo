@@ -1,5 +1,20 @@
 # std/otp changes
 
+## 2026-11-16: test: a differential fuzz against pquerna/otp, and a stress program (task #117)
+
+- Kind: test
+- Commit: this push
+- Found by: task #117 (testing evidence)
+- Go reference: github.com/pquerna/otp v1.5.0 (hotp and totp GenerateCodeCustom, totp.ValidateCustom, NewKeyFromURL and the Key's methods, totp.Generate and hotp.Generate, Key.Image)
+- Test: TestOtpFuzz (internal/stdtest/otpfuzz_test.go; oracle scripts/stdcorpus/otporacle, Xo side scripts/otpdiff/xo), seeds 2 to 4, about 18,500 cases each, equal on amd64 and llvm; std/evidence/otp/stress
+- Shipped in: not yet released
+
+No difference found. The doc now names the departures the fuzz models: `totp` and `verify` take
+the step as an integer quotient (pquerna floors a float64 quotient, which rounds past 2^53);
+`verify` does not trim white space around a code and skips a step under 0 (pquerna wraps it);
+`parse_uri` gives the default period or digits past Int (pquerna keeps the uint64) and its text
+fields keep a byte that is not UTF-8 as its `%XX` escape (std/url's rule).
+
 ## 2026-11-16: perf: a decimal code's modulus without a loop
 
 - Kind: perf

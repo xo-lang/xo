@@ -1,0 +1,80 @@
+// The Xo side of TestOtpFuzz (internal/stdtest/otpfuzz_test.go, task
+// #117): each stdin line is a case of scripts/stdcorpus/otporacle ("c "
+// and tab separated fields); prints "== i" and std/otp's answer in the
+// oracle's form.
+use std/crypto
+use std/otp
+
+fn algo(name: Str) -> crypto.Hash {
+  match name {
+    "Sha256" => crypto.Hash.Sha256
+    "Sha512" => crypto.Hash.Sha512
+    _ => crypto.Hash.Sha1
+  }
+}
+
+fn algo_name(h: crypto.Hash) -> Str {
+  match h {
+    Md5 => "MD5"
+    Sha256 => "SHA256"
+    Sha512 => "SHA512"
+    _ => "SHA1"
+  }
+}
+
+fn enc(name: Str) -> otp.Encoder { if name == "steam" { otp.Encoder.Steam } else { otp.Encoder.Decimal } }
+
+fn hx(s: Str) -> Str { s.bytes().to_hex() }
+
+fn unhex(s: Str) -> Bytes { Bytes.from_hex(s) ?? b"" }
+
+fn unhex_str(s: Str) -> Str { unhex(s).to_str() ?? "" }
+
+fn int(s: Str) -> Int { Int.parse(s) ?? -1 }
+
+fn answer(f: List[Str]) -> Str {
+  match f[0] {
+    "h" => otp.hotp(unhex(f[1]), int(f[2]), int(f[3]), algo(f[4]), enc(f[5]))
+    "t" => otp.totp(unhex(f[1]), int(f[2]), int(f[3]), int(f[4]), algo(f[5]), enc(f[6]))
+    "v" => if otp.verify(unhex(f[1]), unhex_str(f[2]), int(f[3]), int(f[4]), int(f[5]), algo(f[6]), int(f[7]), enc(f[8])) is Some(..) { "true" } else { "false" }
+    "u" => match otp.parse_uri(unhex_str(f[1])) {
+      Ok(k) => {
+        let sb = match k.secret_bytes() {
+          Ok(b) => b.to_hex()
+          Err(_) => "err"
+        }
+        "${hx(k.uri)}|${hx(k.kind)}|${hx(k.issuer)}|${hx(k.account)}|${hx(k.secret)}|${k.period}|${k.digits}|${algo_name(k.algo)}|${if k.encoder is Steam { "steam" } else { "dec" }}|${sb}"
+      }
+      Err(_) => "err"
+    }
+    "g" => {
+      let s = if f[1] == "totp" {
+        otp.uri(unhex_str(f[2]), unhex_str(f[3]), unhex(f[4]), int(f[5]), int(f[6]), algo(f[7]))
+      } else {
+        otp.hotp_uri(unhex_str(f[2]), unhex_str(f[3]), unhex(f[4]), int(f[6]), algo(f[7]))
+      }
+      hx(s)
+    }
+    "q" => {
+      let k = otp.Key{uri: unhex_str(f[1]).trim(), kind: "totp", issuer: "", account: "", secret: "", period: 30, digits: 6, algo: crypto.Hash.Sha1, encoder: otp.Encoder.Decimal}
+      match k.image(int(f[2]), int(f[3])) {
+        Ok(img) => "${img.width}x${img.height} ${crypto.sha256(img.pix).to_hex()}"
+        Err(e) => "err ${e.msg}"
+      }
+    }
+    _ => "?"
+  }
+}
+
+fn main(os: Os) ! {
+  var i = 0
+  for line in os.stdio.lines()? {
+    if !line.starts_with("c ") {
+      os.stdio.eprintln("line ${i}: not a case")
+      continue
+    }
+    os.stdio.println("== ${i}")
+    i += 1
+    os.stdio.println(answer(line.trim_prefix("c ").split("\t")))
+  }
+}

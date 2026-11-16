@@ -59,8 +59,9 @@ pub fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: crypto.Hash = cr
   code
 }
 
-/// The TOTP code (RFC 6238) at unix seconds: hotp of `unix / period`.
-/// A fault for a period under 1 or a negative unix, and hotp's.
+/// The TOTP code (RFC 6238) at unix seconds: hotp of `unix / period`, an
+/// integer quotient (pquerna/otp floors a float64 quotient, which rounds
+/// once unix passes 2^53). A fault for a period under 1 or a negative unix, and hotp's.
 pub fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, encoder: Encoder = Encoder.Decimal) -> Str {
   if period < 1 {
     fault("otp: period must be at least 1")
@@ -79,7 +80,10 @@ pub fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: c
 /// time and every one is compared, so the time taken does not say which
 /// matched. A code that is not `digits` ASCII digits (letters of Steam's
 /// alphabet with `Encoder.Steam`) is None, never a fault: it is untrusted
-/// input. Does not remember a used code.
+/// input. Does not remember a used code. Unlike pquerna/otp's
+/// totp.ValidateCustom, white space around the code is not trimmed, a
+/// step under 0 is skipped (pquerna wraps it to 2^64 minus it) and the
+/// step is an integer quotient (as `totp`).
 pub fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1, encoder: Encoder = Encoder.Decimal) -> Int? {
   check_params(digits, algo, encoder)
   if period < 1 || unix < 0 || skew < 0 {
@@ -184,12 +188,14 @@ fn check_params(digits: Int, algo: crypto.Hash, encoder: Encoder = Encoder.Decim
 /// `issuer` parameter, else the label's part before `:`; `account` the
 /// label after `:` (all of it without one); `secret` the base32 text as
 /// written (`secret_bytes` decodes it); `period` (30) and `digits` (6)
-/// when the parameter is missing or not an unsigned decimal; `algo` from
+/// when the parameter is missing, not an unsigned decimal or past Int
+/// (pquerna/otp keeps the uint64); `algo` from
 /// `algorithm` in any case (`md5`, `sha256`, `sha512`, else Sha1; hotp
 /// refuses Md5, whose 16 byte MAC is too short for RFC 4226's truncation,
 /// where pquerna/otp's index goes out of range);
 /// `encoder` Steam for `encoder=steam`. `uri` is the input without the
-/// white space around it.
+/// white space around it. The text fields are as std/url decodes them: a
+/// byte that is not UTF-8 stays its `%XX` escape (Go keeps the byte).
 pub struct Key {
   pub uri: Str
   pub kind: Str
