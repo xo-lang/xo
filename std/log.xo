@@ -61,6 +61,11 @@ fn dropped() -> Int uses log
 struct Logger {}
 fn with(fields: Map[Str, Debug]) -> Logger
 fn (l: Logger) with(fields: Map[Str, Debug]) -> Logger
+/// A logger whose later fields (from later `with` calls and each record's
+/// own) go under the group name (log/slog's Logger.WithGroup, decision
+/// 0678); the fields it has keep their place. Nested calls nest; an
+/// empty name changes nothing, and a group no field reaches is left out.
+fn (l: Logger) with_group(name: Str) -> Logger
 fn (l: Logger) debug(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn (l: Logger) info(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn (l: Logger) warn(msg: Str, fields: Map[Str, Debug] = {}) uses log
@@ -108,4 +113,19 @@ enum Value {
   Time(t: Time)
   Dur(d: Duration)
   Any(text: Str)
+  /// A group of fields (log.group, Logger.with_group; decision 0678), in
+  /// the order they were given.
+  Group(fields: Map[Str, Value])
 }
+
+/// A field value that groups fields under the field's key (log/slog's
+/// Group, decision 0678): `log.info("served", {"req": log.group({"method":
+/// m})})` writes `req.method=GET` in text and `"req":{"method":"GET"}` in
+/// JSON. An empty key puts the members beside the other fields; an empty
+/// group is left out. Its Debug text is the dotted form (`method=GET`);
+/// its Display text is the encoding the log functions read back, not
+/// meant for people.
+struct Group {}
+fn group(fields: Map[Str, Debug]) -> Group
+fn (g: Group) debug() -> Str
+fn (g: Group) display() -> Str

@@ -68,3 +68,22 @@ open feature gaps (scripts/stdaudit/map.txt).
 - **Pre-rendering handlers (WithAttrs, WithGroup on Handler)**: still
   left out (decision 0617); groups here live in the record, so a handler
   needs no new methods.
+
+## Implementation (2026-11-16, Xo Lang 3)
+
+- std/log.xo declares `Group`, `group`, `Logger.with_group` and
+  `Value.Group`; std/native/log.xo and std/rt/log.go implement them; the
+  golden `log_group` runs on go, arm64 and LLVM with the same output.
+- On the native backends a `Debug` field value reaches std/log only as
+  its text (the xo.dyn record keeps no value), so a `Group`'s Display
+  text is an encoding (`GROUP_MARK`, then length-prefixed key, kind
+  letter and payload per member) that `value_of` decodes back to
+  `Value.Group`; its Debug text is the dotted form. The Go backend
+  type-asserts `Log_Group` and writes the same Display text. A compiler
+  kind for groups (rt.dyn_kind) would avoid the encoding; it would need
+  a seed before std could read it.
+- The group rules are slog's (an empty key inlines, an empty group and
+  a `with_group` no field reaches are left out, `with_group("")` is a
+  no-op). The record layout around them stays configure's (a time,
+  level and message, then fields; JSON with sorted keys), not
+  TextHandler's quoting, as before this decision.

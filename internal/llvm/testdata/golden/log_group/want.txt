@@ -1,0 +1,33 @@
+exit 0
+--- stdout
+debug: a=1 g.b=y
+--- stderr
+<time> INFO served req.method=GET req.status=200 req.inner.ok=true req.inner.f=2.5 n=1
+{"level":"INFO","msg":"served","n":1,"req":{"inner":{"f":2.5,"ok":true},"method":"GET","status":200},"time":"<time>"}
+<time> INFO inline a=1 b=x
+{"a":1,"b":"x","level":"INFO","msg":"inline","time":"<time>"}
+<time> WARN slow app=demo http.host=h1 http.ms=120
+{"app":"demo","http":{"host":"h1","ms":120},"level":"WARN","msg":"slow","time":"<time>"}
+<time> ERROR no fields app=demo http.host=h1
+{"app":"demo","http":{"host":"h1"},"level":"ERROR","msg":"no fields","time":"<time>"}
+<time> ERROR boom app=demo http.host=h1 http.db.code=7 http.db.q=select "x"
+{"app":"demo","http":{"db":{"code":7,"q":"select \"x\""},"host":"h1"},"level":"ERROR","msg":"boom","time":"<time>"}
+fields served: req.method=GET req.status=200 req.inner.ok=true req.inner.f=2.5 n=1
+group req: 3 members
+fields inline: a=1 b=x
+fields slow: app=demo http.host=h1 http.ms=120
+group http: 2 members
+fields no fields: app=demo http.host=h1
+group http: 1 members
+fields boom: app=demo http.host=h1 http.db.code=7 http.db.q=select "x"
+group http: 2 members
+<time> INFO served req.method=GET req.status=200 req.inner.ok=true req.inner.f=2.5 n=1
+<time> INFO inline a=1 b=x
+<time> WARN slow app=demo http.host=h1 http.ms=120
+<time> ERROR no fields app=demo http.host=h1
+<time> ERROR boom app=demo http.host=h1 http.db.code=7 http.db.q=select "x"
+{"level":"INFO","msg":"served","n":1,"req":{"inner":{"f":2.5,"ok":true},"method":"GET","status":200},"time":"<time>"}
+{"a":1,"b":"x","level":"INFO","msg":"inline","time":"<time>"}
+{"app":"demo","http":{"host":"h1","ms":120},"level":"WARN","msg":"slow","time":"<time>"}
+{"app":"demo","http":{"host":"h1"},"level":"ERROR","msg":"no fields","time":"<time>"}
+{"app":"demo","http":{"db":{"code":7,"q":"select \"x\""},"host":"h1"},"level":"ERROR","msg":"boom","time":"<time>"}

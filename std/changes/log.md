@@ -1,5 +1,16 @@
 # std/log changes
 
+## 2026-11-16: feature: groups (log.group, Logger.with_group, Value.Group; decision 0678)
+
+- Kind: feature
+- Commit: this push
+- Found by: the stdaudit gaps slog.Group and slog.Logger.WithGroup (decision 0678)
+- Go reference: log/slog Group, Logger.WithGroup and the handlers' group rules (empty key inlined, empty group left out), go1.26 (Copyright 2022 The Go Authors, BSD-style license)
+- Test: golden log_group (go, arm64, LLVM): text, JSON, handlers, configure, nested with_group
+- Shipped in: not yet released
+
+`log.group(fields)` is a field value that groups fields under the field's key, and `Logger.with_group(name)` puts a logger's later fields under name. Text records write dotted keys (`req.method=GET`), JSON records nested objects; `Record.values` carries `Value.Group` and `Record.fields` the dotted keys. Breaking for a `match` on `log.Value` with no `_` arm: add a `Group(fields)` arm.
+
 ## 2026-11-16: fix: JSON records escape <, > and & and write floats as Go's json.Marshal
 
 - Kind: fix

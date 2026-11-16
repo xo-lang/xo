@@ -1,0 +1,52 @@
+// log.group and Logger.with_group (decision 0678, log/slog's Group and
+// WithGroup): text writes dotted keys, JSON nested objects; an empty
+// key inlines a group, an empty group is left out; a handler sees the
+// group in Record.values and the dotted keys in Record.fields.
+use std/log
+
+fn work() uses log {
+  log.info("served", {"req": log.group({"method": "GET", "status": 200, "inner": log.group({"ok": true, "f": 2.5})}), "n": 1})
+  log.info("inline", {"": log.group({"a": 1, "b": "x"}), "empty": log.group({})})
+  let l = log.with({"app": "demo"}).with_group("http").with({"host": "h1"}).with_group("")
+  l.warn("slow", {"ms": 120})
+  l.with_group("none").error("no fields")
+  l.with_group("db").error("boom", {"code": 7, "q": "select \"x\""})
+}
+
+struct Show {
+  out: Chan[Str]
+}
+
+fn (s: Show) enabled(level: log.Level) -> Bool { true }
+
+fn (s: Show) handle(r: log.Record) {
+  var fs: List[Str] = []
+  for (k, t) in r.fields {
+    fs.push("${k}=${t}")
+  }
+  s.out.send("fields ${r.msg}: ${fs.join(" ")}")
+  for (k, v) in r.values {
+    match v {
+      log.Value.Group(m) => s.out.send("group ${k}: ${m.len()} members")
+      _ => {}
+    }
+  }
+}
+
+fn main(os: Os) {
+  let c: Chan[Str] = Chan.new(64)
+  let all = log.func_sink(fn(l: Str) { c.send(l) })
+  log.configure_handler(log.multi([log.text_handler(all), log.json_handler(all)]))
+  work()
+  log.configure_handler(Show{out: c})
+  work()
+  c.close()
+  while let Some(l) = c.recv() {
+    os.stdio.eprintln(l)
+  }
+  os.stdio.println("debug: ${log.group({"a": 1, "g": log.group({"b": "y"})}):?}")
+  log.configure(os.stdio)
+  work()
+  log.configure(os.stdio, format: log.Format.Json)
+  work()
+}

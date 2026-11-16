@@ -27,6 +27,9 @@ fn error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, fields, logsta
 struct Logger {
   fields: Map[Str, Debug]
   from: Str
+  /// with_group's levels, outermost first: each group's name and the
+  /// fields `with` gave under it (decision 0678).
+  groups: List[(Str, Map[Str, Debug])] = []
 }
 
 fn with(fields: Map[Str, Debug]) -> log.Logger {
@@ -46,16 +49,279 @@ fn merged(a: Map[Str, Debug], b: Map[Str, Debug]) -> Map[Str, Debug] {
 }
 
 fn (l: Logger) with(fields: Map[Str, Debug]) -> log.Logger {
-  rt.cast[Logger, log.Logger](l with {fields: merged(l.fields, fields)})
+  if l.groups.is_empty() {
+    return rt.cast[Logger, log.Logger](l with {fields: merged(l.fields, fields)})
+  }
+  var gs = l.groups
+  let n = gs.len() - 1
+  gs.set(n, (gs[n].0, merged(gs[n].1, fields)))
+  rt.cast[Logger, log.Logger](l with {groups: gs})
 }
 
-fn (l: Logger) debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, merged(l.fields, fields), l.from) }
+fn (l: Logger) with_group(name: Str) -> log.Logger {
+  if name.is_empty() {
+    return rt.cast[Logger, log.Logger](l)
+  }
+  var gs = l.groups
+  let empty: Map[Str, Debug] = {}
+  gs.push((name, empty))
+  rt.cast[Logger, log.Logger](l with {groups: gs})
+}
 
-fn (l: Logger) info(msg: Str, fields: Map[Str, Debug] = {}) { record(2, msg, merged(l.fields, fields), l.from) }
+/// l's fields with a record's: the record's under the innermost group,
+/// each group a log.group field of the level around it (decision 0678).
+fn logger_fields(l: Logger, fields: Map[Str, Debug]) -> Map[Str, Debug] {
+  if l.groups.is_empty() {
+    return merged(l.fields, fields)
+  }
+  var i = l.groups.len() - 1
+  var acc = merged(l.groups[i].1, fields)
+  while i >= 0 {
+    var parent = if i == 0 { l.fields } else { l.groups[i - 1].1 }
+    if !acc.is_empty() {
+      var g: Map[Str, Debug] = {}
+      g.put(l.groups[i].0, group(acc))
+      parent = merged(parent, g)
+    }
+    acc = parent
+    i -= 1
+  }
+  acc
+}
 
-fn (l: Logger) warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, merged(l.fields, fields), l.from) }
+fn (l: Logger) debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, logger_fields(l, fields), l.from) }
 
-fn (l: Logger) error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, merged(l.fields, fields), l.from) }
+fn (l: Logger) info(msg: Str, fields: Map[Str, Debug] = {}) { record(2, msg, logger_fields(l, fields), l.from) }
+
+fn (l: Logger) warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, logger_fields(l, fields), l.from) }
+
+fn (l: Logger) error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, logger_fields(l, fields), l.from) }
+
+// Groups (decision 0678). A Debug value reaches std/log as its text
+// (the native backends' xo.dyn keeps no value), so a Group's Display text
+// is an encoding value_of reads back: GROUP_MARK, then each member's key,
+// a kind letter and its payload, the key and payload with their byte
+// length first (`6:method` `s` `3:GET`).
+const GROUP_MARK = "\u{1e}xo.log.group\u{1e}"
+
+/// log.Group: its members as log.Values, in the order given.
+struct Group {
+  fields: Map[Str, log.Value]
+}
+
+fn group(fields: Map[Str, Debug]) -> log.Group {
+  var vs: Map[Str, log.Value] = {}
+  for (k, v) in fields {
+    vs.put(k, value_of(v))
+  }
+  rt.cast[Group, log.Group](Group{fields: vs})
+}
+
+fn (g: Group) display() -> Str { GROUP_MARK + group_enc(g.fields) }
+
+fn (g: Group) debug() -> Str { dotted(g.fields) }
+
+fn lenp(s: Str) -> Str { "${s.len()}:${s}" }
+
+fn group_enc(fs: Map[Str, log.Value]) -> Str {
+  var out = ""
+  for (k, v) in fs {
+    let (tag, p) = match v {
+      log.Value.Str(s) => ("s", s)
+      log.Value.Int(n) => ("i", "${n}")
+      log.Value.UInt(n) => ("u", "${n.to_bits()}")
+      log.Value.Float(f) => ("f", "${f.to_bits()}")
+      log.Value.Bool(b) => ("b", if b { "1" } else { "0" })
+      log.Value.Group(m) => ("g", group_enc(m))
+      _ => ("a", value_text(v))
+    }
+    out = out + lenp(k) + tag + lenp(p)
+  }
+  out
+}
+
+/// The length-prefixed piece of s at byte i and the index after it.
+fn piece_at(s: Str, i: Int) -> (Str, Int)? {
+  let rest = s[i..s.len()]
+  let c = rest.find(":")?
+  let n = Int.parse(rest[0..c])?
+  if n < 0 || c + 1 + n > rest.len() {
+    return None
+  }
+  Some((rest[c + 1..c + 1 + n], i + c + 1 + n))
+}
+
+fn group_dec(s: Str) -> Map[Str, log.Value]? {
+  var m: Map[Str, log.Value] = {}
+  var i = 0
+  while i < s.len() {
+    let (k, a) = piece_at(s, i)?
+    if a >= s.len() {
+      return None
+    }
+    let tag = s[a..a + 1]
+    let (p, b) = piece_at(s, a + 1)?
+    let v = match tag {
+      "s" => log.Value.Str(s: p)
+      "i" => log.Value.Int(n: Int.parse(p)?)
+      "u" => log.Value.UInt(n: UInt64.from_bits(Int.parse(p)?))
+      "f" => log.Value.Float(f: Float.from_bits(Int.parse(p)?))
+      "b" => log.Value.Bool(b: p == "1")
+      "g" => log.Value.Group(fields: group_dec(p)?)
+      _ => log.Value.Any(text: p)
+    }
+    m.put(k, v)
+    i = b
+  }
+  Some(m)
+}
+
+/// A value's text as the text format writes it (a group's dotted form).
+fn value_text(v: log.Value) -> Str {
+  match v {
+    log.Value.Str(s) => s
+    log.Value.Int(n) => "${n}"
+    log.Value.UInt(n) => "${n}"
+    log.Value.Float(f) => "${f}"
+    log.Value.Bool(b) => "${b}"
+    log.Value.Time(t) => "${t}"
+    log.Value.Dur(d) => "${d}"
+    log.Value.Any(text) => text
+    log.Value.Group(fs) => dotted(fs)
+  }
+}
+
+fn join_key(prefix: Str, k: Str) -> Str { if prefix.is_empty() { k } else { "${prefix}.${k}" } }
+
+/// fs's members under prefix as (dotted key, text): a group's members
+/// under its key (beside the others for an empty key).
+fn flat(prefix: Str, fs: Map[Str, log.Value]) -> List[(Str, Str)] {
+  var out: List[(Str, Str)] = []
+  for (k, v) in fs {
+    match v {
+      log.Value.Group(m) => out = out + flat(if k.is_empty() { prefix } else { join_key(prefix, k) }, m)
+      _ => out.push((join_key(prefix, k), value_text(v)))
+    }
+  }
+  out
+}
+
+fn dotted(fs: Map[Str, log.Value]) -> Str {
+  var parts: List[Str] = []
+  for (k, t) in flat("", fs) {
+    parts.push("${k}=${t}")
+  }
+  parts.join(" ")
+}
+
+/// fs with Go's rules: a group with an empty key inlined, an empty group
+/// left out.
+fn norm(fs: Map[Str, log.Value]) -> Map[Str, log.Value] {
+  var out: Map[Str, log.Value] = {}
+  for (k, v) in fs {
+    match v {
+      log.Value.Group(m) => {
+        let n = norm(m)
+        if !n.is_empty() {
+          if k.is_empty() {
+            for (k2, v2) in n {
+              out.put(k2, v2)
+            }
+          } else {
+            out.put(k, log.Value.Group(fields: n))
+          }
+        }
+      }
+      _ => out.put(k, v)
+    }
+  }
+  out
+}
+
+/// A record's fields: the flat text view (Record.fields, dotted keys)
+/// and the values (Record.values, groups nested), by Go's group rules.
+fn expand(fields: Map[Str, Debug]) -> (Map[Str, Str], Map[Str, log.Value]) {
+  var fs: Map[Str, Str] = {}
+  var vs: Map[Str, log.Value] = {}
+  for (k, v) in fields {
+    let val = value_of(v)
+    match val {
+      log.Value.Group(_) => {
+        var one: Map[Str, log.Value] = {}
+        one.put(k, val)
+        let n = norm(one)
+        for (k2, v2) in n {
+          vs.put(k2, v2)
+        }
+        for (k2, t) in flat("", n) {
+          fs.put(k2, t)
+        }
+      }
+      _ => {
+        fs.put(k, rt.dyn_text(v))
+        vs.put(k, val)
+      }
+    }
+  }
+  (fs, vs)
+}
+
+/// A value in a JSON record: numbers and booleans bare, a group an
+/// object, the others strings.
+fn json_value(v: log.Value) -> Str {
+  match v {
+    log.Value.Int(_) | log.Value.UInt(_) | log.Value.Bool(_) => value_text(v)
+    log.Value.Float(f) => rtjson.json_enc("", f)
+    log.Value.Group(m) => {
+      var es: List[(Str, Str)] = []
+      for (k, x) in m {
+        es.push((k, json_value(x)))
+      }
+      json_obj(es)
+    }
+    _ => rtjson.json_enc("", value_text(v))
+  }
+}
+
+/// A JSON object of es, keys sorted (encoding/json of a map; a later
+/// entry replaces an earlier one of the same key).
+fn json_obj(es: List[(Str, Str)]) -> Str {
+  var keys: List[Str] = []
+  var vals: List[Str] = []
+  for (k, j) in es {
+    var found = false
+    for (i, x) in keys.indexed() {
+      if x == k {
+        vals.set(i, j)
+        found = true
+      }
+    }
+    if !found {
+      keys.push(k)
+      vals.push(j)
+    }
+  }
+  // the keys in order, by insertion (a record has a handful; no
+  // closure or second list for sort_by)
+  var order: List[Int] = []
+  for i in 0..keys.len() {
+    var j = order.len()
+    order.push(i)
+    while j > 0 && keys[order[j - 1]] > keys[i] {
+      order.set(j, order[j - 1])
+      j -= 1
+    }
+    order.set(j, i)
+  }
+  var line = "{"
+  for (n, i) in order.indexed() {
+    if n > 0 {
+      line = line + ","
+    }
+    line = rtjson.json_enc(line, keys[i]) + ":" + vals[i]
+  }
+  line + "}"
+}
 
 fn enabled(level: log.Level) -> Bool {
   if logstate.has_handler() {
@@ -111,6 +377,11 @@ fn configure_handler(h: log.Handler) uses stdio {
 /// seed knows them (gotchas/seed-older-than-intrinsics.md).
 fn value_of(v: Debug) -> log.Value {
   let t = rt.dyn_text(v)
+  if t.starts_with(GROUP_MARK) {
+    if let Some(m) = group_dec(t[GROUP_MARK.len()..t.len()]) {
+      return log.Value.Group(fields: m)
+    }
+  }
   if rt.dyn_raw(v) {
     if t == "true" || t == "false" {
       return log.Value.Bool(b: t == "true")
@@ -161,12 +432,7 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
   if let Some(h) = cur {
     let lv = level_of(level)
     if h.enabled(lv) {
-      var fs: Map[Str, Str] = {}
-      var vs: Map[Str, log.Value] = {}
-      for (k, v) in fields {
-        fs.put(k, rt.dyn_text(v))
-        vs.put(k, value_of(v))
-      }
+      let (fs, vs) = expand(fields)
       if testworld.on() {
         // testing.logs keeps it (decision 0083); the handler writes it
         var keys: List[Str] = []
@@ -184,7 +450,8 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
   if level < logstate.level() {
     return
   }
-  let line = format(level, msg, fields, from)
+  let (fs, vs) = expand(fields)
+  let line = format(level, msg, fs, vs, from)
   if testworld.on() {
     // a test keeps its records (testing.logs, decision 0083); without a
     // configured output the line goes to the test's buffer (printed when
@@ -192,9 +459,9 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
     // logRecord)
     var keys: List[Str] = []
     var vals: List[Str] = []
-    for (k, v) in fields {
+    for (k, t) in fs {
       keys.push(k)
-      vals.push(rt.dyn_text(v))
+      vals.push(t)
     }
     if !logstate.configured() {
       testworld.log(level, msg, from, keys, vals, line)
@@ -217,75 +484,28 @@ fn go_html(line: Str) -> Str {
   line.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 }
 
-/// The text of a record: JSON when configured so, else text.
-fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
+/// The text of a record: JSON when configured so, else text. fs is the
+/// flat text view (dotted keys), vs the values (groups nested).
+fn format(level: Int, msg: Str, fs: Map[Str, Str], vs: Map[Str, log.Value], from: Str) -> Str {
   if logstate.json() {
-    // encoding/json of a map: keys sorted
-    var keys: List[Str] = ["time", "level", "msg"]
-    var vals: List[Str] = [rtjson.json_enc("", logstate.now(true)), rtjson.json_enc("", level_name(level)), rtjson.json_enc("", msg)]
-    for (k, v) in fields {
-      let text = rt.dyn_text(v)
-      var j = rtjson.json_enc("", text)
-      if rt.dyn_raw(v) {
-        j = match value_of(v) {
-          log.Value.Float(f) => rtjson.json_enc("", f)
-          _ => text
-        }
-      }
-      var found = false
-      for (i, x) in keys.indexed() {
-        if x == k {
-          vals.set(i, j)
-          found = true
-        }
-      }
-      if !found {
-        keys.push(k)
-        vals.push(j)
-      }
+    // encoding/json of a map: keys sorted; a field replaces time, level
+    // or msg, the attribution replaces a field named "module"
+    var es: List[(Str, Str)] = [("time", rtjson.json_enc("", logstate.now(true))), ("level", rtjson.json_enc("", level_name(level))), ("msg", rtjson.json_enc("", msg))]
+    for (k, v) in vs {
+      es.push((k, json_value(v)))
     }
     if from != "" {
-      // the attribution replaces a field named "module"
-      var found = false
-      for (i, x) in keys.indexed() {
-        if x == "module" {
-          vals.set(i, rtjson.json_enc("", from))
-          found = true
-        }
-      }
-      if !found {
-        keys.push("module")
-        vals.push(rtjson.json_enc("", from))
-      }
+      es.push(("module", rtjson.json_enc("", from)))
     }
-    // the keys in order, by insertion (a record has a handful; no
-    // closure or second list for sort_by)
-    var order: List[Int] = []
-    for i in 0..keys.len() {
-      var j = order.len()
-      order.push(i)
-      while j > 0 && keys[order[j - 1]] > keys[i] {
-        order.set(j, order[j - 1])
-        j -= 1
-      }
-      order.set(j, i)
-    }
-    var line = "{"
-    for (n, i) in order.indexed() {
-      if n > 0 {
-        line = line + ","
-      }
-      line = rtjson.json_enc(line, keys[i]) + ":" + vals[i]
-    }
-    return go_html(line + "}")
+    return go_html(json_obj(es))
   }
   var tag = ""
   if from != "" {
     tag = "[${from}] "
   }
   var line = "${logstate.now(false)} ${level_name(level)} ${tag}${msg}"
-  for (k, v) in fields {
-    line = line + " ${k}=${rt.dyn_text(v)}"
+  for (k, t) in fs {
+    line = line + " ${k}=${t}"
   }
   line
 }
@@ -424,60 +644,30 @@ fn render(json: Bool, r: log.Record) -> Str {
   let level = rank(r.level)
   let ns = r.time.unix_nanos()
   if json {
-    var keys: List[Str] = ["time", "level", "msg"]
-    var vals: List[Str] = [rtjson.json_enc("", text.append_time("", ns)), rtjson.json_enc("", level_name(level)), rtjson.json_enc("", r.msg)]
+    var es: List[(Str, Str)] = [("time", rtjson.json_enc("", text.append_time("", ns))), ("level", rtjson.json_enc("", level_name(level))), ("msg", rtjson.json_enc("", r.msg))]
     for (k, t) in r.fields {
-      let raw = match r.values.get(k) {
-        Some(log.Value.Int(_)) | Some(log.Value.UInt(_)) | Some(log.Value.Float(_)) | Some(log.Value.Bool(_)) => true
-        _ => false
-      }
-      let j = match r.values.get(k) {
-        Some(log.Value.Float(f)) => rtjson.json_enc("", f)
-        _ => if raw { t } else { rtjson.json_enc("", t) }
-      }
-      var found = false
-      for (i, x) in keys.indexed() {
-        if x == k {
-          vals.set(i, j)
-          found = true
+      if let Some(dot) = k.find(".") {
+        // a group's member: the group's value writes it (decision 0678)
+        if let Some(log.Value.Group(_)) = r.values.get(k[0..dot]) {
+          continue
         }
       }
-      if !found {
-        keys.push(k)
-        vals.push(j)
+      let j = match r.values.get(k) {
+        Some(log.Value.Int(_)) | Some(log.Value.UInt(_)) | Some(log.Value.Bool(_)) => t
+        Some(log.Value.Float(f)) => rtjson.json_enc("", f)
+        _ => rtjson.json_enc("", t)
+      }
+      es.push((k, j))
+    }
+    for (k, v) in r.values {
+      if let log.Value.Group(_) = v {
+        es.push((k, json_value(v)))
       }
     }
     if r.module != "" {
-      var found = false
-      for (i, x) in keys.indexed() {
-        if x == "module" {
-          vals.set(i, rtjson.json_enc("", r.module))
-          found = true
-        }
-      }
-      if !found {
-        keys.push("module")
-        vals.push(rtjson.json_enc("", r.module))
-      }
+      es.push(("module", rtjson.json_enc("", r.module)))
     }
-    var order: List[Int] = []
-    for i in 0..keys.len() {
-      var j = order.len()
-      order.push(i)
-      while j > 0 && keys[order[j - 1]] > keys[i] {
-        order.set(j, order[j - 1])
-        j -= 1
-      }
-      order.set(j, i)
-    }
-    var line = "{"
-    for (n, i) in order.indexed() {
-      if n > 0 {
-        line = line + ","
-      }
-      line = rtjson.json_enc(line, keys[i]) + ":" + vals[i]
-    }
-    return go_html(line + "}")
+    return go_html(json_obj(es))
   }
   let secs = ns - (ns % 1000000000 + 1000000000) % 1000000000
   var tag = ""

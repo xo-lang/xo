@@ -25,8 +25,12 @@ var (
 	_ func(*Task) int64                                             = Log_dropped
 	_ func(*Task, Map[string, IDebug]) Log_Logger                   = Log_with
 	_ func(*Log_Logger, *Task, Map[string, IDebug]) Log_Logger      = (*Log_Logger).M_with
+	_ func(*Log_Logger, *Task, string) Log_Logger                   = (*Log_Logger).M_with_group
 	_ func(*Log_Logger, *Task, string, Map[string, IDebug])         = (*Log_Logger).M_debug
 	_ func(*Log_Logger, *Task, string, Map[string, IDebug])         = (*Log_Logger).M_info
 	_ func(*Log_Logger, *Task, string, Map[string, IDebug])         = (*Log_Logger).M_warn
 	_ func(*Log_Logger, *Task, string, Map[string, IDebug])         = (*Log_Logger).M_error
+	_ func(*Task, Map[string, IDebug]) Log_Group                    = Log_group
+	_ func(*Log_Group, *Task) string                                = (*Log_Group).M_debug
+	_ func(*Log_Group, *Task) string                                = (*Log_Group).M_display
 )

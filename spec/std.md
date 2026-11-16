@@ -3005,6 +3005,31 @@ Records go to the same sink, level and format as the module functions'
 (`configure` applies to both). A logger made in a dependency's code
 names that dependency (below), wherever its methods are called.
 
+Groups (decision 0678, log/slog's `Group` and `Logger.WithGroup`) put
+fields under a name: text writes dotted keys, JSON a nested object.
+
+```
+struct Group {}
+pub fn group(fields: Map[Str, Debug]) -> Group                 // a field value
+fn (l: Logger) with_group(name: Str) -> Logger                 // later fields go under name
+```
+
+```
+log.info("served", {"req": log.group({"method": "GET", "status": 200})})
+                         // text: ... INFO served req.method=GET req.status=200
+                         // JSON: {..., "req":{"method":"GET","status":200}}
+log.with({"app": "demo"}).with_group("http").warn("slow", {"ms": 120})
+                         // ... WARN slow app=demo http.ms=120
+```
+
+As in Go, a group under an empty key puts its members beside the other
+fields, an empty group (or a `with_group` no field reaches) is left out,
+and `with_group("")` changes nothing. A handler sees a group in
+`Record.values` as `Value.Group` and its members in `Record.fields`
+under their dotted keys. A `Group`'s Debug text is its dotted form
+(`method=GET status=200`); its Display text is an encoding the log
+functions read back on the native backends, not meant for people.
+
 Every record includes the time. A record written by the code of a
 dependency (a required module version, not the main module or a
 workspace module) names it, `<module path>@<version>` (decision 0173):
@@ -3038,7 +3063,7 @@ pub fn text_handler[fx: Effects](out: Sink[fx], level: Level = Level.Info) -> Ha
 pub fn multi[fx: Effects](hs: List[Handler[fx]]) -> Handler[fx]
 pub fn level_range[fx: Effects](h: Handler[fx], min: Level, max: Level) -> Handler[fx]
 pub fn dropped() -> Int uses log
-enum Value { Str(s: Str), Int(n: Int), UInt(n: UInt64), Float(f: Float), Bool(b: Bool), Time(t: Time), Dur(d: Duration), Any(text: Str) }
+enum Value { Str(s: Str), Int(n: Int), UInt(n: UInt64), Float(f: Float), Bool(b: Bool), Time(t: Time), Dur(d: Duration), Any(text: Str), Group(fields: Map[Str, Value]) }
 ```
 
 ```

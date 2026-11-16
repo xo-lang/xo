@@ -815,8 +815,8 @@ slog.Logger.WarnContext = std/log.Logger.warn
 slog.Logger.ErrorContext = std/log.Logger.error
 slog.Logger.With = std/log.Logger.with
 slog.Logger.Enabled = std/log.enabled
-slog.Logger.WithGroup = gap: no attribute groups (Logger.with takes flat fields)
-slog.Group = gap: no attribute groups (Logger.with takes flat fields)
+slog.Logger.WithGroup = std/log.Logger.with_group
+slog.Group = std/log.group
 slog.Level = std/log.Level
 slog.LevelDebug = std/log.Level.Debug
 slog.LevelInfo = std/log.Level.Info
@@ -826,8 +826,8 @@ slog.Record = std/log.Record
 slog.NewJSONHandler = std/log.Format.Json
 slog.NewTextHandler = std/log.Format.Text
 slog.SetDefault = std/log.configure
-slog.Handler = gap: no custom handlers (a sink per level or destination; std-coverage.md log/slog row)
-slog.NewMultiHandler = gap: no custom handlers (a sink per level or destination; std-coverage.md log/slog row)
+slog.Handler = std/log.Handler
+slog.NewMultiHandler = std/log.multi
 slog.* = not planned: Attr, Value and Kind are interpolated fields (Logger.with takes typed values); handler internals follow the Handler gap
 
 # testing: test blocks, expect, std/testing fakes (core 9)
