@@ -298,7 +298,11 @@ yourself.
   file's clean exit stays stopped), output in `~/xo-lead/logs/NAME.log`;
   `uninstall` removes it. `mainwatch.sh` is mainwatch2.sh's loop (the
   2-hourly hourly.sh, its windows and spacing) that keeps going after a
-  failing check: xw's main-check alert reports it. Each loop writes a
+  failing check: xw's main-check alert reports it. A check waits up to
+  30 minutes for the Mac's 1-minute load to fall under 20, then runs
+  anyway; its hourly.log verdict ends `[Mac load L at the start, ...]`,
+  with `(over 20: a timeout may be the load)` when it ran loaded (lead,
+  2026-11-16; `MAINWATCH_LOAD_MAX`, `_WAIT`, `_POLL`). Each loop writes a
   heartbeat at every wait (`~/xo-lead/xw/beat/NAME`: due epoch and what
   it waits on), and xw raises `loop-stale` when one is overdue. Stop a
   session's copy before installing (mainwatch2.sh in the lead's session;
