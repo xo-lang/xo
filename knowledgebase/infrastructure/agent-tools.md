@@ -1591,9 +1591,13 @@ Last verified: 2026-11-15
     (stdcov -json's missing lists: Go rows and map.txt gaps; race,
     stress, fuzz or review evidence; a perf row over 1.05 or no Go twin)
     and the open tasks naming it as std/MODULE; /std opens with the
-    same for every module below Proven, worst first. Name the module as
-    std/MODULE in a task title so the page credits it. Last verified:
-    2026-11-16.
+    same for every module below Proven, worst first. A task title
+    credits a module named as std/MODULE, in a run of three or more bare
+    module names ("brotli cbor grpc") or in a slash list ("amqp/grpc");
+    a lone or paired word ("testing Early to Proven") does not count
+    (#96). /std lists the modules below Proven no open task names, and
+    from 07:00 local a daily `std-uncovered` alert to the lead lists
+    them. Last verified: 2026-11-16.
   - Owner questions (2026-11-15, replacing OWNER-MORNING.md and todo.md's
     OWNER lines): `xw ask TEXT` (anyone) opens one; the lead records the
     owner's word with `xw answer ID --by owner TEXT`; `xw decisions
