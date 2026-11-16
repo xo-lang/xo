@@ -1174,8 +1174,27 @@ bin_select() {
       xargs -P "${XO_GATE_BIN_JOBS:-$(ir_jobs)}" -n 1 sh -c 'mkdir -p "$OUT/$0" && cd "$SRC/$0" && XO_STD="$XSTD" "$BX" build --backend="$BE" -o "$OUT/$0/prog" . >"$OUT/$0/log" 2>&1; :' <"$T/names.txt"
     mv "$T/o" "$3"
   }
-  bin_build_side "$T/xo-base" "$T/tree/std" "$T/a"
-  bin_build_side "$XO_CLI" "$PWD/std" "$T/b"
+  # arm64: both sides build through internal/arm64's
+  # TestGoldenBinSelectBuild, in TestGoldenRun's own shape (directory,
+  # -o name, options, environment), so the head side's builds fill the
+  # run cache (decision 0360) that TestGoldenRun hits later in this gate
+  # (lever b, lead 2026-11-15); the base side runs the test with the merge
+  # base's xo and std. XO_GATE_BIN_SHAPE=script builds both with xargs.
+  bin_test_side() { # XO STDDIR OUT
+    mkdir -p "$3"
+    # the base side's xo is older than this tree, so xotool's stale check
+    # is off for it (without it every build failed to start and the side
+    # built nothing; 2026-11-15)
+    env ${2:+XO_STD="$2" XO_CLI_STALE_OK=1} XO_CLI="$1" XO_GOLDEN_BIN_OUT="$3" \
+      go test -count=1 -timeout 120m ./internal/arm64 -run '^TestGoldenBinSelectBuild$' >"$3.log" 2>&1
+  }
+  if [ "$be" = arm64 ] && [ "${XO_GATE_BIN_SHAPE:-test}" = test ]; then
+    bin_test_side "$T/xo-base" "$T/tree/std" "$T/a"
+    bin_test_side "$XO_CLI" "" "$T/b"
+  else
+    bin_build_side "$T/xo-base" "$T/tree/std" "$T/a"
+    bin_build_side "$XO_CLI" "$PWD/std" "$T/b"
+  fi
   sel=$(python3 scripts/golden-bin-select.py "$T/a" "$T/b" "$T/src/golden" "$T/names.txt" 2>"$T/count.txt")
   # the goldens whose own directory the branch changes or adds: both sides
   # built this branch's sources
