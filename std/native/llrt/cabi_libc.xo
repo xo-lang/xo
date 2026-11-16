@@ -14,6 +14,7 @@
 use native/llrt/libcio
 use native/llrt/libcmath
 use native/llrt/libcmem
+use native/llrt/libcint
 use native/llrt/libcstr
 use native/llrt/libcsys
 use native/llrt/libcthr
@@ -36,6 +37,19 @@ fn memmove(d: Int, s: Int, n: Int) -> Int { libcstr.memmove(d, s, n) }
 fn memset(d: Int, c: Int, n: Int) -> Int { libcstr.memset(d, c, n) }
 
 fn memcmp(a: Int, b: Int, n: Int) -> Int { libcstr.memcmp(a, b, n) }
+
+/// libgcc's unsigned 128-bit division and remainder, which the LLVM
+/// emitter's code calls (libcint.xo): an unsigned __int128 is two words,
+/// low then high, in and out.
+fn __udivti3(nlo: Int, nhi: Int, dlo: Int, dhi: Int) -> (Int, Int) {
+  let (q, qh, _r, _rh) = libcint.udivmod128(nlo, nhi, dlo, dhi)
+  (q, qh)
+}
+
+fn __umodti3(nlo: Int, nhi: Int, dlo: Int, dhi: Int) -> (Int, Int) {
+  let (_q, _qh, r, rh) = libcint.udivmod128(nlo, nhi, dlo, dhi)
+  (r, rh)
+}
 
 fn bcmp(a: Int, b: Int, n: Int) -> Int { libcstr.memcmp(a, b, n) }
 

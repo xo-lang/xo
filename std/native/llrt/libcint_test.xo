@@ -1,0 +1,35 @@
+// Tests of libcint.xo's 128-bit division: `xo test
+// --std-module=native/llrt/libcint`, run by internal/stdtest.
+
+test "small operands take the 64-bit path" {
+  expect(udivmod128(100, 0, 7, 0) == (14, 0, 2, 0))
+  expect(udivmod128(0, 0, 5, 0) == (0, 0, 0, 0))
+}
+
+test "a high word divides" {
+  // 2^64 / 2 = 2^63; 2^64 / 3 = 6148914691236517205 r 1
+  expect(udivmod128(0, 1, 2, 0) == (Int.min, 0, 0, 0))
+  expect(udivmod128(0, 1, 3, 0) == (6148914691236517205, 0, 1, 0))
+}
+
+test "unsigned low words above 2^63" {
+  // (2^64 - 1) / 2 = 2^63 - 1 r 1; (2^64 - 1) / (2^64 - 1) = 1
+  expect(udivmod128(-1, 0, 2, 0) == (Int.max, 0, 1, 0))
+  expect(udivmod128(-1, 0, -1, 0) == (1, 0, 0, 0))
+  // 2^63 / 3 = 3074457345618258602 r 2
+  expect(udivmod128(Int.min, 0, 3, 0) == (3074457345618258602, 0, 2, 0))
+}
+
+test "a 128-bit divisor" {
+  // 2^127 / (2^64 + 1), checked by multiplying back: q * 2^64 + q + r == 2^127
+  let (q, qh, r, rh) = udivmod128(0, Int.min, 1, 1)
+  expect(qh == 0)
+  // q * (2^64 + 1) + r == 2^127: low word q + r, high word q (+ carry)
+  let lo = q.wrapping_add(r)
+  let carry = if (lo ^ Int.min) < (q ^ Int.min) { 1 } else { 0 }
+  expect(lo == 0 && q.wrapping_add(rh).wrapping_add(carry) == Int.min)
+}
+
+test "division by zero does not fault" {
+  expect(udivmod128(5, 0, 0, 0) == (-1, -1, 5, 0))
+}

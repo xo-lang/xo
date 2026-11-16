@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (LLVM backend, linux): a program whose loops LLVM computes with 128-bit division (`__udivti3`) failed to link ("clang failed"); the runtime now provides `__udivti3` and `__umodti3` for links with no C library.
 - Feature (std/protodesc, std/protoparse): `protodesc.build_with_source_info` writes protoc's SourceCodeInfo (`--include_source_info`: locations and comments) byte for byte; `protoparse.lex` gives tokens with protoc's columns and attributed comments; `parse` keeps oneof options. Fix: `build` writes custom options set on a oneof or an extension range.
 - Feature (std/protodesc, std/protoparse): `protodesc.build` writes custom options (`(ext)`, `(ext).a.b` and aggregate values of extensions of descriptor.proto's options messages) byte for byte as protoc does; `protoparse` keeps a nested aggregate's keys as dotted pairs (`limits.min`) instead of dropping the nested message.
 - Perf (std/ui): a scope's writer appends without reading the store first, and reads it only after a lost race: on real S3, 4 instances x 100 appends to one scope took 24 s instead of 64 s (decision 0686).

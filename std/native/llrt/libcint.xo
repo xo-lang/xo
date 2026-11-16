@@ -1,0 +1,45 @@
+// 128-bit integer division for a link with no C library (decision 0206):
+// the LLVM emitter's code calls libgcc's __udivti3 and __umodti3 (its loop
+// trip counts widen to 128 bits; latch's sieve on linux/arm64 failed to
+// link with "undefined symbol: __udivti3", 2026-11-16), which
+// cabi_libc.xo exports under those names. A 128-bit value is two Int
+// words, low then high, as the C ABI passes an unsigned __int128 on arm64
+// (x0:x1) and amd64 (rdi:rsi, result rax:rdx). None may fault: the
+// arithmetic wraps (Int's word methods), and division by zero is the caller's
+// (undefined in C; this returns all ones).
+
+/// (quotient low, quotient high, remainder low, remainder high) of the
+/// unsigned 128-bit n by d.
+pub fn udivmod128(nlo: Int, nhi: Int, dlo: Int, dhi: Int) -> (Int, Int, Int, Int) {
+  if nhi == 0 && dhi == 0 && nlo >= 0 && dlo > 0 {
+    // both below 2^63: one 64-bit division
+    return (nlo / dlo, 0, nlo % dlo, 0)
+  }
+  if dlo == 0 && dhi == 0 {
+    return (-1, -1, nlo, nhi)
+  }
+  var qlo = 0
+  var qhi = 0
+  var rlo = 0
+  var rhi = 0
+  for k in 0..128 {
+    let i = 127 - k
+    // r = r << 1 | bit i of n
+    let bit = if i >= 64 { nhi.shr_logical(i - 64) & 1 } else { nlo.shr_logical(i) & 1 }
+    rhi = rhi.wrapping_shl(1) | rlo.shr_logical(63)
+    rlo = rlo.wrapping_shl(1) | bit
+    // r >= d: subtract and set bit i of q
+    let ge = if rhi != dhi { dhi.lt_unsigned(rhi) } else { !rlo.lt_unsigned(dlo) }
+    if ge {
+      let borrow = if rlo.lt_unsigned(dlo) { 1 } else { 0 }
+      rlo = rlo.wrapping_sub(dlo)
+      rhi = rhi.wrapping_sub(dhi).wrapping_sub(borrow)
+      if i >= 64 {
+        qhi = qhi | 1.wrapping_shl(i - 64)
+      } else {
+        qlo = qlo | 1.wrapping_shl(i)
+      }
+    }
+  }
+  (qlo, qhi, rlo, rhi)
+}
