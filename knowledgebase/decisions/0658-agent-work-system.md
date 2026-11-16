@@ -209,3 +209,19 @@ lead), workstream c1d23ad and after:
   not pushed (newest gate passed on a HEAD not on main, no push since),
   and "no task started" when an agent works while its card's task is
   unstarted.
+
+### The web view on std/ui (2026-11-15, #76)
+
+The owner asked for xw's pages on std/ui (decisions 0659, 0664), switched
+in place on :7480 (workstream 2fa7d98, std/ui 6a115d27a). Each live page
+is a std/ui host whose model is the page's data and whose one Msg,
+`Load`, the server applies (`Host.apply`) when a refresh loop at the
+ingest pace finds the page changed; open pages update over std/ui's
+websocket instead of a meta refresh, and are served from memory (10 to
+20 ms, was 80 to 130). `auth` reads a session cache the loop copies from
+Postgres (std/ui's auth may use only sync), `redact` puts the viewer's
+name on the page, the log keeps 50 Loads. Search, login, resolve and
+logout stay plain forms rendered by the same view: they read or write
+the database, which a pure update cannot. Asked of std/ui and built by
+its session the same evening: `Host.apply`, `host(keep:)`,
+`host(signin_url:)`.
