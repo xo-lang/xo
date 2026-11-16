@@ -343,7 +343,10 @@ fn hex_min(v: Int) -> Str {
   out.freeze()
 }
 
-fn trim_dot(s: Str) -> Str { if s.starts_with(".") { s[1..s.len()] } else { s } }
+// one slice, not `if .. { a slice } else { s }`: returning s itself makes
+// the caller's struct (a FieldDesc) owned, seven retains a call (protojson,
+// task #87)
+fn trim_dot(s: Str) -> Str { s[if s.starts_with(".") { 1 } else { 0 }..s.len()] }
 
 fn is_numeric_kind(k: Int) -> Bool { k != 9 && k != 10 && k != 11 && k != 12 }
 
@@ -393,17 +396,29 @@ fn is_known(info: protojson.MsgInfo, f: pw.Fld) -> Bool {
   false
 }
 
-/// TextName: a field's name, but a group like field (a group, or an editions
-/// delimited field named as its message's name in lower case) goes by its
-/// message's name.
-fn text_name(fd: protodesc.FieldDesc) -> Str {
-  if fd.kind != protodesc.TYPE_GROUP {
-    return fd.name
+/// Writes a field's TextName and the colon: its name, but a group like
+/// field (a group, or an editions delimited field named as its message's
+/// name in lower case) goes by its message's name. It writes rather than
+/// returns the name so fd stays borrowed (returning fd.name copied every
+/// FieldDesc passed down the marshal path).
+fn w_field_name(var e: Enc, fd: protodesc.FieldDesc) {
+  prep(e, T_NAME)
+  if fd.kind == protodesc.TYPE_GROUP {
+    let tn = fd.type_name
+    let at = match tn.rfind(".") {
+      Some(i) => i + 1
+      None => 0
+    }
+    let short = tn[at..tn.len()]
+    if short.to_lower() == fd.name {
+      e.out.write(short)
+    } else {
+      e.out.write(fd.name)
+    }
+  } else {
+    e.out.write(fd.name)
   }
-  let tn = trim_dot(fd.type_name)
-  let parts = tn.split(".")
-  let short = parts[parts.len() - 1]
-  if short.to_lower() == fd.name { short } else { fd.name }
+  e.out.write(":")
 }
 
 fn is_zero(fd: protodesc.FieldDesc, f: pw.Fld) -> Bool {
@@ -461,9 +476,17 @@ fn msg_fields(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, wire: 
       }
     }
   }
-  // the member of each oneof set last on the wire wins
+  // the member of each oneof set last on the wire wins (no scan of the wire
+  // for a message without a real oneof)
   var win: Map[Int, Int] = {}
-  for f in fl {
+  var oneofs = false
+  for j in 0..fds.len() {
+    if fds[j].oneof_index.is_some() && !fds[j].proto3_optional {
+      oneofs = true
+      break
+    }
+  }
+  for f in if oneofs { fl } else { [] } {
     if !is_known(info, f) {
       continue
     }
@@ -503,24 +526,30 @@ fn wants_utf8(info: protojson.MsgInfo, num: Int) -> Bool {
 }
 
 fn field_out(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.Fld], real_oneof: Bool, depth: Int) -> () ! TextErr {
+  // the field's occurrences, counted first so an unset field copies none
   let num = fd.number
-  var occ: List[pw.Fld] = []
+  var count = 0
+  for i in 0..fl.len() {
+    if fl[i].num == num {
+      count += 1
+    }
+  }
+  if count == 0 {
+    return Ok(())
+  }
+  var occ: List[pw.Fld] = List.with_capacity(count)
   for i in 0..fl.len() {
     if fl[i].num == num {
       occ.push(fl[i])
     }
   }
-  if occ.is_empty() {
-    return Ok(())
-  }
   let k = fd.kind
-  let name = text_name(fd)
   let utf8 = wants_utf8(info, num)
   if fd.label == protodesc.LABEL_REPEATED {
     if k == protodesc.TYPE_MESSAGE {
       let entry = lookup(r, fd.type_name)?
       if entry.is_map {
-        return map_out(e, r, entry, name, occ, depth)
+        return map_out(e, r, entry, fd, occ, depth)
       }
     }
     let w = wire_of(k)
@@ -532,11 +561,11 @@ fn field_out(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, fd: pro
         while at < b.len() {
           let (v, n2) = packed_at(b, at, w)?
           at = n2
-          w_name(e, name)
+          w_field_name(e, fd)
           scalar_out(e, r, fd, pw.Fld{num: f.num, wire: w, v: v, data: b"", raw: b""}, utf8)?
         }
       } else if f.wire == w {
-        w_name(e, name)
+        w_field_name(e, fd)
         if is_msg(fd) {
           msg_out(e, r, lookup(r, fd.type_name)?, f.data, depth + 1)?
         } else {
@@ -561,7 +590,7 @@ fn field_out(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, fd: pro
   if implicit && is_zero(fd, pick) {
     return Ok(())
   }
-  w_name(e, name)
+  w_field_name(e, fd)
   if is_msg(fd) {
     var data = b""
     for f in last {
@@ -716,7 +745,7 @@ fn key_sort(kfd: protodesc.FieldDesc, f: pw.Fld) -> Str {
 /// A map field's entries, the last of a key winning, in key order, each as
 /// `name:{key:K value:V}` (marshalMap writes both, a missing one as its
 /// zero value).
-fn map_out(var e: Enc, r: protojson.Registry, entry: protojson.MsgInfo, name: Str, occ: List[pw.Fld], depth: Int) -> () ! TextErr {
+fn map_out(var e: Enc, r: protojson.Registry, entry: protojson.MsgInfo, fd: protodesc.FieldDesc, occ: List[pw.Fld], depth: Int) -> () ! TextErr {
   let (kfd, vfd) = entry_fields(entry)
   var rows: Map[Str, (pw.Fld, pw.Fld, Bytes)] = {}
   for o in occ {
@@ -734,7 +763,7 @@ fn map_out(var e: Enc, r: protojson.Registry, entry: protojson.MsgInfo, name: St
       Some(t) => t
       None => continue
     }
-    w_name(e, name)
+    w_field_name(e, fd)
     w_open(e)
     w_name(e, "key")
     scalar_out(e, r, kfd, kf, ku)?

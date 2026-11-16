@@ -1,5 +1,17 @@
 # std/prototext changes
 
+## 2026-11-16: perf: marshal 1.56 to 1.33 of Go
+
+- Kind: perf
+- Commit: this push
+- Found by: XO_PROF=cpu of bench/perf/prototext marshal (msg_fields and field_out flat, Str drops from FieldDesc copies)
+- Go reference: none (same output)
+- Test: corpus prototext unchanged (660 rows, arm64, llvm and go)
+- Timing: bench/perf/prototext, linux/arm64 host 1, xo bench --ab 15 rounds, Xo/Go wall: marshal 1.562 to 1.332 (1.303 to 1.344), format 1.572 to 1.335 (1.313 to 1.37); max RSS 0.11 to 0.099
+
+A field's name is written, not returned (returning fd.name copied each FieldDesc), the wire is scanned for oneof
+winners only when the message has a real oneof, and a field's occurrences are counted before they are copied.
+
 ## 2026-11-16: feature: the text format writer, protobuf-go's prototext Marshal and Format
 
 - Kind: feature
