@@ -1,0 +1,283 @@
+// smtp stress program (decision 0616 section 2): an SMTP server in this
+// program (loopback, plain text: Security.None) takes the mail of TASKS
+// clients sending with smtp.send, each send its own connection. A client
+// sends in turn with no AUTH, with PLAIN and with CRAM-MD5 (the server
+// checks the response, and the challenge's HMAC), to 1 to 3 recipients;
+// its messages run 0 to 70,000 bytes with lines that start with dots and
+// an X-Sum header, the SHA-256 of the body, which the server checks
+// against the body it took (dot unstuffed) and refuses with 554 when they
+// differ. One send in 10 has a recipient the server refuses (550) and
+// one in 16 a wrong password (535): the client must get that error.
+// Timed runs keep to RATE connections a second in all. A
+// background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: every send as
+// expected, no fault, and the resident set at the end within 10% or 4 MB
+// of its sample at 5 minutes.
+//
+//   main [MINUTES (30); 0: 40 sends per client] [TASKS (64)]
+use std/base64
+use std/crypto
+use std/smtp
+
+fn reply(c: ServerConn, r: Str) -> () ! NetErr uses net {
+  c.write("${r}\r\n".bytes())
+}
+
+/// The body without its X-Sum header line, and the sum the header names.
+fn split_sum(data: Bytes) -> (Bytes, Str) {
+  match data.find(b"\r\n") {
+    Some(i) => {
+      let head = data[0..i].to_str_lossy()
+      if head.starts_with("X-Sum: ") {
+        return (data[i + 2..], head.trim_prefix("X-Sum: "))
+      }
+      (data, "")
+    }
+    None => (data, "")
+  }
+}
+
+/// One connection's session: Ok(the bytes of the messages it took).
+fn session(c: ServerConn, k: Int) -> Int ! NetErr uses net {
+  reply(c, "220 stress ESMTP")?
+  var buf = b""
+  var data = BytesBuilder.new()
+  var in_data = false
+  var took = 0
+  var cram = ""
+  while true {
+    let i = match buf.find(b"\r\n") {
+      Some(x) => x
+      None => {
+        match c.read(65536)? {
+          Some(b) => {
+            buf = buf + b
+            continue
+          }
+          None => return Ok(took)
+        }
+      }
+    }
+    let line = buf[0..i]
+    buf = buf[i + 2..]
+    if in_data {
+      if line == b"." {
+        in_data = false
+        let (body, sum) = split_sum(data.freeze())
+        data = BytesBuilder.new()
+        if crypto.sha256(body).to_hex() != sum {
+          reply(c, "554 5.6.0 body sum mismatch")?
+        } else {
+          took += body.len()
+          reply(c, "250 2.0.0 queued as ${k}")?
+        }
+      } else {
+        // dot unstuffing
+        data.write(if line.len() > 0 && line[0] == '.' { line[1..] } else { line })
+        data.write(b"\r\n")
+      }
+      continue
+    }
+    let l = line.to_str_lossy()
+    if !cram.is_empty() {
+      // the CRAM-MD5 response: "user hexmac" in base64
+      let ok = match base64.decode(l) {
+        Ok(b) => b.to_str_lossy() == "u ${crypto.hmac(crypto.Hash.Md5, b"pw", cram.bytes()).to_hex()}"
+        Err(_) => false
+      }
+      cram = ""
+      reply(c, if ok { "235 2.7.0 ok" } else { "535 5.7.8 bad credentials" })?
+    } else if l.starts_with("EHLO") {
+      c.write("250-stress\r\n250-8BITMIME\r\n250-AUTH PLAIN CRAM-MD5\r\n250 SIZE 100000000\r\n".bytes())?
+    } else if l.starts_with("AUTH PLAIN ") {
+      let ok = match base64.decode(l.trim_prefix("AUTH PLAIN ")) {
+        Ok(b) => b == b"\x00u\x00pw"
+        Err(_) => false
+      }
+      reply(c, if ok { "235 2.7.0 ok" } else { "535 5.7.8 bad credentials" })?
+    } else if l == "AUTH CRAM-MD5" {
+      cram = "<${k}.${took}@stress>"
+      reply(c, "334 ${base64.encode(cram.bytes())}")?
+    } else if l.starts_with("RCPT TO:<reject") {
+      reply(c, "550 5.1.1 no such user")?
+    } else if l == "DATA" {
+      in_data = true
+      reply(c, "354 go on")?
+    } else if l == "QUIT" {
+      reply(c, "221 2.0.0 bye")?
+      return Ok(took)
+    } else if l == "*" {
+      reply(c, "501 cancelled")?
+    } else {
+      reply(c, "250 ok")?
+    }
+  }
+  Ok(took)
+}
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+/// Message k of client t: its X-Sum header and a body of lines, some
+/// starting with dots, some empty, CRLF ended.
+fn message(t: Int, k: Int) -> Bytes {
+  var x = next(t * 1000003 + k + 1)
+  let size = if k % 7 == 0 { 0 } else { (x >> 20) % 70000 }
+  var body = BytesBuilder.with_capacity(size + 100)
+  body.write("Subject: stress ${t} ${k}\r\n\r\n".bytes())
+  while body.len() < size {
+    x = next(x)
+    let n = (x >> 24) % 120
+    match (x >> 40) % 6 {
+      0 => body.write(b".")
+      1 => body.write(b"..")
+      2 => body.write(b". ")
+      _ => {}
+    }
+    for j in 0..n {
+      body.write_byte(UInt8(97 + (j + (x >> 8)) % 26))
+    }
+    body.write(b"\r\n")
+  }
+  let b = body.freeze()
+  "X-Sum: ${crypto.sha256(b).to_hex()}\r\n".bytes() + b
+}
+
+/// One send of client t's k-th turn: Ok when as expected.
+fn turn(os: Os, addr: Str, t: Int, k: Int) -> () ! Str uses net {
+  let reject = (t + k) % 10 == 3
+  let wrong = (t * 3 + k) % 16 == 5
+  var to = ["r${t}.${k}@x.test"]
+  for j in 0..(t + k) % 3 {
+    to.push("r${t}.${k}.${j}@x.test")
+  }
+  if reject {
+    to.push("reject${t}@x.test")
+  }
+  let pw = Secret.new(if wrong { "nope" } else { "pw" })
+  let auth = match k % 3 {
+    0 => smtp.Auth.None
+    1 => smtp.Auth.Plain(user: "u", password: pw)
+    _ => smtp.Auth.CramMd5(user: "u", secret: pw)
+  }
+  let r = smtp.send(os.net, addr, "s${t}@x.test", to, message(t, k), auth: auth, security: smtp.Security.None)
+  let want = if wrong && k % 3 != 0 { 535 } else if reject { 550 } else { 0 }
+  match r {
+    Ok(_) => {
+      if want != 0 {
+        return Err("client ${t} send ${k}: sent, want ${want}")
+      }
+    }
+    Err(e) => {
+      if e.code != want || want == 0 {
+        return Err("client ${t} send ${k}: ${e}, want ${if want == 0 { "sent" } else { "${want}" }}")
+      }
+    }
+  }
+  Ok(())
+}
+
+/// The connections a second all clients make at most: each send is a
+/// connection the server closes, its port kept in TIME_WAIT (30 s on
+/// macOS of 16,384 ports, 60 s on Linux of 28,232); 85,000 sends in a
+/// minute ran the Mac out (connect: can't assign requested address).
+const RATE: Int = 400
+
+fn client(os: Os, addr: Str, t: Int, end: Time, passes: Int, tasks: Int) -> Int ! Str uses (net, clock) {
+  let every = Duration.from_secs(Float(tasks) / Float(RATE))
+  var next_at = os.clock.now()
+  var k = 0
+  while if passes > 0 { k < passes } else { os.clock.now() < end } {
+    if passes == 0 {
+      let now = os.clock.now()
+      if now < next_at {
+        os.clock.sleep(next_at - now)
+      }
+      next_at = next_at + every
+    }
+    turn(os, addr, t, k)?
+    k += 1
+  }
+  Ok(k)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let passes = if minutes == 0 { 40 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let took = Mutex[Int].new(0)
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  let sends = scope s {
+    s.spawn_background(fn() {
+      var k = 0
+      while let Ok(c) = l.accept() {
+        k += 1
+        let id = k
+        s.spawn_background(fn() {
+          match session(c, id) {
+            Ok(n) => took.with(fn(var v) { v += n })
+            Err(_) => {}
+          }
+          c.close()
+        })
+      }
+    })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var x) {
+          let (m, _, p) = x
+          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str { client(os, addr, t, end, passes, tasks) }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a client: ${e}" })?
+    }
+    l.close()
+    s.cancel()
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  let mb = took.with(fn(v) { v }) / 1048576
+  os.stdio.println("smtp stress: ${sends} sends by ${tasks} clients in ${minutes} min (${mb} MB of bodies taken), 0 wrong results, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
