@@ -59,11 +59,16 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   prune of 2026-10-30 to 2026-11-07). It deletes the least recently used
   files (the later of atime and mtime) until /work has OFF_FREE_TARGET GB
   free (30; 25 on host 1, whose disk is 89 GB), cheapest to lose first:
-  ~/.cache/xo build, testcc and testbin, this user's /tmp `Test*` and
-  `xo-*` dirs idle 3 hours, backend, gocache, checkout entries (idle 12
+  ~/.cache/xo build, testcc and testbin, this user's /tmp `Test*`,
+  `xo-*` and `go-build*` dirs and `prog-*.o` objects idle 3 hours, backend, gocache, checkout entries (idle 12
   hours, or past the newest 8), Go's build cache, then `/work/in/*.bundle`
   files idle 6 hours. Then each cache is held under a cap (gocache 8 GB,
-  backend 4, testbin 2, build 1, go-build 3). Nothing touched in the last
+  backend 4, testbin 2, testcc 4, build 1, go-build 3; testcc was
+  uncapped until 2026-11-16, when it held 16 and 12 GB on hosts 3 and 4).
+  On hosts 3 and 4 (containers on the Mac) ~/.cache/xo and /tmp live in
+  the container's writable layer, on the same Docker VM disk as /work, so
+  /work's free space counts them: `docker system df` showed 73.5 and
+  68.7 GB of container layers (2026-11-16, ~/.cache/xo 37 and 36 GB, /opt/llvm 12 GB each). Nothing touched in the last
   60 minutes goes (an age prune of hour old files during a long sweep broke
   its later builds, 2026-11-02), and empty directories go only when as old
   (gotchas/empty-dir-prune-removes-live-build-dir.md). While the job runs
@@ -74,7 +79,7 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   hour, with under 20% of either read back), so an age prune before the
   job found nothing old while one gate filled the disk. /work job
   directories are never touched. Tests: scripts/lead/offload-prune_test.sh
-  (a tmpfs tree in a local Linux container). Last verified: 2026-11-13.
+  (a tmpfs tree in a local Linux container). Last verified: 2026-11-16.
   The arm64 container runs 2 jobs at once (OFF_SLOTS=2 in offload.env;
   owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
   `/work/offload.lock.2`. A job that measures time or memory sets
