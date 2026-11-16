@@ -1,0 +1,46 @@
+// std/htmlparse's tree edits through the public API: new_node,
+// insert_before, append_child, remove_child, child_nodes, ancestors and
+// descendants, after x/net/html's InsertBefore, AppendChild, RemoveChild,
+// ChildNodes, Ancestors and Descendants. Written by hand beside the
+// generated htmlparse_test.xo.
+
+use std/htmlparse
+
+fn names(t: htmlparse.Tree, ns: List[Int]) -> List[Str] {
+  var out: List[Str] = []
+  for n in ns {
+    out.push(t.nodes[n].data)
+  }
+  out
+}
+
+test "new_node, insert_before and remove_child edit a tree; descendants lists it (InsertBefore, RemoveChild, Descendants)" {
+  var t = htmlparse.parse("<ul><li>a</li></ul>") ?? e => fault(e.msg)
+  var ul = -1
+  for n in t.descendants(t.root) {
+    if t.nodes[n].data == "ul" { ul = n }
+  }
+  expect(ul >= 0) == true
+  let first = t.nodes[ul].first_child
+  let li = t.new_node(htmlparse.NodeType.Element, "li")
+  let txt = t.new_node(htmlparse.NodeType.Text, "z")
+  t.insert_before(li, txt, -1)
+  t.insert_before(ul, li, first)
+  expect(names(t, t.descendants(ul))) == ["li", "z", "li", "a"]
+  expect(t.render_node(ul) ?? e => fault(e.msg)) == "<ul><li>z</li><li>a</li></ul>"
+  t.remove_child(ul, first)
+  expect(names(t, t.descendants(ul))) == ["li", "z"]
+  expect(t.nodes[first].parent) == -1
+}
+
+test "append_child, child_nodes and ancestors (AppendChild, ChildNodes, Ancestors)" {
+  var t = htmlparse.parse("<p>x</p>") ?? e => fault(e.msg)
+  var p = -1
+  for n in t.descendants(t.root) {
+    if t.nodes[n].data == "p" { p = n }
+  }
+  let b = t.new_node(htmlparse.NodeType.Element, "b")
+  t.append_child(p, b)
+  expect(names(t, t.child_nodes(p))) == ["x", "b"]
+  expect(names(t, t.ancestors(b))) == ["p", "body", "html", ""]
+}

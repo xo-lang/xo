@@ -1,0 +1,35 @@
+// The streaming multipart Writer through the public API, after Go's
+// mime/multipart TestWriter and TestWriterSetBoundary (go1.26.1; Copyright
+// The Go Authors, BSD-style license), each body read back by parse. Written
+// by hand beside the generated multipart_test.xo.
+
+use std/multipart
+
+test "a form file, a form field and write_field read back (TestWriter)" {
+  var w = multipart.writer("0123456789abcdef").or_fault("writer")
+  var b = BytesBuilder.new()
+  b.write(w.create_form_file("myfile", "my-file.txt"))
+  b.write(b"my file contents")
+  b.write(w.create_form_field("note"))
+  b.write(b"a note")
+  b.write(w.write_field("key", "val"))
+  b.write(w.close())
+  let ps = multipart.parse(b.freeze(), w.boundary()).or_fault("parse")
+  expect(ps.map(fn(p) { (p.name, p.filename, p.data) })) == [
+    ("myfile", Some("my-file.txt"), b"my file contents"),
+    ("note", None, b"a note"),
+    ("key", None, b"val"),
+  ]
+}
+
+test "writer checks the boundary (TestWriterSetBoundary)" {
+  for (bd, ok) in [("abc", true), ("", false), ("x".repeat(70), true), ("x".repeat(71), false), ("bad!ascii!", false), ("with space", true), ("badspace ", false)] {
+    match multipart.writer(bd) {
+      Ok(w) => {
+        expect((bd, true)) == (bd, ok)
+        expect(w.boundary()) == bd
+      }
+      Err(_) => expect((bd, false)) == (bd, ok)
+    }
+  }
+}

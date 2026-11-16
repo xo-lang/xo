@@ -1,0 +1,10 @@
+// std/htmltok's unescape_string, after Go's html.UnescapeString examples.
+// Written by hand beside the generated htmltok_test.xo.
+
+use std/htmltok
+
+test "unescape_string decodes character references (UnescapeString)" {
+  expect(htmltok.unescape_string("plain")) == "plain"
+  expect(htmltok.unescape_string("a &amp; b &lt;c&gt; &#39;d&#39;")) == "a & b <c> 'd'"
+  expect(htmltok.unescape_string("&lt without semicolon")) == "< without semicolon"
+}

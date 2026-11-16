@@ -1,0 +1,43 @@
+// std/metrics' curry_with, must_curry_with and delete_partial_match on a
+// Counter, Gauge and Histogram through the public API, after
+// prometheus/client_golang's testCurryVec and testDeletePartialMatch (as
+// std/metrics_test.xo ports them inside the module). Written by hand beside
+// the generated metrics_test.xo.
+
+use std/metrics
+
+test "a curried Counter shares the series; errors name the label (testCurryVec)" {
+  let r = metrics.registry()
+  let c = r.counter("cc", "h", ["a", "b"])
+  c.must_curry_with({"a": "x"}).inc(["y"])
+  expect(r.text().contains("cc{a=\"x\",b=\"y\"} 1\n")) == true
+  match c.must_curry_with({"a": "x"}).curry_with({"a": "z"}) {
+    Ok(_) => fault("currying a curried label succeeded")
+    Err(e) => expect(e.msg) == "label name \"a\" is already curried"
+  }
+  match c.curry_with({"foo": "bar"}) {
+    Ok(_) => fault("currying an unknown label succeeded")
+    Err(e) => expect(e.msg) == "1 unknown label(s) found during currying"
+  }
+  expect(c.delete_partial_match({"a": "nope"})) == 0
+  expect(c.delete_partial_match({"b": "y"})) == 1
+  expect(r.text().contains("cc{")) == false
+}
+
+test "a curried Gauge and Histogram (testCurryVec, testDeletePartialMatch)" {
+  let r = metrics.registry()
+  let g = r.gauge("gg", "h", ["a", "b"])
+  let gc = g.curry_with({"b": "x"}) ?? e => fault(e.msg)
+  gc.set(4.0, ["y"])
+  g.must_curry_with({"b": "w"}).set(1.0, ["y"])
+  expect(r.text().contains("gg{a=\"y\",b=\"x\"} 4\n")) == true
+  expect(g.delete_partial_match({"b": "x"})) == 1
+  expect(r.text().contains("gg{a=\"y\",b=\"w\"} 1\n")) == true
+  let h = r.histogram("hh", "h", ["a", "b"], [1.0])
+  let hc = h.curry_with({"a": "p"}) ?? e => fault(e.msg)
+  hc.observe(0.5, ["q"])
+  h.must_curry_with({"a": "s"}).observe(2.0, ["q"])
+  expect(r.text().contains("hh_count{a=\"p\",b=\"q\"} 1\n")) == true
+  expect(h.delete_partial_match({"b": "q"})) == 2
+  expect(r.text().contains("hh_count{")) == false
+}

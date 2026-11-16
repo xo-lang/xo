@@ -1,0 +1,14 @@
+// std/protoparse's aggregate_pairs on an aggregate option value as the
+// parser keeps it, after protocompile's message literal options. Written
+// by hand beside the generated protoparse_test.xo.
+
+use std/protoparse
+
+test "aggregate_pairs reads the pairs of a message literal option" {
+  let f = protoparse.parse("syntax = \"proto3\";\nmessage M {\n  int32 a = 1 [(my.opt) = { a: 1 b: \"x\" }];\n}\n") ?? e => fault(e.msg)
+  let opts = f.messages[0].fields[0].options
+  expect(opts.len()) == 1
+  expect(protoparse.aggregate_pairs(opts[0].1)) == [("a", "1"), ("b", "x")]
+  expect(protoparse.aggregate_pairs("7")) == []
+  expect(protoparse.aggregate_pairs("{}")) == []
+}

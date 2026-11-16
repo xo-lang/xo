@@ -1,0 +1,41 @@
+// FieldMask against a message's descriptor: new_mask, append and is_valid
+// (fieldmaskpb's New, Append and IsValid, protobuf-go v1.36.12), on a file
+// std/protoparse parses and std/protodesc builds. Written by hand beside
+// the generated wkt_test.xo; std/protowkt_test.xo runs fieldmaskpb's own
+// tables on its TestAllTypes descriptors.
+
+use std/protodesc
+use std/protoparse
+use std/protowkt
+
+const PROTO = "syntax = \"proto3\";\npackage t;\nmessage Inner { int32 a = 1; Outer back = 2; }\nmessage Outer { int32 n = 1; Inner inner = 2; repeated Inner list = 3; map<string, int32> m = 4; }\n"
+
+fn files() -> List[protodesc.FileDesc] {
+  let f = protoparse.parse(PROTO).or_fault("parse")
+  [protodesc.build(f, "t.proto").or_fault("build")]
+}
+
+test "is_valid: a path goes through singular message fields; a repeated or map field only ends one (TestIsValid)" {
+  let fs = files()
+  for p in ["n", "inner", "inner.a", "inner.back.inner.a", "list", "m"] {
+    expect((p, protowkt.FieldMask{paths: [p]}.is_valid(fs, "t.Outer"))) == (p, true)
+  }
+  for p in ["nope", "", "n.x", "list.a", "m.x"] {
+    expect((p, protowkt.FieldMask{paths: [p]}.is_valid(fs, "t.Outer"))) == (p, false)
+  }
+  expect(protowkt.FieldMask{paths: ["n"]}.is_valid(fs, "t.Nope")) == false
+}
+
+test "new_mask checks every path; append keeps the paths before the first invalid one (New, TestAppend)" {
+  let fs = files()
+  expect(protowkt.new_mask(fs, "t.Outer", ["n", "inner.a"]).or_fault("new").paths) == ["n", "inner.a"]
+  expect(protowkt.new_mask(fs, "t.Outer", ["n", "nope"]).is_err()) == true
+  var fm = protowkt.FieldMask{}
+  match fm.append(fs, "t.Outer", ["n", "inner", "bad", "m"]) {
+    Ok(_) => fault("want an error")
+    Err(e) => expect(e.display()) == "proto: invalid path \"bad\" for message \"t.Outer\""
+  }
+  expect(fm.paths) == ["n", "inner"]
+  fm.append(fs, "t.Outer", ["m"]).or_fault("append")
+  expect(fm.paths) == ["n", "inner", "m"]
+}

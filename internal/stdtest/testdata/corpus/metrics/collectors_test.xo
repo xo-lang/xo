@@ -1,0 +1,69 @@
+// std/metrics' collectors and registry helpers through the public API:
+// untyped_func, wrap, client_send, runtime_collector, build_info,
+// process_collector with ProcessCollector.update, and pid_collector, after
+// prometheus/client_golang's UntypedFunc, WrapRegistererWith,
+// InstrumentRoundTripperCounter, NewGoCollector, NewBuildInfoCollector and
+// NewProcessCollector (as std/metrics_test.xo ports them inside the
+// module). Written by hand beside the generated metrics_test.xo.
+
+use std/http
+use std/metrics
+
+test "untyped_func exposes an untyped series (UntypedFunc)" {
+  let r = metrics.registry()
+  r.untyped_func("temp", "A temperature.", fn() -> Float uses sync { 21.5 })
+  expect(r.text().contains("# TYPE temp untyped\ntemp 21.5\n")) == true
+}
+
+test "wrap puts a prefix and constant labels on what is made through it (WrapRegistererWith)" {
+  let r = metrics.registry()
+  let w = r.wrap(prefix: "app_", labels: {"zone": "b", "region": "a"})
+  w.counter("hits_total", "Hits.", ["path"]).inc(["/x"])
+  let n = w.wrap(prefix: "db_", labels: {"shard": "1"})
+  n.gauge("open", "Open.").set(3.0)
+  let t = r.text()
+  expect(t.contains("app_hits_total{region=\"a\",zone=\"b\",path=\"/x\"} 1\n")) == true
+  expect(t.contains("app_db_open{region=\"a\",shard=\"1\",zone=\"b\"} 3\n")) == true
+  expect(w.text()) == t
+}
+
+test "client_send counts a failed send as code error (InstrumentRoundTripperCounter)" uses (net, clock) {
+  let r = metrics.registry()
+  let send = r.client_send(os.clock)
+  let req = http.Request{method: "GET", path: "/", url: http.parse_url("http://127.0.0.1:1/") ?? e => fault("${e}"), headers: {}, body: b"", remote_ip: ""}
+  match send(http.client(os.net, 5s), req) {
+    Ok(_) => fault("a send to port 1 succeeded")
+    Err(_) => {}
+  }
+  let t = r.text()
+  expect(t.contains("http_client_requests_total{method=\"GET\",code=\"error\"} 1\n")) == true
+  expect(t.contains("http_client_in_flight 0\n")) == true
+}
+
+test "runtime_collector and build_info (NewGoCollector, NewBuildInfoCollector)" {
+  let r = metrics.registry()
+  r.runtime_collector()
+  r.build_info(path: "example.com/app", version: "v1.2.3")
+  let t = r.text()
+  expect(t.contains("# TYPE xo_heap_bytes gauge\nxo_heap_bytes ")) == true
+  expect(t.contains("xo_build_info{checksum=\"unknown\",path=\"example.com/app\",version=\"v1.2.3\"} 1\n")) == true
+}
+
+test "process_collector reports what update read (NewProcessCollector)" uses (clock, proc) {
+  let r = metrics.registry()
+  let pc = r.process_collector(os.clock, namespace: "app")
+  pc.update(os.proc)
+  let t = r.text()
+  expect(t.contains("# TYPE app_process_cpu_seconds_total counter\napp_process_cpu_seconds_total ")) == true
+  expect(pc.max_rss.get() > 0) == true
+  expect(t.contains("app_process_start_time_seconds ")) == true
+}
+
+test "pid_collector reads /proc where there is one (ProcessCollectorOpts.PidFn)" uses (fs, proc) {
+  let r = metrics.registry()
+  let pc = r.pid_collector(namespace: "child")
+  match pc.update(os.fs, os.proc.pid()) {
+    Ok(_) => expect(r.text().contains("child_process_resident_memory_bytes ${pc.rss.get()}\n")) == true
+    Err(e) => expect(e.msg.starts_with("process metrics need /proc/")) == true
+  }
+}
