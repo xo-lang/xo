@@ -99,4 +99,6 @@ normalized. Inside Time's range both normalize the same way.
 
 Fix: the fuzz comparison counts `go date text` when the answers are equal
 once each of Xo's date Texts is normalized as time.Date does
-(myfDateNormalized).
+(myfDateNormalized). Only the whole zero value stays as it is: a zero date
+with a fraction (`0000-00-00 00:00:00.050000`, seed 31 case 940) is a time
+to go-sql-driver, normalized to `-0001-11-30 00:00:00.05`.

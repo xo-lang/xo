@@ -496,9 +496,6 @@ func myfDateNormalized(got, want string) bool {
 	norm := myfDateText.ReplaceAllStringFunc(got, func(m string) string {
 		p := myfDateText.FindStringSubmatch(m)
 		n := func(i int) int { v, _ := strconv.Atoi(p[i]); return v }
-		if p[2] == "00" && p[3] == "00" && n(1) == 0 {
-			return m // the zero date: both keep it
-		}
 		layout := "2006-01-02"
 		var hh, mi, ss, ns int
 		if p[4] != "" {
@@ -509,6 +506,9 @@ func myfDateNormalized(got, want string) bool {
 				f, _ := strconv.ParseFloat("0"+p[7], 64)
 				ns = int(f*1e9 + 0.5)
 			}
+		}
+		if n(1) == 0 && n(2) == 0 && n(3) == 0 && hh == 0 && mi == 0 && ss == 0 && ns == 0 {
+			return m // the zero value: both keep it (a fraction makes it a time)
 		}
 		t := time.Date(n(1), time.Month(n(2)), n(3), hh, mi, ss, ns, time.UTC)
 		return `Text(s: "` + t.Format(layout) + `")`
@@ -692,6 +692,13 @@ func TestMysqlFuzzWideCollation(t *testing.T) {
 	// seed 25's case 4659: day 0 of a year outside Time's range
 	if !myfDateNormalized("types c0:DATE:-:true\nRow{vals: [Text(s: \"0000-06-00\")]}\n", "types c0:DATE:-:true\nRow{vals: [Text(s: \"0000-05-31\")]}\n") {
 		t.Errorf("0000-06-00 against 0000-05-31: not normalized")
+	}
+	// seed 31's case 940: the zero date with a fraction is a time to Go
+	if !myfDateNormalized("Row{vals: [Text(s: \"0000-00-00 00:00:00.050000\")]}\n", "Row{vals: [Text(s: \"-0001-11-30 00:00:00.050000\")]}\n") {
+		t.Errorf("zero date with a fraction: not normalized")
+	}
+	if myfDateNormalized("Row{vals: [Text(s: \"0000-00-00 00:00:00.000000\")]}\n", "Row{vals: [Text(s: \"-0001-11-30 00:00:00.000000\")]}\n") {
+		t.Errorf("the zero value: normalized")
 	}
 	if myfDateNormalized("Row{vals: [Text(s: \"0000-06-01\")]}\n", "Row{vals: [Text(s: \"0000-05-31\")]}\n") {
 		t.Errorf("0000-06-01 against 0000-05-31: normalized")
