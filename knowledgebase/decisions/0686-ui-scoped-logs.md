@@ -129,6 +129,41 @@ client.
    input-to-screen latency, ticks per second per room, bytes per second
    per player and CPU per room.
 
+## Stage 1 (2026-11-16)
+
+Built: `Store` (append, read, snapshot, put_snapshot), `memory_store`,
+`Bus` and `local_bus`, `Scope` (a Server kept in step with a store:
+catch up, run the change, append after the version read, on a lost race
+restore and run again), the Host on a Scope, store and bus (defaults: a
+memory store and a bus of its own, one instance as before).
+
+Evidence: the convergence property test with 2 to 4 Scopes on one
+store, each sync routed to a random Scope, with loss, reordering,
+offline clients, refusals and compaction, converges in 30 runs; with a
+store per Scope (separate instances, today) it fails. Two Hosts on one
+store and bus: a Msg through one reaches the other's live connection and
+pages, a retry through the other is not applied again, a client keeps
+its principal, server Msgs go both ways, versions match. A cart add in
+examples/ui-shop costs what it did (10 to 14 us, one sample).
+
+Found while building it:
+
+- A snapshot's version can fall inside a batch (compaction counts
+  entries, a batch holds several), so `read` returns every batch that
+  ends past the version asked for and catch-up skips the entries it
+  has.
+- A new instance must read the store once before it trusts the bus
+  (it has heard nothing yet).
+- Store functions carry effects. A memory store performs `sync`; a
+  Postgres or S3 store performs `net` (a directory store `fs`). Declaring
+  them on Store spreads `net` and `fs` to every Host caller, and a test
+  using `net` runs only with `--real`, so most std/ui tests would stop
+  running by default. Done in stage 1: Store and Bus
+  take an effect parameter (`Store[fx]`, as jsonrpc's Conn does), Scope
+  carries it, and the Host's effects are inferred from its Scope field;
+  `host` (memory) stays `sync`, `host_with(app, store, bus)` performs
+  what the store and bus perform.
+
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.

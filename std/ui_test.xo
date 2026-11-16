@@ -351,6 +351,195 @@ test "replicas converge while the server compacts its log" {
   }
 }
 
+/// simulate with `nodes` Scopes on one memory store (decision 0686): each
+/// sync goes to a random one, as behind a load balancer. Every Msg is
+/// logged once, every replica and every Scope converge.
+fn simulate_nodes(seed: Int, nodes: Int, clients: Int, ticks: Int, drop: Int, offline: Int, keep: Int, refuse: Bool = false) -> Bool ! Str {
+  let allow = fn(m: Model, p: Str, e: Msg) -> Bool { !refuse || p == "p0" || !(e is Msg.Remove(_)) }
+  let app = todo_app()
+  let r0 = seed % 2147483646
+  var g = Rng{s: (if r0 < 0 { -r0 } else { r0 }) + 1}
+  let st = memory_store()
+  var ns = [scope(app, st, max_batch: 8)]
+  for _ in 1..nodes {
+    ns.push(scope(app, st, max_batch: 8))
+  }
+  var rs: List[Replica[Model, Msg]] = []
+  var online: List[Int] = []
+  var sent: List[Int] = []
+  for i in 0..clients {
+    rs.push(replica(app, "c${i}", app.init, 0))
+    online.push(0)
+    sent.push(0)
+  }
+  var net: List[Flight] = []
+  var t = 0
+  var heal = false
+  while t < ticks + 3000 {
+    heal = t >= ticks
+    if heal {
+      ns[0].catch_up()?
+      let top = ns[0].version()
+      if rs.all(fn(r) { r.pending() == 0 && r.version() == top }) {
+        break
+      }
+    }
+    for i in 0..clients {
+      if !heal && online[i] <= t && g.int(1000) < offline {
+        online[i] = t + 1 + g.int(120)
+      }
+      if !heal && g.int(1000) < 200 {
+        sent[i] = sent[i] + 1
+        rs[i].send(random_msg(g, i, sent[i], rs[i].model()))
+      }
+      let up_now = heal || online[i] <= t
+      if up_now && (t % 3 == i % 3 || heal) && (heal || g.int(1000) >= drop) {
+        net.push(Flight{at: t + (if heal { 1 } else { 1 + g.int(12) }), p: Packet.ToServer(up: rs[i].outbox())})
+      }
+    }
+    if t % 50 == 49 {
+      for k in 0..nodes {
+        ns[k].compact(keep)?
+      }
+    }
+    let due = net.filter(fn(f) { f.at <= t })
+    net = net.filter(fn(f) { f.at > t })
+    for f in due {
+      match f.p {
+        ToServer(up) => {
+          let who = Int.parse(up.client[1..]) ?? 0
+          let k = g.int(nodes)
+          let d = match ns[k].receive_as(up, "p${who % 2}", allow)? {
+            Some(x) => x
+            None => ns[k].reply(up.client, up.ver)?
+          }
+          if heal || g.int(1000) >= drop {
+            net.push(Flight{at: t + (if heal { 1 } else { 1 + g.int(12) }), p: Packet.ToClient(to: who, down: d)})
+          }
+        }
+        ToClient(to, down) => {
+          if heal || online[to] <= t {
+            rs[to].receive(down)
+          }
+        }
+      }
+    }
+    t = t + 1
+  }
+  let total = sent.fold(0, fn(a, n) { a + n })
+  for k in 0..nodes {
+    ns[k].catch_up()?
+  }
+  let sm = ns[0].model()
+  Ok(total == ns[0].version() && ns.all(fn(n) { n.model() == sm && n.version() == total }) && rs.all(fn(r) { r.pending() == 0 && r.model() == sm && r.confirmed() == sm }))
+}
+
+test "Scopes on one store converge with syncs routed to any of them (decision 0686)" {
+  for seed in 1..=10 {
+    expect(simulate_nodes(seed * 7919, 3, 5, 300, 300, 30, 1000000)?) == true
+    expect(simulate_nodes(seed * 15485863, 2, 5, 300, 300, 30, 10, refuse: true)?) == true
+    expect(simulate_nodes(seed * 104729, 4, 6, 300, 300, 30, 10)?) == true
+  }
+}
+
+test "two Scopes racing for one version: the loser applies again after the winner" {
+  let st = memory_store()
+  var a = scope(todo_app(), st)
+  var b = scope(todo_app(), st)
+  a.receive(Up{client: "x", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "1", title: "milk")}]})?
+  // b has not read a's batch: its append after version 0 loses, it reads
+  // the batch and appends after version 1
+  let d = b.receive(Up{client: "y", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "2", title: "eggs")}]})?
+  expect(d.acked) == 1
+  expect(b.version()) == 2
+  a.catch_up()?
+  expect(a.model()) == b.model()
+  expect(a.model().todos.len()) == 2
+  // a retry of x's Msg through b is not applied again
+  b.receive(Up{client: "x", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "1", title: "milk")}]})?
+  expect(b.version()) == 2
+  // a client belongs to the principal of its first logged Msg on every Scope
+  let all = fn(m: Model, p: Str, e: Msg) -> Bool { true }
+  a.receive_as(Up{client: "z", ver: 2, msgs: [Envelope{seq: 1, msg: Msg.Star(id: "1")}]}, "ann", all)?
+  expect(b.receive_as(Up{client: "z", ver: 3, msgs: [Envelope{seq: 2, msg: Msg.Star(id: "1")}]}, "bob", all)?) == None
+}
+
+test "two Hosts on one store and bus act as one, behind a load balancer (decision 0686)" {
+  let st = memory_store()
+  let bus = local_bus()
+  let a = host_with(todo_app(), st, bus, auth: Some(auth_hdr))
+  let b = host_with(todo_app(), st, bus, auth: Some(auth_hdr))
+  let ra = routes_for(a)
+  let rb = routes_for(b)
+  let (idb, chb) = b.subscribe("bob")
+  // ann's Msg through a reaches b's live connection and b's pages
+  let s1 = sync_as(ra, "ann", Up{client: "c1", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "ann milk")}]})?
+  expect(s1.ver) == 1
+  expect(chb.try_recv()) == Some(1)
+  expect(rb.call(http.new_request("GET", "/", headers: {"X-User": "bob"})).text()?.contains("ann milk")) == true
+  // the retry routed to b is not applied again, and acknowledged
+  let s2 = sync_as(rb, "ann", Up{client: "c1", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "ann milk")}]})?
+  expect(s2.down.acked) == 1
+  expect(s2.ver) == 1
+  // the client belongs to ann on b too
+  let up = json.encode_str(Up{client: "c1", ver: 1, msgs: [Envelope{seq: 2, msg: Msg.Remove(id: "x")}]})
+  expect(rb.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json", "X-User": "bob"}, body: up.bytes())).status) == 403
+  // a server Msg on b reaches a, and versions name one history
+  b.apply(Msg.Add(id: "y", title: "loaded"))
+  expect(a.model().todos.len()) == 2
+  let s3 = sync_as(ra, "ann", Up{client: "c1", ver: 1, msgs: []})?
+  expect(s3.ver) == 2
+  expect(s3.html.contains("loaded")) == true
+  b.unsubscribe(idb)
+}
+
+test "a Host on a store it shares catches up before it appends" {
+  // no bus between them: a never hears of b, and still appends after b
+  let st = memory_store()
+  let a = host_with(todo_app(), st, local_bus())
+  let b = host_with(todo_app(), st, local_bus())
+  b.apply(Msg.Add(id: "1", title: "first"))
+  a.apply(Msg.Add(id: "2", title: "second"))
+  expect(a.model().todos.len()) == 2
+  let s = json.decode_str[Sync[Model, Msg]](routes_for(b).call(sync_req(json.encode_str(Up{client: "c", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Star(id: "1")}]}))).text() ?? "")?
+  expect(s.ver) == 3
+}
+
+test "compaction snapshots the scope, the store drops what it covers, and a new Host starts from it" {
+  let st = memory_store()
+  let bus = local_bus()
+  let h = host_with(todo_app(), st, bus, keep: 5)
+  for i in 0..100 {
+    h.apply(Msg.Add(id: "t${i}", title: "t"))
+  }
+  // the store keeps about keep entries' batches, not 100
+  expect((st.read)("", 0)?.len() < 12) == true
+  let snap = (st.snapshot)("")? ?? return Err("no snapshot")
+  expect(snap.after > 80) == true
+  // an instance started now loads the snapshot and the batches after it
+  let late = host_with(todo_app(), st, bus, keep: 5)
+  expect(late.model().todos.len()) == 100
+  let s = json.decode_str[Sync[Model, Msg]](routes_for(late).call(sync_req(json.encode_str(Up{client: "c", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Star(id: "t1")}]}))).text() ?? "")?
+  expect(s.ver) == 101
+  h.apply(Msg.Star(id: "t2"))
+  expect(late.model()) == h.model()
+}
+
+// a memory Host performs sync only: a store's effects reach only the code
+// that uses that store (decision 0686)
+fn memory_host_count() -> Int uses sync {
+  let h = host(todo_app())
+  h.apply(Msg.Add(id: "a", title: "a"))
+  let st = memory_store()
+  let h2 = host_with(todo_app(), st, local_bus(), scope: "k")
+  h2.apply(Msg.Add(id: "b", title: "b"))
+  h.model().todos.len() + h2.model().todos.len()
+}
+
+test "a memory Host declares only sync" {
+  expect(memory_host_count()) == 2
+}
+
 test "convergence holds for any seed" for seed: Int {
   expect(simulate(seed, 4, 120, 400, 50, 20)) == true
 }
@@ -717,11 +906,11 @@ test "a host keeps at most twice keep log entries" {
   for i in 0..100 {
     h.apply(Msg.Add(id: "t${i}", title: "t"))
   }
-  let n = h.state.with_read(fn(s) { s.log.len() })
+  let n = h.state.with_read(fn(c) { c.s.log.len() })
   expect(n < 10) == true
   expect(h.model().todos.len()) == 100
   // a page from before the compaction catches up through a snapshot
-  let d = h.state.with_read(fn(s) { s.reply("late", 0) })
+  let d = h.state.with_read(fn(c) { c.s.reply("late", 0) })
   expect(d.reset.is_some()) == true
 }
 

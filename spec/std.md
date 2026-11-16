@@ -11544,7 +11544,9 @@ fn (var r: Replica[M, E]) receive(d: Down[M, E])
 pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None, pub same: Bool = false, pub build: Str = "", pub seen: Str = "" }   // derive Json
 pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"",
     auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E]
-fn (h: Host[M, E]) apply(msg: E)
+pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", ...same options as host) -> Host[M, E, fx, bx] uses bx
+fn (h: Host[M, E]) apply(msg: E) uses sync               // faults if the store fails
+fn (h: Host[M, E]) try_apply(msg: E) -> () ! Str uses sync
 pub const SERVER_CLIENT = "~server"
 fn (h: Host[M, E]) model() -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
@@ -11554,6 +11556,23 @@ pub struct ClientIn[M, E] { pub model: M, pub pending: List[E], pub query: Str =
 pub struct ClientOut { pub html: Str, pub awaiting: Int }                   // derive Json
 pub fn predict[M, E](app: App[M, E], input: ClientIn[M, E]) -> ClientOut
 pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str uses stdio
+
+pub struct Batch { pub after: Int, pub count: Int, pub data: Bytes }
+pub struct Store[fx: Effects] { pub append: fn(Str, Batch) -> Bool ! Str uses fx, pub read: fn(Str, Int) -> List[Batch] ! Str uses fx,
+    pub snapshot: fn(Str) -> Batch? ! Str uses fx, pub put_snapshot: fn(Str, Batch) -> () ! Str uses fx }
+pub fn memory_store() -> Store[sync]
+pub struct Bus[fx: Effects] { pub publish: fn(Str, Int) uses fx, pub subscribe: fn(Str, fn(Int) uses sync) uses fx }
+pub fn local_bus() -> Bus[sync]
+pub fn scope[M: Json, E: Json, fx: Effects](app: App[M, E], store: Store[fx], key: Str = "", max_batch: Int = 256) -> Scope[M, E, fx]
+// Scope methods below perform (sync, fx)
+fn (var c: Scope[M, E]) catch_up() -> () ! Str uses sync
+fn (var c: Scope[M, E]) receive(up: Up[E]) -> Down[M, E] ! Str uses sync
+fn (var c: Scope[M, E]) receive_as(up: Up[E], principal: Str, allow: fn(M, Str, E) -> Bool) -> Down[M, E]? ! Str uses sync
+fn (var c: Scope[M, E]) apply(msg: E) -> () ! Str uses sync
+fn (var c: Scope[M, E]) reply(client: Str, ver: Int) -> Down[M, E] ! Str uses sync
+fn (c: Scope[M, E]) model() -> M
+fn (c: Scope[M, E]) version() -> Int
+fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
 ```
 
 - `update` and `view` are fn types without `uses`, so the checker
@@ -11686,6 +11705,26 @@ pub fn client_main[M: Json, E: Json](stdio: Stdio, app: App[M, E]) -> () ! Str u
   catches up through a snapshot. With `auth`, `signin_url` sends a page
   request without a principal to that URL (303) instead of 401; a sync
   still answers 401.
+- Scoped logs in a store (decision 0686, Proposed; stage 1). A Host
+  keeps its log in a `Store` under the key `scope` and hears other
+  instances' appends on a `Bus`; by default a memory store and an
+  in-process bus of its own, which is one instance as before. Hosts
+  given one store and one bus act as one App behind a load balancer: any
+  of them takes any sync, each Msg is logged once (a client's seq and
+  principal are in its entries), live connections on every instance
+  hear every change, and versions name one history. The store's one
+  atomic operation is `append`, a conditional create (the batch is
+  written only if the log ends at `after`); a Scope that loses the race
+  reads the winner's batch and runs its Msgs again. A sync without Msgs
+  answers from the instance's copy, which the bus keeps current, without
+  the store; a new instance reads the store once on first use, from its
+  snapshot when it has one. Compaction (`keep`) writes a snapshot, and
+  the store may then drop the batches it covers. Store and Bus take an
+  effect parameter: a Host or Scope performs what its store and bus
+  perform, so a memory Host stays `sync` and a networked store's `net`
+  reaches only the code that uses it. `host` is one instance in memory;
+  `host_with(app, store, bus, scope:)` names the store and bus. A `Scope` is the store-backed
+  Server, usable without a Host.
 - Tab state (decision 0672, Proposed; prototype). `with_url_view` gives
   the App a view that also reads the page's query: a filter, a sort, a
   selected row or a step lives in the URL, so reload, back and forward

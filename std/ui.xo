@@ -388,6 +388,278 @@ pub fn (var s: Server[M, E]) compact(keep: Int) {
   s.log = s.log[drop..].clone()
 }
 
+// ---- scoped logs in a durable store (decision 0686) ----
+
+/// One append to a scope's log: count entries as the versions after
+/// `after`, encoded by the Scope (a backend never reads them).
+pub struct Batch {
+  pub after: Int
+  pub count: Int
+  pub data: Bytes
+}
+
+/// Where scoped logs are kept. append is the one atomic operation, a
+/// conditional create that every durable backend has (memory, a
+/// directory, Postgres, S3, ...): it writes the batch only if the
+/// scope's log ends at `after`, and answers false when another writer
+/// took that version first.
+pub struct Store[fx: Effects] {
+  pub append: fn(Str, Batch) -> Bool ! Str uses fx
+  /// The batches holding versions after `after`, oldest first (the first
+  /// may start before it: a snapshot's version can fall inside a batch).
+  /// Batches a snapshot covers may be gone.
+  pub read: fn(Str, Int) -> List[Batch] ! Str uses fx
+  /// The newest snapshot of a scope (`after` is its version, count 0).
+  pub snapshot: fn(Str) -> Batch? ! Str uses fx
+  /// Keeps a snapshot if it is newer than the one kept; the batches it
+  /// covers may then be dropped.
+  pub put_snapshot: fn(Str, Batch) -> () ! Str uses fx
+}
+
+/// A store in this process's memory: one instance, or tests of several
+/// Scopes sharing it.
+pub fn memory_store() -> Store[sync] {
+  let logs = Mutex[Map[Str, List[Batch]]].new({})
+  let snaps = Mutex[Map[Str, Batch]].new({})
+  Store{
+    append: fn(scope: Str, b: Batch) -> Bool ! Str uses sync {
+      Ok(logs.with(fn(var m) {
+        var l = m.get(scope) ?? []
+        let top = if l.is_empty() { 0 } else { l[l.len() - 1].after + l[l.len() - 1].count }
+        if b.after != top {
+          return false
+        }
+        l.push(b)
+        m.put(scope, l)
+        true
+      }))
+    },
+    read: fn(scope: Str, after: Int) -> List[Batch] ! Str uses sync {
+      Ok(logs.with_read(fn(m) { (m.get(scope) ?? []).filter(fn(b) { b.after + b.count > after }) }))
+    },
+    snapshot: fn(scope: Str) -> Batch? ! Str uses sync {
+      Ok(snaps.with_read(fn(m) { m.get(scope) }))
+    },
+    put_snapshot: fn(scope: Str, b: Batch) -> () ! Str uses sync {
+      let newer = snaps.with(fn(var m) {
+        if let Some(old) = m.get(scope) {
+          if old.after >= b.after {
+            return false
+          }
+        }
+        m.put(scope, b)
+        true
+      })
+      if newer {
+        // the batches it covers go: memory stays bounded by keep
+        logs.with(fn(var m) {
+          if let Some(l) = m.get(scope) {
+            m.put(scope, l.filter(fn(x) { x.after + x.count > b.after }))
+          }
+        })
+      }
+      Ok(())
+    },
+  }
+}
+
+// A scope's state at a version, as a snapshot keeps it.
+struct Snap[M] {
+  model: M
+  seqs: Map[Str, Int]
+  owners: Map[Str, Str]
+} derive Json
+
+// A log entry as stored: with the principal its client acted as, which
+// replay needs to bind clients and a client is never sent.
+struct Logged[E] {
+  entry: Entry[E]
+  principal: Str
+} derive Json
+
+/// A Server kept in step with one scope of a store: any number of Scopes
+/// (in one process or many) share a scope's log, and each Msg is applied
+/// once whichever Scope receives it. Each change reads the batches the
+/// Scope lacks, applies the Msgs, and appends the new entries after the
+/// version it read; when another Scope appended first it reads that
+/// batch and applies the Msgs again.
+pub struct Scope[M: Json, E: Json, fx: Effects] {
+  s: Server[M, E]
+  store: Store[fx]
+  key: Str
+  // whether this copy has read the store once (a new instance must)
+  loaded: Bool = false
+}
+
+/// A Scope of store's log key, for app.
+pub fn scope[M: Json, E: Json, fx: Effects](app: App[M, E], store: Store[fx], key: Str = "", max_batch: Int = 256) -> Scope[M, E, fx] {
+  ui_scope(app, store, key, max_batch)
+}
+
+fn ui_scope[M: Json, E: Json, fx: Effects](app: App[M, E], store: Store[fx], key: Str, max_batch: Int) -> Scope[M, E, fx] {
+  Scope{s: server(app, max_batch: max_batch), store: store, key: key}
+}
+
+// Applies an entry another Scope logged.
+fn (var s: Server[M, E]) replay(e: Entry[E], principal: Str) {
+  if e.client != SERVER_CLIENT && !s.owners.contains(e.client) {
+    s.owners.put(e.client, principal)
+  }
+  s.last_seq.put(e.client, e.seq)
+  if !e.refused {
+    s.model = s.app.update(s.model, e.msg)
+  }
+  s.log.push(e)
+}
+
+// Starts this copy from the store's snapshot when it is past it.
+fn (var c: Scope[M, E, fx]) load_snapshot() -> Bool ! Str uses (sync, fx) {
+  let b = (c.store.snapshot)(c.key)? ?? return Ok(false)
+  if b.after <= c.s.version() {
+    return Ok(false)
+  }
+  let sn = json.decode_str[Snap[M]](b.data.to_str_lossy()).map_err(fn(e) { "std/ui: scope ${c.key}: snapshot: ${e}" })?
+  c.s = Server{app: c.s.app, model: sn.model, base: b.after, base_model: sn.model, base_seqs: sn.seqs, log: [], last_seq: sn.seqs, max_batch: c.s.max_batch, owners: sn.owners}
+  Ok(true)
+}
+
+/// Reads and applies the entries other Scopes appended (from the store's
+/// snapshot first when this copy is older than the batches kept).
+pub fn (var c: Scope[M, E, fx]) catch_up() -> () ! Str uses (sync, fx) {
+  var bs = (c.store.read)(c.key, c.s.version())?
+  if (bs.is_empty() && c.s.version() == 0) || (!bs.is_empty() && bs[0].after > c.s.version()) {
+    if c.load_snapshot()? {
+      bs = (c.store.read)(c.key, c.s.version())?
+    }
+  }
+  for b in bs {
+    if b.after > c.s.version() {
+      return Err("std/ui: scope ${c.key}: a batch after ${b.after}, the log is at ${c.s.version()}")
+    }
+    let ls = json.decode_str[List[Logged[E]]](b.data.to_str_lossy()).map_err(fn(e) { "std/ui: scope ${c.key}: ${e}" })?
+    for l in ls {
+      // a batch can start before this copy's version (after a snapshot)
+      if l.entry.ver == c.s.version() + 1 {
+        c.s.replay(l.entry, l.principal)
+      }
+    }
+  }
+  c.loaded = true
+  Ok(())
+}
+
+// Runs change on the Server and appends the entries it logs, as principal;
+// on a lost race, catches up and runs it again.
+fn (var c: Scope[M, E, fx]) commit[T](principal: Str, change: fn(var Server[M, E]) -> T) -> T ! Str uses (sync, fx) {
+  for _ in 0..16 {
+    c.catch_up()?
+    let before = c.s
+    let v0 = c.s.version()
+    let out = change(c.s)
+    let fresh = c.s.log[v0 - c.s.base..].clone()
+    if fresh.is_empty() {
+      return Ok(out)
+    }
+    let data = json.encode_str(fresh.map(fn(e) { Logged{entry: e, principal: principal} })).bytes()
+    match (c.store.append)(c.key, Batch{after: v0, count: fresh.len(), data: data}) {
+      Ok(true) => return Ok(out)
+      Ok(false) => c.s = before
+      Err(e) => {
+        // nothing was appended: this copy goes back to the store's version
+        c.s = before
+        return Err(e)
+      }
+    }
+  }
+  Err("std/ui: scope ${c.key}: 16 appends lost to other writers")
+}
+
+/// Server.receive through the store.
+pub fn (var c: Scope[M, E, fx]) receive(up: Up[E]) -> Down[M, E] ! Str uses (sync, fx) {
+  c.commit("", fn(var s) { s.receive(up) })
+}
+
+/// Server.receive_as through the store.
+pub fn (var c: Scope[M, E, fx]) receive_as(up: Up[E], principal: Str, allow: fn(M, Str, E) -> Bool) -> Down[M, E]? ! Str uses (sync, fx) {
+  c.commit(principal, fn(var s) { s.receive_as(up, principal, allow) })
+}
+
+/// Server.apply through the store.
+pub fn (var c: Scope[M, E, fx]) apply(msg: E) -> () ! Str uses (sync, fx) {
+  c.commit("", fn(var s) { s.apply(msg) })
+}
+
+/// Server.reply after catching up.
+pub fn (var c: Scope[M, E, fx]) reply(client: Str, ver: Int) -> Down[M, E] ! Str uses (sync, fx) {
+  c.catch_up()?
+  Ok(c.s.reply(client, ver))
+}
+
+/// The model and version this Scope has read (catch_up first for the
+/// store's newest).
+pub fn (c: Scope[M, E, fx]) model() -> M {
+  c.s.model
+}
+
+pub fn (c: Scope[M, E, fx]) version() -> Int {
+  c.s.version()
+}
+
+/// Server.compact on this Scope's copy, and a snapshot at the new base
+/// for the store (which may then drop the batches before it).
+pub fn (var c: Scope[M, E, fx]) compact(keep: Int) -> () ! Str uses (sync, fx) {
+  let b0 = c.s.base
+  c.s.compact(keep)
+  if c.s.base == b0 {
+    return Ok(())
+  }
+  let data = json.encode_str(Snap{model: c.s.base_model, seqs: c.s.base_seqs, owners: c.s.owners}).bytes()
+  (c.store.put_snapshot)(c.key, Batch{after: c.s.base, count: 0, data: data})
+}
+
+// Catches up when a notice named a version past this Scope's.
+fn (var c: Scope[M, E, fx]) fresh(latest: Int) -> () ! Str uses (sync, fx) {
+  if !c.loaded || latest > c.s.version() {
+    c.catch_up()?
+  }
+  Ok(())
+}
+
+/// Notices of new versions between instances (decision 0686), chosen
+/// apart from the store: an instance publishes after each append, and
+/// every instance subscribed to the scope hears it (in process, Postgres
+/// LISTEN/NOTIFY, Redis, NATS, or polling the store).
+pub struct Bus[fx: Effects] {
+  pub publish: fn(Str, Int) uses fx
+  pub subscribe: fn(Str, fn(Int) uses sync) uses fx
+}
+
+/// A bus within this process: every Host given it hears the others.
+pub fn local_bus() -> Bus[sync] {
+  local_bus_of({})
+}
+
+// A local bus starting with these subscribers (making it performs nothing,
+// so a one-instance host stays pure to build).
+fn local_bus_of(first: Map[Str, List[fn(Int) uses sync]]) -> Bus[sync] {
+  let subs = Mutex[Map[Str, List[fn(Int) uses sync]]].new(first)
+  Bus{
+    publish: fn(scope: Str, v: Int) uses sync {
+      let fs = subs.with_read(fn(m) { m.get(scope) ?? [] })
+      for f in fs {
+        f(v)
+      }
+    },
+    subscribe: fn(scope: Str, f: fn(Int) uses sync) uses sync {
+      subs.with(fn(var m) {
+        var l = m.get(scope) ?? []
+        l.push(f)
+        m.put(scope, l)
+      })
+    },
+  }
+}
+
 /// A client's copy: the confirmed model at a log version and its own
 /// Msgs not yet in the log.
 pub struct Replica[M, E] {
@@ -712,9 +984,14 @@ fn accepts_gzip(v: Str) -> Bool {
 }
 
 /// An App served over HTTP, with its Server behind a lock.
-pub struct Host[M: Json, E: Json] {
+pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects] {
   app: App[M, E]
-  state: Mutex[Server[M, E]]
+  // This instance's copy of the scope's log (decision 0686), the bus that
+  // tells it of other instances' appends, and the newest version heard.
+  state: Mutex[Scope[M, E, fx]]
+  bus: Bus[bx]
+  key: Str
+  latest: Atomic[Int]
   title: Str
   css: Str
   // The App's client program built for wasm, "" for a thin client.
@@ -738,9 +1015,40 @@ pub struct Host[M: Json, E: Json] {
   next_sub: Atomic[Int]
 }
 
-/// A host for app starting at app.init.
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E] {
-  Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex[Server[M, E]].new(server(app, max_batch: max_batch)), title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: Mutex[Map[Int, Sub]].new({}), next_sub: Atomic[Int].new(0)}
+/// A host for app starting at app.init: one instance, its log in memory.
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E, sync, sync] {
+  let subs = Mutex[Map[Int, Sub]].new({})
+  let latest = Atomic[Int].new(0)
+  let bus = local_bus_of({"": [waker(subs, latest)]})
+  host_core(app, memory_store(), bus, "", subs, latest, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
+}
+
+/// A host whose log is the scope key `scope` of store, hearing other
+/// instances' appends on bus (decision 0686): Hosts given one store and
+/// one bus act as one App behind a load balancer. The Host performs what
+/// the store and bus perform (a memory store: sync; a networked one: net).
+pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000) -> Host[M, E, fx, bx] uses bx {
+  let subs = Mutex[Map[Int, Sub]].new({})
+  let latest = Atomic[Int].new(0)
+  (bus.subscribe)(scope, waker(subs, latest))
+  host_core(app, store, bus, scope, subs, latest, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
+}
+
+// What a Host hears from its bus: every instance's append to the scope
+// (this one's too) wakes the live connections here.
+fn waker(subs: Mutex[Map[Int, Sub]], latest: Atomic[Int]) -> fn(Int) uses sync {
+  fn(v: Int) uses sync {
+    latest.max(v)
+    subs.with_read(fn(m) {
+      for (_, c) in m {
+        let _sent = c.ch.try_send(v)
+      }
+    })
+  }
+}
+
+fn host_core[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, subs: Mutex[Map[Int, Sub]], latest: Atomic[Int], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx] {
+  Host{app: app, auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, state: Mutex.new(ui_scope(app, st, scope, max_batch)), bus: b, key: scope, latest: latest, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0)}
 }
 
 // A live connection: its principal and its channel.
@@ -809,20 +1117,40 @@ pub fn (h: Host[M, E]) live() -> Int {
 /// Applies a Msg of the server's own (Server.apply) and wakes the live
 /// pages: how data from elsewhere (a database, a queue, a timer) reaches
 /// the model.
-pub fn (h: Host[M, E]) apply(msg: E) {
-  let keep = h.keep
-  let v = h.state.with(fn(var s) {
-    s.apply(msg)
-    if keep > 0 && s.log.len() >= 2 * keep {
-      s.compact(keep)
-    }
-    s.version()
-  })
-  h.notify(v)
+pub fn (h: Host[M, E]) apply(msg: E) uses sync {
+  h.try_apply(msg).or_fault("std/ui: Host.apply: the store failed")
 }
 
-pub fn (h: Host[M, E]) model() -> M {
-  h.state.with_read(fn(s) { s.model() })
+/// Host.apply, with the store's error (decision 0686).
+pub fn (h: Host[M, E]) try_apply(msg: E) -> () ! Str uses sync {
+  let keep = h.keep
+  // the copy keeps what it caught up even when the append fails (commit
+  // undoes its own change), so the closure's result is a value
+  let (v, err) = h.state.with(fn(var c) -> (Int, Str) {
+    match c.apply(msg) {
+      Ok(_) => {}
+      Err(e) => return (0, e)
+    }
+    if keep > 0 && c.s.log.len() >= 2 * keep {
+      // best effort: the next compaction writes the snapshot again
+      let _snap = c.compact(keep).is_ok()
+    }
+    (c.version(), "")
+  })
+  if err != "" {
+    return Err(err)
+  }
+  (h.bus.publish)(h.key, v)
+  Ok(())
+}
+
+pub fn (h: Host[M, E]) model() -> M uses sync {
+  let latest = h.latest.get()
+  h.state.with(fn(var c) {
+    // a store error leaves this instance's copy, which is still a version
+    let _ok = c.fresh(latest).is_ok()
+    c.model()
+  })
 }
 
 /// Adds the routes to r under prefix ("" or a path like "/todo"): GET
@@ -877,7 +1205,17 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
         return http.Response{status: 303, headers: {"Location": signin}, body: b""}
       }
     }
-    let (m0, v) = state.with_read(fn(s) { (s.model(), s.version()) })
+    let latest = hh.latest.get()
+    let (m0, v, err) = state.with(fn(var c) -> (M, Int, Str) {
+      let e = match c.fresh(latest) {
+        Ok(_) => ""
+        Err(x) => x
+      }
+      (c.model(), c.version(), e)
+    })
+    if err != "" {
+      return http.text(503, "std/ui: ${err}")
+    }
     let m = shown(m0, p)
     http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync, css: css, live_url: live, wasm_url: wasm, build: build, seen: hh.digest(m0, p), query: req.url.to_url().raw_query)).with_header("Content-Type", "text/html; charset=utf-8")
   })
@@ -897,17 +1235,33 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let p = who(req) ?? return http.text(401, "std/ui: sign in first")
     let checked = auth.is_some() || allow.is_some()
     let ok = allow ?? fn(m: M, q: Str, e: E) -> Bool { true }
-    let (dd, m0, v, before) = state.with(fn(var s) {
-      let b = s.version()
-      let d = if checked { s.receive_as(up, p, ok) } else { Some(s.receive(up)) }
-      if keep > 0 && s.log.len() >= 2 * keep {
-        s.compact(keep)
+    let latest = hh.latest.get()
+    let (res, m0, v, before) = state.with(fn(var c) -> (Result[Down[M, E]?, Str], M, Int, Int) {
+      if let Err(e) = c.fresh(latest) {
+        return (Err(e), c.model(), c.version(), c.version())
       }
-      (d, s.model(), s.version(), b)
+      let b = c.version()
+      // a sync without Msgs answers from this copy, which the bus keeps
+      // current, without the store
+      let r = if up.msgs.is_empty() {
+        Ok(if checked { c.s.receive_as(up, p, ok) } else { Some(c.s.receive(up)) })
+      } else if checked {
+        c.receive_as(up, p, ok)
+      } else {
+        c.receive(up).map(fn(x) { Some(x) })
+      }
+      if keep > 0 && c.s.log.len() >= 2 * keep {
+        let _snap = c.compact(keep).is_ok()
+      }
+      (r, c.model(), c.version(), b)
     })
+    let dd = match res {
+      Ok(x) => x
+      Err(e) => return http.text(503, "std/ui: ${e}")
+    }
     let d = dd ?? return http.text(403, "std/ui: this client belongs to another principal")
     if v != before {
-      hh.notify(v)
+      (hh.bus.publish)(hh.key, v)
     }
     let m = shown(m0, p)
     // with redact a log entry may hold what this principal must not see
@@ -948,7 +1302,7 @@ fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str) {
   // the digest after subscribing: a change in between is seen again and
   // skipped if this view already holds it (the page syncs on open)
   let first = h.digest(h.model(), p)
-  let now = h.state.with_read(fn(s) { s.version() })
+  let now = h.state.with_read(fn(c) { c.version() })
   if conn.write_text("${now}") is Err(_) {
     return
   }

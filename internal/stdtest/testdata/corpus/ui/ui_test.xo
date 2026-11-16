@@ -101,3 +101,24 @@ test "a server page and its runtime" {
   let js = r.call(http.new_request("GET", ui.runtime_url("/app")))
   expect(js.status) == 200
 }
+
+test "Scopes on one store and Hosts on one bus act as one (decision 0686)" {
+  let st = ui.memory_store()
+  var a = ui.scope(counter(), st, key: "room")
+  var b = ui.scope(counter(), st, key: "room")
+  a.receive(ui.Up{client: "x", ver: 0, msgs: [ui.Envelope{seq: 1, msg: Act.Inc(by: 2)}]})?
+  let all = fn(m: Count, p: Str, e: Act) -> Bool { true }
+  let d = b.receive_as(ui.Up{client: "y", ver: 0, msgs: [ui.Envelope{seq: 1, msg: Act.Join(who: "ann")}]}, "ann", all)?
+  expect(d.is_some()) == true
+  b.apply(Act.Inc(by: 1))?
+  a.catch_up()?
+  expect(a.model()) == b.model()
+  expect(a.version()) == 3
+  expect(a.reply("x", 0)?.entries.len()) == 3
+  a.compact(1)?
+  let bus = ui.local_bus()
+  let h1 = ui.host_with(counter(), st, bus, scope: "room")
+  let h2 = ui.host_with(counter(), st, bus, scope: "room")
+  h1.try_apply(Act.Inc(by: 4))?
+  expect(h2.model().n) == 7
+}

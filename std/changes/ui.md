@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: feature: scoped logs in a store, Hosts that act as one behind a load balancer (decision 0686 stage 1)
+
+- Kind: feature
+- Commit: this push
+- Found by: owner (several instances behind a load balancer)
+- Go reference: none
+- Test: std/ui tests: Scopes on one store converge with each sync routed to a random one of 2 to 4, with loss, reordering, offline clients, refusals and compaction (30 runs; with a store per node, as separate instances today, it fails); two Scopes racing for one version; two Hosts on one store and bus (live notice, page, retry not applied twice, principal kept, server Msgs); a Host appends after another without a bus; compaction snapshots and a new Host starts from the snapshot; the ui corpus; every headless Chrome suite (todo 21, morph 3, navigation 17, redeploy 6, pages 14, busy 6, shop 12, shop tab 12)
+- Timing: examples/ui-shop/measure, one cart add with 2, 20, 200 users: 23, 9, 12 us before and 16, 10, 14 us with the memory store (one sample each)
+- Shipped in: not yet released
+
+`ui.host_with(app, store, bus, scope:)`, `Store` (a conditional `append`, `read`, `snapshot`, `put_snapshot`), `memory_store()`, `Bus` and `local_bus()`, `Scope` (a Server kept in step with a store), and `Host.try_apply`. Store, Bus and Scope take an effect parameter, so a Host performs what its store performs. `ui.host` keeps working as one instance. `Host.apply` and `Host.model` now declare `uses sync`.
+
 ## 2026-11-16: perf: with redact, a change no longer computes every viewer's digest on its request
 
 - Kind: perf
