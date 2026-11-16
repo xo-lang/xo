@@ -1984,6 +1984,28 @@ pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int, fib: Int
   walk_regs(s, out, max, lo, hi, darwin, true, top)
 }
 
+/// prof_walk with the stack's end given (end: 0 for none known): darwin's
+/// sampler thread, which reads another thread's state and the end of the
+/// mapping its sp is in (prof.xo mac_top), and cannot read that thread's
+/// running fiber. No frame is read at or past min(end, sp + PROF_SPAN).
+pub fn prof_walk_to(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int, end: Int) -> Int {
+  let darwin = match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
+  }
+  let cur = s + REGS_A
+  rt.mem_set(cur, 0, PC + 8)
+  if !prof_regs(uc, cur, darwin) {
+    return 0
+  }
+  let sp = rt.mem_load(cur, sp_off(), 8)
+  var top = sp.wrapping_add(PROF_SPAN)
+  if end > sp && end < top {
+    top = end
+  }
+  walk_regs(s, out, max, lo, hi, darwin, true, top)
+}
+
 /// The fiber record of the calling thread's running fiber (sched.xo
 /// TLS_FIB), for prof_walk: 0 on a thread that runs none.
 pub fn cur_fiber() -> Int { rt.tlocal_get(TLS_FIB) }

@@ -26,3 +26,14 @@ decides whether a rule meets the edge, so a smaller or debug build of the
 same work passed 16 runs without the fix: keep the test's program as it is.
 The darwin sampler thread (prof.xo mac_sample) cannot read the target
 thread's TLS and passes no fiber, so it keeps the span bound.
+
+Observed again 2026-11-16 on macOS (task #97): the sampler thread
+(prof.xo mac_sample) walks another, suspended thread and cannot read its
+running fiber, so it passed fib 0 and the walk's bound was sp + PROF_SPAN
+(64 MiB). A frame pointer near a stack's top led into the guard page of
+the mapping above: SIGSEGV (code 2) in the sampler, 2 of 20 runs of a
+profiled protojson marshal at 5000 Hz. Fix: mac_walk bounds the walk by
+the end of the mapping sp is in (mach_vm_region, a kernel call, so no
+lock the suspended thread holds; unwind.prof_walk_to). Test: prof_test.xo
+(`xo test --std-module=native/llrt/prof`), a stack page under a PROT_NONE
+page with the frame pointer in it: SIGBUS before, passes after.

@@ -1,0 +1,51 @@
+// Tests of prof.xo (`xo test --std-module=native/llrt/prof`, run by
+// internal/stdtest).
+
+use native/llrt/unwind
+use native/sys_darwin
+
+// task #97: macOS's sampler thread walked a suspended thread with no
+// bound but sp + 64 MiB, and a frame pointer near the top of a stack read
+// the guard page of the mapping above it (SIGSEGV in the sampler, 2 of 20
+// profiled runs at 5000 Hz). Here a stack is one page under a PROT_NONE
+// page, sp 64 bytes under its top and the frame pointer in the guard.
+test "the macOS sampler's walk stops at the end of the stack's mapping" {
+  let darwin = match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
+  }
+  if !darwin {
+    return
+  }
+  let x64 = match target.arch {
+    TargetArch.Amd64 => true
+    TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
+  }
+  let pg = 16384
+  let m = map(2 * pg)
+  expect(m != 0)
+  expect(Int(sys_darwin.mprotect(m + pg, pg, 0)) == 0)
+  let d = map(DB_SIZE)
+  let s = map(unwind.PROF_RECORD)
+  expect(unwind.prof_init(s))
+  st(d, DB_TASK, Int(sys_darwin.task_self_trap()) & 4294967295)
+  st(d, DB_UNW, s)
+  st(d, DB_UC + 48, d + DB_STATE - 16)
+  let st0 = d + DB_STATE
+  let sp = m + pg - 64
+  let fp = m + pg + 4096
+  if x64 {
+    st(st0, 48, fp)
+    st(st0, 56, sp)
+    st(st0, 128, 4)
+  } else {
+    st(st0, 232, fp)
+    st(st0, 240, 4)
+    st(st0, 248, sp)
+    st(st0, 256, 4)
+  }
+  let out = map(8 * DEPTH)
+  // pcs outside [lo, hi): the walk follows frame pointers
+  let n = mac_walk(d, out, 65536, 131072)
+  expect(n >= 1 && n <= 2)
+}

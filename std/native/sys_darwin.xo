@@ -238,6 +238,12 @@ fn thread_resume(t: Int) -> Int32
 fn thread_get_state(t: Int, flavor: Int, state: Int, n: Int) -> Int32
 /// Drops a reference to the port name.
 fn mach_port_deallocate(task: Int, name: Int) -> Int32
+/// mach_vm_region of the task: the first region at or above the address
+/// in the word at addr (its start written back there, its size at size),
+/// the flavor's info at info (in: its count of 32 bit words at the word
+/// at n), the object name port at obj (prof.xo mac_top: where a suspended
+/// thread's stack ends).
+fn mach_vm_region(task: Int, addr: Int, size: Int, flavor: Int, info: Int, n: Int, obj: Int) -> Int32
 /// Unmaps n bytes at addr from the task (task_threads' array).
 fn vm_deallocate(task: Int, addr: Int, n: Int) -> Int32
 

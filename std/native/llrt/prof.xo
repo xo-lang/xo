@@ -1833,7 +1833,9 @@ fn table_with(samples: List[List[Int]], syms: Syms, lines: dwline.Lines) -> Tabl
 /// (prof_walk reads a signal's ucontext; the thread state is the same
 /// words), the thread state (272 bytes), the run this thread samples
 /// for, the tick count, and the table of threads seen: DT_N entries of
-/// (port, last CPU microseconds, carried microseconds, last tick seen).
+/// (port, last CPU microseconds, carried microseconds, last tick seen);
+/// then mach_vm_region's words (DB_REG: address, size, count, object
+/// name, info).
 const DB_TASK = 0
 const DB_ME = 8
 const DB_TICK = 16
@@ -1848,7 +1850,11 @@ const DB_RUN = 440
 const DB_GEN = 448
 const DB_TAB = 512
 const DT_N = 256
-const DB_SIZE = 8704
+const DB_REG = 8704
+const DB_SIZE = 8768
+/// VM_REGION_BASIC_INFO_64 and its count of 32 bit words.
+const REGION_BASIC_64 = 9
+const REGION_BASIC_64_N = 9
 /// thread_info's THREAD_BASIC_INFO and its count of 32 bit words.
 const THREAD_BASIC_INFO = 3
 const BASIC_INFO_COUNT = 10
@@ -1971,6 +1977,38 @@ fn mac_entry(d: Int, t: Int, gen: Int) -> Int {
   free
 }
 
+/// The walk of the suspended thread whose state the sampler record d
+/// holds: its pcs into out (DEPTH at most), their count. Bounded by the
+/// end of the mapping sp is in (mac_top): the sampler cannot read the
+/// thread's running fiber, and the walk's default bound, sp + PROF_SPAN
+/// (64 MiB), let a frame pointer near a stack's top lead into the guard
+/// page of the mapping above (task #97: SIGSEGV in 2 of 20 profiled runs
+/// at 5000 Hz).
+fn mac_walk(d: Int, out: Int, lo: Int, hi: Int) -> Int {
+  let x64 = match target.arch {
+    TargetArch.Amd64 => true
+    TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
+  }
+  let sp = ld(d, DB_STATE + (if x64 { 56 } else { 248 }))
+  unwind.prof_walk_to(ld(d, DB_UNW), d + DB_UC, out, DEPTH, lo, hi, mac_top(d, sp))
+}
+
+/// The end of the mapping that holds sp (mach_vm_region, a kernel call:
+/// no lock the suspended thread could hold), 0 when none does.
+fn mac_top(d: Int, sp: Int) -> Int {
+  let a = d + DB_REG
+  st(a, 0, sp)
+  rt.mem_store(a, 16, REGION_BASIC_64_N, 4)
+  if Int(sys_darwin.mach_vm_region(ld(d, DB_TASK), a, a + 8, REGION_BASIC_64, a + 24, a + 16, a + 20)) != 0 {
+    return 0
+  }
+  let start = ld(a, 0)
+  if start > sp {
+    return 0
+  }
+  start.wrapping_add(ld(a, 8))
+}
+
 /// Samples thread t for each whole period of CPU it used since its last
 /// tick: one walk while it is suspended, the stack written that many
 /// times.
@@ -2018,7 +2056,11 @@ fn mac_sample(r: Int, d: Int, t: Int, gen: Int) {
     let k0 = claim(r, k)
     if k0 >= 0 {
       let p = ld(r, R_RING) + k0 * SLOT
-      fill(r, k0, k, unwind.prof_walk(ld(d, DB_UNW), d + DB_UC, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI), 0))
+      // bounded by the end of sp's mapping (task #97): the thread runs a
+      // fiber or its own pthread stack, which the sampler cannot tell, and
+      // sp + PROF_SPAN from near a stack's top read the guard page above
+      // it (2 in 20 runs of a profiled protojson marshal at 5000 Hz)
+      fill(r, k0, k, mac_walk(d, p + 8, ld(r, R_TLO), ld(r, R_THI)))
     }
   }
   let _r = sys_darwin.thread_resume(t)
