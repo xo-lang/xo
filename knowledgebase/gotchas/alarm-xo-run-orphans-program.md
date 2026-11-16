@@ -54,3 +54,19 @@ Bound a run with a watchdog that kills the PID it started:
 `kill -9 $pid` (the PID captured at launch, never a name or pattern).
 macOS has no timeout(1). Example:
 ~/xo-lead/notes/xo-lang-5/scripts/pipe-probe2.sh.
+
+## Observed again (Xo Lang 3, 2026-11-16)
+
+A with_timeout busy-loop probe (`perl -e 'alarm 20; exec @ARGV' xo run
+--backend=$b main.xo`, both backends) left
+`~/Library/Caches/xo/build/KEY/arm64/bin/busyprobe` spinning at 98% CPU
+with PPID 1 after the alarm ended `xo run` (alert #1871). `xo run`
+forwards only the stop signals (SIGINT, SIGTERM: compiler/xo/run.xo
+exec_binary sends TERM to the child on `task.stopping()`); SIGALRM, SIGHUP
+and SIGKILL end `xo run` alone. The `Signal` enum (prelude, decision 0407)
+has no Alarm, and compiler/ cannot call a std method newer than its seed,
+so the fix is two steps: (1) a prelude change (an `Alarm` signal to
+forward, or a parent-death watch in the native runtime when `xo run` sets
+an XO_* variable naming its PID: kqueue NOTE_EXIT on darwin, prctl
+PR_SET_PDEATHSIG on Linux), then (2) after the next seed, xo run uses it.
+Until then use the Fix above (build, then time the binary itself).
