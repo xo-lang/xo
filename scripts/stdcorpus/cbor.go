@@ -652,7 +652,7 @@ func cborCorpus() string {
 
 	var o strings.Builder
 	o.WriteString(header("RFC 8949 CBOR: decode, well_formed, diagnostic and the deterministic encode, on the Appendix A examples, malformed and edge inputs, and changed copies of them, against github.com/fxamacker/cbor/v2 (MIT) run by internal/stdtest/cborref"))
-	o.WriteString("use std/cbor\nuse std/json\n\n")
+	o.WriteString("use std/big\nuse std/cbor\nuse std/json\n\n")
 	o.WriteString("/// (CBOR bytes, well formed, diagnostic notation or ERR, UTF8 or SKIP, deterministic encoding in hex or ERR or SKIP, repeated map key: yes, no or ?)\nconst CASES: List[(Bytes, Bool, Str, Str, Str)] = [\n")
 	for i, in := range inputs {
 		rf := refs[i]
@@ -683,6 +683,7 @@ func cborCorpus() string {
 	o.WriteString(cborTypedXo)
 	o.WriteString(cborCheckXo)
 	o.WriteString(cborAPITests)
+	o.WriteString(cborStreamTests)
 	cborOptsCorpus(&o)
 	return o.String()
 }
@@ -1022,5 +1023,202 @@ test "decode_with: default options are decode's, the prefix form, and the reserv
   expect(cbor.decode_with(hx("00"), cbor.DecodeOptions{rejected_simple: [24]}).err().map(fn(e: cbor.CborErr) -> Str { e.display() })) == Some("cbor: cannot set analog for reserved simple value 24")
   expect(cbor.decode_with(hx("820000"), cbor.DecodeOptions{max_depth: 0}).is_err()) == true
   expect(cbor.decode_with(hx("a20000"  + "00" + "00"), cbor.DecodeOptions{reject_dup_keys: true}).is_err()) == true
+}
+`
+
+const cborStreamTests = `
+// TestStdAPICovered (2026-11-16): std/cbor_test.xo's ports of fxamacker's
+// encode_test.go (TestMapSort, TestMarshalBigInt, TestMarshalTime),
+// stream_test.go (the indefinite length Encoder) and diagnose_test.go,
+// with fxamacker's expected values, as corpus calls
+
+fn ct(s: Str) -> cbor.Value { cbor.Value.TextString(s: s) }
+
+fn ci(n: Int) -> cbor.Value { cbor.from_int(n) }
+
+test "TestMapSort: length first, bytewise, canonical and CTAP2 orders" {
+  let m = cbor.Value.Map(pairs: [
+    (ci(10), cbor.Value.Bool(b: true)),
+    (ci(100), cbor.Value.Bool(b: true)),
+    (ci(-1), cbor.Value.Bool(b: true)),
+    (ct("z"), ct("zzz")),
+    (ct("aa"), cbor.Value.Bool(b: true)),
+    (cbor.Value.Array(items: [ci(100)]), cbor.Value.Bool(b: true)),
+    (cbor.Value.Array(items: [ci(-1)]), cbor.Value.Bool(b: true)),
+    (cbor.Value.Bool(b: false), cbor.Value.Bool(b: true)),
+  ])
+  // sorted keys: 10, -1, false, 100, "z", [-1], "aa", [100]
+  let len_first = "a80af520f5f4f51864f5617a637a7a7a8120f5626161f5811864f5"
+  // sorted keys: 10, 100, -1, "z", "aa", [100], [-1], false
+  let bytewise = "a80af51864f520f5617a637a7a7a626161f5811864f58120f5f4f5"
+  expect((cbor.encode_sorted(m, cbor.KeyOrder.LengthFirst) ?? e => fault(e.display())).to_hex()) == len_first
+  expect((cbor.encode_sorted(m, cbor.KeyOrder.Bytewise) ?? e => fault(e.display())).to_hex()) == bytewise
+  expect((cbor.encode(m, deterministic: true) ?? e => fault(e.display())).to_hex()) == bytewise
+  // unsorted keeps the pairs' order
+  expect((cbor.encode_sorted(cbor.Value.Map(pairs: [(ct("b"), ci(1)), (ct("a"), ci(2))]), cbor.KeyOrder.Unsorted) ?? e => fault(e.display())).to_hex()) == "a2616201616102"
+}
+
+test "TestIndefiniteByteString and TestIndefiniteTextString" {
+  var e = cbor.encoder()
+  e.start_indefinite(cbor.Indefinite.ByteString)
+  e.encode(cbor.Value.ByteString(b: hx("0102"))) ?? x => fault(x.display())
+  e.encode(cbor.Value.ByteString(b: hx("030405"))) ?? x => fault(x.display())
+  e.end_indefinite() ?? x => fault(x.display())
+  expect(e.bytes().to_hex()) == "5f42010243030405ff"
+  var s = cbor.encoder()
+  s.start_indefinite(cbor.Indefinite.TextString)
+  s.encode(ct("strea")) ?? x => fault(x.display())
+  s.encode(ct("ming")) ?? x => fault(x.display())
+  s.end_indefinite() ?? x => fault(x.display())
+  expect(s.bytes().to_hex()) == "7f657374726561646d696e67ff"
+  // and it decodes back to the joined string
+  expect(cbor.decode(s.bytes()) ?? x => fault(x.display())) == ct("streaming")
+}
+
+test "TestIndefiniteByteStringError and TestIndefiniteTextStringError" {
+  var e = cbor.encoder()
+  e.start_indefinite(cbor.Indefinite.ByteString)
+  match e.encode(cbor.Value.Array(items: [ci(1), ci(2)])) {
+    Ok(_) => fault("an array chunk passed")
+    Err(x) => expect(x.display()) == "cbor: cannot encode item type array for indefinite-length byte string"
+  }
+  match e.encode(ct("hello")) {
+    Ok(_) => fault("a text chunk passed")
+    Err(x) => expect(x.display()) == "cbor: cannot encode item type UTF-8 text string for indefinite-length byte string"
+  }
+  var s = cbor.encoder()
+  s.start_indefinite(cbor.Indefinite.TextString)
+  match s.encode(cbor.Value.ByteString(b: hx("0102"))) {
+    Ok(_) => fault("a byte chunk passed")
+    Err(x) => expect(x.display()) == "cbor: cannot encode item type byte string for indefinite-length text string"
+  }
+}
+
+test "TestIndefiniteArray and TestIndefiniteMap" {
+  var e = cbor.encoder()
+  e.start_indefinite(cbor.Indefinite.Array)
+  e.encode(ci(1)) ?? x => fault(x.display())
+  e.encode(cbor.Value.Array(items: [ci(2), ci(3)])) ?? x => fault(x.display())
+  e.start_indefinite(cbor.Indefinite.Array)
+  e.encode(ci(4)) ?? x => fault(x.display())
+  e.encode(ci(5)) ?? x => fault(x.display())
+  e.end_indefinite() ?? x => fault(x.display())
+  e.end_indefinite() ?? x => fault(x.display())
+  expect(e.bytes().to_hex()) == "9f018202039f0405ffff"
+  var m = cbor.encoder(cbor.KeyOrder.LengthFirst)
+  m.start_indefinite(cbor.Indefinite.Map)
+  m.encode(ct("a")) ?? x => fault(x.display())
+  m.encode(ci(1)) ?? x => fault(x.display())
+  m.encode(ct("b")) ?? x => fault(x.display())
+  m.start_indefinite(cbor.Indefinite.Array)
+  m.encode(ci(2)) ?? x => fault(x.display())
+  m.encode(ci(3)) ?? x => fault(x.display())
+  m.end_indefinite() ?? x => fault(x.display())
+  m.end_indefinite() ?? x => fault(x.display())
+  expect(m.bytes().to_hex()) == "bf61610161629f0203ffff"
+}
+
+test "TestIndefiniteLengthError: a break outside an indefinite item" {
+  var e = cbor.encoder()
+  e.start_indefinite(cbor.Indefinite.ByteString)
+  e.end_indefinite() ?? x => fault(x.display())
+  match e.end_indefinite() {
+    Ok(_) => fault("a second break passed")
+    Err(x) => expect(x.display()) == "cbor: cannot encode \"break\" code outside indefinite length values"
+  }
+}
+
+test "diagnose_test.go: byte strings in base16, base32, base32hex and base64url" {
+  let v = cbor.decode(hx("4412345678")) ?? x => fault(x.display())
+  expect(v.diagnostic_with(cbor.DiagBytes.Base16)) == "h'12345678'"
+  expect(v.diagnostic_with(cbor.DiagBytes.Base32)) == "b32'CI2FM6A'"
+  expect(v.diagnostic_with(cbor.DiagBytes.Base32Hex)) == "h32'28Q5CU0'"
+  expect(v.diagnostic_with(cbor.DiagBytes.Base64)) == "b64'EjRWeA'"
+  // nested, as the mode applies to every byte string
+  let n = cbor.Value.Array(items: [cbor.Value.ByteString(b: b"hello"), cbor.Value.Map(pairs: [(ct("k"), cbor.Value.ByteString(b: b"\x01"))])])
+  expect(n.diagnostic_with(cbor.DiagBytes.Base64)) == "[b64'aGVsbG8', {\"k\": b64'AQ'}]"
+}
+
+// encode_test.go TestMarshalBigInt and decode_test.go's bignum cases
+test "from_big and to_big: shortest, always a tag, reject (BigIntConvertMode)" {
+  let cases: List[(Str, Str, Str)] = [
+    // (decimal, shortest hex, tag hex)
+    ("0", "00", "c240"),
+    ("1", "01", "c24101"),
+    ("-1", "20", "c340"),
+    ("18446744073709551615", "1bffffffffffffffff", "c248ffffffffffffffff"),
+    ("18446744073709551616", "c249010000000000000000", "c249010000000000000000"),
+    ("-18446744073709551616", "3bffffffffffffffff", "c348ffffffffffffffff"),
+    ("-18446744073709551617", "c349010000000000000000", "c349010000000000000000"),
+  ]
+  for (dec, short, tag) in cases {
+    let n = big.parse(dec) ?? e => fault(e.display())
+    let a = cbor.from_big(n) ?? e => fault(e.display())
+    expect((cbor.encode(a) ?? e => fault(e.display())).to_hex()) == short
+    let b = cbor.from_big(n, cbor.BigConvert.None) ?? e => fault(e.display())
+    expect((cbor.encode(b) ?? e => fault(e.display())).to_hex()) == tag
+    expect((a.to_big() ?? fault("no big")).text()) == dec
+    expect((b.to_big() ?? fault("no big")).text()) == dec
+  }
+  match cbor.from_big(big.from_int(1), cbor.BigConvert.Reject) {
+    Ok(_) => fault("Reject encoded")
+    Err(e) => expect(e.display()) == "cbor: unsupported type: big.Int"
+  }
+  expect(cbor.Value.TextString(s: "1").to_big() is None) == true
+}
+
+test "cbor.DecodeOptions.reject_bignum (BignumTagForbidden)" {
+  let data = hx("c249010000000000000000")
+  expect(cbor.decode_with(data, cbor.DecodeOptions{}) is Ok(_)) == true
+  match cbor.decode_with(data, cbor.DecodeOptions{reject_bignum: true}) {
+    Ok(_) => fault("a bignum passed")
+    Err(e) => expect(e.display()) == "cbor: data item of cbor type tag is not accepted by protocol: bignum"
+  }
+  // other tags still pass
+  expect(cbor.decode_with(hx("c11a514b67b0"), cbor.DecodeOptions{reject_bignum: true}) is Ok(_)) == true
+}
+
+// encode_test.go TestMarshalTime's modes and decode_test.go's time cases
+test "from_time_as: TimeMode, with and without the tag (EncTagRequired)" {
+  let tm = Time.from_unix_nanos(1363896240500000000)
+  let w = Time.from_unix(1363896240)
+  expect(cbor.from_time_as(w, cbor.TimeFormat.Unix)) == cbor.from_int(1363896240)
+  expect((cbor.encode(cbor.from_time_as(w, cbor.TimeFormat.Unix, tag: true)) ?? e => fault(e.display())).to_hex()) == "c11a514b67b0"
+  expect(cbor.from_time_as(tm, cbor.TimeFormat.Unix)) == cbor.from_int(1363896240)
+  expect(cbor.from_time_as(tm, cbor.TimeFormat.UnixMicro)) == cbor.Value.Float(f: 1363896240.5)
+  expect(cbor.from_time_as(tm, cbor.TimeFormat.UnixDynamic)) == cbor.Value.Float(f: 1363896240.5)
+  expect(cbor.from_time_as(w, cbor.TimeFormat.UnixDynamic)) == cbor.from_int(1363896240)
+  expect(cbor.from_time_as(tm, cbor.TimeFormat.Rfc3339)) == ct("2013-03-21T20:04:00Z")
+  expect(cbor.from_time_as(tm, cbor.TimeFormat.Rfc3339Nano)) == ct("2013-03-21T20:04:00.5Z")
+  // RFC 8949 Appendix A: 0("2013-03-21T20:04:00Z")
+  expect((cbor.encode(cbor.from_time_as(w, cbor.TimeFormat.Rfc3339, tag: true)) ?? e => fault(e.display())).to_hex()) == "c074323031332d30332d32315432303a30343a30305a"
+}
+
+test "cbor.Value.to_time: tags under DecTagMode, byte strings, errors" {
+  let want = Time.from_unix(1363896240)
+  for h in ["c074323031332d30332d32315432303a30343a30305a", "c11a514b67b0", "1a514b67b0", "74323031332d30332d32315432303a30343a30305a"] {
+    let v = cbor.decode(hx(h)) ?? e => fault(e.display())
+    expect(v.to_time() ?? e => fault(e.display())) == want
+  }
+  expect(cbor.decode(hx("c1fb41d452d9ec200000")).ok().map(fn(v: cbor.Value) -> Int { (v.to_time() ?? e => fault(e.display())).unix_millis() })) == Some(1363896240500)
+  // DecTagRequired refuses an untagged time; DecTagIgnored skips any tag
+  match cbor.from_int(1363896240).to_time(cbor.TagRule.Required) {
+    Ok(_) => fault("an untagged time passed Required")
+    Err(e) => expect(e.display()) == "cbor: cannot unmarshal integer into Go value of type time.Time (expect CBOR tag value)"
+  }
+  let tagged2 = cbor.Value.Tag(num: UInt64.from_bits(2), v: cbor.from_int(1363896240))
+  match tagged2.to_time() {
+    Ok(_) => fault("tag 2 passed")
+    Err(e) => expect(e.display()) == "cbor: wrong tag number for time.Time, got 2, expect 0 or 1"
+  }
+  expect(tagged2.to_time(cbor.TagRule.Ignored) ?? e => fault(e.display())) == want
+  // ByteStringToTimeMode
+  let bs = cbor.Value.ByteString(b: b"2013-03-21T20:04:00Z")
+  match bs.to_time() {
+    Ok(_) => fault("a byte string passed")
+    Err(e) => expect(e.display()) == "cbor: cannot unmarshal byte string into Go value of type time.Time"
+  }
+  expect(bs.to_time(bytes: true) ?? e => fault(e.display())) == want
+  expect(cbor.Value.Null.to_time() ?? e => fault(e.display())) == Time.UNIX_EPOCH
 }
 `

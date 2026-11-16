@@ -170,6 +170,14 @@ func main() {
 			if err := decDup.Unmarshal(data, &v); err != nil {
 				if _, ok := err.(*cbor.DupMapKeyError); ok {
 					r.Dup = "yes"
+					// the interface decode drops tag 55799, makes undefined
+					// nil and turns tags 0 to 3 into Go values, so keys
+					// RFC 8949 section 5.6 holds different (a tagged and an
+					// untagged undefined) compare equal there: no answer
+					// (fuzz seed 23, 2026-11-16: a2d9d9f7f760f77fff)
+					if skipCanon {
+						r.Dup = "?"
+					}
 				} else {
 					r.Dup = "?"
 				}
