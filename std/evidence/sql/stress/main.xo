@@ -1,0 +1,294 @@
+// sql stress program (decision 0616 section 2, the server form): a fake
+// MySQL server on loopback (protocol 4.1, mysql_native_password, the
+// classic EOF packets) and 64 client tasks over 8 pools of std/sql's MySQL
+// driver (sql.open "mysql", 4 connections each, a 2 s max_lifetime so
+// connections are retired and dialed again all run long). Each client pass
+// runs a text query whose rows cover BIGINT, VARCHAR (with NULLs and
+// multi-byte text), DOUBLE, DATETIME (parseTime) and BLOB (0 to 299
+// bytes), an UPDATE's counts, a statement the server refuses (1064), and a
+// transaction with a query inside, and checks every value against the one
+// computed here. The pools are shared by 8 tasks each, so tasks wait for
+// connections. A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/sql
+
+/// x as n little-endian bytes.
+fn le(x: Int, n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    b.write_byte(UInt8((x >> (8 * i)) & 255))
+  }
+  b.freeze()
+}
+
+/// A length-encoded string (below 2^24 bytes).
+fn lenenc(s: Bytes) -> Bytes {
+  let n = s.len()
+  if n < 251 {
+    return le(n, 1) + s
+  }
+  if n < 65536 {
+    return b"\xfc" + le(n, 2) + s
+  }
+  b"\xfd" + le(n, 3) + s
+}
+
+/// The packet: length (3), sequence (1), payload.
+fn frame(seq: Int, p: Bytes) -> Bytes { le(p.len(), 3) + le(seq & 255, 1) + p }
+
+const CAPS: Int = 1 | 4 | 8 | 512 | 8192 | 32768 | 131072 | 524288 | 2097152
+
+fn handshake() -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_byte(10)
+  b.write(b"8.4.3\x00")
+  b.write(le(7, 4))
+  b.write(b"abcdefgh\x00")
+  b.write(le(CAPS & 65535, 2))
+  b.write_byte(255)
+  b.write(le(2, 2))
+  b.write(le(CAPS >> 16, 2))
+  b.write_byte(21)
+  b.write(b"\x00".repeat(10))
+  b.write(b"ijklmnopqrst\x00")
+  b.write(b"mysql_native_password\x00")
+  b.freeze()
+}
+
+fn ok_packet(affected: Int, id: Int) -> Bytes { b"\x00" + lenenc_int(affected) + lenenc_int(id) + le(2, 2) + b"\x00\x00" }
+
+fn lenenc_int(x: Int) -> Bytes {
+  if x < 251 {
+    return le(x, 1)
+  }
+  if x < 65536 {
+    return b"\xfc" + le(x, 2)
+  }
+  b"\xfd" + le(x, 3)
+}
+
+const EOF_PACKET: Bytes = b"\xfe\x00\x00\x02\x00"
+
+fn column(name: Str, kind: Int, charset: Int, flags: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for s in ["def", "app", "t", "t", name, name] {
+    b.write(lenenc(s.bytes()))
+  }
+  b.write(b"\x0c")
+  b.write(le(charset, 2))
+  b.write(le(255, 4))
+  b.write_byte(UInt8(kind))
+  b.write(le(flags, 2))
+  b.write(b"\x00\x00\x00")
+  b.freeze()
+}
+
+/// The rows of `SELECT k` (k from 0 to 63).
+fn row_count(k: Int) -> Int { k % 7 + 1 }
+
+fn name_of(k: Int, r: Int) -> Str? { if (k + r) % 5 == 0 { None } else { Some("n-${k}-${r}-ñé") } }
+
+fn score_text(k: Int, r: Int) -> Str { "${k}.${["0", "25", "5", "75"][r % 4]}" }
+
+/// x in two digits.
+fn two(x: Int) -> Str { if x < 10 { "0${x}" } else { "${x}" } }
+
+fn at_text(k: Int, r: Int) -> Str { "2026-11-15 ${two(k % 24)}:${two(k % 60)}:${two(r % 60)}" }
+
+fn data_of(k: Int, r: Int) -> Bytes { le((k + r) % 256, 1).repeat((k * 37 + r) % 300) }
+
+/// The server's answer to one command: its packets, and whether the
+/// connection ends after them.
+fn answer(cmd: Bytes) -> (List[Bytes], Bool) {
+  if cmd.is_empty() || Int(cmd[0]) == 1 {
+    return ([], true)
+  }
+  if Int(cmd[0]) != 3 {
+    return ([ok_packet(0, 0)], false)
+  }
+  let q = cmd[1..cmd.len()].to_str_lossy()
+  if q.starts_with("SELECT ") {
+    let k = Int.parse(q.trim_prefix("SELECT ")) ?? 0
+    var out = [b"\x05", column("id", 8, 63, 1), column("name", 253, 255, 0), column("score", 5, 63, 0), column("at", 12, 63, 0), column("data", 252, 63, 128), EOF_PACKET]
+    for r in 0..row_count(k) {
+      let name = match name_of(k, r) {
+        Some(s) => lenenc(s.bytes())
+        None => b"\xfb"
+      }
+      out.push(lenenc("${k * 1000 + r}".bytes()) + name + lenenc(score_text(k, r).bytes()) + lenenc(at_text(k, r).bytes()) + lenenc(data_of(k, r)))
+    }
+    out.push(EOF_PACKET)
+    return (out, false)
+  }
+  if q.starts_with("UPDATE ") {
+    let k = Int.parse(q.trim_prefix("UPDATE ")) ?? 0
+    return ([ok_packet(k, k * 2)], false)
+  }
+  if q == "BAD" {
+    return ([b"\xff" + le(1064, 2) + b"#42000You have an error in your SQL syntax"], false)
+  }
+  ([ok_packet(0, 0)], false)
+}
+
+/// The next packet of buf, or more read from c: (payload, the rest).
+fn read_packet(c: ServerConn, buf: Bytes) -> (Bytes, Bytes)? ! NetErr uses net.listen {
+  var have = buf
+  while true {
+    if have.len() >= 4 {
+      let n = Int(have[0]) | Int(have[1]) << 8 | Int(have[2]) << 16
+      if have.len() >= 4 + n {
+        return Some((have[4..4 + n], have[4 + n..have.len()]))
+      }
+    }
+    match c.read(65536)? {
+      Some(more) => have = have + more
+      None => return None
+    }
+  }
+  None
+}
+
+fn serve(c: ServerConn) -> () ! NetErr uses net.listen {
+  c.write(frame(0, handshake()))?
+  let (_, rest) = read_packet(c, b"")? ?? return Ok(())
+  c.write(frame(2, ok_packet(0, 0)))?
+  var buf = rest
+  while let Some((cmd, more)) = read_packet(c, buf)? {
+    buf = more
+    let (out, end) = answer(cmd)
+    var b = BytesBuilder.new()
+    for (i, p) in out.indexed() {
+      b.write(frame(i + 1, p))
+    }
+    if b.len() > 0 {
+      c.write(b.freeze())?
+    }
+    if end {
+      break
+    }
+  }
+  c.close()
+}
+
+/// The rows `SELECT k` must give, as the driver decodes them.
+fn want_rows(k: Int) -> List[List[sql.SqlValue]] {
+  var out: List[List[sql.SqlValue]] = []
+  for r in 0..row_count(k) {
+    let name = match name_of(k, r) {
+      Some(s) => sql.SqlValue.Text(s: s)
+      None => sql.SqlValue.Null
+    }
+    let at = Time.parse_rfc3339("${at_text(k, r).replace(" ", "T")}Z").or_fault("at")
+    let d = data_of(k, r)
+    out.push([sql.SqlValue.Integer(n: k * 1000 + r), name, sql.SqlValue.Real(f: Float(k) + Float(r % 4) * 0.25), sql.SqlValue.At(t: at), sql.SqlValue.Blob(b: d)])
+  }
+  out
+}
+
+fn check_rows(what: Str, rows: List[sql.Row], k: Int) -> () ! Str {
+  let got = rows.map(fn(r) { r.values() })
+  if got != want_rows(k) {
+    return Err("${what} ${k}: got ${got.debug()}")
+  }
+  Ok(())
+}
+
+/// One client pass: the operations done, or the first mismatch.
+fn client_pass(db: sql.Db, t: Int, i: Int) -> Int ! Str uses net.dial {
+  let k = (t * 7 + i) % 64
+  check_rows("SELECT", db.query("SELECT ${k}").map_err(fn(e) { "SELECT ${k}: ${e.debug()}" })?, k)?
+  let r = db.exec("UPDATE ${k}").map_err(fn(e) { "UPDATE ${k}: ${e.debug()}" })?
+  if (r.rows_affected, r.last_insert_id) != (k, k * 2) {
+    return Err("UPDATE ${k}: got ${r.rows_affected} ${r.last_insert_id}")
+  }
+  match db.exec("BAD") {
+    Err(sql.SqlErr.Syntax(msg: m)) if m == "Error 1064 (42000): You have an error in your SQL syntax" => {}
+    other => return Err("BAD: got ${other.debug()}")
+  }
+  let tx = db.begin().map_err(fn(e) { "begin: ${e.debug()}" })?
+  let k2 = (k + 13) % 64
+  check_rows("tx SELECT", tx.query("SELECT ${k2}").map_err(fn(e) { "tx SELECT ${k2}: ${e.debug()}" })?, k2)?
+  tx.commit().map_err(fn(e) { "commit: ${e.debug()}" })?
+  Ok(5)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let l = os.net.listen("127.0.0.1:0")?
+  let dsn = "app@tcp(${l.addr()})/app?tls=false&parseTime=true"
+  let pools = (tasks + 7) / 8
+  let ops = scope s {
+    s.spawn_background(fn() {
+      while let Ok(c) = l.accept() {
+        s.spawn_background(fn() { serve(c).ignore_err("a client closed its connection") })
+      }
+    })
+    // open pings the server, so the pools are opened once it accepts
+    var dbs: List[sql.Db] = []
+    for _ in 0..pools {
+      dbs.push(sql.open(os.net, "mysql", dsn, max_open: 4, max_idle: 4, max_lifetime: 2s)?)
+    }
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        let db = dbs[t / 8]
+        var n = 0
+        var i = 0
+        while clock.now() < end {
+          n += client_pass(db, t, i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a client: ${e}" })?
+    }
+    s.cancel()
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("sql stress: ${ops} statements by ${tasks} clients over ${pools} pools in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
