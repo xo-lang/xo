@@ -1811,6 +1811,29 @@ Last verified: 2026-11-15
   reachable (the feature or caller that first runs it) and use the later
   of the two tags. Last verified: 2026-11-03.
 
+### ccguard: the Claude Code hook (#138)
+
+A PreToolUse hook (`scripts/lead/ccguard/`) stops the commands agents
+kept getting wrong and says what to run instead. A blocked call shows
+"ccguard blocked (RULE): WHY. Instead: COMMAND."; run the command it
+names, never a rewording of the blocked one. It blocks: pkill, killall,
+or kill by name (only `kill <PID>` of a PID you captured); `git stash`
+(commit first, or `git pull --rebase --autostash`); heavy.sh piped or
+launched with `&` (output to /dev/null, read `agents/NAME-cmd.log`;
+run_in_background); heavy.sh around offload.sh, offload-gate.sh or
+pushq.sh (run them directly); `git reset --hard` over uncommitted tracked
+changes (commit, or `--soft`); an em-dash in a commit message, or
+backticks in `git commit -m` (`git commit -F -` with a quoted heredoc);
+Edit or Write of a generated file (its header's generator, then
+regenerate; a hand-written test goes in a new file beside it). It allows
+a call it cannot parse (fail open) and logs blocks and errors to
+`~/xo-lead/notes/ccguard.log`. It runs once `~/xo-lead/ccguard-on`
+exists and install.sh ran (it adds itself to the main checkout's
+`.claude/settings.local.json`); sessions pick it up at their next start.
+Replayed over 25,230 Bash commands of past sessions (2026-11-16): the
+blocks were all real breaks of these rules, none a false alarm after the
+fixes its tests now pin.
+
 ## Coming
 
 - `dbg` in pure and no-GC code (0265), vet hints for

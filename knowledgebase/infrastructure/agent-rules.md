@@ -47,6 +47,12 @@ Last verified: 2026-11-16.
 | Work outside an agent's charter needs the lead's ok; a bug fix does not | xw check | `workstream:work.xo` (off_charter) | `workstream:test/work_test.sh` | off-charter |
 | A stuck gate, spinning process or dead Docker is found and stopped | heavyd, hangcheck | `scripts/lead/hangcheck.sh`, `scripts/lead/heavyd/daemon.go` (gate and slot timeouts, stall stop) | `scripts/lead/heavyd/scenario_test.go` (TestScenario17Stall) | hang |
 | A push does not lower a std module's mark unseen | xw std marks | `workstream:alerts.xo` (std_falls; prevention at push time is #140's pushq rows, pending) | `workstream:test/pg_test.sh` | std-fall |
+| Claude Code agents never kill by name or pattern (pkill, killall, kill NAME, kill $(pgrep)) | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkKill) | `scripts/lead/ccguard/rules_test.ts` | |
+| Claude Code agents never git stash (shared across worktrees) | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkStash) | `scripts/lead/ccguard/rules_test.ts` | |
+| heavy.sh is never piped or launched with &; host tools (offload.sh, offload-gate.sh, pushq.sh) never run inside it | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkHeavy) | `scripts/lead/ccguard/rules_test.ts` | |
+| No git reset --hard over uncommitted tracked changes | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkResetHard) | `scripts/lead/ccguard/rules_test.ts` | |
+| Commit messages carry no em-dash and no backticks in -m | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkCommitMessage) | `scripts/lead/ccguard/rules_test.ts` | |
+| A generated file is changed through its generator, never by hand | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkGeneratedWrite) | `scripts/lead/ccguard/rules_test.ts` | |
 | Every bug fix lands with a test that fails before it | CLAUDE.md | none | none | |
 | Long fuzz sweeps go sharded to a host, never the Mac gate class | CLAUDE.md | none | none | |
 | Never wait idle while a gate or push runs | CLAUDE.md | none | none | idle, idle-empty, waiting |
