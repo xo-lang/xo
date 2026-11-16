@@ -1,6 +1,6 @@
 # 0673: json.Number, a JSON number kept as its text, and BigInt in JSON
 
-Status: Proposed (Xo Lang 3, 2026-11-16, task #89)
+Status: Accepted (lead for the owner, 2026-11-16 overnight; proposed by Xo Lang 3, 2026-11-16, task #89)
 
 ## Context
 
