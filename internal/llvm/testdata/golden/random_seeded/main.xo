@@ -1,0 +1,29 @@
+// random.seeded (decision 0652): Go's math/rand/v2 ChaCha8 words for the
+// same seed (go1.26.11, NewChaCha8(...).Uint64: words 0 to 3, the last of
+// the first block and the first of the next, the reseed at 124, and a
+// checksum of 300), and both sources as a pure Rand[()].
+use std/random
+
+fn hex64(x: Int) -> Str { "${x.shr_logical(32).to_str_width(8, base: 16, zero: true)}${(x & 0xFFFFFFFF).to_str_width(8, base: 16, zero: true)}" }
+
+/// Pure: its Rand is a Rand[()].
+fn roll(r: Rand[()]) -> (Int, Bool, Float, Bytes, List[Int]) { (r.int(1, 7), r.bool(), r.float(), r.bytes(3), r.shuffle([1, 2, 3, 4])) }
+
+fn main(os: Os) {
+  let s = random.seeded(b"chacha8rand seed for xo random!!")
+  var sum = 0
+  for i in 0..300 {
+    let x = s.word()
+    sum = sum.wrapping_mul(31).wrapping_add(x)
+    if i < 4 || i == 31 || i == 32 || i == 123 || i == 124 || i == 299 {
+      os.stdio.println("w${i} ${hex64(x)}")
+    }
+  }
+  os.stdio.println("sum ${hex64(sum)}")
+  let (a, b, c, d, e) = roll(random.seeded(b"chacha8rand seed for xo random!!"))
+  os.stdio.println("seeded roll ${a} ${b} ${c < 1.0} ${d.len()} ${e.len()}")
+  let f = random.fixed(b"\x05\x00\x00\x00\x00\x00\x00\x00abc")
+  os.stdio.println("fixed ${f.int(0, 4)} ${f.bytes(3).to_str() ?? "?"}")
+  let again = random.seeded(b"chacha8rand seed for xo random!!")
+  os.stdio.println("same ${roll(again).0 == a}")
+}

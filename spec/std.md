@@ -11474,7 +11474,22 @@ fn perm(r: Rand, n: Int) -> List[Int] uses rand   // a permutation of 0..n
 struct Zipf { ... }                          // Go's Zipf
 fn zipf(s: Float, v: Float, imax: Int) -> Zipf?   // NewZipf; None for s <= 1 or v < 1
 fn (z: Zipf) draw(r: Rand) -> Int uses rand  // Uint64: k in 0..=imax
+struct Seeded { ... }                        // a Rand[()] over Go's ChaCha8 (decision 0652)
+fn seeded(seed: Bytes) -> Seeded             // NewChaCha8: 32 bytes, else a fault
+fn (s: Seeded) word() -> Int                 // ChaCha8.Uint64, as an Int's bits
+struct Fixed { ... }                         // a Rand[()] over given bytes, then a fault
+fn fixed(data: Bytes) -> Fixed
+fn (f: Fixed) word() -> Int                  // the next 8 bytes, little endian
 ```
+
+`Seeded` and `Fixed` implement Rand with no effects (`Rand[()]`, decision
+0652): code given one stays pure. `Seeded`'s words are Go's ChaCha8's for
+the same seed (internal/chacha8rand: blocks of four, a reseed every
+fourth); `int`, `float`, `bool`, `bytes` and `shuffle` map words as the
+runtime's Rand does (std.md 3.4: `int` by rejection below the largest
+multiple of the span, `float` 53 bits, `bytes` one word's low byte each).
+`Fixed.bytes(n)` hands out its next n bytes; its other methods take one
+8 byte word each.
 
 `normal` and `exp` are Marsaglia and Tsang's ziggurat with Go's tables
 and float32 comparisons; they draw only through `r.int` and `r.float`,

@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+w0 a8e42ea85732ee10
+w1 4519ab3a4eabb741
+w2 88fc2b4e1adec3f0
+w3 29573fce744533e6
+w31 1dc77aed0ab92ba9
+w32 952f0d490d88a513
+w123 7aeb9dd80942b452
+w124 90d29e8ad751cf20
+w299 02aca9df7e55201e
+sum 71746619d92f26ba
+seeded roll 3 true true 3 4
+fixed 1 abc
+same true
+--- stderr

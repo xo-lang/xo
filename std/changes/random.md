@@ -1,5 +1,17 @@
 # std/random changes
 
+## 2026-11-16: feature: seeded and fixed, pure Rand sources
+
+- Kind: feature
+- Commit: this push
+- Found by: task #141 (decision 0652 step 2b): a pure Rand for sans-I/O code and tests
+- Go reference: math/rand/v2 NewChaCha8 and ChaCha8.Uint64, internal/chacha8rand (go1.26.11)
+- Test: golden random_seeded (arm64, LLVM, wasm, Go parity): Go's words 0 to 3, 31, 32, 123, 124 and 299 and a checksum of 300 for one seed; both sources passed as a `Rand[()]`
+- Shipped in: not yet released
+- Timing: none yet (a List based block, not the runtime's; a timing row against Go's ChaCha8 is to follow)
+
+`random.seeded(seed)` is a `Rand[()]` over Go's ChaCha8 stream, and `random.fixed(data)` one that answers the given bytes, then faults. Code given either stays pure (decision 0652).
+
 ## 2026-11-16: perf: one draw a ziggurat try, as Go
 
 - Kind: perf
