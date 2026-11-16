@@ -13,6 +13,7 @@
 //	compare fields N            # compare the first N fields of each line
 //	env KEY=VALUE               # for both sides (a smaller iteration count)
 //	require MODULE VERSION      # what a single-file Go twin imports from outside the standard library (built from the module cache, offline)
+//	backend NAME                # build the Xo side with --backend=NAME (go for a `use go` program, which only the Go backend builds)
 //	XOPROG GOPROG [ARGS] [-- GOARGS]
 //
 // A case line names the Xo program (a .xo file or a program directory) and
@@ -47,6 +48,7 @@ type Dir struct {
 	Fields   int      // compare the first Fields fields of each line; 0 for the whole line
 	Env      []string // KEY=VALUE for both sides
 	Requires []string // "MODULE VERSION": what a single-file Go twin imports from outside the standard library
+	Backend  string   // the Xo side's --backend; "" for xo's default
 }
 
 // ConfigName is the file, in a bench directory, that says how to run it.
@@ -199,6 +201,12 @@ func parse(d *Dir, dir, data string) error {
 				return fmt.Errorf("line %d: env takes KEY=VALUE", i+1)
 			}
 			d.Env = append(d.Env, kv)
+		case "backend":
+			f := strings.Fields(rest)
+			if len(f) != 1 {
+				return fmt.Errorf("line %d: backend takes one NAME", i+1)
+			}
+			d.Backend = f[0]
 		case "require":
 			f := strings.Fields(rest)
 			if len(f) != 2 {

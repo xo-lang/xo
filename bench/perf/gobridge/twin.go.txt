@@ -1,0 +1,40 @@
+// gobridge's Go twin: the same calls as main.xo's `use go` bindings, made
+// directly.
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	w := "str"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	n := 10000000
+	if len(os.Args) > 2 {
+		if v, err := strconv.Atoi(os.Args[2]); err == nil {
+			n = v
+		}
+	}
+	s := "the quick brown fox jumps over z"
+	b := []byte(s)
+	sum := 0
+	for i := 0; i < n; i++ {
+		switch w {
+		case "str":
+			sum += strings.Index(s, "z") + i%3
+		case "bytes":
+			sum += bytes.IndexByte(b, 'z') + i%3
+		case "int":
+			sum += len(strconv.Itoa(i))
+		default:
+			sum += i % 3
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

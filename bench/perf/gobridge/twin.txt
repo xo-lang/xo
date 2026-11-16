@@ -1,0 +1,7 @@
+# twincheck: gobridge: `use go` calls (Go backend) against the same Go calls.
+backend go
+env N=1000
+- - none
+- - str
+- - bytes
+- - int

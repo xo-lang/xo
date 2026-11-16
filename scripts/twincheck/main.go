@@ -147,7 +147,7 @@ func (c *checker) bin(name string) string {
 // the difference ("" when they agree).
 func (c *checker) check(d *twincheck.Dir, cs twincheck.Case) (string, error) {
 	dir := filepath.Join(c.root, d.Path)
-	xoBin, err := c.buildXo(d.Path, cs.Xo)
+	xoBin, err := c.buildXo(d.Path, cs.Xo, d.Backend)
 	if err != nil {
 		return "", err
 	}
@@ -169,8 +169,8 @@ func (c *checker) check(d *twincheck.Dir, cs twincheck.Case) (string, error) {
 
 // buildXo builds the Xo program (a file, or a program directory), once per
 // program.
-func (c *checker) buildXo(rel, prog string) (string, error) {
-	key := "xo:" + rel + "/" + prog
+func (c *checker) buildXo(rel, prog, backend string) (string, error) {
+	key := "xo:" + rel + "/" + prog + ":" + backend
 	if b, ok := c.builds[key]; ok {
 		return b.path, b.err
 	}
@@ -182,7 +182,11 @@ func (c *checker) buildXo(rel, prog string) (string, error) {
 	out := c.bin(key)
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
-	args := append(append([]string{}, c.xo[1:]...), "build", "-o", out, dir)
+	args := append(append([]string{}, c.xo[1:]...), "build", "-o", out)
+	if backend != "" {
+		args = append(args, "--backend="+backend)
+	}
+	args = append(args, dir)
 	cmd := exec.CommandContext(ctx, c.xo[0], args...)
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
@@ -286,7 +290,7 @@ func (c *checker) exec(bin, dir string, args, env []string) (string, error) {
 // the `time` line: the median wall milliseconds and Xo over Go.
 func (c *checker) timeCase(d *twincheck.Dir, cs twincheck.Case, name string) (string, error) {
 	dir := filepath.Join(c.root, d.Path)
-	xoBin, err := c.buildXo(d.Path, cs.Xo)
+	xoBin, err := c.buildXo(d.Path, cs.Xo, d.Backend)
 	if err != nil {
 		return "", err
 	}

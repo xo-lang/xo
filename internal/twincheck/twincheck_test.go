@@ -103,6 +103,7 @@ func TestParse(t *testing.T) {
 # how demo runs
 env N=1000        # a small count
 compare fields 2
+backend go
 main.xo - alpha beta
 - go/ gamma
 xo/ go -- mode 3
@@ -114,6 +115,9 @@ skip: a server, driven by run.sh
 	}
 	if d.Fields != 2 || len(d.Env) != 1 || d.Env[0] != "N=1000" {
 		t.Fatalf("directives: fields %d env %v", d.Fields, d.Env)
+	}
+	if d.Backend != "go" {
+		t.Fatalf("backend is %q", d.Backend)
 	}
 	if d.Skip != "a server, driven by run.sh" {
 		t.Fatalf("skip is %q", d.Skip)
