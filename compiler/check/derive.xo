@@ -1942,7 +1942,7 @@ fn proto_elem(tx: Str, po: ProtoOpts, enums: Map[Str, Str]) -> ProtoElem? {
   }
   if !tx.is_empty() && !tx.contains("[") && tx.bytes()[0] >= 65 && tx.bytes()[0] <= 90 {
     // a struct deriving Proto (its generated functions must exist; a plain field is always written)
-    return Some(ProtoElem{wire: 2, enc: "proto_cwrite__${tx}($B, $V, sz__, at__)", rd: "protobuf.read_bytes", conv: "proto_unmarshal__${tx}($X)?", nonzero: "true", zero: "proto_zero__${tx}()", packable: false, merge: "proto_merge__${tx}($R, $X)?", size: "proto_csize__${tx}($V, sz__)"})
+    return Some(ProtoElem{wire: 2, enc: "proto_cwrite__${tx}($B, $V, sz__, at__)", rd: "protobuf.read_bytes", conv: "proto_mergedepth__${tx}(proto_zero__${tx}(), $X, d__ - 1)?", nonzero: "true", zero: "proto_zero__${tx}()", packable: false, merge: "proto_mergedepth__${tx}($R, $X, d__ - 1)?", size: "proto_csize__${tx}($V, sz__)"})
   }
   None
 }
@@ -2306,14 +2306,22 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   e.ln("  var at__ = 0", sp)
   e.ln("  proto_write__${n}(BytesBuilder.with_capacity(n), v, sz__, at__).freeze()", sp)
   e.ln("}", sp)
-  e.ln("${pub_}fn proto_unmarshal__${n}(data: Bytes) -> ${n} ! protobuf.ProtoErr { proto_merge__${n}(proto_zero__${n}(), data) }", sp)
+  // protowire's DefaultRecursionLimit: each nested message takes one, and
+  // a message below 0 is ProtoErr.Recursion, as Go's unmarshal; with no
+  // limit a message nested 8M deep (38 MB) overflowed the stack (#132,
+  // 2026-11-16)
+  e.ln("${pub_}fn proto_unmarshal__${n}(data: Bytes) -> ${n} ! protobuf.ProtoErr { proto_mergedepth__${n}(proto_zero__${n}(), data, 10000) }", sp)
   // protobuf.size (proto.Size) is proto_size__N above
   // protobuf.merge_from (proto.Merge): src's populated fields merged into
   // dst as a parse of src's wire bytes merges them (proto.Merge's rules:
   // scalars replace, messages merge, lists append, map entries replace,
   // unknown fields append); marshal's output always parses
   e.ln("${pub_}fn proto_merge_from__${n}(dst: ${n}, src: ${n}) -> ${n} { proto_merge__${n}(dst, proto_marshal__${n}(src)).or_fault(\"protobuf.merge_from: marshal's own bytes did not parse\") }", sp)
-  e.ln("${pub_}fn proto_merge__${n}(r0: ${n}, data: Bytes) -> ${n} ! protobuf.ProtoErr {", sp)
+  e.ln("${pub_}fn proto_merge__${n}(r0: ${n}, data: Bytes) -> ${n} ! protobuf.ProtoErr { proto_mergedepth__${n}(r0, data, 10000) }", sp)
+  // d__: the nesting left (proto_unmarshal__N above); a nested message's
+  // conv and merge pass d__ - 1
+  e.ln("${pub_}fn proto_mergedepth__${n}(r0: ${n}, data: Bytes, d__: Int) -> ${n} ! protobuf.ProtoErr {", sp)
+  e.ln("  if d__ < 0 { return Err(protobuf.ProtoErr.Recursion) }", sp)
   e.ln("  var r = r0", sp)
   e.ln("  var at = 0", sp)
   e.ln("  while at < data.len() {", sp)

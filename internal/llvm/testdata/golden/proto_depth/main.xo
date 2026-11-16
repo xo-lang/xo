@@ -1,0 +1,62 @@
+// derive Proto's decoder stops at protowire's DefaultRecursionLimit
+// (10000 nested messages, ProtoErr.Recursion) as Go's proto.Unmarshal
+// does; without it a message nested 8M deep overflowed the stack (#132).
+use std/protobuf
+
+struct Node {
+  name proto "1": Str
+  child proto "2": Node?
+} derive Proto
+
+struct Holder {
+  nodes proto "1": List[Node]
+} derive Proto
+
+/// n nested `child` fields: each layer is tag 2 (length delimited) then
+/// the varint length of what it holds, innermost first, written outermost
+/// first.
+fn nested(n: Int) -> Bytes {
+  var heads: List[Bytes] = []
+  var size = 0
+  for _ in 0..n {
+    let h = protobuf.append_varint(protobuf.append_tag(b"", 2, protobuf.BYTES), UInt64(size))
+    heads.push(h)
+    size += h.len()
+  }
+  var out = BytesBuilder.with_capacity(size)
+  var i = n - 1
+  while i >= 0 {
+    out.write(heads[i])
+    i -= 1
+  }
+  out.freeze()
+}
+
+fn depth(n: Node) -> Int {
+  var d = 0
+  var cur = n.child
+  while let Some(c) = cur {
+    d += 1
+    cur = c.child
+  }
+  d
+}
+
+fn main(os: Os) {
+  for n in [0, 1, 10000, 10001, 100000] {
+    match protobuf.unmarshal[Node](nested(n)) {
+      Ok(v) => os.stdio.println("${n}: depth ${depth(v)}")
+      Err(e) => os.stdio.println("${n}: ${e}")
+    }
+  }
+  // through a list field: the Holder is one level, so 9999 nested children
+  // under its element reach the limit and 10000 pass it
+  for n in [9999, 10000] {
+    let el = nested(n)
+    let b = protobuf.append_bytes(protobuf.append_tag(b"", 1, protobuf.BYTES), el)
+    match protobuf.unmarshal[Holder](b) {
+      Ok(h) => os.stdio.println("list ${n}: depth ${depth(h.nodes[0])}")
+      Err(e) => os.stdio.println("list ${n}: ${e}")
+    }
+  }
+}

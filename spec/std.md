@@ -10512,7 +10512,7 @@ The Protocol Buffers wire format and the runtime of `derive Proto` (decision 053
 ```xo
 open enum ProtoErr { Truncated, Overflow, BadTag, BadWire(wire: Int), EndGroup, Recursion, BadLength, Utf8 }
 fn marshal[T: Proto](v: T) -> Bytes                     // rewritten to the generated proto_marshal__T
-fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr     // as proto.Unmarshal: scalars last wins, messages merge
+fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr     // as proto.Unmarshal: scalars last wins, messages merge; Recursion past 10000 nested messages
 fn size[T: Proto](v: T) -> Int                          // proto.Size: marshal(v).len() without writing (proto_size__T)
 fn merge_from[T: Proto](dst: T, src: T) -> T            // proto.Merge: src's populated fields merged into dst (proto_merge_from__T)
 fn append_varint(b: Bytes, v: UInt64) -> Bytes          // the wire functions of protowire, by the same names

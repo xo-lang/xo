@@ -1,5 +1,18 @@
 # std/protobuf changes
 
+## 2026-11-16: security: unmarshal stops at 10000 nested messages (protowire's RecursionLimit)
+
+- Kind: security
+- Commit: this push
+- Found by: Xo Lang 3 (task #132): a message nested 8M deep (38 MB) overflowed the stack on arm64 and LLVM
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protowire DefaultRecursionLimit, proto.UnmarshalOptions.RecursionLimit
+- Test: golden proto_depth (arm64, LLVM): 10000 levels decode, 10001 and 100000 return ProtoErr.Recursion, and the same limit through a list field
+- Timing: none (one compare per nested message)
+
+derive Proto's decoder counts nested messages from 10000 down, as Go's
+unmarshal does, and returns `ProtoErr.Recursion` ("proto: exceeded maximum
+recursion depth") past the limit. Before, any peer could crash a program
+that unmarshals untrusted protobuf by sending a deeply nested message.
 
 ## 2026-11-16: feature: protobuf.size and protobuf.merge_from (proto.Size, proto.Merge)
 
