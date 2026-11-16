@@ -367,6 +367,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [module-cache-read-only.md](module-cache-read-only.md): the module cache is read only, so `rm -rf` and `t.TempDir` cleanup fail; use `xo mod clean` or `modtest.MakeWritable`.
 - [mod-tidy-drops-unimported-requires.md](mod-tidy-drops-unimported-requires.md): `xo mod tidy` removed every requirement of a module with no imports; write the imports first.
 - [transitive-module-import.md](transitive-module-import.md): a package of a module required only by a dependency was importable; now XO1306.
+- [derive-proto-across-files.md](derive-proto-across-files.md): Observed 2026-11-16: xo proto gen output did not build (unused use, derive helpers of a private struct invisible across files, no enum of another file or type of another package); generated types are pub now
 - [derived-display-had-no-display-method.md](derived-display-had-no-display-method.md): `e.display()` failed with XO0601 on `derive Display` and std error types; now callable.
 - [arms-on-one-line-false-missing-arm.md](arms-on-one-line-false-missing-arm.md): several arms on one line dropped the later arms and gave a false XO0301 with a hole fix; now XO0175 with a split fix.
 - [full-gen-tests-exceed-default-timeout.md](full-gen-tests-exceed-default-timeout.md): full `go test ./...` can time out in internal/gen at 10 min under load; use `-timeout 40m`.

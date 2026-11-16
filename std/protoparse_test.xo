@@ -166,3 +166,39 @@ test "proto2: unlabeled field and a oneof member" {
   let f = must("syntax = \"proto2\"; message M { oneof k { int32 a = 1; string b = 2; } }")
   expect(f.messages[0].fields.len()) == 2
 }
+
+test "gen_set: a type from an imported file resolves; one imported without public does not pass on" {
+  let a = must("syntax = \"proto3\";\npackage x.a;\nmessage A { int32 v = 1; message In { string s = 1; } }\nenum K { Z = 0; }")
+  let b = must("syntax = \"proto3\";\npackage x.b;\nimport public \"x/a.proto\";\nmessage B { x.a.A a = 1; .x.a.A.In i = 2; }")
+  let c = must("syntax = \"proto3\";\npackage x.c;\nimport \"x/b.proto\";\nmessage C { x.b.B b = 1; x.a.A a = 2; }")
+  let d = must("syntax = \"proto3\";\npackage x.d;\nimport \"x/c.proto\";\nmessage D { x.a.A a = 1; }")
+  let out = gen_set([("x/a.proto", a), ("dir/x/b.proto", b), ("x/c.proto", c)]).or_fault("gen_set")
+  expect(out[1].contains("a proto \"1\": A")) == true
+  expect(out[1].contains("i proto \"2\": AIn")) == true
+  // x/a.proto reaches C through b's `import public`
+  expect(out[2].contains("a proto \"2\": A")) == true
+  // D imports C, which imports B without public: A is not visible
+  expect(gen_set([("x/a.proto", a), ("x/b.proto", b), ("x/c.proto", c), ("x/d.proto", d)]).is_err()) == true
+  // the same file alone: the import is not in the set
+  expect(gen(b).is_err()) == true
+}
+
+test "gen_set: an enum of an imported file and a type outside the set are errors" {
+  let a = must("syntax = \"proto3\";\npackage x.a;\nenum K { Z = 0; }\nmessage A { enum E { Y = 0; } }")
+  let b = must("syntax = \"proto3\";\npackage x.b;\nimport \"x/a.proto\";\nmessage B { x.a.K k = 1; }")
+  let c = must("syntax = \"proto3\";\npackage x.c;\nimport \"x/a.proto\";\nmessage C { x.a.A.E e = 1; }")
+  expect(gen_set([("x/a.proto", a), ("x/b.proto", b)]).is_err()) == true
+  expect(gen_set([("x/a.proto", a), ("x/c.proto", c)]).is_err()) == true
+  // the well-known types are not in the set
+  expect(gen(must("syntax = \"proto3\";\nimport \"google/protobuf/timestamp.proto\";\nmessage S { google.protobuf.Timestamp t = 1; }")).is_err()) == true
+}
+
+test "gen writes pub types and no use line (derive Proto needs none; an unused use is XO0110)" {
+  let src = gen(must("message M { int32 v = 1; oneof w { string s = 2; } }\nenum K { Z = 0; }")).or_fault("gen")
+  expect(src.contains("use ")) == false
+  expect(src.contains("pub struct M {")) == true
+  expect(src.contains("  pub v proto \"1\": Int32")) == true
+  expect(src.contains("  pub w proto \"oneof\": MW?")) == true
+  expect(src.contains("pub enum MW {")) == true
+  expect(src.contains("pub enum K: Int {")) == true
+}

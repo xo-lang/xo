@@ -31,11 +31,19 @@ pub fn (e: JsonErr) display() -> Str { e.text }
 /// Go's MarshalOptions and UnmarshalOptions: `proto_names` writes the proto field names (UseProtoNames),
 /// `emit_defaults` writes default valued fields (EmitDefaultValues), `enum_numbers` writes enums as numbers
 /// (UseEnumNumbers); `discard_unknown` skips unknown fields and enum names when reading (DiscardUnknown).
+/// `emit_unpopulated` (EmitUnpopulated) is `emit_defaults` plus `null` for an unset field with presence
+/// (a message field, a proto2 scalar); unset oneof members, proto3 `optional` fields among them, stay out.
+/// `allow_partial` (AllowPartial) lets a message miss proto2 required fields in both directions.
+/// `recursion_limit` (UnmarshalOptions.RecursionLimit; 0 is protowire's default, 10000) is how deeply messages may
+/// nest when reading: the top message counts one, an Any and the message in it one each.
 /// `multiline` writes one member per line indented by `indent` (Multiline, Indent; two spaces when
 /// indent is empty, and a non-empty indent is multiline too).
 pub struct Opts {
   pub proto_names: Bool = false
   pub emit_defaults: Bool = false
+  pub emit_unpopulated: Bool = false
+  pub allow_partial: Bool = false
+  pub recursion_limit: Int = 0
   pub enum_numbers: Bool = false
   pub discard_unknown: Bool = false
   pub multiline: Bool = false
@@ -164,8 +172,12 @@ fn reindent(compact: Str, indent: Str) -> Str {
 /// text as message `name`.
 pub fn unmarshal(r: Registry, name: Str, json: Str, o: Opts = Opts{}) -> Bytes ! JsonErr {
   let jv = parse_json(json)?
+  var lo = o
+  if lo.recursion_limit == 0 {
+    lo.recursion_limit = 10000
+  }
   match r.msgs.get(name) {
-    Some(info) => msg_wire(r, info, jv, o)
+    Some(info) => msg_wire(r, info, jv, lo)
     None => Err(jerr("unknown message ${name}"))
   }
 }
@@ -524,7 +536,7 @@ fn msg_to(var out: StrBuilder, r: Registry, info: MsgInfo, wire: Bytes, o: Opts,
   // each FieldDesc, 17 retains, per field and per wire field (task #87)
   let fds = info.d.field
   for j in 0..fds.len() {
-    if fds[j].label == protodesc.LABEL_REQUIRED {
+    if fds[j].label == protodesc.LABEL_REQUIRED && !o.allow_partial {
       let num = fds[j].number
       if !fl.any(fn(f: pw.Fld) -> Bool { f.num == num }) {
         return Err(jerr("required field ${fds[j].name} not set"))
@@ -651,7 +663,7 @@ fn field_to(var out: StrBuilder, comma: Bool, r: Registry, info: MsgInfo, fd: pr
       let entry = lookup(r, fd.type_name)?
       if entry.is_map {
         if occ.is_empty() {
-          if !o.emit_defaults {
+          if !o.emit_defaults && !o.emit_unpopulated {
             return Ok(false)
           }
           member_to(out, comma, fd, o)
@@ -675,7 +687,7 @@ fn field_to(var out: StrBuilder, comma: Bool, r: Registry, info: MsgInfo, fd: pr
       }
     }
     if !any {
-      if !o.emit_defaults {
+      if !o.emit_defaults && !o.emit_unpopulated {
         return Ok(false)
       }
       member_to(out, comma, fd, o)
@@ -731,9 +743,17 @@ fn field_to(var out: StrBuilder, comma: Bool, r: Registry, info: MsgInfo, fd: pr
   }
   let implicit = (info.proto3 || info.implicit_nums.contains(fd.number)) && k != protodesc.TYPE_MESSAGE && k != protodesc.TYPE_GROUP && !real_oneof && !fd.proto3_optional
   if last.is_empty() {
-    if o.emit_defaults && implicit {
+    if (o.emit_defaults || o.emit_unpopulated) && implicit {
       member_to(out, comma, fd, o)
       out.write(default_text(r, fd, o))
+      return Ok(true)
+    }
+    if o.emit_unpopulated && !implicit && fd.oneof_index == None {
+      // Go's unpopulatedFieldRanger: a field with presence outside any oneof (a proto3 optional
+      // field is in its synthetic oneof; an editions explicit field marked proto3_optional is not)
+      // is null
+      member_to(out, comma, fd, o)
+      out.write("null")
       return Ok(true)
     }
     return Ok(false)
@@ -750,7 +770,7 @@ fn field_to(var out: StrBuilder, comma: Bool, r: Registry, info: MsgInfo, fd: pr
     }
   }
   if implicit && is_zero(fd, pick) {
-    if o.emit_defaults {
+    if o.emit_defaults || o.emit_unpopulated {
       member_to(out, comma, fd, o)
       out.write(default_text(r, fd, o))
       return Ok(true)
@@ -2041,7 +2061,19 @@ fn field_for(info: MsgInfo, key: Str) -> protodesc.FieldDesc? {
 }
 
 /// The wire bytes of the message `info` from its JSON value.
-fn msg_wire(r: Registry, info: MsgInfo, jv: Jv, o: Opts) -> Bytes ! JsonErr {
+/// o with one less level of message nesting left (Go's decoder.unmarshalMessage: RecursionLimit--, then
+/// below 0 is the error); `unmarshal` turned a limit of 0 into the default first.
+fn deeper(o: Opts) -> Opts ! JsonErr {
+  var d = o
+  d.recursion_limit = o.recursion_limit - 1
+  if d.recursion_limit < 0 {
+    return Err(jerr("exceeded max recursion depth"))
+  }
+  d
+}
+
+fn msg_wire(r: Registry, info: MsgInfo, jv: Jv, o0: Opts) -> Bytes ! JsonErr {
+  let o = deeper(o0)?
   match wkt_wire(r, info, jv, o)? {
     Some(b) => return Ok(b)
     None => {}
@@ -2105,7 +2137,7 @@ fn msg_wire_obj(r: Registry, info: MsgInfo, jv: Jv, o: Opts, in_any: Bool) -> By
   // proto2's required fields (Go's protojson reports the first missing one; a message of an Any is checked
   // too, as proto.CheckInitialized does)
   for fd in info.d.field {
-    if fd.label == protodesc.LABEL_REQUIRED && !given.contains(fd.number) {
+    if fd.label == protodesc.LABEL_REQUIRED && !given.contains(fd.number) && !o.allow_partial {
       return Err(jerr("required field ${fd.name} not set"))
     }
   }
@@ -2329,7 +2361,8 @@ fn struct_wire(members: List[(Str, Jv)], o: Opts) -> Bytes ! JsonErr {
     seen.put(m.0, true)
     var rec = BytesBuilder.new()
     pw.wsa(rec, 1, m.0)
-    pw.wm(rec, 2, value_wire(m.1, o)?)
+    // each Value is a message of its own to Go's decoder (unmarshalMap calls unmarshalMessage)
+    pw.wm(rec, 2, value_wire(m.1, deeper(o)?)?)
     recs.push((m.0, rec.freeze()))
   }
   let sorted = recs.sort_by(fn(e: (Str, Bytes)) -> Str { e.0 })
@@ -2343,7 +2376,7 @@ fn struct_wire(members: List[(Str, Jv)], o: Opts) -> Bytes ! JsonErr {
 fn list_wire(items: List[Jv], o: Opts) -> Bytes ! JsonErr {
   var out = BytesBuilder.new()
   for it in items {
-    pw.wm(out, 1, value_wire(it, o)?)
+    pw.wm(out, 1, value_wire(it, deeper(o)?)?)
   }
   Ok(out.freeze())
 }
@@ -2498,7 +2531,7 @@ fn any_wire(r: Registry, info: MsgInfo, jv: Jv, o: Opts) -> Bytes ! JsonErr {
       }
     }
   } else {
-    value = msg_wire_obj(r, em, jv, o, true)?
+    value = msg_wire_obj(r, em, jv, deeper(o)?, true)?
   }
   var out = BytesBuilder.new()
   pw.ws(out, 1, url)

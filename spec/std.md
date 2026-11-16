@@ -10629,7 +10629,8 @@ struct ParseErr { line: Int, col: Int, msg: Str }              // 1 based; displ
 fn tokens(src: Str) -> List[Token] ! ParseErr
 fn parse(src: Str) -> File ! ParseErr
 fn gen(f: File) -> Str ! ParseErr
-// File { syntax, package, imports, messages: List[Message], enums: List[Enum], services: List[Service] }
+fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr   // (import path, File) each; one source per file
+// File { syntax, package, imports, public_imports, messages: List[Message], enums: List[Enum], services: List[Service] }
 // Message { name, fields: List[Field], oneofs: List[Str], nested: List[Message], enums: List[Enum] }
 // Field { name, num, typ, key, repeated, optional, required, oneof }   Rpc { name, req, resp, client_stream, server_stream }
 ```
@@ -10646,7 +10647,13 @@ fn gen(f: File) -> Str ! ParseErr
   both), so a generated proto2 message is not byte identical to protoc's output for those fields.
 - `gen` writes Xo source: a nested type `Inner` of `Outer` is `OuterInner`, a oneof is an enum held in an optional
   field marked `proto "oneof"`, an enum is an open `Int` enum with a catch-all variant. Services are not generated
-  here (the stubs of std/grpc come with `xo proto gen`).
+  here (the stubs of std/grpc come with `xo proto gen`). Types and fields are `pub`, and the output has no `use`
+  line (`derive Proto` needs none).
+- `gen_set` generates files that import one another (`xo proto gen` passes every file it is given): a type resolves
+  in the file's own package scopes, then in the files it imports (matched by path, or a path ending in `/` and the
+  import) and their `import public` files. A field typed by an enum of another file, or by a type outside the set
+  (google/protobuf's well-known types among them), is an error: `derive Proto` takes an enum of the same file and a
+  struct of the same package only.
 
 ## 71. std/htmltok
 

@@ -1,5 +1,20 @@
 # std/protojson changes
 
+## 2026-11-16: feature: EmitUnpopulated, AllowPartial and RecursionLimit options
+
+- Kind: feature
+- Commit: this push
+- Found by: task #102 (std/protobuf features): stdaudit gaps protojson.MarshalOptions.EmitUnpopulated, AllowPartial, UnmarshalOptions.AllowPartial, RecursionLimit
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protojson encode.go (unpopulatedFieldRanger), decode.go (unmarshalMessage, unmarshalMap), well_known_types.go
+- Test: corpus protojson: an EmitUnpopulated row per generated message in MARSHAL (375 rows, editions explicit fields included), MARSHAL2's proto2 required rows with AllowPartial, and UNMARSHAL_OPTS (33 rows: the required inputs with AllowPartial; nested messages, Struct values and Any under limits 1 to 4), on go, arm64 and LLVM
+- Timing: none (option checks on paths that existed)
+
+`Opts{emit_unpopulated: true}` writes unset fields as Go's EmitUnpopulated
+does (`null` for a field with presence outside a oneof),
+`Opts{allow_partial: true}` lets a message miss proto2 required fields when
+marshaling and unmarshaling, and `Opts{recursion_limit: n}` limits message
+nesting when unmarshaling (0 keeps protowire's default, 10000; each Value in
+a Struct or ListValue counts, as in Go).
 
 ## 2026-11-16: feature: multiline output (MarshalOptions Multiline and Indent)
 

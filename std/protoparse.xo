@@ -171,6 +171,8 @@ pub struct File {
   pub syntax: Str
   pub package: Str
   pub imports: List[Str]
+  /// the imports marked `import public` (also in `imports`)
+  pub public_imports: List[Str] = []
   pub messages: List[Message]
   pub enums: List[Enum]
   pub services: List[Service]
@@ -196,8 +198,11 @@ pub fn parse(src: Str) -> File ! ParseErr {
       p_expect(p, ";")?
     } else if p_is(p, "import") {
       p.at += 1
-      if p_is(p, "public") || p_is(p, "weak") { p.at += 1 }
-      f.imports.push(p_str(p)?)
+      let public = p_is(p, "public")
+      if public || p_is(p, "weak") { p.at += 1 }
+      let path = p_str(p)?
+      f.imports.push(path)
+      if public { f.public_imports.push(path) }
       p_expect(p, ";")?
     } else if p_is(p, "option") {
       p_skip_stmt(p)?
@@ -227,13 +232,55 @@ pub fn parse(src: Str) -> File ! ParseErr {
 /// `MsgKind` held in an optional field marked `proto "oneof"`, an enum an open `Int` enum with a
 /// catch-all `Other(v: Int)`. Fields keep their proto names. Services are not generated here.
 pub fn gen(f: File) -> Str ! ParseErr {
-  var names: List[(Str, Str)] = []
-  for m in f.messages { names = g_collect("", "", m, names) }
-  for e in f.enums { names.push((e.name, e.name)) }
-  var o: List[Str] = ["use std/protobuf", ""]
-  for e in f.enums { o = g_enum(e, e.name, o) }
-  for m in f.messages { o = g_message(m, "", "", names, o)? }
-  Ok(o.join("\n"))
+  let out = gen_set([("", f)])?
+  Ok(out[0])
+}
+
+/// The Xo source of each file of a set, in the order given; each file is `(import path, File)`, the path as
+/// other files of the set import it, or a path ending in `/` and that import path. A type resolves as protoc
+/// resolves it: in the file's own package scopes first, then among the types of the files it imports and the
+/// files those import with `import public`. The generated sources share one Xo package (`xo proto gen
+/// --out=DIR`), so a message keeps the name `gen` gives it in its own file and every type is `pub`. A field
+/// whose type is an enum of another file, or a type of a file outside the set (the well-known types of
+/// google/protobuf among them), is an error: `derive Proto` takes an enum of the same file and a struct of
+/// the same package only.
+pub fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr {
+  var res: List[Str] = []
+  for (_, f) in files {
+    var names: List[(Str, Str)] = []
+    names = g_names(f, false, names)
+    var visible: List[Str] = []
+    var queue = f.imports
+    while !queue.is_empty() {
+      let path = queue[0]
+      queue = queue[1..]
+      if visible.contains(path) { continue }
+      visible.push(path)
+      for (q, g) in files {
+        if q != "" && (q == path || q.ends_with("/${path}")) {
+          names = g_names(g, true, names)
+          for pp in g.public_imports { queue.push(pp) }
+        }
+      }
+    }
+    let scope = if f.package == "" { "" } else { "${f.package}." }
+    var o: List[Str] = []
+    for e in f.enums { o = g_enum(e, e.name, o) }
+    for m in f.messages { o = g_message(m, scope, "", names, o)? }
+    res.push(o.join("\n"))
+  }
+  Ok(res)
+}
+
+/// The declared names of `f`'s types, fully qualified by its package, with their generated names; an enum
+/// of an imported file (`imported`) has its generated name marked with a leading `!` (g_type refuses it).
+fn g_names(f: File, imported: Bool, out: List[(Str, Str)]) -> List[(Str, Str)] {
+  var names = out
+  let pre = if f.package == "" { "" } else { "${f.package}." }
+  let mark = if imported { "!" } else { "" }
+  for m in f.messages { names = g_collect(pre, "", m, mark, names) }
+  for e in f.enums { names.push(("${pre}${e.name}", "${mark}${e.name}")) }
+  names
 }
 
 fn is_letter(c: Int) -> Bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 }
@@ -589,13 +636,13 @@ fn g_scalar(t: Str) -> (Str, Str)? {
 }
 
 /// Every type name declared in the file as (full dotted name inside the package, generated name).
-fn g_collect(prefix_dot: Str, prefix_gen: Str, m: Message, out: List[(Str, Str)]) -> List[(Str, Str)] {
+fn g_collect(prefix_dot: Str, prefix_gen: Str, m: Message, enum_mark: Str, out: List[(Str, Str)]) -> List[(Str, Str)] {
   var o = out
   let d = "${prefix_dot}${m.name}"
   let g = "${prefix_gen}${m.name}"
   o.push((d, g))
-  for e in m.enums { o.push(("${d}.${e.name}", "${g}${e.name}")) }
-  for n in m.nested { o = g_collect("${d}.", g, n, o) }
+  for e in m.enums { o.push(("${d}.${e.name}", "${enum_mark}${g}${e.name}")) }
+  for n in m.nested { o = g_collect("${d}.", g, n, enum_mark, o) }
   o
 }
 
@@ -621,7 +668,7 @@ fn g_resolve(typ: Str, scope: Str, names: List[(Str, Str)]) -> Str? {
 
 fn g_enum(e: Enum, gname: Str, out: List[Str]) -> List[Str] {
   var o = out
-  o.push("enum ${gname}: Int {")
+  o.push("pub enum ${gname}: Int {")
   var seen: List[Int] = []
   for v in e.values {
     // an alias of an earlier number is dropped
@@ -643,7 +690,7 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], out:
   for e in m.enums { o = g_enum(e, "${g}${e.name}", o) }
   // oneof enums first
   for on in m.oneofs {
-    o.push("enum ${g}${g_camel(on)} {")
+    o.push("pub enum ${g}${g_camel(on)} {")
     for fl in m.fields {
       if fl.oneof != on { continue }
       let ty = g_type(fl.typ, d, names)?
@@ -652,13 +699,13 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], out:
     o.push("} derive Proto")
     o.push("")
   }
-  o.push("struct ${g} {")
+  o.push("pub struct ${g} {")
   var done: List[Str] = []
   for fl in m.fields {
     if fl.oneof != "" {
       if done.contains(fl.oneof) { continue }
       done.push(fl.oneof)
-      o.push("  ${fl.oneof} proto \"oneof\": ${g}${g_camel(fl.oneof)}?")
+      o.push("  pub ${fl.oneof} proto \"oneof\": ${g}${g_camel(fl.oneof)}?")
       continue
     }
     let ty = g_type(fl.typ, d, names)?
@@ -672,7 +719,7 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], out:
       tx = "${tx}?"
     }
     let opts = if fl.key != "" { "" } else { ty.1 }
-    o.push("  ${fl.name} proto \"${fl.num}${opts}\": ${tx}")
+    o.push("  pub ${fl.name} proto \"${fl.num}${opts}\": ${tx}")
   }
   o.push("} derive Proto")
   o.push("")
@@ -682,7 +729,12 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], out:
 fn g_type(typ: Str, scope: Str, names: List[(Str, Str)]) -> (Str, Str) ! ParseErr {
   if let Some(s) = g_scalar(typ) { return Ok(s) }
   match g_resolve(typ, scope, names) {
-    Some(g) => Ok((g, ""))
+    Some(g) => {
+      if g.starts_with("!") {
+        return Err(ParseErr{line: 0, col: 0, msg: "`${typ}` is an enum of an imported file; `derive Proto` takes an enum of the same file only"})
+      }
+      Ok((g, ""))
+    }
     None => Err(ParseErr{line: 0, col: 0, msg: "unknown type `${typ}`"})
   }
 }

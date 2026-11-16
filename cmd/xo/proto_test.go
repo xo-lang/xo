@@ -46,3 +46,25 @@ func TestProtoGen(t *testing.T) {
 	xo(t, "proto", "gen").want(2)
 	xo(t, "proto").want(2)
 }
+
+// TestProtoGenBuilds generates two files, one importing the other, into one directory with a main
+// and runs it: the output compiles (it carried an unused `use std/protobuf`, XO0110, before
+// 2026-11-16) and a message of the imported file resolves and round-trips.
+func TestProtoGenBuilds(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"p/a.proto": "syntax = \"proto3\";\npackage p.a;\nmessage A { int32 v = 1; }\nenum K { Z = 0; ONE = 1; }\nmessage H { K k = 1; }\n",
+		"p/b.proto": "syntax = \"proto3\";\npackage p.b;\nimport \"p/a.proto\";\nmessage B { p.a.A a = 1; repeated p.a.A more = 2; p.a.H h = 3; }\n",
+		"gen/main.xo": "use std/protobuf\n\nfn main(os: Os) {\n  let b = B{a: A{v: 7}, more: [A{v: 8}], h: H{k: K.One}}\n" +
+			"  let back = protobuf.unmarshal[B](protobuf.marshal(b)).or_fault(\"unmarshal\")\n" +
+			"  os.stdio.println(\"${back.a.v} ${back.more[0].v} ${back.h.k == K.One}\")\n}\n",
+	})
+	out := filepath.Join(dir, "gen")
+	xo(t, "proto", "gen", "--out="+out, filepath.Join(dir, "p", "a.proto"), filepath.Join(dir, "p", "b.proto")).want(0)
+	r := xo(t, "run", out).want(0)
+	if r.out != "7 8 true\n" {
+		t.Fatalf("got %q\n%s", r.out, r.err)
+	}
+	// alone, b.proto's import is not in the set
+	xo(t, "proto", "gen", filepath.Join(dir, "p", "b.proto")).want(1)
+}

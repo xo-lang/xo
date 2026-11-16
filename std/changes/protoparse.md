@@ -1,5 +1,25 @@
 # std/protoparse changes
 
+## 2026-11-16: fix: generated code compiles; a type of an imported file resolves
+
+- Kind: fix
+- Commit: this push
+- Found by: task #102 (stdaudit gap proto.behavior.proto_files): building `xo proto gen` output for an import failed, and so did a single file's
+- Go reference: protoc's name resolution (descriptor.proto scoping, `import public`)
+- Test: cmd/xo TestProtoGenBuilds (two files, one importing the other, generated into one directory with a main, run; failed before with XO0110 and "unknown type"); protoparse tests for gen_set, `import public`, an imported enum and a type outside the set
+
+`gen` wrote `use std/protobuf`, which `derive Proto` does not need, so the
+output failed to build with XO0110 (unused import); it is gone. Types and
+fields are now `pub`, so the code `derive Proto` writes for a message is
+visible from the other generated files and from other packages. The new
+`gen_set(files)` generates a set of files, a type resolving in its own
+package's scopes, then in the files it imports and their `import public`
+files; `xo proto gen` parses every file it is given first and uses it.
+`File.public_imports` lists the public imports. A field typed by an enum of
+another file, or by a type outside the set (the google/protobuf well-known
+types), is an error: `derive Proto` takes only an enum of the same file and
+a struct of the same package.
+
 ## 2026-11-10: fix: `ParseErr` displays as `LINE:COL: MSG` again
 
 - Kind: fix

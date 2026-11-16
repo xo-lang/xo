@@ -466,7 +466,7 @@ func q(s string) string {
 var resolver *dynamicpb.Types
 
 func opts(flags int) protojson.MarshalOptions {
-	return protojson.MarshalOptions{Resolver: resolver, UseProtoNames: flags&1 != 0, EmitDefaultValues: flags&2 != 0, UseEnumNumbers: flags&4 != 0}
+	return protojson.MarshalOptions{Resolver: resolver, UseProtoNames: flags&1 != 0, EmitDefaultValues: flags&2 != 0, UseEnumNumbers: flags&4 != 0, EmitUnpopulated: flags&8 != 0}
 }
 
 func main() {
@@ -495,7 +495,7 @@ func main() {
 		panic(err)
 	}
 	fmt.Fprintf(&o, "/// the schema: a FileDescriptorSet, files in dependency order, as hex\nconst SCHEMA: Str = \"%x\"\n\n", sb)
-	o.WriteString("/// (message full name, flags: 1 proto names, 2 emit defaults, 4 enum numbers; wire hex, Go's protojson output compacted)\nconst MARSHAL: List[(Str, Int, Str, Str)] = [\n")
+	o.WriteString("/// (message full name, flags: 1 proto names, 2 emit defaults, 4 enum numbers, 8 emit unpopulated; wire hex, Go's protojson output compacted)\nconst MARSHAL: List[(Str, Int, Str, Str)] = [\n")
 	names := []string{"pjt.Scalars", "pjt.Wkt", "pjt.Inner", "pjed.EdMsg", "pjedi.ImpMsg"}
 	var rows []string
 	type unm struct{ name, in, wire string }
@@ -515,6 +515,10 @@ func main() {
 				continue
 			}
 			rows = append(rows, fmt.Sprintf("  (\"%s\", %d, \"%x\", \"%s\"),\n", name, fl, wire, q(compact(js))))
+		}
+		// EmitUnpopulated (flag 8), with no random draw so the rows above stay as they were
+		if js, err := opts(8).Marshal(m.Interface()); err == nil {
+			rows = append(rows, fmt.Sprintf("  (\"%s\", %d, \"%x\", \"%s\"),\n", name, 8, wire, q(compact(js))))
 		}
 		// Multiline with two indents (no random draws, so the rows above stay as they were)
 		if len(mlRows) < 120 {
@@ -599,6 +603,43 @@ func main() {
 	}
 	for _, u := range umRows {
 		emitU(u.name, u.in)
+	}
+	o.WriteString("]\n\n")
+	// UnmarshalOptions AllowPartial and RecursionLimit: the required rows with AllowPartial, and nested messages
+	// (and the first well-known-type rows) under small limits
+	o.WriteString("/// (message full name, JSON in, AllowPartial, RecursionLimit, wire hex of Go's result or the text `error`)\nconst UNMARSHAL_OPTS: List[(Str, Str, Bool, Int, Str)] = [\n")
+	emitO := func(name, in string, partial bool, limit int) {
+		d, err := files.FindDescriptorByName(protoreflect.FullName(name))
+		if err != nil {
+			panic(err)
+		}
+		m := dynamicpb.NewMessage(d.(protoreflect.MessageDescriptor))
+		res := "error"
+		if err := (protojson.UnmarshalOptions{Resolver: resolver, AllowPartial: partial, RecursionLimit: limit}).Unmarshal([]byte(in), m); err == nil {
+			b, err := proto.MarshalOptions{Deterministic: true, AllowPartial: true}.Marshal(m)
+			if err != nil {
+				panic(err)
+			}
+			res = fmt.Sprintf("%x", b)
+		}
+		fmt.Fprintf(&o, "  (\"%s\", \"%s\", %t, %d, \"%s\"),\n", name, q(in), partial, limit, res)
+	}
+	for _, c := range cur[len(cur)-12:] {
+		emitO(c.name, c.in, true, 0)
+	}
+	deep := `{"id":1,"leaf":{"a":2},"leaves":[{"a":3}],"optLeaf":{"a":4}}`
+	for _, lim := range []int{1, 2, 3} {
+		emitO("pjt2.Req", deep, false, lim)
+	}
+	nw := 0
+	for _, u := range umRows {
+		if u.name != "pjt.Wkt" || nw >= 4 {
+			continue
+		}
+		nw++
+		for _, lim := range []int{1, 2, 3, 4} {
+			emitO(u.name, u.in, false, lim)
+		}
 	}
 	o.WriteString("]\n\n")
 	// normalize: Go's proto.Unmarshal then proto.Marshal on a dynamic message, with unknown fields before, after
@@ -704,7 +745,7 @@ func main() {
 	o.WriteString("]\n\n")
 	// proto2 messages with required fields: the wire is made with AllowPartial, so a missing required field is
 	// on the wire as such; Go's protojson.Marshal either writes the JSON or errors
-	o.WriteString("/// (message full name, wire hex, Go's protojson output compacted, or the text `error` for a missing required field)\nconst MARSHAL2: List[(Str, Str, Str)] = [\n")
+	o.WriteString("/// (message full name, wire hex, Go's protojson output compacted, or the text `error` for a missing required field;\n/// the output with AllowPartial)\nconst MARSHAL2: List[(Str, Str, Str, Str)] = [\n")
 	rdd, _ := files.FindDescriptorByName("pjt2.Req")
 	ldd, _ := files.FindDescriptorByName("pjt2.Leaf")
 	rd, ld := rdd.(protoreflect.MessageDescriptor), ldd.(protoreflect.MessageDescriptor)
@@ -719,7 +760,11 @@ func main() {
 		if js, err := (protojson.MarshalOptions{Resolver: resolver}).Marshal(m); err == nil {
 			res = q(compact(js))
 		}
-		fmt.Fprintf(&o, "  (\"%s\", \"%x\", \"%s\"),\n", md.FullName(), wire, res)
+		part := "error"
+		if js, err := (protojson.MarshalOptions{Resolver: resolver, AllowPartial: true}).Marshal(m); err == nil {
+			part = q(compact(js))
+		}
+		fmt.Fprintf(&o, "  (\"%s\", \"%x\", \"%s\", \"%s\"),\n", md.FullName(), wire, res, part)
 	}
 	field_ := func(md protoreflect.MessageDescriptor, n string) protoreflect.FieldDescriptor {
 		return md.Fields().ByName(protoreflect.Name(n))
@@ -800,7 +845,7 @@ fn registry() -> protojson.Registry {
 }
 
 fn opts(flags: Int) -> protojson.Opts {
-  protojson.Opts{proto_names: flags & 1 != 0, emit_defaults: flags & 2 != 0, enum_numbers: flags & 4 != 0, discard_unknown: false}
+  protojson.Opts{proto_names: flags & 1 != 0, emit_defaults: flags & 2 != 0, emit_unpopulated: flags & 8 != 0, enum_numbers: flags & 4 != 0, discard_unknown: false}
 }
 
 test "marshal equals Go's protojson" {
@@ -815,13 +860,20 @@ test "marshal equals Go's protojson" {
 
 test "marshal of proto2 required fields equals Go's protojson, a missing one an error" {
   let r = registry()
-  for (name, wire, want) in MARSHAL2 {
+  for (name, wire, want, partial) in MARSHAL2 {
     let got = match protojson.marshal(r, name, unhex(wire), opts(0)) {
       Ok(j) => j
       Err(_) => "error"
     }
     if got != want {
       expect("${name} ${wire}: ${got}") == "${name} ${wire}: ${want}"
+    }
+    let pgot = match protojson.marshal(r, name, unhex(wire), protojson.Opts{allow_partial: true}) {
+      Ok(j) => j
+      Err(_) => "error"
+    }
+    if pgot != partial {
+      expect("partial ${name} ${wire}: ${pgot}") == "partial ${name} ${wire}: ${partial}"
     }
   }
 }
@@ -846,6 +898,19 @@ test "normalize equals Go's proto.Unmarshal then Marshal, unknown fields kept" {
     }
     if got != want {
       expect("${name} ${input}: ${got}") == "${name} ${input}: ${want}"
+    }
+  }
+}
+
+test "unmarshal with AllowPartial and RecursionLimit equals Go's protojson" {
+  let r = registry()
+  for (name, input, partial, limit, want) in UNMARSHAL_OPTS {
+    let got = match protojson.unmarshal(r, name, input, protojson.Opts{allow_partial: partial, recursion_limit: limit}) {
+      Ok(b) => hex(b)
+      Err(_) => "error"
+    }
+    if got != want {
+      expect("${name} ${input} ${partial} ${limit}: ${got}") == "${name} ${input} ${partial} ${limit}: ${want}"
     }
   }
 }
