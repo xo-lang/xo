@@ -121,3 +121,16 @@ func TestKilledUnchecked(t *testing.T) {
 		}
 	}
 }
+
+func TestNotRun(t *testing.T) {
+	for _, c := range []struct{ out, want string }{
+		{"=== RUN   TestYamlFuzz\n    yamlfuzz_test.go:34: yamloracle cannot run\n--- SKIP: TestYamlFuzz (0.10s)\nPASS\nok  \tx/internal/stdtest\t0.2s", "skipped"},
+		{"testing: warning: no tests to run\nPASS\nok  \tx/internal/stdtest\t0.1s [no tests to run]", "did not run"},
+		{"PASS\nok  \tx/internal/stdtest\t0.1s", "did not run"},
+		{"=== RUN   TestYamlFuzz\n--- PASS: TestYamlFuzz (12.00s)\nPASS\nok  \tx/internal/stdtest\t12.1s", ""},
+	} {
+		if got := notRun("TestYamlFuzz", c.out); got != c.want {
+			t.Errorf("notRun(%q) = %q, want %q", c.out, got, c.want)
+		}
+	}
+}

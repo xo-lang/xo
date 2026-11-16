@@ -78,6 +78,7 @@ var harnesses = map[string][]harness{
 	"uuid":     {{"TestUuidFuzz", "XO_UUIDFUZZ"}},
 	"norm":     {{"TestNormFuzz", "XO_NORMFUZZ"}},
 	"idna":     {{"TestIdnaFuzz", "XO_IDNAFUZZ"}},
+	"yaml":     {{"TestYamlFuzz", "XO_YAMLFUZZ"}},
 	"jpeg":     {{"TestJpegFuzz", "XO_JPEGFUZZ"}, {"TestJpegEncFuzz", "XO_JPEGENC"}},
 	"base32":   {{"TestBase32Fuzz", "XO_BASE32FUZZ"}},
 	"base64":   {{"TestBase64Fuzz", "XO_BASE64FUZZ"}},
@@ -304,6 +305,20 @@ func killedUnchecked(out string) bool {
 	return strings.Contains(out, ": signal: killed; 0 passed, 0 failed")
 }
 
+// notRun names why a harness's go test -v output that exited 0 checked no
+// case, or is "": a skipped harness (yaml's, when its oracle cannot run) or
+// a -run that matched nothing passes as ok and was counted as cases
+// (2026-11-16).
+func notRun(test, out string) string {
+	switch {
+	case strings.Contains(out, "--- SKIP: "+test):
+		return "skipped"
+	case strings.Contains(out, "no tests to run") || !strings.Contains(out, "--- PASS: "+test):
+		return "did not run"
+	}
+	return ""
+}
+
 func fuzz(args []string) error {
 	fs := flag.NewFlagSet("fuzz", flag.ExitOnError)
 	cases := fs.Int("cases", 1000000, "cases per backend to reach")
@@ -362,7 +377,7 @@ func fuzz(args []string) error {
 			}
 			t0 := time.Now()
 			run := func() ([]byte, error) {
-				cmd := exec.Command("go", "test", "./internal/stdtest", "-run", "^"+h.test+"$", "-count=1", "-timeout", "2h")
+				cmd := exec.Command("go", "test", "./internal/stdtest", "-run", "^"+h.test+"$", "-count=1", "-v", "-timeout", "2h")
 				cmd.Env = append(os.Environ(),
 					fmt.Sprintf("%s_SEED=%d", h.env, seed),
 					fmt.Sprintf("%s_N=%d", h.env, *batch),
@@ -379,6 +394,9 @@ func fuzz(args []string) error {
 				log = append(log, line)
 				fmt.Println(line)
 				b, err = run()
+			}
+			if why := notRun(h.test, string(b)); err == nil && why != "" {
+				err = fmt.Errorf("%s %s", h.test, why)
 			}
 			if err != nil {
 				tail := string(b)
