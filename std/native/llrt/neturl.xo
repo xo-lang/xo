@@ -317,7 +317,7 @@ fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int, last_colon: Bool) -> (Bool, St
       }
     }
     match netip.parse_addr(name) {
-      Err(e) => return (false, "", "invalid host: " + e.msg)
+      Err(e) => return (false, "", "invalid host: " + e.display())
       Ok(a) => if a.is_4() {
         return (false, "", "invalid IP-literal")
       }
@@ -659,7 +659,7 @@ fn raw_addr_err(h: Str, zone: Str) -> Str {
   let ps = pa + zone
   let msg = match netip.parse_addr(ps) {
     Ok(_) => return "ParseAddr(${rb.quote()}): unexpected character"
-    Err(e) => e.msg
+    Err(e) => e.display()
   }
   let head = "ParseAddr(${ps.quote()}): "
   var rest = msg.trim_prefix(head)

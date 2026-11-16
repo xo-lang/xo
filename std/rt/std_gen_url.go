@@ -2145,7 +2145,7 @@ func Url_parse_host(tk *Task, v_scheme string, v_host string) Result[string, Url
 			if !x_m198.Ok {
 				var v_e Netip_ParseErr = x_m198.E
 				_ = v_e
-				return Err[string](Url_EscapeErr{F_msg: ("invalid host: " + v_e.F_msg)})
+				return Err[string](Url_EscapeErr{F_msg: ("invalid host: " + v_e.M_display(tk))})
 			}
 			panic(Unreachable("std/url.xo:1077:5"))
 		}
@@ -2218,7 +2218,7 @@ x_M212:
 		if !x_m211.Ok {
 			var v_e Netip_ParseErr = x_m211.E
 			_ = v_e
-			x_v210 = v_e.F_msg
+			x_v210 = v_e.M_display(tk)
 			break x_M212
 		}
 		panic(Unreachable("std/url.xo:1113:11"))

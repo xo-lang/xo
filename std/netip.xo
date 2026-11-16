@@ -35,12 +35,36 @@ pub struct AddrPort {
   pub port: Int
 } derive Ord
 
-/// Go's texts: `ParseAddr("1.2.3"): IPv4 address too short`.
+/// A parse error's parts, as Go's ParseError (In, Msg, At): `display`
+/// builds Go's text, `ParseAddr("1.2.3"): IPv4 address too short`, only
+/// when it is asked for, so a caller that tries text as an address and
+/// moves on pays no formatting (decision: lead, 2026-11-16).
 pub struct ParseErr {
+  /// The function in Go's text: `ParseAddr`, `netip.ParsePrefix`,
+  /// `address` (a host and port), or "" when msg is the whole text.
+  pub what: Str = ""
+  /// The text that was parsed.
+  pub input: Str = ""
+  /// The reason alone: `IPv4 address too short`.
   pub msg: Str
+  /// The rest of the input from where parsing stopped, or empty.
+  pub at: Bytes = Bytes.zeroed(0)
 }
 
-pub fn (e: ParseErr) display() -> Str { e.msg }
+pub fn (e: ParseErr) display() -> Str {
+  if e.what.is_empty() || e.what == "address" && e.input.is_empty() {
+    return e.msg
+  }
+  if e.what == "address" {
+    return "address ${e.input}: ${e.msg}"
+  }
+  // at is quoted byte for byte (an invalid byte as \xHH), so a rest that
+  // is not UTF-8 keeps its "(at ...)" (fuzz seed 2: ParseAddr("fe\xff0::1%eth0"))
+  if e.at.is_empty() {
+    return "${e.what}(${e.input.quote()}): ${e.msg}"
+  }
+  "${e.what}(${e.input.quote()}): ${e.msg} (at ${e.at.quote()})"
+}
 
 /// Go's ParseAddr: IPv4 (no leading zeros), IPv6, IPv4 in IPv6, zones.
 pub fn parse_addr(s: Str) -> Addr ! ParseErr {
@@ -71,7 +95,7 @@ pub fn lookup(n: Net, host: Str) -> List[Addr] ! NetErr uses net.dial {
   for t in n.lookup_host(host)? {
     match parse_addr(t) {
       Ok(a) => out.push(a)
-      Err(e) => return Err(NetErr.Io(msg: "lookup ${host}: ${e.msg}"))
+      Err(e) => return Err(NetErr.Io(msg: "lookup ${host}: ${e.display()}"))
     }
   }
   Ok(out)
@@ -89,7 +113,7 @@ pub fn parse_prefix(s: Str) -> Prefix ! ParseErr {
   }
   let ip = match parse_addr(s[0..i]) {
     Ok(a) => a
-    Err(e) => return Err(prefix_err(s, e.msg))
+    Err(e) => return Err(prefix_err(s, e.display()))
   }
   if ip.bits == 128 && !ip.zone.is_empty() {
     return Err(prefix_err(s, "IPv6 zones cannot be present in a prefix"))
@@ -366,7 +390,7 @@ fn host_port_err(addr: Str, why: Str) -> ParseErr {
   if addr.is_empty() {
     return ParseErr{msg: why}
   }
-  ParseErr{msg: "address ${addr}: ${why}"}
+  ParseErr{what: "address", input: addr, msg: why}
 }
 
 /// Go's AddrPort.String: `1.2.3.4:80`, `[2001:db8::1]:443`.
@@ -483,15 +507,8 @@ pub fn (p: Prefix) overlaps(o: Prefix) -> Bool {
 /// Go's Prefix.IsSingleIP: the length is the family's.
 pub fn (p: Prefix) is_single_ip() -> Bool { p.addr.bits != 0 && p.len == p.addr.bits }
 
-/// at is the input's rest from where parsing stopped, as bytes: Go quotes
-/// it byte for byte (an invalid byte as \xHH), so a rest that is not UTF-8
-/// keeps its "(at ...)" (fuzz seed 2: ParseAddr("fe\xff0::1%eth0")).
-fn addr_err(input: Str, msg: Str, at: Bytes) -> ParseErr {
-  if at.is_empty() {
-    return ParseErr{msg: "ParseAddr(${input.quote()}): ${msg}"}
-  }
-  ParseErr{msg: "ParseAddr(${input.quote()}): ${msg} (at ${at.quote()})"}
-}
+/// at is the input's rest from where parsing stopped, as bytes.
+fn addr_err(input: Str, msg: Str, at: Bytes) -> ParseErr { ParseErr{what: "ParseAddr", input: input, msg: msg, at: at} }
 
 /// The top bit of a word: flipped in an Addr's stored words so that the
 /// derived order of the signed words is the order of the address bytes
@@ -928,6 +945,6 @@ fn string6(a: Addr) -> Str {
   rt.cast[Bytes, Str](out.freeze())
 }
 
-fn prefix_err(input: Str, msg: Str) -> ParseErr { ParseErr{msg: "netip.ParsePrefix(${input.quote()}): ${msg}"} }
+fn prefix_err(input: Str, msg: Str) -> ParseErr { ParseErr{what: "netip.ParsePrefix", input: input, msg: msg} }
 
 fn ap_err(msg: Str) -> ParseErr { ParseErr{msg: msg} }

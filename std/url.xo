@@ -1078,7 +1078,7 @@ fn parse_host(scheme: Str, host: Str) -> Str ! EscapeErr {
       Ok(a) => if a.is_4() {
         return Err(EscapeErr{msg: "invalid IP-literal"})
       }
-      Err(e) => return Err(EscapeErr{msg: "invalid host: " + e.msg})
+      Err(e) => return Err(EscapeErr{msg: "invalid host: " + e.display()})
     }
     return Ok("[" + uh + "]" + ucp)
   }
@@ -1112,7 +1112,7 @@ fn bracket_addr_err(hb: Bytes, zb: Bytes) -> Str {
   let st = (sub.freeze().to_str() ?? "") + text_of(zb)
   let m = match netip.parse_addr(st) {
     Ok(_) => return "ParseAddr(${go_q(hb)}): unable to parse IP"
-    Err(e) => e.msg
+    Err(e) => e.display()
   }
   let head = "ParseAddr(${st.quote()}): "
   if !m.starts_with(head) {

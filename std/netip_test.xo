@@ -3337,14 +3337,14 @@ test "go net/netip: ParseAddr and ParsePrefix" {
   for (s, want) in ADDRS {
     let got = parse_addr(s).map(fn(a) {
       (a.bits, words_bytes(hi_of(a), lo_of(a)).to_hex(), a.zone, a.display(), a.is_4in6(), a.is_loopback(), a.is_private(), a.is_unspecified(), a.is_link_local_unicast(), a.is_multicast(), a.unmap().is_4(), a.bytes().to_hex())
-    }).map_err(fn(e) { e.msg })
+    }).map_err(fn(e) { e.display() })
     if got != want && bad.len() < 10 {
       bad.push("${s.quote()}: got ${got.debug()} want ${want.debug()}")
     }
   }
   let probes = PROBES.map(fn(p) { parse_addr(p).or_fault("probe") })
   for (s, want) in PREFIXES {
-    let got = parse_prefix(s).map(fn(p) { (p.display(), p.masked().display(), probes.map(fn(a) { "${p.contains(a)}" }).join(" ")) }).map_err(fn(e) { e.msg })
+    let got = parse_prefix(s).map(fn(p) { (p.display(), p.masked().display(), probes.map(fn(a) { "${p.contains(a)}" }).join(" ")) }).map_err(fn(e) { e.display() })
     if got != want && bad.len() < 20 {
       bad.push("prefix ${s.quote()}: got ${got.debug()} want ${want.debug()}")
     }
@@ -3355,4 +3355,19 @@ test "go net/netip: ParseAddr and ParsePrefix" {
 test "addresses order as Go's Compare" {
   let xs = ["10.0.0.2", "::1", "10.0.0.10", "fe80::1%b", "fe80::1%a", "1.2.3.4", "::ffff:1.2.3.4"].map(fn(s) { parse_addr(s).or_fault("addr") })
   expect(xs.sort().map(fn(a) { a.display() })) == ["1.2.3.4", "10.0.0.2", "10.0.0.10", "::1", "::ffff:1.2.3.4", "fe80::1%a", "fe80::1%b"]
+}
+
+test "a ParseErr keeps Go's parts and builds Go's text on display" {
+  let e = match parse_addr("1.2.3") {
+    Ok(_) => fault("parsed")
+    Err(e) => e
+  }
+  expect((e.what, e.input, e.msg, e.at.len())) == ("ParseAddr", "1.2.3", "IPv4 address too short", 0)
+  expect(e.display()) == "ParseAddr(\"1.2.3\"): IPv4 address too short"
+  let p = match parse_prefix("1.2.3/8") {
+    Ok(_) => fault("parsed")
+    Err(e) => e
+  }
+  expect(p.what) == "netip.ParsePrefix"
+  expect(p.display()) == "netip.ParsePrefix(\"1.2.3/8\"): ParseAddr(\"1.2.3\"): IPv4 address too short"
 }

@@ -1,5 +1,22 @@
 # std/netip changes
 
+## 2026-11-16: behavior: ParseErr keeps its parts and formats on display (breaking)
+
+- Kind: behavior
+- Commit: this push
+- Found by: task #88 (bench/perf/httpproxy_rules: a host tried as an address formatted a quoted message it then dropped); direction from the lead, 2026-11-16
+- Go reference: net/netip ParseError (In, Msg, At; Error() formats)
+- Test: std/netip_test.xo (a ParseErr keeps Go's parts and builds Go's text on display; Go's ParseAddr and ParsePrefix tables compare display())
+- Timing: none (the error path only)
+
+`ParseErr` had one field, `msg`, the whole text, formatted (with a
+quote of the input) on every failed parse. It now holds `what`
+(`ParseAddr`, `netip.ParsePrefix`, `address`, or "" for a text alone),
+`input`, `msg` (the reason alone) and `at` (the rest where parsing
+stopped), as Go's ParseError does, and `display()` builds the same text
+as before. Breaking: `e.msg` is the reason alone; use `e.display()` for
+the whole text.
+
 ## 2026-11-16: perf: parse_ipv6 finds the zone with Str.find
 
 - Kind: perf

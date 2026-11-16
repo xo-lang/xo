@@ -6934,7 +6934,7 @@ through `Net.lookup_host`, section 3.2).
 struct Addr { bits: Int, hi: Int, lo: Int, zone: Str } derive Ord   // 32, 128, or 0; the 16 bytes as two words (top bit flipped, as Uuid); an IPv6 zone
 struct Prefix { addr: Addr, len: Int }
 struct AddrPort { addr: Addr, port: Int } derive Ord   // Go's AddrPort: the address, then the port
-struct ParseErr { msg: Str }   // ParseAddr("1.2.3"): IPv4 address too short
+struct ParseErr { what: Str, input: Str, msg: Str, at: Bytes }   // Go's ParseError parts; display(): ParseAddr("1.2.3"): IPv4 address too short
 
 pub fn parse_addr(s: Str) -> Addr ! ParseErr
 pub fn parse_prefix(s: Str) -> Prefix ! ParseErr
