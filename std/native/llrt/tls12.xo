@@ -760,21 +760,21 @@ pub struct Conf {
   /// as one hook, run once the server's chain is checked (or not, with
   /// insecure) over what is negotiated so far; its text fails the
   /// handshake with bad_certificate ("" passes)
-  pub vhook: (fn(tlsneg.Negotiated) -> Str)? = None
+  pub vhook: (fn(tlsneg.Negotiated) -> Str uses sync)? = None
   /// Go's GetClientCertificate: asked at a CertificateRequest with its
   /// certificate_authorities, signature schemes and the version; the
   /// chain and key it gives (an empty chain sends none), or the error's
   /// text
-  pub get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None
+  pub get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str) uses sync)? = None
   /// decision 0644 T8: Go's KeyLogWriter, given each secret's NSS key
   /// log label, the client random and the secret at Go's point; a text
   /// fails the handshake with internal_error
-  pub key_log: (fn(Str, Bytes, Bytes) -> Str)? = None
+  pub key_log: (fn(Str, Bytes, Bytes) -> Str uses sync)? = None
   /// tls13.Conf's (decision 0644 T3): a cache is set, the session the
   /// hello offered, and the hook new sessions go to
   pub tickets: Bool = false
   pub session: tlscache.Session? = None
-  pub on_session: (fn(tlscache.Session) -> ())? = None
+  pub on_session: (fn(tlscache.Session) -> () uses sync)? = None
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.

@@ -221,7 +221,7 @@ fn fk_read_msg(c: ServerConn, var buf: Bytes, untyped: Bool) -> (Str, Bytes, Byt
 
 /// A fake server: after startup, answer(kind, body) gives the bytes for
 /// each message; the conversation ends at Terminate or end of stream.
-fn fk_serve(l: Listener, hello: Bytes, answer: fn(Str, Bytes) -> Bytes) -> () ! NetErr {
+fn fk_serve(l: Listener, hello: Bytes, answer: fn(Str, Bytes) -> Bytes uses sync) -> () ! NetErr {
   while let Ok(c) = l.accept() {
     var buf = b""
     let (_, _, rest) = fk_read_msg(c, buf, true)?
@@ -277,7 +277,7 @@ fn fk_error_server(kind: Str, body: Bytes) -> Bytes {
 
 /// A server that takes a COPY, refuses its first CopyData with an error and
 /// discards the rest up to CopyDone, as PostgreSQL does for a bad row.
-fn fk_copy_refuse(seen: Atomic[Int]) -> fn(Str, Bytes) -> Bytes {
+fn fk_copy_refuse(seen: Atomic[Int]) -> fn(Str, Bytes) -> Bytes uses sync {
   fn(kind: Str, body: Bytes) -> Bytes {
     if kind == "Q" {
       if (body.to_str() ?? "").starts_with("COPY") {
@@ -350,7 +350,7 @@ fn fk_cstr_at(b: Bytes, at: Int) -> (Str, Int) {
 /// The extended protocol of a named statement (decision 0648 stage D), each
 /// message logged, and a ; separated script on the simple protocol giving
 /// two result sets around an UPDATE.
-fn fk_stmt_server(log: Mutex[List[Str]]) -> fn(Str, Bytes) -> Bytes {
+fn fk_stmt_server(log: Mutex[List[Str]]) -> fn(Str, Bytes) -> Bytes uses sync {
   fn(kind, body) {
     match kind {
       "P" => {
@@ -593,7 +593,7 @@ test "pgx TestListenNotify and TestConnWaitForNotificationTimeout: a timed out w
 /// at Parse; "DEFER..." fails at its batch's Sync, as a deferred
 /// constraint fails at the implicit commit; a SELECT gives one int4 row
 /// of 7, an INSERT "INSERT 0 1".
-fn fk_pipe_server(log: Mutex[List[Str]], skipping: Atomic[Bool], last: Mutex[Str], deferred: Atomic[Bool]) -> fn(Str, Bytes) -> Bytes {
+fn fk_pipe_server(log: Mutex[List[Str]], skipping: Atomic[Bool], last: Mutex[Str], deferred: Atomic[Bool]) -> fn(Str, Bytes) -> Bytes uses sync {
   fn(kind, body) {
     let q = last.with_read(fn(s) { s })
     match kind {
@@ -663,7 +663,7 @@ fn fk_pipe_server(log: Mutex[List[Str]], skipping: Atomic[Bool], last: Mutex[Str
   }
 }
 
-fn fk_pipe_db(l: Listener, log: Mutex[List[Str]]) -> fn() -> () ! NetErr uses net.listen {
+fn fk_pipe_db(l: Listener, log: Mutex[List[Str]]) -> fn() -> () ! NetErr uses (net.listen, sync) {
   let skipping = Atomic.new(false)
   let last: Mutex[Str] = Mutex.new("")
   let deferred = Atomic.new(false)

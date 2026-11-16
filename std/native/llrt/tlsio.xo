@@ -197,7 +197,7 @@ struct RootsData {
   sni: Str = ""
   /// Go's tls.Config.VerifyConnection: called with the server's chain (DER, leaf first) after the handshake and
   /// before any byte is sent; a non empty answer fails the connection with that text. Its own pool key too.
-  vconn: (fn(List[Bytes]) -> Str)? = None
+  vconn: (fn(List[Bytes]) -> Str uses sync)? = None
   /// Client.with_verify (VERIFY_*; 0 leaves the caller's mode): a Roots with one is its own pool key
   verify: Int = 0
 }
@@ -253,7 +253,7 @@ pub fn roots_with_cert(r: rthttp.Roots, certs: List[Bytes], key: Bytes) -> rthtt
 
 /// roots r with a server name and a verify hook (Client.with_server_name, with_verify_conn): a new Roots, so the pool
 /// keeps the clients with and without them apart. A name of "" or no hook keeps r's.
-pub fn roots_with_tls(r: rthttp.Roots, sni: Str, vconn: (fn(List[Bytes]) -> Str)?) -> rthttp.Roots {
+pub fn roots_with_tls(r: rthttp.Roots, sni: Str, vconn: (fn(List[Bytes]) -> Str uses sync)?) -> rthttp.Roots {
   let d = roots_base(r)
   let n = if sni.is_empty() { d.sni } else { sni }
   let v = match vconn {
@@ -503,12 +503,12 @@ pub const VERIFY_NONE = 2
 pub struct ConfStart {
   pub cf: tls13.Conf
   pub fail: Start?
-  pub vconn: (fn(List[Bytes]) -> Str)?
+  pub vconn: (fn(List[Bytes]) -> Str uses sync)?
 }
 
 /// client_with's settings without its connection (decision 0644 T14:
 /// QUIC's client takes them too).
-pub fn client_conf(host: Str, roots: Int, protos: List[Str], verify: Int, ccerts: List[Bytes], ckey: Bytes, min_v: Int, max_v: Int, suites: List[Int], curves: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, tickets: Bool, session: tlscache.Session?, put: (fn(tlscache.Session?) -> ())?, ech_list: Bytes?, ech_verify: (fn(tlsneg.Negotiated) -> Str)?) -> ConfStart {
+pub fn client_conf(host: Str, roots: Int, protos: List[Str], verify: Int, ccerts: List[Bytes], ckey: Bytes, min_v: Int, max_v: Int, suites: List[Int], curves: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str uses sync)?, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str) uses sync)?, key_log: (fn(Str, Bytes, Bytes) -> Str uses sync)?, tickets: Bool, session: tlscache.Session?, put: (fn(tlscache.Session?) -> () uses sync)?, ech_list: Bytes?, ech_verify: (fn(tlsneg.Negotiated) -> Str uses sync)?) -> ConfStart {
   // decision 0644 T7: Go's MinVersion and MaxVersion (0: TLS 1.2 and
   // 1.3), CipherSuites (TLS 1.2's only) and CurvePreferences, whose
   // orders Go ignores: each keeps the default order, less what is left out
@@ -583,7 +583,7 @@ pub fn client_conf(host: Str, roots: Int, protos: List[Str], verify: Int, ccerts
   ConfStart{cf: cf, fail: None, vconn: data.vconn}
 }
 
-pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, tickets: Bool = false, session: tlscache.Session? = None, put: (fn(tlscache.Session?) -> ())? = None, ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None) -> Start {
+pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"", min_v: Int = 0, max_v: Int = 0, suites: List[Int] = [], curves: List[Int] = [], vhook: (fn(tlsneg.Negotiated) -> Str uses sync)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str) uses sync)? = None, key_log: (fn(Str, Bytes, Bytes) -> Str uses sync)? = None, tickets: Bool = false, session: tlscache.Session? = None, put: (fn(tlscache.Session?) -> () uses sync)? = None, ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str uses sync)? = None) -> Start {
   let cs = client_conf(host, roots, protos, verify, ccerts, ckey, min_v, max_v, suites, curves, vhook, get_cert, key_log, tickets, session, put, ech_list, ech_verify)
   if let Some(f) = cs.fail {
     return f

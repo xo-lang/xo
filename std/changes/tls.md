@@ -1,5 +1,16 @@
 # std/tls changes
 
+## 2026-11-15: fix: callback hooks may record what they see (decision 0662)
+
+- Kind: fix
+- Commit: this commit
+- Found by: decision 0662 made a closure capturing a Mutex, Chan or Atomic perform `sync`; the tls and http goldens (tls_verify, tls_keylog, tls_certsel, tls_resume, tls_verify_conn, http_request_guards, test_fakenet_tls) failed XO0701 on main
+- Go reference: none
+- Test: internal/llvm goldens tls_verify, tls_keylog, tls_certsel, tls_resume, tls_verify_conn, http_request_guards; internal/gen test_fakenet_tls
+- Shipped in: not yet released
+
+`ClientConfig` and `ServerConfig`'s `verify_peer_certificate`, `verify_connection`, `get_client_certificate`, `get_certificate`, `get_config_for_client` and `key_log` hooks are `uses sync`: a hook that records what it saw (a key log, the certificates offered) writes to a captured Mutex or Chan, which decision 0662 made an effect. A pure hook still fits.
+
 ## 2026-11-15: feature: QUIC (decision 0644 T14)
 
 - Kind: feature

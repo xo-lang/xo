@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-15: fix: callback hooks may record what they see (decision 0662)
+
+- Kind: fix
+- Commit: this commit
+- Found by: decision 0662 made a closure capturing a Mutex, Chan or Atomic perform `sync`; the tls and http goldens (tls_verify, tls_keylog, tls_certsel, tls_resume, tls_verify_conn, http_request_guards, test_fakenet_tls) failed XO0701 on main
+- Go reference: none
+- Test: internal/llvm goldens tls_verify, tls_keylog, tls_certsel, tls_resume, tls_verify_conn, http_request_guards; internal/gen test_fakenet_tls
+- Shipped in: not yet released
+
+`Client.with_verify_conn` and `ReverseProxy.with_rewrite` take `uses sync` functions, so a hook may record what it saw in a captured Mutex or Chan (decision 0662). A pure hook still fits.
+
 ## 2026-11-15: breaking: a failed TLS handshake is `ClientErr.Tls(err: tls.TlsErr)`
 
 - Kind: breaking

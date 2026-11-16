@@ -158,16 +158,16 @@ pub struct Conf {
   /// as one hook, run once the server's chain is checked (or not, with
   /// insecure) over what is negotiated so far; its text fails the
   /// handshake with bad_certificate ("" passes)
-  pub vhook: (fn(tlsneg.Negotiated) -> Str)? = None
+  pub vhook: (fn(tlsneg.Negotiated) -> Str uses sync)? = None
   /// Go's GetClientCertificate: asked at a CertificateRequest with its
   /// certificate_authorities, signature schemes and the version; the
   /// chain and key it gives (an empty chain sends none), or the error's
   /// text
-  pub get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None
+  pub get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str) uses sync)? = None
   /// decision 0644 T8: Go's KeyLogWriter, given each secret's NSS key
   /// log label, the client random and the secret at Go's point; a text
   /// fails the handshake with internal_error
-  pub key_log: (fn(Str, Bytes, Bytes) -> Str)? = None
+  pub key_log: (fn(Str, Bytes, Bytes) -> Str uses sync)? = None
   /// decision 0644 T3: a session cache is set (Go's ClientSessionCache,
   /// with SessionTicketsDisabled false), so the hello asks for tickets;
   /// session the cached one to offer (tlsio.xo checks it as Go's
@@ -175,14 +175,14 @@ pub struct Conf {
   /// tickets give (TLS 1.2's from tls12.xo)
   pub tickets: Bool = false
   pub session: tlscache.Session? = None
-  pub on_session: (fn(tlscache.Session) -> ())? = None
+  pub on_session: (fn(tlscache.Session) -> () uses sync)? = None
   /// decision 0644 T13: Go's EncryptedClientHelloConfigList (None: no
   /// ECH; with one the hello offers TLS 1.3 alone) and
   /// EncryptedClientHelloRejectionVerify (run in place of the
   /// verification against the public name when the server rejects ECH;
   /// its text fails the handshake with bad_certificate)
   pub ech_list: Bytes? = None
-  pub ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None
+  pub ech_verify: (fn(tlsneg.Negotiated) -> Str uses sync)? = None
   /// decision 0644 T14: the handshake runs for a QUIC transport (RFC
   /// 9001): no records, no compatibility ChangeCipherSpec, no session id,
   /// no KeyUpdate; the handshake bytes and the secrets go to quic_events
@@ -2022,7 +2022,7 @@ fn key_update(var c: Client, msg: Bytes) {
 /// Go's two writeKeyLog calls in a row (decision 0644 T8): the client's
 /// secret, then the server's; the hook's text, "" when it took both or
 /// none is set.
-pub fn log_keys(hook: (fn(Str, Bytes, Bytes) -> Str)?, cl: Str, sl: Str, cr: Bytes, cs: Bytes, ss: Bytes) -> Str {
+pub fn log_keys(hook: (fn(Str, Bytes, Bytes) -> Str uses sync)?, cl: Str, sl: Str, cr: Bytes, cs: Bytes, ss: Bytes) -> Str {
   if let Some(k) = hook {
     let e = k(cl, cr, cs)
     if !e.is_empty() {

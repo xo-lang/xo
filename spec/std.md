@@ -2202,7 +2202,7 @@ fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Req
 
 pub fn reverse_proxy(client: Client, target: Url) -> ReverseProxy   // decision 0404
 struct ReverseProxy {}
-fn (p: ReverseProxy) with_rewrite(f: fn(Request, Request) -> Request) -> ReverseProxy
+fn (p: ReverseProxy) with_rewrite(f: fn(Request, Request) -> Request uses sync) -> ReverseProxy
 fn (p: ReverseProxy) serve(req: Request, body: BodyReader) -> Response uses net.dial
 
 fn (c: Client) open(req: Request) -> ClientStream ! ClientErr uses net.dial
@@ -2450,7 +2450,7 @@ fn (s: Server) with_client_auth(mode: tls.ClientAuth, roots: tls.Roots? = None) 
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
 fn (c: Client) with_cert(cert: TlsCert) -> Client
 fn (c: Client) with_server_name(name: Str) -> Client
-fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Client
+fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str uses sync) -> Client
 fn (c: Client) with_verify(v: tls.Verify) -> Client
 struct TlsOptions { server_name: Str, verify_conn: Bool, custom_roots: Bool, client_cert: Bool, verify: tls.Verify }
 fn (c: Client) tls_options() -> TlsOptions
@@ -3137,10 +3137,10 @@ entropy.
 ### 8.1 FakeNet
 
 ```
-fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
+fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response uses sync)
     // pattern: "[METHOD ]<absolute url pattern>", e.g. "GET https://api.test/users/{id}"
     // a second handle with the same method, URL prefix and path pattern replaces the first (last wins; Go's ServeMux panics)
-fn (n: FakeNet) handle_tls(pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response)
+fn (n: FakeNet) handle_tls(pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response uses sync)
     // handle for https with the server's certificate: the client's checks run first (decision 0544)
 fn (n: FakeNet) fail(pattern: Str, err: http.ClientErr)       // every matching request, until clear_failures
 fn (n: FakeNet) fail_next(pattern: Str, err: http.ClientErr)  // the next matching request only
@@ -3373,7 +3373,7 @@ pub fn open(net: Net, driver: Str, dsn: Str,
             max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m,
             roots: Bytes = b"", loc: time.Zone = time.utc(),   // roots: 10.8, 10.10; loc: 10.10
             server_pub_key: Bytes = b"",                      // 10.10
-            on_notice: (fn(Notice))? = None)                  // 10.12
+            on_notice: (fn(Notice) uses sync)? = None)                  // 10.12
     -> Db ! SqlErr uses net.dial
 pub fn memory(schema: Str = "") -> Db ! SqlErr         // no capability, no effect
 // std/testing: fake_db(schema: Str) -> Db ! SqlErr    // same as memory(schema)
@@ -3444,7 +3444,7 @@ fn (r: Rows) column_types() -> List[ColumnType]   // Go's Rows.ColumnTypes (deci
 fn (r: Rows) next() -> Row? ! SqlErr uses net.dial          // None after the last row
 fn (r: Rows) next_as[T: SqlRow]() -> T? ! SqlErr uses net.dial
 fn (r: Rows) close() uses net.dial                          // idempotent
-fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
+fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr uses sync) -> () ! SqlErr uses net.dial
 ```
 
 The Postgres driver reads the rows off the socket as `next` asks, so a
@@ -3509,7 +3509,7 @@ of more than one statement takes no arguments (`Param`).
 STDIN in the text format:
 
 ```
-fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
+fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses net.dial
 fn (t: Tx) copy_from(...) -> Int ! SqlErr uses net.dial
 fn quote_ident(name: Str) -> Str                   // "name", a double quote doubled
 ```
@@ -3707,7 +3707,7 @@ interface DriverConn[fx: Effects] {
   fn query(self, q: Str, args: List[SqlValue]) -> DriverRows[fx] ! SqlErr uses (net.dial, fx)
   fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses (net.dial, fx)
   fn begin(self) -> () ! SqlErr uses (net.dial, fx)      // also commit, rollback, ping
-  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses (net.dial, fx)
+  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr uses sync) -> Int ! SqlErr uses (net.dial, fx)
   fn prepare(self, q: Str) -> DriverStmt[fx]? ! SqlErr uses (net.dial, fx)   // None: no server statements
   fn close(self) uses (net.dial, fx)
   fn is_broken(self) -> Bool                       // dropped from the pool when true
@@ -3741,7 +3741,7 @@ interface DriverCursor[fx: Effects] {            // the rest of a result on the 
 }
 
 pub fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2,
-                   max_lifetime: Duration = 30m, on_notice: (fn(Notice))? = None) -> Db[fx] ! SqlErr uses (net.dial, fx)
+                   max_lifetime: Duration = 30m, on_notice: (fn(Notice) uses sync)? = None) -> Db[fx] ! SqlErr uses (net.dial, fx)
 ```
 
 **Column types** (decision 0609, Go's `Rows.ColumnTypes`):
@@ -4212,7 +4212,7 @@ struct TraceRecord {
 }
 
 fn (d: Db) stats() -> PoolStats
-// open(..., on_trace: (fn(TraceRecord))? = None), open_driver(..., on_trace: ...)
+// open(..., on_trace: (fn(TraceRecord) uses sync)? = None), open_driver(..., on_trace: ...)
 ```
 
 `stats` (Go's `DB.Stats`, pgxpool's `Pool.Stat`) reads the pool's counts
@@ -6312,9 +6312,9 @@ fn (t: TlsServerConn) export_keying_material(label: Str, context: Bytes?, length
 struct ClientConfig {
   server_name: Str = "", roots: Roots? = None, verify: Verify = Verify.Full, next_protos: List[Str] = []
   certificates: List[TlsCert] = []
-  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)? = None
-  verify_connection: (fn(ConnState) -> () ! Str)? = None
-  get_client_certificate: (fn(CertificateRequestInfo) -> TlsCert? ! Str)? = None
+  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str uses sync)? = None
+  verify_connection: (fn(ConnState) -> () ! Str uses sync)? = None
+  get_client_certificate: (fn(CertificateRequestInfo) -> TlsCert? ! Str uses sync)? = None
   min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []
 }
 struct CertificateRequestInfo { acceptable_cas: List[Bytes], signature_schemes: List[Int], version: Int }
@@ -6322,8 +6322,8 @@ fn (i: CertificateRequestInfo) supports_certificate(cert: TlsCert) -> () ! TlsEr
 fn client_config(c: Conn, config: ClientConfig) -> TlsConn ! NetErr uses net.dial
 fn dial_config(net: Net, addr: Str, config: ClientConfig, timeout: Duration? = None) -> TlsConn ! NetErr uses net.dial
 // ServerConfig gains: verify_peer_certificate, verify_connection (as ClientConfig's),
-//   get_certificate: (fn(ClientHelloInfo) -> TlsCert? ! Str)? = None
-//   get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str)? = None
+//   get_certificate: (fn(ClientHelloInfo) -> TlsCert? ! Str uses sync)? = None
+//   get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str uses sync)? = None
 struct ClientHelloInfo {
   cipher_suites: List[Int], server_name: Str, supported_curves: List[Int], supported_points: List[Int]
   signature_schemes: List[Int], supported_protos: List[Str], supported_versions: List[Int], extensions: List[Int]
@@ -6332,7 +6332,7 @@ struct ClientHelloInfo {
 fn (i: ClientHelloInfo) supports_certificate(cert: TlsCert) -> () ! TlsErr
 
 // decision 0644 B3: T8, T12, T4, T3, T10
-// ClientConfig and ServerConfig gain: key_log: (fn(Str) -> () ! Str)? = None
+// ClientConfig and ServerConfig gain: key_log: (fn(Str) -> () ! Str uses sync)? = None
 // ServerConfig gains: session_tickets_disabled: Bool = false, session_ticket_keys: List[TicketKey] = []
 struct TicketKey {}
 fn ticket_key(key: Bytes) -> TicketKey ! TlsErr                  // 32 bytes (Go's SetSessionTicketKeys)

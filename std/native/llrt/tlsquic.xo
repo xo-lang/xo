@@ -55,10 +55,10 @@ pub struct Quic {
   /// the Error event was given (Go's errorReturned)
   err_given: Bool = false
   /// run on the client's verified chain once done (a Roots' verify_conn)
-  vconn: (fn(List[Bytes]) -> Str)? = None
+  vconn: (fn(List[Bytes]) -> Str uses sync)? = None
 }
 
-pub fn client(cf: tls13.Conf, vconn: (fn(List[Bytes]) -> Str)?) -> Quic { Quic{server: false, cl: None, sv: None, ccf: Some(cf), scf: None, vconn: vconn} }
+pub fn client(cf: tls13.Conf, vconn: (fn(List[Bytes]) -> Str uses sync)?) -> Quic { Quic{server: false, cl: None, sv: None, ccf: Some(cf), scf: None, vconn: vconn} }
 
 pub fn server(cf: tls13srv.Conf) -> Quic { Quic{server: true, cl: None, sv: None, ccf: None, scf: Some(cf)} }
 

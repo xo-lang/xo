@@ -155,7 +155,7 @@ B's 46 hits are of two kinds, and none has a machine fix yet:
 
 The prototype plus:
 
-- **std/native is exempt for now.** The seed compiles std/native, and a
+- **std/native was exempt until seed 0.52.0** (removed 2026-11-15 with the std/tls, std/http and std/websocket callback types gaining `uses sync`; the paragraph below is the history). The seed compiles std/native, and a
   seed rejects an unknown effect label, so its sites (HTTP body pipes and
   readers, the TLS session cache callback) cannot say `uses sync` yet.
   The capture rule skips native modules, as `log` is ambient there (0156).

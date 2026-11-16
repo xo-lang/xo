@@ -51,8 +51,8 @@ fn shape(l: Str) -> Str {
   "${f[0]} ${f[1].len()} ${f[2].len()} newline ${l.ends_with("\n")}"
 }
 
-fn logger(m: Mutex[List[Str]], fail: Str) -> fn(Str) -> () ! Str {
-  fn(line: Str) -> () ! Str {
+fn logger(m: Mutex[List[Str]], fail: Str) -> fn(Str) -> () ! Str uses sync {
+  fn(line: Str) -> () ! Str uses sync {
     if !fail.is_empty() {
       return Err(fail)
     }

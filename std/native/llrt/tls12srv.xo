@@ -96,12 +96,12 @@ pub struct Conf {
   /// certificates and verified chains, when one was requested) and
   /// VerifyConnection (every handshake, at Go's point); a text fails the
   /// handshake with bad_certificate
-  pub vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str)? = None
-  pub vconn: (fn(tlsneg.Negotiated) -> Str)? = None
+  pub vpeer: (fn(List[Bytes], List[List[Bytes]]) -> Str uses sync)? = None
+  pub vconn: (fn(tlsneg.Negotiated) -> Str uses sync)? = None
   /// decision 0644 T8: Go's KeyLogWriter, given each secret's NSS key
   /// log label, the client random and the secret at Go's point; a text
   /// fails the handshake with internal_error
-  pub key_log: (fn(Str, Bytes, Bytes) -> Str)? = None
+  pub key_log: (fn(Str, Bytes, Bytes) -> Str uses sync)? = None
   pub client_roots: List[Bytes] = []
 }
 

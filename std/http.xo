@@ -546,7 +546,7 @@ fn (c: Client) with_server_name(name: Str) -> Client
 /// any request byte is sent (Go's tls.Config.VerifyConnection); Err(text) fails the connection with that text. It runs
 /// on every new connection, so a pinning check works with a self signed server. A client with one has its own
 /// connections.
-fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Client
+fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str uses sync) -> Client
 /// How the client checks the server's certificate for https (Go's InsecureSkipVerify when Verify.None, with
 /// Verify.ChainOnly the chain without the name); the default is Verify.Full. UNSAFE alone: Verify.None accepts any
 /// certificate, so a request on such a client fails ("tls: Verify.None needs a verify_conn ...") unless
@@ -589,7 +589,7 @@ struct ReverseProxy {}
 /// so f checks a key that may repeat with query_all or raw_query. A query
 /// that does not parse is forwarded rebuilt from what parsed (Go's
 /// cleanQueryParams).
-fn (p: ReverseProxy) with_rewrite(f: fn(Request, Request) -> Request) -> ReverseProxy
+fn (p: ReverseProxy) with_rewrite(f: fn(Request, Request) -> Request uses sync) -> ReverseProxy
 /// Forwards req, its body read from body, and returns the target's
 /// response with its body streamed back.
 fn (p: ReverseProxy) serve(req: Request, body: BodyReader) -> Response uses net.dial

@@ -178,7 +178,7 @@ fn fk_read(c: ServerConn, buf: Bytes) -> (Bytes, Int, Bytes)? ! NetErr {
 
 /// A server: the handshake, the auth exchange login gives, then answer
 /// per command packet (each answer a list of payloads, sent from seq 1).
-fn fk_serve(l: Listener, caps: Int, plugin: Str, login: fn(Bytes, ServerConn, Int) -> Int ! NetErr uses net.listen, answer: fn(Bytes) -> List[Bytes]) -> () ! NetErr {
+fn fk_serve(l: Listener, caps: Int, plugin: Str, login: fn(Bytes, ServerConn, Int) -> Int ! NetErr uses net.listen, answer: fn(Bytes) -> List[Bytes] uses sync) -> () ! NetErr {
   while let Ok(c) = l.accept() {
     c.write(w.frame(0, fk_handshake(caps, plugin)).0)?
     let (resp, _, rest) = fk_read(c, b"")? ?? (b"", 0, b"")
@@ -241,7 +241,7 @@ fn fk_prepared(id: Int, params: Int, cols: List[Bytes], eof: Bool) -> List[Bytes
   out
 }
 
-fn fk_rows_server(eof: Bool) -> fn(Bytes) -> List[Bytes] {
+fn fk_rows_server(eof: Bool) -> fn(Bytes) -> List[Bytes] uses sync {
   fn(cmd) {
     let q = cmd[1..cmd.len()].to_str_lossy()
     if Int(cmd[0]) == w.COM_PING {
@@ -494,7 +494,7 @@ test "a fake server: RSA full authentication with the server's key or open's" {
 /// A server that logs each command (decision 0648 stage D): statement 3
 /// as fk_rows_server's, and "MULTI" as two result sets with an OK
 /// between them (SERVER_MORE_RESULTS_EXISTS).
-fn fk_stmt_server(log: Mutex[List[Str]]) -> fn(Bytes) -> List[Bytes] {
+fn fk_stmt_server(log: Mutex[List[Str]]) -> fn(Bytes) -> List[Bytes] uses sync {
   let rows = fk_rows_server(false)
   fn(cmd) {
     let kind = Int(cmd[0])
@@ -622,7 +622,7 @@ test "readTimeout: a server that does not answer is an i/o timeout, and the conn
 }
 
 /// fk_rows_server with each COM_QUERY's text logged.
-fn fk_log_server(log: Mutex[List[Str]]) -> fn(Bytes) -> List[Bytes] {
+fn fk_log_server(log: Mutex[List[Str]]) -> fn(Bytes) -> List[Bytes] uses sync {
   let rows = fk_rows_server(false)
   fn(cmd) {
     if Int(cmd[0]) == w.COM_QUERY {
@@ -656,7 +656,7 @@ test "a fake server: batch and pipeline (decision 0648 item 15) run each batch i
 
 /// fk_serve, but each connection closes after its first statement's
 /// answer, as a server whose wait_timeout passed while it sat idle.
-fn fk_serve_once(l: Listener, answer: fn(Bytes) -> List[Bytes], closed: Chan[Int]) -> () ! NetErr {
+fn fk_serve_once(l: Listener, answer: fn(Bytes) -> List[Bytes] uses sync, closed: Chan[Int]) -> () ! NetErr {
   while let Ok(c) = l.accept() {
     c.write(w.frame(0, fk_handshake(fk_caps(true), "caching_sha2_password")).0)?
     let (resp, _, rest) = fk_read(c, b"")? ?? (b"", 0, b"")

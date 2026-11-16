@@ -54,7 +54,7 @@ fn lru_session_cache(capacity: Int) -> SessionCache { SessionCache{m: Mutex[tlsc
 struct Resume {
   tickets: Bool
   session: tlscache.Session?
-  put: (fn(tlscache.Session?) -> ())?
+  put: (fn(tlscache.Session?) -> () uses sync)?
 }
 
 fn no_resume() -> Resume { Resume{tickets: false, session: None, put: None} }
@@ -297,7 +297,7 @@ fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! tls.TlsErr {
 }
 
 /// f as the tlsio hook: the DERs parsed (those that parse), Err's text or "".
-pub fn vconn_wrap(f: fn(List[x509.Certificate]) -> () ! Str) -> fn(List[Bytes]) -> Str {
+pub fn vconn_wrap(f: fn(List[x509.Certificate]) -> () ! Str uses sync) -> fn(List[Bytes]) -> Str uses sync {
   fn(ders: List[Bytes]) -> Str {
     var certs: List[x509.Certificate] = []
     for d in ders {
@@ -313,7 +313,7 @@ pub fn vconn_wrap(f: fn(List[x509.Certificate]) -> () ! Str) -> fn(List[Bytes]) 
 }
 
 /// Go's pin check over the leaf's DER: pin is hex (colons and spaces dropped), of the digest h's size.
-fn pin_check(h: crypto.Hash, pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str {
+fn pin_check(h: crypto.Hash, pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str uses sync) ! Str {
   var hex = pin.replace(":", "").replace(" ", "")
   let want = Bytes.from_hex(hex) ?? return Err("tls: pin is not hexadecimal")
   if want.len() != h.size() {
@@ -330,19 +330,19 @@ fn pin_check(h: crypto.Hash, pin: Str) -> (fn(List[x509.Certificate]) -> () ! St
   }
 }
 
-fn pin_sha1(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str { pin_check(crypto.Hash.Sha1, pin) }
+fn pin_sha1(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str uses sync) ! Str { pin_check(crypto.Hash.Sha1, pin) }
 
-fn pin_sha256(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str { pin_check(crypto.Hash.Sha256, pin) }
+fn pin_sha256(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str uses sync) ! Str { pin_check(crypto.Hash.Sha256, pin) }
 
 /// cert is passed to the client's CertificateRequest path when it lands
 /// (Lang 3's tls13/tls12 hooks, decision 0433); until then the client
 /// answers a request with no certificate.
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial {
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str uses sync)? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial {
   client_full(c, host, roots, verify, alpn, cert, verify_conn, min_version, max_version, cipher_suites, curve_preferences, None, None, None, no_resume(), new_st())
 }
 
 /// client with ClientConfig's hooks (decision 0644 T6).
-fn client_full(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str)?, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))?, key_log: (fn(Str, Bytes, Bytes) -> Str)?, res0: Resume, st: Mutex[ClientSt], ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None) -> TlsConn ! NetErr uses net.dial {
+fn client_full(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, verify_conn: (fn(List[x509.Certificate]) -> () ! Str uses sync)?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], vhook: (fn(tlsneg.Negotiated) -> Str uses sync)?, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str) uses sync)?, key_log: (fn(Str, Bytes, Bytes) -> Str uses sync)?, res0: Resume, st: Mutex[ClientSt], ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str uses sync)? = None) -> TlsConn ! NetErr uses net.dial {
   if host.is_empty() && verify == tls.Verify.Full {
     // Go's Client without ServerName: the name could not be verified
     return Err(note(st, NetErr.Io(msg: "tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config"), tlsneg.Failure{}))
@@ -402,7 +402,7 @@ fn client_full(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List
 }
 
 /// client on wasm: no upgrade mark, no system roots (none on wasm).
-fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], st: Mutex[ClientSt], vhook: (fn(tlsneg.Negotiated) -> Str)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? = None, key_log: (fn(Str, Bytes, Bytes) -> Str)? = None, res0: Resume = no_resume(), ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str)? = None) -> TlsConn ! NetErr uses net.dial {
+fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?, min_version: Int, max_version: Int, cipher_suites: List[Int], curve_preferences: List[Int], st: Mutex[ClientSt], vhook: (fn(tlsneg.Negotiated) -> Str uses sync)? = None, get_cert: (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str) uses sync)? = None, key_log: (fn(Str, Bytes, Bytes) -> Str uses sync)? = None, res0: Resume = no_resume(), ech_list: Bytes? = None, ech_verify: (fn(tlsneg.Negotiated) -> Str uses sync)? = None) -> TlsConn ! NetErr uses net.dial {
   let cn = rt.obj_addr(c)
   if netwasi.upgraded(cn) {
     return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))
@@ -688,7 +688,7 @@ fn dial_host(addr: Str) -> Str {
   }
 }
 
-fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None, timeout: Duration? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial {
+fn dial(net: Net, addr: Str, server_name: Str = "", roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str uses sync)? = None, timeout: Duration? = None, min_version: Int = 0, max_version: Int = 0, cipher_suites: List[Int] = [], curve_preferences: List[Int] = []) -> TlsConn ! NetErr uses net.dial {
   let name = if server_name.is_empty() { dial_host(addr) } else { server_name }
   let c = dial_open(net, addr, timeout)?
   dial_done(c, timeout, client(c, name, roots: roots, verify: verify, alpn: alpn, cert: cert, verify_conn: verify_conn, min_version: min_version, max_version: max_version, cipher_suites: cipher_suites, curve_preferences: curve_preferences))
@@ -751,7 +751,7 @@ fn client_config_st(c: Conn, config: tls.ClientConfig, st: Mutex[ClientSt]) -> T
 /// ClientConfig's encrypted_client_hello_rejection_verify as the
 /// engine's hook (decision 0644 T13): the state so far; its Err's text
 /// fails the handshake.
-fn client_ech_verify(cfg: tls.ClientConfig) -> (fn(tlsneg.Negotiated) -> Str)? {
+fn client_ech_verify(cfg: tls.ClientConfig) -> (fn(tlsneg.Negotiated) -> Str uses sync)? {
   let f = cfg.encrypted_client_hello_rejection_verify ?? return None
   Some(fn(n: tlsneg.Negotiated) -> Str {
     match f(state_of(n, false)) {
@@ -785,7 +785,7 @@ fn dial_config(net: Net, addr: Str, config: tls.ClientConfig, timeout: Duration?
 
 /// ClientConfig's verify_peer_certificate then verify_connection as the
 /// handshake's hook (decision 0644 T6).
-fn client_vhook(cfg: tls.ClientConfig) -> (fn(tlsneg.Negotiated) -> Str)? {
+fn client_vhook(cfg: tls.ClientConfig) -> (fn(tlsneg.Negotiated) -> Str uses sync)? {
   if cfg.verify_peer_certificate.is_none() && cfg.verify_connection.is_none() {
     return None
   }
@@ -797,7 +797,7 @@ fn client_vhook(cfg: tls.ClientConfig) -> (fn(tlsneg.Negotiated) -> Str)? {
 /// verify_peer_certificate and verify_connection over n, on either end:
 /// the text of the first Err (a default for an empty one), "" when both
 /// pass.
-fn verify_hooks(vp: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)?, vc: (fn(tls.ConnState) -> () ! Str)?, n: tlsneg.Negotiated) -> Str {
+fn verify_hooks(vp: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str uses sync)?, vc: (fn(tls.ConnState) -> () ! Str uses sync)?, n: tlsneg.Negotiated) -> Str {
   // a resumed session's certificates are not verified again, so Go
   // calls only VerifyConnection
   if let Some(f) = (if n.resumed { None } else { vp }) {
@@ -817,7 +817,7 @@ fn verify_hooks(vp: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)?
 /// certificates the first the request supports (Go's
 /// getClientCertificate), as the handshake's hook; None with at most one
 /// (client's cert path).
-fn client_get_cert(cfg: tls.ClientConfig) -> (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str))? {
+fn client_get_cert(cfg: tls.ClientConfig) -> (fn(List[Bytes], List[Int], Int) -> (List[Bytes], Bytes, Str) uses sync)? {
   if let Some(g) = cfg.get_client_certificate {
     return Some(fn(cas: List[Bytes], schemes: List[Int], v: Int) -> (List[Bytes], Bytes, Str) {
       match g(tls.CertificateRequestInfo{acceptable_cas: cas, signature_schemes: schemes, version: v}) {
@@ -843,7 +843,7 @@ fn client_get_cert(cfg: tls.ClientConfig) -> (fn(List[Bytes], List[Int], Int) ->
 }
 
 /// ServerConfig's verify_peer_certificate as the handshake's hook.
-fn server_vpeer(cfg: tls.ServerConfig) -> (fn(List[Bytes], List[List[Bytes]]) -> Str)? {
+fn server_vpeer(cfg: tls.ServerConfig) -> (fn(List[Bytes], List[List[Bytes]]) -> Str uses sync)? {
   let f = cfg.verify_peer_certificate ?? return None
   Some(fn(peer: List[Bytes], chains: List[List[Bytes]]) -> Str {
     match f(peer, chains.map(parse_ders)) {
@@ -857,7 +857,7 @@ fn server_vpeer(cfg: tls.ServerConfig) -> (fn(List[Bytes], List[List[Bytes]]) ->
 /// key_log takes each secret as an NSS key log line, `LABEL`, the client
 /// random and the secret in hexadecimal, and a newline; its Err fails
 /// the handshake.
-fn key_log_hook(kl: (fn(Str) -> () ! Str)?) -> (fn(Str, Bytes, Bytes) -> Str)? {
+fn key_log_hook(kl: (fn(Str) -> () ! Str uses sync)?) -> (fn(Str, Bytes, Bytes) -> Str uses sync)? {
   let f = kl ?? return None
   Some(fn(label: Str, cr: Bytes, secret: Bytes) -> Str {
     match f(label + " " + cr.to_hex() + " " + secret.to_hex() + "\n") {
@@ -868,7 +868,7 @@ fn key_log_hook(kl: (fn(Str) -> () ! Str)?) -> (fn(Str, Bytes, Bytes) -> Str)? {
 }
 
 /// ServerConfig's verify_connection as the handshake's hook.
-fn server_vconn(cfg: tls.ServerConfig) -> (fn(tlsneg.Negotiated) -> Str)? {
+fn server_vconn(cfg: tls.ServerConfig) -> (fn(tlsneg.Negotiated) -> Str uses sync)? {
   if cfg.verify_connection.is_none() {
     return None
   }
@@ -898,9 +898,9 @@ fn chi_at(h: tlsneg.HelloInfo, local: Str, remote: Str) -> tls.ClientHelloInfo {
 }
 
 /// ServerConfig's get_certificate as the engine's hook (decision 0644 T5).
-fn server_get_cert(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? { server_get_cert_at(cfg, c.local_addr(), c.remote_addr()) }
+fn server_get_cert(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> tlsneg.Chain uses sync)? { server_get_cert_at(cfg, c.local_addr(), c.remote_addr()) }
 
-fn server_get_cert_at(cfg: tls.ServerConfig, local: Str, remote: Str) -> (fn(tlsneg.HelloInfo) -> tlsneg.Chain)? {
+fn server_get_cert_at(cfg: tls.ServerConfig, local: Str, remote: Str) -> (fn(tlsneg.HelloInfo) -> tlsneg.Chain uses sync)? {
   let g = cfg.get_certificate ?? return None
   Some(fn(h: tlsneg.HelloInfo) -> tlsneg.Chain {
     match g(chi_at(h, local, remote)) {
@@ -921,9 +921,9 @@ fn (c: TlsCert) with_signed_certificate_timestamps(scts: List[Bytes]) -> TlsCert
 /// ServerConfig's get_config_for_client as the engine's hook: the
 /// configuration it gives as the engine's, with its own get_certificate
 /// (its get_config_for_client is not called, as Go's).
-fn server_for_client(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? { server_for_client_at(cfg, c.local_addr(), c.remote_addr()) }
+fn server_for_client(cfg: tls.ServerConfig, c: ServerConn) -> (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str) uses sync)? { server_for_client_at(cfg, c.local_addr(), c.remote_addr()) }
 
-fn server_for_client_at(cfg: tls.ServerConfig, local: Str, remote: Str) -> (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str))? {
+fn server_for_client_at(cfg: tls.ServerConfig, local: Str, remote: Str) -> (fn(tlsneg.HelloInfo) -> (tls13srv.Conf?, Str) uses sync)? {
   let f = cfg.get_config_for_client ?? return None
   Some(fn(h: tlsneg.HelloInfo) -> (tls13srv.Conf?, Str) {
     match f(chi_at(h, local, remote)) {

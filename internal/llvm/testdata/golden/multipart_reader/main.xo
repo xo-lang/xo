@@ -6,9 +6,9 @@ use std/multipart
 
 const BODY: Str = "preamble\r\n--XB\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHello there\r\n--XB\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"dir/a.txt\"\r\nContent-Type: text/plain\r\nX-Tag: one\r\nX-Tag: two\r\n\r\nline1\nline2\r\n--XB\r\nContent-Disposition: form-data; name=\"q\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\ncaf=C3=A9 =\r\nsoft\r\n--XB--\r\nepilogue"
 
-fn source(body: Bytes, n: Int, fail: Str) -> fn() -> Bytes? ! Str {
+fn source(body: Bytes, n: Int, fail: Str) -> fn() -> Bytes? ! Str uses sync {
   let at = Atomic[Int].new(0)
-  fn() -> Bytes? ! Str {
+  fn() -> Bytes? ! Str uses sync {
     let i = at.add(n) - n
     if i >= body.len() {
       if !fail.is_empty() {

@@ -68,10 +68,10 @@ struct Pool[fx: Effects] {
   /// Nanoseconds; 0 for none.
   max_lifetime: Int
   /// open's on_notice: each new connection is a Noticed then.
-  on_notice: (fn(sql.Notice))? = None
+  on_notice: (fn(sql.Notice) uses sync)? = None
   /// open's on_trace (decision 0648 item 16): each new connection is a
   /// Traced then, and take and give report Connect, Acquire and Release.
-  on_trace: (fn(sql.TraceRecord))? = None
+  on_trace: (fn(sql.TraceRecord) uses sync)? = None
   max_open: Int = 0
   n: Mutex[Counts]
 }
@@ -102,7 +102,7 @@ struct Started {
 fn started() -> Started { Started{wall: sysio.real_ns(), at: pool_now()} }
 
 /// The record of an operation that began at s, given to h.
-fn emit(h: fn(sql.TraceRecord), s: Started, op: sql.TraceOp, query: Str, args: List[sql.SqlValue], n: Int, err: sql.SqlErr?) {
+fn emit(h: fn(sql.TraceRecord) uses sync, s: Started, op: sql.TraceOp, query: Str, args: List[sql.SqlValue], n: Int, err: sql.SqlErr?) {
   h(sql.TraceRecord{op: op, query: query, args: args, rows_affected: n, err: err, start_ns: s.wall, elapsed: Duration.from_nanos((pool_now() - s.at).max(0))})
 }
 
@@ -360,7 +360,7 @@ fn noticed[fx: Effects](p: Pool[fx], c: sql.DriverConn[fx]) -> sql.DriverConn[fx
 /// (pgconn calls OnNotice as it reads each NoticeResponse).
 struct Noticed[fx: Effects] {
   c: sql.DriverConn[fx]
-  h: fn(sql.Notice)
+  h: fn(sql.Notice) uses sync
 }
 
 fn (n: Noticed) drain() {
@@ -406,7 +406,7 @@ fn (n: Noticed) ping() -> () ! sql.SqlErr uses net.dial {
   r
 }
 
-fn (n: Noticed) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+fn (n: Noticed) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   let r = n.c.copy_from(table, columns, rows)
   n.drain()
   r
@@ -454,7 +454,7 @@ fn traced[fx: Effects](p: Pool[fx], c: sql.DriverConn[fx]) -> sql.DriverConn[fx]
 /// QueryTracer, BatchTracer, CopyFromTracer and PrepareTracer).
 struct Traced[fx: Effects] {
   c: sql.DriverConn[fx]
-  h: fn(sql.TraceRecord)
+  h: fn(sql.TraceRecord) uses sync
 }
 
 fn (t: Traced[fx]) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows[fx] ! sql.SqlErr uses (net.dial, fx) {
@@ -505,7 +505,7 @@ fn (t: Traced) rollback() -> () ! sql.SqlErr uses net.dial {
 
 fn (t: Traced) ping() -> () ! sql.SqlErr uses net.dial { t.c.ping() }
 
-fn (t: Traced) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+fn (t: Traced) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   let s = started()
   let r = t.c.copy_from(table, columns, rows)
   emit(t.h, s, sql.TraceOp.CopyFrom, table, [], r.ok() ?? 0, r.err())
@@ -573,7 +573,7 @@ fn (t: Traced) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> Lis
 /// A prepared statement whose runs are Query and Exec records of its text.
 struct TracedStmt[fx: Effects] {
   s: sql.DriverStmt[fx]
-  h: fn(sql.TraceRecord)
+  h: fn(sql.TraceRecord) uses sync
   q: Str
 }
 
@@ -610,7 +610,7 @@ fn (t: TracedStmt[fx]) close() uses (net.dial, fx) {
 /// the rows read.
 struct TracedCursor[fx: Effects] {
   c: sql.DriverCursor[fx]
-  h: fn(sql.TraceRecord)
+  h: fn(sql.TraceRecord) uses sync
   s: Started
   q: Str
   args: List[sql.SqlValue]
@@ -655,7 +655,7 @@ fn (t: TracedCursor[fx]) close() uses (net.dial, fx) {
   t.end(None)
 }
 
-fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(sql.Notice))? = None, on_trace: (fn(sql.TraceRecord))? = None) -> Db ! sql.SqlErr uses net.dial {
+fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, on_notice: (fn(sql.Notice) uses sync)? = None, on_trace: (fn(sql.TraceRecord) uses sync)? = None) -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
@@ -765,7 +765,7 @@ fn memory(schema: Str = "") -> Db ! sql.SqlErr {
   new_db(tables)
 }
 
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(sql.Notice))? = None, on_trace: (fn(sql.TraceRecord))? = None) -> Db ! sql.SqlErr uses net.dial {
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"", loc: time.Zone = time.utc(), server_pub_key: Bytes = b"", on_notice: (fn(sql.Notice) uses sync)? = None, on_trace: (fn(sql.TraceRecord) uses sync)? = None) -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
@@ -1232,7 +1232,7 @@ fn copy_insert_sql(table: Str, columns: List[Str]) -> Str {
   "INSERT INTO ${table} (${columns.join(", ")}) VALUES (${ph.join(", ")})"
 }
 
-fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   d.ready()?
   if let Some(p) = d.pool {
     let t = p.take()?
@@ -1243,7 +1243,7 @@ fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlV
   mem_copy(fn(q, args) { d.exec(q, args) }, table, columns, rows)
 }
 
-fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
@@ -1261,7 +1261,7 @@ fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlV
 /// COPY on the in memory database: an INSERT per row. The rows copied
 /// before an error from rows stay, as the in memory driver has no COPY to
 /// roll back (use a transaction).
-fn mem_copy[fx: Effects](ins: fn(Str, List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses fx, table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses fx {
+fn mem_copy[fx: Effects](ins: fn(Str, List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses fx, table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses fx {
   let q = copy_insert_sql(table, columns)
   var n = 0
   while {
@@ -1341,7 +1341,7 @@ fn (r: Rows) close() uses net.dial {
   })
 }
 
-fn rows_each(rs: Rows, f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
+fn rows_each(rs: Rows, f: fn(Row) -> () ! sql.SqlErr uses sync) -> () ! sql.SqlErr uses net.dial {
   while true {
     match rs.next() {
       Ok(o) => {
@@ -1366,11 +1366,11 @@ fn rows_each(rs: Rows, f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses ne
   }
 }
 
-fn (d: Db) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
+fn (d: Db) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr uses sync) -> () ! sql.SqlErr uses net.dial {
   rows_each(d.rows(q, args)?, f)
 }
 
-fn (t: Tx) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
+fn (t: Tx) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr uses sync) -> () ! sql.SqlErr uses net.dial {
   rows_each(t.rows(q, args)?, f)
 }
 
@@ -1906,11 +1906,11 @@ fn (c: Conn) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr us
   }
 }
 
-fn (c: Conn) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
+fn (c: Conn) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr uses sync) -> () ! sql.SqlErr uses net.dial {
   rows_each(c.rows(q, args)?, f)
 }
 
-fn (c: Conn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+fn (c: Conn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial {
   match c.on()? {
     Some(t) => t.copy_from(table, columns, rows)
     None => c.db.copy_from(table, columns, rows)

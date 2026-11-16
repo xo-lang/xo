@@ -124,14 +124,14 @@ struct ClientConfig {
   /// leaf first) and the chains that verified them ([] with
   /// Verify.None), after the normal verification; an Err fails the
   /// handshake with its text
-  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)? = None
+  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str uses sync)? = None
   /// Go's VerifyConnection: the state so far (handshake_complete false)
   /// after verify_peer_certificate; an Err fails the handshake
-  verify_connection: (fn(ConnState) -> () ! Str)? = None
+  verify_connection: (fn(ConnState) -> () ! Str uses sync)? = None
   /// Go's GetClientCertificate: asked when the server requests a
   /// certificate, in place of certificates; None sends none, and an Err
   /// fails the handshake with its text
-  get_client_certificate: (fn(CertificateRequestInfo) -> TlsCert? ! Str)? = None
+  get_client_certificate: (fn(CertificateRequestInfo) -> TlsCert? ! Str uses sync)? = None
   /// as client's (decision 0644 T7)
   min_version: Int = 0
   max_version: Int = 0
@@ -143,7 +143,7 @@ struct ClientConfig {
   /// the connection; it compromises the connection's security, so use
   /// it only to debug. An Err fails the handshake. It runs on the
   /// connection's task, so calls from several connections can overlap.
-  key_log: (fn(Str) -> () ! Str)? = None
+  key_log: (fn(Str) -> () ! Str uses sync)? = None
   /// Go's ClientSessionCache (decision 0644 T3): sessions to resume,
   /// keyed by server_name (else the server's address); None resumes
   /// none
@@ -372,21 +372,21 @@ struct ServerConfig {
   /// leaf first; [] when it sent none) and the chains that verified
   /// them, when client_auth asks for one; an Err fails the handshake
   /// (decision 0644 T6)
-  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str)? = None
+  verify_peer_certificate: (fn(List[Bytes], List[List[x509.Certificate]]) -> () ! Str uses sync)? = None
   /// Go's VerifyConnection: the state so far (handshake_complete false)
   /// on every handshake, resumptions too; an Err fails it
-  verify_connection: (fn(ConnState) -> () ! Str)? = None
+  verify_connection: (fn(ConnState) -> () ! Str uses sync)? = None
   /// Go's GetCertificate: the certificate for a ClientHello (called
   /// when certificates is empty or the client sent a server name); None
   /// falls back to certificates, and an Err fails the handshake with its
   /// text (decision 0644 T5)
-  get_certificate: (fn(ClientHelloInfo) -> TlsCert? ! Str)? = None
+  get_certificate: (fn(ClientHelloInfo) -> TlsCert? ! Str uses sync)? = None
   /// Go's GetConfigForClient: the settings for the rest of a handshake
   /// from its ClientHello (their own get_config_for_client is not
   /// called); None keeps these, and an Err fails the handshake
-  get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str)? = None
+  get_config_for_client: (fn(ClientHelloInfo) -> ServerConfig? ! Str uses sync)? = None
   /// as ClientConfig's (Go's KeyLogWriter, decision 0644 T8)
-  key_log: (fn(Str) -> () ! Str)? = None
+  key_log: (fn(Str) -> () ! Str uses sync)? = None
   /// Go's SessionTicketsDisabled: no session tickets, so no client
   /// resumes (decision 0644 T4)
   session_tickets_disabled: Bool = false

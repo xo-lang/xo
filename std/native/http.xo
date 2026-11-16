@@ -75,7 +75,7 @@ struct Request {
   /// with_body_reader's source of the body sent as it is read (decision
   /// 0404 stage C), its pieces as the server's BodyPart (data the raw
   /// bytes, never shown as text). Hidden from Xo code.
-  src: List[fn(Int) -> http1.BodyPart] = []
+  src: List[fn(Int) -> http1.BodyPart uses sync] = []
   /// with_expect_continue's wait in nanoseconds, 0 for none. Hidden.
   expect_ns: Int = 0
   /// with_host's Host (Go's Request.Host), "" for the URL's. Hidden.
@@ -236,7 +236,7 @@ struct BodyReader {
   /// closes the source's reading end (http.pipe's) for a client done with
   /// a request that sends this body (with_body_reader); set when made and
   /// read without st, which a read waiting on the source holds
-  close: List[fn() -> ()] = []
+  close: List[fn() -> () uses sync] = []
   /// the request has no body (HTTP/1.1 with neither Content-Length nor
   /// chunked, or Content-Length 0: net/http's ContentLength 0), so a
   /// reverse proxy sends it on with none (httputil's outreq.Body = nil),
@@ -251,8 +251,8 @@ struct BodyReader {
 /// after the handler (finish: HTTP/1.1's discard; none: HTTP/2's reset
 /// is h2srv's); a read's error, which sticks; the end seen.
 struct BodyState {
-  next: List[fn(Int) -> http1.BodyPart]
-  finish: List[fn() -> ()]
+  next: List[fn(Int) -> http1.BodyPart uses sync]
+  finish: List[fn() -> () uses sync]
   data: Bytes
   pos: Int
   err: Str
@@ -291,7 +291,7 @@ fn declared_trailers(trailer: Str) -> List[Str] {
 
 /// A request's body read from its connection by next, finish run after
 /// its handler.
-fn conn_body(next: fn(Int) -> http1.BodyPart, finish: List[fn() -> ()], declared: List[Str]) -> BodyReader {
+fn conn_body(next: fn(Int) -> http1.BodyPart uses sync, finish: List[fn() -> () uses sync], declared: List[Str]) -> BodyReader {
   BodyReader{st: Mutex[BodyState].new(BodyState{next: [next], finish: finish, data: b"", pos: 0, err: "", end: false, declared: declared})}
 }
 
@@ -561,7 +561,7 @@ fn (b: BodyReader) read_all() -> Bytes ! IoErr {
 
 /// A multipart body read part by part (decision 0310 phase 3).
 struct PartReader {
-  st: Mutex[multipart.Reader[()]]
+  st: Mutex[multipart.Reader[sync]]
 }
 
 /// A part of a PartReader; fields: every header field as [name, value,
@@ -604,7 +604,7 @@ fn (b: BodyReader) multipart(req: Request) -> PartReader ! multipart.MultipartEr
       Err(e) => Err(io_err_text(e))
     }
   }
-  Ok(PartReader{st: Mutex[multipart.Reader[()]].new(multipart.reader(src, boundary))})
+  Ok(PartReader{st: Mutex[multipart.Reader[sync]].new(multipart.reader(src, boundary))})
 }
 
 /// The text of a body read's error, as Go's error from the body.
@@ -618,7 +618,7 @@ fn io_err_text(e: IoErr) -> Str {
 
 fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr {
   // the outcome as the closure's value, as BodyReader.read's
-  let h = p.st.with(fn(var s: multipart.Reader[()]) -> Result[multipart.PartHead?, multipart.MultipartErr] { s.next_part() })
+  let h = p.st.with(fn(var s: multipart.Reader[sync]) -> Result[multipart.PartHead?, multipart.MultipartErr] { s.next_part() })
   match h {
     Ok(Some(h)) => Ok(Some(StreamPart{name: h.name, filename: h.filename, headers: h.headers, head: Some(h)}))
     Ok(None) => Ok(None)
@@ -630,7 +630,7 @@ fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr {
   if max < 1 {
     fault("PartReader.read: max must be at least 1, got ${max}")
   }
-  p.st.with(fn(var s: multipart.Reader[()]) -> Result[Bytes?, multipart.MultipartErr] { s.read(max) })?
+  p.st.with(fn(var s: multipart.Reader[sync]) -> Result[Bytes?, multipart.MultipartErr] { s.read(max) })?
 }
 
 fn (p: StreamPart) header_values(name: Str) -> List[Str] {
@@ -3633,7 +3633,7 @@ fn (c: Client) with_server_name(name: Str) -> Client {
   c with {roots: tlsio.roots_with_tls(c.roots, name, None)}
 }
 
-fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Client {
+fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str uses sync) -> Client {
   c with {roots: tlsio.roots_with_tls(c.roots, "", Some(ntls.vconn_wrap(f)))}
 }
 
@@ -4058,7 +4058,7 @@ struct StreamState {
   dsrv: rthttp.Srv? = None
   /// the request body's source (Request.src), closed with dsrv's close
   /// (close_src)
-  src_close: List[fn(Int) -> http1.BodyPart] = []
+  src_close: List[fn(Int) -> http1.BodyPart uses sync] = []
   /// a task other than the stream's reader may write on conn (the
   /// reverse proxy's tunnel after a 101): its end closes only the
   /// descriptor, like a full duplex sender's (end_conn)
@@ -4072,7 +4072,7 @@ struct StreamState {
 /// body in memory is sent as a source; names are the declared ones.
 struct TrailerArgs {
   body: Bytes
-  src: List[fn(Int) -> http1.BodyPart]
+  src: List[fn(Int) -> http1.BodyPart uses sync]
   names: Str
   fns: List[fn() -> List[Str]]
 }
@@ -4114,7 +4114,7 @@ struct PolledBody {
 /// A source over f that never blocks, for HTTP/2's pump: the first call
 /// spawns (spawn) a task pulling f into a queue, each call takes the next
 /// queued piece or answers wait. The blocking f stays src[0] for HTTP/1.1.
-fn poll_source(f: fn(Int) -> http1.BodyPart, spawn: fn(fn() -> ())) -> fn(Int) -> http1.BodyPart {
+fn poll_source(f: fn(Int) -> http1.BodyPart uses sync, spawn: fn(fn() -> () uses sync) uses sync) -> fn(Int) -> http1.BodyPart uses sync {
   let q = Mutex[PolledBody].new(PolledBody{})
   fn(max: Int) -> http1.BodyPart {
     // one with: whether this call starts the feeder, and the next piece
@@ -4175,12 +4175,12 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   // a streamed request body is sent from a task, so the response head
   // may come before the body ends (full duplex, decision 0433)
   var dsrv: rthttp.Srv? = None
-  var duplex: List[fn(fn() -> ())] = []
+  var duplex: List[fn(fn() -> () uses sync) uses sync] = []
   if !req.src.is_empty() {
     let ds = hserve.srv_new()
     let g = hserve.srv_group(ds)
     dsrv = Some(ds)
-    duplex = [fn(f: fn() -> ()) { g.spawn_background(f) }]
+    duplex = [fn(f: fn() -> () uses sync) uses sync { g.spawn_background(f) }]
   }
   let ta = trailer_args(req)
   let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0])] }
@@ -4351,7 +4351,7 @@ fn end_conn(x: StreamState, r: rthttp.CResp, keep: Bool, s: Int) {
 /// Closes a request body's source (with_body_reader's, called with a
 /// negative max; the source a read waits on is not locked for it): the
 /// client is done with the request.
-fn close_src(fs: List[fn(Int) -> http1.BodyPart]) {
+fn close_src(fs: List[fn(Int) -> http1.BodyPart uses sync]) {
   for f in fs {
     let _p = f(-1)
   }
@@ -5862,14 +5862,14 @@ fn joining_slash(a: Str, b: Str) -> Str {
 struct ReverseProxy {
   c: Client
   target: http.Url
-  rewrite: List[fn(http.Request, http.Request) -> http.Request]
+  rewrite: List[fn(http.Request, http.Request) -> http.Request uses sync]
 }
 
 pub fn reverse_proxy(client: http.Client, target: http.Url) -> http.ReverseProxy {
   rt.cast[ReverseProxy, http.ReverseProxy](ReverseProxy{c: rt.cast[http.Client, Client](client).with_redirects(0), target: target, rewrite: []})
 }
 
-fn (p: ReverseProxy) with_rewrite(f: fn(http.Request, http.Request) -> http.Request) -> http.ReverseProxy {
+fn (p: ReverseProxy) with_rewrite(f: fn(http.Request, http.Request) -> http.Request uses sync) -> http.ReverseProxy {
   rt.cast[ReverseProxy, http.ReverseProxy](p with {rewrite: [f]})
 }
 

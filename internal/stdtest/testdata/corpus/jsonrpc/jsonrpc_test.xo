@@ -879,8 +879,8 @@ test "encode_batch, decode_value, ids and Request.is_call" {
   expect(jsonrpc.RpcError{code: -32000, message: "boom"}.display()) == "boom"
 }
 
-fn pipe_conn(out: Chan[Str], cancel: jsonrpc.Cancel? = None) -> jsonrpc.Conn[()] {
-  jsonrpc.conn(fn(t: Str) -> () ! IoErr {
+fn pipe_conn(out: Chan[Str], cancel: jsonrpc.Cancel? = None) -> jsonrpc.Conn[sync] {
+  jsonrpc.conn(fn(t: Str) -> () ! IoErr uses sync {
     out.send(t)
     Ok(())
   }, cancel: cancel)
@@ -899,8 +899,8 @@ test "Conn: calls both ways, at the same time, with the peer's errors" {
   let got = scope s {
     let a = pipe_conn(ab)
     let b = pipe_conn(ba)
-    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
-    b.serve(s.group(), fn() -> Str? ! IoErr { Ok(ab.recv()) }, handle)
+    a.serve(s.group(), fn() -> Str? ! IoErr uses sync { Ok(ba.recv()) }, handle)
+    b.serve(s.group(), fn() -> Str? ! IoErr uses sync { Ok(ab.recv()) }, handle)
     let t1 = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("subtract", Some(json.Value.List([json.Value.Int(42), json.Value.Int(23)]))) })
     let t2 = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { b.call("get_data") })
     let t3 = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("nope") })
@@ -918,7 +918,7 @@ test "Conn: the end of the read side ends the calls waiting, and later ones" {
   let ba = Chan[Str].new(cap: 16)
   let got = scope s {
     let a = pipe_conn(ab)
-    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    a.serve(s.group(), fn() -> Str? ! IoErr uses sync { Ok(ba.recv()) }, handle)
     let t = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("subtract") })
     let sent = ab.recv() ?? ""
     ba.close()
@@ -944,7 +944,7 @@ test "Conn: a batch and invalid text from the peer are answered" {
   let ba = Chan[Str].new(cap: 16)
   let got = scope s {
     let a = pipe_conn(ab)
-    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    a.serve(s.group(), fn() -> Str? ! IoErr uses sync { Ok(ba.recv()) }, handle)
     ba.send("[{\"jsonrpc\":\"2.0\",\"method\":\"sum\",\"params\":[1,2],\"id\":7},{\"jsonrpc\":\"2.0\",\"method\":\"notify_x\"}]")
     ba.send("{oops")
     let out = [ab.recv() ?? "", ab.recv() ?? ""]
@@ -959,14 +959,14 @@ test "Conn: the peer's cancel notification cancels the call's task (LSP answers 
     let ab = Chan[Str].new(cap: 16)
     let ba = Chan[Str].new(cap: 16)
     let a = pipe_conn(ab, cancel: Some(jsonrpc.lsp_cancel()))
-    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    a.serve(s.group(), fn() -> Str? ! IoErr uses sync { Ok(ba.recv()) }, handle)
     ba.send("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"slow\"}")
     ba.send("{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":9}}")
     let lsp = ab.recv() ?? ""
     let cd = Chan[Str].new(cap: 16)
     let dc = Chan[Str].new(cap: 16)
     let m = pipe_conn(cd, cancel: Some(jsonrpc.mcp_cancel()))
-    m.serve(s.group(), fn() -> Str? ! IoErr { Ok(dc.recv()) }, handle)
+    m.serve(s.group(), fn() -> Str? ! IoErr uses sync { Ok(dc.recv()) }, handle)
     dc.send("{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"method\":\"slow\"}")
     dc.send("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":\"x\"}}")
     dc.send("{\"jsonrpc\":\"2.0\",\"id\":\"y\",\"method\":\"sum\",\"params\":[2,2]}")
@@ -983,7 +983,7 @@ test "Conn: a call whose task is cancelled tells the peer and is dropped" {
   let ba = Chan[Str].new(cap: 16)
   let got = scope s {
     let a = pipe_conn(ab, cancel: Some(jsonrpc.mcp_cancel()))
-    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    a.serve(s.group(), fn() -> Str? ! IoErr uses sync { Ok(ba.recv()) }, handle)
     let sent = scope inner {
       let _t = inner.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("slow") })
       let req = ab.recv() ?? ""

@@ -54,19 +54,10 @@ test "binary gcd, short division and shifts" {
 }
 
 test "generate: a key of the asked size from a byte source" {
-  // xorshift-free counter source: bytes of an LCG, so the test is the same on every backend
-  let state = Mutex[Int].new(12345)
-  let src = fn(n: Int) -> Bytes uses rand {
-    var out = BytesBuilder.new()
-    for _ in 0..n {
-      let v = state.with(fn(var s: Int) -> Int {
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
-        s.shr_logical(33) & 255
-      })
-      out.write_byte(UInt8(v))
-    }
-    out.freeze()
-  }
+  // the test world's rand is seeded (std.md: tests are reproducible),
+  // so the key is the same on every run; a counter behind a Mutex would
+  // perform sync, which the byte source may not (decision 0662)
+  let src = fn(n: Int) -> Bytes uses rand { os.rand.bytes(n) }
   let k = generate(1024, src) ?? fault("no key")
   expect(k.n.len()) == 128
   expect(k.e) == 65537
