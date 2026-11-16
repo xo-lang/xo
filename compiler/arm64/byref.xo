@@ -448,6 +448,14 @@ fn (var g: G) plan_sret_lazy(calls: List[Int]) {
           if root.get(w) == Some(r) {
             continue // a field or payload of it: its own uses decide
           }
+          if a == r && g.sret_tuple(r) {
+            // a tuple result read in place is read by its fields alone:
+            // sret_set gives the call zero words for the result (a `ret`
+            // of the whole tuple returned them, Lang 2's remove_at of a
+            // 65 word element on 2026-11-16), as plan_sret_slots refuses
+            bad[r] = true
+            continue
+          }
           let (b0, i0, stop) = at.get(r) ?? (-1, 0, 0)
           if bi != b0 || i <= i0 || i >= stop {
             bad[r] = true

@@ -1,0 +1,22 @@
+// An sret call returning a tuple (a result and a `var` parameter) read
+// in place (plan_sret_lazy) and returned whole: the out of line
+// xo.list.remove_at of a 65 word element took its slow path at the last
+// element and returned zero words (2026-11-16).
+struct Inner { a: Str? = None, f0: Str = "", f1: Str = "", f2: Str = "", f3: Str = "", f4: Str = "", f5: Str = "", f6: Str = "", f7: Str = "", f8: Str = "", f9: Str = "", f10: Str = "", f11: Str = "", f12: Str = "", f13: Str = "", f14: Str = "", f15: Str = "", f16: Str = "", f17: Str = "", f18: Str = "", f19: Str = "", f20: Str = "", f21: Str = "", f22: Str = "", f23: Str = "", f24: Str = "", f25: Str = "", f26: Str = "", f27: Str = "", f28: Str = "", f29: Str = "" }
+struct M { seq: Int, inner: Inner = Inner{}, n: Int = 0 }
+fn other(var l: List[M]) -> M {
+  l.remove_at(0)
+}
+fn main(os: Os) uses stdio, env {
+  var l: List[M] = []
+  for i in 0..4 { l.push(M{seq: i, inner: Inner{a: Some("x${i}")}}) }
+  var sum = 0
+  if os.env.args().len() > 7 {
+    sum += other(l).seq
+  }
+  for _ in 0..4 {
+    let m = l.remove_at(0)
+    sum += m.seq
+  }
+  os.stdio.println("${sum}")
+}
