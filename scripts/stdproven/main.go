@@ -120,6 +120,7 @@ var harnesses = map[string][]harness{
 	"big":          {{"TestBigFuzz", "XO_BIGFUZZ"}},
 	"image":        {{"TestImageFuzz", "XO_IMAGEFUZZ"}},
 	"brotli":       {{"TestBrotliFuzz", "XO_BROTLIFUZZ"}},
+	"cbor":         {{"TestCborFuzz", "XO_CBORFUZZ"}},
 	"charset":      {{"TestCharsetFuzz", "XO_CHARSETFUZZ"}},
 	"htmlparse":    {{"TestHtmlparseFuzz", "XO_HTMLPARSEFUZZ"}},
 	"htmltok":      {{"TestHtmltokFuzz", "XO_HTMLTOKFUZZ"}},
