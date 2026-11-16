@@ -146,6 +146,7 @@ var generators = map[string]func() string{
 	"pkcs12":       pkcs12Corpus,
 	"amqp":         amqpCorpus,
 	"toml":         tomlCorpus,
+	"sqlite":       sqliteCorpus,
 	"grpc":         grpcCorpus,
 	"otlp":         otlpCorpus,
 	"timego":       timegoCorpus,

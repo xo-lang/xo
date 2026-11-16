@@ -100,6 +100,12 @@ func corporaBackends() []string {
 	return bs
 }
 
+// nativeOnlyCorpora are the corpora whose module calls C, which the Go
+// backend refuses (XO1201): the reason each skips there.
+var nativeOnlyCorpora = map[string]string{
+	"sqlite": "std/sqlite calls SQLite's C code, which the Go backend refuses (XO1201)",
+}
+
 // jobs is how many xo test processes run at once.
 func jobs() int {
 	if v, err := strconv.Atoi(os.Getenv("XO_STDTEST_JOBS")); err == nil && v > 0 {
@@ -193,6 +199,9 @@ func TestStdCorpora(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Run(b+"/"+filepath.Base(d), func(t *testing.T) {
+				if why, ok := nativeOnlyCorpora[filepath.Base(d)]; ok && b == "go" {
+					t.Skip(why)
+				}
 				t.Parallel()
 				sem <- struct{}{}
 				defer func() { <-sem }()

@@ -1,5 +1,20 @@
 # std/sqlite changes
 
+## 2026-11-16: test: a differential corpus against mattn/go-sqlite3, and the timing row
+
+- Kind: test
+- Commit: this push
+- Found by: task #109 (features to Proven), the SQLite driver row's remaining items
+- Go reference: github.com/mattn/go-sqlite3 v1.14.53 (MIT), the same SQLite 3.54.1 amalgamation
+- Test: internal/stdtest/testdata/corpus/sqlite (scripts/stdcorpus/sqliteoracle: 180 cases, 30 for the
+  spec's mappings and 150 seeded tables of mixed storage classes and declared affinities, each run by
+  mattn through database/sql on an in-memory database: rows with their storage classes and float bits,
+  exec counts and last insert ids, and errors as std/sql's variants); TestStdCorpora sqlite on arm64 and
+  LLVM (the Go backend refuses `use c`, XO1201); every case matched on the first run
+- Timing: std/evidence/sqlite/perf.md, linux/arm64 host 1, 9 rounds: insert 0.869, point 0.801, scan 0.694
+  of mattn's time
+- Shipped in: not yet released
+
 ## 2026-11-10: feature: freebsd/arm64 and freebsd/amd64
 
 - Kind: feature
