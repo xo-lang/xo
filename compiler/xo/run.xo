@@ -3,51 +3,64 @@
 // directory (or after `--`) on xo1's own standard streams; xo1 exits with
 // its status (128 plus the signal number for a program a signal ended).
 
-use std/task
 use github.com/xo-lang/xo/compiler/check
 
 /// execBinary: runs bin with args and the extra environment (NAME=value
 /// words) on this process's standard input, output, and error; its exit
-/// status. A stop request xo gets (SIGINT or SIGTERM, core 7.5) is sent
-/// on to the program as SIGTERM when standard input is not a terminal (a
-/// process manager, an IDE, a script signals xo's pid alone; 0.25.2 sent
-/// nothing on, a field report); on a terminal, Ctrl-C reaches the
-/// program through the process group already, and sending it on would
-/// be a second signal, which skips the program's grace (core 7.5).
+/// status. The signals that end xo while it waits are sent on to the
+/// program, so a program never outlives the `xo run` that started it
+/// (task #155: a looping program ran 13 h with PPID 1 after its `xo run`
+/// was signalled): SIGHUP as SIGHUP and SIGTERM as SIGTERM always, and
+/// SIGINT as SIGTERM when standard input is not a terminal (a process
+/// manager, an IDE, a script signals xo's pid alone; 0.25.2 sent nothing
+/// on, a field report). On a terminal Ctrl-C reaches the program through
+/// the process group already, and sending it on would be a second
+/// signal, which skips the program's grace (core 7.5). SIGALRM (perl's
+/// alarm) still ends xo alone: Signal has no Alarm to subscribe to
+/// (gotchas/alarm-xo-run-orphans-program.md).
 fn exec_binary(os: Os, bin: Str, args: List[Str], env: List[Str]) -> Int {
   var cmd = os.proc.cmd(bin, args).inherit()
   for kv in env {
     let parts = kv.split("=")
     cmd = cmd.set_env(parts[0], parts[1..parts.len()].join("="))
   }
-  if os.stdio.stdin_is_tty() {
-    return match cmd.run() {
-      Ok(code) => code
-      Err(e) => {
-        os.stdio.eprintln("xo: ${e}")
-        1
-      }
-    }
-  }
+  let tty = os.stdio.stdin_is_tty()
+  // subscribed before the program starts: a signal in between is held
+  let sigs = os.proc.notify([Signal.Hangup, Signal.Interrupt, Signal.Terminate])
   let child = match cmd.spawn() {
     Ok(ch) => ch
     Err(e) => {
+      os.proc.stop_notify(sigs)
       os.stdio.eprintln("xo: ${e}")
       return 1
     }
   }
   let pid = child.pid()
   let _fwd = os.tasks.spawn_background(fn() {
-    let _ = task.stopping().recv()
-    os.proc.kill(pid, "TERM").ignore_err("it may have exited already")
+    while true {
+      let sig = match sigs.recv() {
+        Some(s) => s
+        None => break
+      }
+      let name = match sig {
+        Signal.Hangup => "HUP"
+        Signal.Interrupt => if tty { "" } else { "TERM" }
+        _ => "TERM"
+      }
+      if !name.is_empty() {
+        os.proc.kill(pid, name).ignore_err("it may have exited already")
+      }
+    }
   })
-  match child.wait() {
+  let code = match child.wait() {
     Ok(code) => code
     Err(e) => {
       os.stdio.eprintln("xo: ${e}")
       1
     }
   }
+  os.proc.stop_notify(sigs)
+  code
 }
 
 /// `xo build --profile=P` (main.xo): runs this xo again on args with

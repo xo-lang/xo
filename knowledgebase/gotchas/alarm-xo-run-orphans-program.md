@@ -70,3 +70,20 @@ forward, or a parent-death watch in the native runtime when `xo run` sets
 an XO_* variable naming its PID: kqueue NOTE_EXIT on darwin, prctl
 PR_SET_PDEATHSIG on Linux), then (2) after the next seed, xo run uses it.
 Until then use the Fix above (build, then time the binary itself).
+
+## Fixed in part (2026-11-16, task #155)
+
+Status: Observed (SIGHUP fixed; SIGALRM and SIGKILL open)
+
+`xo run` (compiler/xo/run.xo exec_binary) subscribes to Hangup,
+Interrupt and Terminate (`os.proc.notify`, decision 0407, which the seed
+has) before it starts the program, and sends each on: SIGHUP as SIGHUP,
+SIGTERM as SIGTERM, SIGINT as SIGTERM when standard input is not a
+terminal (on a terminal Ctrl-C reaches the program through the process
+group). Test: cmd/xo TestRunSignalEndsProgram (SIGHUP to `xo run`; the
+program was left running before). SIGALRM (perl's alarm) and SIGKILL
+still end `xo run` alone: the next step is the parent-death watch above,
+a native runtime and std/rt change that `xo run` turns on with an
+environment variable (no newer std API in compiler/). Until it lands,
+time the built binary itself, as in the first Fix.
+
