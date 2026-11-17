@@ -3043,9 +3043,11 @@ when given a pure one. The parameter is covariant (decision 0582): a
 the argument takes it from the value passed (6.2): a function `fn f(r:
 Rand)` performs what its caller's value performs, `rand` for `os.rand`
 and nothing for a `Rand[()]`, and a closure inside it may perform it
-without naming it in its `uses`. A struct field of type `Rand` gives the
-struct an implicit effect parameter; a field that holds the OS generator
-is written `Rand[rand]`. Clock, Env, Fs, Net, Stdio and Proc follow in
+without naming it in its `uses`. A struct field or enum variant field of
+type `Rand` written without the argument is a `Rand[rand]`, as `Os`'s own
+field (decision 0690): it holds `os.rand` or any pure source; a
+struct whose field should carry its value's effect names a parameter
+(`struct C[fx: Effects] { r: Rand[fx] }`). Clock, Env, Fs, Net, Stdio and Proc follow in
 later steps (decision 0652).
 
 `os.fs` is rooted at the filesystem root and accepts absolute paths

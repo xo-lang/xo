@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+os true
+seeded true
+enum true -1
+--- stderr

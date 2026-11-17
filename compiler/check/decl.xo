@@ -18,6 +18,9 @@ struct TypeEnv {
   arg_param: Int = -1
   /// Collect the effect parameters of left out effect arguments.
   elided: Bool = false
+  /// A type declaration's fields and variants are being resolved: a
+  /// capability written without its effect argument is the OS's (#161).
+  type_decl: Bool = false
   elided_list: List[Int] = []
 }
 
@@ -31,6 +34,7 @@ fn (c: Checker) env_with(e: TypeEnv, ps: List[Int]) -> TypeEnv {
   n.implicit_list = []
   n.elided = false
   n.elided_list = []
+  n.type_decl = false
   n
 }
 
@@ -200,6 +204,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
   c.set_file(f)
   var env = c.env_with(TypeEnv{file: f, mod: c.objs[t].module}, c.objs[t].tparams)
   env.elided = true
+  env.type_decl = true
   // a std type's tree, when its record left the file unparsed
   c.need_tree(t)
   let d = c.top_decl(f, c.objs[t].decl_idx) ?? fault("internal: type ${text(c.objs[t].name)}'s tree is not parsed (${c.files[f].path})")
@@ -858,6 +863,7 @@ fn (var c: Checker) alias_expr_type(t: Int) -> Int {
   c.set_file(f)
   var env = c.env_with(TypeEnv{file: f, mod: c.objs[t].module}, c.objs[t].tparams)
   env.elided = true
+  env.type_decl = true
   var r = c.bad_ty
   if let TypeDecl(d: td) = d {
     if let Some(x) = td.typ {
@@ -1510,6 +1516,13 @@ fn (var c: Checker) resolve_args_for(obj: Int, wr: List[Type], var env: TypeEnv)
 /// The argument of effect parameter tp of obj left out: an implicit
 /// effect parameter of what is being declared, or an open effect set.
 fn (var c: Checker) elided_effect(obj: Int, tp: Int, var env: TypeEnv) -> Int {
+  // a capability in a struct field or enum variant (`rand: Rand`): the
+  // OS's own effect, as Os's field (`Rand[rand]`); an effect parameter
+  // there would be one no caller can name (#161, decision 0652)
+  let os_label = os_effect_of(c.objs[obj].name)
+  if env.type_decl && !os_label.is_empty() && c.objs[obj].module == c.prelude {
+    return c.effarg(c.new_eset([EffItem{label: os_label}]))
+  }
   if !env.implicit && !env.elided {
     return c.fresh_effarg()
   }
@@ -1523,6 +1536,18 @@ fn (var c: Checker) elided_effect(obj: Int, tp: Int, var env: TypeEnv) -> Int {
     env.elided_list.push(p)
   }
   c.effarg(c.new_eset([EffItem{param: p}]))
+}
+
+/// The effect of the OS's value of capability type name (the prelude Os
+/// field's effect argument), or "" for a type that is not one.
+fn os_effect_of(name: Bytes) -> Str {
+  if name == "Rand".bytes() {
+    return "rand"
+  }
+  if name == "Clock".bytes() {
+    return "clock"
+  }
+  ""
 }
 
 fn (var c: Checker) resolve_type_arg(a: Type, tp: Int, var env: TypeEnv) -> Int {

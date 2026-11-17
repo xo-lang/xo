@@ -1,0 +1,40 @@
+// A capability written without its effect argument in a struct field or
+// enum variant is the OS's (#161): `rand: Rand` is `Rand[rand]`, as Os's
+// own field. Before, the field took an effect parameter of the struct
+// that no caller could name, so `jitter`'s closure below (checked against
+// retry's `fn() -> Int uses rand`) was XO0701 "performs `Client.Rand.fx`" (the AWS SDK's clients, 2026-11-16).
+use std/random
+
+struct Client {
+  name: Str
+  rand: Rand
+}
+
+enum Source {
+  Os(r: Rand)
+  Off
+}
+
+/// Runs f, whose type allows only `rand` (as the SDK's retry loop takes
+/// its attempt).
+fn retry(f: fn() -> Int uses rand) -> Int uses rand { f() }
+
+fn jitter(c: Client) -> Int uses rand { retry(fn() { c.rand.int(0, 10) }) }
+
+fn pick(s: Source) -> Int uses rand {
+  match s {
+    Os(r) => r.int(0, 10)
+    Off => -1
+  }
+}
+
+fn main(os: Os) {
+  let c = Client{name: "s3", rand: os.rand}
+  let j = jitter(c)
+  os.stdio.println("os ${j >= 0 && j < 10}")
+  // a pure Rand still fits a Rand[rand] field
+  let s = Client{name: "seeded", rand: random.seeded("0123456789abcdef0123456789abcdef".bytes())}
+  let k = jitter(s)
+  os.stdio.println("seeded ${k >= 0 && k < 10}")
+  os.stdio.println("enum ${pick(Source.Os(r: os.rand)) >= 0} ${pick(Source.Off)}")
+}
