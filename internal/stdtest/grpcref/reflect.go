@@ -104,7 +104,9 @@ func reflectServe() {
 
 func fileNames(r *rpb.ServerReflectionResponse) string {
 	if e := r.GetErrorResponse(); e != nil {
-		return fmt.Sprintf("err code %d: %s", e.ErrorCode, e.ErrorMessage)
+		// protobuf-go writes the space after "proto:" as U+00A0 in some builds (internal/detrand, chosen from the
+		// binary's hash) so that callers do not match on its texts: printed as a plain space
+		return fmt.Sprintf("err code %d: %s", e.ErrorCode, strings.ReplaceAll(e.ErrorMessage, "\u00a0", " "))
 	}
 	var names []string
 	for _, b := range r.GetFileDescriptorResponse().GetFileDescriptorProto() {

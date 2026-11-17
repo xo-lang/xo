@@ -31,7 +31,8 @@ fn file_names(a: grpcreflect.Answer) -> Str {
       }
       "[${names.join(" ")}]"
     }
-    Error(code, msg) => "err code ${code}: ${msg}"
+    // a grpc-go server's protobuf-go texts have U+00A0 for the space after "proto:" in some builds (internal/detrand)
+    Error(code, msg) => "err code ${code}: ${msg.replace("\u{a0}", " ")}"
     ExtensionNumbers(_, _) => "extension numbers"
     Services(_) => "services"
   }
