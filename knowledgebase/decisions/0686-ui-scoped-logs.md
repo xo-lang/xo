@@ -283,6 +283,42 @@ The prototype is kept unpushed (worktree stdui-lease); it returns if a
 store's per append cost makes racing instances lose too often (S3 is the
 case to measure).
 
+## Leases on group commit (2026-11-16)
+
+The lease prototype rebuilt on group commit (the holder appends every
+sync queued behind the one in flight as one batch; an instance whose
+batch loses a race takes the lease) was measured on S3's API in
+localstack, 4 instances x 150 appends to one scope, three rounds,
+slowest instance: racing 3.07, 2.72 and 2.94 s; leased 2.13, 2.01 and
+1.92 s (about 30% less), every item kept once in all six runs
+(~/xo-lead/notes/stdui/s3store, lease-local2.log to lease-local4.log).
+Before group commit the same bench took 18.7 s racing. Localstack has
+no network round trip. Real S3 (ca-central-1, owner approved, 4 x 100
+appends, one run, lease-real4.log): racing 23.5 s, leased 20.9 s for the
+slowest instance, every item kept once; the first prototype was 32.9 s
+leased against 23.7 s racing. Each instance in this bench sends one sync
+at a time, so the instances finish in steps of about 5.3 s and group
+commit finds almost nothing to batch; the case leases are for (many
+concurrent clients per instance, as the Postgres hot room above) is the
+next measurement.
+
+That measurement (localstack, 2026-11-16, 4 instances x 160 appends, C
+clients per instance each sending its share one sync at a time,
+lease-localc1.log and lease-localc2.log), slowest instance:
+
+| C | racing (s) | leased (s) |
+|---|---|---|
+| 1 | 3.64 | 2.99 |
+| 8 | 1.74, 1.34, 1.59, 1.48, 2.80 | 1.06, 1.31, 1.44, 1.51, 2.41 |
+| 32 | 0.64, 0.68, 1.23 | 0.56, 0.56, 0.81 |
+
+Concurrent clients make group commit batch in both modes (8 clients
+halve the time of 1). Leases were faster in 7 of the 8 paired runs at 8
+and 32 clients and even in the eighth (medians 1.44 against 1.59 s at
+8, 0.56 against 0.68 s at 32), and every item was kept once in all 18
+runs. Leases ship on that basis as an option (`lease:` on `host_with`),
+off by default; real S3 with concurrent clients is still to measure.
+
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.

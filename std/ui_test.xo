@@ -1059,6 +1059,87 @@ test "a Host keeps at most max_scopes scopes, dropping the least recently used w
   expect(h.model(scope: Some("room:1")).todos.keys()) == ["a"]
 }
 
+// st, but its next `lose` appends to a scope's log are lost races (what
+// another instance writing at the same moment would cause).
+fn lossy(st: Store[sync], lose: Atomic[Int]) -> Store[sync] {
+  st with {append: fn(scope: Str, b: Batch) -> Bool ! Str uses sync {
+    if !scope.starts_with("~lease/") && lose.add(-1) >= 0 {
+      return Ok(false)
+    }
+    (st.append)(scope, b)
+  }}
+}
+
+test "an instance that loses a race takes a lease, and the others forward that scope's syncs to it" {
+  let st = memory_store()
+  let clock = Atomic[Int].new(1000)
+  let peers = Mutex[Map[Str, http.Router]].new({})
+  let forwards = Atomic[Int].new(0)
+  let lease = fn(me: Str) -> Lease[sync] {
+    Lease{
+      me: me,
+      forward: fn(to: Str, req: http.Request) -> http.Response ! Str uses sync {
+        let _n = forwards.add(1)
+        let r = peers.with_read(fn(m) { m.get(to) }) ?? return Err("no peer ${to}")
+        Ok(r.call(req))
+      },
+      now_ms: fn() -> Int uses sync { clock.get() },
+      term_ms: 10000,
+    }
+  }
+  let la = Atomic[Int].new(0)
+  let lb = Atomic[Int].new(0)
+  let a = host_with(todo_app(), lossy(st, la), local_bus(), lease: Some(lease("a")))
+  let b = host_with(todo_app(), lossy(st, lb), local_bus(), lease: Some(lease("b")))
+  let ra = routes_for(a)
+  let rb = routes_for(b)
+  peers.with(fn(var m) {
+    m.put("a", ra)
+    m.put("b", rb)
+  })
+  let send = fn(r: http.Router, client: Str, seq: Int, id: Str) -> Int uses sync {
+    let body = json.encode_str(Up{client: client, ver: 0, msgs: [Envelope{seq: seq, msg: Msg.Add(id: id, title: id)}]})
+    r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json"}, body: body.bytes())).status
+  }
+  expect(b.model().todos.len()) == 0
+  expect(send(ra, "c1", 1, "x")) == 200
+  // b loses a race, and takes the lease
+  lb.set(1)
+  expect(send(rb, "c2", 1, "y")) == 200
+  expect(b.slot("").held.with_read(fn(x) { x.holder })) == "b"
+  expect(forwards.get()) == 0
+  // a loses its next race, reads b's lease, and from then on forwards
+  la.set(1)
+  expect(send(ra, "c1", 2, "z")) == 200
+  expect(a.slot("").held.with_read(fn(x) { x.holder })) == "b"
+  expect(send(ra, "c1", 3, "w")) == 200
+  expect(forwards.get()) == 1
+  expect(b.model().todos.keys().sort()) == ["w", "x", "y", "z"]
+  // past half its term, a forwarded sync renews b's lease (a holder's work
+  // is mostly forwarded syncs)
+  let term0 = b.slot("").held.with_read(fn(x) { x.term })
+  clock.set(1000 + 6000)
+  expect(send(ra, "c1", 4, "v")) == 200
+  expect(forwards.get()) == 2
+  expect(b.slot("").held.with_read(fn(x) { x.term })) == term0 + 1
+  expect(b.slot("").held.with_read(fn(x) { x.until })) == 1000 + 6000 + 8000
+  // a's view ran out: it reads the store, finds the renewal, and forwards
+  clock.set(1000 + 20000)
+  expect(send(ra, "c1", 5, "u2")) == 200
+  expect(forwards.get()) == 3
+  // the lease runs out without renewal: a appends itself again
+  clock.set(1000 + 50000)
+  expect(send(ra, "c1", 6, "v2")) == 200
+  expect(forwards.get()) == 3
+  expect(a.model().todos.len()) == 7
+  // a holder that cannot be reached: the follower appends itself
+  let c = host_with(todo_app(), st, local_bus(), lease: Some(lease("c")))
+  let rc = routes_for(c)
+  c.slot("").held.with(fn(var x) { x = Held{term: 99, holder: "gone", until: 1000 + 90000} })
+  expect(send(rc, "c3", 1, "u")) == 200
+  expect(c.model().todos.len()) == 8
+}
+
 test "syncs that arrive while an append is in flight share the next append (group commit)" {
   let st = memory_store()
   let appends = Atomic[Int].new(0)

@@ -1,5 +1,22 @@
 # std/ui changes
 
+## 2026-11-16: feature: leases route a hot scope's syncs to one instance (decision 0686)
+
+- Kind: feature
+- Commit: this push
+- Found by: owner track (leases for hot scopes, decision 0686 item 6)
+- Go reference: none
+- Test: std/ui "an instance that loses a race takes a lease, and the others forward that scope's syncs to it"; the racing-Scopes and group commit tests
+- Timing: localstack, 4 instances x 160 appends to one scope, slowest instance: 8 clients per instance 1.44 s leased against 1.59 s racing (medians of 5), 32 clients 0.56 s against 0.68 s (medians of 3); real S3 (ca-central-1), 4 x 100 with one client each, 20.9 s against 23.5 s; every item kept once in every run (~/xo-lead/notes/stdui/s3store)
+- Shipped in: not yet released
+
+`host_with(..., lease: ui.Lease{me, forward, now_ms})` lets Hosts on one
+store share a hot scope: an instance that loses an append race takes a
+lease kept in the store, and the others forward that scope's syncs to it
+while the lease lasts (`term_ms`, 10 s by default). Appends stay
+conditional, so an instance that has not seen a lease, or cannot reach
+its holder, still writes correctly. Off unless `lease:` is given.
+
 ## 2026-11-16: fix: a subscriber that joins pg_bus after it listens hears -1
 
 - Kind: fix

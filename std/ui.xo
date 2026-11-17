@@ -490,6 +490,9 @@ pub struct Scope[M: Json, E: Json, fx: Effects] {
   key: Str
   // whether this copy has read the store once (a new instance must)
   loaded: Bool = false
+  // appends lost to other writers (a Host takes a lease on a scope that
+  // loses them)
+  lost: Int = 0
 }
 
 /// A Scope of store's log key, for app.
@@ -575,9 +578,9 @@ struct Change[M: Json, E: Json, T] {
 fn (var c: Scope[M, E, fx]) commit_all[T](changes: List[Change[M, E, T]]) -> List[T] ! Str uses (sync, fx) {
   var read = false
   for _ in 0..commit_tries {
-    // a copy the Host keeps current (its bus) appends at once; a stale one
-    // loses the race and reads the store, so a writer alone on a scope
-    // pays one request per append, not two
+    // a copy the Host keeps current (its bus, its lease) appends at once;
+    // a stale one loses the race and reads the store, so a writer alone
+    // on a scope pays one request per append, not two
     let caught = read || !c.loaded
     if caught {
       c.catch_up()?
@@ -606,7 +609,10 @@ fn (var c: Scope[M, E, fx]) commit_all[T](changes: List[Change[M, E, T]]) -> Lis
     let data = json.encode_str(logged).bytes()
     match (c.store.append)(c.key, Batch{after: v0, count: logged.len(), data: data}) {
       Ok(true) => return Ok(outs)
-      Ok(false) => c.s = before
+      Ok(false) => {
+        c.s = before
+        c.lost += 1
+      }
       Err(e) => {
         // nothing was appended: this copy goes back to the store's version
         c.s = before
@@ -1454,9 +1460,50 @@ fn accepts_gzip(v: Str) -> Bool {
   false
 }
 
+/// How Hosts on one store share a hot scope (decision 0686). An instance
+/// that loses an append race on a scope takes a lease on it, kept in the
+/// store, and the other instances forward that scope's syncs to it while
+/// the lease lasts: one instance appends, batching what arrives together,
+/// instead of every instance racing for each version. A lease only routes
+/// work: appends stay conditional, so an instance that has not heard of a
+/// lease, or whose holder is unreachable, still writes correctly. The
+/// Host performs what the calls do (they reach other instances and read
+/// a clock).
+pub struct Lease[fx: Effects] {
+  /// This instance's address, as forward reaches it.
+  pub me: Str
+  /// Sends the request to the instance at the address (the same method,
+  /// path, query, headers and body) and answers its response.
+  pub forward: fn(Str, http.Request) -> http.Response ! Str uses fx
+  /// A monotonic clock in milliseconds (an instance's own; clocks are
+  /// never compared across instances).
+  pub now_ms: fn() -> Int uses fx
+  /// How long a lease lasts; the holder renews it while it serves.
+  pub term_ms: Int = 10000
+}
+
+// The lease on a scope as this instance knows it: the lease log's length
+// (its term), the holder ("" none) and, on this instance's clock, until
+// when it counts (a follower counts from when it read it, the holder
+// from before it wrote it, less a margin, so the holder stops first).
+struct Held {
+  term: Int = 0
+  holder: Str = ""
+  until: Int = 0
+}
+
+// A lease record in the store.
+struct LeaseRec {
+  holder: Str
+  ms: Int
+} derive Json
+
+// The header on a forwarded sync: the instance it reaches serves it.
+const forwarded = "X-Xo-Ui-Forwarded"
+
 /// An App served over HTTP (decision 0686): its state in scopes of a
 /// store, each scope this instance serves cached here behind its own lock.
-pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects] {
+pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects] {
   app: App[M, E]
   store: Store[fx]
   bus: Bus[bx]
@@ -1497,6 +1544,7 @@ pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects] {
   // (with redact, only when its principal's view changed).
   subs: Mutex[Map[Int, Sub]]
   next_sub: Atomic[Int]
+  lease: Lease[lx]?
 }
 
 // One scope this instance serves: its copy of the log, the newest version
@@ -1507,6 +1555,7 @@ struct Slot[M: Json, E: Json, fx: Effects] {
   latest: Atomic[Int]
   resync: Atomic[Int]
   used: Atomic[Int]
+  held: Mutex[Held]
   // syncs waiting for the next append, and whether a request is writing
   // them (group commit)
   queue: Mutex[List[Waiting[M, E]]]
@@ -1543,7 +1592,7 @@ struct Waiting[M: Json, E: Json] {
 /// A host for app starting at app.init: one instance, its log in memory.
 /// scope_of puts each page in a scope of its own (a room, a tenant, a
 /// user), of which the instance keeps at most max_scopes.
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000) -> Host[M, E, sync, sync] {
+pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000) -> Host[M, E, sync, sync, sync] {
   let subs = Mutex[Map[Int, Sub]].new({})
   let slots = Mutex[Map[Str, Slot[M, E, sync]]].new({})
   let bus = local_bus_of([waker(slots, subs)])
@@ -1555,11 +1604,11 @@ pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", ma
 /// behind a load balancer. `scope` is the scope of every page without
 /// scope_of. The Host performs what the store and bus perform (a memory
 /// store: sync; a networked one: net).
-pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000) -> Host[M, E, fx, bx] uses bx {
+pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, lease: Lease[lx]? = None) -> Host[M, E, fx, bx, lx] uses bx {
   let subs = Mutex[Map[Int, Sub]].new({})
   let slots = Mutex[Map[Str, Slot[M, E, fx]]].new({})
   (bus.subscribe)(waker(slots, subs))
-  host_core(app, store, bus, scope, scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
+  host_core(app, store, bus, scope, scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {lease: lease}
 }
 
 // What a Host hears from its bus: each instance's append (this one's
@@ -1587,8 +1636,8 @@ fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], 
   }
 }
 
-fn host_core[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx] {
-  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0)}
+fn host_core[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx, lx] {
+  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0), lease: None}
 }
 
 // A live connection: its principal, its scope and its channel.
@@ -1600,7 +1649,7 @@ struct Sub {
 
 // The slot of scope key, made (and the least recently used scope without
 // a live page dropped, past max_scopes) when this instance has none.
-fn (h: Host[M, E, fx, bx]) slot(key: Str) -> Slot[M, E, fx] {
+fn (h: Host[M, E, fx, bx, lx]) slot(key: Str) -> Slot[M, E, fx] {
   let t = h.tick.add(1)
   if let Some(sl) = h.slots.with_read(fn(m) { m.get(key) }) {
     sl.used.set(t)
@@ -1633,7 +1682,7 @@ fn (h: Host[M, E, fx, bx]) slot(key: Str) -> Slot[M, E, fx] {
         m.remove(old)
       }
     }
-    let sl = Slot{state: Mutex.new(ui_scope(app, st, key, mb)), latest: Atomic[Int].new(0), resync: Atomic[Int].new(0), used: Atomic[Int].new(t), queue: Mutex.new([]), writing: Atomic[Int].new(0), frames: Mutex.new({})}
+    let sl = Slot{state: Mutex.new(ui_scope(app, st, key, mb)), latest: Atomic[Int].new(0), resync: Atomic[Int].new(0), used: Atomic[Int].new(t), held: Mutex.new(Held{}), queue: Mutex.new([]), writing: Atomic[Int].new(0), frames: Mutex.new({})}
     m.put(key, sl)
     sl
   })
@@ -1747,12 +1796,110 @@ fn (h: Host[M, E]) version_of(key: Str) -> Int {
   h.slot(key).state.with_read(fn(c) { c.version() })
 }
 
+// The instance holding a live lease on scope key, when it is another
+// one. Renews this instance's own lease once half of it has run, and
+// reads the lease log again when a lease it knew of ran out.
+fn (h: Host[M, E]) leader(key: Str) -> Str? {
+  let l = h.lease ?? return None
+  let sl = h.slot(key)
+  let now = (l.now_ms)()
+  let cur = sl.held.with_read(fn(x) { x })
+  if cur.holder != "" && now < cur.until {
+    if cur.holder != l.me {
+      return Some(cur.holder)
+    }
+    if now >= cur.until - l.term_ms / 2 {
+      h.take_lease(key, cur.term)
+    }
+    return None
+  }
+  if cur.holder == "" {
+    // no lease known: a lost race makes this instance look (try_lease)
+    return None
+  }
+  let seen = h.read_lease(key, cur.term)
+  if seen.holder != "" && seen.holder != l.me && now < seen.until { Some(seen.holder) } else { None }
+}
+
+// After this instance lost a race on scope key: take a lease on it, or
+// learn who has one.
+fn (h: Host[M, E]) try_lease(key: Str) {
+  let l = h.lease ?? return
+  let sl = h.slot(key)
+  let cur = sl.held.with_read(fn(x) { x })
+  if cur.holder != "" && (l.now_ms)() < cur.until {
+    return
+  }
+  // the newest term first: an expired lease is replaced at its end
+  let seen = h.read_lease(key, cur.term)
+  if seen.holder == "" || (l.now_ms)() >= seen.until {
+    h.take_lease(key, seen.term)
+  }
+}
+
+// Appends this instance's lease as term+1 of scope key's lease log (a lost
+// race reads the winner's).
+fn (h: Host[M, E]) take_lease(key: Str, term: Int) {
+  let l = h.lease ?? return
+  let sl = h.slot(key)
+  let start = (l.now_ms)()
+  let data = json.encode_str(LeaseRec{holder: l.me, ms: l.term_ms}).bytes()
+  match (h.store.append)(lease_key(key), Batch{after: term, count: 1, data: data}) {
+    Ok(true) => {
+      let me = l.me
+      let until = start + l.term_ms - l.term_ms / 5
+      sl.held.with(fn(var x) {
+        if x.term <= term {
+          x = Held{term: term + 1, holder: me, until: until}
+        }
+      })
+      if (term + 1) % 64 == 0 {
+        // the log's old terms can go (best effort)
+        let _snap = (h.store.put_snapshot)(lease_key(key), Batch{after: term + 1, count: 0, data: b""}).is_ok()
+      }
+    }
+    Ok(false) => {
+      let _seen = h.read_lease(key, term)
+    }
+    // a store error leaves the scope without a lease: appends still race
+    Err(_) => {}
+  }
+}
+
+// Reads scope key's lease log past term and keeps its newest record.
+fn (h: Host[M, E]) read_lease(key: Str, term: Int) -> Held {
+  let l = h.lease ?? return Held{}
+  let sl = h.slot(key)
+  let now = (l.now_ms)()
+  let bs = (h.store.read)(lease_key(key), term) ?? _ => return sl.held.with_read(fn(x) { x })
+  if bs.is_empty() {
+    // nothing newer: a lease that ran out stays out
+    return sl.held.with_read(fn(x) { x })
+  }
+  let b = bs[bs.len() - 1]
+  let rec = json.decode_str[LeaseRec](b.data.to_str_lossy()) ?? _ => return sl.held.with_read(fn(x) { x })
+  let seen = Held{term: b.after + b.count, holder: rec.holder, until: now + rec.ms}
+  sl.held.with(fn(var x) {
+    if x.term < seen.term {
+      x = seen
+    }
+    x
+  })
+}
+
+// Where scope key's lease log is kept (scope names starting with ~lease/
+// are the Host's).
+fn lease_key(key: Str) -> Str {
+  "~lease/" + key
+}
+
 // Group commit for scope key: unless another request is writing, appends
 // every queued sync as one batch, then what queued during that append,
 // until the queue is empty. Waiters get their answers on their channels.
-fn (h: Host[M, E, fx, bx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (bx, fx) {
+fn (h: Host[M, E, fx, bx, lx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (bx, fx, lx) {
   let keep = h.keep
   while sl.writing.swap(1) == 0 {
+    var lost = 0
     while true {
       let ws = sl.queue.with(fn(var q) {
         let all = q
@@ -1764,13 +1911,14 @@ fn (h: Host[M, E, fx, bx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (bx, 
       }
       let latest = sl.latest.get()
       let again = sl.resync.swap(0) > 0
-      let (v0, v) = sl.state.with(fn(var c) -> (Int, Int) {
+      let (v0, v, l) = sl.state.with(fn(var c) -> (Int, Int, Int) {
         let b = c.version()
+        let l0 = c.lost
         if let Err(e) = c.fresh(latest, again: again) {
           for w in ws {
             let _sent = w.out.try_send(Err(e))
           }
-          return (b, b)
+          return (b, b, 0)
         }
         match c.commit_all(ws.map(fn(w) { w.change })) {
           Ok(outs) => {
@@ -1787,13 +1935,17 @@ fn (h: Host[M, E, fx, bx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (bx, 
         if keep > 0 && c.s.log.len() >= 2 * keep {
           let _snap = c.compact(keep).is_ok()
         }
-        (b, c.version())
+        (b, c.version(), c.lost - l0)
       })
+      lost += l
       if v != v0 {
         (h.bus.publish)(key, v)
       }
     }
     sl.writing.set(0)
+    if lost > 0 {
+      h.try_lease(key)
+    }
     // a sync queued after the last round but before the flag dropped has
     // no writer yet: take the role again
     if sl.queue.with_read(fn(q) { q.is_empty() }) {
@@ -1904,6 +2056,23 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let checked = auth.is_some() || allow.is_some()
     let ok = allow ?? fn(m: M, q: Str, e: E) -> Bool { true }
     let key = hh.scope_for(req.query("page") ?? "", p) ?? return http.text(404, "std/ui: no such page")
+    if !up.msgs.is_empty() && hh.lease.is_some() {
+      // leader also renews this instance's own lease while it serves,
+      // forwarded syncs included (they are most of a holder's work)
+      let to = hh.leader(key)
+      if req.header(forwarded).is_some() {
+        // the instance that sent it believes this one holds the lease:
+        // serve it here either way
+      } else if let Some(to) = to {
+        if let Some(l) = hh.lease {
+          // the holder appends; when it cannot be reached, this instance
+          // does (appends stay conditional)
+          if let Ok(r) = (l.forward)(to, req.with_header(forwarded, "1")) {
+            return r
+          }
+        }
+      }
+    }
     let sl = hh.slot(key)
     var res: Result[Down[M, E]?, Str] = Err("std/ui: a queued sync had no answer")
     if up.msgs.is_empty() {
