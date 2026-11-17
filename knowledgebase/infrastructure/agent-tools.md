@@ -1670,6 +1670,16 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     not counted (scripts/lead/ccguard rules.ts checkRepeatStatus; state
     in ~/xo-lead/notes/ccguard-polls/SESSION.json). Last verified:
     2026-11-17.
+  - Job ends come as messages (#247, ADR 0702 stage 1): xw sends each
+    agent's heavy.sh, gate and push ends to its live session (XW_NOTIFY=1
+    in xw.env; a pass-only batch as its lines, a failure summarized by a
+    no-tools `claude -p`, delivered by a SendMessage-only one; about 3K
+    input tokens a message) and the hook inbox shows them on the next
+    prompt. A failed end a later pass of the same job or worktree
+    supersedes is dropped. With `~/xo-lead/ccguard-retire-waits` present
+    (the lead's switch), ccguard refuses a command that only waits for a
+    job (a `--wait` of heavy.sh, pushq.sh or offload-gate.sh, or a sleep);
+    a chain that waits and then gates or pushes still runs.
   - `xw ack ID` for each decision sent to you (`xw decisions --open
     --agent NAME`), in the tool round you read it.
     The Claude Code hook (scripts/lead/xw-cc-hook.sh, `xw cc-inbox`)
