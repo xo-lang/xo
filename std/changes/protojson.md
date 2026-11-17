@@ -1,5 +1,16 @@
 # std/protojson changes
 
+## 2026-11-17: feature: proto2 extensions
+
+- Kind: feature
+- Commit: this push
+- Found by: task #228 (follow-up of std/prototext's reader, #153)
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protojson (encode.go marshalMessage with order.IndexNameFieldOrder, decode.go unmarshalMessage's `[name]` keys)
+- Test: testdata/corpus/protojson, generated from protobuf-go: pjt2.Ext with four file scope extensions and one declared in Leaf; marshal rows (extensions after fields, by full name, a message extension, a zero value) and unmarshal rows (unknown name, duplicate, null, a message extension missing a required field, a message that cannot take the extension)
+- Timing: none (one map lookup per message with extensions)
+
+The registry now keeps the extensions its files declare. A set extension is written as `"[full.name]"` after the
+fields, sorted by full name, and read back from that key; an extension the message cannot take is an error as in Go.
 ## 2026-11-17: fix: an integer map key is read as Go reads it
 
 - Kind: fix

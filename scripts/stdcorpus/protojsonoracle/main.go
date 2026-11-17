@@ -180,9 +180,25 @@ func schema() *descriptorpb.FileDescriptorSet {
 		field("leaves", 4, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, rep, ".pjt2.Leaf"),
 		field("opt_leaf", 5, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, opt, ".pjt2.Leaf"),
 	}}
+	// extensions (task #228): Ext takes 100 to 199; four at file scope (a scalar, a string, a repeated number, a
+	// message) and one declared inside Leaf
+	ext := &descriptorpb.DescriptorProto{Name: proto.String("Ext"), Field: []*descriptorpb.FieldDescriptorProto{
+		field("f", 1, descriptorpb.FieldDescriptorProto_TYPE_INT32, opt, ""),
+	}, ExtensionRange: []*descriptorpb.DescriptorProto_ExtensionRange{{Start: proto.Int32(100), End: proto.Int32(200)}}}
+	extOf := func(fd *descriptorpb.FieldDescriptorProto) *descriptorpb.FieldDescriptorProto {
+		fd.Extendee = proto.String(".pjt2.Ext")
+		return fd
+	}
+	leaf.Extension = []*descriptorpb.FieldDescriptorProto{extOf(field("in_leaf", 104, descriptorpb.FieldDescriptorProto_TYPE_INT64, opt, ""))}
 	set.File = append(set.File, &descriptorpb.FileDescriptorProto{
 		Name: proto.String("pjtest2.proto"), Package: proto.String("pjt2"), Syntax: proto.String("proto2"),
-		MessageType: []*descriptorpb.DescriptorProto{leaf, rq},
+		MessageType: []*descriptorpb.DescriptorProto{leaf, rq, ext},
+		Extension: []*descriptorpb.FieldDescriptorProto{
+			extOf(field("e_int", 100, descriptorpb.FieldDescriptorProto_TYPE_INT32, opt, "")),
+			extOf(field("e_str", 101, descriptorpb.FieldDescriptorProto_TYPE_STRING, opt, "")),
+			extOf(field("e_rep", 102, descriptorpb.FieldDescriptorProto_TYPE_INT32, rep, "")),
+			extOf(field("e_leaf", 103, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, opt, ".pjt2.Leaf")),
+		},
 	})
 	// an editions file (2023): per-field presence, packed encoding and delimited message encoding, written as protoc
 	// writes them (the unresolved features of each field)
@@ -604,6 +620,15 @@ func main() {
 	for _, u := range umRows {
 		emitU(u.name, u.in)
 	}
+	// extensions (task #228): "[full.name]" keys, an unknown one, one the message cannot take, a duplicate
+	for _, in := range []string{
+		`{"f":1,"[pjt2.e_int]":7}`, `{"[pjt2.e_str]":"s","[pjt2.e_rep]":[1,2],"[pjt2.Leaf.in_leaf]":"1099511627776"}`,
+		`{"[pjt2.e_leaf]":{"a":5,"b":"x"}}`, `{"[pjt2.e_leaf]":{"b":"x"}}`, `{"[pjt2.nope]":1}`, `{"[pjt2.e_int]":1,"[pjt2.e_int]":2}`,
+		`{"[pjt2.e_int]":null}`, `{"[ pjt2.e_int]":1}`, `{"[pjt2.e_rep]":[]}`,
+	} {
+		emitU("pjt2.Ext", in)
+	}
+	emitU("pjt2.Leaf", `{"a":1,"[pjt2.e_int]":7}`)
 	o.WriteString("]\n\n")
 	// UnmarshalOptions AllowPartial and RecursionLimit: the required rows with AllowPartial, and nested messages
 	// (and the first well-known-type rows) under small limits
@@ -806,6 +831,32 @@ func main() {
 	mk(rd, func(m *dynamicpb.Message) {})
 	mk(ld, func(m *dynamicpb.Message) { m.Set(field_(ld, "a"), protoreflect.ValueOfInt32(7)) })
 	mk(ld, func(m *dynamicpb.Message) { m.Set(field_(ld, "b"), protoreflect.ValueOfString("q")) })
+	// extensions (task #228): written after the fields, sorted by full name, as "[full.name]"
+	edd, _ := files.FindDescriptorByName("pjt2.Ext")
+	ed := edd.(protoreflect.MessageDescriptor)
+	xf := func(n string) protoreflect.FieldDescriptor {
+		xt, err := resolver.FindExtensionByName(protoreflect.FullName(n))
+		if err != nil {
+			panic(err)
+		}
+		return xt.TypeDescriptor()
+	}
+	mk(ed, func(m *dynamicpb.Message) {
+		m.Set(field_(ed, "f"), protoreflect.ValueOfInt32(1))
+		m.Set(xf("pjt2.e_int"), protoreflect.ValueOfInt32(7))
+	})
+	mk(ed, func(m *dynamicpb.Message) {
+		m.Set(xf("pjt2.e_str"), protoreflect.ValueOfString("s"))
+		m.Set(xf("pjt2.e_int"), protoreflect.ValueOfInt32(-3))
+		m.Set(xf("pjt2.Leaf.in_leaf"), protoreflect.ValueOfInt64(1<<40))
+		ls := m.Mutable(xf("pjt2.e_rep")).List()
+		ls.Append(protoreflect.ValueOfInt32(1))
+		ls.Append(protoreflect.ValueOfInt32(2))
+		m.Set(xf("pjt2.e_leaf"), protoreflect.ValueOfMessage(leafOf(5, true, "x")))
+		m.Set(field_(ed, "f"), protoreflect.ValueOfInt32(9))
+	})
+	mk(ed, func(m *dynamicpb.Message) { m.Set(xf("pjt2.e_leaf"), protoreflect.ValueOfMessage(leafOf(0, false, "y"))) })
+	mk(ed, func(m *dynamicpb.Message) { m.Set(xf("pjt2.e_int"), protoreflect.ValueOfInt32(0)) })
 	o.WriteString("]\n\n")
 	o.WriteString("/// (message full name, indent (empty: Multiline's default), wire hex, Go's Multiline protojson output with its random second space after a name removed)\nconst MULTILINE: List[(Str, Str, Str, Str)] = [\n")
 	for _, r := range mlRows {

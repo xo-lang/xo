@@ -54,6 +54,11 @@ pub struct Opts {
 pub struct Registry {
   pub msgs: Map[Str, MsgInfo]
   pub enums: Map[Str, protodesc.EnumDesc]
+  /// the extensions (protoregistry's ExtensionTypeResolver), by full name; their descriptors are named
+  /// `[full.name]`, the JSON name protobuf-go gives an extension
+  pub exts: Map[Str, protodesc.FieldDesc] = {}
+  /// the full names of each message's extensions (no leading dot), sorted as protojson writes them
+  pub exts_of: Map[Str, List[Str]] = {}
 }
 
 /// A message of a registry: its descriptor, full name, syntax and whether it is a map entry. Internal.
@@ -93,7 +98,42 @@ pub fn registry(files: List[protodesc.FileDesc]) -> Registry {
       add_msg(r, m, pre, p3)
     }
   }
+  for f in files {
+    let pre = if f.package.is_empty() { "" } else { f.package + "." }
+    for x in f.extension {
+      add_ext(r, x, pre)
+    }
+    for m in f.message_type {
+      add_exts_in(r, m, pre)
+    }
+  }
+  for (k, names) in r.exts_of {
+    // protobuf-go's order.IndexNameFieldOrder: extensions by full name, byte order
+    r.exts_of.put(k, names.sort())
+  }
   r
+}
+
+/// Registers the extension x declared in scope pre (a package or a message, with its trailing dot).
+fn add_ext(var r: Registry, x: protodesc.FieldDesc, pre: Str) {
+  let full = pre + x.name
+  let named = x with {name: "[${full}]", json_name: "[${full}]"}
+  r.exts.put(full, named)
+  let on = trim_dot(x.extendee)
+  var l = r.exts_of.get(on) ?? []
+  l.push(full)
+  r.exts_of.put(on, l)
+}
+
+/// Registers the extensions declared inside message m (scope pre) and its nested messages.
+fn add_exts_in(var r: Registry, m: protodesc.MessageDesc, pre: Str) {
+  let scope = pre + m.name + "."
+  for x in m.extension {
+    add_ext(r, x, scope)
+  }
+  for n in m.nested_type {
+    add_exts_in(r, n, scope)
+  }
 }
 
 /// A registry of a serialized FileDescriptorSet.
@@ -621,6 +661,17 @@ fn msg_to(var out: StrBuilder, r: Registry, info: MsgInfo, wire: Bytes, o: Opts,
     }
     if field_to(out, n > 0, r, info, fds[j], fl, ord, o, real_oneof)? {
       n += 1
+    }
+  }
+  // the extensions set on the wire, after the fields, by full name (protobuf-go's IndexNameFieldOrder); an
+  // unset one is left out whatever the options (Go's unpopulated ranger covers the fields only)
+  for full in r.exts_of.get(info.full) ?? [] {
+    let x = r.exts.get(full) ?? fault("extension ${full}")
+    let num = x.number
+    if fl.any(fn(f: pw.Fld) -> Bool { f.num == num }) {
+      if field_to(out, n > 0, r, info, x, fl, ord, o, false)? {
+        n += 1
+      }
     }
   }
   out.write("}")
@@ -2168,8 +2219,18 @@ fn msg_wire_obj(r: Registry, info: MsgInfo, jv: Jv, o: Opts, in_any: Bool) -> By
     if in_any && key == "@type" {
       continue
     }
-    let fd = match field_for(info, key) {
-      Some(f) => f
+    let ext = key.starts_with("[") && key.ends_with("]") && key.len() >= 2
+    let fd = match if ext { r.exts.get(key[1..key.len() - 1]) } else { field_for(info, key) } {
+      Some(f) => {
+        if ext {
+          let xname = key[1..key.len() - 1]
+          let in_range = info.d.extension_range.any(fn(e: protodesc.ExtensionRange) -> Bool { f.number >= e.start && f.number < e.end })
+          if trim_dot(f.extendee) != info.full || !in_range {
+            return Err(jerr("message ${info.full} cannot be extended by ${xname}"))
+          }
+        }
+        f
+      }
       None => {
         if o.discard_unknown || (key.starts_with("[") && key.ends_with("]") && o.discard_unknown) {
           continue
@@ -2185,7 +2246,8 @@ fn msg_wire_obj(r: Registry, info: MsgInfo, jv: Jv, o: Opts, in_any: Bool) -> By
       continue
     }
     given.put(fd.number, true)
-    var order = fd.number
+    // protobuf-go writes a message's extensions before its fields, by number
+    var order = if ext { fd.number - 1000000000000000 } else { fd.number }
     var real_oneof = false
     match fd.oneof_index {
       Some(k) => {

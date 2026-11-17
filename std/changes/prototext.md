@@ -1,5 +1,16 @@
 # std/prototext changes
 
+## 2026-11-17: feature: proto2 extensions
+
+- Kind: feature
+- Commit: this push
+- Found by: task #228
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/prototext (encode.go, decode.go unmarshalMessage's text.TypeName case)
+- Test: testdata/corpus/prototext, generated from protobuf-go: marshal and Format of pjt2.Ext wires with extensions (one with a wrong wire type, kept as an unknown field), and unmarshal of `[full.name]` fields, brackets with spaces, a duplicate, a repeated extension in two forms, by number, discarded, one the message cannot take
+- Timing: none
+
+Extensions are written as `[full.name]: value` after the fields, sorted by full name, and read from that form, with
+protobuf-go's errors ("message M cannot be extended by X", "unknown field: [x]").
 ## 2026-11-17: feature: the text format reader (Unmarshal)
 
 - Kind: feature

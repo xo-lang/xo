@@ -417,6 +417,11 @@ fn lookup(r: protojson.Registry, type_name: Str) -> protojson.MsgInfo ! TextErr 
 /// Whether wire field f is a value of a field the descriptor knows (else
 /// it is an unknown field): its number and a wire type the field's kind is
 /// written with (a packed run for a repeated number).
+/// Whether field f of the wire is extension x's: its number, with the wire type x takes (else it is unknown).
+fn ext_takes(x: protodesc.FieldDesc, f: pw.Fld) -> Bool {
+  x.number == f.num && (f.wire == wire_of(x.kind) || (x.label == protodesc.LABEL_REPEATED && is_numeric_kind(x.kind) && f.wire == 2))
+}
+
 fn is_known(info: protojson.MsgInfo, f: pw.Fld) -> Bool {
   let fds = info.d.field
   for j in 0..fds.len() {
@@ -613,8 +618,16 @@ fn msg_fields(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, wire: 
     }
     field_out(e, r, info, fds[j], fl, sorted, real_oneof, depth)?
   }
+  // the extensions set on the wire, after the fields, by full name (IndexNameFieldOrder)
+  let xs = exts_of(r, info)
+  for x in xs {
+    let num = x.number
+    if fl.any(fn(f: pw.Fld) -> Bool { f.num == num }) {
+      field_out(e, r, info, x, fl, sorted, false, depth)?
+    }
+  }
   if e.o.emit_unknown {
-    unknowns_out(e, info, fl)?
+    unknowns_out(e, info, fl, xs)?
   }
   Ok(())
 }
@@ -978,9 +991,9 @@ fn scalar_out(var e: Enc, r: protojson.Registry, fd: protodesc.FieldDesc, f: pw.
 /// descriptor does not know, or a known number with another wire type.
 /// (A closed enum's value it does not name stays the field's value, as
 /// protobuf-go's dynamicpb reads it.)
-fn unknowns_out(var e: Enc, info: protojson.MsgInfo, fl: List[pw.Fld]) -> () ! TextErr {
+fn unknowns_out(var e: Enc, info: protojson.MsgInfo, fl: List[pw.Fld], xs: List[protodesc.FieldDesc]) -> () ! TextErr {
   for f in fl {
-    if !is_known(info, f) {
+    if !is_known(info, f) && !xs.any(fn(x: protodesc.FieldDesc) -> Bool { ext_takes(x, f) }) {
       unknown_out(e, f)?
     }
   }
@@ -2126,6 +2139,23 @@ fn is_message_set(info: protojson.MsgInfo) -> Bool {
 /// The order Go's deterministic Marshal writes fields in
 /// (order.LegacyFieldOrder): by number, real oneof members after the rest
 /// by oneof index.
+/// The extensions of info the registry holds, in full name order, each named `[full.name]`; only those
+/// whose number is in one of info's extension ranges (protobuf-go refuses the others).
+fn exts_of(r: protojson.Registry, info: protojson.MsgInfo) -> List[protodesc.FieldDesc] {
+  var out: List[protodesc.FieldDesc] = []
+  for full in r.exts_of.get(info.full) ?? [] {
+    match r.exts.get(full) {
+      Some(x) => {
+        if info.d.extension_range.any(fn(e: protodesc.ExtensionRange) -> Bool { x.number >= e.start && x.number < e.end }) {
+          out.push(x)
+        }
+      }
+      None => {}
+    }
+  }
+  out
+}
+
 fn order_of(fd: protodesc.FieldDesc) -> Int {
   match fd.oneof_index {
     Some(k) => if fd.proto3_optional { fd.number } else { (k + 1) * 1000000000000 + fd.number }
@@ -2152,6 +2182,8 @@ fn rec_msg(num: Int, k: Int, body: Bytes) -> Bytes {
 /// unmarshalMessage: the wire bytes of message `info` (and Any's form);
 /// `miss` gets the first required field missing in it or below it.
 fn d_msg(var d: Dec, info: protojson.MsgInfo, delims: Bool, lim0: Int, var miss: Miss) -> Bytes ! TextErr {
+  // the message's fields, then its registered extensions (named `[full.name]`)
+  let nf = info.d.field.len()
   let lim = lim0 - 1
   if lim < 0 {
     return Err(terr("proto: exceeded maximum recursion depth"))
@@ -2168,7 +2200,7 @@ fn d_msg(var d: Dec, info: protojson.MsgInfo, delims: Bool, lim0: Int, var miss:
       return Err(unexpected(d, t))
     }
   }
-  let fds = info.d.field
+  let fds = info.d.field + exts_of(d.r, info)
   var seen_nums: List[Int] = []
   var seen_oneofs: List[Int] = []
   var given: List[Int] = []
@@ -2195,9 +2227,21 @@ fn d_msg(var d: Dec, info: protojson.MsgInfo, delims: Bool, lim0: Int, var miss:
     }
     var j = -1
     var name = ""
-    if t.attrs == N_IDENT {
+    if t.attrs == N_TYPE {
+      // an extension (Decoder.unmarshalMessage's text.TypeName case; an Any's URL is read elsewhere)
+      let xn = t.str.to_str_lossy()
+      for i in nf..fds.len() {
+        if fds[i].name == "[${xn}]" {
+          j = i
+          break
+        }
+      }
+      if j < 0 && d.r.exts.contains(xn) {
+        return Err(perr_at(d.l.orig, t.pos, "message ${info.full} cannot be extended by ${xn}"))
+      }
+    } else if t.attrs == N_IDENT {
       name = raw(d, t)
-      for i in 0..fds.len() {
+      for i in 0..nf {
         if text_name_is(fds[i], name) {
           j = i
           break
@@ -2228,7 +2272,8 @@ fn d_msg(var d: Dec, info: protojson.MsgInfo, delims: Bool, lim0: Int, var miss:
     let fd = fds[j]
     let k = fd.kind
     let is_m = is_msg(fd)
-    let ord = order_of(fd)
+    // protobuf-go writes a message's extensions before its fields, by number
+    let ord = if j >= nf { fd.number - 1000000000000000 } else { order_of(fd) }
     if fd.label == protodesc.LABEL_REPEATED {
       let sub = if is_m { lookup(d.r, fd.type_name)? } else { info }
       if k == protodesc.TYPE_MESSAGE && sub.is_map {

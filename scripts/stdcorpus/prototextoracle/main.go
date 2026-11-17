@@ -10,6 +10,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math"
 	"math/rand"
@@ -196,9 +197,25 @@ func schema() *descriptorpb.FileDescriptorSet {
 		mapEntry("MoodMapEntry", descriptorpb.FieldDescriptorProto_TYPE_INT32, descriptorpb.FieldDescriptorProto_TYPE_ENUM, ".pjt2.Mood"),
 		{Name: proto.String("Grp"), Field: []*descriptorpb.FieldDescriptorProto{field("g", 1, descriptorpb.FieldDescriptorProto_TYPE_INT32, opt, "")}},
 	}
+	// extensions (task #228): Ext takes 100 to 199; four at file scope (a scalar, a string, a repeated number, a
+	// message) and one declared inside Leaf
+	ext := &descriptorpb.DescriptorProto{Name: proto.String("Ext"), Field: []*descriptorpb.FieldDescriptorProto{
+		field("f", 1, descriptorpb.FieldDescriptorProto_TYPE_INT32, opt, ""),
+	}, ExtensionRange: []*descriptorpb.DescriptorProto_ExtensionRange{{Start: proto.Int32(100), End: proto.Int32(200)}}}
+	extOf := func(fd *descriptorpb.FieldDescriptorProto) *descriptorpb.FieldDescriptorProto {
+		fd.Extendee = proto.String(".pjt2.Ext")
+		return fd
+	}
+	leaf.Extension = []*descriptorpb.FieldDescriptorProto{extOf(field("in_leaf", 104, descriptorpb.FieldDescriptorProto_TYPE_INT64, opt, ""))}
 	set.File = append(set.File, &descriptorpb.FileDescriptorProto{
 		Name: proto.String("pjtest2.proto"), Package: proto.String("pjt2"), Syntax: proto.String("proto2"),
-		MessageType: []*descriptorpb.DescriptorProto{leaf, rq},
+		MessageType: []*descriptorpb.DescriptorProto{leaf, rq, ext},
+		Extension: []*descriptorpb.FieldDescriptorProto{
+			extOf(field("e_int", 100, descriptorpb.FieldDescriptorProto_TYPE_INT32, opt, "")),
+			extOf(field("e_str", 101, descriptorpb.FieldDescriptorProto_TYPE_STRING, opt, "")),
+			extOf(field("e_rep", 102, descriptorpb.FieldDescriptorProto_TYPE_INT32, rep, "")),
+			extOf(field("e_leaf", 103, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, opt, ".pjt2.Leaf")),
+		},
 		EnumType: []*descriptorpb.EnumDescriptorProto{{Name: proto.String("Mood"), Value: []*descriptorpb.EnumValueDescriptorProto{
 			{Name: proto.String("CALM"), Number: proto.Int32(0)}, {Name: proto.String("ANGRY"), Number: proto.Int32(1)}, {Name: proto.String("SAD"), Number: proto.Int32(3)},
 		}}},
@@ -615,6 +632,30 @@ func main() {
 			fmtRows = append(fmtRows, fmt.Sprintf("  (\"%s\", \"%x\", \"%s\"),\n", name, wire, q(undetrand(prototext.MarshalOptions{Multiline: true, Resolver: resolver}.Format(m)))))
 		}
 	}
+	// extensions (task #228): hand made wires of pjt2.Ext (protobuf-go writes extensions before fields), each
+	// marshaled with a few flags and formatted
+	for _, hw := range []string{
+		"a006070801", "a006fdffffffffffffffff01aa060173b00601b00602ba06050805120178c0068080808080200809",
+		"ba0603120179", "a00600", "a00607a80601", "f8060508010801",
+	} {
+		wire, _ := hex.DecodeString(hw)
+		edd, _ := files.FindDescriptorByName("pjt2.Ext")
+		m := dynamicpb.NewMessage(edd.(protoreflect.MessageDescriptor))
+		if err := (proto.UnmarshalOptions{AllowPartial: true, Resolver: resolver}).Unmarshal(wire, m); err != nil {
+			panic(err)
+		}
+		for _, fl := range []int{0, 1, 4, 8} {
+			var want string
+			txt, err := mopts(fl).Marshal(m)
+			if err != nil {
+				want = "ERR:" + strings.Replace(err.Error(), "proto:\u00a0", "proto: ", 1)
+			} else {
+				want = undetrand(string(txt))
+			}
+			rows = append(rows, fmt.Sprintf("  (\"pjt2.Ext\", %d, \"%x\", \"%s\"),\n", fl, wire, q(want)))
+		}
+		fmtRows = append(fmtRows, fmt.Sprintf("  (\"pjt2.Ext\", \"%x\", \"%s\"),\n", wire, q(undetrand(prototext.MarshalOptions{Multiline: true, Resolver: resolver}.Format(m)))))
+	}
 	o.WriteString("/// (message full name, flags: 1 multiline, 2 emit ASCII, 4 emit unknown, 8 allow partial; wire hex, Go's prototext output with one space where it put two at random, or ERR: and its error)\nconst MARSHAL: List[(Str, Int, Str, Str)] = [\n")
 	for _, r := range rows {
 		o.WriteString(r)
@@ -700,6 +741,20 @@ type handCase struct {
 
 // handCases are the lexer's and the decoder's edges, each written once.
 var handCases = []handCase{
+	// extensions (task #228): by full name in brackets (spaces and comments allowed inside), one the message
+	// cannot take, an unknown one, a duplicate, a repeated one twice, by number, discarded
+	{"pjt2.Ext", 0, "f: 1 [pjt2.e_int]: 7"},
+	{"pjt2.Ext", 0, "[pjt2.e_str]: \"s\" [pjt2.e_rep]: 1 [pjt2.e_rep]: [2, 3] [pjt2.Leaf.in_leaf]: 1099511627776"},
+	{"pjt2.Ext", 0, "[ pjt2 . e_leaf ] { a: 5 b: \"x\" }"},
+	{"pjt2.Ext", 0, "[pjt2.e_leaf] { b: \"x\" }"},
+	{"pjt2.Ext", 1, "[pjt2.e_leaf] { b: \"x\" }"},
+	{"pjt2.Ext", 0, "[pjt2.nope]: 1"},
+	{"pjt2.Ext", 2, "[pjt2.nope]: 1 f: 2"},
+	{"pjt2.Ext", 0, "[pjt2.e_int]: 1 [pjt2.e_int]: 2"},
+	{"pjt2.Ext", 0, "100: 1"},
+	{"pjt2.Ext", 0, "[pjt2.e_int] 1"},
+	{"pjt2.Leaf", 0, "a: 1 [pjt2.e_int]: 7"},
+	{"pjt2.Ext", 0, "[pjt2.e_leaf]: { a: 1 }"},
 	{"pjt.Scalars", 0, ""},
 	{"pjt.Scalars", 0, "  # only a comment\n"},
 	{"pjt.Scalars", 0, "s_int32: 0x7fffffff s_int64: -0x8000000000000000 s_uint32: 037777777777 s_uint64: 18446744073709551615"},

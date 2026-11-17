@@ -11250,6 +11250,13 @@ numbers, rejects unknown fields (skipped with `discard_unknown`), duplicate fiel
 then oneofs), maps in key order. A proto2 `required` field that is missing (or `null`) is an error in both directions, at any depth, as
 protobuf-go's protojson reports it (a message of an `Any` too). Checked against protobuf-go's `protojson` (testdata/corpus/protojson).
 
+Proto2 extensions (protobuf-go's extension types in its resolver): the registry holds every extension its files declare
+(at file scope or inside a message; `Registry.exts` by full name). `marshal` writes the extensions set on the wire after
+the fields as `"[full.name]"`, sorted by full name; `unmarshal` reads such a key as that extension, an error when the
+message cannot be extended by it ("message M cannot be extended by X") and an unknown field when no file declares it,
+and writes extensions before the fields, by number, as protobuf-go does. std/prototext does the same with `[full.name]`
+names (spaces and comments allowed inside the brackets).
+
 ### 74.1 std/prototext
 
 Protocol Buffers' text format as protobuf-go's `encoding/prototext` (decision 0683 item 2), driven by the same
