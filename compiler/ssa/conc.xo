@@ -764,7 +764,7 @@ fn (var b: Builder) is_mutex_take(e: Expr) -> Bool {
     return false
   }
   let r = b.c.objs[fo].recv
-  r >= 0 && b.obj_name(r) == "Mutex" && b.obj_name(fo) is "with" | "with_read"
+  r >= 0 && b.obj_name(r) == "Mutex" && b.obj_name(fo) is "with" | "with_read" | "try_with"
 }
 
 /// The entry function that runs a task whose closure has type ft (fails:
@@ -998,6 +998,7 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
       return b.atomic_c(key, fo, es, h, et, span)
     }
     "Mutex.with" | "Mutex.with_read" => return b.mutex_with(x, h, et, fname == "with_read")
+    "Mutex.try_with" => return b.mutex_try_with(x, h, et)
     "Mutex.reset" => {
       // the new value in a list of one, stored whether or not the mutex
       // is poisoned (decision 0482)
@@ -1114,6 +1115,42 @@ fn (var b: Builder) mutex_with(x: Expr, h: Int, et: Int, read: Bool) -> Int {
   let lt = b.m.list(et)
   let l = b.rt(lock_fn, lt, [h, b.loc(span)])
   b.check("")
+  b.mutex_body(x, h, et, l, fv, packed, unlock_fn)
+}
+
+/// `m.try_with(f)` (decision 0698): rt.mutex_try_lock never waits and
+/// gives the value list, or an empty list when m is held or waited for;
+/// f runs as in `with` (mutex_body) and its result is wrapped in Some,
+/// else the call is None.
+fn (var b: Builder) mutex_try_with(x: Expr, h: Int, et: Int) -> Int {
+  let (span, _, args) = call_parts(x)
+  let nt = b.nat_of(x)
+  let (fv, packed) = b.with_closure(args[0].value, et)
+  if fv < 0 {
+    return b.undef(nt)
+  }
+  let it = b.int_t()
+  let l = b.rt("mutex_try_lock", b.m.list(et), [h, b.loc(span)])
+  b.check("")
+  let got = b.add(Op.Ne, b.bool_t(), Aux.None, [b.call("list.len", it, "", [l]), b.cint(0)])
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, nt)
+  let (yes, no) = b.branch(got)
+  b.s.cur = yes
+  let r = b.mutex_body(x, h, et, l, fv, packed, "mutex_unlock")
+  b.jump(join, [b.variant(nt, "Some", [r])])
+  b.s.cur = no
+  b.jump(join, [b.variant(nt, "None", [])])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// mutex_with after the lock: f runs on the value list l of m and the
+/// value goes back (unlock_fn, or mutex_unlock_put on the packed path).
+fn (var b: Builder) mutex_body(x: Expr, h: Int, et: Int, l: Int, fv: Int, packed: Bool, unlock_fn: Str) -> Int {
+  let nt = b.nat_of(x)
+  let lt = b.m.list(et)
   if packed {
     // the value moves out of the mutex's list into the closure, which
     // hands back what the mutex keeps (packed_value)

@@ -98,6 +98,21 @@ IndexFunc; `chunks(n)`, `dedup()`, `dedup_by(eq)`, `repeat(n)` and
 `Map.equal_by(other, eq)` is maps.EqualFunc. `dedup_by` compares each
 element with the one before it in the list, as Go's CompactFunc does.
 
+## 2026-11-17: feature: Mutex.try_with (Go's TryLock)
+
+- Kind: feature
+- Commit: this push
+- Found by: the std features audit (task #224): sync.Mutex.TryLock was std/task's last gap
+- Go reference: sync.Mutex.TryLock (go1.26)
+- Test: internal/llvm/testdata/golden/mutex_try_with (arm64, LLVM, wasm): free, held by another task, inside the task's own with and with_read, a re-entrant with in the body, poisoned, reset; the same program in internal/gen/testdata/golden and std/rt TestMutexTryWith (Go backend)
+- Shipped in: not yet released
+
+`m.try_with(f)` never waits: when no writer holds or waits for m and no
+reader shares it, f runs as in with and its result comes back as Some,
+else None. As Go's TryLock, a mutex the task holds itself answers None
+(no XO-F004; decision 0698). Native backends call
+std/native/llrt/mutex.xo try_lock, the wasm runtime $mutex_try_lock, the
+Go backend Mutex_try_with.
 ## 2026-11-16: feature: Atomic[Int].and and or
 
 - Kind: feature

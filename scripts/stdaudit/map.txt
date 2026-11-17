@@ -1091,7 +1091,7 @@ regexp.* = not planned: POSIX syntax (CompilePOSIX) and io.RuneReader matching
 # sync: prelude Mutex[T], task.Group, task.once
 sync.Mutex.Lock = std/prelude.Mutex.with
 sync.Mutex.Unlock = std/prelude.Mutex.with
-sync.Mutex.TryLock = gap: no Mutex.try_with
+sync.Mutex.TryLock = std/prelude.Mutex.try_with
 sync.RWMutex.Lock = std/prelude.Mutex.with
 sync.RWMutex.Unlock = std/prelude.Mutex.with
 sync.RWMutex.* = std/prelude.Mutex.with_read

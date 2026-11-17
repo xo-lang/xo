@@ -55,7 +55,7 @@ fn rt3_blocking(name: Str) -> Bool {
 
 /// The runtime functions of rt3.xo called with the operands' leaves.
 fn rt3_direct(name: Str) -> Bool {
-  name is "wasi_mono_ns" | "wasi_park_wait" | "wasi_park_signal" | "wasi_scope_new" | "wasi_scope_group" | "wasi_scope_close" | "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_unlock_put" | "mutex_reset" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "atomic_and" | "atomic_or" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end" | "task_stopping"
+  name is "wasi_mono_ns" | "wasi_park_wait" | "wasi_park_signal" | "wasi_scope_new" | "wasi_scope_group" | "wasi_scope_close" | "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_try_lock" | "mutex_unlock" | "mutex_unlock_put" | "mutex_reset" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "atomic_and" | "atomic_or" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end" | "task_stopping"
 }
 
 /// The WASI imports of the task runtime: the clocks and waiting for one.
@@ -131,6 +131,7 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
   let w_with = g.raw("with".bytes())
   let w_read = g.raw("with_read".bytes())
   let pz_with = g.litp("XO-F010: Mutex.with on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value")
+  let pz_try = g.litp("XO-F010: Mutex.try_with on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value")
   let pz_read = g.litp("XO-F010: Mutex.with_read on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value")
   let dead = g.litp("fault: XO-F001: deadlock: every task is blocked\n")
   let notasks = g.str_obj(b"os.tasks is not available here")
@@ -3726,6 +3727,58 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
         i32.add
         local.get $ln
         call $fault_set
+        i32.const ${empty}
+        return
+      end
+      local.get $m
+      i32.const 1
+      i32.store offset=8
+      local.get $m
+      i32.load offset=20
+      local.set $l
+      local.get $m
+      i32.const 0
+      i32.store offset=20
+      local.get $l)
+
+    ;; m.try_with (decision 0698): never waits; the empty list when a
+    ;; writer holds m (8), readers share it (12) or writers wait (16),
+    ;; else m taken and its value moved out as mutex_lock_k does
+    (func $mutex_try_lock (param $m i32) (param $lo i32) (param $ln i32) (result i32) (local $l i32)
+      local.get $m
+      i32.load offset=8
+      local.get $m
+      i32.load offset=12
+      i32.or
+      local.get $m
+      i32.load offset=16
+      i32.or
+      if
+        i32.const ${empty}
+        return
+      end
+      local.get $m
+      i32.load offset=28
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${pz_try}
+        call $sapp
+        local.get $lo
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i32.const ${empty}
+        return
+      end
+      local.get $m
+      i32.const 0
+      local.get $lo
+      local.get $ln
+      call $held_check
+      if
         i32.const ${empty}
         return
       end

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+free: Some(11), then 11
+in with: None
+in with_read: None
+held by another task: None, then Some(112)
+with inside: fault XO-F004: Mutex.with called re-entrantly in one task; the mutex is already held from main.xo:49
+poisoned: fault XO-F010: Mutex.try_with on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value
+after reset: Some(1)
+--- stderr

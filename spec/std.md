@@ -614,6 +614,7 @@ fn (c: Chan[T]) len() -> Int
 Mutex[T].new(v: T) -> Mutex[T]
 fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
 fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
+fn (m: Mutex[T]) try_with[R, fx: Effects](f: fn(var T) -> R uses fx) -> R?  // never waits (decision 0698)
 fn (m: Mutex[T]) reset(v: T)                 // stores v, clears the poison (decision 0482)
 
 Atomic[T].new(v: T) -> Atomic[T]             // T is Int or Bool
@@ -693,6 +694,15 @@ held. An `Err` from the closure, or a cancellation while it waits, leaves the
 value unchanged and does not poison. Like Rust's `Mutex` poisoning, it keeps
 a half changed value from being used silently; unlike Go's `sync.Mutex` with
 a deferred `Unlock`, which leaves it in place.
+
+`m.try_with(f)` (decision 0698, Go's `TryLock`) never waits: when no
+writer holds or waits for `m` and no reader shares it, `f` runs as in
+`with` (its writes kept, a fault in it poisons `m`) and its result comes
+back as `Some`; otherwise `f` does not run and the call is `None`, also
+when this task holds `m` itself (no `XO-F004`). A poisoned `m` faults with
+`XO-F010` as `with` does. `f` returns its result directly (no `! E`); a
+body that can fail returns a `Result` as its value. It is not a
+cancellation point.
 
 `Mutex.with_read` (decision 0063) is shared read only access: many readers
 or one writer. `f` gets the value read only (mutating it is an error, and
@@ -7664,7 +7674,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-616 declarations.
+617 declarations.
 
 ### Range
 
@@ -8187,6 +8197,7 @@ fn (c: Chan[T]) len() -> Int
 fn (static: Mutex[T]) new(v: T) -> Mutex[T]
 fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
 fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
+fn (m: Mutex[T]) try_with[R, fx: Effects](f: fn(var T) -> R uses fx) -> R? uses fx
 fn (m: Mutex[T]) reset(v: T)
 ```
 

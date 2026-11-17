@@ -427,6 +427,61 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 	return r
 }
 
+// tryAcquire takes an exclusive permit if one is free and no writer
+// waits, never waiting (Mutex.try_with, decision 0698).
+func (l *lock) tryAcquire(tk *Task, site *heldSite) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.wwait > 0 || !l.free(false, false) {
+		return false
+	}
+	l.permits--
+	if site != nil {
+		l.owner, l.site = tk, *site
+	}
+	return true
+}
+
+// Mutex_try_with is `m.try_with(f)` (decision 0698, Go's TryLock): f
+// runs as in Mutex_with when m is free and its result comes back as
+// Some; None at once when a writer holds or waits for m, readers share
+// it, or this task holds it (no XO-F004). A poisoned m faults (XO-F010).
+func Mutex_try_with[T, R any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, Never]) Option[R] {
+	tk.Yield()
+	if _, ok := tk.held.get(m); ok {
+		return None[R]()
+	}
+	site := holdSite(tk, m)
+	if !m.l.tryAcquire(tk, &site) {
+		tk.held.del(m)
+		return None[R]()
+	}
+	done := false
+	defer func() {
+		if !done {
+			// a fault (not a cancellation or an exit) poisons m
+			if r := recover(); r != nil {
+				if _, ok := r.(*exitUnwind); !ok && !IsUnwind(r) {
+					m.poisoned = true
+				}
+				defer panic(r)
+			}
+		}
+		tk.held.del(m)
+		m.l.release()
+	}()
+	if m.poisoned {
+		done = true
+		poisonedFault("try_with")
+	}
+	v := m.v
+	MarkP(&v)
+	r := f(tk, &v)
+	done = true
+	m.v = v
+	return Some(r.V)
+}
+
 // Mutex_with_read is `m.with_read(f)` (std.md 2.7, decision 0063): f
 // gets a read only copy of the value while the mutex is held in shared
 // mode; other readers may hold it at the same time, writers wait (see

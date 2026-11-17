@@ -16,7 +16,7 @@ fn rt_bounded(k: Str) -> Bool {
 /// The prelude functions and methods that wait for another task or the
 /// scheduler (realtime.go rtBlocking).
 fn rt_blocking(k: Str) -> Bool {
-  k is "dbg" | "Chan.send" | "Chan.recv" | "Chan.try_send" | "Chan.try_recv" | "Chan.close" | "Chan.new" | "Mutex.with" | "Mutex.with_read" | "Mutex.new" | "Task.await" | "Scope.spawn" | "Scope.spawn_background" | "Scope.cancel" | "Scope.group"
+  k is "dbg" | "Chan.send" | "Chan.recv" | "Chan.try_send" | "Chan.try_recv" | "Chan.close" | "Chan.new" | "Mutex.with" | "Mutex.with_read" | "Mutex.try_with" | "Mutex.new" | "Task.await" | "Scope.spawn" | "Scope.spawn_background" | "Scope.cancel" | "Scope.group"
 }
 
 /// A call of a real-time function from another, for XO1404.

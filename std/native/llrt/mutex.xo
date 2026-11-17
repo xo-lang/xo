@@ -414,6 +414,43 @@ fn lock_body(m: Int, lp: Int, ln: Int, check: Bool) -> Int {
   l
 }
 
+/// Takes m exclusively for `try_with` (decision 0698) when no writer
+/// holds it or waits for it and no reader shares it, and moves its value
+/// out as lock does; else, never waiting, the empty list
+/// (tasks.empty_list; the caller tests its length), also when the calling
+/// task holds m itself (as Go's TryLock: no XO-F004). A poisoned m
+/// faults (XO-F010) as with does. The value goes back through unlock.
+pub fn try_lock(m: Int, lp: Int, ln: Int) -> Int {
+  if det.built() {
+    pool.det_point()
+  }
+  pool.defer_check()
+  pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
+  // the writer bit and the readers word both clear: nobody holds m or
+  // waits for it, and the bit keeps readers on the locked path
+  if ld4(m, M_WRITER) != 0 || ld(m, M_WWAIT) > 0 || !rt.slot_cas(m, R_W, 0, R_WRITER, ACQ_REL) {
+    pool.unlock(m + M_MU)
+    return tasks.empty_list()
+  }
+  if ld(m, M_POISON) != 0 {
+    sync_writer(m)
+    let _y = wake(m, false)
+    pool.unlock(m + M_MU)
+    poisoned("try_with", lp, ln)
+  }
+  st4(m, M_WRITER, 1)
+  let l = ld(m, M_SLOT)
+  st(m, M_SLOT, 0)
+  pool.unlock(m + M_MU)
+  // held, so a `with` of m inside the body faults XO-F004 as in a `with`
+  let c = ctx.cur()
+  let w = "try_with"
+  st(c, ctx.C_LOCKS, ld(c, ctx.C_LOCKS) + 1)
+  held_add(c, m, raw.data(w), 8, lp, ln)
+  sanhook.acquire(m)
+  l
+}
+
 /// Gives the value l back and releases m (xo_mutex_unlock).
 pub fn unlock(m: Int, l: Int) {
   // the critical section happens before the next lock (decision 0273)

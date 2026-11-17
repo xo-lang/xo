@@ -1,0 +1,53 @@
+// Mutex.try_with (decision 0698, Go's TryLock): on a free mutex f runs and
+// its result comes back as Some, its write kept; while another task holds
+// the mutex, and inside this task's own with or with_read, None at once
+// (no XO-F004). A with of the mutex inside try_with's body is re-entrant
+// (XO-F004); that fault poisons the mutex, and try_with on a poisoned
+// mutex faults (XO-F010) until reset.
+use std/task
+
+fn show(io: Stdio, label: Str, r: Result[Str, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => io.println("${label}: ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("${label}: fault ${info.msg}")
+    Err(_) => io.println("${label}: failed")
+  }
+}
+
+fn opt(o: Int?) -> Str {
+  match o {
+    Some(v) => "Some(${v})"
+    None => "None"
+  }
+}
+
+fn bump(m: Mutex[Int]) -> Int? { m.try_with(fn(var n) { n += 1; n }) }
+
+fn main(os: Os) {
+  let io = os.stdio
+  let m = Mutex.new(10)
+  io.println("free: ${opt(bump(m))}, then ${m.with_read(fn(n) { n })}")
+  io.println("in with: ${opt(m.with(fn(var n) { bump(m) }))}")
+  io.println("in with_read: ${opt(m.with_read(fn(n) { bump(m) }))}")
+  let held = Chan[()].new()
+  let release = Chan[()].new()
+  let got = scope s {
+    let h = s.spawn(fn() {
+      m.with(fn(var n) {
+        let _a = held.send(())
+        let _b = release.recv()
+        n += 100
+      })
+    })
+    let _c = held.recv()
+    let busy = bump(m)
+    let _d = release.send(())
+    h.await
+    busy
+  }
+  io.println("held by another task: ${opt(got)}, then ${opt(bump(m))}")
+  show(io, "with inside", task.isolate(fn() -> Str ! () { opt(m.try_with(fn(var n) { m.with(fn(var k) { k }) })) }))
+  show(io, "poisoned", task.isolate(fn() -> Str ! () { opt(bump(m)) }))
+  m.reset(0)
+  io.println("after reset: ${opt(bump(m))}")
+}

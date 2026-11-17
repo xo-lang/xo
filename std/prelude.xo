@@ -1264,6 +1264,11 @@ fn (static: Mutex[T]) new(v: T) -> Mutex[T]
 fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
 /// Shared read only access (decision 0063): many readers or one writer.
 fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
+/// Runs f as with does when m is free, and returns its result as Some;
+/// None at once, without waiting and without running f, when a writer
+/// holds m or waits for it, readers share it, or this task holds it
+/// (Go's TryLock; decision 0698). A poisoned m faults as with does.
+fn (m: Mutex[T]) try_with[R, fx: Effects](f: fn(var T) -> R uses fx) -> R? uses fx
 /// Stores v and clears the poison a fault inside `with` left (decision 0482).
 fn (m: Mutex[T]) reset(v: T)
 
