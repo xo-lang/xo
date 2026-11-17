@@ -39,6 +39,19 @@ Native builds take `Rand.bytes` from the same per-thread ChaCha8 keystream
 as `int`, `float` and `bool` (decision 0700), 8 bytes a word, each word
 zeroed in the buffer as it is taken. Seeded and `xo test` streams are
 unchanged; a thread with no worker record keeps the system call.
+## 2026-11-17: feature: Int.reverse_bits and Int.div_wide_unsigned
+
+- Kind: feature
+- Commit: this push
+- Found by: task #231 (std Proven; scripts/stdaudit/map.txt math/bits gap rows Reverse, Reverse64, Div)
+- Go reference: math/bits Reverse64 and Div64 (go1.26; Div64's Hacker's Delight divlu ported line by line with Ints as unsigned words)
+- Test: internal/llvm/testdata/golden/int_reverse_div_wide (arm64, LLVM, Go backend): edge words and 2000 xorshift words, want.txt Go's output
+- Shipped in: not yet released
+
+`n.reverse_bits()` reverses n's 64 bits; `hi.div_wide_unsigned(lo, y)`
+divides the unsigned 128 bit word (hi, lo) by y and returns the quotient
+and remainder, a fault (Go's panic) when y is 0 or not above hi.
+
 ## 2026-11-16: feature: Atomic[Int].and and or
 
 - Kind: feature

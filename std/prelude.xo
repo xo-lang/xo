@@ -357,6 +357,12 @@ fn (n: Int) rotate_right(k: Int) -> Int
 fn (n: Int) rotate_right32(k: Int) -> Int
 /// n's 8 bytes in the reverse order.
 fn (n: Int) swap_bytes() -> Int
+/// n's 64 bits in the reverse order (Go's bits.Reverse64).
+fn (n: Int) reverse_bits() -> Int
+/// The quotient and remainder of the unsigned 128 bit word (n, lo), n the
+/// high half, divided by the unsigned word y (Go's bits.Div64); a fault
+/// when y is 0 or y <= n as unsigned words (the quotient would not fit).
+fn (n: Int) div_wide_unsigned(lo: Int, y: Int) -> (Int, Int)
 /// The high 64 bits of the 128 bit product of n and m as unsigned words.
 fn (n: Int) mul_hi_unsigned(m: Int) -> Int
 /// Whether n < m as unsigned 64 bit words.

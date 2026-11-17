@@ -1,0 +1,41 @@
+// Go's bits.Reverse64 and bits.Div64 on Int words (task #231): edge words
+// and 2000 pseudo random ones; the expected output is Go's.
+fn h(x: Int) -> Str { x.to_str_base(16) }
+
+fn main(os: Os) {
+  for x in [0, 1, -1, 2, Int.min, Int.max, 0x0123456789abcdef, 0x00ff00ff00ff00ff] {
+    os.stdio.println("rev ${h(x)} ${h(x.reverse_bits())}")
+  }
+  var s = 88172645463325252
+  var sum = 0
+  for i in 0..2000 {
+    s = s ^ s.wrapping_shl(13)
+    s = s ^ s.shr_logical(7)
+    s = s ^ s.wrapping_shl(17)
+    let a = s
+    s = s ^ s.wrapping_shl(13)
+    s = s ^ s.shr_logical(7)
+    s = s ^ s.wrapping_shl(17)
+    var y = s
+    if i % 3 == 0 {
+      y = y.shr_logical(i % 64)
+    }
+    if y == 0 {
+      y = 7
+    }
+    // a high word below y: a mod y as unsigned, or a shifted down
+    var hi = a.shr_logical(1 + i % 63)
+    if !hi.lt_unsigned(y) {
+      hi = y.shr_logical(1)
+    }
+    if i % 7 == 0 {
+      hi = 0
+    }
+    let (q, r) = hi.div_wide_unsigned(a, y)
+    sum = sum.wrapping_mul(31).wrapping_add(q).wrapping_mul(31).wrapping_add(r).wrapping_add(a.reverse_bits())
+    if i < 12 {
+      os.stdio.println("div ${h(hi)} ${h(a)} ${h(y)} ${h(q)} ${h(r)}")
+    }
+  }
+  os.stdio.println("sum ${h(sum)}")
+}

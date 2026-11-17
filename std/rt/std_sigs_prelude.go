@@ -74,6 +74,8 @@ var (
 	_ func(*Task, int64, int64) int64                                                                      = Int_rotate_right
 	_ func(*Task, int64, int64) int64                                                                      = Int_rotate_right32
 	_ func(*Task, int64) int64                                                                             = Int_swap_bytes
+	_ func(*Task, int64) int64                                                                             = Int_reverse_bits
+	_ func(*Task, int64, int64, int64) Tuple2[int64, int64]                                                = Int_div_wide_unsigned
 	_ func(*Task, int64, int64) int64                                                                      = Int_mul_hi_unsigned
 	_ func(*Task, int64, int64) bool                                                                       = Int_lt_unsigned
 	_ func(*Task, int64, int64) bool                                                                       = Int_le_unsigned

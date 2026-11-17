@@ -116,6 +116,8 @@ fn (n: Int) wrapping_shl(k: Int) -> Int      // k mod 64, the bits shifted out d
 fn (n: Int) shr_logical(k: Int) -> Int       // the 64 bits shifted right by k mod 64, zeros in (`>>` keeps the sign)
 fn (n: Int) rotate_right(k: Int) -> Int      // also rotate_right32: the low 32 bits by k mod 32, zero extended
 fn (n: Int) swap_bytes() -> Int              // the 8 bytes reversed
+fn (n: Int) reverse_bits() -> Int            // the 64 bits reversed (Go's bits.Reverse64)
+fn (n: Int) div_wide_unsigned(lo: Int, y: Int) -> (Int, Int)   // Go's bits.Div64: (n, lo) / y as unsigned words, quotient and remainder; a fault for y 0 or y <= n
 fn (n: Int) mul_hi_unsigned(m: Int) -> Int   // the high word of the 128 bit product as unsigned words
 fn (n: Int) lt_unsigned(m: Int) -> Bool      // also le_unsigned: compared as unsigned 64 bit words
 fn (n: Int) saturating_add(m: Int) -> Int    // also saturating_sub, saturating_mul
@@ -7641,7 +7643,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-596 declarations.
+598 declarations.
 
 ### Range
 
@@ -7691,6 +7693,8 @@ fn (n: Int) shr_logical(k: Int) -> Int
 fn (n: Int) rotate_right(k: Int) -> Int
 fn (n: Int) rotate_right32(k: Int) -> Int
 fn (n: Int) swap_bytes() -> Int
+fn (n: Int) reverse_bits() -> Int
+fn (n: Int) div_wide_unsigned(lo: Int, y: Int) -> (Int, Int)
 fn (n: Int) mul_hi_unsigned(m: Int) -> Int
 fn (n: Int) lt_unsigned(m: Int) -> Bool
 fn (n: Int) le_unsigned(m: Int) -> Bool

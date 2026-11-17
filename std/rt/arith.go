@@ -301,6 +301,22 @@ func Int_rotate_right32(_ *Task, a, k int64) int64 {
 // Int_swap_bytes is `n.swap_bytes()`.
 func Int_swap_bytes(_ *Task, a int64) int64 { return int64(bits.ReverseBytes64(uint64(a))) }
 
+// Int_reverse_bits is `n.reverse_bits()`: bits.Reverse64.
+func Int_reverse_bits(_ *Task, a int64) int64 { return int64(bits.Reverse64(uint64(a))) }
+
+// Int_div_wide_unsigned is `n.div_wide_unsigned(lo, y)`: bits.Div64, its
+// panics as faults.
+func Int_div_wide_unsigned(_ *Task, hi, lo, y int64) Tuple2[int64, int64] {
+	if y == 0 {
+		FaultHere("integer divide by zero in Int.div_wide_unsigned")
+	}
+	if uint64(y) <= uint64(hi) {
+		FaultHere("integer overflow in Int.div_wide_unsigned: y <= the high word")
+	}
+	q, r := bits.Div64(uint64(hi), uint64(lo), uint64(y))
+	return Tuple2[int64, int64]{int64(q), int64(r)}
+}
+
 // Int_mul_hi_unsigned is `n.mul_hi_unsigned(m)`.
 func Int_mul_hi_unsigned(_ *Task, a, b int64) int64 {
 	hi, _ := bits.Mul64(uint64(a), uint64(b))

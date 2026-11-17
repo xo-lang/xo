@@ -1051,9 +1051,9 @@ bits.Len64 = Int.bit_len
 bits.Mul = Int.mul_hi_unsigned
 bits.Add = Int.add_carry
 bits.Sub = Int.sub_borrow
-bits.Div = gap: no 128 by 64 bit division
-bits.Reverse = gap: no Int.reverse_bits
-bits.Reverse64 = gap: no Int.reverse_bits
+bits.Div = Int.div_wide_unsigned
+bits.Reverse = Int.reverse_bits
+bits.Reverse64 = Int.reverse_bits
 bits.* = not planned: the 8, 16 and 32 bit variants (Int is 64 bit; mask first) and UintSize
 
 # regexp: std/regexp.Regex
