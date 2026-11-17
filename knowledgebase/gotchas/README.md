@@ -1449,3 +1449,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [sepcomp-thunk-shared.md](sepcomp-thunk-shared.md): link fails on a duplicate `NAME.value` thunk from std's object and the program (Observed)
 - [go-oracle-panic-as-want.md](go-oracle-panic-as-want.md): a fuzz want of "ERR runtime error"; x/net/html recovers its panics as plain errors, so the oracle drops those cases
 - [gate-env-leaks-into-push.md](gate-env-leaks-into-push.md): an exported OFF_MAX_MIN from a gate failed the next push; pushq now clears gate-only settings (#169)
+- [evidence-rounds-share-worktree.md](evidence-rounds-share-worktree.md): Observed 2026-11-16: two std evidence rounds on one host shared its worktree and log, and leftover untracked evidence blocked the next checkout once main had it; one round per host (lock), a log per round, clear evidence before checkout
