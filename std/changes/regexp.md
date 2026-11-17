@@ -1,5 +1,20 @@
 # std/regexp changes
 
+## 2026-11-17: perf: the backtracker allocates one buffer a search and pushes its ALT job inline
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (std performance to Proven; bench/perf/regexp match was 1.137 of Go's wall on host 1, 1.154 on the Mac)
+- Go reference: regexp/backtrack.go (Go keeps its bitState in a pool; Xo keeps no package caches, so the three lists a search allocated become one)
+- Test: the regexp module tests (arm64, llvm); bench/perf/regexp's checksums equal Go's (twincheck)
+- Timing: Mac, 3,000,000 is_match calls: 0.54 s to 0.45 s user; twincheck -time 5 match 1.154 to 1.010 of Go's wall; host 1 `xo bench --ab` (ab-host.sh d166da7d4 f23cd9e21, n=3) wall 0.882 (0.854 to 0.907), better
+- Shipped in: not yet released
+
+A backtracking search allocated a visited bitmap, a job stack and the
+capture positions separately; they now share one list (captures, then
+the visited bits, then the jobs, which grow at the end), and the push of
+an ALT's second branch, the hottest, is written inline in the loop.
+
 ## 2026-11-16: fix: a backslash before a non-ASCII rune is an invalid escape, not a fault
 
 - Kind: fix

@@ -2756,12 +2756,17 @@ fn literal_prefix(g: Prog) -> Str {
 /// Go's bitState (backtrack.go): the backtracker's visited bits, job stack
 /// (instruction, position, and a flag for "continue a visit"), and group
 /// positions.
+/// One buffer per search (one allocation where there were three lists;
+/// task #271): buf holds the capture positions (0 to ncap), then the
+/// visited bits from vis0, then the job stack from job0, which grows at
+/// the end.
 struct BT {
   end: Int
-  visited: List[Int]
-  jobs: List[Int]
+  buf: List[Int]
+  ncap: Int
+  vis0: Int
+  job0: Int
   jn: Int
-  cap: List[Int]
   matchcap: List[Int]
   nprog: Int
 }
@@ -2771,11 +2776,11 @@ fn (var b: BT) should_visit(pc: Int, pos: Int) -> Bool {
   let n = pc * (b.end + 1) + pos
   let w = n >> 5
   let bit = 1 << (n & 31)
-  let v = b.visited[w]
+  let v = b.buf[b.vis0 + w]
   if (v & bit) != 0 {
     return false
   }
-  b.visited[w] = v | bit
+  b.buf[b.vis0 + w] = v | bit
   true
 }
 
@@ -2783,10 +2788,11 @@ fn (var b: BT) should_visit(pc: Int, pos: Int) -> Bool {
 /// programs of at most 500 instructions, so pc << 1 | arg is under 4096).
 fn (var b: BT) job(pc: Int, pos: Int, arg: Int) {
   let j = (pos << 12) | (pc << 1) | arg
-  if b.jn < b.jobs.len() {
-    b.jobs[b.jn] = j
+  let at = b.job0 + b.jn
+  if at < b.buf.len() {
+    b.buf[at] = j
   } else {
-    b.jobs.push(j)
+    b.buf.push(j)
   }
   b.jn += 1
 }
@@ -2800,14 +2806,15 @@ fn (var b: BT) push(g: Prog, pc: Int, pos: Int, arg: Int) {
 /// tryBacktrack: the first match (leftmost-first priority) starting at
 /// pos, its positions in b.matchcap.
 fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
-  let ncap = b.cap.len()
+  let ncap = b.ncap
+  let vis0 = b.vis0
   let sd = s.bytes()
   let end1 = b.end + 1
   b.push(g, pc0, pos0, 0)
   while b.jn > 0 {
     b.jn -= 1
     // (through a let: a var copied from an element is XO0520)
-    let j = b.jobs[b.jn]
+    let j = b.buf[b.job0 + b.jn]
     let pc0 = (j >> 1) & 2047
     let pos0 = j >> 12
     let arg0 = j & 1
@@ -2821,11 +2828,11 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
         let n = pc * end1 + pos
         let w = n >> 5
         let bit = 1 << (n & 31)
-        let v = b.visited[w]
+        let v = b.buf[vis0 + w]
         if (v & bit) != 0 {
           break
         }
-        b.visited[w] = v | bit
+        b.buf[vis0 + w] = v | bit
       }
       check = true
       if pc == 0 {
@@ -2838,7 +2845,15 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
           pc = g.arg[pc]
         } else {
           // push(pc, pos, 1) without its checks: pc is an ALT
-          b.job(pc, pos, 1)
+          // b.job(pc, pos, 1), inline (the hottest push)
+          let jat = b.job0 + b.jn
+          let jv = (pos << 12) | (pc << 1) | 1
+          if jat < b.buf.len() {
+            b.buf[jat] = jv
+          } else {
+            b.buf.push(jv)
+          }
+          b.jn += 1
           pc = g.out[pc]
         }
         continue
@@ -2876,13 +2891,13 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
       }
       if op == I_CAPTURE {
         if arg == 1 {
-          b.cap[g.arg[pc]] = pos
+          b.buf[g.arg[pc]] = pos
           break
         }
         let a = g.arg[pc]
         if a < ncap {
-          b.job(pc, b.cap[a], 1)
-          b.cap[a] = pos
+          b.job(pc, b.buf[a], 1)
+          b.buf[a] = pos
         }
         pc = g.out[pc]
         continue
@@ -2900,11 +2915,11 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
         continue
       }
       if op == I_MATCH {
-        b.cap[1] = pos
+        b.buf[1] = pos
         if b.matchcap[1] == -1 {
           var i = 0
           while i < ncap {
-            b.matchcap[i] = b.cap[i]
+            b.matchcap[i] = b.buf[i]
             i += 1
           }
         }
@@ -3369,10 +3384,11 @@ fn one_pass_exec(g: Prog, o: List[Int], s: Str, pos0: Int, ncap: Int) -> List[In
 fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
   let end = s.len()
   let nprog = g.op.len()
-  var b = BT{end: end, visited: zeros((nprog * (end + 1) + 31) / 32), jobs: zeros(32), jn: 0, cap: zeros(ncap), matchcap: zeros(ncap), nprog: nprog}
+  let vw = (nprog * (end + 1) + 31) / 32
+  var b = BT{end: end, buf: zeros(ncap + vw + 32), ncap: ncap, vis0: ncap, job0: ncap + vw, jn: 0, matchcap: zeros(ncap), nprog: nprog}
   var i = 0
   while i < ncap {
-    b.cap[i] = -1
+    b.buf[i] = -1
     b.matchcap[i] = -1
     i += 1
   }
@@ -3382,7 +3398,7 @@ fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
     if pos0 != 0 {
       return []
     }
-    b.cap[0] = 0
+    b.buf[0] = 0
     if try_backtrack(g, s, b, g.start, 0) {
       return b.matchcap
     }
@@ -3402,7 +3418,7 @@ fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
       }
       pos = at
     }
-    b.cap[0] = pos
+    b.buf[0] = pos
     if try_backtrack(g, s, b, g.start, pos) {
       return b.matchcap
     }
