@@ -222,14 +222,24 @@ fn cut(s: Str) -> Str { if s.len() < 60 { s } else { s[0..60] } }
 /// salts and seeds are not zeros: a result that differs from Go's still
 /// passes when a second call gives other bytes (the backend is not
 /// deterministic) and check accepts it.
-fn random(got: Str, want: Str, again: Str, check: fn(Bytes) -> Bool) -> Bool {
-  if got.starts_with("err") || want.starts_with("err") || again == got {
+/// Whether got, unlike Go's want, is a randomized result that check accepts (the Go backend's crypto/rsa takes no
+/// caller's random source since Go 1.26). again, a second result, must differ when the randomness is 8 bytes or
+/// more; with fewer (a PSS salt of 1 byte) two results coincide by chance (1 in 256 for one byte: the Go backend's
+/// rsaopts corpus failed tier c36c812d6, task #277).
+fn random(got: Str, want: Str, again: Str, check: fn(Bytes) -> Bool, entropy: Int) -> Bool {
+  if got.starts_with("err") || want.starts_with("err") || (again == got && entropy >= 8) {
     return false
   }
   check(Bytes.from_hex(got) ?? b"")
 }
 
 fn show(bad: List[Str]) -> List[Str] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
+
+test "a short salt may repeat: random accepts the same randomized result twice below 8 bytes of entropy" {
+  expect(random("ab", "cd", "ab", fn(_) { true }, 1)) == true
+  expect(random("ab", "cd", "ab", fn(_) { true }, 32)) == false
+  expect(random("ab", "cd", "ef", fn(_) { false }, 1)) == false
+}
 
 test "sign_pss_digest and verify_pss_digest are Go's SignPSS and VerifyPSS (TestPSSSigning, TestInvalidPSSSaltLength)" {
   var bad: List[Str] = []
@@ -239,7 +249,7 @@ test "sign_pss_digest and verify_pss_digest are Go's SignPSS and VerifyPSS (Test
     let name = "key ${ki} ${h:?} digest ${dg.len()} salt ${sl}"
     let got = res(crypto.sign_pss_digest(Zeros{}, k, h, dg, sl))
     let actual = if sl == -1 { h.size() } else if sl == 0 { (k.rsa_parts() ?? e => fault(e.msg)).size - 2 - h.size() } else { sl }
-    if got != want && !random(got, want, res(crypto.sign_pss_digest(Zeros{}, k, h, dg, sl)), fn(b) { crypto.verify_pss_digest(k.public_key(), h, dg, b, actual) }) {
+    if got != want && !random(got, want, res(crypto.sign_pss_digest(Zeros{}, k, h, dg, sl)), fn(b) { crypto.verify_pss_digest(k.public_key(), h, dg, b, actual) }, actual) {
       bad.push("${name}: ${cut(got)}")
       continue
     }
@@ -302,7 +312,7 @@ test "encrypt_oaep and decrypt_oaep take MGF1's hash apart (EncryptOAEPWithOptio
     let mh: crypto.Hash? = if mi < 0 { None } else { Some(HASHES[mi]) }
     let name = "key ${ki} ${h:?} mgf ${mi} msg ${msg.len()}"
     let got = res(crypto.encrypt_oaep(Zeros{}, k.public_key(), h, msg, label, mh))
-    if got != want && !random(got, want, res(crypto.encrypt_oaep(Zeros{}, k.public_key(), h, msg, label, mh)), fn(c) { (crypto.decrypt_oaep(k, h, c, label, mh) ?? _ => b"!") == msg }) {
+    if got != want && !random(got, want, res(crypto.encrypt_oaep(Zeros{}, k.public_key(), h, msg, label, mh)), fn(c) { (crypto.decrypt_oaep(k, h, c, label, mh) ?? _ => b"!") == msg }, h.size()) {
       bad.push("${name}: ${cut(got)}")
       continue
     }
