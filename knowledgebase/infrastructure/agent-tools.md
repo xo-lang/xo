@@ -1832,6 +1832,28 @@ Last verified: 2026-11-15
   Name the files one by one under zsh, then read `git diff` and
   `git add` (it stages nothing). Last verified: 2026-10-21.
 
+### Before a run: xw preflight (#157)
+
+`xw preflight offload|gate|batch [--jobs N] [--host HOST.env|mac] [--quiet]`
+checks a run before it starts and prints each check with its fix:
+
+1. seed age: commits behind origin/main and the p50 xo build a job (from
+   `xobuild` events); warn past 100 commits or 180 s, a batch refused past
+   400 or 600 s; a too-old seed also opens one `xw ask` to the owner per
+   seed version;
+2. Docker answers (no open DOCKER-DEAD alert);
+3. host free disk (warn under 30 GB, a batch refused under 15 GB);
+4. main's open failures; 5. tier leases on the evidence lanes;
+6. this agent's open offload runs against OFF_MAX_QUEUED;
+7. the Mac's load and free memory for a run on hosts 3 or 4 (containers on
+   the Mac) or the Mac itself, against the gate threshold (load 48, 55%).
+
+offload.sh and offload-gate.sh call it and only warn; stdproven-offload.sh
+refuses a `batch` or `par` run (exit 2). `XW_PREFLIGHT_OK=REASON` runs a
+refused batch anyway (recorded as a preflight.override event);
+`XW_PREFLIGHT=0` skips the check. xw down or hung (5 s bound): the run goes
+on. Rows: agent-rules.md. Last verified: 2026-11-16.
+
 ### Origin claims (scripts/shipped-in.sh)
 
 - `scripts/shipped-in.sh REV...` prints, for each revision, the first
