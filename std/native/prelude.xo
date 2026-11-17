@@ -403,6 +403,9 @@ fn str_to_lower(s: Str) -> Str { unicode.map_case(s, true) }
 
 fn str_to_upper(s: Str) -> Str { unicode.map_case(s, false) }
 
+/// strings.ToTitle: strings.Map(unicode.ToTitle).
+fn str_to_title(s: Str) -> Str { s.map_runes(fn(r: Rune) -> Rune? { Some(r.to_title()) }) }
+
 /// `a.to_lower() == b.to_lower()` (internal/ssa lowers that comparison to
 /// a call of this).
 fn str_eq_lower(a: Str, b: Str) -> Bool { unicode.eq_lower(a, b) }
@@ -1202,6 +1205,97 @@ fn bytes_replace_n(b: Bytes, old: Bytes, new: Bytes, n: Int) -> Bytes { strings.
 fn bytes_to_lower(b: Bytes) -> Bytes { unicode.map_case_bytes(b, true) }
 
 fn bytes_to_upper(b: Bytes) -> Bytes { unicode.map_case_bytes(b, false) }
+
+/// bytes.ToTitle: bytes.Map(unicode.ToTitle).
+fn bytes_to_title(b: Bytes) -> Bytes { b.map_runes(fn(r: Rune) -> Rune? { Some(r.to_title()) }) }
+
+/// bytes.Runes: each byte of an invalid sequence U+FFFD, as to_str_lossy.
+fn bytes_runes(b: Bytes) -> List[Rune] { b.to_str_lossy().runes() }
+
+/// Str.lines over b's bytes: views of b.
+fn bytes_lines(b: Bytes) -> List[Bytes] {
+  var out: List[Bytes] = []
+  var i = 0
+  let n = b.len()
+  while i < n {
+    var j = i
+    while j < n && b[j] != 10 {
+      j += 1
+    }
+    var e = j
+    if e > i && b[e - 1] == 13 {
+      e -= 1
+    }
+    out.push(b[i..e])
+    i = j + 1
+  }
+  out
+}
+
+/// bytes.Join.
+fn bytes_join(parts: List[Bytes], sep: Bytes) -> Bytes {
+  var sb = BytesBuilder.new()
+  for i in 0..parts.len() {
+    if i > 0 {
+      sb.write(sep)
+    }
+    sb.write(parts[i])
+  }
+  sb.freeze()
+}
+
+const HEX_DIGITS = "0123456789abcdef"
+
+fn hex_dump_byte(var sb: BytesBuilder, x: Int) {
+  sb.write_byte(HEX_DIGITS.bytes()[(x >> 4) & 15])
+  sb.write_byte(HEX_DIGITS.bytes()[x & 15])
+}
+
+/// hex.Dump (Go's dumper's Write and Close): the offset is 32 bits, as
+/// Go's.
+fn bytes_hex_dump(b: Bytes) -> Str {
+  var sb = BytesBuilder.new()
+  var right = BytesBuilder.new()
+  var used = 0
+  for i in 0..b.len() {
+    if used == 0 {
+      for k in 0..4 {
+        hex_dump_byte(sb, (i >> (24 - 8 * k)) & 255)
+      }
+      sb.write(b"  ")
+    }
+    let x = Int(b[i])
+    hex_dump_byte(sb, x)
+    sb.write_byte(32)
+    if used == 7 {
+      sb.write_byte(32)
+    } else if used == 15 {
+      sb.write(b" |")
+    }
+    right.write_byte(if x >= 32 && x <= 126 { b[i] } else { 46 })
+    used += 1
+    if used == 16 {
+      sb.write(right.freeze())
+      sb.write(b"|\n")
+      right = BytesBuilder.new()
+      used = 0
+    }
+  }
+  if used > 0 {
+    while used < 16 {
+      sb.write(b"   ")
+      if used == 7 {
+        sb.write_byte(32)
+      } else if used == 15 {
+        sb.write(b" |")
+      }
+      used += 1
+    }
+    sb.write(right.freeze())
+    sb.write(b"|\n")
+  }
+  sb.freeze().to_str_lossy()
+}
 
 /// bytes.Map: f applied to every rune of b, None dropping it. Like
 /// str_map_runes and Go's: no copy until the first rune that changes (a valid

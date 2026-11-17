@@ -161,6 +161,7 @@ var (
 	_ func(*Task, string, string) string                                                                   = Str_trim_end_chars
 	_ func(*Task, string) string                                                                           = Str_to_lower
 	_ func(*Task, string) string                                                                           = Str_to_upper
+	_ func(*Task, string) string                                                                           = Str_to_title
 	_ func(*Task, string, string, string) string                                                           = Str_replace
 	_ func(*Task, string, string, string, int64) string                                                    = Str_replace_n
 	_ func(*Task, string, int64) string                                                                    = Str_repeat
@@ -176,6 +177,7 @@ var (
 	_ func(*Task, Bytes) string                                                                            = Bytes_to_str_lossy
 	_ func(*Task, Bytes, string) string                                                                    = Bytes_to_valid_utf8
 	_ func(*Task, Bytes) string                                                                            = Bytes_to_hex
+	_ func(*Task, Bytes) string                                                                            = Bytes_hex_dump
 	_ func(*Task, Bytes) Bytes                                                                             = Bytes_clone
 	_ func(*Task, Bytes) string                                                                            = Bytes_to_base64
 	_ func(*Task, string) Option[Bytes]                                                                    = Bytes_from_hex
@@ -210,6 +212,10 @@ var (
 	_ func(*Task, Bytes, Bytes, Bytes, int64) Bytes                                                        = Bytes_replace_n
 	_ func(*Task, Bytes) Bytes                                                                             = Bytes_to_lower
 	_ func(*Task, Bytes) Bytes                                                                             = Bytes_to_upper
+	_ func(*Task, Bytes) Bytes                                                                             = Bytes_to_title
+	_ func(*Task, Bytes) List[Rune]                                                                        = Bytes_runes
+	_ func(*Task, Bytes) List[Bytes]                                                                       = Bytes_lines
+	_ func(*Task, List[Bytes], Bytes) Bytes                                                                = Bytes_join
 	_ func(*Task, Bytes, Bytes) bool                                                                       = Bytes_equal_fold
 	_ func(*Task, Bytes, int64) Bytes                                                                      = Bytes_repeat
 	_ func(*Task, Bytes) List[Tuple2[int64, uint8]]                                                        = Bytes_indexed

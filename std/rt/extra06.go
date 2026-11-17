@@ -410,6 +410,34 @@ func Bytes_to_lower(_ *Task, b Bytes) Bytes { return Bytes(bytes.ToLower([]byte(
 // Bytes_to_upper is `b.to_upper()`: bytes.ToUpper.
 func Bytes_to_upper(_ *Task, b Bytes) Bytes { return Bytes(bytes.ToUpper([]byte(b))) }
 
+// Bytes_to_title is `b.to_title()`: bytes.ToTitle.
+func Bytes_to_title(_ *Task, b Bytes) Bytes { return Bytes(bytes.ToTitle([]byte(b))) }
+
+// Bytes_runes is `b.runes()`: bytes.Runes.
+func Bytes_runes(tk *Task, b Bytes) List[Rune] { return Str_runes(tk, string(b)) }
+
+// Bytes_lines is `b.lines()`: Str.lines over the bytes.
+func Bytes_lines(tk *Task, b Bytes) List[Bytes] {
+	ls := Str_lines(tk, string(b))
+	out := make([]Bytes, len(ls.s))
+	for i, l := range ls.s {
+		out[i] = Bytes(l)
+	}
+	return ListOf(out...)
+}
+
+// Bytes_join is `Bytes.join(parts, sep)`: bytes.Join.
+func Bytes_join(_ *Task, parts List[Bytes], sep Bytes) Bytes {
+	ss := make([]string, len(parts.s))
+	for i, p := range parts.s {
+		ss[i] = string(p)
+	}
+	return Bytes(strings.Join(ss, string(sep)))
+}
+
+// Bytes_hex_dump is `b.hex_dump()`: hex.Dump.
+func Bytes_hex_dump(_ *Task, b Bytes) string { return hex.Dump([]byte(b)) }
+
 // Bytes_equal_fold is `b.equal_fold(other)`: bytes.EqualFold.
 func Bytes_equal_fold(_ *Task, b, other Bytes) bool {
 	return bytes.EqualFold([]byte(b), []byte(other))

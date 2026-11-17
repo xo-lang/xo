@@ -596,6 +596,9 @@ fn (s: Str) trim_end_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> S
 fn (s: Str) to_lower() -> Str
 /// s with every rune in upper case, Unicode aware (Go's strings.ToUpper).
 fn (s: Str) to_upper() -> Str
+/// s with every rune in title case (Go's strings.ToTitle: unicode.ToTitle
+/// on each rune; `ǆ` becomes `ǅ` where to_upper gives `Ǆ`).
+fn (s: Str) to_title() -> Str
 /// f applied to every rune of s (strings.Map); None (Go's negative
 /// mapping) drops the rune, and s itself, not a copy, when nothing changes.
 fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx
@@ -646,6 +649,10 @@ fn (b: Bytes) to_valid_utf8(replacement: Str) -> Str
 /// b in lower case hexadecimal, two digits a byte (Go's
 /// hex.EncodeToString).
 fn (b: Bytes) to_hex() -> Str
+/// Go's hex.Dump, the layout of `hexdump -C`: each line an 8 digit offset,
+/// 16 bytes in hex (a space between the two halves) and their printable
+/// ASCII between bars (`.` for the rest), newline ended; "" for no bytes.
+fn (b: Bytes) hex_dump() -> Str
 /// An explicit copy of b in a buffer of its own (see Str.clone).
 fn (b: Bytes) clone() -> Bytes
 /// b in the standard base64 encoding with padding (Go's
@@ -762,6 +769,18 @@ fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes
 fn (b: Bytes) to_lower() -> Bytes
 /// b raised (bytes.ToUpper), as to_lower.
 fn (b: Bytes) to_upper() -> Bytes
+/// b in title case (bytes.ToTitle), as Str.to_title; each byte of an
+/// invalid sequence as U+FFFD.
+fn (b: Bytes) to_title() -> Bytes
+/// The runes of b, each byte of an invalid sequence U+FFFD (Go's
+/// bytes.Runes).
+fn (b: Bytes) runes() -> List[Rune]
+/// The lines of b, split on \n with a \r before it removed, a final
+/// newline starting no empty line, as Str.lines (Go's bufio.ScanLines;
+/// Go's bytes.Lines keeps each line's newline).
+fn (b: Bytes) lines() -> List[Bytes]
+/// The parts joined with sep between them (Go's bytes.Join).
+fn (static: Bytes) join(parts: List[Bytes], sep: Bytes) -> Bytes
 /// f applied to every rune of b (bytes.Map); None (Go's negative mapping)
 /// drops the rune, and b itself, not a copy, when nothing changes.
 fn (b: Bytes) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Bytes ! E uses fx

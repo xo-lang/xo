@@ -1,0 +1,20 @@
+// strings.ToTitle, bytes.ToTitle, bytes.Runes, bytes.Join, Str.lines on
+// Bytes and hex.Dump (task #231); the expected output is Go's for the
+// same calls.
+fn main(os: Os) {
+  os.stdio.println("ǆemal ǳ hello ß".to_title())
+  os.stdio.println("ǆemal ǳ hello ß".to_upper())
+  os.stdio.println(b"x\xffǆ".to_title().to_hex())
+  os.stdio.println("${b"a\xffé\xe2\x82".runes().map(fn(r: Rune) -> Int { Int(r) })}")
+  os.stdio.println(Bytes.join([b"a", b"", b"bc"], b", ").to_str_lossy())
+  os.stdio.println(Bytes.join([], b", ").to_hex())
+  os.stdio.println("${b"one\r\ntwo\n\nthree\n".lines().map(fn(l: Bytes) -> Str { l.to_str_lossy() })} ${b"".lines().len()} ${b"x".lines().len()}")
+  os.stdio.print(b"".hex_dump())
+  os.stdio.print(b"0123456789abcdef".hex_dump())
+  var all = BytesBuilder.new()
+  for i in 0..40 {
+    all.write_byte(UInt8((i * 37) % 256))
+  }
+  os.stdio.print(all.freeze().hex_dump())
+  os.stdio.print(b"hello\n\tworld".hex_dump())
+}

@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fix (std/protoparse): `parse` rejects files protoc rejects that it accepted: an enum's `allow_alias` with no aliases (or aliases without it), overlapping `reserved` or `extensions` ranges, and an option name with no value (`[import json_name = "j"]`), with protocompile's error texts.
+- Feature (prelude): `Str.to_title`, `Bytes.to_title`, `Bytes.runes`, `Bytes.lines`, `Bytes.join` and `Bytes.hex_dump` (Go's strings.ToTitle, bytes.ToTitle, Runes, Join and hex.Dump).
 - Fix (std/sql, Postgres): a column name (or any backend message string) that is not valid UTF-8 keeps its valid bytes, with U+FFFD for each invalid one; it was read as an empty string.
 - Fix (std/protojson): an integer map key is read as Go's strconv.ParseInt and ParseUint read it: a sign and leading zeros are allowed, an exponent, fraction or space is an error (it was read as a quoted number).
 - Feature (std/toml): `decode(text, strict: true)` rejects keys and tables the type has no field for (go-toml's DisallowUnknownFields) with `DecodeErr.Strict`, each `StrictErr` giving the line, column, key and go-toml's context text. `DecodeErr` is open, so existing matches are unchanged.

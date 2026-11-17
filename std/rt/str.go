@@ -252,6 +252,9 @@ func Str_eq_lower(a, b string) bool {
 // Str_to_upper is `s.to_upper()`.
 func Str_to_upper(_ *Task, s string) string { return strings.ToUpper(s) }
 
+// Str_to_title is `s.to_title()`: strings.ToTitle.
+func Str_to_title(_ *Task, s string) string { return strings.ToTitle(s) }
+
 // Str_replace is `s.replace(old, new)`: every occurrence.
 func Str_replace(_ *Task, s, old, nw string) string { return strings.ReplaceAll(s, old, nw) }
 

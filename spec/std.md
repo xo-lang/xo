@@ -240,6 +240,7 @@ fn (s: Str) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str !
 // trim_start_chars, trim_end_chars, trim_where, trim_start_where, trim_end_where, trim_prefix and trim_suffix
 // return views of s on native targets (O(1) per piece, no copy; a piece keeps s alive), as slices do (core 3.6)
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
+fn (s: Str) to_title() -> Str                // strings.ToTitle: Rune.to_title on each rune
 fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx        // strings.Map; None drops the rune, and s itself when nothing changes
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str  // the first n copies (strings.Replace); n below 0 for every one, 0 for none
@@ -296,6 +297,11 @@ fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes  // bytes.ReplaceAll; b i
 fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes  // the first n copies (bytes.Replace); n below 0 for every one, 0 for none
 fn (b: Bytes) to_lower() -> Bytes            // bytes.ToLower; an invalid byte becomes U+FFFD, as Go maps it
 fn (b: Bytes) to_upper() -> Bytes            // bytes.ToUpper
+fn (b: Bytes) to_title() -> Bytes            // bytes.ToTitle
+fn (b: Bytes) runes() -> List[Rune]          // bytes.Runes; each byte of an invalid sequence U+FFFD
+fn (b: Bytes) lines() -> List[Bytes]         // as Str.lines (bufio.ScanLines; Go's bytes.Lines keeps the newlines)
+fn (static: Bytes) join(parts: List[Bytes], sep: Bytes) -> Bytes   // bytes.Join
+fn (b: Bytes) hex_dump() -> Str              // hex.Dump: hexdump -C's layout
 fn (b: Bytes) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Bytes ! E uses fx      // bytes.Map; None drops the rune, and b itself when nothing changes
 fn (b: Bytes) equal_fold(other: Bytes) -> Bool  // bytes.EqualFold, Unicode simple case folding
 fn (b: Bytes) repeat(n: Int) -> Bytes        // bytes.Repeat; empty for 0, a fault below 0
@@ -7632,7 +7638,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-590 declarations.
+596 declarations.
 
 ### Range
 
@@ -7882,6 +7888,7 @@ fn (s: Str) trim_start_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) ->
 fn (s: Str) trim_end_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx
 fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
+fn (s: Str) to_title() -> Str
 fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str
@@ -7905,6 +7912,7 @@ fn (b: Bytes) to_str() -> Str?
 fn (b: Bytes) to_str_lossy() -> Str
 fn (b: Bytes) to_valid_utf8(replacement: Str) -> Str
 fn (b: Bytes) to_hex() -> Str
+fn (b: Bytes) hex_dump() -> Str
 fn (b: Bytes) clone() -> Bytes
 fn (b: Bytes) to_base64() -> Str
 fn (static: Bytes) from_hex(s: Str) -> Bytes?
@@ -7946,6 +7954,10 @@ fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes
 fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes
 fn (b: Bytes) to_lower() -> Bytes
 fn (b: Bytes) to_upper() -> Bytes
+fn (b: Bytes) to_title() -> Bytes
+fn (b: Bytes) runes() -> List[Rune]
+fn (b: Bytes) lines() -> List[Bytes]
+fn (static: Bytes) join(parts: List[Bytes], sep: Bytes) -> Bytes
 fn (b: Bytes) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Bytes ! E uses fx
 fn (b: Bytes) equal_fold(other: Bytes) -> Bool
 fn (b: Bytes) repeat(n: Int) -> Bytes

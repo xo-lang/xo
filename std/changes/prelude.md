@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-17: feature: Str.to_title, Bytes to_title, runes, lines, join and hex_dump
+
+- Kind: feature
+- Commit: this push
+- Found by: task #231 (std Proven; scripts/stdaudit/map.txt strings, bytes and encoding/hex gap rows)
+- Go reference: strings.ToTitle, bytes.ToTitle, bytes.Runes, bytes.Join, bufio.ScanLines, encoding/hex Dump and Dumper (go1.26)
+- Test: internal/llvm/testdata/golden/bytes_title_join_dump (arm64, LLVM, Go backend), its want.txt Go's output for the same calls (title case digraphs, invalid UTF-8, partial and full dump lines)
+- Shipped in: not yet released
+
+`s.to_title()` and `b.to_title()` map each rune to title case (`ǆ` to
+`ǅ`, where to_upper gives `Ǆ`); `b.runes()` decodes b with U+FFFD for each
+invalid byte; `b.lines()` splits as Str.lines does (Go's bytes.Lines
+keeps each newline); `Bytes.join(parts, sep)` is bytes.Join; and
+`b.hex_dump()` is hex.Dump's `hexdump -C` layout.
+
 ## 2026-11-16: feature: Atomic[Int].and and or
 
 - Kind: feature
