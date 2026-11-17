@@ -1,5 +1,15 @@
 # std/grpc changes
 
+## 2026-11-17: fix: a handler that sends nothing ends the call trailers-only, as grpc-go
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #236, the retry test (an Xo server's Unavailable was never retried: its head came before the status, so the call read as committed)
+- Go reference: google.golang.org/grpc v1.79.2 internal/transport/http2_server.go WriteStatus (headers not sent: the status goes in a trailers-only response)
+- Test: std/grpc_test.xo "retries follow the service config" (the retried calls failed after one attempt before), arm64 and LLVM; TestGrpcInterop, TestGrpcHealthInterop, TestGrpcReflectInterop
+- Timing: none
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: service config and retries (decision 0705)
 
 - Kind: feature

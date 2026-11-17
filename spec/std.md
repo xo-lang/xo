@@ -11002,6 +11002,8 @@ fn (c: Client) with_call_creds(cr: PerRpcCreds) -> Client      // the PerRPCCred
   stream interceptor sees unary calls too (grpc-go runs one kind per method). Their effects are counted where they
   are registered, as `http.Router.wrap`'s. A client stream interceptor sees and changes the method's options before
   the call opens, or ends it with a status; it does not wrap the call's send and recv (grpc-go's does).
+- A handler that ends before it sends a message or a header gets a trailers-only response, the status in the
+  head as grpc-go's server sends it (a client reads it as not committed, so it may retry).
 - A service config (decision 0705) gives a method (its own entry, else its service's, else the default) a timeout,
   used when shorter than the call's own, message limits, used when smaller than the client's, and a retry policy. A
   unary call is retried as grpc-go retries: on a listed code, before a response head came (a trailers-only error

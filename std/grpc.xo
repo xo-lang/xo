@@ -965,9 +965,9 @@ pub fn service_config_json(text: Str) -> ServiceConfig ! Str {
       out.methods.push(m)
     }
   }
-  if let Some(rt) = root.get("retryThrottling") {
-    let mt = rt.get("maxTokens").and_then(json_num) ?? 0.0
-    let tr = rt.get("tokenRatio").and_then(json_num) ?? 0.0
+  if let Some(thr) = root.get("retryThrottling") {
+    let mt = thr.get("maxTokens").and_then(json_num) ?? 0.0
+    let tr = thr.get("tokenRatio").and_then(json_num) ?? 0.0
     if mt <= 0.0 || mt > 1000.0 || tr <= 0.0 {
       return Err("service config: invalid retry throttling config")
     }
@@ -1043,17 +1043,17 @@ fn (c: Client) backoff(p: RetryPolicy, n: Int) -> Duration {
 fn (c: Client) throttle_fail(t: RetryThrottling?) -> Bool {
   match t {
     None => true
-    Some(rt) => c.tokens.with(fn(var k: Float) -> Bool {
+    Some(thr) => c.tokens.with(fn(var k: Float) -> Bool {
       k = if k - 1.0 < 0.0 { 0.0 } else { k - 1.0 }
-      k > rt.max_tokens / 2.0
+      k > thr.max_tokens / 2.0
     })
   }
 }
 
 fn (c: Client) throttle_ok(t: RetryThrottling?) {
-  if let Some(rt) = t {
+  if let Some(thr) = t {
     c.tokens.with(fn(var k: Float) {
-      k = if k + rt.token_ratio > rt.max_tokens { rt.max_tokens } else { k + rt.token_ratio }
+      k = if k + thr.token_ratio > thr.max_tokens { thr.max_tokens } else { k + thr.token_ratio }
     })
   }
 }
@@ -1606,6 +1606,21 @@ fn reserved(name: Str) -> Bool {
   name.starts_with("grpc-") || name == "content-type" || name == "te"
 }
 
+/// The status as head fields of a response whose head has not gone out (a trailers-only response); false when the
+/// head was already sent.
+fn head_status_fields(w: http.BodyWriter, st: Status) -> Bool {
+  if !w.set_header("grpc-status", "${st.code.number()}") {
+    return false
+  }
+  if st.message != "" {
+    let _m = w.set_header("grpc-message", encode_message(st.message))
+  }
+  if !st.details.is_empty() {
+    let _d = w.set_header("grpc-status-details-bin", bin_encode(st.details))
+  }
+  true
+}
+
 fn finish(w: http.BodyWriter, st: Status) {
   w.set_trailer("grpc-status", "${st.code.number()}")
   if st.message != "" {
@@ -1715,7 +1730,16 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
         Err(e) => e
       }
     }
-    finish(w, st)
+    // nothing sent: the status goes in the head, a trailers-only response as grpc-go's WriteStatus sends, which a
+    // client reads as not committed (decision 0705's retries)
+    let early = send.head_sent.with(fn(var sent) -> Bool {
+      let e = !sent
+      sent = true
+      e
+    })
+    if !early || !head_status_fields(w, st) {
+      finish(w, st)
+    }
   }).with_header("content-type", "application/grpc").with_header("date", "").with_late_head()
   if gz {
     resp = resp.with_header("grpc-encoding", "gzip")
