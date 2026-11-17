@@ -1,0 +1,9 @@
+// std/grpc's native part (decision 0597 part 2, decision 0703): pure1,
+// declared bodyless in std/grpc.xo. A merged module may not call
+// rt.launder1, which counts a stored function's effects where it is
+// registered (as http's middleware); the Go backend's twin is
+// std/rt/grpc.go.
+
+use native/rt
+
+fn pure1[A, R, fx: Effects](f: fn(A) -> R uses fx) -> (fn(A) -> R) uses fx { rt.launder1(f) }

@@ -1,5 +1,16 @@
 # std/grpc changes
 
+## 2026-11-17: feature: interceptors (decision 0703)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (std Proven; scripts/stdaudit/map.txt grpc interceptor rows and behavior.interceptors)
+- Go reference: google.golang.org/grpc v1.79.2 server.go chainUnaryServerInterceptors and chainStreamServerInterceptors, dialoptions.go WithChainUnaryInterceptor, clientconn.go chainUnaryClientInterceptors; interceptor_test.go (chain order)
+- Test: std/grpc_test.xo "server interceptors chain in order around every method" (order with unary inside stream, one registered after the methods, metadata and request changed, a refusal, a stream method's kind) and "client interceptors chain around a call" (order, metadata added, an answer without a call, a stream interceptor adding metadata and refusing), arm64 and LLVM; golden grpc_calls unchanged on the Go backend
+- Behavior difference: unary interceptors run inside the stream ones (grpc-go runs one kind per method); a client stream interceptor changes the options only
+- Timing: none (a call without interceptors takes the path it took)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: services, unknown and a stop that waits for handlers
 
 - Kind: feature

@@ -234,6 +234,43 @@ pub struct Call {
   pub metadata: Map[Str, Str]
   /// the deadline the client sent (`grpc-timeout`), None for no deadline
   pub timeout: Duration?
+  /// the method's kind as registered (grpc-go's StreamServerInfo): a unary method has neither
+  pub client_stream: Bool = true
+  pub server_stream: Bool = true
+}
+
+/// f with its effects counted at this call, as a function whose type has none: interceptors and handlers are stored
+/// that way (decision 0703, as http's middleware). std/native/grpc_native.xo on the native backends, std/rt/grpc.go on
+/// the Go backend.
+fn pure1[A, R, fx: Effects](f: fn(A) -> R uses fx) -> (fn(A) -> R) uses fx
+
+/// The rest of a stream interceptor's chain: the next interceptor or the method's handler (decision 0703). Like
+/// `http.Next`, it has no effects in its type: they were counted where the interceptors and handlers were registered.
+pub type StreamNext = fn(Call, Recv, Send) -> () ! Status
+
+/// The rest of a unary interceptor's chain: the next unary interceptor or the method's handler.
+pub type UnaryNext = fn(Call, Bytes) -> Bytes ! Status
+
+/// A server's interceptors, shared by every copy of the Server so that they reach methods registered before them.
+pub struct Interceptors {
+  pub stream: List[fn(Call, Recv, Send, StreamNext) -> () ! Status] = []
+  pub unary: List[fn(Call, Bytes, UnaryNext) -> Bytes ! Status] = []
+}
+
+/// The stream interceptors from the i-th on, around h.
+fn run_stream(ics: List[fn(Call, Recv, Send, StreamNext) -> () ! Status], i: Int, call: Call, recv: Recv, send: Send, h: StreamNext) -> () ! Status {
+  if i == ics.len() {
+    return h(call, recv, send)
+  }
+  ics[i](call, recv, send, fn(c, r, sd) -> () ! Status { run_stream(ics, i + 1, c, r, sd, h) })
+}
+
+/// The unary interceptors from the i-th on, around h.
+fn run_unary(ics: List[fn(Call, Bytes, UnaryNext) -> Bytes ! Status], i: Int, call: Call, req: Bytes, h: UnaryNext) -> Bytes ! Status {
+  if i == ics.len() {
+    return h(call, req)
+  }
+  ics[i](call, req, fn(c, m) -> Bytes ! Status { run_unary(ics, i + 1, c, m, h) })
 }
 
 pub struct RecvState {
@@ -318,6 +355,29 @@ pub struct Server {
   pub infos: List[MethodInfo] = []
   /// unknown registered a handler for methods no route has (router keeps it)
   pub has_unknown: Bool = false
+  /// intercept's and intercept_unary's functions, in registration order
+  pub icpt: Mutex[Interceptors] = Mutex[Interceptors].new(Interceptors{})
+}
+
+/// grpc-go's StreamInterceptor and ChainStreamInterceptor (decision 0703): f runs around every method's handler,
+/// unary methods and `unknown`'s included, registered before or after it; it calls `next` to go on, with the call,
+/// Recv and Send as they came or replaced, or returns without it. Several run in registration order, the first
+/// outermost. f's effects are counted here, as `http.Router.wrap`'s.
+pub fn (var s: Server) intercept[fx: Effects](f: fn(Call, Recv, Send, StreamNext) -> () ! Status uses fx) uses fx {
+  let g = pure1(fn(a: (Call, Recv, Send, StreamNext)) -> Result[(), Status] { f(a.0, a.1, a.2, a.3) })
+  s.icpt.with(fn(var ic: Interceptors) {
+    ic.stream.push(fn(c, r, sd, n) -> () ! Status { g((c, r, sd, n)) })
+  })
+}
+
+/// grpc-go's UnaryInterceptor and ChainUnaryInterceptor: f runs around every unary method's handler with its request
+/// message, inside the stream interceptors (grpc-go runs one kind or the other for a method; here a stream
+/// interceptor sees unary calls too). Several run in registration order, the first outermost.
+pub fn (var s: Server) intercept_unary[fx: Effects](f: fn(Call, Bytes, UnaryNext) -> Bytes ! Status uses fx) uses fx {
+  let g = pure1(fn(a: (Call, Bytes, UnaryNext)) -> Result[Bytes, Status] { f(a.0, a.1, a.2) })
+  s.icpt.with(fn(var ic: Interceptors) {
+    ic.unary.push(fn(c, m, n) -> Bytes ! Status { g((c, m, n)) })
+  })
 }
 
 /// A registered method as grpc-go's MethodInfo: its name within the service (`Method` of
@@ -378,12 +438,16 @@ pub fn (s: Server) with_max_send(n: Int) -> Server {
 
 /// Registers a unary method (`/package.Service/Method`).
 pub fn (var s: Server) unary[fx: Effects](method: Str, f: fn(Call, Bytes) -> Bytes ! Status uses fx) uses (fx, clock) {
+  let icpt = s.icpt
+  let g = pure1(fn(a: (Call, Bytes)) -> Result[Bytes, Status] { f(a.0, a.1) })
+  let h: UnaryNext = fn(c, m) -> Bytes ! Status { g((c, m)) }
   s.stream(method, fn(call, recv, send) -> () ! Status {
     let req = match recv.next()? {
       Some(m) => m
       None => return Err(status_new(Code.Internal, "grpc: client sent no request message"))
     }
-    let resp = f(call, req)?
+    let ics = icpt.with(fn(var ic: Interceptors) -> List[fn(Call, Bytes, UnaryNext) -> Bytes ! Status] { ic.unary })
+    let resp = if ics.is_empty() { f(call, req)? } else { run_unary(ics, 0, call, req, h)? }
     send_framed(send, frame_msg(resp, send.gzip), "grpc: ")?
   }, client_stream: false, server_stream: false)
 }
@@ -397,8 +461,14 @@ pub fn (var s: Server) stream[fx: Effects](method: Str, f: fn(Call, Recv, Send) 
   let clock = s.clock
   s.methods.push(method)
   s.infos.push(MethodInfo{name: method, client_stream: client_stream, server_stream: server_stream})
+  let icpt = s.icpt
+  let g = pure1(fn(a: (Call, Recv, Send)) -> Result[(), Status] { f(a.0, a.1, a.2) })
+  let h: StreamNext = fn(c, r, sd) -> () ! Status { g((c, r, sd)) }
   s.routes.handle_stream("POST ${method}", fn(req, body) -> http.Response {
-    serve_call(f, clock, max, max_send, method, req, body)
+    serve_call(fn(call, recv, send) -> () ! Status {
+      let ics = icpt.with(fn(var ic: Interceptors) -> List[fn(Call, Recv, Send, StreamNext) -> () ! Status] { ic.stream })
+      run_stream(ics, 0, call with {client_stream: client_stream, server_stream: server_stream}, recv, send, h)
+    }, clock, max, max_send, method, req, body)
   })
 }
 
@@ -410,6 +480,9 @@ pub fn (var s: Server) unknown[fx: Effects](f: fn(Call, Recv, Send) -> () ! Stat
   let max_send = s.max_send
   let clock = s.clock
   s.has_unknown = true
+  let icpt = s.icpt
+  let g = pure1(fn(a: (Call, Recv, Send)) -> Result[(), Status] { f(a.0, a.1, a.2) })
+  let h: StreamNext = fn(c, r, sd) -> () ! Status { g((c, r, sd)) }
   // a route for every path, so the request body streams as a registered method's does; the methods'
   // own routes are more specific and win
   s.routes.handle_stream("/{path...}", fn(req, body) -> http.Response {
@@ -417,7 +490,10 @@ pub fn (var s: Server) unknown[fx: Effects](f: fn(Call, Recv, Send) -> () ! Stat
     if !ct.starts_with("application/grpc") || req.method != "POST" {
       return http.not_found()
     }
-    serve_call(f, clock, max, max_send, req.path, req, body)
+    serve_call(fn(call, recv, send) -> () ! Status {
+      let ics = icpt.with(fn(var ic: Interceptors) -> List[fn(Call, Recv, Send, StreamNext) -> () ! Status] { ic.stream })
+      run_stream(ics, 0, call, recv, send, h)
+    }, clock, max, max_send, req.path, req, body)
   })
 }
 
@@ -457,6 +533,46 @@ pub struct Client {
   pub max_recv: Int = 4194304
   /// the largest request message (grpc-go's MaxCallSendMsgSize, math.MaxInt32 by default)
   pub max_send: Int = 2147483647
+  /// with_unary_interceptor's and with_stream_interceptor's functions, in registration order
+  pub unary_icpt: List[fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status] = []
+  pub stream_icpt: List[fn(Str, CallOpts) -> CallOpts ! Status] = []
+}
+
+/// A call's options as a client interceptor sees them: the request metadata and the timeout.
+pub struct CallOpts {
+  pub metadata: Map[Str, Str] = {}
+  pub timeout: Duration? = None
+}
+
+/// The rest of a client unary interceptor's chain (grpc-go's UnaryInvoker): the next interceptor or the call itself,
+/// with the method, request and options to send. No effects in its type (decision 0703).
+pub type Invoker = fn(Str, Bytes, CallOpts) -> Bytes ! Status
+
+/// The client with f around each `unary` call (grpc-go's WithUnaryInterceptor and WithChainUnaryInterceptor): f
+/// gets the method, the request and the options, and calls `invoker` to send it (as it came or changed) or returns
+/// without it. Several run in the order added, the first outermost. f's effects are counted here.
+pub fn (c: Client) with_unary_interceptor[fx: Effects](f: fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status uses fx) -> Client uses fx {
+  let g = pure1(fn(a: (Str, Bytes, CallOpts, Invoker)) -> Result[Bytes, Status] { f(a.0, a.1, a.2, a.3) })
+  var ics = c.unary_icpt
+  ics.push(fn(m, r, o, inv) -> Bytes ! Status { g((m, r, o, inv)) })
+  c with {unary_icpt: ics}
+}
+
+/// The client with f before each streaming `call` opens (grpc-go's WithStreamInterceptor, in part): f gets the
+/// method and the options and returns the options to open with, or an error that ends the call before it starts.
+/// Several run in the order added. Unlike grpc-go's, f does not wrap the call's send and recv.
+pub fn (c: Client) with_stream_interceptor[fx: Effects](f: fn(Str, CallOpts) -> CallOpts ! Status uses fx) -> Client uses fx {
+  let g = pure1(fn(a: (Str, CallOpts)) -> Result[CallOpts, Status] { f(a.0, a.1) })
+  var ics = c.stream_icpt
+  ics.push(fn(m, o) -> CallOpts ! Status { g((m, o)) })
+  c with {stream_icpt: ics}
+}
+
+fn run_invoke(ics: List[fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status], i: Int, method: Str, req: Bytes, o: CallOpts, last: Invoker) -> Bytes ! Status {
+  if i == ics.len() {
+    return last(method, req, o)
+  }
+  ics[i](method, req, o, fn(m, r, oo) -> Bytes ! Status { run_invoke(ics, i + 1, m, r, oo, last) })
 }
 
 /// A client of `base` (`http://host:port`, plain HTTP/2 with prior knowledge, or `https://host:port`).
@@ -489,6 +605,16 @@ fn send_too_large(n: Int, max: Int) -> Status {
 /// One unary call: the request message, the response message, or the call's status. `timeout` is sent as
 /// `grpc-timeout` and bounds the call (DeadlineExceeded).
 pub fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, timeout: Duration? = None) -> Bytes ! Status uses net.dial {
+  if c.unary_icpt.is_empty() {
+    return c.unary_call(method, req, metadata, timeout)
+  }
+  let me = c
+  let g = pure1(fn(a: (Str, Bytes, CallOpts)) -> Result[Bytes, Status] { me.unary_call(a.0, a.1, a.2.metadata, a.2.timeout) })
+  run_invoke(c.unary_icpt, 0, method, req, CallOpts{metadata: metadata, timeout: timeout}, fn(m, r, o) -> Bytes ! Status { g((m, r, o)) })
+}
+
+/// One unary call, after the interceptors.
+fn (c: Client) unary_call(method: Str, req: Bytes, metadata: Map[Str, Str], timeout: Duration?) -> Bytes ! Status uses net.dial {
   let body = frame_msg(req, c.gzip)
   if body.len() - 5 > c.max_send {
     return Err(send_too_large(body.len() - 5, c.max_send))
@@ -550,6 +676,15 @@ pub struct CallState {
 /// Runs `f` on a streaming call: `f` sends with `send`, ends the request with `close_send` and reads with `recv`.
 /// The call's status is the result of `recv` after the last message (an error when it is not OK).
 pub fn (c: Client) call[R, fx: Effects](method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status uses fx) -> R ! Status uses (fx, net.dial) {
+  var o = CallOpts{metadata: metadata, timeout: timeout}
+  for ic in c.stream_icpt {
+    o = ic(method, o)?
+  }
+  c.call_opened(method, o.metadata, o.timeout, f)
+}
+
+/// One streaming call, after the interceptors.
+fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status uses fx) -> R ! Status uses (fx, net.dial) {
   let (pw, pr) = http.pipe()
   var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout, c.gzip)).with_body_reader(pr)
   if let Some(d) = timeout {

@@ -328,3 +328,128 @@ test "a stop waits for the running handlers, as grpc-go's WaitForHandlers" uses 
   }
   expect(result.recv()) == Some("done x")
 }
+
+// grpc-go's TestChainUnaryServerInterceptor and TestChainStreamServerInterceptor: registration order, the first
+// outermost, unary ones inside stream ones (decision 0703)
+test "server interceptors chain in order around every method, as grpc-go's ChainUnaryInterceptor" uses (net, clock) {
+  let log = Mutex[List[Str]].new([])
+  let note = fn(t: Str) { log.with(fn(var l: List[Str]) { l.push(t) }) }
+  var srv = server(os.clock)
+  srv.intercept(fn(call, recv, send, next) -> () ! Status {
+    note("s1 in ${call.method} ${call.client_stream} ${call.server_stream}")
+    next(call, recv, send)?
+    note("s1 out")
+  })
+  srv.unary("/i.I/Get", fn(call, req) -> Bytes ! Status {
+    note("handler ${call.metadata.get("x-user") ?? "-"}")
+    Ok(b"got " + req)
+  })
+  srv.stream("/i.I/Chat", fn(_call, recv, send) -> () ! Status {
+    note("chat")
+    while let Some(m) = recv.next()? {
+      send.send(m)?
+    }
+  })
+  // registered after the methods: still around them
+  srv.intercept(fn(call, recv, send, next) -> () ! Status {
+    note("s2 in")
+    next(call, recv, send)?
+    note("s2 out")
+  })
+  srv.intercept_unary(fn(call, req, next) -> Bytes ! Status {
+    note("u1 in")
+    // metadata and the request changed on the way in
+    let out = next(call with {metadata: md_with(call.metadata, "x-user", "ann")}, req + b"!")?
+    note("u1 out")
+    Ok(out)
+  })
+  srv.intercept_unary(fn(call, req, next) -> Bytes ! Status {
+    note("u2 in")
+    if call.metadata.get("x-deny") == Some("1") {
+      return Err(status_new(Code.PermissionDenied, "denied"))
+    }
+    next(call, req)
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    expect(c.unary("/i.I/Get", b"a")) == Ok(b"got a!")
+    expect(log.with(fn(var l: List[Str]) -> List[Str] {
+      let out = l
+      l = []
+      out
+    })) == ["s1 in /i.I/Get false false", "s2 in", "u1 in", "u2 in", "handler ann", "u1 out", "s2 out", "s1 out"]
+    // a refusal ends the call with its status; the handler does not run
+    expect(c.unary("/i.I/Get", b"a", {"x-deny": "1"})) == Err(status_new(Code.PermissionDenied, "denied"))
+    expect(log.with(fn(var l: List[Str]) -> List[Str] {
+      let out = l
+      l = []
+      out
+    })) == ["s1 in /i.I/Get false false", "s2 in", "u1 in", "u2 in"]
+    // a stream method: the stream interceptors only, with its kind
+    let got = c.call("/i.I/Chat", {}, None, fn(cc) -> List[Str] ! Status {
+      cc.send(b"x")?
+      cc.close_send()
+      var out: List[Str] = []
+      while let Some(m) = cc.recv()? {
+        out.push(m.to_str_lossy())
+      }
+      Ok(out)
+    })
+    expect(got) == Ok(["x"])
+    expect(log.with(fn(var l: List[Str]) -> List[Str] { l })) == ["s1 in /i.I/Chat true true", "s2 in", "chat", "s2 out", "s1 out"]
+  }
+}
+
+// grpc-go's TestChainUnaryClientInterceptor and the stream client interceptor's options
+test "client interceptors chain around a call, as grpc-go's WithChainUnaryInterceptor" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/c.C/Who", fn(call, req) -> Bytes ! Status {
+    Ok("${call.metadata.get("authorization") ?? "none"} ${call.metadata.get("x-trace") ?? "-"} ${req.to_str_lossy()}".bytes())
+  })
+  srv.stream("/c.C/Who2", fn(call, _recv, send) -> () ! Status {
+    send.send((call.metadata.get("authorization") ?? "none").bytes())?
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let order = Mutex[List[Str]].new([])
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let base = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    let c = base.with_unary_interceptor(fn(m, req, o, inv) -> Bytes ! Status {
+      order.with(fn(var l: List[Str]) { l.push("auth") })
+      inv(m, req, o with {metadata: md_with(o.metadata, "authorization", "Bearer t")})
+    }).with_unary_interceptor(fn(m, req, o, inv) -> Bytes ! Status {
+      order.with(fn(var l: List[Str]) { l.push("trace") })
+      if m == "/c.C/Cached" {
+        // answered without a call
+        return Ok(b"cached")
+      }
+      inv(m, req + b"?", o with {metadata: md_with(o.metadata, "x-trace", "1")})
+    })
+    expect(c.unary("/c.C/Who", b"q")) == Ok(b"Bearer t 1 q?")
+    expect(c.unary("/c.C/Cached", b"q")) == Ok(b"cached")
+    expect(order.with(fn(var l: List[Str]) -> List[Str] { l })) == ["auth", "trace", "auth", "trace"]
+    expect(base.unary("/c.C/Who", b"q")) == Ok(b"none - q")
+    let sc = base.with_stream_interceptor(fn(m, o) -> CallOpts ! Status {
+      if m == "/c.C/No" {
+        return Err(status_new(Code.Unauthenticated, "no token"))
+      }
+      Ok(o with {metadata: md_with(o.metadata, "authorization", "Bearer s")})
+    })
+    let first = fn(cc: ClientCall) -> Str ! Status {
+      cc.close_send()
+      Ok((cc.recv()? ?? b"").to_str_lossy())
+    }
+    expect(sc.call("/c.C/Who2", {}, None, first)) == Ok("Bearer s")
+    expect(sc.call("/c.C/No", {}, None, first)) == Err(status_new(Code.Unauthenticated, "no token"))
+  }
+}
+
+fn md_with(m: Map[Str, Str], k: Str, v: Str) -> Map[Str, Str] {
+  var out = m
+  out[k] = v
+  out
+}

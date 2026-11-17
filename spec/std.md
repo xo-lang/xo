@@ -10861,7 +10861,7 @@ fn (c: Client) with_gzip() -> Client          // sends gzip compressed messages 
 fn bin_encode(data: Bytes) -> Str            // a `-bin` metadata value: unpadded standard base64
 fn bin_decode(value: Str) -> Bytes?          // padded or not; None when it is not base64
 // the server
-struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration? }
+struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration?, client_stream: Bool, server_stream: Bool }
 fn server(clock: Clock) -> Server
 fn (var s: Server) unary(method: Str, f: fn(Call, Bytes) -> Bytes ! Status)
 fn (var s: Server) stream(method: Str, f: fn(Call, Recv, Send) -> () ! Status, client_stream: Bool = true, server_stream: Bool = true)
@@ -10870,6 +10870,15 @@ fn (s: Server) services() -> List[ServiceInfo]   // grpc-go's GetServiceInfo, by
 struct ServiceInfo { name: Str, methods: List[MethodInfo] }
 struct MethodInfo { name: Str, client_stream: Bool, server_stream: Bool }
 fn (s: Server) router() -> http.Router
+// interceptors (decision 0703): effects counted where they are registered, none in the Next and Invoker types
+type StreamNext = fn(Call, Recv, Send) -> () ! Status
+type UnaryNext = fn(Call, Bytes) -> Bytes ! Status
+fn (var s: Server) intercept(f: fn(Call, Recv, Send, StreamNext) -> () ! Status)    // grpc-go's StreamInterceptor, around every method
+fn (var s: Server) intercept_unary(f: fn(Call, Bytes, UnaryNext) -> Bytes ! Status) // UnaryInterceptor, unary methods, inside the stream ones
+struct CallOpts { metadata: Map[Str, Str], timeout: Duration? }
+type Invoker = fn(Str, Bytes, CallOpts) -> Bytes ! Status
+fn (c: Client) with_unary_interceptor(f: fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status) -> Client
+fn (c: Client) with_stream_interceptor(f: fn(Str, CallOpts) -> CallOpts ! Status) -> Client   // before a call opens
 fn (r: Recv) next() -> Bytes? ! Status
 fn (s: Send) send(msg: Bytes) -> () ! Status
 fn (s: Send) set_trailer(name: Str, value: Str)
@@ -10898,6 +10907,12 @@ fn (c: Client) with_max_send(n: Int) -> Client
 - `services` lists each service with a registered method, sorted by name, its methods in registration order with
   their kind: `unary` is neither stream, `stream` is both unless `client_stream` or `server_stream` says otherwise
   (grpc-go takes them from the generated StreamDesc).
+- Interceptors (decision 0703) run in the order registered, the first outermost, around every method registered
+  before or after them and `unknown`'s handler; each calls its `next` (or `Invoker`) to go on, with the call, messages
+  and options as they came or changed, or returns without it. Unary interceptors run inside the stream ones, so a
+  stream interceptor sees unary calls too (grpc-go runs one kind per method). Their effects are counted where they
+  are registered, as `http.Router.wrap`'s. A client stream interceptor sees and changes the method's options before
+  the call opens, or ends it with a status; it does not wrap the call's send and recv (grpc-go's does).
 - A stop waits for the running handlers (grpc-go's WaitForHandlers(true)): the calls are `http.Server` requests, which
   `serve` waits for when its scope ends (std 4.4); grpc-go's default Stop does not wait.
 - `unary` is `stream` with one message each way. A handler reads `Recv.next` until None (the client finished sending)
@@ -10918,7 +10933,7 @@ fn (c: Client) with_max_send(n: Int) -> Client
   vs. M)", with grpc-go's "grpc: " prefix for a unary method's response. A response above the client's receive
   limit is `ResourceExhausted` "grpc: received message larger than max (N vs. M)".
 - Not yet: response headers from a handler (grpc-go's SetHeader and SendHeader; the head is written before the
-  handler runs), interceptors, keepalive, the typed stubs of `xo proto gen`, a TLS example.
+  handler runs), keepalive, the typed stubs of `xo proto gen`, a TLS example.
 
 ## 69. std/otlp
 
