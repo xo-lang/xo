@@ -1,5 +1,17 @@
 # std/httpproxy changes
 
+## 2026-11-17: perf: proxy_for reads the request URL's host and port without building an address
+
+- Kind: perf
+- Commit: this push
+- Found by: task #99 (perf evidence: route 1.665 against Go on linux/arm64 host 1, over the 1.05 Proven bar)
+- Go reference: x/net/http/httpproxy proxyForURL and useProxy (canonicalAddr, then net.SplitHostPort)
+- Test: std/httpproxy_test.xo "proxy_for's fast path answers as use_proxy of the canonical address"; TestHttpproxyFuzz seed 2 equal on arm64 and llvm (15,361 cases)
+- Timing: bench/perf/httpproxy_rules route on the Mac: 0.43 s to 0.29 s (Go 0.31 s); the twin's result length is counted, not formatted, as Go's len(p.Host) reads a stored string
+- Shipped in: not yet released
+
+This replaces the one pass of the entry below (task #103) with one that also compares ports as numbers. For an ASCII host with no brackets inside, proxy_for no longer joins the host and port into an address and splits it again, scans the host once for whether it can be an IP address and whether trim and to_lower change it, and compares a NO_PROXY port with the request's port as a number (the text Go compares: "08080" is not 8080).
+
 ## 2026-11-17: perf: a request's host and port are no longer joined and split again
 
 - Kind: perf

@@ -229,36 +229,38 @@ pub fn (r: Rules) proxy_for(u: http.Url) -> http.Url? {
   if https { r.https } else { r.http }
 }
 
-/// use_proxy(canonical_addr(u)) without building `host:port` and
-/// splitting it again: one pass over the host finds what the pair would
-/// change. A host with a byte above 0x7f (its IDNA form) or a bracket
-/// (SplitHostPort's errors) takes that path; for the rest the split gives
-/// back the host and port joined (bench/perf/httpproxy_rules route).
+/// use_proxy(canonical_addr(u)) without building the address and
+/// splitting it again: for an ASCII host with no `[` or `]` that split
+/// gives back the host and port joined (bench/perf/httpproxy_rules
+/// route). The rest take the full path.
 fn (r: Rules) use_proxy_url(u: http.Url) -> Bool {
   var host = u.host
   if host.starts_with("[") && host.ends_with("]") {
     host = host[1..host.len() - 1]
   }
-  let port = match u.port {
-    Some(p) => "${p}"
-    None => PORTS.get(u.scheme) ?? ""
-  }
-  var odd = false
+  // one pass for may_be_ip and for whether trim and to_lower change it
   var colon = false
-  var name = false
-  for c in host.bytes() {
-    if c >= 0x80 || c == 91 || c == 93 {
-      odd = true
-    } else if c == 58 {
+  var digits = true
+  var plain = true
+  for b in host.bytes() {
+    if b >= 0x80 || b == '[' || b == ']' {
+      return r.use_proxy(canonical_addr(u))
+    }
+    if b == ':' {
       colon = true
-    } else if c != 46 && (c < 48 || c > 57) {
-      name = true
+    } else if b != '.' && (b < '0' || b > '9') {
+      digits = false
+      if b <= ' ' || (b >= 'A' && b <= 'Z') {
+        plain = false
+      }
     }
   }
-  if odd {
-    return r.use_proxy(netip.join_host_port(ascii_name(host), port))
+  // the port as a number, never formatted: port_is compares it
+  let pnum = match u.port {
+    Some(p) => p
+    None => if u.scheme == "http" { 80 } else if u.scheme == "https" { 443 } else if u.scheme == "socks5" { 1080 } else { -1 }
   }
-  r.use_host(host, port, colon || (!name && !host.is_empty()))
+  r.use_host_port(host, "", pnum, colon || (digits && !host.is_empty()), plain)
 }
 
 /// Whether a request to addr (`host:port`) goes through the proxy (Go's
@@ -271,32 +273,34 @@ pub fn (r: Rules) use_proxy(addr: Str) -> Bool {
     Ok(hp) => hp
     Err(_) => return false
   }
-  r.use_host(host, port, may_be_ip(host))
+  r.use_host_port(host, port, -1, may_be_ip(host), false)
 }
 
-/// use_proxy after the split: maybe_ip is may_be_ip(host).
-fn (r: Rules) use_host(host: Str, port: Str, maybe_ip: Bool) -> Bool {
+/// use_proxy of an address split into host and port; ipish is
+/// may_be_ip(host), plain that host has no space and no upper case ASCII
+/// letter (and no other byte at or above 0x80), so trim and to_lower keep it.
+fn (r: Rules) use_host_port(host: Str, port: Str, pnum: Int, ipish: Bool, plain: Bool) -> Bool {
   if host == "localhost" {
     return false
   }
   var ip: netip.Addr? = None
-  let parsed = if maybe_ip { netip.parse_addr(host).ok() } else { None }
+  let parsed = if ipish { netip.parse_addr(host).ok() } else { None }
   if let Some(a) = parsed {
     if a.is_loopback() {
       return false
     }
     ip = Some(a.unmap().with_zone(""))
   }
-  let name = host.trim().to_lower()
+  let name = if plain { host } else { host.trim().to_lower() }
   if ip is Some(_) {
     for m in r.ips {
-      if matches(m, name, port, ip) {
+      if matches(m, name, port, pnum, ip) {
         return false
       }
     }
   }
   for m in r.domains {
-    if matches(m, name, port, ip) {
+    if matches(m, name, port, pnum, ip) {
       return false
     }
   }
@@ -308,18 +312,39 @@ fn (r: Rules) use_host(host: Str, port: Str, maybe_ip: Bool) -> Bool {
 /// only digits and dots. A host name is neither, so it skips
 /// netip.parse_addr and its error text (bench/perf/httpproxy_rules route).
 fn may_be_ip(host: Str) -> Bool {
-  if host.contains(":") {
-    return true
-  }
+  var digits = true
   for c in host.bytes() {
-    if c != 46 && (c < 48 || c > 57) {
-      return false
+    if c == ':' {
+      return true
+    }
+    if c != '.' && (c < '0' || c > '9') {
+      digits = false
     }
   }
-  !host.is_empty()
+  digits && !host.is_empty()
 }
 
-fn matches(m: Matcher, host: Str, port: Str, ip: netip.Addr?) -> Bool {
+/// Whether a rule's port wport is the request's: port, or when pnum is not
+/// negative the decimal of pnum (with port empty), compared as the text
+/// Go compares ("08080" is not 8080) without formatting pnum.
+fn port_is(wport: Str, port: Str, pnum: Int) -> Bool {
+  if pnum < 0 {
+    return wport == port
+  }
+  if wport.is_empty() || (wport.len() > 1 && wport.starts_with("0")) || wport.len() > 18 {
+    return false
+  }
+  var v = 0
+  for b in wport.bytes() {
+    if b < '0' || b > '9' {
+      return false
+    }
+    v = v * 10 + Int(b - '0')
+  }
+  v == pnum
+}
+
+fn matches(m: Matcher, host: Str, port: Str, pnum: Int, ip: netip.Addr?) -> Bool {
   match m {
     Matcher.All => true
     Matcher.Cidr(p) => match ip {
@@ -327,7 +352,7 @@ fn matches(m: Matcher, host: Str, port: Str, ip: netip.Addr?) -> Bool {
       None => false
     }
     Matcher.Ip(want, wport) => match ip {
-      Some(a) => a == want && (wport.is_empty() || wport == port)
+      Some(a) => a == want && (wport.is_empty() || port_is(wport, port, pnum))
       None => false
     }
     Matcher.Domain(h, wport, match_host) => {
@@ -335,7 +360,7 @@ fn matches(m: Matcher, host: Str, port: Str, ip: netip.Addr?) -> Bool {
         return false
       }
       if host.ends_with(h) || (match_host && host == h[1..]) {
-        return wport.is_empty() || wport == port
+        return wport.is_empty() || port_is(wport, port, pnum)
       }
       false
     }

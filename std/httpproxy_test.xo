@@ -145,3 +145,15 @@ test "proxy_for's one pass over the host agrees with use_proxy(canonical_addr(u)
   }
   expect(bad) == []
 }
+
+test "proxy_for's fast path answers as use_proxy of the canonical address" {
+  let r = rules_of(Config{http_proxy: "proxy", https_proxy: "proxy", no_proxy: "a.test:08080, b.test:8080, c.test:0, ex.test, 10.0.0.0/8, [::1]:80, 1.2.3.4:443"})
+  let cases = ["http://a.test:8080/", "http://b.test:8080/", "http://b.test:80/", "http://B.TEST:8080/", "http://c.test:0/", "http://c.test/", "http://sub.ex.test/", "http://EX.test/", "http://10.1.2.3:1/", "http://[::1]:80/", "http://[::1]/", "https://1.2.3.4/", "http://1.2.3.4/", "http://bücher.ex.test/", "http://other.test/"]
+  for s in cases {
+    let u = url(s)
+    expect("${s} ${r.proxy_for(u) is None}") == "${s} ${!r.use_proxy(canonical_addr(u))}"
+  }
+  expect(shown(r.proxy_for(url("http://a.test:8080/")))) == "http://proxy"
+  expect(shown(r.proxy_for(url("http://B.TEST:8080/")))) == "<nil>"
+  expect(shown(r.proxy_for(url("http://c.test:0/")))) == "<nil>"
+}

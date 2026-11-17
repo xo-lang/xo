@@ -14,11 +14,20 @@ fn cfg() -> httpproxy.Config {
   httpproxy.Config{http_proxy: "proxy.corp:3128", https_proxy: "https://secure-proxy.corp:443", no_proxy: "internal.corp,.example.org,10.0.0.0/8,192.168.0.5:8080,static.net,*.cdn.static.net,2001:db8::/32,localhost,1.2.3.4"}
 }
 
-/// The proxy's host and port as Go's URL.Host holds them (host, then
-/// `:port` when the setting gave one).
+/// The length of the proxy's host and port as Go's URL.Host holds them
+/// (host, then `:port` when the setting gave one), counted, not formatted:
+/// Go's len(p.Host) reads a stored string.
 fn hostport(p: http.Url) -> Int {
   p.host.len() + match p.port {
-    Some(n) => "${n}".len() + 1
+    Some(n) => {
+      var d = 2
+      var v = n
+      while v >= 10 {
+        v = v / 10
+        d += 1
+      }
+      d
+    }
     None => 0
   }
 }
