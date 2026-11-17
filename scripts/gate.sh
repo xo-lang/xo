@@ -1123,6 +1123,13 @@ for step in "$@"; do
     named="$named $step" ;;
   repo) ;; # ran first, above
   xo) ;; # only the xobuild above: xo-prewarm.sh's build of main's xo on a host (#264)
+  hourly)
+    # hourly.sh's main check on a pass host (#265: on the Mac its -short
+    # timed out after 180 min at load ~50): -short with reruns alone and its
+    # targeted non-short tests (scripts/lead/hourly-short.sh); its log is
+    # printed on a failure, which hourly.sh reads as its .short file
+    if bash scripts/lead/hourly-short.sh "$logs/hourly"; then echo "hourly: pass"; grep ': passes alone in ' "$logs/hourly.short" | head -10
+    else failed=1; echo "hourly: FAIL"; cat "$logs/hourly.short"; fi ;;
   short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|corpuscheck|alloff|fp|warm|chkcache|warmseq|stdwasm|devllvm)
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
