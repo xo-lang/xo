@@ -1,0 +1,66 @@
+// Task #191: a Str parameter that only a return consumes takes decision
+// 0149's rule (borrowed unless every path consumes it), as path.clean's
+// (it returns the path itself when it is already clean); one any other
+// use consumes keeps decision 0046's (owned when a path consumes it).
+
+/// A function f(p: Str, c: Bool) -> Str: when c, it returns p (or, with
+/// keep, hands p to the owned parameter of sink first), else a constant
+/// (or p again when every is set).
+fn strret_mod(keep: Bool, every: Bool) -> Module {
+  var m = Module{}
+  let s = m.builtin(Kind.Str)
+  let b = m.builtin(Kind.Bool)
+  let si = m.new_func("sink", [s], [s])
+  var sf = m.funcs[si]
+  let _sr = sf.add(0, Op.Return, -1, Aux.None, [sf.blocks[0].params[0]])
+  m.funcs[si] = sf
+  let fi = m.new_func("f", [s, b], [s])
+  var f = m.funcs[fi]
+  let p = f.blocks[0].params[0]
+  let c = f.blocks[0].params[1]
+  let yes = f.new_block()
+  let no = f.new_block()
+  let _br = f.branch(0, c, yes, no)
+  var out = p
+  if keep {
+    out = f.add(yes, Op.Call, s, Aux.S(s: "sink"), [p])
+  }
+  let _r1 = f.add(yes, Op.Return, -1, Aux.None, [out])
+  if every {
+    let _r2 = f.add(no, Op.Return, -1, Aux.None, [p])
+  } else {
+    let k = f.add(no, Op.Const, s, Aux.S(s: "."), [])
+    let _r2 = f.add(no, Op.Return, -1, Aux.None, [k])
+  }
+  m.funcs[fi] = f
+  m
+}
+
+fn strret_borrowed(m: Module) -> Bool {
+  var r = Rc{types: m.types}
+  for (i, f) in m.funcs.indexed() {
+    r.fidx[f.name] = i
+  }
+  r.infer_borrows(m.funcs, 1)
+  r.borrowed[1][0]
+}
+
+test "a Str returned on one path only is borrowed" {
+  expect(strret_borrowed(strret_mod(false, false))) == true
+}
+
+test "a Str returned on every path is owned" {
+  expect(strret_borrowed(strret_mod(false, true))) == false
+}
+
+test "a Str another use consumes on one path is owned" {
+  let m = strret_mod(true, false)
+  var r = Rc{types: m.types}
+  for (i, f) in m.funcs.indexed() {
+    r.fidx[f.name] = i
+  }
+  r.infer_borrows(m.funcs, 1)
+  // sink returns its parameter on every path: owned, so the call consumes p
+  expect(r.borrowed[0][0]) == false
+  expect(r.borrowed[1][0]) == false
+}

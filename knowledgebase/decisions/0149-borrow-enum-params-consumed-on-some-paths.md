@@ -56,6 +56,19 @@ those were the largest entries of the LLVM build's profile.
   stable memory for decision 0147, so more sub nodes are passed by
   address.
 
+## Addendum 2026-11-17: a Str only returned (task #191)
+
+A Str parameter whose only consuming uses are returns of the parameter
+itself takes this rule too: borrowed unless every path returns it, the
+returning paths counting it up. The callee never updates it in place
+(it only hands it back), so decision 0046's reason for owned Str
+parameters does not apply. std/path's clean returns its argument when it
+is already clean and builds a new Str otherwise: owned, every caller that
+kept its argument (dir and split's cut views) counted it up for the call
+and clean dropped it on the building paths. A Str consumed by any other
+use (a call that owns it, a block argument, a tuple) keeps decision
+0046's rule. compiler/ssa/strret_test.xo tests the three cases.
+
 ## Alternatives
 
 - **Every type** (the first version): quadratic copies of lists and

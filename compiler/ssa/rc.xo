@@ -1159,12 +1159,18 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
   // its leaves they consume
   var cons: Map[Int, List[Bool]] = {}
   var cpaths: Map[Int, Set[Str]] = {}
+  // the parameters something other than a return consumes
+  var notret: Set[Int] = #{}
   for bi in 0..f.blocks.len() {
     for v in f.blocks[bi].instrs {
+      let isret = f.values[v].op == Op.Return
       for u in r.leaf_uses(f, v) {
         if u.m == Mode.Consume {
           cons = r.consumed(f, u.l, bi, cons)
           r.consumed_path(f, u.l, cpaths)
+          if !isret {
+            r.kept_other(f, u.l, notret)
+          }
         }
       }
       for e in f.values[v].succs() {
@@ -1172,6 +1178,7 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
           for l in r.leaves(f, a) {
             cons = r.consumed(f, l, bi, cons)
             r.consumed_path(f, l, cpaths)
+            r.kept_other(f, l, notret)
           }
         }
       }
@@ -1180,7 +1187,10 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
   var owned: List[Int] = []
   for (i, bs) in cons {
     let pt = ty_of(f.values[f.blocks[0].params[i]].tb)
-    if r.enum_like(pt) {
+    if r.enum_like(pt) || (r.types[pt].kind == Kind.Str && !notret.contains(i)) {
+      // a Str only returned (path.clean's already clean path, task
+      // #191) is not updated in place here: the paths that return it
+      // count it up, the others no longer drop what callers counted up
       if consumed_on_every_path(f, bs) {
         owned.push(i)
       }
@@ -1189,6 +1199,19 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
     }
   }
   owned
+}
+
+/// Records in notret the parameter leaf l is of, when it is one
+/// (borrow_scan: a use other than a return consumes it).
+fn (var r: Rc) kept_other(f: Func, l: Leaf, var notret: Set[Int]) {
+  let p = l.root
+  if f.values[p].op != Op.Param || block_of(f.values[p].tb) != 0 {
+    return
+  }
+  let i = param_index(f, p)
+  if i >= 0 {
+    notret.add(i)
+  }
 }
 
 /// Records the path of leaf l in cpaths when l is of a borrowed
