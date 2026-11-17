@@ -11,6 +11,7 @@ the text of every entry is unchanged).
 
 - Fix (std/grpc): a server handler that ends before sending a message or a header answers trailers-only (the status in the head), as grpc-go's, so clients that retry (grpc-go's and std/grpc's) can retry it.
 - Feature (std/grpc, decision 0705): service config and retries: `service_config_json`, `Client.with_service_config(cfg, clock, rand)`, `with_disable_retry`, `with_max_call_attempts`, `with_max_retry_buffer` and `method_config`, with grpc-go's retry rules for unary calls.
+- Feature (xo proto gen, std/protoparse): a `service` block generates typed gRPC stubs, a client with a method per rpc and a `handle_` function per rpc (decision 0706).
 - Fix (std/grpcreflect): requests and responses are read as protobuf-go reads them: a repeated message field merges into the first instead of replacing it, and strings protobuf-go refuses (not UTF-8) are refused.
 - Fix (std/grpcreflect): files given as descriptors that import each other in a cycle no longer make a file request loop for good; each file is walked once.
 - Feature (std/grpc): `grpc.client` takes grpc-go target names (`dns:///host:port`, `passthrough:///host:port`, a bare `host:port`) besides http and https URLs, with `Client.target()` and `canonical_target()`.

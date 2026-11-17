@@ -532,10 +532,15 @@ pub fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr {
     var o: List[Str] = []
     for e in f.enums { o = g_enum(e, e.name, o) }
     for m in f.messages { o = g_message(m, scope, "", names, pk, o)? }
+    for sv in f.services { o = g_service(sv, scope, names, o)? }
     var src = o.join("\n")
     // a well-known type is std/protowkt's (decision 0683 item 4): the only use line gen writes
     if src.contains(": protowkt.") || src.contains("[protowkt.") || src.contains("(v: protowkt.") {
       src = "use std/protowkt\n\n${src}"
+    }
+    // a service's stubs call std/grpc with protobuf's wire form (decision 0706)
+    if !f.services.is_empty() {
+      src = "use std/grpc\nuse std/protobuf\n\n${src}"
     }
     res.push(src)
   }
@@ -1280,6 +1285,110 @@ fn p_service(var p: P) -> Service ! ParseErr {
   }
   p.at += 1
   Ok(Service{name: name, rpcs: rpcs, options: sopts})
+}
+
+/// `SayHello` as `say_hello`: an underscore before an upper case letter that follows a lower case letter or a
+/// digit, or that starts a word after an acronym (`HTTPServer` is `http_server`).
+fn g_snake(s: Str) -> Str {
+  let b = s.bytes()
+  var o = BytesBuilder.new()
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    let up = c >= 65 && c <= 90
+    if up && i > 0 {
+      let p = Int(b[i - 1])
+      let p_low = (p >= 97 && p <= 122) || (p >= 48 && p <= 57)
+      let p_up = p >= 65 && p <= 90
+      let n_low = i + 1 < b.len() && Int(b[i + 1]) >= 97 && Int(b[i + 1]) <= 122
+      if p_low || (p_up && n_low) {
+        o.write_byte(95)
+      }
+    }
+    o.write_byte(if up { UInt8.wrapping_from(c + 32) } else { b[i] })
+  }
+  o.freeze().to_str() ?? s
+}
+
+/// The typed gRPC stubs of service `sv` (decision 0706): a full method name constant per rpc, a client with one
+/// method per rpc, typed stream, receive and send wrappers, and a `handle_` function per rpc registering a typed
+/// handler on a grpc.Server. Only std/grpc's public calls are used (Client.unary and call, Server.unary and
+/// stream), so a client's interceptors, credentials and retries apply.
+fn g_service(sv: Service, scope: Str, names: List[(Str, Str)], out: List[Str]) -> List[Str] ! ParseErr {
+  var o = out
+  let full = "${scope}${sv.name}"
+  let sn = g_snake(sv.name)
+  let cl = "${sv.name}Client"
+  // `${e}` in the generated text, not here
+  let ie = "$" + "{e}"
+  let dec_c = "grpc.Status{code: grpc.Code.Internal, message: \"grpc: failed to unmarshal the received message: ${ie}\"}"
+  let dec_s = "grpc.Status{code: grpc.Code.Internal, message: \"grpc: error unmarshalling request: ${ie}\"}"
+  var b: List[Str] = []
+  b.push("/// A client of ${full} (protoc-gen-go-grpc's ${cl}).")
+  b.push("pub struct ${cl} {\n  pub c: grpc.Client\n}\n")
+  b.push("/// A ${full} client calling through c.")
+  b.push("pub fn new_${sn}_client(c: grpc.Client) -> ${cl} { ${cl}{c: c} }\n")
+  for rpc in sv.rpcs {
+    let (req, _) = g_type(rpc.req, scope, names)?
+    let (resp, _) = g_type(rpc.resp, scope, names)?
+    let mn = g_snake(rpc.name)
+    let k = "${sn.to_upper()}_${mn.to_upper()}"
+    let tn = "${sv.name}${rpc.name}"
+    b.push("/// ${full}'s ${rpc.name} as a full method name.")
+    b.push("pub const ${k}: Str = \"/${full}/${rpc.name}\"\n")
+    // the typed receive and send of a handler, and a client's stream (bidirectional)
+    if rpc.client_stream {
+      b.push("/// The requests of a ${rpc.name} call, read by its handler.")
+      b.push("pub struct ${tn}Recv {\n  pub r: grpc.Recv\n}\n")
+      b.push("/// The next request, None after the last.")
+      b.push("pub fn (x: ${tn}Recv) next() -> ${req}? ! grpc.Status {\n  match x.r.next()? {\n    Some(m) => Ok(Some(protobuf.unmarshal[${req}](m).map_err(fn(e) { ${dec_s} })?))\n    None => Ok(None)\n  }\n}\n")
+    }
+    if rpc.server_stream {
+      b.push("/// The responses of a ${rpc.name} call, written by its handler.")
+      b.push("pub struct ${tn}Send {\n  pub s: grpc.Send\n}\n")
+      b.push("/// Sends one response.")
+      b.push("pub fn (x: ${tn}Send) send(m: ${resp}) -> () ! grpc.Status { x.s.send(protobuf.marshal(m)) }\n")
+    }
+    if rpc.client_stream && rpc.server_stream {
+      b.push("/// A ${rpc.name} call's stream on the client: send requests, close_send, recv responses.")
+      b.push("pub struct ${tn}Stream {\n  pub cc: grpc.ClientCall\n}\n")
+      b.push("pub fn (x: ${tn}Stream) send(m: ${req}) -> () ! grpc.Status { x.cc.send(protobuf.marshal(m)) }\n")
+      b.push("pub fn (x: ${tn}Stream) close_send() { x.cc.close_send() }\n")
+      b.push("/// The next response, None after the last (the call's status when it is not OK).")
+      b.push("pub fn (x: ${tn}Stream) recv() -> ${resp}? ! grpc.Status uses net.dial {\n  match x.cc.recv()? {\n    Some(m) => Ok(Some(protobuf.unmarshal[${resp}](m).map_err(fn(e) { ${dec_c} })?))\n    None => Ok(None)\n  }\n}\n")
+    }
+    // the client's method
+    let opts = "metadata: Map[Str, Str] = {}, timeout: Duration? = None"
+    if !rpc.client_stream && !rpc.server_stream {
+      b.push("/// Calls ${rpc.name}.")
+      b.push("pub fn (c: ${cl}) ${mn}(req: ${req}, ${opts}) -> ${resp} ! grpc.Status uses net.dial {\n  let b = c.c.unary(${k}, protobuf.marshal(req), metadata, timeout)?\n  protobuf.unmarshal[${resp}](b).map_err(fn(e) { ${dec_c} })\n}\n")
+    } else if !rpc.client_stream {
+      b.push("/// Calls ${rpc.name}: f gets each response and returns false to stop reading (the call then ends OK).")
+      b.push("pub fn (c: ${cl}) ${mn}[fx: Effects](req: ${req}, f: fn(${resp}) -> Bool uses fx, ${opts}) -> () ! grpc.Status uses (fx, net.dial) {\n  c.c.call(${k}, metadata, timeout, fn(cc) -> () ! grpc.Status uses (fx, net.dial) {\n    cc.send(protobuf.marshal(req))?\n    cc.close_send()\n    while let Some(m) = cc.recv()? {\n      if !f(protobuf.unmarshal[${resp}](m).map_err(fn(e) { ${dec_c} })?) {\n        return Ok(())\n      }\n    }\n    Ok(())\n  })\n}\n")
+    } else if !rpc.server_stream {
+      b.push("/// Calls ${rpc.name} with reqs, the response when the server has read them.")
+      b.push("pub fn (c: ${cl}) ${mn}(reqs: List[${req}], ${opts}) -> ${resp} ! grpc.Status uses net.dial {\n  c.c.call(${k}, metadata, timeout, fn(cc) -> ${resp} ! grpc.Status uses net.dial {\n    for r in reqs {\n      cc.send(protobuf.marshal(r))?\n    }\n    cc.close_send()\n    match cc.recv()? {\n      Some(m) => protobuf.unmarshal[${resp}](m).map_err(fn(e) { ${dec_c} })\n      None => Err(grpc.Status{code: grpc.Code.Internal, message: \"cardinality violation: expected <EOF> for non server-streaming RPCs, but received another message\"})\n    }\n  })\n}\n")
+    } else {
+      b.push("/// Calls ${rpc.name}: f sends and reads on the call's stream; the call's status is f's result.")
+      b.push("pub fn (c: ${cl}) ${mn}[R, fx: Effects](f: fn(${tn}Stream) -> R ! grpc.Status uses fx, ${opts}) -> R ! grpc.Status uses (fx, net.dial) {\n  c.c.call(${k}, metadata, timeout, fn(cc) -> R ! grpc.Status uses fx { f(${tn}Stream{cc: cc}) })\n}\n")
+    }
+    // the server's registration
+    let h = "handle_${sn}_${mn}"
+    if !rpc.client_stream && !rpc.server_stream {
+      b.push("/// Serves ${rpc.name} on s with f.")
+      b.push("pub fn ${h}[fx: Effects](var s: grpc.Server, f: fn(grpc.Call, ${req}) -> ${resp} ! grpc.Status uses fx) uses (fx, clock) {\n  s.unary(${k}, fn(call, b) -> Bytes ! grpc.Status uses fx {\n    let req = protobuf.unmarshal[${req}](b).map_err(fn(e) { ${dec_s} })?\n    Ok(protobuf.marshal(f(call, req)?))\n  })\n}\n")
+    } else if !rpc.client_stream {
+      b.push("/// Serves ${rpc.name} on s with f, which sends its responses.")
+      b.push("pub fn ${h}[fx: Effects](var s: grpc.Server, f: fn(grpc.Call, ${req}, ${tn}Send) -> () ! grpc.Status uses fx) uses (fx, clock) {\n  s.stream(${k}, fn(call, recv, send) -> () ! grpc.Status uses fx {\n    let m = recv.next()? ?? return Err(grpc.Status{code: grpc.Code.Internal, message: \"grpc: client sent no request message\"})\n    let req = protobuf.unmarshal[${req}](m).map_err(fn(e) { ${dec_s} })?\n    f(call, req, ${tn}Send{s: send})\n  }, client_stream: false, server_stream: true)\n}\n")
+    } else if !rpc.server_stream {
+      b.push("/// Serves ${rpc.name} on s with f, which reads the requests and returns the response.")
+      b.push("pub fn ${h}[fx: Effects](var s: grpc.Server, f: fn(grpc.Call, ${tn}Recv) -> ${resp} ! grpc.Status uses fx) uses (fx, clock) {\n  s.stream(${k}, fn(call, recv, send) -> () ! grpc.Status uses fx {\n    send.send(protobuf.marshal(f(call, ${tn}Recv{r: recv})?))\n  }, client_stream: true, server_stream: false)\n}\n")
+    } else {
+      b.push("/// Serves ${rpc.name} on s with f, which reads the requests and sends the responses.")
+      b.push("pub fn ${h}[fx: Effects](var s: grpc.Server, f: fn(grpc.Call, ${tn}Recv, ${tn}Send) -> () ! grpc.Status uses fx) uses (fx, clock) {\n  s.stream(${k}, fn(call, recv, send) -> () ! grpc.Status uses fx { f(call, ${tn}Recv{r: recv}, ${tn}Send{s: send}) })\n}\n")
+    }
+  }
+  for line in b { o.push(line) }
+  Ok(o)
 }
 
 fn g_camel(s: Str) -> Str {

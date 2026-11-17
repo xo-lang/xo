@@ -94,3 +94,21 @@ func TestProtoGenWellKnownEnumsUnpacked(t *testing.T) {
 		t.Fatalf("got %q\n%s", r.out, r.err)
 	}
 }
+
+// TestProtoGenServiceRuns generates the gRPC stubs of a service with the four kinds of rpc (decision 0706),
+// registers typed handlers with the generated handle_ functions, and calls each through the generated client
+// over HTTP/2: unary, server streaming, client streaming and bidirectional.
+func TestProtoGenServiceRuns(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"svc.proto":   "syntax = \"proto3\";\npackage demo;\n\nmessage Req { string name = 1; int32 n = 2; }\nmessage Resp { string text = 1; }\n\nservice Greeter {\n  rpc SayHello(Req) returns (Resp);\n  rpc Count(Req) returns (stream Resp);\n  rpc Join(stream Req) returns (Resp);\n  rpc Chat(stream Req) returns (stream Resp);\n}\n",
+		"gen/main.xo": "// decision 0706: the stubs xo proto gen writes for svc.proto, served and called over HTTP/2.\nuse std/grpc\nuse std/http\n\nfn main(os: Os) {\n  var srv = grpc.server(os.clock)\n  handle_greeter_say_hello(srv, fn(_call, req) -> Resp ! grpc.Status { Ok(Resp{text: \"hello ${req.name}\"}) })\n  handle_greeter_count(srv, fn(_call, req, send) -> () ! grpc.Status {\n    for i in 0..Int(req.n) {\n      send.send(Resp{text: \"${req.name} ${i}\"})?\n    }\n    Ok(())\n  })\n  handle_greeter_join(srv, fn(_call, recv) -> Resp ! grpc.Status {\n    var parts: List[Str] = []\n    while let Some(r) = recv.next()? {\n      parts.push(r.name)\n    }\n    Ok(Resp{text: parts.join(\"+\")})\n  })\n  handle_greeter_chat(srv, fn(_call, recv, send) -> () ! grpc.Status {\n    while let Some(r) = recv.next()? {\n      send.send(Resp{text: \"echo ${r.name}\"})?\n    }\n    Ok(())\n  })\n  let l = os.net.listen(\"127.0.0.1:0\").or_fault(\"listen\")\n  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})\n  scope s {\n    s.spawn_background(fn() { hs.serve().ignore_err(\"the program ends the server\") })\n    let c = new_greeter_client(grpc.client(http.client(os.net, timeout: 30s), \"http://${hs.addr()}\"))\n    os.stdio.println(\"unary: ${c.say_hello(Req{name: \"xo\", n: 0}).or_fault(\"unary\").text}\")\n    let seen = Mutex[List[Str]].new([])\n    c.count(Req{name: \"c\", n: 3}, fn(r) -> Bool {\n      seen.with(fn(var l) { l.push(r.text) })\n      true\n    }).or_fault(\"count\")\n    os.stdio.println(\"server stream: ${seen.with_read(fn(l) { l })}\")\n    os.stdio.println(\"client stream: ${c.join([Req{name: \"a\", n: 0}, Req{name: \"b\", n: 0}]).or_fault(\"join\").text}\")\n    let got = c.chat(fn(st) -> List[Str] ! grpc.Status uses net.dial {\n      st.send(Req{name: \"x\", n: 0})?\n      st.send(Req{name: \"y\", n: 0})?\n      st.close_send()\n      var out: List[Str] = []\n      while let Some(r) = st.recv()? {\n        out.push(r.text)\n      }\n      Ok(out)\n    }).or_fault(\"chat\")\n    os.stdio.println(\"bidi: ${got}\")\n  }\n  os.stdio.println(\"done\")\n}\n",
+	})
+	out := filepath.Join(dir, "gen")
+	xo(t, "proto", "gen", "--out="+out, filepath.Join(dir, "svc.proto")).want(0)
+	r := xo(t, "run", out).want(0)
+	want := "unary: hello xo\nserver stream: [\"c 0\", \"c 1\", \"c 2\"]\nclient stream: a+b\nbidi: [\"echo x\", \"echo y\"]\ndone\n"
+	if r.out != want {
+		t.Fatalf("got %q\nwant %q\n%s", r.out, want, r.err)
+	}
+}

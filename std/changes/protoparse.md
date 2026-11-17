@@ -1,5 +1,18 @@
 # std/protoparse changes
 
+## 2026-11-17: feature: gen writes typed gRPC stubs for services
+
+- Kind: feature
+- Commit: this push
+- Found by: task #236's map rows (grpc.ServiceDesc and five more; decision 0706)
+- Go reference: grpc-go v1.79.2's protoc-gen-go-grpc output (the client interface, RegisterService)
+- Test: cmd/xo TestProtoGenServiceRuns (a service with unary, server streaming, client streaming and bidirectional rpcs, generated, served and called); protoparse_test.xo "service stub names"
+- Timing: none
+
+A `service` block now generates a typed client (`SClient`, a method per rpc), typed stream wrappers and a
+`handle_s_m` function per rpc that registers a typed handler on a grpc.Server; the file then uses std/grpc and
+std/protobuf.
+
 ## 2026-11-17: fix: protoc's grammar for options, map keys, field numbers, groups and syntax; no syntax statement is proto2
 
 - Kind: fix

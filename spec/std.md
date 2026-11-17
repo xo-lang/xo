@@ -11042,8 +11042,8 @@ fn (a: AuthInfo) validate_authority(authority: Str) -> () ! Str   // AuthorityVa
 - A message above a send limit is `ResourceExhausted` and is not sent: "trying to send message larger than max (N
   vs. M)", with grpc-go's "grpc: " prefix for a unary method's response. A response above the client's receive
   limit is `ResourceExhausted` "grpc: received message larger than max (N vs. M)".
-- Not yet: response headers from a handler (grpc-go's SetHeader and SendHeader; the head is written before the
-  handler runs), a keepalive enforcement policy, MaxConnectionAge, the typed stubs of `xo proto gen`, a TLS example.
+- Not yet: a keepalive enforcement policy, MaxConnectionAge, a TLS example. Typed stubs come from `xo proto gen`
+  (section 70's gen_set, decision 0706).
 
 ## 69. std/otlp
 
@@ -11187,9 +11187,19 @@ has its message among the messages of the scope the block is in (the file's or t
   EXPANDED, so the field's bytes are protoc's. A group, and an editions field with `features.message_encoding =
   DELIMITED`, is an error in `gen`: derive Proto writes a message length prefixed, not with group tags.
 - `gen` writes Xo source: a nested type `Inner` of `Outer` is `OuterInner`, a oneof is an enum held in an optional
-  field marked `proto "oneof"`, an enum is an open `Int` enum with a catch-all variant. Services are not generated
-  here (the stubs of std/grpc come with `xo proto gen`). Types and fields are `pub`, and the output has no `use`
-  line (`derive Proto` needs none).
+  field marked `proto "oneof"`, an enum is an open `Int` enum with a catch-all variant. Types and fields are `pub`,
+  and the output has no `use` line (`derive Proto` needs none) unless the file has a service.
+- `gen_set` writes a service `S` of package `p` as typed gRPC stubs over std/grpc (decision 0706; protoc-gen-go-grpc's
+  output), and the file then starts `use std/grpc` and `use std/protobuf`: a constant `S_M` (snake case, upper) with
+  each rpc's full method name `/p.S/M`; `SClient` (`new_s_client(c: grpc.Client)`) with a method per rpc, snake case:
+  unary `m(req, metadata = {}, timeout = None) -> Resp ! grpc.Status`, server streaming `m(req, f: fn(Resp) -> Bool)`
+  (f returns false to stop), client streaming `m(reqs: List[Req]) -> Resp`, bidirectional `m(f: fn(SMStream) -> R !
+  grpc.Status) -> R` with `send`, `close_send` and `recv` on the typed stream; and `handle_s_m(var srv: grpc.Server,
+  f)` per rpc, f typed as `fn(grpc.Call, Req) -> Resp`, `fn(grpc.Call, Req, SMSend)`, `fn(grpc.Call, SMRecv) -> Resp`
+  or `fn(grpc.Call, SMRecv, SMSend)`. A message that does not decode is `Internal` with grpc-go's texts ("grpc:
+  failed to unmarshal the received message: ..." on the client, "grpc: error unmarshalling request: ..." on the
+  server). The stubs call only `Client.unary` and `call` and `Server.unary` and `stream`, so a client's interceptors,
+  credentials and retries apply to them.
 - `gen_set` generates files that import one another (`xo proto gen` passes every file it is given): a type resolves
   in the file's own package scopes, then in the files it imports (matched by path, or a path ending in `/` and the
   import) and their `import public` files. A field typed by an enum of another file of the set is taken as

@@ -383,3 +383,17 @@ test "map keys, field numbers, group names and numbers" {
   expect(parse_err("syntax = \"proto2\";\nmessage M {\n  optional group package = 1 {\n    optional int32 x = 1;\n  }\n}")) == "3:18: group package should have a name that starts with a capital letter"
   expect(parse_err("syntax = \"proto2\";\nmessage M {\n  optional int32 f = 1 [default = -31reserved];\n}")) == "3:36: invalid syntax in float value: 31reserved"
 }
+
+test "service stub names" {
+  expect(g_snake("SayHello")) == "say_hello"
+  expect(g_snake("Get")) == "get"
+  expect(g_snake("HTTPServer")) == "http_server"
+  expect(g_snake("ListV2Items")) == "list_v2_items"
+  let f = parse("syntax = \"proto3\";\npackage p;\nmessage A { int32 v = 1; }\nservice Greeter { rpc SayHello(A) returns (A); rpc Watch(A) returns (stream A); }\n").or_fault("parse")
+  let src = gen_set([("a.proto", f)]).or_fault("gen")[0]
+  expect(src.starts_with("use std/grpc\nuse std/protobuf\n")) == true
+  expect(src.contains("pub const GREETER_SAY_HELLO: Str = \"/p.Greeter/SayHello\"")) == true
+  expect(src.contains("pub fn (c: GreeterClient) say_hello(req: A,")) == true
+  expect(src.contains("pub fn handle_greeter_watch[fx: Effects](var s: grpc.Server, f: fn(grpc.Call, A, GreeterWatchSend)")) == true
+}
+
