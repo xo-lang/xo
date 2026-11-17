@@ -1,0 +1,13 @@
+add 7n
+greet_len 11n
+count 6n
+live delta after 1000 0n
+greet hello wasm
+greet live delta after 1000 0n
+parse ok 3n 0 
+parse err 0n 1 not a number: 1x3
+parse ok again 2n 0 
+shout ok hey! 0
+shout err 1 nothing to shout
+error live delta after 1000 0n
+trapped: RuntimeError

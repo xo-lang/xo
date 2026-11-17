@@ -1592,6 +1592,21 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
   passes and returns `XoBytes` and `XoStr` through pointers, which a C
   compiler does from the header. `--lib=static` is not yet available
   for windows.
+  With `--targets=wasip1/wasm`, `--lib=shared` writes `NAME.wasm`, a WASI
+  reactor (decision 0688; `--lib=static` is an error, and so is a package
+  with no `as c` function): no `_start`; the host calls `_initialize` once,
+  then any export, each `as c` function by its name. `Int` is i64, `Float`
+  f64, a handle i64. A `Str` or `Bytes` parameter is two i32s, the address
+  and length of bytes the host wrote into a block from
+  `xo_alloc(len: i32) -> i32` (released when the export returns). A `Str`
+  or `Bytes` result is allowed: the export returns its bytes' address
+  (i32), `xo_result_len() -> i32` its length, valid until the next export
+  that returns one. A function that can fail takes no `err` parameter:
+  after each call `xo_failed() -> i32` is 1 when it failed (the value is
+  then 0, or empty), and `xo_last_error() -> i32` and
+  `xo_last_error_len() -> i32` the error's text (empty after a success),
+  valid until the next call that can fail. A fault writes its report to
+  stderr and traps; the instance is dead. No header is written.
 
 ### 3.3 Closures
 

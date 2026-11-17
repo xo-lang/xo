@@ -131,6 +131,9 @@ pub struct Gen {
   /// a wasip2/wasm command (rt7.xo, decision 0447 stage 3): a program
   /// built for wasip2/wasm that does not serve wasi:http
   cmd: Bool = false
+  /// a WASI reactor (decision 0688, xo build --lib=shared): an
+  /// _initialize export and one export per `as c` function, no _start
+  reactor: Bool = false
   /// a call of rt.wasi_stdin_read was lowered (rt7_p1_text's fd_read import)
   stdin: Bool = false
   /// An unsupported call faults when it runs instead of failing the build
@@ -271,8 +274,14 @@ pub fn generate_component(m: ssa.Module, tz: tzsel.TZSel, p3: Bool = false) -> P
   gen_module(m, false, false, false, [tz], true, p3)
 }
 
-fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzsel.TZSel], p2: Bool, p3: Bool = false) -> Program {
-  var g = Gen{m: atomics_to_runtime(m), all: all, lax: lax, annotate: annotate}
+/// Lowers library module m (xo build --lib=shared) for wasip1/wasm: a
+/// WASI reactor whose exports are its `as c` functions (decision 0688).
+pub fn generate_reactor(m: ssa.Module, tz: tzsel.TZSel) -> Program {
+  gen_module(m, false, false, false, [tz], false, reactor: true)
+}
+
+fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzsel.TZSel], p2: Bool, p3: Bool = false, reactor: Bool = false) -> Program {
+  var g = Gen{m: atomics_to_runtime(m), all: all, lax: lax, annotate: annotate, reactor: reactor}
   for _ in 0..m.types.len() {
     g.leaf_memo.push([])
     g.leaf_done.push(false)
@@ -2007,6 +2016,22 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   for t in g.table {
     roots.push(t)
   }
+  if g.reactor {
+    // the exports' runtime calls ($alloc, $free for xo_alloc's blocks)
+    called_names(g.reactor_text(start), roots)
+    // a reactor's fault traps (decision 0688): the host sees the export
+    // fail and makes a new instance, where proc_exit would end its process
+    // fault_report's last two instructions, whatever their indent
+    let fr = rt.find("(func $fault_report") ?? -1
+    let rest = if fr < 0 { "" } else { rt[fr..rt.len()] }
+    let px = rest.find("call $proc_exit)") ?? -1
+    let c70 = if px < 0 { -1 } else { rest[0..px].rfind("i32.const 70") ?? -1 }
+    if fr < 0 || c70 < 0 || px < c70 {
+      g.fail("the wasm runtime's fault_report changed: a reactor's trap needs its end")
+    } else {
+      rt = rt[0..fr + c70] + "unreachable)" + rt[fr + px + "call $proc_exit)".len()..rt.len()]
+    }
+  }
   b.write(strip_runtime(rt, roots))
   for h in g.helpers {
     b.write(h)
@@ -2024,6 +2049,8 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   } else if g.cmd {
     // a command's run export (rt7.xo)
     b.write(rt7_run(start, g.files))
+  } else if g.reactor {
+    b.write(g.reactor_text(start))
   } else {
     b.write("  (func $_start (export \"_start\")\n")
     for s in start {
@@ -2273,4 +2300,98 @@ fn ls_text() -> Str {
       global.set $lsspare
     end)
 """
+}
+
+/// A reactor's exports (decision 0688): _initialize runs what _start
+/// would before main's code (a library's main is empty: the packages'
+/// initialization), and each `as c` function is exported by its C name.
+/// A fault reports to stderr and traps: the instance is dead.
+fn (var g: Gen) reactor_text(start: List[Str]) -> Str {
+  var b = StrBuilder.new()
+  // xo_alloc(len) -> pointer: a block the host writes a Str or Bytes
+  // argument into, freed when the next export returns (the callee copied
+  // it). Each block's first 8 bytes chain it to the one before.
+  b.write("  (global $xin (mut i32) (i32.const 0))\n")
+  b.write("  (func $xo_alloc_x (export \"xo_alloc\") (param $n i32) (result i32) (local $p i32)\n    local.get $n\n    i32.const 8\n    i32.add\n    call $alloc\n    local.tee $p\n    global.get $xin\n    i32.store\n    local.get $p\n    global.set $xin\n    local.get $p\n    i32.const 8\n    i32.add)\n")
+  b.write("  (func $xin_free (local $p i32)\n    block\n      loop\n        global.get $xin\n        i32.eqz\n        br_if 1\n        global.get $xin\n        local.tee $p\n        i32.load\n        global.set $xin\n        local.get $p\n        call $free\n        br 0\n      end\n    end)\n")
+  // a Str or Bytes result: kept here until the next export returns one
+  // (released then), its bytes' address returned and its length read
+  // with xo_result_len
+  b.write("  (global $xres_o (mut i32) (i32.const 0))\n  (global $xres_n (mut i32) (i32.const 0))\n")
+  b.write("  (func $xo_result_len_x (export \"xo_result_len\") (result i32)\n    global.get $xres_n)\n")
+  // an error result: whether the last export failed (xo_failed) and its
+  // message, kept until the next export that can fail returns
+  // (xo_last_error, its bytes' address or 0, and xo_last_error_len)
+  b.write("  (global $xfailed (mut i32) (i32.const 0))\n  (global $xerr_o (mut i32) (i32.const 0))\n  (global $xerr_n (mut i32) (i32.const 0))\n")
+  b.write("  (func $xo_failed_x (export \"xo_failed\") (result i32)\n    global.get $xfailed)\n")
+  b.write("  (func $xo_last_error_x (export \"xo_last_error\") (result i32)\n    global.get $xerr_o\n    if (result i32)\n      global.get $xerr_o\n      i32.const 8\n      i32.add\n    else\n      i32.const 0\n    end)\n")
+  b.write("  (func $xo_last_error_len_x (export \"xo_last_error_len\") (result i32)\n    global.get $xerr_n)\n")
+  b.write("  (func $_initialize (export \"_initialize\")\n")
+  for s in start {
+    b.write("    ${s}\n")
+  }
+  b.write("    global.get $faulting\n    if\n      call $fault_report\n      unreachable\n    end)\n")
+  for (fi, f) in g.m.funcs.indexed() {
+    if f.export.is_empty() {
+      continue
+    }
+    var params = ""
+    var gets = ""
+    var k = 0
+    for (pi, p) in f.blocks[0].params.indexed() {
+      for l in g.leaves(ssa.ty_of(f.values[p].tb)) {
+        if f.wasm_i32.contains(pi) && l == "i64" {
+          // a Str or Bytes pointer or length: i32 for the host (a JS
+          // number, not a BigInt)
+          params = params + " (param i32)"
+          gets = gets + "    local.get ${k}\n    i64.extend_i32_u\n"
+        } else {
+          params = params + " (param ${l})"
+          gets = gets + "    local.get ${k}\n"
+        }
+        k += 1
+      }
+    }
+    // -2: the result is (value, failed, message); the value's type
+    let eres = f.wasm_i32.contains(-2) && f.results.len() == 1
+    let vts: List[Int] = if eres { [g.m.types[f.results[0]].elems[0]] } else { f.results }
+    let sres = f.wasm_i32.contains(-1) && vts.len() == 1
+    var results = ""
+    if sres {
+      results = " (result i32)"
+    } else {
+      for r in vts {
+        for l in g.leaves(r) {
+          results = results + " (result ${l})"
+        }
+      }
+    }
+    if sres {
+      results = results + " (local $o i32) (local $n i32)"
+    }
+    if eres {
+      results = results + " (local $ef i32) (local $eo i32) (local $en i32)"
+    }
+    b.write("  (func $x_${fi} (export \"${f.export}\")${params}${results}\n${gets}    call $f${fi}\n")
+    if eres {
+      b.write("    local.set $en\n    local.set $eo\n    local.set $ef\n")
+    }
+    if sres {
+      b.write("    local.set $n\n    local.set $o\n")
+    }
+    b.write("    call $xin_free\n    global.get $faulting\n    if\n      call $fault_report\n      unreachable\n    end\n")
+    if eres {
+      let edrop = g.rc_fn("drop", g.m.types[f.results[0]].elems[2])
+      b.write("    global.get $xerr_o\n    if\n      global.get $xerr_o\n      global.get $xerr_n\n      call ${edrop}\n    end\n")
+      b.write("    local.get $eo\n    global.set $xerr_o\n    local.get $en\n    global.set $xerr_n\n    local.get $ef\n    global.set $xfailed\n")
+    }
+    if sres {
+      let drop = g.rc_fn("drop", vts[0])
+      b.write("    global.get $xres_o\n    if\n      global.get $xres_o\n      global.get $xres_n\n      call ${drop}\n    end\n")
+      b.write("    local.get $o\n    global.set $xres_o\n    local.get $n\n    global.set $xres_n\n")
+      b.write("    local.get $o\n    i32.const 8\n    i32.add\n")
+    }
+    b.write("  )\n")
+  }
+  b.freeze()
 }

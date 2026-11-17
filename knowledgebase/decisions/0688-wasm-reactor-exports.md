@@ -68,3 +68,26 @@ already exports wasi:http.
 - **Exports in a program build (with `_start`)**: a program that also
   exports would run main and exit through proc_exit; a reactor is the
   WASI form for a module whose host calls in.
+
+## As built (Xo Lang 1, 2026-11-16, task #53)
+
+- Item 3's error result differs: 0574's `int32_t *err` and
+  `xo_last_error()` keep the text in the thread heap (weak_malloc), which
+  faults on wasm, and an err pointer into an `xo_alloc` block is freed
+  before the host reads it. A failing export's wrapper returns (value,
+  failed, message) instead (compiler/ssa declare_c_export, marked -2 in
+  Func.wasm_i32), and the export keeps them: `xo_failed() -> i32`,
+  `xo_last_error() -> i32` (the text's address, 0 before any failure)
+  and `xo_last_error_len() -> i32`, valid until the next export that can
+  fail returns. On failure the value is 0 (a Str result: empty).
+- A Str or Bytes result (item 2) is the Str itself kept in globals
+  (`$xres_o`, `$xres_n`) and released when the next one is stored; no
+  malloc copy (c_bytes_out's weak_malloc has no wasm form either).
+- Item 4: an export cannot print (no `Os` reaches an `as c` function),
+  so the only output is a fault's report, written before the trap.
+- Item 5 is an error naming the package: "the package has no `as c`
+  function".
+- Test: internal/selfhost TestWasmReactorLib (testdata/wasm_reactor,
+  Node's WASI through drive.mjs: Int, Float, Str and Bytes in and out,
+  errors, a trap, no object left live after a thousand calls of each
+  kind; and testdata/wasm_reactor_empty refused).

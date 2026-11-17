@@ -939,8 +939,10 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let et = b.fail_err(b.c.objs[o].err)
   var rs = b.m.funcs[fi].results
   let rt = if rs.len() == 1 { rs[0] } else { b.unit_t() }
-  if et >= 0 {
+  if et >= 0 && !b.wasm {
     ps.push(b.int_t())
+  }
+  if et >= 0 {
     let ok = b.m.variant_index(rt, "Ok")
     rs = [b.m.types[rt].variants[ok].fields[0].ty]
   }
@@ -955,13 +957,22 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   if hres {
     rs = [b.int_t()]
   }
-  if bres {
+  if bres && !b.wasm {
     rs = [pair]
   }
   let sret = bres && w64
   if sret {
     ps = [b.int_t()] + ps
     rs = [b.int_t()]
+  }
+  // a wasm reactor's error result (decision 0688): no int32_t *err (an
+  // error's text in the thread heap does not fit wasm), the wrapper
+  // returns (value, failed, message) and the export keeps the last two
+  // for xo_failed and xo_last_error
+  let rv0 = if rs.len() == 1 { rs[0] } else { b.unit_t() }
+  let werr = et >= 0 && b.wasm
+  if werr {
+    rs = [b.m.tuple([rv0, b.bool_t(), b.str_t()])]
   }
   // a static library's or a windows DLL's export starts the runtime
   let lazy = b.c.clib_static || b.c.clib_lazy
@@ -976,12 +987,15 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   // the first C_BUFS Bytes and Str parameters copy into the thread's
   // buffer for them (clibh bytes_in, text_in), which bytes_back keeps
   // after the call when the function kept no reference: no allocation
-  let bin = if wide { b.llrt_fn("native/llrt/clibh", "bytes_in") } else { "" }
-  let tin = if wide { b.llrt_fn("native/llrt/clibh", "text_in") } else { "" }
-  let bback = if wide { b.llrt_fn("native/llrt/clibh", "bytes_back") } else { "" }
-  let bufs_fn = if wide { b.llrt_fn("native/llrt/clibh", "bufs") } else { "" }
-  let c_ok = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_ok") } else { "" }
-  let c_error = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_error") } else { "" }
+  // (not on wasm, decision 0688: the buffers view memory with rt.str_at,
+  // which wasm has not; each parameter copies)
+  let bufd = wide && !b.wasm
+  let bin = if bufd { b.llrt_fn("native/llrt/clibh", "bytes_in") } else { "" }
+  let tin = if bufd { b.llrt_fn("native/llrt/clibh", "text_in") } else { "" }
+  let bback = if bufd { b.llrt_fn("native/llrt/clibh", "bytes_back") } else { "" }
+  let bufs_fn = if bufd { b.llrt_fn("native/llrt/clibh", "bufs") } else { "" }
+  let c_ok = if et >= 0 && !werr { b.llrt_fn("native/llrt/heapos", "c_ok") } else { "" }
+  let c_error = if et >= 0 && !werr { b.llrt_fn("native/llrt/heapos", "c_error") } else { "" }
   let started = if lazy { b.llrt_fn("native/llrt/obj", "heap_started") } else { "" }
   let early = if lazy { b.llrt_fn("native/llrt/cabi_c", "xo_start_early") } else { "" }
   // handle parameters: read in place inside the table's read epoch
@@ -995,11 +1009,13 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let gets: List[Str] = if hold && (rbeg.is_empty() || rend.is_empty() || haddr.is_empty() || hbad.is_empty() || peek.is_empty()) { ["-"] } else { [] }
   // an Option[T] result of a handle type T: 0 for None, else T's handle
   let rnull = if hres { b.c_nullable(b.c.objs[o].result) } else { -1 }
-  let cout = if bres { b.llrt_fn("native/llrt/heapos", "c_bytes_out") } else { "" }
+  // (a wasm reactor's export keeps the Str itself until the next call and
+  // hands the host its bytes, decision 0688: no malloc copy)
+  let cout = if bres && !b.wasm { b.llrt_fn("native/llrt/heapos", "c_bytes_out") } else { "" }
   let wword = if wide && w64 { b.llrt_fn("native/llrt/clibh", "w64_word") } else { "" }
   let wsret = if sret { b.llrt_fn("native/llrt/clibh", "w64_sret") } else { "" }
   let put = if hres { b.llrt_inst("native/llrt/clibh", "hput", if rnull >= 0 { rnull } else { b.c.objs[o].result }) } else { "" }
-  if (wide && (copy.is_empty() || text.is_empty() || bin.is_empty() || tin.is_empty() || bback.is_empty() || bufs_fn.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (lazy && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || (bres && cout.is_empty()) || (wide && w64 && wword.is_empty()) || (sret && wsret.is_empty()) || gets.any(fn(g) { g == "-" }) {
+  if (wide && (copy.is_empty() || text.is_empty())) || (bufd && (bin.is_empty() || tin.is_empty() || bback.is_empty() || bufs_fn.is_empty())) || (et >= 0 && !werr && (c_ok.is_empty() || c_error.is_empty())) || (lazy && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || (bres && !b.wasm && cout.is_empty()) || (wide && w64 && wword.is_empty()) || (sret && wsret.is_empty()) || gets.any(fn(g) { g == "-" }) {
     b.unsupported("a C export with no native/llrt")
     return
   }
@@ -1007,6 +1023,15 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   b.m.funcs[w].entry = true
   b.m.funcs[w].export = name
   let saved = b.begin(w, b.decl_file(o))
+  if bres && b.wasm {
+    // -1: the result is a Str or Bytes the export returns as a pointer
+    // and xo_result_len
+    b.s.f.wasm_i32.push(-1)
+  }
+  if werr {
+    // -2: the result is (value, failed, message)
+    b.s.f.wasm_i32.push(-2)
+  }
   let wp = b.s.f.blocks[0].params
   // a static library's: a call before its constructor ran (another
   // constructor's, which runs first in the program's link order) starts
@@ -1028,7 +1053,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   // the Bytes and Str arguments in buffers: (buffer index, value)
   var bufs: List[(Int, Int)] = []
   // the thread's buffer table, read once a call
-  let bt = if wide { b.call(bufs_fn, b.int_t(), "", []) } else { -1 }
+  let bt = if bufd { b.call(bufs_fn, b.int_t(), "", []) } else { -1 }
   // (the result's pointer is parameter 0 with sret)
   var i = if sret { 1 } else { 0 }
   for (k, p) in b.m.funcs[fi].blocks[0].params.indexed() {
@@ -1036,8 +1061,12 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     if b.tkind(t) == Kind.Str {
       // a Str holds valid UTF-8; a Bytes any bytes
       let str = k < b.c.objs[o].params.len() && b.c.show(b.c.objs[o].params[k].ty) == "Str"
+      if b.wasm {
+        b.s.f.wasm_i32.push(i)
+        b.s.f.wasm_i32.push(i + 1)
+      }
       let (pa, pn) = if w64 { (b.call(wword, b.int_t(), "", [wp[i], b.cint(0)]), b.call(wword, b.int_t(), "", [wp[i], b.cint(1)])) } else { (wp[i], wp[i + 1]) }
-      if bufs.len() < C_BUFS {
+      if bufd && bufs.len() < C_BUFS {
         let v = b.call(if str { tin } else { bin }, t, "", [bt, b.cint(bufs.len()), pa, pn])
         bufs.push((bufs.len(), v))
         args.push(v)
@@ -1077,26 +1106,35 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     let _e = b.call(rend, b.unit_t(), "", [rd])
   }
   if et < 0 {
-    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, r) } else if sret { b.c_bytes_w64(cout, wsret, wp[0], r) } else if bres { b.c_bytes(cout, pair, r) } else { r })
+    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, r) } else if sret { b.c_bytes_w64(cout, wsret, wp[0], r) } else if bres && b.wasm { r } else if bres { b.c_bytes(cout, pair, r) } else { r })
   } else {
-    let errp = wp[wp.len() - 1]
+    let errp = if werr { -1 } else { wp[wp.len() - 1] }
     let ok = b.m.variant_index(rt, "Ok")
     let ei = b.m.variant_index(rt, "Err")
     let (yes, no) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [r]), b.cint(ok)]))
     b.s.cur = yes
-    let _o = b.call(c_ok, b.unit_t(), "", [errp])
+    if !werr {
+      let _o = b.call(c_ok, b.unit_t(), "", [errp])
+    }
     let v = b.add(Op.Payload, vt, Aux.P(tag: ok, field: 0), [r])
-    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, v) } else if sret { b.c_bytes_w64(cout, wsret, wp[0], v) } else if bres { b.c_bytes(cout, pair, v) } else { v })
+    let okv = if hres { b.c_hold_opt(put, rnull >= 0, v) } else if sret { b.c_bytes_w64(cout, wsret, wp[0], v) } else if bres && b.wasm { v } else if bres { b.c_bytes(cout, pair, v) } else { v }
+    b.retv(if werr { b.add(Op.Tuple, rs[0], Aux.None, [okv, b.cbool(false), b.const_str("")]) } else { okv })
     b.s.cur = no
     let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
     // a Str error is its own text; others build their Display form
     let msg = if b.vty(e) == b.str_t() { e } else { b.append_display(b.const_str(""), e, et) }
-    let _e = b.call(c_error, b.unit_t(), "", [errp, msg])
-    b.retv(if sret { b.call(wsret, b.int_t(), "", [wp[0], b.cint(0), b.cint(0)]) } else { b.zero(rs[0], []) })
+    if werr {
+      b.retv(b.add(Op.Tuple, rs[0], Aux.None, [b.zero(rv0, []), b.cbool(true), msg]))
+    } else {
+      let _e = b.call(c_error, b.unit_t(), "", [errp, msg])
+      b.retv(if sret { b.call(wsret, b.int_t(), "", [wp[0], b.cint(0), b.cint(0)]) } else { b.zero(rs[0], []) })
+    }
   }
   b.finish_fn()
   b.end(saved)
-  b.check_c_result(w)
+  if !(b.wasm && (bres || werr)) {
+    b.check_c_result(w)
+  }
 }
 
 /// The Bytes and Str parameters of a C export that copy into the
@@ -3598,7 +3636,7 @@ fn (var b: Builder) begin(fi: Int, file: Int) -> S {
   for p in ps {
     pvals.push(f.values[p])
   }
-  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, blocks: [Block{params: ps}], values: pvals}
+  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, wasm_i32: f.wasm_i32, catches: f.catches, reader: f.reader, blocks: [Block{params: ps}], values: pvals}
   var s = S{f: f, fi: fi, file: file}
   if file >= 0 {
     s.f.file = b.file_name(file)

@@ -1,0 +1,29 @@
+// A library built with xo build --lib=shared --targets=wasip1/wasm (decision 0688): TestWasmReactorLib drives its exports from drive.mjs.
+pub fn add(a: Int, b: Int) -> Int as c "add" { a + b }
+
+pub fn half(x: Float) -> Float as c "half" { x / 2.0 }
+
+pub fn boom(n: Int) -> Int as c "boom" {
+  let xs = [1, 2, 3]
+  xs[n]
+}
+
+pub fn greet_len(name: Str) -> Int as c "greet_len" { "hello ${name}".len() }
+
+pub fn count(b: Bytes) -> Int as c "count" { b.len() }
+
+pub fn greet(name: Str) -> Str as c "greet" { "hello ${name}" }
+
+pub fn parse(s: Str) -> Int ! Str as c "parse" {
+  if s.is_empty() || s.contains("x") {
+    return Err("not a number: ${s}")
+  }
+  Ok(s.len())
+}
+
+pub fn shout(s: Str) -> Str ! Str as c "shout" {
+  if s.is_empty() {
+    return Err("nothing to shout")
+  }
+  Ok("${s}!")
+}

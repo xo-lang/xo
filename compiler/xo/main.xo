@@ -1194,10 +1194,21 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !(o.lib is "shared" | "static") {
       fail(os, "--lib=${o.lib}: a library is --lib=shared or --lib=static")
     }
-    if !(backend is "arm64" | "amd64" | "llvm") {
-      fail(os, "--lib builds with the native arm64 or amd64 backend or the LLVM backend (not ${backend})")
+    if backend == "wasm" {
+      // a WASI reactor (decision 0688): _initialize and one export per
+      // `as c` function; a core module has no archive form
+      if o.lib == "static" {
+        fail(os, "--lib=static: a wasm module has no static library form; build --lib=shared (decision 0688)")
+      }
+      if o.targets != "wasip1/wasm" {
+        fail(os, "--lib=shared with the wasm backend builds for --targets=wasip1/wasm alone (decision 0688)")
+      }
+    } else if !(backend is "arm64" | "amd64" | "llvm") {
+      fail(os, "--lib builds with the native arm64 or amd64 backend, the LLVM backend, or wasm for wasip1 (not ${backend})")
     }
-    if o.targets.starts_with("windows/") {
+    if backend == "wasm" {
+      // no linker, no assembler, no DWARF
+    } else if o.targets.starts_with("windows/") {
       // a windows DLL (decision 0574): Xo's PE linker writes it (its
       // export directory and DllMain, pelink.xo), with its PDB
       if o.lib == "static" {
@@ -1278,9 +1289,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // the library's exports (a shared library's symbol list, a windows
     // DLL's export directory), even with no -o
     o.lib_exports = c_export_names(c)
+    if o.lib_exports.is_empty() && o.targets.starts_with("wasip") {
+      // a reactor with no export is a module nothing can call (decision
+      // 0688 item 5)
+      fail(os, "--lib=${o.lib} --targets=${o.targets}: the package has no `as c` function, so the module would export nothing (decision 0688)")
+    }
   }
-  if !o.lib.is_empty() && !o.out.is_empty() {
-    // the library's header beside it (decision 0574)
+  if !o.lib.is_empty() && !o.out.is_empty() && !o.targets.starts_with("wasip") {
+    // the library's header beside it (decision 0574; a wasm reactor's
+    // host is JavaScript or a wasm runtime, not C: none)
     let (hp, guard) = c_header_path(o.out)
     if let Err(e) = os.fs.write(hp, c_header(c, guard).bytes()) {
       fail(os, "write ${hp}: ${e}")
@@ -1486,7 +1503,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
       wout = "${wdir.trim_suffix("/")}/${prog_name(o.wd, o.dirs)}.test.wasm"
     }
-    let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata, "wasip1"), o.skip_unsupported, p2, p3)
+    let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata, "wasip1"), o.skip_unsupported, p2, p3, lib: !o.lib.is_empty())
     if !why.is_empty() {
       return Native{skipped: why}
     }

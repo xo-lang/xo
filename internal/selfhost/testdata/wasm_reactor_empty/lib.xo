@@ -1,0 +1,2 @@
+// A library with no `as c` function: TestWasmReactorLib expects --lib=shared --targets=wasip1/wasm to refuse it (decision 0688 item 5).
+pub fn add(a: Int, b: Int) -> Int { a + b }

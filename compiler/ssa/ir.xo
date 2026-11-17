@@ -556,6 +556,9 @@ pub struct Func {
   pub entry: Bool = false
   /// The C symbol of a C ABI export (Func.Export, decision 0207), or "".
   pub export: Str = ""
+  /// A wasm reactor export's parameters that are a Str or Bytes pointer
+  /// or length (decision 0688): i32 at the module's boundary.
+  pub wasm_i32: List[Int] = []
   /// A fault in it returns (a closure given to Map.update): its unwind
   /// block does not go on to the caller (Func.Catches).
   pub catches: Bool = false
@@ -630,7 +633,7 @@ pub fn (var f: Func) set_pos(v: Int, pos: Str) {
 }
 
 pub fn (f: Func) shell() -> Func {
-  Func{name: f.name, file: f.file, names: f.names, blobs: f.blobs, name_ix: f.name_ix, ntag: f.ntag, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader, lazy_lands: f.lazy_lands}
+  Func{name: f.name, file: f.file, names: f.names, blobs: f.blobs, name_ix: f.name_ix, ntag: f.ntag, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, wasm_i32: f.wasm_i32, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader, lazy_lands: f.lazy_lands}
 }
 
 /// A lowered program (ssa.Module).

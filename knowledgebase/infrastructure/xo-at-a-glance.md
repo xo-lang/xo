@@ -177,7 +177,10 @@ lists the rest.
   linux/riscv64 through `--backend=llvm` only (0571). Release archives:
   darwin and linux (arm64, amd64) and windows/amd64; windows/arm64 joins in 0.52 (owner,
   2026-11-15). `xo build --lib=shared|static` builds a C library or a
-  Windows DLL with its import library (0574).
+  Windows DLL with its import library (0574); with `--targets=wasip1/wasm`
+  `--lib=shared` builds a WASI reactor (0688: `_initialize`, one export
+  per `as c` function, Str in through `xo_alloc`, Str out through
+  `xo_result_len`, errors through `xo_failed` and `xo_last_error`).
 - Modules: versioned requires, `xo get`, the public proxy, checksum log
   and index (proxy.xolang.org, sum.xolang.org, index.xolang.org; 0568,
   0124, 0126). `xo vuln` (0647 stage A: toolchain, imported std modules
