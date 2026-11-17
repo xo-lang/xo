@@ -1555,14 +1555,21 @@ fn convert_words(q0: List[Int], p: Int, lo: Int, hi0: Int, base: Int, nd: Int, b
       // Go's "hard-coded for speed", two digits a step: a division by the
       // constant 100 is a multiply, and d / 10 for d < 100 is
       // (d * 103) >> 10
-      while j + 2 <= nd && i - 2 >= lo {
-        i -= 2
+      // r < bb and d < 100, i and j within [lo, hi] and [0, nd]: the
+      // steps cannot overflow, so wrapping ops leave out the checks
+      // (2026-11-17: they were most of the loop's instructions)
+      let jn = nd - 2
+      let il = lo + 2
+      while j <= jn && i >= il {
+        i = i.wrapping_sub(2)
         let t = r / 100
-        let d = r - t * 100
-        let d1 = (d * 103) >> 10
-        rt.mem_store(p, i, (48 + d1) | ((48 + d - d1 * 10) << 8), 2)
+        let d = r.wrapping_sub(t.wrapping_mul(100))
+        let d1 = d.wrapping_mul(103) >> 10
+        let lo2 = d1.wrapping_add(48)
+        let hi2 = d.wrapping_add(48).wrapping_sub(d1.wrapping_mul(10))
+        rt.mem_store(p, i, lo2 | hi2.wrapping_shl(8), 2)
         r = t
-        j += 2
+        j = j.wrapping_add(2)
       }
       while j < nd && i > lo {
         i -= 1

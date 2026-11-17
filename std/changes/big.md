@@ -1,5 +1,18 @@
 # std/big changes
 
+## 2026-11-17: perf: BigInt.text's decimal digit loop
+
+- Kind: perf
+- Commit: this push
+- Found by: task #4 (bench/perf/big text)
+- Go reference: math/big natconv.go convertWords
+- Test: internal/arm64 TestBigTextFast (instruction ceiling 880M for 20,000 texts of a 2048 bit number; 931,953,259 before, 836,024,541 after on the Mac)
+- Timing: bench/perf/big text on linux/arm64 host 1, xo bench --ab 3 rounds: 0.935 of before (95% interval 0.93 to 0.959; 5.089 to 4.76 ms)
+
+convert_words' base-10 loop splits each word into digits with wrapping
+operations and bounds hoisted out of the loop, as Go's convertWords.
+Output is unchanged.
+
 ## 2026-11-16: feature: BigInt in JSON (decision 0673)
 
 - Kind: feature
