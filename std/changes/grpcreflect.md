@@ -2,6 +2,15 @@
 
 
 
+## 2026-11-17: perf: each file is encoded once, when the service is made
+
+- Kind: perf
+- Commit: this commit
+- Found by: task #273, the stress evidence run (memory grew 13% over 30 minutes: every answer re-encoded its files and rebuilt every file's symbol set)
+- Go reference: grpc-go's reflection server marshals on each ask; Xo keeps the bytes, as answers never change
+- Test: std/grpcreflect "answers carry each file's encoding, the file found even when two share a name"
+- Shipped in: not yet released
+
 ## 2026-11-17: fix: a field number above 536870911 fails a request or response, as protobuf-go
 
 - Kind: fix

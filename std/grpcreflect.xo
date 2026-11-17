@@ -21,12 +21,28 @@ pub const METHOD_ALPHA: Str = "/grpc.reflection.v1alpha.ServerReflection/ServerR
 pub struct Reflection {
   files: List[protodesc.FileDesc]
   services: List[Str]
+  /// made once in new, since a stream asks again and again for the same files (re-encoding every file of each
+  /// answer was the grpcreflect stress run's memory growth, task #273): each file's index in files by name (the
+  /// first of a name), its serialized FileDescriptorProto and its symbols
+  index: Map[Str, Int]
+  encoded: List[Bytes]
+  syms: List[Set[Str]]
 }
 
 /// A reflection service over files (each file's dependencies are found among files by name; one not given is left
 /// out of the answers, as grpc-go skips a placeholder) listing services.
 pub fn new(files: List[protodesc.FileDesc], services: List[Str]) -> Reflection {
-  Reflection{files: files, services: services}
+  var index: Map[Str, Int] = {}
+  var encoded: List[Bytes] = []
+  var syms: List[Set[Str]] = []
+  for (i, f) in files.indexed() {
+    if !index.contains(f.name) {
+      index.put(f.name, i)
+    }
+    encoded.push(protodesc.encode(f))
+    syms.push(symbols(f))
+  }
+  Reflection{files: files, services: services, index: index, encoded: encoded, syms: syms}
 }
 
 /// Registers the service on s, v1 and v1alpha, as grpc-go's reflection.Register. It lists the services registered
@@ -104,7 +120,7 @@ fn not_found() -> Answer { Answer.Error(code: 5, message: "proto: not found") }
 
 /// grpc-go's FileDescWithDependencies: the file and its imports breadth first, the first always and the others
 /// when the stream has not had them.
-fn (r: Reflection) files_from(f: protodesc.FileDesc?, sent0: Set[Str]) -> (Answer, Set[Str]) {
+fn (r: Reflection) files_from(f: Int?, sent0: Set[Str]) -> (Answer, Set[Str]) {
   let first = match f {
     Some(x) => x
     None => return (not_found(), sent0)
@@ -114,20 +130,22 @@ fn (r: Reflection) files_from(f: protodesc.FileDesc?, sent0: Set[Str]) -> (Answe
   var queue = [first]
   // each file is walked once: files given as descriptors may import each other in a cycle, which a .proto parser
   // rejects but a hand built or decoded FileDesc does not
-  var walked: Set[Str] = #{first.name}
+  var walked: Set[Str] = #{r.files[first].name}
   var at = 0
   while at < queue.len() {
-    let cur = queue[at]
+    let k = queue[at]
+    let cur = r.files[k]
     at += 1
     if out.is_empty() || !sent.contains(cur.name) {
       sent.add(cur.name)
-      out.push(protodesc.encode(cur))
+      out.push(r.encoded[k])
     }
     for d in cur.dependency {
-      if let Some(df) = r.file_named(d) {
-        if !walked.contains(df.name) {
-          walked.add(df.name)
-          queue.push(df)
+      if let Some(dk) = r.file_named(d) {
+        let dn = r.files[dk].name
+        if !walked.contains(dn) {
+          walked.add(dn)
+          queue.push(dk)
         }
       }
     }
@@ -135,13 +153,8 @@ fn (r: Reflection) files_from(f: protodesc.FileDesc?, sent0: Set[Str]) -> (Answe
   (Answer.Files(files: out), sent)
 }
 
-fn (r: Reflection) file_named(name: Str) -> protodesc.FileDesc? {
-  for f in r.files {
-    if f.name == name {
-      return Some(f)
-    }
-  }
-  None
+fn (r: Reflection) file_named(name: Str) -> Int? {
+  r.index.get(name)
 }
 
 fn trim_dot(s: Str) -> Str { if s.starts_with(".") { s[1..] } else { s } }
@@ -150,20 +163,20 @@ fn qual(pkg: Str, name: Str) -> Str { if pkg.is_empty() { name } else { "${pkg}.
 
 /// The file declaring symbol: a message, enum, enum value, field, oneof, service, method or extension by its
 /// full name (protoregistry's FindDescriptorByName).
-fn (r: Reflection) file_of_symbol(symbol: Str) -> protodesc.FileDesc? {
-  for f in r.files {
-    if symbols(f).contains(symbol) {
-      return Some(f)
+fn (r: Reflection) file_of_symbol(symbol: Str) -> Int? {
+  for (i, s) in r.syms.indexed() {
+    if s.contains(symbol) {
+      return Some(i)
     }
   }
   None
 }
 
-fn (r: Reflection) file_of_extension(containing_type: Str, number: Int) -> protodesc.FileDesc? {
-  for f in r.files {
+fn (r: Reflection) file_of_extension(containing_type: Str, number: Int) -> Int? {
+  for (i, f) in r.files.indexed() {
     for e in all_extensions(f) {
       if trim_dot(e.extendee) == containing_type && e.number == number {
-        return Some(f)
+        return Some(i)
       }
     }
   }
@@ -238,23 +251,10 @@ fn message_extensions(var out: List[protodesc.FieldDesc], m: protodesc.MessageDe
   }
 }
 
-/// A message's fields as proto.Unmarshal reads them: protowire.walk (ConsumeField takes field numbers up to 2^31-1)
-/// and every number at most 536870911 (protowire.MaxValidNumber; protobuf-go's decoder fails a larger one, found by
-/// TestGrpcReflectFuzz).
-fn fields(b: Bytes) -> List[protowire.Fld] ! protobuf.ProtoErr {
-  let fs = protowire.walk(b)?
-  for f in fs {
-    if f.num > 536870911 {
-      return Err(protobuf.ProtoErr.BadTag)
-    }
-  }
-  Ok(fs)
-}
-
 /// ServerReflectionRequest: its host and question.
 pub fn decode_request(b: Bytes) -> (Str, Request) ! grpc.Status {
   let bad = fn(e: protobuf.ProtoErr) -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling request: ${e}", details: b""} }
-  let flds = fields(b).map_err(bad)?
+  let flds = protowire.fields(b).map_err(bad)?
   var host = ""
   var req = Request.Empty
   for f in flds {
@@ -272,7 +272,7 @@ pub fn decode_request(b: Bytes) -> (Str, Request) ! grpc.Status {
           ListServices => ("", 0)
           Empty => ("", 0)
         }
-        for g in fields(f.data).map_err(bad)? {
+        for g in protowire.fields(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 2) => t = protowire.text(g).map_err(bad)?
             (2, 0) => n = int32(g.v)
@@ -367,7 +367,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
   let bad = fn(e: protobuf.ProtoErr) -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling response: ${e}", details: b""} }
   var out = Answer.Error(code: 2, message: "the response has no answer")
   var none = true
-  for f in fields(b).map_err(bad)? {
+  for f in protowire.fields(b).map_err(bad)? {
     if f.wire != 2 {
       continue
     }
@@ -387,7 +387,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           Services(_) => []
           Error(_, _) => []
         }
-        for g in fields(f.data).map_err(bad)? {
+        for g in protowire.fields(f.data).map_err(bad)? {
           if g.num == 1 && g.wire == 2 {
             files.push(g.data)
           }
@@ -402,7 +402,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           Services(_) => ("", [])
           Error(_, _) => ("", [])
         }
-        for g in fields(f.data).map_err(bad)? {
+        for g in protowire.fields(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 2) => base = protowire.text(g).map_err(bad)?
             (2, 0) => nums.push(int32(g.v))
@@ -424,10 +424,10 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           ExtensionNumbers(_, _) => []
           Error(_, _) => []
         }
-        for g in fields(f.data).map_err(bad)? {
+        for g in protowire.fields(f.data).map_err(bad)? {
           if g.num == 1 && g.wire == 2 {
             var name = ""
-            for h in fields(g.data).map_err(bad)? {
+            for h in protowire.fields(g.data).map_err(bad)? {
               if h.num == 1 && h.wire == 2 {
                 name = protowire.text(h).map_err(bad)?
               }
@@ -445,7 +445,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           ExtensionNumbers(_, _) => (0, "")
           Services(_) => (0, "")
         }
-        for g in fields(f.data).map_err(bad)? {
+        for g in protowire.fields(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 0) => code = int32(g.v)
             (2, 2) => msg = protowire.text(g).map_err(bad)?

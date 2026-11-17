@@ -79,6 +79,20 @@ test "a server's reflection service lists it and answers over the wire" uses (ne
 
 // files that import each other (a hand built FileDesc; a .proto parser rejects the cycle) are each sent once and the
 // walk ends: it looped for good before
+// each file is encoded once, in new (task #273: the stress run grew re-encoding them per answer): an answer carries
+// the bytes protodesc.encode gives, and the file a symbol was found in even when another file has its name
+test "answers carry each file's encoding, the file found even when two share a name" {
+  let fs = files()
+  let r = new(fs, [])
+  for _ in 0..3 {
+    expect(r.answer(Request.FileByFilename(name: "a.proto"), #{}).0) == Answer.Files(files: [protodesc.encode(fs[0]), protodesc.encode(fs[1])])
+  }
+  let other = protodesc.build_with_source_info("syntax = \"proto2\";\npackage z;\nmessage Only {}\n", "b.proto").or_fault("z")
+  let d = new([fs[1], other], [])
+  expect(d.answer(Request.FileContainingSymbol(symbol: "z.Only"), #{}).0) == Answer.Files(files: [protodesc.encode(other)])
+  expect(d.answer(Request.FileByFilename(name: "b.proto"), #{}).0) == Answer.Files(files: [protodesc.encode(fs[1])])
+}
+
 test "a cycle of imports ends the file walk, each file sent once" {
   let a = protodesc.FileDesc{name: "a.proto", dependency: ["b.proto"]}
   let b = protodesc.FileDesc{name: "b.proto", dependency: ["a.proto", "a.proto"]}
