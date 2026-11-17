@@ -86,3 +86,20 @@ test "a cycle of imports ends the file walk, each file sent once" {
   expect(names(r.answer(Request.FileByFilename(name: "a.proto"), #{}).0)) == ["a.proto", "b.proto"]
   expect(names(r.answer(Request.FileByFilename(name: "b.proto"), #{}).0)) == ["b.proto", "a.proto"]
 }
+
+// found by TestGrpcReflectFuzz against protobuf-go: a repeated message field merges into the first (lists append, a
+// scalar the last wins), list_services' text and the response's host and request are checked as UTF-8 and protobuf
+test "repeated answers merge and every string is checked, as protobuf-go reads them" {
+  // two ExtensionRequests: the second's number with the first's type
+  expect(decode_request(b"\x2a\x05\x0a\x03a.B\x2a\x02\x10\x07")) == Ok(("", Request.FileContainingExtension(containing_type: "a.B", number: 7)))
+  // list_services that is not UTF-8
+  expect(decode_request(b"\x3a\x01\xff").is_err()) == true
+  // two list_services_response blocks append; two file responses append
+  expect(decode_answer(b"\x32\x05\x0a\x03\x0a\x01a\x32\x05\x0a\x03\x0a\x01b")) == Ok(Answer.Services(names: ["a", "b"]))
+  expect(decode_answer(b"\x22\x03\x0a\x01x\x22\x03\x0a\x01y")) == Ok(Answer.Files(files: [b"x", b"y"]))
+  // an error response's code with a later message
+  expect(decode_answer(b"\x3a\x02\x08\x05\x3a\x03\x12\x01m")) == Ok(Answer.Error(code: 5, message: "m"))
+  // a host or an original request protobuf-go refuses
+  expect(decode_answer(b"\x0a\x01\xff\x32\x00").is_err()) == true
+  expect(decode_answer(b"\x12\x03\x0a\x01\xff\x32\x00").is_err()) == true
+}

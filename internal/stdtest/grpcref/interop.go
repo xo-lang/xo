@@ -259,6 +259,10 @@ func interopMain() bool {
 		reflectServe()
 	case "reflectclient":
 		reflectClient(os.Args[2])
+	case "reflectfuzz":
+		seed, _ := strconv.ParseInt(os.Args[2], 10, 64)
+		n, _ := strconv.Atoi(os.Args[3])
+		reflectFuzz(seed, n)
 	case "cannedserve":
 		cannedServe(os.Args[2])
 	case "cannedclient":

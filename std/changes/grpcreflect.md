@@ -1,5 +1,16 @@
 # std/grpcreflect changes
 
+## 2026-11-17: fix: requests and responses read as protobuf-go reads them
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestGrpcReflectFuzz (task #273), the new differential fuzz against protobuf-go reading grpc-go's reflection messages
+- Go reference: google.golang.org/protobuf v1.36.12 proto.Unmarshal (a repeated message field merges; strings are checked as UTF-8)
+- Test: std/grpcreflect_test.xo "repeated answers merge and every string is checked" (each case read differently before), arm64 and LLVM; TestGrpcReflectFuzz 2,000 requests and 2,000 responses
+- Behavior: a repeated ExtensionRequest or answer block merges into the first (lists append, the last scalar wins) instead of replacing it; a list_services text, a response's host and its original request that protobuf-go refuses are refused
+- Timing: none
+- Shipped in: not yet released
+
 ## 2026-11-17: fix: files that import each other no longer loop the file walk
 
 - Kind: fix

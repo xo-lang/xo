@@ -250,8 +250,15 @@ pub fn decode_request(b: Bytes) -> (Str, Request) ! grpc.Status {
       (3, 2) => req = Request.FileByFilename(name: protowire.text(f).map_err(bad)?)
       (4, 2) => req = Request.FileContainingSymbol(symbol: protowire.text(f).map_err(bad)?)
       (5, 2) => {
-        var t = ""
-        var n = 0
+        // a second ExtensionRequest merges into the first, as protobuf merges a repeated message field
+        var (t, n) = match req {
+          FileContainingExtension(t0, n0) => (t0, n0)
+          FileByFilename(_) => ("", 0)
+          FileContainingSymbol(_) => ("", 0)
+          AllExtensionNumbersOfType(_) => ("", 0)
+          ListServices => ("", 0)
+          Empty => ("", 0)
+        }
         for g in protowire.walk(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 2) => t = protowire.text(g).map_err(bad)?
@@ -262,7 +269,10 @@ pub fn decode_request(b: Bytes) -> (Str, Request) ! grpc.Status {
         req = Request.FileContainingExtension(containing_type: t, number: n)
       }
       (6, 2) => req = Request.AllExtensionNumbersOfType(type_name: protowire.text(f).map_err(bad)?)
-      (7, 2) => req = Request.ListServices
+      (7, 2) => {
+        let _content = protowire.text(f).map_err(bad)?
+        req = Request.ListServices
+      }
       _ => {}
     }
   }
@@ -343,18 +353,43 @@ pub fn encode_response(host: Str, original: Bytes, a: Answer) -> Bytes {
 pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
   let bad = fn(e: protobuf.ProtoErr) -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling response: ${e}", details: b""} }
   var out = Answer.Error(code: 2, message: "the response has no answer")
+  var none = true
   for f in protowire.walk(b).map_err(bad)? {
-    // 1 is the host and 2 the request as sent: only the answers are walked
-    if f.wire != 2 || f.num < 4 || f.num > 7 {
+    if f.wire != 2 {
       continue
     }
-    let inner = protowire.walk(f.data).map_err(bad)?
     match f.num {
-      4 => out = Answer.Files(files: inner.filter(fn(g) -> Bool { g.num == 1 && g.wire == 2 }).map(fn(g) -> Bytes { g.data }))
+      // the host and the request as sent are checked as protobuf-go reads them, then left
+      1 => {
+        let _host = protowire.text(f).map_err(bad)?
+      }
+      2 => {
+        let _req = decode_request(f.data).map_err(fn(_e) -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling response: original request", details: b""} })?
+      }
+      4 => {
+        // a repeated answer of the same kind merges into the first (its lists append), another kind replaces it
+        var files: List[Bytes] = match out {
+          Files(fs) => fs
+          ExtensionNumbers(_, _) => []
+          Services(_) => []
+          Error(_, _) => []
+        }
+        for g in protowire.walk(f.data).map_err(bad)? {
+          if g.num == 1 && g.wire == 2 {
+            files.push(g.data)
+          }
+        }
+        out = Answer.Files(files: files)
+        none = false
+      }
       5 => {
-        var base = ""
-        var nums: List[Int] = []
-        for g in inner {
+        var (base, nums) = match out {
+          ExtensionNumbers(b0, n0) => (b0, n0)
+          Files(_) => ("", [])
+          Services(_) => ("", [])
+          Error(_, _) => ("", [])
+        }
+        for g in protowire.walk(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 2) => base = protowire.text(g).map_err(bad)?
             (2, 0) => nums.push(int32(g.v))
@@ -367,24 +402,37 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           }
         }
         out = Answer.ExtensionNumbers(base_type: base, numbers: nums)
+        none = false
       }
       6 => {
-        var names: List[Str] = []
-        for g in inner {
+        var names: List[Str] = match out {
+          Services(ns) => ns
+          Files(_) => []
+          ExtensionNumbers(_, _) => []
+          Error(_, _) => []
+        }
+        for g in protowire.walk(f.data).map_err(bad)? {
           if g.num == 1 && g.wire == 2 {
+            var name = ""
             for h in protowire.walk(g.data).map_err(bad)? {
               if h.num == 1 && h.wire == 2 {
-                names.push(protowire.text(h).map_err(bad)?)
+                name = protowire.text(h).map_err(bad)?
               }
             }
+            names.push(name)
           }
         }
         out = Answer.Services(names: names)
+        none = false
       }
       7 => {
-        var code = 0
-        var msg = ""
-        for g in inner {
+        var (code, msg) = match out {
+          Error(c0, m0) => if none { (0, "") } else { (c0, m0) }
+          Files(_) => (0, "")
+          ExtensionNumbers(_, _) => (0, "")
+          Services(_) => (0, "")
+        }
+        for g in protowire.walk(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 0) => code = int32(g.v)
             (2, 2) => msg = protowire.text(g).map_err(bad)?
@@ -392,6 +440,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           }
         }
         out = Answer.Error(code: code, message: msg)
+        none = false
       }
       _ => {}
     }

@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/grpcreflect): requests and responses are read as protobuf-go reads them: a repeated message field merges into the first instead of replacing it, and strings protobuf-go refuses (not UTF-8) are refused.
 - Fix (std/grpcreflect): files given as descriptors that import each other in a cycle no longer make a file request loop for good; each file is walked once.
 - Feature (std/grpc): `grpc.client` takes grpc-go target names (`dns:///host:port`, `passthrough:///host:port`, a bare `host:port`) besides http and https URLs, with `Client.target()` and `canonical_target()`.
 - Feature (std/grpc): keepalive: `Client.with_keepalive(ClientKeepalive{...})` and `keepalive_server(http_server, ServerKeepalive{...})` (grpc-go's keepalive parameters over std/http's HTTP/2 pings).
