@@ -972,6 +972,74 @@ test "a Host keeps at most max_scopes scopes, dropping the least recently used w
   expect(h.model(scope: Some("room:1")).todos.keys()) == ["a"]
 }
 
+test "syncs that arrive while an append is in flight share the next append (group commit)" {
+  let st = memory_store()
+  let appends = Atomic[Int].new(0)
+  let gate = Chan[Int].new(cap: 1)
+  let held = Atomic[Int].new(1)
+  // the first append waits until the test lets it go
+  let slow = st with {append: fn(scope: Str, b: Batch) -> Bool ! Str uses sync {
+    let _n = appends.add(1)
+    if held.swap(0) == 1 {
+      let _go = gate.recv()
+    }
+    (st.append)(scope, b)
+  }}
+  let h = host_with(todo_app(), slow, local_bus())
+  let r = routes_for(h)
+  let send = fn(client: Str, id: Str) -> Int uses sync {
+    let body = json.encode_str(Up{client: client, ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: id, title: id)}]})
+    r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json"}, body: body.bytes())).status
+  }
+  let _m = h.model()
+  let first = os.tasks.spawn(fn() -> Int ! Never { send("c0", "t0") })
+  while appends.get() < 1 {
+  }
+  var rest: List[Task[Int, Never]] = []
+  for i in 1..6 {
+    rest.push(os.tasks.spawn(fn() -> Int ! Never { send("c${i}", "t${i}") }))
+  }
+  while h.slot("").queue.with_read(fn(q) { q.len() }) < 5 {
+  }
+  let _go = gate.send(1)
+  expect(first.await) == 200
+  for x in rest {
+    expect(x.await) == 200
+  }
+  // six syncs, two appends: the one in flight, then the five behind it
+  expect(appends.get()) == 2
+  expect(h.model().todos.len()) == 6
+}
+
+
+test "many concurrent syncs to one scope are each applied once" {
+  let st = memory_store()
+  let appends = Atomic[Int].new(0)
+  let counted = st with {append: fn(scope: Str, b: Batch) -> Bool ! Str uses sync {
+    let _n = appends.add(1)
+    (st.append)(scope, b)
+  }}
+  let h = host_with(todo_app(), counted, local_bus())
+  let r = routes_for(h)
+  var ts: List[Task[Int, Never]] = []
+  for c in 0..20 {
+    ts.push(os.tasks.spawn(fn() -> Int ! Never {
+      var bad = 0
+      for i in 0..10 {
+        let body = json.encode_str(Up{client: "c${c}", ver: 0, msgs: [Envelope{seq: i + 1, msg: Msg.Add(id: "c${c}-${i}", title: "t")}]})
+        if r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json"}, body: body.bytes())).status != 200 {
+          bad += 1
+        }
+      }
+      bad
+    }))
+  }
+  for x in ts {
+    expect(x.await) == 0
+  }
+  expect(h.model().todos.len()) == 200
+}
+
 test "convergence holds for any seed" for seed: Int {
   expect(simulate(seed, 4, 120, 400, 50, 20)) == true
 }

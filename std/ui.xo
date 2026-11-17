@@ -560,11 +560,24 @@ const commit_tries = 100
 // Runs change on the Server and appends the entries it logs, as principal;
 // on a lost race, catches up and runs it again.
 fn (var c: Scope[M, E, fx]) commit[T](principal: Str, change: fn(var Server[M, E]) -> T) -> T ! Str uses (sync, fx) {
+  Ok(c.commit_all([Change{principal: principal, run: change}])?[0])
+}
+
+// A change to run on a Scope's Server, logged as principal's.
+struct Change[M: Json, E: Json, T] {
+  principal: Str
+  run: fn(var Server[M, E]) -> T
+}
+
+// Runs the changes in order and appends what they log as one batch
+// (group commit: the syncs that queue while an append is in flight share
+// the next one); on a lost race, catches up and runs them all again.
+fn (var c: Scope[M, E, fx]) commit_all[T](changes: List[Change[M, E, T]]) -> List[T] ! Str uses (sync, fx) {
   var read = false
   for _ in 0..commit_tries {
-    // a copy the Host keeps current (its bus, its lease) appends at once;
-    // a stale one loses the race and reads the store, so a writer alone
-    // on a scope pays one request per append, not two
+    // a copy the Host keeps current (its bus) appends at once; a stale one
+    // loses the race and reads the store, so a writer alone on a scope
+    // pays one request per append, not two
     let caught = read || !c.loaded
     if caught {
       c.catch_up()?
@@ -572,20 +585,27 @@ fn (var c: Scope[M, E, fx]) commit[T](principal: Str, change: fn(var Server[M, E
     read = true
     let before = c.s
     let v0 = c.s.version()
-    let out = change(c.s)
-    let fresh = c.s.log[v0 - c.s.base..].clone()
-    if fresh.is_empty() {
+    var outs: List[T] = []
+    var logged: List[Logged[E]] = []
+    for ch in changes {
+      let n0 = c.s.version()
+      outs.push((ch.run)(c.s))
+      for e in c.s.log[n0 - c.s.base..] {
+        logged.push(Logged{entry: e, principal: ch.principal})
+      }
+    }
+    if logged.is_empty() {
       if caught {
-        return Ok(out)
+        return Ok(outs)
       }
       // an answer with no append (a refusal, a gap in a client's seqs)
       // must come from the store's state: read it and run again
       c.s = before
       continue
     }
-    let data = json.encode_str(fresh.map(fn(e) { Logged{entry: e, principal: principal} })).bytes()
-    match (c.store.append)(c.key, Batch{after: v0, count: fresh.len(), data: data}) {
-      Ok(true) => return Ok(out)
+    let data = json.encode_str(logged).bytes()
+    match (c.store.append)(c.key, Batch{after: v0, count: logged.len(), data: data}) {
+      Ok(true) => return Ok(outs)
       Ok(false) => c.s = before
       Err(e) => {
         // nothing was appended: this copy goes back to the store's version
@@ -594,7 +614,7 @@ fn (var c: Scope[M, E, fx]) commit[T](principal: Str, change: fn(var Server[M, E
       }
     }
   }
-  Err("std/ui: scope ${c.key}: ${commit_tries} appends lost to other writers in a row (a hot scope: decision 0686 leases)")
+  Err("std/ui: scope ${c.key}: ${commit_tries} appends lost to other writers in a row")
 }
 
 /// Server.receive through the store.
@@ -1478,6 +1498,16 @@ struct Slot[M: Json, E: Json, fx: Effects] {
   latest: Atomic[Int]
   resync: Atomic[Int]
   used: Atomic[Int]
+  // syncs waiting for the next append, and whether a request is writing
+  // them (group commit)
+  queue: Mutex[List[Waiting[M, E]]]
+  writing: Atomic[Int]
+}
+
+// A sync's change and where its answer goes.
+struct Waiting[M: Json, E: Json] {
+  change: Change[M, E, Down[M, E]?]
+  out: Chan[Result[Down[M, E]?, Str]]
 }
 
 /// A host for app starting at app.init: one instance, its log in memory.
@@ -1573,7 +1603,7 @@ fn (h: Host[M, E, fx, bx]) slot(key: Str) -> Slot[M, E, fx] {
         m.remove(old)
       }
     }
-    let sl = Slot{state: Mutex.new(ui_scope(app, st, key, mb)), latest: Atomic[Int].new(0), resync: Atomic[Int].new(0), used: Atomic[Int].new(t)}
+    let sl = Slot{state: Mutex.new(ui_scope(app, st, key, mb)), latest: Atomic[Int].new(0), resync: Atomic[Int].new(0), used: Atomic[Int].new(t), queue: Mutex.new([]), writing: Atomic[Int].new(0)}
     m.put(key, sl)
     sl
   })
@@ -1687,6 +1717,61 @@ fn (h: Host[M, E]) version_of(key: Str) -> Int {
   h.slot(key).state.with_read(fn(c) { c.version() })
 }
 
+// Group commit for scope key: unless another request is writing, appends
+// every queued sync as one batch, then what queued during that append,
+// until the queue is empty. Waiters get their answers on their channels.
+fn (h: Host[M, E, fx, bx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (bx, fx) {
+  let keep = h.keep
+  while sl.writing.swap(1) == 0 {
+    while true {
+      let ws = sl.queue.with(fn(var q) {
+        let all = q
+        q = []
+        all
+      })
+      if ws.is_empty() {
+        break
+      }
+      let latest = sl.latest.get()
+      let again = sl.resync.swap(0) > 0
+      let (v0, v) = sl.state.with(fn(var c) -> (Int, Int) {
+        let b = c.version()
+        if let Err(e) = c.fresh(latest, again: again) {
+          for w in ws {
+            let _sent = w.out.try_send(Err(e))
+          }
+          return (b, b)
+        }
+        match c.commit_all(ws.map(fn(w) { w.change })) {
+          Ok(outs) => {
+            for i in 0..ws.len() {
+              let _sent = ws[i].out.try_send(Ok(outs[i]))
+            }
+          }
+          Err(e) => {
+            for w in ws {
+              let _sent = w.out.try_send(Err(e))
+            }
+          }
+        }
+        if keep > 0 && c.s.log.len() >= 2 * keep {
+          let _snap = c.compact(keep).is_ok()
+        }
+        (b, c.version())
+      })
+      if v != v0 {
+        (h.bus.publish)(key, v)
+      }
+    }
+    sl.writing.set(0)
+    // a sync queued after the last round but before the flag dropped has
+    // no writer yet: take the role again
+    if sl.queue.with_read(fn(q) { q.is_empty() }) {
+      break
+    }
+  }
+}
+
 // The scope of a page (its path and query) for principal p.
 fn (h: Host[M, E]) scope_for(page: Str, p: Str) -> Str? {
   match h.scope_of {
@@ -1727,7 +1812,6 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   let allow = h.allow
   let redact = h.redact
   let signin = h.signin_url
-  let keep = h.keep
   // The principal of req: "" without auth, None when auth refuses it.
   let who = fn(req: http.Request) -> Str? uses sync {
     match auth {
@@ -1791,35 +1875,38 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let ok = allow ?? fn(m: M, q: Str, e: E) -> Bool { true }
     let key = hh.scope_for(req.query("page") ?? "", p) ?? return http.text(404, "std/ui: no such page")
     let sl = hh.slot(key)
-    let latest = sl.latest.get()
-    let again = sl.resync.swap(0) > 0
-    let (res, m0, v, before) = sl.state.with(fn(var c) -> (Result[Down[M, E]?, Str], M, Int, Int) {
-      if let Err(e) = c.fresh(latest, again: again) {
-        return (Err(e), c.model(), c.version(), c.version())
-      }
-      let b = c.version()
-      // a sync without Msgs answers from this copy, which the bus keeps
-      // current, without the store
-      let r = if up.msgs.is_empty() {
+    var res: Result[Down[M, E]?, Str] = Err("std/ui: a queued sync had no answer")
+    if up.msgs.is_empty() {
+      // answered from this copy, which the bus keeps current, without the
+      // store
+      let latest = sl.latest.get()
+      let again = sl.resync.swap(0) > 0
+      res = sl.state.with(fn(var c) -> Result[Down[M, E]?, Str] {
+        if let Err(e) = c.fresh(latest, again: again) {
+          return Err(e)
+        }
         Ok(if checked { c.s.receive_as(up, p, ok) } else { Some(c.s.receive(up)) })
-      } else if checked {
-        c.receive_as(up, p, ok)
-      } else {
-        c.receive(up).map(fn(x) { Some(x) })
+      })
+    } else {
+      // group commit: the sync waits in the scope's queue, and the request
+      // that finds no writer appends everything queued, round after round
+      let mine = Chan[Result[Down[M, E]?, Str]].new(cap: 1)
+      let run = fn(var s: Server[M, E]) -> Down[M, E]? {
+        if checked { s.receive_as(up, p, ok) } else { Some(s.receive(up)) }
       }
-      if keep > 0 && c.s.log.len() >= 2 * keep {
-        let _snap = c.compact(keep).is_ok()
+      sl.queue.with(fn(var q) { q.push(Waiting{change: Change{principal: p, run: run}, out: mine}) })
+      hh.write_queued(key, sl)
+      if let Some(r) = mine.recv() {
+        res = r
       }
-      (r, c.model(), c.version(), b)
-    })
+    }
+    // the writer published each version it appended
+    let (m0, v) = sl.state.with_read(fn(c) { (c.model(), c.version()) })
     let dd = match res {
       Ok(x) => x
       Err(e) => return http.text(503, "std/ui: ${e}")
     }
     let d = dd ?? return http.text(403, "std/ui: this client belongs to another principal")
-    if v != before {
-      (hh.bus.publish)(key, v)
-    }
     let m = shown(m0, p)
     // with redact a log entry may hold what this principal must not see
     let down = if req.query("thin") == Some("1") || redact.is_some() { Down{acked: d.acked, reset: None, entries: [], refused: d.refused} } else { d }

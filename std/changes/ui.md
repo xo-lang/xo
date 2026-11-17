@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: perf: group commit, the syncs to one scope that arrive during an append share the next one (decision 0686)
+
+- Kind: perf
+- Commit: this push
+- Found by: owner track (hot rooms, step 1 and 2 measurements)
+- Go reference: none
+- Test: std/ui "syncs that arrive while an append is in flight share the next append" (six syncs, two appends); "many concurrent syncs to one scope are each applied once" (20 clients x 10); the racing-Scopes and lost-race tests; every headless Chrome suite
+- Timing: Postgres in Docker, one scope, 52 concurrent clients, 2,080 Msgs (~/xo-lead/notes/stdui/pghot): one instance 9.2 s with 1,890 appends and a p99 of 3.2 s before, 0.23 s with 103 appends and a p99 of 7 ms after; four instances on pg_bus 15 s with 2 syncs failing (100 lost races) before, 0.84 s with 321 appends and none failing after
+- Shipped in: not yet released
+
+A sync with Msgs waits in its scope's queue; the request that finds no writer appends everything queued as one batch, then what queued during that append, until the queue is empty, and each waiter gets its own answer. Syncs without Msgs still answer from the instance's copy.
+
 ## 2026-11-16: perf: a writer appends at once and reads the store only after a lost race (decision 0686)
 
 - Kind: perf

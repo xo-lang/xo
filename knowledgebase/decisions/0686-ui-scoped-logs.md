@@ -258,7 +258,31 @@ optimistic appends): the holder appends one sync at a time while racing
 instances overlap. Leases wait for group commit (the holder appending
 every sync queued behind the one in flight as one batch).
 
-## Alternatives
+## Group commit and hot rooms (2026-11-16)
+
+Measured on Postgres in Docker, one scope, 52 concurrent clients, 2,080
+Msgs (~/xo-lead/notes/stdui/pghot):
+
+| Setup | Before | Group commit (writer) |
+|---|---|---|
+| 1 instance | 9.2 s, 1,890 appends, p99 3.2 s | 0.23 s, 103 appends, p99 7 ms |
+| 4 instances on pg_bus | 15 s, 2 syncs failed | 0.84 s, 321 appends, none failed |
+| 4 instances with leases | 7.8 s | 1.18 s |
+
+A first version let whoever took the scope's lock next drain the queue;
+the lock passes from waiter to waiter, so each found about one sync
+(1,763 appends of one Msg). The writer fixed it: the request that finds
+no writer appends the whole queue, then what queued during that
+append, until it is empty.
+
+Leases (an instance that loses races takes a lease in the store; the
+others forward that scope's syncs to it) are shelved: with group commit
+four racing instances already serve a hot scope at about 2,500 Msgs a
+second with no failures, and forwarding added a hop without helping.
+The prototype is kept unpushed (worktree stdui-lease); it returns if a
+store's per append cost makes racing instances lose too often (S3 is the
+case to measure).
+
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.
