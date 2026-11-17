@@ -2,6 +2,7 @@
 // Host's routes, the predicting client and the page layer (decisions 0659,
 // 0668, 0670). The module's own tests are in std/ui_test.xo.
 use std/http
+use std/json
 use std/sql
 use std/ui
 use std/url
@@ -231,4 +232,42 @@ test "commands run once for each committed Msg and answer with a server Msg (dec
   expect(h.commands_running()) == 0
   expect(ran.with_read(fn(l) { l.clone() })) == ["greet:ann"]
   expect(h.model().n) == 11
+}
+
+// A principal's own draft (App.with_user, decision 0672): typed on one
+// device, seen on another, never by anyone else.
+fn draft_step(c: Count, d: Str, a: Str) -> (Str, List[Act]) {
+  (a, [])
+}
+
+fn draft_show(c: Count, d: Str, q: url.Values) -> ui.Html {
+  ui.el("p", [ui.on_user("input", "typed")], [ui.text("n=${c.n} draft=${d}")])
+}
+
+fn who(req: http.Request) -> Str? uses sync {
+  req.header("X-User")
+}
+
+fn sync_user(r: http.Router, user: Str, client: Str, up: ui.UserUp) -> ui.UserDown? {
+  let body = json.encode_str(ui.Up[Act]{client: client, ver: 0, msgs: [], user: Some(up)})
+  let resp = r.call(http.new_request("POST", "/_xo/sync?thin=1", headers: {"Content-Type": "application/json", "X-User": user}, body: body.bytes()))
+  let s = json.decode_str[ui.Sync[Count, Act]](resp.text() ?? "").ok() ?? return None
+  s.user
+}
+
+test "each principal's own state follows it across devices (decision 0672)" {
+  let app = counter().with_user("", draft_step, draft_show)
+  expect(ui.render(ui.el("b", [ui.on_user("click", "x")]))) == "<b data-xo-uclick=\"&#34;x&#34;\"></b>"
+  var h = ui.host(app, auth: Some(who))
+  var r = http.router()
+  h.mount(r)
+  let d1 = sync_user(r, "ann", "phone", ui.UserUp{ver: 0, msgs: [ui.Envelope{seq: 1, msg: json.encode_str("milk")}]}) ?? return Err("no user state")
+  expect(d1.acked) == 1
+  expect(d1.state) == "\"milk\""
+  let d2 = sync_user(r, "ann", "laptop", ui.UserUp{ver: 0, msgs: []}) ?? return Err("no user state")
+  expect(d2.ver) == d1.ver
+  expect(d2.state) == "\"milk\""
+  let d3 = sync_user(r, "bob", "b", ui.UserUp{ver: 0, msgs: []}) ?? return Err("no user state")
+  expect(d3.state) == "\"\""
+  expect(r.call(http.new_request("GET", "/", headers: {"X-User": "ann"})).text()?.contains("draft=milk")) == true
 }
