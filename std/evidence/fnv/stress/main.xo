@@ -56,7 +56,8 @@ fn main(os: Os) ! {
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
-  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak): decision 0616, medians since 2026-11-17
   let ops = scope s {
     s.spawn_background(fn() {
       var marked = false
@@ -64,9 +65,11 @@ fn main(os: Os) ! {
         clock.sleep(10s)
         let r = rss_kib(os)
         let now_marked = !marked && clock.now() >= mark
+        let after_mark = marked || now_marked
         samples.with(fn(var t) {
-          let (m, _, p) = t
-          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+          var (m, p) = t
+          if after_mark && r > 0 { m.push(r) }
+          t = (m, if r > p { r } else { p })
         })
         if clock.now() >= mark {
           marked = true
@@ -91,9 +94,10 @@ fn main(os: Os) ! {
     }
     total
   }
-  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let (rss_after, peak) = samples.with_read(fn(t) { t })
+  let (at_mark, last) = rss_medians(rss_after)
   let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
-  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes 5 to 7), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
   let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
   os.stdio.println("fnv stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
   if !ok {
@@ -170,3 +174,22 @@ const CASES: List[(Str, Int, Int, Int, Int, Str, Str)] = [
   ("6cdbc80df9b72f454199e0f4af5f807c536647a258cfa0e0e11dd1296cfb19aedfdb1aa11d8dcee1aa0afee348217839867fb094b1ab77fb20804e1a9b6efbfbadddb30a59857d14b34d0b7157147ce1cb4decde3b94afe0923d58b3026e6e26f665fb20eb7ff7e0cd7d7871aabbaafefc4d4b213543cb8a1376877baeab9822176d4fec99f04032b7cd5d9c2ae8548c253cdb4ca9fa23c906770c01481ae87c956ef6b15db0c5b2dd12063c1a63ad8d621f45ecbad2d7e3d21f5b188dbdf23f78c983d384161fe835da584769109912f9f367e92f07affe7f188d20d1c0ba6c38543b4e18f1d23a6203dec47caf660e8aaf5526f60a488e60280958f915f346bd2048ad8556c8943332c36ac43f8aa2d2a6b67cfb1fda704a79d74f4160894dec5b29783ab8d0f7f4b7cec32c1f3d0df9debbb09892f0240d914e6a6331386285a24ad17718eeec9f49a6f6fc7707611c0de209ec81ba813119a12397a59ddb62036b3a33f6f621c3df15bba92d2911d2894692737ff2505419be89ce46813824685b03e2ce0b9f83191603d712df09679d230b03d4b1f3255a4ab39500b3186e0e1d6ce9153f0e436724c7d572eb3f51d83334d92baf9e3b588110fd812db2352f07850fdc031f8f266b2d7dd3a81b3f45eb35f45ff41187b57c50e1cc831c1e1e0227a01429123a6de56da5cb84967f195d2f626416e25e3bc1c4108dc2a88eb8a9fdcf3faaac90e7ca7bcbaeaaa73b5f632427cca65625b22db875e60f3628cfca5e85a458f56daec850cd732634ae858df6a537f26eee7df0c482b5290cad4655d2791964073b00dd60941fc55305882a3788aeeb30ea59950ee611f7c6dcfb7fd142e17ac312d8c0b4e4e5e067ae39ebbec1c6623edf2da114559dc211e3a8dc4d79510b7a52c7", 3046371323, 736195587, -8812696997886157989, -8671836167833608925, "a81e1119a273fd7d37f3b4675760e383", "2d1a88dfcf65f8cb15cca48067759acb"),
   ("52f49ae773230785ee7ecc494f946925a209d2565cbc3c6dedbc30b452f836821ac31f55cdcf81b714ee9c0d660014705cfc58d4dbfe2b144c662e5e4dbb807cf915079df36371767f1bc0afc3b5df89529cf81f9c317ee4ffa03e0cf75b70", 3336927350, 2602968496, -436023555756129130, -2773384495618445840, "a0d348508b41f56525449016a64c2b0e", "67b0b215650a1cb50f3cc82da3fc4930"),
 ]
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 5 to 7 of a 30 minute run) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}

@@ -207,7 +207,8 @@ fn main(os: Os) ! {
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
-  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak): decision 0616, medians since 2026-11-17
   let total = scope s {
     s.spawn_background(fn() {
       var marked = false
@@ -220,9 +221,11 @@ fn main(os: Os) ! {
           os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
         }
         let now_marked = !marked && clock.now() >= mark
+        let after_mark = marked || now_marked
         samples.with(fn(var x) {
-          let (m, _, p) = x
-          x = (if now_marked { v } else { m }, v, if v > p { v } else { p })
+          var (m, p) = x
+          if after_mark && v > 0 { m.push(v) }
+          x = (m, if v > p { v } else { p })
         })
         if clock.now() >= mark {
           marked = true
@@ -240,12 +243,32 @@ fn main(os: Os) ! {
     s.cancel()
     n
   }
-  let (at_mark, last, peak) = samples.with_read(fn(x) { x })
+  let (rss_after, peak) = samples.with_read(fn(x) { x })
+  let (at_mark, last) = rss_medians(rss_after)
   let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
-  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes 5 to 7), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
   let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
   os.stdio.println("textproto stress: ${total} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
   if !mem_ok {
     return Err("memory grew ${growth}%")
   }
+}
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 5 to 7 of a 30 minute run) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
 }

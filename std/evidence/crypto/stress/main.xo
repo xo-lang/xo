@@ -176,7 +176,8 @@ fn main(os: Os) ! {
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
-  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak): decision 0616, medians since 2026-11-17
   let ops = scope s {
     s.spawn_background(fn() {
       var marked = false
@@ -184,9 +185,11 @@ fn main(os: Os) ! {
         clock.sleep(10s)
         let r = rss_kib(os)
         let now_marked = !marked && clock.now() >= mark
+        let after_mark = marked || now_marked
         samples.with(fn(var t) {
-          let (m, _, p) = t
-          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+          var (m, p) = t
+          if after_mark && r > 0 { m.push(r) }
+          t = (m, if r > p { r } else { p })
         })
         if clock.now() >= mark {
           marked = true
@@ -212,9 +215,10 @@ fn main(os: Os) ! {
     }
     total
   }
-  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let (rss_after, peak) = samples.with_read(fn(t) { t })
+  let (at_mark, last) = rss_medians(rss_after)
   let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
-  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes 5 to 7), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
   let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
   os.stdio.println("crypto stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
   if !ok {
@@ -593,3 +597,22 @@ const CASES: List[(Int, Int, Str, Str, Str, Str, Str)] = [
   (8, 0, "798eac45da9524a3b12c73fc31c14c528fcef6be87e496dc288366d96d9e7dd0d9a286ae2254fde2e3f3339a451575be6ec17e86d0d078d703188748d60e4ba3", "4e446aa7012a70628a8e9cc13a426d9b1f35712a1a8fdb4fffe88b91080648fcad4403df12572872cb2b3cc862869915f669563ef63b80499528d8bd223c46f622b733f6f62c5469b1a4cc41e6be4f09e97724c056ebf9bc06d71fcec01f358259eea966a581a95e366952365a4117bdf8fd75fcd7ae9ed86862a9766d379091d9c0f78dd0df63d381a573af3763454bf119c88125d481a830371ee80ed344d28b0eab1438950b37d86fa19c47a87dca0ae21cd5a59cdcf156ca2356a204c3d27650dda5501be9a04a841b3ab00b18df0536fe6795b121694c9e0728b25886a260a7f67521889411b99c680dcd0e47f9d47a0f1456649c220206d1f99a0a89e19751507bc79693f1f808af7f0a09930ada7d542f35fc907eec64d57597feca19a943dd1d46121c0e32e80713d37d8252666bf7f9f7bc3194b65d63c4ece05cdcc6fa9ed3eda4606e6a6141a9f990987edc686ca24fae5b4f7e07d1b3a7f9dee45130111121c7877775134795460877ef69a190e146324b86a1fa206a2f10286eed8df1c9cbc0010975e06955733ce691fcb03fe8a46ac123783f0ee2985af20cdf2579e2923e2cd261840604b5ad7ca44479e7521aa09cb8e6c401806ed1986322e1af6f7c75f526d208f37fbb9062e50ac1d52c01898f000273178628274bfa49bdbbe9babf7a8d78182dc5c8fbfad6b8cbe3a441759da45def9cfb132f607a15f78dee30c45912763cfbd3f9daab29bcbd2256a6592044797eec948cd358f7a829520d4eac7da0449cf0c09263a4ca739989e2c419618874a5d469a124814c954448ccc8e92f1f802c5610b0dda8e29e0ceb9e9fcef023cf6e476fe5d7f0880017d39b385d73acb372a4dc168a7ef3815a19888fff4338bd6f2d519358386a7763895dcb5ad716557129ae19a87bdd903554cfc868652f895074df06ac4261f6724e8eafcbf9616cde74c84a47afcd274b0af88524649760c786a5ccdf2b36d194885932caf71668d90522441d6ec482174970c674523a32a4b36d23f5d01b09c465716a8b92bf0951e7e91f4a11a9913806d9c98f465bec3b0f563ce7d923d5269af91127757028ffa30026a01cc4ce024d8d2b39f0699e64f60e923cdf53679d5b193dd835be82c75b74a7491c83fa015fbba38ae8d7b2ff0f2b7dd8b1aada6ea3834436d2b7b900da75b748b03aed0219963a10bae531c8a31656c879187e1a27dec3e0bb12d8bc25c32d8a9b1d40a05854a7455f157b08ab9bb16fa7b7baac02c628fe6273dbf5c08c65c2657bfad1cb684630455e7aa5b7a88ab5c0e25ec7c7f76ae06f8fc5fef8a42ac6fdb2ea54b1c3e216c1d249cf705dcd4addc14d349fc27cb3cb56d651120b7fb13e973a8a346c19c39935304be0360a57b4aa276133d984da37b17dc37b37701d5632658def9b3f2c79d10c536fd4d48865a53ed99013988c415de33e8463285a7bc5a985498ba8f55430b529313723ec234d7a25ab84536e9e729de42f5f58040aae4ff866f60fb95bd3f974d5f5cfafdb49", "", "", "59d9c6f0725216abf942aa525480f5f6cd27ec584274e978d8a7bc28d4491c2e"),
   (8, 0, "a46885153da80542ccc70de05b29226364ab94d8379e931c6e60e8430cc22bc0073f3f9fb8f4fd03c6584341e5dfe9c19d17b6d249a5d98bdd281d502d351736", "6263ff306e22d9bc6f6a1d9019d6b968fc92c6e7eebfd420476d55a30ccc966efcbec7b9d0d638fb5b42be86b2c1688ab6fb6508aa1293c9073152b1d62a62ae3cd3f0ce9c90f4a20df1bdaf72d2c50b3f6b509b9bc32fed94e6123cca0ba6ab2c1dbbf77a7228129b4fb07a2f1176db29b7d28518b8026bcffbe102a033c3017f17e6d0897e020e633d26c477c5e6d84247779f2766e2a0729286b09a60cb300f2e7b6e24830d08c5c17720f4aa6100b9caab937d1293124d3897edc3948b99372fa082c4c72703596f3d2655c5e4123bed425cb595ee00d6670b7c3f89651d8c3fdb15993b6aa410c855b2e0086158b4cf989564dc610825067e261f60e95ee25230befd4eb0471a67c5f829d67c3ab6b699193582594808a8479802c81072cac7cabf5ebbb5b6a8c62763a150ea8b64a7728e573c6baa03a448db4f6e08b12f1d8a7a86c9b96abf6a952ef5bda966ea5ffb2b350e440a7872064bf4c6adcccdc0c51cafa43bfe750f53ead92508aecfe9ce0e0051db6ccad3a2cd145544bb4b8e7e98d0e6bc7830dfc03704c21ca0b0d54f65f858395ab2e30636e9bddc2e52336367a8ac914c4c9e4665556296da3f16ee812d3b627217c7bdfdad3eb4c0f3ba8ae9eb7f1d61c0e65b93320f4ae15998df3420bd9fa707d7b0ee5b2efe7570596f117b1dd5bcce29246f358af3ab9e0051fb30b94f73bdc45152d54c83bc0ffe9451d719bf8d28cf076afac5b0ac510952a758e644bb42f0984dca8f378029ef6db30a66ad56a7403a932e4a4ec3f7c283f0c55d50b1eaa048cf3d2f71492481cdd84ae9865cd05c50db3c3e3bd64ee75e93d33c444ef23ef130c425fd127dec8046fcf0c33d7dc7a1fb228a7625d11ac477ec2e47a35204dba1d029c202fcb7b27fa7f92d3497ebc7b7bb4dd8230d15b96c72555300047e7da1f93358da5e575a62ea4e6c6c310bc174ef6ae52261e7d3b363b6880adffa26d99d7ae6e740f60705d914a4a2b3a3bb8764e242b6d9f57b50ffb1302514f6aa49ec7aa4d2b01bc9bdf2c7dec7528c70feaa58e64535a803bdc67cae31d03ace838ce2d0a542099504a5eb9f1eb7cd4000aa32d17e661e3dc566f667906a334d86d931f4b2c39e8ca50f6512d4daa3a30cd56170a4ab8a02f57ca5f2046e03d816cb2c8c11e35e5e9c963db2fe466bc104c204be4a8052f60099d1f93c9ed9a931d0e2846335507dcd1d926e64a6743389afaf3fd6618028c78aa160afd9d7a1889c751f483888256af7e4a224b0fd63f0eebe23efb2cc3e71c4b85c6c11154455832cd81894354d8a4eda6c12d24790f101da71dc3514fa179e60b10d1b9db832c9e3c80606d71c7b64c8da9d55b192ff28c10bc5de76349289b7290090be42ab1864ea80e7619056e973b60ebd3577edce2f82f0cb5cd6b8d8eec020f10ccfcd7d0935c81f0ac4f6218431e21f467797c5a058a3ef454646bbabef71a53b1e8b9e5c91c3cb4445f03453c590a393ca65860d7c164978367dc7c927e32f9bb2d49ea1c93d", "", "", "b9480f3978d64af786dd26004e87ffa35434412185290843ec20ddc81eb9714d"),
 ]
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 5 to 7 of a 30 minute run) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}

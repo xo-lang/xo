@@ -127,7 +127,8 @@ fn main(os: Os) ! {
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
-  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak): decision 0616, medians since 2026-11-17
   let ops = scope s {
     s.spawn_background(fn() {
       var marked = false
@@ -135,9 +136,11 @@ fn main(os: Os) ! {
         clock.sleep(10s)
         let r = rss_kib(os)
         let now_marked = !marked && clock.now() >= mark
+        let after_mark = marked || now_marked
         samples.with(fn(var t) {
-          let (m, _, p) = t
-          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+          var (m, p) = t
+          if after_mark && r > 0 { m.push(r) }
+          t = (m, if r > p { r } else { p })
         })
         if clock.now() >= mark {
           marked = true
@@ -162,9 +165,10 @@ fn main(os: Os) ! {
     }
     total
   }
-  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let (rss_after, peak) = samples.with_read(fn(t) { t })
+  let (at_mark, last) = rss_medians(rss_after)
   let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
-  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes 5 to 7), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
   let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
   os.stdio.println("x509 stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
   if !ok {
@@ -212,3 +216,22 @@ const LEAVES: List[(Str, Str, Str, Str)] = [
   ("308201b330820165a00302010202020082300506032b6570301e311c301a0603550403131353747265737320496e7465726d656469617465301e170d3236313031333030303030305a170d3237303231333030303030305a303731193009060355040a1302586f300c060355040a0c0562c3a97461311a30180603550403131173766333302e6578616d706c652e636f6d3059301306072a8648ce3d020106082a8648ce3d0301070342000405be356b2e4ad9bbd210f4c7d1f9eb2986e3ef97bb29104e19ed6827fd455e6c27c58ad1699ad637f99c8a7f83070b4d2f61aeda63c74d0f4d24c0a0f0468b2ca37f307d300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301f0603551d2304183016801435bdc0b338086d883702e6d992931e4c7aa75e5630350603551d11042e302c821173766333302e6578616d706c652e636f6d82112a2e7376632e6578616d706c652e636f6d87040a001e01300506032b6570034100fa77edc8c2db38ec39a667ea84704fa61f0fbb05cd17c506e973523721d8078d10daca7158b991926cd324d8a9d043f3404c4c4d15c1254dee39757ee717af01", "v=3 serial=82 sig=Ed25519 subj=CN=svc30.example.com,O=Xo+O=béta iss=CN=Stress Intermediate nb=1791849600 na=1802476800 dns=svc30.example.com,*.svc.example.com ip=10.0.30.1 email= uri= ca=false mpl=none ku=0 eku=1.3.6.1.5.5.7.3.1 ski= aki=35bdc0b338086d883702e6d992931e4c7aa75e56 ext=2.5.29.15/true/4,2.5.29.37/false/12,2.5.29.35/false/24,2.5.29.17/false/46 key=EcdsaP256 attrs=2.5.4.10=Xo;2.5.4.10=béta;2.5.4.3=svc30.example.com", "svc30.example.com", "svc30.example.com>Stress Intermediate>Stress Root"),
   ("3082018430820136a00302010202020083300506032b6570301e311c301a0603550403131353747265737320496e7465726d656469617465301e170d3236313031333030303030305a170d3237303231333030303030305a303731193009060355040a1302586f300c060355040a0c0562c3a97461311a30180603550403131173766333312e6578616d706c652e636f6d302a300506032b65700321005a79c5dd73595ca9086cb689cdb917d03c4afb74c64842d0ce415c8541288418a37f307d300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301f0603551d2304183016801435bdc0b338086d883702e6d992931e4c7aa75e5630350603551d11042e302c821173766333312e6578616d706c652e636f6d82112a2e7376632e6578616d706c652e636f6d87040a001f01300506032b65700341004ad0e88d1a2635593b5bf2eb909eb25651759992cf154797fc48ff0c9b34891d3038ae77ac3b3a7fac755a577e426584a0cf002c7d10cbefb91421e7d690fc00", "v=3 serial=83 sig=Ed25519 subj=CN=svc31.example.com,O=Xo+O=béta iss=CN=Stress Intermediate nb=1791849600 na=1802476800 dns=svc31.example.com,*.svc.example.com ip=10.0.31.1 email= uri= ca=false mpl=none ku=0 eku=1.3.6.1.5.5.7.3.1 ski= aki=35bdc0b338086d883702e6d992931e4c7aa75e56 ext=2.5.29.15/true/4,2.5.29.37/false/12,2.5.29.35/false/24,2.5.29.17/false/46 key=Ed25519 attrs=2.5.4.10=Xo;2.5.4.10=béta;2.5.4.3=svc31.example.com", "svc31.example.com", "svc31.example.com>Stress Intermediate>Stress Root"),
 ]
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 5 to 7 of a 30 minute run) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}

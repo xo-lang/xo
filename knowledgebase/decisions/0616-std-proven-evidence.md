@@ -68,7 +68,12 @@ regression case, then a new run.
   host 2. Each task checks every result against a precomputed answer. It
   samples resident memory every 10 s. Pass: no mismatch, no fault, and
   resident memory after the first 5 minutes grows by under 10% (no leak
-  under load), and (amended 2026-11-14) a further 5 minute arm64 run of
+  under load; amended 2026-11-17, owner, xw answer 68: the growth is
+  the median of the samples of minutes 5 to 7 against the median of the
+  last 3 minutes' samples, the same 10% bar, so one dip or spike does not
+  decide: amqp's llvm run failed on a single dip at the mark, 211 MB
+  against a 217 to 230 MB plateau; internal/stdtest TestStressRssMedians),
+  and (amended 2026-11-14) a further 5 minute arm64 run of
   the program built with `--check=all` (decision 0638) ends with no
   fault and `xo leakcheck: 0 live`. For servers (http, tls, websocket, grpc, smtp): 64
   concurrent clients against the module's server over loopback, with

@@ -46,7 +46,8 @@ fn main(os: Os) ! {
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
-  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak): decision 0616, medians since 2026-11-17
   let ops = scope s {
     s.spawn_background(fn() {
       var marked = false
@@ -54,9 +55,11 @@ fn main(os: Os) ! {
         clock.sleep(10s)
         let r = rss_kib(os)
         let now_marked = !marked && clock.now() >= mark
+        let after_mark = marked || now_marked
         samples.with(fn(var t) {
-          let (m, _, p) = t
-          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+          var (m, p) = t
+          if after_mark && r > 0 { m.push(r) }
+          t = (m, if r > p { r } else { p })
         })
         if clock.now() >= mark {
           marked = true
@@ -81,9 +84,10 @@ fn main(os: Os) ! {
     }
     total
   }
-  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let (rss_after, peak) = samples.with_read(fn(t) { t })
+  let (at_mark, last) = rss_medians(rss_after)
   let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
-  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes 5 to 7), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
   let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
   os.stdio.println("deque stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
   if !ok {
@@ -200,3 +204,22 @@ const CASES: List[(Int, Str, Str, Str, Str)] = [
   (8, "3:903 5:707 6:271 0:723 0:923 5:409 3:793 0:827 3:145 4:-1 0:963 3:997 1:739 1:516 0:643 1:41 1:678 1:783 6:967 1:386 3:395 6:960 1:712 0:483 5:885 5:403 4:7 5:514 0:731 7:783 0:817 5:454 5:887 0:930 0:564 6:716 1:983 1:613 5:449 0:523 1:724 0:158 6:170 5:507 2:25 6:80 1:154 6:730 1:633 3:232 4:15 1:357 1:821 0:77 6:660 0:374 6:2 1:490 6:953 4:-2 4:12 0:812 1:147 0:7 3:308 0:988 0:342 6:842 0:618 1:47 1:233 1:823 2:627 1:377 1:586 1:786 3:725 0:589 1:552 2:34 2:130 0:366 3:314 4:13 3:917 0:470 2:980 2:880 2:663 1:268 6:207 4:11 5:913 1:598 0:868 0:49 0:661 6:774 0:820 6:205 6:53 1:724 1:222 0:635 6:150 0:195 0:560 4:8 5:276 3:473 1:918 1:178 6:152 0:468 2:868 4:17 0:841 6:695 1:549 3:888 1:163 0:746 6:660 1:50 6:340 4:34 1:151 0:407 6:992 0:762 1:679 6:844 2:645 3:632 1:207 2:756 1:97 0:984 1:770 2:806 0:416 0:222 2:440 3:612 3:58 1:41 5:657 5:381 1:593 6:360 4:38 6:933 0:859 6:173 6:762 1:320 6:260 0:172 5:378 5:925 0:754 1:491 6:658 0:510 1:883 0:819 3:904 6:134 0:812 3:721 0:35 3:284 1:736 6:95 3:568 5:772 2:819 3:729 2:25 4:45 4:1 0:39 1:416 2:494 4:39 6:281 2:192 2:370 1:143 6:962 5:724 1:722 3:635 3:549 1:849 6:60 0:852 1:599 6:421 4:52 1:884 0:853 1:207 6:0 1:294 5:773 1:681 1:90 0:21", "none none none 723 923 827 none 963 643 643 723 712 712 723 712 10 712 712 564 613 158 724 724 158 158 158 930 77 374 374 none 516 7 342 823 618 552 786 366 386 589 586 377 233 470 386 268 661 820 820 635 357 222 560 195 178 678 841 841 746 746 988 407 762 679 762 207 770 97 222 416 41 41 984 342 984 859 859 859 320 320 754 819 510 812 35 510 510 736 736 754 883 820 320 416 988 39 491 320 39 143 39 172 859 852 407 853 294", "90 681 294 207 884 599 849 722 143 593 41 151 50 163 549 918 222 724 598 268 47 147 490 821 357 633 154 613 983 712 386 783 678 41 516 739 723 483 731 817 930 564 523 77 374 812 988 342 470 868 49 661 820 635 195 468 746 407 984 859 852 853 21", "783 712 386 783 678 41 516 739 723 483"),
   (5, "2:676 3:298 1:484 6:416 0:832 0:578 7:267 2:670 1:541 6:921 0:566 1:52 6:9 5:607 1:751 4:0 1:492 0:225 0:682 6:724 5:544 1:99 6:154 5:567 4:-1 1:23 6:126 6:990 2:169 1:732 1:371 0:726 1:980 5:439 3:728 1:509 4:0 6:217 4:3 6:350 0:277 6:373 5:810 1:401 6:287 0:48 3:939 1:723 5:888 2:628 2:731 1:184 6:217 5:321 6:261 0:93 0:462 1:541 3:431 0:307 1:155 1:700 1:903 3:640 1:632 6:393 2:124 6:16 5:250 2:966 0:767 0:48 6:124 0:76 5:279 3:60 6:619 1:880 4:19 6:153 5:621 5:572 6:776 3:820 1:878 1:935 1:335 4:23 1:745 0:590 0:719 1:3 5:991 5:647 3:554 2:356 5:558 6:627 1:789 1:94 4:28 1:877 0:717 5:182 1:82 3:37 0:209 1:287 4:18 6:198 0:735 5:258 0:642 3:395 6:755 6:997 5:875 2:864 6:162 2:903 3:971 6:815 3:317 5:518 1:838 0:179 3:492 6:26 2:625 6:149 3:600 3:121 0:476 6:944 1:586 4:13 1:753 0:302 5:38", "none none 484 3 484 578 566 52 751 682 492 682 99 none 682 682 23 980 726 509 682 732 682 277 509 277 48 723 723 401 277 184 277 462 307 93 632 93 903 903 48 700 76 48 277 48 880 880 48 48 93 3 3 719 3 745 590 590 877 717 99 209 287 642 735 735 287 287 735 82 735 209 209 877 179 590 838 590 590 767 476 509 753", "753 586 877 94 789 745 335 935 878 880 700 155 541 184 509 980 371 732 99 492 751 52 541 832 578 566 225 682 277 93 476 302", "267 484 832"),
 ]
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 5 to 7 of a 30 minute run) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}
