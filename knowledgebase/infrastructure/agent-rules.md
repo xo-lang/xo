@@ -17,9 +17,13 @@ Read by machines, so keep the shape:
   `main-check`, `tier` and `bisect` kinds) raised 3 times in 7 days that no
   row with an enforcement lists raises a `rule-gap` alert to the lead.
 - xw reads the Schedules table: a schedule whose evidence is older than
-  twice its period raises `schedule-missed` to the lead.
+  twice its period raises `schedule-missed` to the lead, unless the row's
+  Waits on beat is due in the future: the loop that runs it is on a
+  documented skip (mainwatch: no run 00:45 to 03:30, the quiet window, up
+  to MAINWATCH_LOAD_WAIT for load; task #210). A beat past due is
+  `loop-stale` and the late schedule alerts again.
 
-Last verified: 2026-11-16.
+Last verified: 2026-11-17.
 
 ## Rules
 
@@ -83,9 +87,9 @@ Last verified: 2026-11-16.
 
 ## Schedules
 
-| Schedule | Runs | Every (min) | Evidence |
-|---|---|---|---|
-| mainwatch | launchd org.xolang.mainwatch: hourly.sh, diskguard.sh | 120 | `beat:mainwatch` |
-| hourly | the main check (hourly.sh, from mainwatch) | 120 | `log:notes/lead/hourly.log` |
-| ctier | launchd org.xolang.ctier: the full tier on main | 120 | `beat:ctier` |
-| heavyd | launchd org.xolang.heavyd (KeepAlive) | 10 | `log:heavyd.log` |
+| Schedule | Runs | Every (min) | Evidence | Waits on |
+|---|---|---|---|---|
+| mainwatch | launchd org.xolang.mainwatch: hourly.sh, diskguard.sh | 120 | `beat:mainwatch` | |
+| hourly | the main check (hourly.sh, from mainwatch) | 120 | `log:notes/lead/hourly.log` | `beat:mainwatch` |
+| ctier | launchd org.xolang.ctier: the full tier on main | 120 | `beat:ctier` | |
+| heavyd | launchd org.xolang.heavyd (KeepAlive) | 10 | `log:heavyd.log` | |
