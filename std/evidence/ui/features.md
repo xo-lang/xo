@@ -49,7 +49,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] the view is patched in place, keeping nodes and focus | 0659 | `internal/uiruntime/runtime_test.go:TestMorphKeepsNodes`
 - [x] a new build reloads once the queue drains | 0659 | `internal/uiruntime/runtime_test.go:TestNewBuildReloadsAfterQueue`
 - [x] opening the socket syncs | 0659 | `internal/uiruntime/runtime_test.go:TestSocketOpenSyncs`
-- [ ] browser measurement (bundle size, time to resume) | 0659 | stage 3 evidence not committed as a test or evidence file
+- [x] browser measurement (bundle size, time to resume) | 0659 | `std/evidence/ui/browser.md` (headless Chrome, ui-todo: 104 KB cold, resume 7 ms unthrottled and 866 ms on slow 4G; no size guard yet)
 
 ## Client in wasm (0659 stage 3, 0663)
 
