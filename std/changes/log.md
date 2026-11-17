@@ -1,5 +1,16 @@
 # std/log changes
 
+## 2026-11-17: perf: JSON records through log.configure are built in one string
+
+- Kind: perf
+- Commit: this push
+- Found by: std/evidence/log/perf.md (task #88): json 1.537 times Go's log/slog on linux/arm64 host 1
+- Go reference: log/slog JSONHandler (one buffer per record), go1.26 (Copyright 2022 The Go Authors, BSD-style license)
+- Test: golden log_json_keys (keys sorted, replaced time, level and msg, groups, escaping; the same output before and after); host 1 `xo bench --ab` bench/perf/log json: 0.804 of before (wall 125.1 to 100.5 ms; cpu 0.799)
+- Shipped in: not yet released
+
+A JSON record from `log.configure(out, format: Format.Json)` appended its keys and values into one string with room reserved, where it built a list of (key, JSON text) pairs, a string per value, and the line by concatenation. The output is unchanged.
+
 ## 2026-11-16: perf: group decoding compares the field tag as a byte
 
 - Kind: perf

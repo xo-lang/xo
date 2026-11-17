@@ -1,0 +1,14 @@
+// std/log's JSON records through log.configure (format_json, task #88):
+// keys sorted as encoding/json sorts a map, a field named time, level or
+// msg replacing the record's own, a group nested, <, > and & escaped, and
+// every kind of value. Each record replaces its time, so the output is
+// fixed.
+use std/log
+
+fn main(os: Os) uses stdio, log {
+  log.configure(os.stdio, level: log.Level.Debug, format: log.Format.Json)
+  log.info("replaced", {"time": "noon", "level": 7, "msg": "<m&>"})
+  log.warn("kinds", {"time": "t", "z": 1.5, "a": -3, "u": UInt64.from_bits(-1), "b": false, "s": "x\"y", "g": log.group({"k": 2, "h": log.group({"q": "<"})})})
+  log.error("a<b>&c", {"time": "t", "": "empty", "Z": 0})
+  log.debug("dup", {"time": "t", "b": 1, "a": 2, "c": 3, "ba": 4, "aa": 5})
+}

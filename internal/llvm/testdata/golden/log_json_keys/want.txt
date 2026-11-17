@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+--- stderr
+{"level":7,"msg":"\u003cm\u0026\u003e","time":"noon"}
+{"a":-3,"b":false,"g":{"h":{"q":"\u003c"},"k":2},"level":"WARN","msg":"kinds","s":"x\"y","time":"t","u":18446744073709551615,"z":1.5}
+{"":"empty","Z":0,"level":"ERROR","msg":"a\u003cb\u003e\u0026c","time":"t"}
+{"a":2,"aa":5,"b":1,"ba":4,"c":3,"level":"DEBUG","msg":"dup","time":"t"}

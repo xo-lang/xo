@@ -486,20 +486,77 @@ fn go_html(line: Str) -> Str {
   line.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 }
 
+/// format's JSON record before go_html, appended into one Str: the keys
+/// sorted (time, level and msg unless a field replaces them, module for
+/// the attribution), with no list of entries or per-value Strs (std/log
+/// json against log/slog, task #88).
+fn format_json(level: Int, msg: Str, vs: Map[Str, log.Value], from: Str) -> Str {
+  var keys: List[Str] = List.with_capacity(vs.len() + 4)
+  keys.push("level")
+  keys.push("msg")
+  keys.push("time")
+  for (k, _) in vs {
+    if k != "level" && k != "msg" && k != "time" && !(k == "module" && from != "") {
+      key_insert(keys, k)
+    }
+  }
+  if from != "" {
+    key_insert(keys, "module")
+  }
+  // one allocation for a usual record (the time, level and keys take
+  // about 60 bytes)
+  var line = rt.rs_with_cap(128 + msg.len()) + "{"
+  for (n, k) in keys.indexed() {
+    if n > 0 {
+      line = line + ","
+    }
+    line = rtjson.json_enc(line, k) + ":"
+    if from != "" && k == "module" {
+      line = rtjson.json_enc(line, from)
+    } else if let Some(v) = vs.get(k) {
+      line = json_value_to(line, v)
+    } else if k == "time" {
+      line = rtjson.json_enc(line, logstate.now(true))
+    } else if k == "level" {
+      line = rtjson.json_enc(line, level_name(level))
+    } else {
+      line = rtjson.json_enc(line, msg)
+    }
+  }
+  line + "}"
+}
+
+/// k into the sorted keys, by insertion (a record has a handful).
+fn key_insert(var keys: List[Str], k: Str) {
+  var j = keys.len()
+  keys.push(k)
+  while j > 0 && keys[j - 1] > k {
+    keys.set(j, keys[j - 1])
+    j -= 1
+  }
+  keys.set(j, k)
+}
+
+/// acc + json_value(v), appended.
+fn json_value_to(acc: Str, v: log.Value) -> Str {
+  match v {
+    log.Value.Int(n) => rtjson.json_enc(acc, n)
+    log.Value.UInt(n) => rtjson.json_enc(acc, n)
+    log.Value.Bool(b) => rtjson.json_enc(acc, b)
+    log.Value.Float(f) => rtjson.json_enc(acc, f)
+    log.Value.Group(_) => acc + json_value(v)
+    log.Value.Str(s) => rtjson.json_enc(acc, s)
+    _ => rtjson.json_enc(acc, value_text(v))
+  }
+}
+
 /// The text of a record: JSON when configured so, else text. fs is the
 /// flat text view (dotted keys), vs the values (groups nested).
 fn format(level: Int, msg: Str, fs: Map[Str, Str], vs: Map[Str, log.Value], from: Str) -> Str {
   if logstate.json() {
     // encoding/json of a map: keys sorted; a field replaces time, level
     // or msg, the attribution replaces a field named "module"
-    var es: List[(Str, Str)] = [("time", rtjson.json_enc("", logstate.now(true))), ("level", rtjson.json_enc("", level_name(level))), ("msg", rtjson.json_enc("", msg))]
-    for (k, v) in vs {
-      es.push((k, json_value(v)))
-    }
-    if from != "" {
-      es.push(("module", rtjson.json_enc("", from)))
-    }
-    return go_html(json_obj(es))
+    return go_html(format_json(level, msg, vs, from))
   }
   var tag = ""
   if from != "" {
