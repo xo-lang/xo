@@ -1712,6 +1712,16 @@ Last verified: 2026-11-15
     output as OFFLOAD-FREE-MB, xwhook.sh's xw_host_disk sends it).
     retry-storm: one lease name (not a .sh default) started over 5 times
     in 30 min. Last verified: 2026-11-16.
+  - Main check reruns (#193, 2026-11-17): when hourly.sh's `go test
+    -short` step fails, scripts/lead/short-rerun.sh reruns each failed
+    package alone (`-short -count=1`, 30 minute limit, at most
+    XO_SHORT_RERUN_MAX=6 packages; a build failure is not rerun). A
+    package that passes alone is a `note: -short PKG: passes alone in DUR
+    (full run: FIRST)` line in hourly.log and the step passes; one that
+    fails alone keeps it red, and the summary, the `hourly-short-HHMM.log`
+    copy and the bisect below read the rerun's output (the full run is
+    `hourly-short-HHMM-full.log`). Gotcha
+    hourly-short-red-under-load.md. Last verified: 2026-11-17.
   - Main-failure bisect (#137, owner 2026-11-16): when the hourly main
     check (hourly.sh) or ctier fails a test, it starts `mainbisect.sh
     --from-log LOG GOOD BAD` detached: the first failed top-level test of
