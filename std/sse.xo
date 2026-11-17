@@ -54,7 +54,11 @@ pub struct Parser {
   started: Bool = false
   skip_lf: Bool = false
   event: Str = ""
-  data: List[Str] = []
+  /// the event's data lines so far, each after the first behind an LF:
+  /// decoded once at the blank line (an LF ends any invalid UTF-8
+  /// sequence, so decoding the joined bytes equals joining the decoded
+  /// lines)
+  data: BytesBuilder = BytesBuilder.new()
   have_data: Bool = false
   last_id: Str = ""
   /// last_id as of the latest blank line (the WHATWG event source's last
@@ -192,9 +196,10 @@ fn (var p: Parser) line(l: Bytes) -> Event? {
       p.event = ""
       return None
     }
-    let ev = Event{event: if p.event.is_empty() { "message" } else { p.event }, data: p.data.join("\n"), id: p.last_id}
+    let d = p.data
+    p.data = BytesBuilder.new()
+    let ev = Event{event: if p.event.is_empty() { "message" } else { p.event }, data: utf8(d.freeze()), id: p.last_id}
     p.event = ""
-    p.data = []
     p.have_data = false
     return Some(ev)
   }
@@ -212,7 +217,10 @@ fn (var p: Parser) line(l: Bytes) -> Event? {
     }
   }
   if name == b"data" {
-    p.data.push(utf8(value))
+    if p.have_data {
+      p.data.write_byte(10)
+    }
+    p.data.write(value)
     p.have_data = true
   } else if name == b"event" {
     p.event = utf8(value)

@@ -150,6 +150,10 @@ test "data that is not UTF-8 decodes as WHATWG's decoder, valid text as it is" {
   expect(messages(b"data:\xFF\xC3\xA9\n\n")) == ["\u{FFFD}\u{E9}"]
   expect(messages(b"data:\xED\xA0\x80\n\n")) == ["\u{FFFD}\u{FFFD}\u{FFFD}"]
   expect(messages(b"data:\xE2\x82\xAC\n\n")) == ["\u{20AC}"]
+  // a sequence cut by a line end is one U+FFFD for that line; the next
+  // line's bytes do not complete it (the data lines are decoded joined)
+  expect(messages(b"data:\xE2\x80\ndata:\x82\n\n")) == ["\u{FFFD}\n\u{FFFD}"]
+  expect(messages(b"data:a\xE2\ndata:\x82\xACb\ndata\n\n")) == ["a\u{FFFD}\n\u{FFFD}\u{FFFD}b\n"]
 }
 
 test "a reconnection asks after the last dispatched event, not after an id the break cut off (sse stress, task #115)" {

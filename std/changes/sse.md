@@ -70,3 +70,14 @@ already have `_` are unchanged.
 - Found by: decision 0603 stage 1 (the client helper that reconnects with Last-Event-ID and the server's retry)
 - Test: internal/stdtest/testdata/corpus/sse (reconnection with Last-Event-ID and retry over FakeNet and FakeClock; a refused stream; giving up after max_retries) on LLVM and the Go backend; arm64 waits on the "reads virtual register before it is written" fix
 - Shipped in: not yet released
+
+## 2026-11-17: perf: an event's data lines are decoded once, joined
+
+- Kind: perf
+- Commit: this commit
+- Found by: task #88 (bench/perf/sse parse 1.077 of Go's time on linux/arm64 host 1)
+- Test: std/sse_test.xo (a UTF-8 sequence cut by a line end is one U+FFFD and the next data line does not complete it); host 1 `xo bench --ab` bench/perf/sse parse: 0.883 of before (wall 130.5 to 115.2 ms)
+- Shipped in: not yet released
+
+A data line is appended to one byte builder per event and the event's data is decoded at the blank line, where
+each line was decoded to a Str, kept in a list and joined. An LF ends any invalid sequence, so the data is the same.
