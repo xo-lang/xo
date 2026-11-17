@@ -3342,10 +3342,16 @@ pub fn live_now() -> Int {
   var l = 0
   hlock_take()
   var h = heaps_head()
+  // each record's counts are its own thread's plain stores, read here
+  // while that thread allocates: the figure is approximate by design, so
+  // ThreadSanitizer does not see these reads (task #270: the /sched page
+  // under the leak check, TestGoldenTasks race_debug_sched)
+  sanhook.ignore_racy_reads(true)
   while h != 0 {
     l = l.wrapping_add(rt.mem_load(h, H_ALLOCS, 8).wrapping_sub(rt.mem_load(h, H_FREES, 8)))
     h = rt.mem_load(h, H_NEXT, 8)
   }
+  sanhook.ignore_racy_reads(false)
   hlock_give()
   l
 }

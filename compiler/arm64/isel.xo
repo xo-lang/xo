@@ -1985,6 +1985,15 @@ fn (g: G) dom_decided(b: Int, c: Int, idom: List[Int]) -> Bool? {
         for i in 0..2 {
           let s = g.f.edges[g.f.values[t].succs()[i]].to
           if g.f.blocks[s].preds.len() == 1 && dominates(idom, s, b) {
+            // the other side must not resume past this branch through a
+            // landing: a fault there that a task.isolate catches lands
+            // after the isolate, where b may be (task #270: devirt_once
+            // and inline put two isolates' `y == 0` checks in one
+            // function, and the second was decided by the first)
+            let o = g.f.edges[g.f.values[t].succs()[1 - i]].to
+            if ssa.landing_reaches(g.f, o, b) {
+              return None
+            }
             return Some((i == 0) != inv)
           }
         }

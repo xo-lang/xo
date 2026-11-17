@@ -550,6 +550,63 @@ fn fold_const_branches(var f: Func) -> Bool {
 /// every value in a reached block is in a reached block (chain_pads lets
 /// calls share a check, so one on the edge not taken can be the landing
 /// of a value that stays).
+/// Whether block target can be reached through a landing from block
+/// start: a value in a block reachable from start (start included) has a
+/// landing (pad_of its pi) whose block reaches target. A call there that
+/// unwinds resumes at the landing, outside what the edges from start show
+/// (task #270: a fault a task.isolate catches lands after the isolate; a
+/// defer's landing that unwinds on reaches nothing after it).
+pub fn landing_reaches(f: Func, start: Int, target: Int) -> Bool {
+  let n = f.blocks.len()
+  if start < 0 || start >= n {
+    return false
+  }
+  var pads: List[Int] = []
+  for bl in reach_from(f, start) {
+    for v in f.blocks[bl].instrs {
+      let w = pad_of(f.values[v].pi)
+      if w >= 0 {
+        let wb = block_of(f.values[w].tb)
+        if wb >= 0 {
+          pads.push(wb)
+        }
+      }
+    }
+  }
+  for p in pads {
+    if reach_from(f, p).contains(target) {
+      return true
+    }
+  }
+  false
+}
+
+/// The blocks reachable from block start by the edges, start included.
+fn reach_from(f: Func, start: Int) -> List[Int] {
+  let n = f.blocks.len()
+  var seen: List[Bool] = []
+  for _ in 0..n {
+    seen.push(false)
+  }
+  var out = [start]
+  seen[start] = true
+  var i = 0
+  while i < out.len() {
+    let tt = f.term(out[i])
+    i += 1
+    if tt >= 0 {
+      for e in f.values[tt].succs() {
+        let to = f.edges[e].to
+        if !seen[to] {
+          seen[to] = true
+          out.push(to)
+        }
+      }
+    }
+  }
+  out
+}
+
 pub fn pads_reached(f: Func, t: Int, keep: Int) -> Bool {
   let n = f.blocks.len()
   var reach: List[Bool] = []

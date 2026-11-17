@@ -1,0 +1,27 @@
+// Two task.isolate closures checking the same divisor (task #270): the
+// first one's division by zero faults and is caught, so the second one
+// must still check y. arm64 decided the second `y == 0` from the first
+// once devirt_once made both closures direct calls and inline put them in
+// one function: its fault went past the check into ints.u64_rem.
+use std/task
+
+fn show(io: Stdio, label: Str, r: Result[Str, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => io.println("${label}: ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("${label}: fault ${info.msg} at ${info.location}")
+    Err(_) => io.println("${label}: failed")
+  }
+}
+
+fn run(io: Stdio, x: UInt64, y: UInt64, a: Int, b: Int) uses stdio {
+  show(io, "UInt64 /", task.isolate(fn() -> Str ! () { "${x / y}" }))
+  show(io, "UInt64 %", task.isolate(fn() -> Str ! () { "${x % y}" }))
+  show(io, "Int /", task.isolate(fn() -> Str ! () { "${a / b}" }))
+  show(io, "Int %", task.isolate(fn() -> Str ! () { "${a % b}" }))
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  run(os.stdio, UInt64(7), UInt64(n), 9, n)
+  run(os.stdio, UInt64(7), UInt64(n + 2), 9, n + 2)
+}

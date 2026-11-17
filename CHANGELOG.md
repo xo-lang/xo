@@ -11,6 +11,7 @@ the text of every entry is unchanged).
 
 - Feature (std/grpc): keepalive: `Client.with_keepalive(ClientKeepalive{...})` and `keepalive_server(http_server, ServerKeepalive{...})` (grpc-go's keepalive parameters over std/http's HTTP/2 pings).
 - Fix (std/grpc): a connection lost under a call (a keepalive ping not acked, the server gone) is `Unavailable`, as grpc-go; it was `Internal`.
+- Fix (arm64): two `task.isolate` calls in one function that check the same divisor (or any value) no longer drop the second check after the first one's fault is caught: the second `x % y` by zero faulted inside the runtime with a `/` message instead of at its own line (task #270).
 - Breaking (std/protoparse): a .proto file with no `syntax` statement is proto2, as protoc reads it (it was proto3); add `syntax = "proto3";` to such a file. `parse` also rejects what protoc's grammar does (option names and values, map keys, signed field numbers, lowercase group names, numbers run into letters, a syntax other than proto2/proto3), with protocompile's error texts.
 - Fix (std/otlp, Go backend): `ExportErr` displays its text for RequestTooLarge, ResponseTooLarge, Partial and Grpc (it was empty).
 - Feature (std/grpcreflect): gRPC server reflection, `grpcreflect.register(server, files)` serving grpc.reflection.v1 and v1alpha from std/protodesc files (grpcurl and grpc-go's reflection client work against it), and a client: `list_services`, `file_by_filename`, `file_containing_symbol`, `ask`.

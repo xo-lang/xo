@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+UInt64 /: fault division by zero: 7 / 0 at main.xo:17:59
+UInt64 %: fault division by zero: 7 % 0 at main.xo:18:59
+Int /: fault division by zero: 9 / 0 at main.xo:19:56
+Int %: fault division by zero: 9 % 0 at main.xo:20:56
+UInt64 /: 3
+UInt64 %: 1
+Int /: 4
+Int %: 1
+--- stderr
