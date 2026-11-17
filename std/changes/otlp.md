@@ -1,5 +1,16 @@
 # std/otlp changes
 
+## 2026-11-17: feature: JSON encoding, gzip, size limits and partial success (task #184)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #184 (stdcov feature gaps against otlptracehttp v1.47.0)
+- Go reference: go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0 (WithEncoding, WithCompression, WithMaxRequestSize, WithMaxResponseSize, partial success handling)
+- Test: std/native/otlp_test.xo (request bodies, partial success, the size errors' text; the oracle JSON expects from scripts/oteloracle)
+- Shipped in: not yet released
+
+`encode_traces_json` writes OTLP's JSON mapping byte for byte as Go's otlptracehttp does (checked against its output for the 7 oracle cases); `with_encoding(Encoding.Json)` sends it as `application/json`. `with_compression(Compression.Gzip)` gzips request bodies. `with_max_request_size` and `with_max_response_size` bound the bodies (`RequestTooLarge`, `ResponseTooLarge`; 64 MiB and 4 MiB by default, as Go). A 2xx response's partial success is `ExportErr.Partial`, displayed as Go writes it.
+
 ## 2026-11-16: behavior: `exporter` takes a `Rand[rand]` (decision 0652)
 
 - Kind: behavior

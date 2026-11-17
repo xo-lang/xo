@@ -1,8 +1,10 @@
 // std/otlp (decision 0539): the OTLP trace and metrics messages as derive Proto structs (decision 0549),
 // marshaled by std/protobuf.
 use std/backoff
+use std/compress
 use std/crypto
 use std/http
+use std/json
 use std/metrics
 use std/otlp
 use std/protobuf
@@ -222,7 +224,7 @@ fn span_msg(s: trace.Span) -> SpanMsg {
     attributes: attrs, events: events, status: st, flags: if otel { 257 } else { 0 }}
 }
 
-fn encode_traces(res: otlp.Resource, spans: List[trace.Span]) -> Bytes {
+fn traces_msg(res: otlp.Resource, spans: List[trace.Span]) -> TracesRequestMsg {
   var rattrs = [kv_str_msg("service.name", res.service)]
   for (k, v) in res.attributes {
     rattrs.push(kv_str_msg(k, v))
@@ -251,7 +253,185 @@ fn encode_traces(res: otlp.Resource, spans: List[trace.Span]) -> Bytes {
     }
     groups[at].spans.push(span_msg(s))
   }
-  protobuf.marshal(TracesRequestMsg{resource_spans: [ResourceSpansMsg{resource: Some(ResourceMsg{attributes: rattrs}), scope_spans: groups}]})
+  TracesRequestMsg{resource_spans: [ResourceSpansMsg{resource: Some(ResourceMsg{attributes: rattrs}), scope_spans: groups}]}
+}
+
+fn encode_traces(res: otlp.Resource, spans: List[trace.Span]) -> Bytes {
+  protobuf.marshal(traces_msg(res, spans))
+}
+
+// OTLP's JSON mapping, written field by field in the order OpenTelemetry Go's
+// otlptracehttp/internal/otlpjson writes them (encoding/json over the proto
+// field order): empty fields left out, ids as hex, 64 bit integers quoted.
+
+fn jstr(s: Str) -> Str { json.html_escape(json.encode_str(s)) }
+
+fn jfloat(f: Float) -> Str {
+  if f.is_nan() {
+    return "\"NaN\""
+  }
+  if f.is_inf() {
+    return if f > 0.0 { "\"Infinity\"" } else { "\"-Infinity\"" }
+  }
+  f.to_general(-1)
+}
+
+fn jvalue(v: AnyValueMsg?) -> Str {
+  match v {
+    None => "{}"
+    Some(a) => match a.value {
+      None => "{}"
+      Some(AnyKind.S(x)) => "{\"stringValue\":${jstr(x)}}"
+      Some(AnyKind.B(x)) => "{\"boolValue\":${x}}"
+      Some(AnyKind.I(x)) => "{\"intValue\":\"${x}\"}"
+      Some(AnyKind.D(x)) => "{\"doubleValue\":${jfloat(x)}}"
+    }
+  }
+}
+
+fn jattrs(var out: StrBuilder, kvs: List[KeyValueMsg]) {
+  if kvs.is_empty() {
+    return
+  }
+  out.write(",\"attributes\":[")
+  for (i, kv) in kvs.indexed() {
+    if i > 0 {
+      out.write(",")
+    }
+    out.write("{\"key\":${jstr(kv.key)},\"value\":${jvalue(kv.value)}}")
+  }
+  out.write("]")
+}
+
+/// An object's fields written by `jattrs` and friends start with a comma: the object's text without it.
+fn jobject(body: Str) -> Str {
+  if body.is_empty() { "{}" } else { "{${body[1..]}}" }
+}
+
+fn all_zero(b: Bytes) -> Bool {
+  for c in b {
+    if c != 0 {
+      return false
+    }
+  }
+  true
+}
+
+/// An id as Go's otlpjson writes it: upper case hex of exactly n bytes (cut, or padded with zeros).
+fn jid(b: Bytes, n: Int) -> Str {
+  var h = b.to_hex().to_upper()
+  while h.len() < 2 * n {
+    h = h + "0"
+  }
+  h[0..2 * n]
+}
+
+fn jspan(var out: StrBuilder, s: SpanMsg) {
+  var b = StrBuilder.new()
+  b.write(",\"traceId\":\"${jid(s.trace_id, 16)}\"")
+  b.write(",\"spanId\":\"${jid(s.span_id, 8)}\"")
+  if !s.parent_span_id.is_empty() && !all_zero(s.parent_span_id) {
+    b.write(",\"parentSpanId\":\"${jid(s.parent_span_id, 8)}\"")
+  }
+  if s.flags != 0 {
+    b.write(",\"flags\":${s.flags}")
+  }
+  if !s.name.is_empty() {
+    b.write(",\"name\":${jstr(s.name)}")
+  }
+  if s.kind != 0 {
+    b.write(",\"kind\":${s.kind}")
+  }
+  if s.start_time_unix_nano != 0 {
+    b.write(",\"startTimeUnixNano\":\"${s.start_time_unix_nano}\"")
+  }
+  if s.end_time_unix_nano != 0 {
+    b.write(",\"endTimeUnixNano\":\"${s.end_time_unix_nano}\"")
+  }
+  jattrs(b, s.attributes)
+  if !s.events.is_empty() {
+    b.write(",\"events\":[")
+    for (i, e) in s.events.indexed() {
+      if i > 0 {
+        b.write(",")
+      }
+      var eb = StrBuilder.new()
+      if e.time_unix_nano != 0 {
+        eb.write(",\"timeUnixNano\":\"${e.time_unix_nano}\"")
+      }
+      if !e.name.is_empty() {
+        eb.write(",\"name\":${jstr(e.name)}")
+      }
+      jattrs(eb, e.attributes)
+      b.write(jobject(eb.freeze()))
+    }
+    b.write("]")
+  }
+  if let Some(st) = s.status {
+    var sb = StrBuilder.new()
+    if !st.message.is_empty() {
+      sb.write(",\"message\":${jstr(st.message)}")
+    }
+    if st.code != 0 {
+      sb.write(",\"code\":${st.code}")
+    }
+    b.write(",\"status\":${jobject(sb.freeze())}")
+  }
+  out.write(jobject(b.freeze()))
+}
+
+fn encode_traces_json(res: otlp.Resource, spans: List[trace.Span]) -> Bytes {
+  let m = traces_msg(res, spans)
+  var out = StrBuilder.new()
+  out.write("{\"resourceSpans\":[")
+  for (i, rs) in m.resource_spans.indexed() {
+    if i > 0 {
+      out.write(",")
+    }
+    var rb = StrBuilder.new()
+    if let Some(r) = rs.resource {
+      var ab = StrBuilder.new()
+      jattrs(ab, r.attributes)
+      rb.write(",\"resource\":${jobject(ab.freeze())}")
+    }
+    if !rs.scope_spans.is_empty() {
+      rb.write(",\"scopeSpans\":[")
+      for (j, ss) in rs.scope_spans.indexed() {
+        if j > 0 {
+          rb.write(",")
+        }
+        var sb = StrBuilder.new()
+        if let Some(sc) = ss.scope {
+          var cb = StrBuilder.new()
+          if !sc.name.is_empty() {
+            cb.write(",\"name\":${jstr(sc.name)}")
+          }
+          if !sc.version.is_empty() {
+            cb.write(",\"version\":${jstr(sc.version)}")
+          }
+          sb.write(",\"scope\":${jobject(cb.freeze())}")
+        }
+        if !ss.spans.is_empty() {
+          sb.write(",\"spans\":[")
+          for (k, sp) in ss.spans.indexed() {
+            if k > 0 {
+              sb.write(",")
+            }
+            jspan(sb, sp)
+          }
+          sb.write("]")
+        }
+        if !ss.schema_url.is_empty() {
+          sb.write(",\"schemaUrl\":${jstr(ss.schema_url)}")
+        }
+        rb.write(jobject(sb.freeze()))
+      }
+      rb.write("]")
+    }
+    out.write(jobject(rb.freeze()))
+  }
+  out.write("]}")
+  out.freeze().bytes()
 }
 
 // The metrics messages (opentelemetry-proto metrics.proto) as derive Proto
@@ -448,6 +628,9 @@ fn exporterr_display(e: otlp.ExportErr) -> Str {
     Transport(msg) => "export: ${msg}"
     Rejected(status, body) => "export rejected: ${status} ${body}"
     GaveUp(status, tries) => "export gave up after ${tries} tries: ${status}"
+    RequestTooLarge(limit) => "request body too large: exceeded ${limit} bytes"
+    ResponseTooLarge(limit) => "response body too large: exceeded ${limit} bytes"
+    Partial(rejected, msg, kind) => "OTLP partial success: ${if msg.is_empty() { "empty message" } else { msg }} (${rejected} ${kind} rejected)"
   }
 }
 
@@ -458,6 +641,94 @@ fn exporter(client: http.Client, endpoint: Str, res: otlp.Resource, clock: Clock
 fn exporter_with_headers(e: otlp.Exporter, h: Map[Str, Str]) -> otlp.Exporter { e with {headers: h} }
 
 fn exporter_with_backoff(e: otlp.Exporter, b: backoff.Backoff) -> otlp.Exporter { e with {backoff: b} }
+
+fn exporter_with_encoding(e: otlp.Exporter, enc: otlp.Encoding) -> otlp.Exporter { e with {encoding: enc} }
+
+fn exporter_with_compression(e: otlp.Exporter, c: otlp.Compression) -> otlp.Exporter { e with {compression: c} }
+
+fn exporter_with_max_request_size(e: otlp.Exporter, n: Int) -> otlp.Exporter { e with {max_request: n} }
+
+fn exporter_with_max_response_size(e: otlp.Exporter, n: Int) -> otlp.Exporter {
+  if n <= 0 { e } else { e with {max_response: n} }
+}
+
+// The partial success of an ExportTraceServiceResponse or ExportMetricsServiceResponse (collector/*/v1): field 1
+// of each is the partial success, whose field 1 is the rejected spans or data points and field 2 the message.
+struct PartialMsg {
+  rejected proto "1": Int = 0
+  error_message proto "2": Str = ""
+} derive Proto
+
+struct ExportResponseMsg { partial_success proto "1": PartialMsg? = None } derive Proto
+
+/// The headers and body of a request carrying `body` in `content_type`: over a positive `max_request` is
+/// RequestTooLarge (the size before compression, as Go checks it), then gzipped when the exporter compresses.
+fn request_body(e: otlp.Exporter, content_type: Str, body: Bytes) -> (Map[Str, Str], Bytes) ! otlp.ExportErr {
+  if e.max_request > 0 && body.len() > e.max_request {
+    return Err(otlp.ExportErr.RequestTooLarge(limit: e.max_request))
+  }
+  var headers = e.headers
+  headers["Content-Type"] = content_type
+  if e.compression == otlp.Compression.Gzip {
+    headers["Content-Encoding"] = "gzip"
+    return Ok((headers, compress.gzip(body)))
+  }
+  Ok((headers, body))
+}
+
+fn json_count(v: json.Value?) -> Int ! Str {
+  match v {
+    None => Ok(0)
+    Some(json.Value.Null) => Ok(0)
+    Some(json.Value.Int(n)) => Ok(n)
+    Some(json.Value.Str(t)) => Int.parse(t).or_err("rejected count ${jstr(t)} is not an integer")
+    Some(other) => Err("rejected count ${other.encode()} is not an integer")
+  }
+}
+
+/// The partial success a 2xx answer carries, read as Go's otlptracehttp reads it: the body is decoded by its
+/// exact Content-Type (protobuf or JSON), any other type is ignored; `rejected_key` is the JSON name of the
+/// rejected count. A body that does not decode is Transport.
+fn partial_success(resp: http.Response, rejected_key: Str, kind: Str) -> () ! otlp.ExportErr {
+  if resp.body.is_empty() {
+    return Ok(())
+  }
+  let ct = resp.header("Content-Type") ?? ""
+  var rejected = 0
+  var msg = ""
+  if ct == "application/x-protobuf" {
+    match protobuf.unmarshal[ExportResponseMsg](resp.body) {
+      Ok(m) => {
+        if let Some(p) = m.partial_success {
+          rejected = p.rejected
+          msg = p.error_message
+        }
+      }
+      Err(err) => return Err(otlp.ExportErr.Transport(msg: "${err}"))
+    }
+  } else if ct == "application/json" {
+    let v = match json.parse_value(resp.body.to_str() ?? "") {
+      Ok(x) => x
+      Err(err) => return Err(otlp.ExportErr.Transport(msg: "${err}"))
+    }
+    let p = v.get("partialSuccess") ?? v.get("partial_success") ?? json.Value.Null
+    let n = json_count(p.get(rejected_key) ?? p.get(rejected_key.replace("Spans", "_spans").replace("DataPoints", "_data_points")))
+    match n {
+      Ok(x) => rejected = x
+      Err(m) => return Err(otlp.ExportErr.Transport(msg: m))
+    }
+    match p.get("errorMessage") ?? p.get("error_message") {
+      Some(json.Value.Str(t)) => msg = t
+      _ => {}
+    }
+  } else {
+    return Ok(())
+  }
+  if rejected != 0 || !msg.is_empty() {
+    return Err(otlp.ExportErr.Partial(rejected: rejected, msg: msg, kind: kind))
+  }
+  Ok(())
+}
 
 fn retryable(status: Int) -> Bool { status == 429 || status == 502 || status == 503 || status == 504 }
 
@@ -477,9 +748,8 @@ fn retry_after(resp: http.Response, now: Time) -> Int {
   }
 }
 
-fn post(e: otlp.Exporter, path: Str, body: Bytes) -> () ! otlp.ExportErr uses net.dial, clock, rand {
-  var headers = e.headers
-  headers["Content-Type"] = "application/x-protobuf"
+fn post(e: otlp.Exporter, path: Str, content_type: Str, raw: Bytes, rejected_key: Str, kind: Str) -> () ! otlp.ExportErr uses net.dial, clock, rand {
+  let (headers, body) = request_body(e, content_type, raw)?
   var tries = 0
   while true {
     tries += 1
@@ -495,8 +765,11 @@ fn post(e: otlp.Exporter, path: Str, body: Bytes) -> () ! otlp.ExportErr uses ne
         continue
       }
     }
+    if e.max_response > 0 && resp.body.len() > e.max_response {
+      return Err(otlp.ExportErr.ResponseTooLarge(limit: e.max_response))
+    }
     if resp.status >= 200 && resp.status < 300 {
-      return Ok(())
+      return partial_success(resp, rejected_key, kind)
     }
     if !retryable(resp.status) {
       return Err(otlp.ExportErr.Rejected(status: resp.status, body: resp.body.to_str() ?? ""))
@@ -515,9 +788,12 @@ fn exporter_send_traces(e: otlp.Exporter, spans: List[trace.Span]) -> () ! otlp.
   if spans.is_empty() {
     return Ok(())
   }
-  post(e, "/v1/traces", encode_traces(e.resource, spans))
+  if e.encoding == otlp.Encoding.Json {
+    return post(e, "/v1/traces", "application/json", encode_traces_json(e.resource, spans), "rejectedSpans", "spans")
+  }
+  post(e, "/v1/traces", "application/x-protobuf", encode_traces(e.resource, spans), "rejectedSpans", "spans")
 }
 
 fn exporter_send_metrics(e: otlp.Exporter, reg: metrics.Registry, start_ms: Int) -> () ! otlp.ExportErr uses net.dial, clock, rand {
-  post(e, "/v1/metrics", encode_metrics(e.resource, reg, start_ms, e.clock.now().unix_millis()))
+  post(e, "/v1/metrics", "application/x-protobuf", encode_metrics(e.resource, reg, start_ms, e.clock.now().unix_millis()), "rejectedDataPoints", "metric data points")
 }

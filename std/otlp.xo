@@ -24,6 +24,12 @@ struct Resource {
 /// HTTP status becomes the span status (500 and above is an error) and the attribute `http.response.status_code`.
 fn encode_traces(res: Resource, spans: List[trace.Span]) -> Bytes
 
+/// The same ExportTraceServiceRequest in OTLP's JSON mapping (the body of OTLP/HTTP with `Content-Type:
+/// application/json`), written as OpenTelemetry Go's otlptracehttp writes it: lowerCamelCase field names, trace
+/// and span ids as upper case hex (as Go's otlpjson writes them), 64 bit integers as strings, empty fields left out, an all zero parent span id
+/// left out, and NaN and the infinities as the strings `NaN`, `Infinity` and `-Infinity`.
+fn encode_traces_json(res: Resource, spans: List[trace.Span]) -> Bytes
+
 /// The body of an ExportMetricsServiceRequest for the families of `reg` (one ResourceMetrics, one ScopeMetrics),
 /// every point cumulative since `start_ms` and stamped `now_ms` (Unix milliseconds): a counter is a monotonic Sum,
 /// a gauge a Gauge, a histogram a Histogram (bucket counts per bucket, not cumulative, as OTLP has them), a summary
@@ -32,17 +38,41 @@ fn encode_metrics(res: Resource, reg: metrics.Registry, start_ms: Int, now_ms: I
 
 /// Why an export failed: the transport (no response), a status the collector will not take (400 and the like: a
 /// retry would send the same bytes), or retries that ran out with the last answer.
+/// A body over the exporter's size limits fails before it is sent (`RequestTooLarge`) or when it comes back
+/// (`ResponseTooLarge`). A 2xx answer whose ExportTraceServiceResponse (or ExportMetricsServiceResponse) reports
+/// a partial success, rejected items or a message, is `Partial`: the rest of the request was taken, so it is
+/// never retried; `kind` is `spans` or `metric data points`.
 open enum ExportErr {
   Transport(msg: Str)
   Rejected(status: Int, body: Str)
   GaveUp(status: Int, tries: Int)
+  RequestTooLarge(limit: Int)
+  ResponseTooLarge(limit: Int)
+  Partial(rejected: Int, msg: Str, kind: Str)
 }
 
-/// `export: MSG`, `export rejected: STATUS BODY`, `export gave up after N tries: STATUS`.
+/// `export: MSG`, `export rejected: STATUS BODY`, `export gave up after N tries: STATUS`, `request body too large:
+/// exceeded N bytes`, `response body too large: exceeded N bytes`, and `OTLP partial success: MSG (N KIND
+/// rejected)` (MSG `empty message` when the collector gave none), the last three as OpenTelemetry Go writes them.
 fn (e: ExportErr) display() -> Str
 
-/// Sends OTLP/HTTP requests (`POST {endpoint}/v1/traces` and `/v1/metrics`, `Content-Type: application/x-protobuf`)
-/// to a collector. 429, 502, 503 and 504 are retried with the schedule of `backoff`, waiting at least the
+/// How an Exporter writes its trace requests: protobuf (`application/x-protobuf`, the default) or OTLP's JSON
+/// mapping (`application/json`, `encode_traces_json`). Metrics are always protobuf, as Go's otlpmetrichttp sends.
+enum Encoding {
+  Protobuf
+  Json
+}
+
+/// Whether an Exporter gzips its request bodies (`Content-Encoding: gzip`); off by default, as in Go.
+enum Compression {
+  Off
+  Gzip
+}
+
+/// Sends OTLP/HTTP requests (`POST {endpoint}/v1/traces` and `/v1/metrics`, `Content-Type: application/x-protobuf`,
+/// or `application/json` for traces with `Encoding.Json`) to a collector. A 2xx answer's body is read as the
+/// collector's response when its Content-Type is one of those two (any other is ignored): a partial success
+/// is `ExportErr.Partial`. 429, 502, 503 and 504 are retried with the schedule of `backoff`, waiting at least the
 /// `Retry-After` the collector asks for (in seconds); any other non 2xx status is not retried, as the OTLP
 /// specification says.
 struct Exporter {
@@ -53,6 +83,12 @@ struct Exporter {
   backoff: backoff.Backoff
   clock: Clock
   rand: Rand[rand]
+  encoding: Encoding = Encoding.Protobuf
+  compression: Compression = Compression.Off
+  /// The largest request body sent, in bytes before compression; 0 or less is no limit (64 MiB by default).
+  max_request: Int = 67108864
+  /// The largest response body read, in bytes (4 MiB by default).
+  max_response: Int = 4194304
 }
 
 /// An exporter to the collector at `endpoint` (`http://host:4318`, no path), for the spans and metrics of `res`.
@@ -61,6 +97,16 @@ fn exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock, ran
 fn (e: Exporter) with_headers(h: Map[Str, Str]) -> Exporter
 /// The exporter retrying on schedule b (5 tries by default).
 fn (e: Exporter) with_backoff(b: backoff.Backoff) -> Exporter
+/// The exporter writing its trace requests in `enc` (otlptracehttp.WithEncoding).
+fn (e: Exporter) with_encoding(enc: Encoding) -> Exporter
+/// The exporter compressing its request bodies with `c` (otlptracehttp.WithCompression).
+fn (e: Exporter) with_compression(c: Compression) -> Exporter
+/// The exporter refusing a request body over `n` bytes before compression, `RequestTooLarge`; 0 or less is no
+/// limit (otlptracehttp.WithMaxRequestSize).
+fn (e: Exporter) with_max_request_size(n: Int) -> Exporter
+/// The exporter failing on a response body over `n` bytes, `ResponseTooLarge`; 0 or less keeps the limit it
+/// had, as Go ignores it (otlptracehttp.WithMaxResponseSize).
+fn (e: Exporter) with_max_response_size(n: Int) -> Exporter
 /// Exports `spans` (one request; an empty list sends nothing).
 fn (e: Exporter) send_traces(spans: List[trace.Span]) -> () ! ExportErr uses net.dial, clock, rand
 /// Exports the registry's metrics (one request), every point cumulative since `start_ms`, stamped now.

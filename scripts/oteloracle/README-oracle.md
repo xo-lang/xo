@@ -16,6 +16,13 @@ Build and run (env -i, GOPATH and GOCACHE in a scratch home):
 - `<case>.json`: that body as Go's protojson, keys sorted (canon.py).
   Bytes fields (traceId, spanId, parentSpanId) are base64, as Go's
   protojson writes them (not OTLP/JSON's hex); 64-bit ints are strings.
+- `<case>.otlp.json`: the same request as OTLP/HTTP's JSON body, written
+  by otlptracehttp v1.47.0's own encoder (its `internal/otlpjson`, copied
+  into a 35 line converter that proto.Unmarshals each `<case>.bin` and
+  calls `otlpjson.MarshalExportTraceServiceRequest`; go.opentelemetry.io/proto/otlp
+  v1.11.1, protobuf v1.36.12). Ids are upper case hex, 64-bit ints
+  strings, an all zero parent span id and empty fields left out. gen.py
+  turns each into an `encode_traces_json` expect (2026-11-17, task #184).
 - `<case>.spec`: what the program asked for, in call order:
   - `scope N "name" "version" "schema_url"` (`""` = not set)
   - `span TRACE_ID SPAN_ID PARENT_SPAN_ID|root KIND "name" START_NS END_NS scope=N`

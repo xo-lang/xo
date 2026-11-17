@@ -10801,21 +10801,33 @@ are checked against protobuf-go marshaling the same messages (testdata/corpus/ot
 ```xo
 struct Resource { service: Str, attributes: List[(Str, Str)] = [], scope: Str = "std/trace", version: Str = "" }
 fn encode_traces(res: Resource, spans: List[trace.Span]) -> Bytes
+fn encode_traces_json(res: Resource, spans: List[trace.Span]) -> Bytes
 fn encode_metrics(res: Resource, reg: metrics.Registry, start_ms: Int, now_ms: Int) -> Bytes
-open enum ExportErr { Transport(msg: Str), Rejected(status: Int, body: Str), GaveUp(status: Int, tries: Int) }
+open enum ExportErr { Transport(msg: Str), Rejected(status: Int, body: Str), GaveUp(status: Int, tries: Int), RequestTooLarge(limit: Int), ResponseTooLarge(limit: Int), Partial(rejected: Int, msg: Str, kind: Str) }
+enum Encoding { Protobuf, Json }
+enum Compression { Off, Gzip }
 fn (e: ExportErr) display() -> Str
-struct Exporter { client: http.Client, endpoint: Str, resource: Resource, headers: Map[Str, Str] = {}, backoff: backoff.Backoff = backoff.Backoff{max_tries: 5}, clock: Clock, rand: Rand }
+struct Exporter { client: http.Client, endpoint: Str, resource: Resource, headers: Map[Str, Str] = {}, backoff: backoff.Backoff = backoff.Backoff{max_tries: 5}, clock: Clock, rand: Rand, encoding: Encoding = Encoding.Protobuf, compression: Compression = Compression.Off, max_request: Int = 67108864, max_response: Int = 4194304 }
 fn exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock, rand: Rand) -> Exporter
 fn (e: Exporter) with_headers(h: Map[Str, Str]) -> Exporter
 fn (e: Exporter) with_backoff(b: backoff.Backoff) -> Exporter
+fn (e: Exporter) with_encoding(enc: Encoding) -> Exporter
+fn (e: Exporter) with_compression(c: Compression) -> Exporter
+fn (e: Exporter) with_max_request_size(n: Int) -> Exporter      // 0 or less: no limit
+fn (e: Exporter) with_max_response_size(n: Int) -> Exporter     // 0 or less: keeps the limit, as Go
 fn (e: Exporter) send_traces(spans: List[trace.Span]) -> () ! ExportErr uses net.dial, clock, rand
 fn (e: Exporter) send_metrics(reg: metrics.Registry, start_ms: Int) -> () ! ExportErr uses net.dial, clock, rand
 ```
 
 `Exporter` posts `{endpoint}/v1/traces` and `/v1/metrics` as `application/x-protobuf` over OTLP/HTTP. 429, 502, 503 and 504 (and a
-transport failure) are retried on the schedule of `backoff`, waiting at least the `Retry-After` seconds the collector asks for;
+transport failure) are retried on the schedule of `backoff`, waiting at least the `Retry-After` the collector asks for (seconds or an HTTP date);
 any other non 2xx status is `Rejected` and not retried, as the OTLP specification says; retries that run out are `GaveUp`.
-`send_traces` of an empty list sends nothing. (The HTTP date form of `Retry-After` and partial success answers are not read yet.)
+`send_traces` of an empty list sends nothing. Traces go as protobuf or, with `Encoding.Json`, as OTLP's JSON mapping
+(`application/json`, `encode_traces_json`, byte for byte as OpenTelemetry Go's otlptracehttp writes it); metrics are always
+protobuf. `Compression.Gzip` gzips the body (`Content-Encoding: gzip`). A body over `max_request` bytes before compression is
+`RequestTooLarge` and is not sent; a response over `max_response` is `ResponseTooLarge`. A 2xx answer whose Content-Type is
+protobuf or JSON is read as the collector's response: a partial success (rejected items or a message) is `Partial`, never
+retried, displayed as Go writes it (`OTLP partial success: MSG (N spans rejected)`).
 
 `encode_traces`: one ResourceSpans and one ScopeSpans. A span's trace id is its request id when that is 32 hex digits,
 else the first 16 bytes of the SHA-256 of the id; the `request` span of an id is a server span (the id's root), its other
