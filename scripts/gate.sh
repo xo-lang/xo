@@ -1684,7 +1684,9 @@ prove_go() {
 }
 prove_clihelp() { prove_go clihelp ./cmd/xo -run '^TestCLIHelp$'; }
 prove_goldenasm() { prove_go goldenasm ./internal/arm64 -run '^TestGoldenAsm$'; }
-prove_tsanmaps() { prove_go tsanmaps ./internal/llvm -run '^(TestTSanSharedMaps|TestGolden/conc_.*)$'; }
+# the conc_ goldens as a second level: inside the first level's parentheses
+# go test never ran them (#249, TestGateRunPatterns)
+prove_tsanmaps() { prove_go tsanmaps ./internal/llvm -run '^(TestTSanSharedMaps|TestGolden)$/^(map_log=|conc_)'; }
 prove_stdobj() { prove_go stdobj ./internal/arm64 -run '^(TestStdRecordIdentity|TestStdTreesRebuild)$'; }
 prove_vetcost() { prove_go vetcost ./cmd/xo -run '^TestVetCostStd$'; }
 # stdcov fails only on what the change adds: an uncovered declaration main
@@ -1714,7 +1716,9 @@ prove_nohttp() {
   if ! go build -tags xo_nohttp ./std/rt >"$logs/nohttp-build.txt" 2>&1; then
     failed=1; echo "nohttp: FAIL: go build -tags xo_nohttp ./std/rt ($logs/nohttp-build.txt)"
   else
-    full nohttp ./internal/devgoldens -short -run 'Go|Replay|Holes'
+    # the Go backend's goldens only: 'Go|Replay|Holes' matched every
+    # TestDevGoldens* (#249, internal/repotest TestGateRunPatterns)
+    full nohttp ./internal/devgoldens -short -run '^TestDevGoldensGo$'
   fi
   [ "$failed" = 0 ] && ran="$ran nohttp"
   [ "$f0" = 1 ] && failed=1
