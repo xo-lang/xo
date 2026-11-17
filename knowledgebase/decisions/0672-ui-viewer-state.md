@@ -164,6 +164,36 @@ What it does not cover, against the draft:
 So far the query alone holds the shop's tab state, and the typed `T`
 and `TA` of the draft are not needed for it.
 
+## User state built (2026-11-17)
+
+`App.with_user(init, update, view)` and `on_user(event, act)`, part 2
+of the draft with these choices:
+
+- The state is kept as JSON text: `UserPart` erases `U` and `UA` so the
+  Host keeps its two type parameters. Each principal's state is a
+  `Slot[Str, Str]` in its own scope, `"~user/" + principal`, in the
+  Host's store, so it has its own log, `keep`, store and bus key; a
+  change publishes that scope and wakes only the principal's live
+  connections (`Sub.uwake`): a `"u<ver>"` text message, or with push
+  (0689) a frame carrying `uver`.
+- User acts go in the sync's `user` part with their own seqs per client
+  and the same ack rules as Msgs; a client of another principal is 403.
+  An act that does not decode is acknowledged and logged as refused.
+- Emitted Msgs are applied after the user commit, each through `allow`
+  as the principal's: at most once. If the process dies or the shared
+  apply fails between the two writes, the user state moved and the
+  Msgs are lost. Exactly once would need the shared entry to carry the
+  user act's id (an outbox) and is left for when an app needs it.
+- The runtime does not predict user acts (the wasm client would need
+  the user update compiled in); an act shows when its sync returns.
+- Tab state stays the page's query (above); `view(m, u, query)`.
+
+Test: two devices of ann share the state, bob's is apart, bob on ann's
+client is 403, a live page of ann is woken and bob's is not; ann's act
+emits a shared Add, eve's is refused by allow. The Node harness checks
+the runtime sends user acts apart, once each, and syncs on `u<n>` only
+when its state is older.
+
 ## Open questions for the prototype
 
 - Are two parts (tab and user) worth the type parameters, or is one

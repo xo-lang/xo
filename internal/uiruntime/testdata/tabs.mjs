@@ -19,7 +19,7 @@ function storage() {
   };
 }
 const local = storage();
-const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [], seen: null, seens: [], search: "", queries: [], sync: "/_xo/sync", urls: [] };
+const server = { acked: new Map(), applied: [], down: false, status: 200, reloads: 0, build: "", syncs: 0, live: null, sockets: [], seen: null, seens: [], search: "", queries: [], sync: "/_xo/sync", urls: [], user: false, uacked: new Map(), uapplied: [], ups: [] };
 function receive(up) {
   let a = server.acked.get(up.client) ?? 0;
   for (const e of up.msgs) {
@@ -28,9 +28,22 @@ function receive(up) {
     server.applied.push(e.msg);
   }
   server.acked.set(up.client, a);
+  // the principal's own state (App.with_user): its own seqs per client
+  let user;
+  if (up.user) {
+    server.ups.push(up.user.ver);
+    let ua = server.uacked.get(up.client) ?? 0;
+    for (const e of up.user.msgs) {
+      if (e.seq <= ua) continue;
+      ua = e.seq;
+      server.uapplied.push(e.msg);
+    }
+    server.uacked.set(up.client, ua);
+    user = { ver: server.uapplied.length, acked: ua, state: JSON.stringify({ n: server.uapplied.length }) };
+  }
   server.seens.push(up.seen ?? "(none)");
   server.queries.push(up.query ?? "(none)");
-  return { down: { acked: a, reset: null, entries: [] }, ver: server.applied.length, html: "<p>" + server.applied.length + "</p>", build: server.build, seen: server.seen === null ? undefined : "d" + server.applied.length };
+  return { down: { acked: a, reset: null, entries: [] }, ver: server.applied.length, html: "<p>" + server.applied.length + (user ? " u" + user.ver : "") + "</p>", user, build: server.build, seen: server.seen === null ? undefined : "d" + server.applied.length };
 }
 
 class WS { constructor(u) { this.url = u; server.sockets.push(this); } close() {} }
@@ -43,7 +56,7 @@ function tab() {
     addEventListener: (n, f) => { handlers[n] = f; },
     contains: () => true,
   };
-  const stEl = { textContent: JSON.stringify({ ver: 0, model: {} }) };
+  const stEl = { textContent: JSON.stringify(server.user ? { ver: 0, model: {}, user: JSON.stringify({ n: server.uapplied.length }), uver: server.uapplied.length } : { ver: 0, model: {} }) };
   const listeners = {};
   const docHandlers = {};
   const timers = [];
@@ -75,7 +88,11 @@ function tab() {
   vm.runInNewContext(src, ctx);
   return {
     click(msg) {
-      const t = { getAttribute: () => JSON.stringify(msg), closest() { return t; }, name: "", form: null };
+      const t = { getAttribute: (k) => (k === "data-xo-click" ? JSON.stringify(msg) : null), closest(sel) { return sel === "[data-xo-click]" ? t : null; }, name: "", form: null };
+      handlers.click({ target: t, preventDefault() {} });
+    },
+    uclick(act) {
+      const t = { getAttribute: (k) => (k === "data-xo-uclick" ? JSON.stringify(act) : null), closest(sel) { return sel === "[data-xo-uclick]" ? t : null; }, name: "", form: null };
       handlers.click({ target: t, preventDefault() {} });
     },
     pagehide() { listeners.pagehide?.(); },
@@ -180,5 +197,23 @@ if (scenario === "pointer") {
   const afterUp = a.view();
   a.flush();
   extra = { before, during, afterUp, after: a.view() };
+}
+if (scenario === "user") {
+  // acts on the principal's own state (on_user): sent apart from shared
+  // Msgs with their own seqs, once each; a "u<n>" from the live socket
+  // syncs a page whose state is older; a second tab starts from the state
+  server.user = true;
+  server.live = "/_xo/live";
+  const a = tab(); await settle();
+  a.uclick({ Type: { s: "hi" } }); await settle();
+  a.uclick("Post"); await settle();
+  await click(a, "a1");
+  const ws = server.sockets[0];
+  const s0 = server.syncs;
+  ws.onmessage({ data: "u2" }); await settle();
+  const s1 = server.syncs;
+  ws.onmessage({ data: "u3" }); await settle();
+  const b = tab(); await settle();
+  extra = { before: server.uapplied.join("|"), during: String(s1 - s0) + "," + String(server.syncs - s1), after: a.view(), afterUp: server.ups.join(",") };
 }
 console.log(JSON.stringify({ sent, applied: server.applied.map((m) => m.Add.title), clients: server.acked.size, ...extra }));

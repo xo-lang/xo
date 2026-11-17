@@ -216,6 +216,31 @@ func TestSyncSendsPageQuery(t *testing.T) {
 	}
 }
 
+// Acts on the principal's own state (on_user, decision 0672) go in the
+// sync's user part with their own seqs, each once, never as shared Msgs;
+// the page's view and state follow the reply; a "u<n>" on the live socket
+// syncs only a page whose state is older.
+func TestUserActsSyncApart(t *testing.T) {
+	r := run(t, "user")
+	if r.Before != `{"Type":{"s":"hi"}}|"Post"` {
+		t.Errorf("user acts applied %q, want the two acts once each", r.Before)
+	}
+	if strings.Join(r.Applied, ",") != "a1" {
+		t.Errorf("shared Msgs applied %v, want [a1]", r.Applied)
+	}
+	if r.During != "0,1" {
+		t.Errorf("syncs after u2 and u3 %q, want 0,1", r.During)
+	}
+	if r.After != "<p>1 u2</p>" {
+		t.Errorf("view %q, want <p>1 u2</p>", r.After)
+	}
+	// Type, Post, the shared click (the page has user state), the u3 wake;
+	// the second tab starts from the served state and does not sync
+	if r.AfterUp != "0,1,2,2" {
+		t.Errorf("user versions sent %q, want 0,1,2,2", r.AfterUp)
+	}
+}
+
 func TestScopedSyncURLKeepsPage(t *testing.T) {
 	r := run(t, "scoped")
 	if r.Before != "/_xo/sync?page=%2Froom%2F1&thin=1" {

@@ -44,6 +44,24 @@ on the instance that committed it, and applies a command's answer as a
 server Msg. Refused Msgs plan none; an instance that loses an append race
 does not run the winner's commands. At most once.
 
+## 2026-11-17: feature: user state across devices (App.with_user, on_user)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #186 (std/evidence/ui/features.md item 91; decision 0672 part 2)
+- Go reference: none
+- Test: std/ui "a principal's own state is the same on each of its devices and no one else's (decision 0672)", "a principal's act emits shared Msgs as that principal, through allow (decision 0672)", "on_user renders the act as JSON in a data-xo-u attribute"; internal/uiruntime TestUserActsSyncApart
+- Timing: none (an App without user state sends and does what it did)
+- Shipped in: not yet released
+
+`App.with_user(init, update, view)` keeps a state per signed in
+principal, synced to each of its devices through the sync's `user`
+part, and `on_user(event, act)` sends an act to it. An act may emit
+shared Msgs, applied as the principal's through `allow`. Each
+principal's state is its own scope in the Host's store, so a change
+wakes only that principal's live pages. A Host with user state and no
+`auth` faults.
+
 ## 2026-11-16: feature: leases route a hot scope's syncs to one instance (decision 0686)
 
 - Kind: feature

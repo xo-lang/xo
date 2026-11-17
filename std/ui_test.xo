@@ -1884,3 +1884,94 @@ test "two Hosts on one store run each command once, after a lost race too" {
   let m = sc.model()
   expect((m.todos.get("x")?.stars, m.todos.get("y")?.stars, m.todos.get("z")?.stars)) == (1, 1, 1)
 }
+
+// ---- decision 0672: each principal's own state (App.with_user) ----
+
+struct Draft {
+  text: Str
+  posts: Int
+} derive Eq, Json, Debug
+
+enum DraftAct {
+  Type(s: Str)
+  Post
+} derive Eq, Json, Debug
+
+fn draft_update(m: Model, d: Draft, a: DraftAct) -> (Draft, List[Msg]) {
+  match a {
+    DraftAct.Type(s) => (Draft{text: s, posts: d.posts}, [])
+    DraftAct.Post => (Draft{text: "", posts: d.posts + 1}, [Msg.Add(id: "p${m.todos.len()}", title: d.text)])
+  }
+}
+
+fn draft_view(m: Model, d: Draft, q: url.Values) -> Html {
+  el("main", [], [view(m), el("p", [attr("id", "draft")], [text("draft: ${d.text}")]), el("input", [on_user("change", DraftAct.Type(s: "x"))])])
+}
+
+fn draft_app() -> App[Model, Msg] {
+  todo_app().with_user(Draft{text: "", posts: 0}, draft_update, draft_view)
+}
+
+fn uact(seq: Int, a: DraftAct) -> Envelope[Str] {
+  Envelope{seq: seq, msg: json.encode_str(a)}
+}
+
+test "on_user renders the act as JSON in a data-xo-u attribute" {
+  expect(render(el("button", [on_user("click", DraftAct.Post)]))) == "<button data-xo-uclick=\"&#34;Post&#34;\"></button>"
+}
+
+test "a principal's own state is the same on each of its devices and no one else's (decision 0672)" {
+  let h = host(draft_app(), auth: Some(auth_hdr))
+  let r = routes_for(h)
+  let (ida, cha) = h.subscribe("ann")
+  let (idb, chb) = h.subscribe("bob")
+  // ann types on her phone
+  let s1 = sync_as(r, "ann", Up{client: "phone", ver: 0, msgs: [], user: Some(UserUp{ver: 0, msgs: [uact(1, DraftAct.Type(s: "buy milk"))]})})?
+  let u1 = s1.user ?? return Err("no user state")
+  expect(u1.acked) == 1
+  expect(u1.ver) == 1
+  expect(json.decode_str[Draft](u1.state).ok()) == Some(Draft{text: "buy milk", posts: 0})
+  expect(s1.html.contains("draft: buy milk")) == true
+  // her live pages learn of it, bob's do not
+  expect(cha.try_recv()) == Some(-2)
+  expect(h.uwoken(ida)) == true
+  expect(chb.try_recv()) == None
+  expect(h.uwoken(idb)) == false
+  // her laptop sees the draft on load and on sync; a retry is applied once
+  expect(r.call(http.new_request("GET", "/", headers: {"X-User": "ann"})).text()?.contains("draft: buy milk")) == true
+  let s2 = sync_as(r, "ann", Up{client: "laptop", ver: 0, msgs: [], user: Some(UserUp{ver: 0, msgs: []})})?
+  expect((s2.user ?? return Err("no user state")).ver) == 1
+  expect(s2.html.contains("draft: buy milk")) == true
+  let s3 = sync_as(r, "ann", Up{client: "phone", ver: 0, msgs: [], user: Some(UserUp{ver: 1, msgs: [uact(1, DraftAct.Type(s: "buy milk"))]})})?
+  expect((s3.user ?? return Err("no user state")).ver) == 1
+  // bob never sees it
+  expect(r.call(http.new_request("GET", "/", headers: {"X-User": "bob"})).text()?.contains("buy milk")) == false
+  let sb = sync_as(r, "bob", Up{client: "bob1", ver: 0, msgs: [], user: Some(UserUp{ver: 0, msgs: []})})?
+  expect(sb.html.contains("buy milk")) == false
+  // a client of ann's is not bob's for his own state either
+  let up = json.encode_str(Up[Msg]{client: "phone", ver: 0, msgs: [], user: Some(UserUp{ver: 0, msgs: [uact(2, DraftAct.Type(s: "bob"))]})})
+  expect(r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json", "X-User": "bob"}, body: up.bytes())).status) == 403
+  h.unsubscribe(ida)
+  h.unsubscribe(idb)
+}
+
+test "a principal's act emits shared Msgs as that principal, through allow (decision 0672)" {
+  let allow = fn(m: Model, p: Str, e: Msg) -> Bool { p != "eve" }
+  let h = host(draft_app(), auth: Some(auth_hdr), allow: Some(allow))
+  let r = routes_for(h)
+  let s1 = sync_as(r, "ann", Up{client: "a", ver: 0, msgs: [], user: Some(UserUp{ver: 0, msgs: [uact(1, DraftAct.Type(s: "ann post")), uact(2, DraftAct.Post)]})})?
+  expect((s1.user ?? return Err("no user state")).ver) == 2
+  expect(s1.ver) == 1
+  expect(s1.html.contains("ann post")) == true
+  expect(h.model().todos.len()) == 1
+  // eve's act changes her own state, and allow refuses what it emits
+  let s2 = sync_as(r, "eve", Up{client: "e", ver: 1, msgs: [], user: Some(UserUp{ver: 0, msgs: [uact(1, DraftAct.Type(s: "eve post")), uact(2, DraftAct.Post)]})})?
+  expect(json.decode_str[Draft]((s2.user ?? return Err("no user state")).state).ok()) == Some(Draft{text: "", posts: 1})
+  expect(h.model().todos.len()) == 1
+  expect(s2.html.contains("eve post")) == false
+  // an act that does not decode is acknowledged and changes nothing
+  let s3 = sync_as(r, "ann", Up{client: "a", ver: 1, msgs: [], user: Some(UserUp{ver: 2, msgs: [Envelope{seq: 3, msg: "{\"Nope\":1}"}]})})?
+  let u3 = s3.user ?? return Err("no user state")
+  expect(u3.acked) == 3
+  expect(json.decode_str[Draft](u3.state).ok()) == Some(Draft{text: "", posts: 1})
+}

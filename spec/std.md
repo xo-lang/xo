@@ -11845,6 +11845,7 @@ pub struct App[M, E] { pub init: M, pub update: fn(M, E) -> M, pub view: fn(M) -
 pub fn app[M, E](init: M, update: fn(M, E) -> M, view: fn(M) -> Html) -> App[M, E]   // confirm says false
 fn (a: App[M, E]) confirming(confirm: fn(E) -> Bool) -> App[M, E]
 fn (a: App[M, E]) with_url_view(view: fn(M, url.Values) -> Html) -> App[M, E]   // tab state: the view reads the page's query
+fn (a: App[M, E]) with_user[U: Json, UA: Json](init: U, update: fn(M, U, UA) -> (U, List[E]), view: fn(M, U, url.Values) -> Html) -> App[M, E]   // user state (needs auth)
 
 pub enum Html { Text(s: Str), El(tag: Str, attrs: List[Attr], kids: List[Html]) }
 pub struct Attr { pub name: Str, pub value: Str }
@@ -11852,6 +11853,7 @@ pub fn text(s: Str) -> Html
 pub fn el(tag: Str, attrs: List[Attr] = [], kids: List[Html] = []) -> Html
 pub fn attr(name: Str, value: Str) -> Attr
 pub fn on[E: Json](event: Str, msg: E) -> Attr       // data-xo-EVENT holding msg as JSON
+pub fn on_user[UA: Json](event: Str, act: UA) -> Attr  // data-xo-uEVENT: an act on the principal's own state
 pub fn render(h: Html) -> Str
 pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "", query: Str = "") -> Str
 pub fn field(name: Str) -> Str                         // a form value placeholder for a Msg's Str field
@@ -12157,6 +12159,25 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   the page's `location.search` without the "?") and each prediction
   (`ClientIn.query`) render with that query; a query that does not parse
   reads as empty, and an App without `url_view` ignores it.
+- User state (decision 0672, Proposed; prototype). `with_user(init,
+  update, view)` gives each principal a `U` of its own (a draft, a cart,
+  settings), the same on every device it signs in on and never shown to
+  another principal. `on_user(event, act)` sends a `UA` to it: the
+  runtime queues user acts apart from shared Msgs, with their own seqs,
+  and sends them in the sync's `user` part (`UserUp{ver, msgs}`); the
+  reply's `user` (`UserDown{ver, acked, state}`) carries the state as
+  JSON text. The server applies each act once, in seq order, with
+  `update(shared model, state, act)`; an act that does not decode is
+  acknowledged and changes nothing. The Msgs it returns are applied to
+  the shared model as the principal's, each through `allow`, at most
+  once (a failure of the shared apply after the user state was written
+  drops them). Each principal's state is its own scope in the Host's
+  store (`~user/` and the principal) with its own log and `keep`; a
+  change wakes that principal's live pages only (a `u<ver>` message, or
+  a pushed view with `uver`). The view renders the shared model
+  (redacted), the state and the page's query. A Host given user state
+  and no `auth` faults. The wasm client predicts shared Msgs only: a
+  user act shows when its sync returns.
 - Principals and authorization (decision 0664, stage 4a). With `auth`,
   every route asks it for the request's principal (an id string; roles
   live in the model) and answers 401 when it gives None. A client id

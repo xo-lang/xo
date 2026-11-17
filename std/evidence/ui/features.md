@@ -88,7 +88,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 
 - [x] tab state: with_url_view renders the page's query | 0672 | `std/ui_test.xo:with_url_view renders the page's query on the page, a sync and a prediction`
 - [x] a sync sends the page's query | 0672 | `internal/uiruntime/runtime_test.go:TestSyncSendsPageQuery`
-- [ ] user state across devices (a typed per-user part, views over two scopes) | 0672, 0686 plan step 6 | not built
+- [x] user state across devices (a typed per-user part, views over two scopes) | 0672, 0686 plan step 6 | `with_user`, `on_user`; std/ui "a principal's own state is the same on each of its devices and no one else's", "a principal's act emits shared Msgs as that principal, through allow"; internal/uiruntime TestUserActsSyncApart (2026-11-17)
 - [ ] 0672 plan steps 2 to 4: 2/20/200 user measurements, two-device property test | 0672 | open
 
 ## Scopes, stores and buses (0686)

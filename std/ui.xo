@@ -45,6 +45,19 @@ pub struct App[M, E] {
   /// booking): a replica never predicts it, and lists it in awaiting()
   /// until the server's log has it.
   pub confirm: fn(E) -> Bool
+  // The per-user part (with_user), None without one.
+  user: UserPart[M, E]? = None
+}
+
+// A user state part (decision 0672) with its types erased to JSON text,
+// so a Host keeps every principal's state in a scope of its own whatever
+// U and UA are: init is U's start, step one act (None: an act or a state
+// that does not decode, which leaves the state as it is) and view the
+// page for the shared model and the principal's state.
+struct UserPart[M, E] {
+  init: Str
+  step: fn(M, Str, Str) -> (Str, List[E])?
+  view: fn(M, Str, url.Values) -> Html
 }
 
 /// An App whose Msgs all show at once (confirm says false for each).
@@ -54,7 +67,7 @@ pub fn app[M, E](init: M, update: fn(M, E) -> M, view: fn(M) -> Html) -> App[M, 
 
 /// The same App with confirm deciding which Msgs wait for the server.
 pub fn (a: App[M, E]) confirming(confirm: fn(E) -> Bool) -> App[M, E] {
-  App{init: a.init, update: a.update, view: a.view, url_view: a.url_view, confirm: confirm}
+  App{init: a.init, update: a.update, view: a.view, url_view: a.url_view, confirm: confirm, user: a.user}
 }
 
 /// The same App whose view also reads the page's query: tab state (a
@@ -64,12 +77,39 @@ pub fn (a: App[M, E]) confirming(confirm: fn(E) -> Bool) -> App[M, E] {
 /// page layer of decision 0670 fetches the new URL and morphs the page);
 /// the shared model is not touched, and other viewers see nothing.
 pub fn (a: App[M, E]) with_url_view(view: fn(M, url.Values) -> Html) -> App[M, E] {
-  App{init: a.init, update: a.update, view: a.view, url_view: Some(view), confirm: a.confirm}
+  App{init: a.init, update: a.update, view: a.view, url_view: Some(view), confirm: a.confirm, user: a.user}
+}
+
+/// The same App with state of each signed in user (decision 0672): a
+/// U per principal, the same on every device it signs in on, that other
+/// principals never see (a draft, a cart, settings, what was last read).
+/// An act (`on_user`) changes it with update, given the shared model,
+/// and may emit shared Msgs, which go through `allow` as the principal's;
+/// view shows the shared model, the user's state and the page's query.
+/// A Host refuses user state without `auth` (a fault at host).
+pub fn (a: App[M, E]) with_user[U: Json, UA: Json](init: U, update: fn(M, U, UA) -> (U, List[E]), view: fn(M, U, url.Values) -> Html) -> App[M, E] {
+  let part = UserPart[M, E]{
+    init: json.encode_str(init),
+    step: fn(m: M, u: Str, ua: Str) -> (Str, List[E])? {
+      let cur = json.decode_str[U](u).ok() ?? return None
+      let act = json.decode_str[UA](ua).ok() ?? return None
+      let (next, msgs) = update(m, cur, act)
+      Some((json.encode_str(next), msgs))
+    },
+    view: fn(m: M, u: Str, q: url.Values) -> Html {
+      view(m, json.decode_str[U](u).ok() ?? init, q)
+    },
+  }
+  App{init: a.init, update: a.update, view: a.view, url_view: a.url_view, confirm: a.confirm, user: Some(part)}
 }
 
 // The page for m at a page whose query is query (without the "?"); a
 // query that does not parse reads as empty.
-fn (a: App[M, E]) show(m: M, query: Str) -> Html {
+fn (a: App[M, E]) show(m: M, query: Str, user: Str? = None) -> Html {
+  if let Some(up) = a.user {
+    let q = url.parse_query(query).ok() ?? url.values()
+    return (up.view)(m, user ?? up.init, q)
+  }
   match a.url_view {
     Some(f) => f(m, url.parse_query(query).ok() ?? url.values())
     None => (a.view)(m)
@@ -116,6 +156,14 @@ pub fn attr(name: Str, value: Str) -> Attr {
 /// `data-xo-click` holding msg as JSON, which the client runtime sends.
 pub fn on[E: Json](event: Str, msg: E) -> Attr {
   Attr{name: "data-xo-${event}", value: json.encode_str(msg)}
+}
+
+/// An event that sends act to the principal's own state (App.with_user):
+/// renders `data-xo-u` and the event (`data-xo-uclick`), queued apart from
+/// shared Msgs and synced to every device of the principal. `field`
+/// placeholders work as in `on`.
+pub fn on_user[UA: Json](event: Str, act: UA) -> Attr {
+  Attr{name: "data-xo-u${event}", value: json.encode_str(act)}
 }
 
 fn name_ok(s: Str) -> Bool {
@@ -238,6 +286,25 @@ pub struct Up[E] {
   pub seen: Str = ""
   /// The page's query (tab state, App.with_url_view), without the "?".
   pub query: Str = ""
+  /// The principal's own state (App.with_user, decision 0672): its
+  /// actions the server has not acknowledged.
+  pub user: UserUp? = None
+} derive Json
+
+/// A client's sync of its principal's state (App.with_user): the user
+/// version it has and its actions (each msg the action's JSON text),
+/// numbered from 1 per client as Envelopes are.
+pub struct UserUp {
+  pub ver: Int
+  pub msgs: List[Envelope[Str]]
+} derive Json
+
+/// The principal's state after a sync: its version, the last seq of this
+/// client the server applied, and the state as JSON text.
+pub struct UserDown {
+  pub ver: Int
+  pub acked: Int
+  pub state: Str
 } derive Json
 
 /// The model at a log version, sent to a client too far behind for the
@@ -1314,6 +1381,10 @@ fn (var r: Replica[M, E]) drop_through(seq: Int) {
 pub struct PageState[M] {
   pub ver: Int
   pub model: M
+  /// The principal's state as JSON text and its version (App.with_user);
+  /// "" and 0 without one.
+  pub user: Str = ""
+  pub uver: Int = 0
 } derive Json
 
 /// A whole HTML document for model at log version ver: the rendered view
@@ -1322,7 +1393,7 @@ pub struct PageState[M] {
 /// for the client runtime at runtime_src, which syncs with sync_url and,
 /// when live_url is not "", listens there for new versions. css,
 /// if any, goes in a `<style>` element in the head.
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "", query: Str = "") -> Str {
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "", query: Str = "", user: Str = "", uver: Int = 0) -> Str {
   var b = BytesBuilder.new()
   b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
   b.write_str(html.escape_string(title))
@@ -1359,12 +1430,12 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
     b.write_str(html.escape_string(seen))
   }
   b.write_str("\">")
-  write_html(b, app.show(model, query))
+  write_html(b, app.show(model, query, user: if user == "" { None } else { Some(user) }))
   b.write_str("</div><script type=\"application/json\" id=\"xo-state\">")
   // encode_str does not escape HTML; html_escape writes the JSON's
   // angle brackets and ampersands as escapes, so a model's text cannot
   // end the element.
-  b.write_str(json.html_escape(json.encode_str(PageState{ver: ver, model: model})))
+  b.write_str(json.html_escape(json.encode_str(PageState{ver: ver, model: model, user: user, uver: uver})))
   b.write_str("</script>")
   if runtime_src != "" {
     let src = if safe_url(runtime_src) { runtime_src } else { "about:invalid#xo-unsafe" }
@@ -1408,6 +1479,8 @@ pub struct Sync[M, E] {
   /// The digest of what this principal is shown (a Host with redact; ""
   /// otherwise): the client sends it back as Up.seen.
   pub seen: Str = ""
+  /// The principal's state (App.with_user), None without one.
+  pub user: UserDown? = None
 } derive Json
 
 // ---- the predicting client (decision 0659 stage 3) ----
@@ -1419,6 +1492,9 @@ pub struct ClientIn[M, E] {
   pub pending: List[E]
   /// The page's query (tab state, App.with_url_view), without the "?".
   pub query: Str = ""
+  /// The principal's confirmed state as JSON text (App.with_user), None
+  /// without one; its pending actions are not predicted.
+  pub user: Str? = None
 } derive Json
 
 /// What the client program answers: the view of the predicted model, and
@@ -1441,7 +1517,7 @@ pub fn predict[M, E](app: App[M, E], input: ClientIn[M, E]) -> ClientOut {
       m = (app.update)(m, e)
     }
   }
-  ClientOut{html: render(app.show(m, input.query)), awaiting: awaiting}
+  ClientOut{html: render(app.show(m, input.query, user: input.user)), awaiting: awaiting}
 }
 
 /// The main of an App's client program, built with `--targets=wasip1/wasm`
@@ -1649,7 +1725,15 @@ pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Eff
   next_sub: Atomic[Int]
   lease: Lease[lx]?
   commands: Commands[M, E, cx]?
+  // Each principal's own state (App.with_user, decision 0672): a scope
+  // USER_SCOPE+principal of the same store whose model is the state's
+  // JSON and whose log holds each new state.
+  uslots: Mutex[Map[Str, Slot[Str, Str, fx]]]
 }
+
+// The prefix of the scopes of App.with_user's states; scope_of never
+// gives one (404).
+const USER_SCOPE = "~user/"
 
 // One scope this instance serves: its copy of the log, the newest version
 // the bus announced, whether the bus may have missed notices (it
@@ -1673,6 +1757,7 @@ struct Slot[M: Json, E: Json, fx: Effects] {
 // A live frame of a scope at version ver.
 struct Frame {
   ver: Int
+  uver: Int
   text: Str
 }
 
@@ -1685,6 +1770,8 @@ struct Push {
   seen: Str
   build: Str
   q: Str
+  // the version of the principal's own state shown (App.with_user)
+  uver: Int = 0
 } derive Json
 
 // A sync's change and where its answer goes.
@@ -1699,8 +1786,9 @@ struct Waiting[M: Json, E: Json] {
 pub fn host[M: Json, E: Json, cx: Effects](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, commands: Commands[M, E, cx]? = None) -> Host[M, E, sync, sync, sync, cx] {
   let subs = Mutex[Map[Int, Sub]].new({})
   let slots = Mutex[Map[Str, Slot[M, E, sync]]].new({})
-  let bus = local_bus_of([waker(slots, subs)])
-  host_core(app, memory_store(), bus, "", scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {commands: commands}
+  let uslots = Mutex[Map[Str, Slot[Str, Str, sync]]].new({})
+  let bus = local_bus_of([waker(slots, uslots, subs)])
+  host_core(app, memory_store(), bus, "", scope_of, max_scopes, slots, uslots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {commands: commands}
 }
 
 /// A host whose scopes live in store, hearing other instances' appends on
@@ -1711,14 +1799,15 @@ pub fn host[M: Json, E: Json, cx: Effects](app: App[M, E], title: Str = "", css:
 pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, lease: Lease[lx]? = None, commands: Commands[M, E, cx]? = None) -> Host[M, E, fx, bx, lx, cx] uses bx {
   let subs = Mutex[Map[Int, Sub]].new({})
   let slots = Mutex[Map[Str, Slot[M, E, fx]]].new({})
-  (bus.subscribe)(waker(slots, subs))
-  host_core(app, store, bus, scope, scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {lease: lease, commands: commands}
+  let uslots = Mutex[Map[Str, Slot[Str, Str, fx]]].new({})
+  (bus.subscribe)(waker(slots, uslots, subs))
+  host_core(app, store, bus, scope, scope_of, max_scopes, slots, uslots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {lease: lease, commands: commands}
 }
 
 // What a Host hears from its bus: each instance's append (this one's
 // too) to a scope it holds wakes that scope's live connections; -1 (a
 // reconnect) makes every scope read the store again.
-fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], subs: Mutex[Map[Int, Sub]]) -> fn(Str, Int) uses sync {
+fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], uslots: Mutex[Map[Str, Slot[Str, Str, fx]]], subs: Mutex[Map[Int, Sub]]) -> fn(Str, Int) uses sync {
   fn(scope: Str, v: Int) uses sync {
     if v < 0 {
       slots.with_read(fn(m) {
@@ -1726,6 +1815,26 @@ fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], 
           sl.resync.set(1)
         }
       })
+      uslots.with_read(fn(m) {
+        for (_, sl) in m {
+          sl.resync.set(1)
+        }
+      })
+    } else if scope.starts_with(USER_SCOPE) {
+      // a principal's own state: its pages learn of it with uwake (their
+      // channel may hold a version already) and -2
+      if let Some(sl) = uslots.with_read(fn(m) { m.get(scope) }) {
+        sl.latest.max(v)
+      }
+      subs.with_read(fn(m) {
+        for (_, c) in m {
+          if USER_SCOPE + c.p == scope {
+            c.uwake.set(1)
+            let _sent = c.ch.try_send(-2)
+          }
+        }
+      })
+      return
     } else if let Some(sl) = slots.with_read(fn(m) { m.get(scope) }) {
       // a scope not held here is read from the store when next used
       sl.latest.max(v)
@@ -1733,6 +1842,9 @@ fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], 
     subs.with_read(fn(m) {
       for (_, c) in m {
         if v < 0 || c.key == scope {
+          if v < 0 {
+            c.uwake.set(1)
+          }
           let _sent = c.ch.try_send(v)
         }
       }
@@ -1740,8 +1852,11 @@ fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], 
   }
 }
 
-fn host_core[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx, lx, cx] {
-  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0), lease: None, commands: None}
+fn host_core[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], uslots: Mutex[Map[Str, Slot[Str, Str, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx, lx, cx] {
+  if app.user.is_some() && auth.is_none() {
+    fault("std/ui: App.with_user needs auth: each principal's state is its own")
+  }
+  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0), lease: None, commands: None, uslots: uslots}
 }
 
 // A live connection: its principal, its scope and its channel.
@@ -1749,6 +1864,8 @@ struct Sub {
   p: Str
   key: Str
   ch: Chan[Int]
+  // set when p's own state (App.with_user) changed
+  uwake: Atomic[Int]
 }
 
 // The slot of scope key, made (and the least recently used scope without
@@ -1763,11 +1880,34 @@ fn (h: Host[M, E, fx, bx, lx, cx]) slot(key: Str) -> Slot[M, E, fx] {
   for c in h.subs.with_read(fn(m) { m.values() }) {
     busy.add(c.key)
   }
-  let app = h.app
-  let st = h.store
-  let mb = h.max_batch
-  let cap = h.max_scopes
-  h.slots.with(fn(var m) {
+  slot_in(h.slots, h.app, h.store, key, h.max_batch, h.max_scopes, t, busy)
+}
+
+// The slot of p's own state (App.with_user), as slot.
+fn (h: Host[M, E, fx, bx, lx]) uslot(p: Str) -> Slot[Str, Str, fx] {
+  let key = USER_SCOPE + p
+  let t = h.tick.add(1)
+  if let Some(sl) = h.uslots.with_read(fn(m) { m.get(key) }) {
+    sl.used.set(t)
+    return sl
+  }
+  var busy: Set[Str] = #{}
+  for c in h.subs.with_read(fn(m) { m.values() }) {
+    busy.add(USER_SCOPE + c.p)
+  }
+  let init = match h.app.user {
+    Some(u) => u.init
+    None => "null"
+  }
+  // the log holds each new state, so a replica replays it as it is
+  let uapp = app(init, fn(_old: Str, next: Str) -> Str { next }, fn(_s: Str) -> Html { text("") })
+  slot_in(h.uslots, uapp, h.store, key, h.max_batch, h.max_scopes, t, busy)
+}
+
+// The slot of key in slots, made (and the least recently used one not in
+// busy dropped, past cap) when there is none.
+fn slot_in[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], app: App[M, E], st: Store[fx], key: Str, mb: Int, cap: Int, t: Int, busy: Set[Str]) -> Slot[M, E, fx] {
+  slots.with(fn(var m) {
     if let Some(sl) = m.get(key) {
       sl.used.set(t)
       return sl
@@ -1819,7 +1959,7 @@ fn (h: Host[M, E]) subscribe(p: Str = "", scope: Str? = None) -> (Int, Chan[Int]
   // versions that come while its connection is busy fold into one.
   let ch = Chan[Int].new(cap: 1)
   let key = scope ?? h.key
-  h.subs.with(fn(var m) { m.put(id, Sub{p: p, key: key, ch: ch}) })
+  h.subs.with(fn(var m) { m.put(id, Sub{p: p, key: key, ch: ch, uwake: Atomic[Int].new(0)}) })
   (id, ch)
 }
 
@@ -1835,6 +1975,16 @@ fn (h: Host[M, E]) news(p: Str, last: Str, key: Str? = None) -> Str? {
   }
   let d = h.digest(h.model(scope: key), p)
   if d == last { None } else { Some(d) }
+}
+
+// Whether p's own state changed since live connection id last asked.
+fn (h: Host[M, E]) uwoken(id: Int) -> Bool {
+  h.subs.with_read(fn(m) {
+    match m.get(id) {
+      Some(c) => c.uwake.swap(0) > 0
+      None => false
+    }
+  })
 }
 
 fn (h: Host[M, E]) unsubscribe(id: Int) {
@@ -2056,12 +2206,25 @@ pub fn (h: Host[M, E, fx, bx, lx, cx]) poll() -> Int uses (sync, fx) {
     }
     l
   })
-  let wake = waker(h.slots, h.subs)
-  var news = 0
+  // and each principal's own state held here (App.with_user)
+  let uheld = h.uslots.with_read(fn(m) {
+    var l: List[(Str, Int)] = []
+    for (k, sl) in m {
+      let mine = sl.state.with_read(fn(c) { c.version() })
+      let heard = sl.latest.get()
+      l.push((k, if heard > mine { heard } else { mine }))
+    }
+    l
+  })
+  var all: List[(Str, Int)] = []
   for (key, sl) in held {
     let mine = sl.state.with_read(fn(c) { c.version() })
     let heard = sl.latest.get()
-    let have = if heard > mine { heard } else { mine }
+    all.push((key, if heard > mine { heard } else { mine }))
+  }
+  let wake = waker(h.slots, h.uslots, h.subs)
+  var news = 0
+  for (key, have) in all + uheld {
     if let Ok(got) = (h.store.read)(key, have) {
       if !got.is_empty() {
         let b = got[got.len() - 1]
@@ -2088,6 +2251,78 @@ pub fn (h: Host[M, E, fx, bx, lx, cx]) poll_every(tasks: task.Group, clock: Cloc
       let _news = h.poll()
     }
   })
+}
+
+// p's own state now (App.with_user): its JSON text and version. A store
+// error leaves this instance's copy.
+fn (h: Host[M, E]) user_state(p: Str) -> (Str, Int) uses sync {
+  let sl = h.uslot(p)
+  let latest = sl.latest.get()
+  let again = sl.resync.swap(0) > 0
+  sl.state.with(fn(var c) {
+    let _ok = c.fresh(latest, again: again).is_ok()
+    (c.model(), c.version())
+  })
+}
+
+// Applies a sync's actions on p's own state (App.with_user) as client,
+// each next seq once (as receive_as), stepping them over the model p is
+// shown. Returns p's state after them and the Msgs they emitted; None
+// when the client belongs to another principal.
+fn (h: Host[M, E]) user_sync(p: Str, client: Str, uu: UserUp, shown: M) -> (UserDown, List[E])? ! Str uses sync {
+  let part = h.app.user ?? return Err("std/ui: the App has no with_user")
+  let sl = h.uslot(p)
+  let latest = sl.latest.get()
+  let again = sl.resync.swap(0) > 0
+  let (res, v0, v) = sl.state.with(fn(var c) -> (Result[(UserDown, List[E])?, Str], Int, Int) {
+    let b = c.version()
+    if let Err(e) = c.fresh(latest, again: again) {
+      return (Err(e), b, b)
+    }
+    let b2 = c.version()
+    if uu.msgs.is_empty() {
+      if let Some(o) = c.s.owners.get(client) {
+        if o != p {
+          return (Ok(None), b2, b2)
+        }
+      }
+      return (Ok(Some((UserDown{ver: b2, acked: c.s.applied(client), state: c.model()}, []))), b2, b2)
+    }
+    let r = c.commit(p, fn(var s: Server[Str, Str]) -> List[E]? {
+      match s.owners.get(client) {
+        Some(o) => if o != p { return None }
+        None => s.owners.put(client, p)
+      }
+      var out: List[E] = []
+      for e in uu.msgs {
+        let last = s.last_seq.get(client) ?? 0
+        if e.seq == last + 1 {
+          s.last_seq.put(client, e.seq)
+          match (part.step)(shown, s.model, e.msg) {
+            Some((u2, ms)) => {
+              s.model = u2
+              s.log.push(Entry{ver: s.version() + 1, client: client, seq: e.seq, msg: u2})
+              for m in ms {
+                out.push(m)
+              }
+            }
+            // an action that does not decode is acknowledged and dropped
+            None => s.log.push(Entry{ver: s.version() + 1, client: client, seq: e.seq, msg: s.model, refused: true})
+          }
+        }
+      }
+      Some(out)
+    })
+    match r {
+      Ok(Some(ms)) => (Ok(Some((UserDown{ver: c.version(), acked: c.s.applied(client), state: c.model()}, ms))), b2, c.version())
+      Ok(None) => (Ok(None), b2, b2)
+      Err(e) => (Err(e), b2, b2)
+    }
+  })
+  if v != v0 {
+    (h.bus.publish)(USER_SCOPE + p, v)
+  }
+  res
 }
 
 // Group commit for scope key: unless another request is writing, appends
@@ -2155,10 +2390,12 @@ fn (h: Host[M, E, fx, bx, lx, cx]) write_queued(key: Str, sl: Slot[M, E, fx]) us
 
 // The scope of a page (its path and query) for principal p.
 fn (h: Host[M, E]) scope_for(page: Str, p: Str) -> Str? {
-  match h.scope_of {
-    Some(f) => f(page, p)
-    None => Some(h.key)
+  let k = match h.scope_of {
+    Some(f) => f(page, p) ?? return None
+    None => h.key
   }
+  // the scopes of App.with_user's states are reached only as their own
+  if k.starts_with(USER_SCOPE) { None } else { Some(k) }
 }
 
 /// Adds the routes to r under prefix ("" or a path like "/todo"): GET
@@ -2231,7 +2468,8 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       return http.text(503, "std/ui: ${err}")
     }
     let m = shown(m0, p)
-    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync + named, css: css, live_url: live + named, wasm_url: wasm, build: build, seen: hh.digest(m0, p), query: req.url.to_url().raw_query)).with_header("Content-Type", "text/html; charset=utf-8")
+    let (us, uv) = if app.user.is_some() { hh.user_state(p) } else { ("", 0) }
+    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync + named, css: css, live_url: live + named, wasm_url: wasm, build: build, seen: hh.digest(m0, p), query: req.url.to_url().raw_query, user: us, uver: uv)).with_header("Content-Type", "text/html; charset=utf-8")
   }
   r.handle("GET ${prefix}/{$}", show_page)
   if h.scope_of.is_some() {
@@ -2273,6 +2511,36 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       }
     }
     let sl = hh.slot(key)
+    // the principal's own state first (App.with_user, decision 0672): its
+    // actions step over the model p is shown here, and the Msgs they emit
+    // go to the scope as p's, each asked of allow
+    var ud: UserDown? = None
+    let uu = up.user ?? UserUp{ver: -1, msgs: []}
+    if app.user.is_some() {
+      let mnow = sl.state.with_read(fn(c) { c.model() })
+      let (d, es) = match hh.user_sync(p, up.client, uu, shown(mnow, p)) {
+        Ok(Some(x)) => x
+        Ok(None) => return http.text(403, "std/ui: this client belongs to another principal")
+        Err(e) => return http.text(503, "std/ui: ${e}")
+      }
+      ud = Some(d)
+      if !es.is_empty() {
+        let done = Chan[Result[Down[M, E]?, Str]].new(cap: 1)
+        let emit = fn(var s: Server[M, E]) -> Down[M, E]? {
+          for e in es {
+            if ok(s.model, p, e) {
+              s.apply(e)
+            }
+          }
+          None
+        }
+        sl.queue.with(fn(var q) { q.push(Waiting{change: Change{principal: p, run: emit}, out: done}) })
+        hh.write_queued(key, sl)
+        if let Some(Err(e)) = done.recv() {
+          return http.text(503, "std/ui: ${e}")
+        }
+      }
+    }
     var res: Result[Down[M, E]?, Str] = Err("std/ui: a queued sync had no answer")
     if up.msgs.is_empty() {
       // answered from this copy, which the bus keeps current, without the
@@ -2310,10 +2578,14 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let down = if req.query("thin") == Some("1") || redact.is_some() { Down{acked: d.acked, reset: None, entries: [], refused: d.refused} } else { d }
     let with_model = if req.query("model") == Some("1") { Some(m) } else { None }
     let seen = hh.digest(m0, p)
-    if up.msgs.is_empty() && (up.ver == v || (seen != "" && up.seen == seen)) {
-      return http.json(200, Sync{down: down, ver: v, html: "", model: None, same: true, build: build, seen: seen})
+    let user_same = match ud {
+      Some(u) => uu.msgs.is_empty() && uu.ver == u.ver
+      None => true
     }
-    http.json(200, Sync{down: down, ver: v, html: render(app.show(m, up.query)), model: with_model, build: build, seen: seen})
+    if up.msgs.is_empty() && user_same && (up.ver == v || (seen != "" && up.seen == seen)) {
+      return http.json(200, Sync{down: down, ver: v, html: "", model: None, same: true, build: build, seen: seen, user: ud})
+    }
+    http.json(200, Sync{down: down, ver: v, html: render(app.show(m, up.query, user: ud.map(fn(u) { u.state }))), model: with_model, build: build, seen: seen, user: ud})
   })
   if !client.is_empty() {
     let gz = h.client_gz
@@ -2359,12 +2631,14 @@ fn (h: Host[M, E]) frame(key: Str, p: Str, q: Str, build: Str) -> Str {
     (c.model(), c.version())
   })
   let seen = h.digest(m0, p)
-  let vk = "${q}\n${seen}"
+  // with App.with_user the view is p's own at its state's version
+  let (us, uv) = if h.app.user.is_some() { h.user_state(p) } else { ("", 0) }
+  let vk = if h.app.user.is_some() { "${q}\n${seen}\n${p}\n${uv}" } else { "${q}\n${seen}" }
   let app = h.app
   // a frame already rendered for this version, under a share
   let ready: Str? = sl.frames.with_read(fn(fs) -> Str? {
     if let Some(f) = fs.get(vk) {
-      if f.ver == v {
+      if f.ver == v && f.uver == uv {
         return Some(f.text)
       }
     }
@@ -2378,15 +2652,15 @@ fn (h: Host[M, E]) frame(key: Str, p: Str, q: Str, build: Str) -> Str {
   // xo:allow XO0804 ready is only a hint: this with looks the frame up again
   sl.frames.with(fn(var fs) -> Str {
     if let Some(f) = fs.get(vk) {
-      if f.ver == v {
+      if f.ver == v && f.uver == uv {
         return f.text
       }
     }
-    let text = json.encode_str(Push{ver: v, html: render(app.show(h.shown(m0, p), q)), seen: seen, build: build, q: q})
+    let text = json.encode_str(Push{ver: v, html: render(app.show(h.shown(m0, p), q, user: if app.user.is_some() { Some(us) } else { None })), seen: seen, build: build, q: q, uver: uv})
     if fs.len() >= 256 {
       fs = {}
     }
-    fs.put(vk, Frame{ver: v, text: text})
+    fs.put(vk, Frame{ver: v, uver: uv, text: text})
     text
   })
 }
@@ -2409,6 +2683,17 @@ fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str, k
     s.spawn_background(fn() {
       var last = first
       for v in ch {
+        // p's own state moved (App.with_user): the page syncs it, or is
+        // pushed its view
+        if h.uwoken(id) && h.app.user.is_some() {
+          let um = if let Some(q) = push { h.frame(key, p, q, build) } else { "u${h.user_state(p).1}" }
+          if conn.write_text(um) is Err(_) {
+            break
+          }
+        }
+        if v == -2 {
+          continue
+        }
         // with redact, only a change to what p is shown
         if let Some(d) = h.news(p, last, key: Some(key)) {
           last = d
@@ -2528,14 +2813,22 @@ function boot(){
   var next=(saved&&saved.next)||1;
   var queue=(saved&&saved.queue)||[];
   var acked=(saved&&saved.acked)||0;
+  // the principal's own actions (App.with_user, decision 0672), sent
+  // with their own seqs; they are not predicted
+  var hasUser=typeof st.user==="string"&&st.user!=="";
+  var uconfirmed=hasUser?st.user:null,uver=st.uver||0;
+  var unext=(saved&&saved.unext)||1;
+  var uqueue=(saved&&saved.uqueue)||[];
+  var uacked=(saved&&saved.uacked)||0;
+  function waiting(){return queue.length+uqueue.length;}
   // the digest of the page shown (Sync.seen): a Host with redact answers
   // `same` while this viewer's page did not change
   var dg=root.getAttribute("data-xo-seen")||"";
   var ver=st.ver;
   var last=root.innerHTML;
   var busy=false,again=false;
-  function save(free){try{localStorage.setItem(KEY+"|"+client,JSON.stringify({client:client,next:next,queue:queue,acked:acked,seen:Date.now(),free:!!free}));}catch(e){}}
-  function mark(){var h=H();if(queue.length)h.setAttribute("data-xo-pending","");else h.removeAttribute("data-xo-pending");}
+  function save(free){try{localStorage.setItem(KEY+"|"+client,JSON.stringify({client:client,next:next,queue:queue,acked:acked,unext:unext,uqueue:uqueue,uacked:uacked,seen:Date.now(),free:!!free}));}catch(e){}}
+  function mark(){var h=H();if(waiting())h.setAttribute("data-xo-pending","");else h.removeAttribute("data-xo-pending");}
   function fill(v,get){
     if(typeof v==="string"&&v.charAt(0)===MARK){var x=get(v.slice(1));return x==null?"":String(x);}
     if(Array.isArray(v))return v.map(function(e){return fill(e,get);});
@@ -2585,22 +2878,25 @@ function boot(){
   function predict(q){
     if(!mod||stopped)return false;
     var r;
-    try{r=JSON.parse(run(JSON.stringify({model:confirmed,pending:queue.map(function(e){return e.msg;}),query:q==null?location.search.slice(1):q})));}catch(e){return false;}
+    try{r=JSON.parse(run(JSON.stringify({model:confirmed,user:uconfirmed,pending:queue.map(function(e){return e.msg;}),query:q==null?location.search.slice(1):q})));}catch(e){return false;}
     show(r.html);
     var h=H();if(r.awaiting>0)h.setAttribute("data-xo-awaiting",String(r.awaiting));else h.removeAttribute("data-xo-awaiting");
     return true;
   }
   function send(msg){queue.push({seq:next++,msg:msg});save();mark();predict();sync();}
+  function usend(msg){uqueue.push({seq:unext++,msg:JSON.stringify(msg)});save();mark();sync();}
   function sync(){
     if(dead)return;
     if(busy){again=true;return;}
     busy=true;
     var msgs=queue.filter(function(e){return e.seq>acked;});
-    fetch(url+(url.indexOf("?")<0?"?":"&")+(mod?"thin=1&model=1":"thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:client,ver:ver,msgs:msgs,seen:dg,query:location.search.slice(1)}),credentials:"same-origin"})
+    var up={client:client,ver:ver,msgs:msgs,seen:dg,query:location.search.slice(1)};
+    if(hasUser||uqueue.length)up.user={ver:uver,msgs:uqueue.filter(function(e){return e.seq>uacked;})};
+    fetch(url+(url.indexOf("?")<0?"?":"&")+(mod?"thin=1&model=1":"thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(up),credentials:"same-origin"})
     .then(function(r){
       var h=H();
       if(dead)throw new Error("sync dead");
-      if(r.status===403){try{localStorage.removeItem(KEY+"|"+client);sessionStorage.removeItem(KEY);}catch(e){}queue=[];if(!stopped)location.reload();throw new Error("sync 403");}
+      if(r.status===403){try{localStorage.removeItem(KEY+"|"+client);sessionStorage.removeItem(KEY);}catch(e){}queue=[];uqueue=[];if(!stopped)location.reload();throw new Error("sync 403");}
       if(r.status===401){h.setAttribute("data-xo-signed-out","");throw new Error("sync 401");}
       h.removeAttribute("data-xo-signed-out");
       if(!r.ok)throw new Error("sync "+r.status);return r.json();})
@@ -2609,6 +2905,7 @@ function boot(){
       if(s.down.acked>acked)acked=s.down.acked;
       if(s.down.refused>0)H().setAttribute("data-xo-refused",String(s.down.refused));else H().removeAttribute("data-xo-refused");
       queue=queue.filter(function(e){return e.seq>acked;});
+      if(s.user){if(s.user.acked>uacked)uacked=s.user.acked;uqueue=uqueue.filter(function(e){return e.seq>uacked;});uver=s.user.ver;uconfirmed=s.user.state;hasUser=true;}
       ver=s.ver;dg=s.seen||"";
       if(s.model!=null)confirmed=s.model;
       if(!(queue.length&&predict())){if(!s.same)show(s.html);H().removeAttribute("data-xo-awaiting");}
@@ -2617,23 +2914,24 @@ function boot(){
       // a new build is served: reload once nothing waits to be sent and no
       // input is being typed in (the new page runs the new runtime)
       if(s.build&&build&&s.build!==build&&!stopped){stale=true;H().setAttribute("data-xo-stale","");}
-      if(stale&&!stopped&&!queue.length&&!editing())location.reload();
+      if(stale&&!stopped&&!waiting()&&!editing())location.reload();
     })
     .catch(function(e){if(!/sync (40[13]|dead)/.test(String(e)))H().setAttribute("data-xo-offline","");})
     .then(function(){busy=false;if(again){again=false;sync();}});
   }
-  function handler(ev,name){
-    var t=ev.target&&ev.target.closest?ev.target.closest("[data-xo-"+name+"]"):null;
+  function handler(ev,name,u){
+    var at="data-xo-"+(u?"u":"")+name;
+    var t=ev.target&&ev.target.closest?ev.target.closest("["+at+"]"):null;
     if(!t||!root.contains(t))return;
     var msg;
-    try{msg=JSON.parse(t.getAttribute("data-xo-"+name));}catch(e){return;}
+    try{msg=JSON.parse(t.getAttribute(at));}catch(e){return;}
     var get;
     if(name==="submit"){ev.preventDefault();var fd=new FormData(t);get=function(k){return fd.get(k);};}
     else{if(name==="click")ev.preventDefault();get=function(k){if(t.name===k)return t.type==="checkbox"?(t.checked?"on":""):t.value;var f=t.form;var e=f&&f.elements[k];return e?e.value:null;};}
-    send(fill(msg,get));
+    if(u)usend(fill(msg,get));else send(fill(msg,get));
     if(name==="submit"&&t.reset)t.reset();
   }
-  ["click","submit","change"].forEach(function(n){on(root,n,function(ev){handler(ev,n);});});
+  ["click","submit","change"].forEach(function(n){on(root,n,function(ev){handler(ev,n,false);handler(ev,n,true);});});
   function connect(){
     if(!live||!window.WebSocket)return;
     // a thin page is sent each new view (decision 0689)
@@ -2642,15 +2940,16 @@ function boot(){
     ws.onopen=function(){wsUp=true;backoff=1000;sync();};// catch up on what changed while the socket was down
     ws.onmessage=function(ev){
       var d=String(ev.data);
-      if(d.charAt(0)!=="{"){if(+d>ver||queue.length)sync();return;}
+      if(d.charAt(0)==="u"){if(+d.slice(1)>uver||waiting())sync();return;}
+      if(d.charAt(0)!=="{"){if(+d>ver||waiting())sync();return;}
       var f;try{f=JSON.parse(d);}catch(e){sync();return;}
       // a page with Msgs to send, a sync in flight, a predicting client or
       // another query syncs instead
-      if(queue.length||busy||mod||f.q!==location.search.slice(1)){if(f.ver>ver||queue.length)sync();return;}
-      if(f.ver<=ver)return;
-      ver=f.ver;dg=f.seen||"";show(f.html);
+      if(waiting()||busy||mod||f.q!==location.search.slice(1)){if(f.ver>ver||(f.uver||0)!==uver||waiting())sync();return;}
+      if(f.ver<ver||(f.ver===ver&&(f.uver||0)===uver))return;
+      ver=f.ver;uver=f.uver||0;dg=f.seen||"";show(f.html);
       if(f.build&&build&&f.build!==build&&!stopped){stale=true;H().setAttribute("data-xo-stale","");}
-      if(stale&&!stopped&&!queue.length&&!editing())location.reload();
+      if(stale&&!stopped&&!waiting()&&!editing())location.reload();
     };
     ws.onclose=function(){wsUp=false;if(stopped)return;setTimeout(connect,backoff);backoff=Math.min(backoff*2,30000);};
   }
@@ -2658,16 +2957,16 @@ function boot(){
   on(window,"pagehide",function(){save(true);});
   on(window,"pageshow",function(){save();});
   on(document,"visibilitychange",function(){if(!document.hidden){save();sync();}});
-  iv=setInterval(function(){if(stopped){if(dead||!queue.length){clearInterval(iv);if(drainers[KEY]===kill)delete drainers[KEY];}else sync();return;}if(stale&&!queue.length&&!editing()){location.reload();return;}tick++;if(tick%15===0)save();if(!document.hidden&&(!wsUp||tick%15===0))sync();},2000);
+  iv=setInterval(function(){if(stopped){if(dead||!waiting()){clearInterval(iv);if(drainers[KEY]===kill)delete drainers[KEY];}else sync();return;}if(stale&&!waiting()&&!editing()){location.reload();return;}tick++;if(tick%15===0)save();if(!document.hidden&&(!wsUp||tick%15===0))sync();},2000);
   connect();
   save();
   mark();
   if(wasmUrl&&window.WebAssembly){
     var mp=mods[wasmUrl]||(mods[wasmUrl]=fetch(wasmUrl).then(function(r){if(!r.ok)throw new Error("wasm "+r.status);return WebAssembly.compileStreaming?WebAssembly.compileStreaming(r):r.arrayBuffer().then(function(b){return WebAssembly.compile(b);});}));
-    mp.then(function(m){if(stopped)return;mod=m;if(queue.length)predict();sync();})
+    mp.then(function(m){if(stopped)return;mod=m;if(waiting())predict();sync();})
     .catch(function(){delete mods[wasmUrl];});
   }
-  if(queue.length)sync();
+  if(waiting())sync();
   function kill(){dead=true;stopped=true;clearInterval(iv);}
   // leave this page: the view, listeners and socket go; Msgs still queued
   // keep syncing to this page's endpoint until they drain
@@ -2676,7 +2975,7 @@ function boot(){
     offs.forEach(function(f){f();});offs=[];
     if(ws){ws.onclose=null;try{ws.close();}catch(e){}}
     save();
-    if(queue.length)drainers[KEY]=kill;else kill();
+    if(waiting())drainers[KEY]=kill;else kill();
   };
   // another query of this page (tab state, App.with_url_view): with the
   // client loaded, the view for it is rendered here, without a fetch; the
