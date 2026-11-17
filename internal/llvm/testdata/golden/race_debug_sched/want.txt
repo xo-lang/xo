@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+sched read while tasks started
+--- stderr

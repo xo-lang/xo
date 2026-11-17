@@ -76,7 +76,12 @@ func TestRaceStdNoUseAfterFree(t *testing.T) {
 // copied the unwinder's per-thread scratch through the C library's
 // memset and memcpy, which a --race build intercepts (unwind.xo
 // zero_regs, scratch_copy; linux, 23 runs in 24).
-var raceInlinedGoldens = []string{"http_h2_config", "http_trailers", "http_server_limits", "websocket_tls_deadline", "lazy_const_cycle_tasks"}
+// race_fault_msg_tasks: the same for a fault's message, which fault.xo at
+// copies into the worker's message buffer (task #225, the 2026-11-17
+// std/task race stress). race_debug_sched: debug's /sched read the
+// counters with plain loads while rtstats.fiber_counted added to them
+// atomically (task #225, the std/debug race stress).
+var raceInlinedGoldens = []string{"http_h2_config", "http_trailers", "http_server_limits", "websocket_tls_deadline", "lazy_const_cycle_tasks", "race_fault_msg_tasks", "race_debug_sched"}
 
 // TestRaceRuntimeInlinedUnchecked builds each of raceInlinedGoldens with
 // --race on the LLVM backend and runs it once: no ThreadSanitizer report.

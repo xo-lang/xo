@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+3200 faults kept their messages
+--- stderr

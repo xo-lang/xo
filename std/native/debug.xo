@@ -102,7 +102,7 @@ fn sched(req: http.Request) -> http.Response {
   var i = 0
   for name in STAT_NAMES.split(" ") {
     if !name.is_empty() {
-      lines.push("${name} ${rt.mem_load(c, 8 * i, 8)}")
+      lines.push("${name} ${rt.slot_load[Int](c, 8 * i, 0)}")
       i += 1
     }
   }

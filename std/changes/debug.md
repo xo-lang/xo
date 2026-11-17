@@ -1,5 +1,18 @@
 # std/debug changes
 
+## 2026-11-17: fix: the /sched page under --race reads the scheduler without a data race report
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1's host 3 race round (#152, task #225): TSan reported debug.sched against pool.fiber_new
+- Go reference: none (runtime introspection)
+- Test: internal/llvm/testdata/golden/race_debug_sched in TestRaceRuntimeInlinedUnchecked (fails before: TSan data race)
+- Shipped in: not yet released
+
+The /sched page read the runtime counters (rtstats.counts) with a plain
+load while workers bump them atomically, as pool.fiber_new does; it now
+uses an atomic slot load, so a program serving debug pages under `--race` no longer
+reports a race. Plain builds behave as before.
 ## 2026-11-16: perf: mem_total is one system call
 
 - Kind: perf

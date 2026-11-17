@@ -1,0 +1,47 @@
+// Task #225: debug's /sched reads the runtime's counters while tasks start
+// on new fiber stacks, which count themselves with an atomic add
+// (rtstats.fiber_counted): the read is an atomic load, so the --race build
+// (TestRaceRuntimeInlinedUnchecked) reports nothing.
+use std/debug
+use std/http
+
+fn get(r: http.Router, path: Str) -> http.Response {
+  let u = http.Url{scheme: "http", host: "h", port: None, path: path, query: {}}
+  r.call(http.Request{method: "GET", path: path, url: u, headers: {}, body: b"", remote_ip: ""})
+}
+
+fn spin(n: Int) -> Int {
+  var acc = 0
+  for i in 0..n {
+    acc = (acc + i) % 1000003
+  }
+  acc
+}
+
+fn main(os: Os) {
+  let r = debug.router(os.clock, fn(_) { true })
+  let done = Atomic[Bool].new(false)
+  let ok = scope s {
+    let reader = s.spawn(fn() -> Int {
+      var n = 0
+      while !done.get() {
+        if get(r, "/sched").status == 200 {
+          n += 1
+        }
+      }
+      n
+    })
+    // waves of more and more tasks at once, so tasks keep starting on
+    // newly mapped fiber stacks while the reader reads the counters
+    for wave in 1..25 {
+      scope w {
+        for k in 0..wave * 4 {
+          let _t = w.spawn(fn() -> Int { spin(20000 + k) })
+        }
+      }
+    }
+    done.set(true)
+    reader.await > 0
+  }
+  os.stdio.println(if ok { "sched read while tasks started" } else { "no read" })
+}

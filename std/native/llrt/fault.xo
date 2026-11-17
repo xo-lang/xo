@@ -21,6 +21,7 @@ use native/llrt/num
 use native/llrt/obj
 use native/llrt/process
 use native/llrt/raw
+use native/llrt/sanhook
 use native/llrt/stdio
 use native/llrt/unwind
 use native/rt
@@ -369,13 +370,23 @@ fn fire_pos(m: Int, file: Int, line: Int, col: Int) {
 fn text(s: Str) -> Int { at(raw.data(s), s.len()) }
 
 /// The thread's message buffer holding the n bytes at p, zero terminated.
+/// The buffer is the worker thread's, so two tasks that fault one after
+/// the other on one worker write it with no order a --race build can see
+/// (task #225: the std/task race stress reported fault.at's memcpy; a
+/// fiber switch orders nothing, gotchas/tsan-fiber-switch-sync.md): its
+/// writes are ignored, as unwind.xo scratch_copy's are.
 fn at(p: Int, n: Int) -> Int {
   var b = unwind.msg_buf()
   if b == 0 || n >= unwind.MSG_BYTES {
     b = rt.heap_large(n + 1)
+    rt.mem_copy(b, p, n)
+    rt.mem_store(b, n, 0, 1)
+    return b
   }
+  sanhook.ignore_writes(true)
   rt.mem_copy(b, p, n)
   rt.mem_store(b, n, 0, 1)
+  sanhook.ignore_writes(false)
   b
 }
 
@@ -471,8 +482,11 @@ fn loc_after(m: Int, lp: Int, ln: Int) -> Int {
   if b != 0 && m == b {
     let o = raw.cstr_len(m) + 1
     if o + ln < unwind.MSG_BYTES {
+      // the thread's buffer: writes ignored under --race (at)
+      sanhook.ignore_writes(true)
       rt.mem_copy(b + o, lp, ln)
       rt.mem_store(b, o + ln, 0, 1)
+      sanhook.ignore_writes(false)
       return b + o
     }
   }

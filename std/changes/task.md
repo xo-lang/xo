@@ -15,6 +15,20 @@ channel, and a release that sees a waiter moves a permit to it. Host 1
 0.139 to 0.142). A semaphore with a free permit is no longer a
 cancellation point on entry; a waiting one still is.
 
+## 2026-11-17: fix: isolated faults in many tasks no longer report a data race under --race
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1's host 3 race round (#152, task #225): TSan race at llrt/fault.xo reached through tasks.spawn
+- Go reference: none (runtime)
+- Test: internal/llvm/testdata/golden/race_fault_msg_tasks in TestRaceRuntimeInlinedUnchecked (fails before: TSan data race)
+- Shipped in: not yet released
+
+A fault message is built in its worker thread's buffer, which several
+fibers on that worker use in turn; fiber switches carry no TSan
+synchronization, so the writes looked racy. They are now ignored by
+TSan as unwind.xo's register and scratch copies already were. Answers
+were right before; only `--race` runs reported a false race.
 ## 2026-11-17: fix: a caught fault with a location no longer leaks
 
 - Kind: fix
