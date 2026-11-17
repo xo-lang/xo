@@ -55,6 +55,14 @@ func jobs() string {
 // root and fails t with each failing program.
 func devGoldens(t *testing.T, args ...string) {
 	t.Helper()
+	devGoldensSkip(t, nil, args...)
+}
+
+// devGoldensSkip is devGoldens where a failing program for which skip
+// returns a reason is skipped instead (a program the run cannot build by
+// design, such as a C binding under --ld=macho).
+func devGoldensSkip(t *testing.T, skip func(xo, root, dir string) string, args ...string) {
+	t.Helper()
 	xo, err := xotool.Path()
 	if err != nil {
 		t.Fatal(err)
@@ -123,12 +131,19 @@ func devGoldens(t *testing.T, args ...string) {
 		if filtered && !chosen[filepath.Base(o.Dir)] && o.Name != "(discovery)" {
 			continue
 		}
-		if o.Status == "fail" {
+		skipped := ""
+		if o.Status == "fail" && skip != nil {
+			skipped = skip(xo, root, o.Dir)
+		}
+		if o.Status == "fail" && skipped == "" {
 			fails = append(fails, o.Dir+": "+o.Why)
 		}
 		// one subtest a program, so -run selects programs as it does for
 		// the other golden drivers
 		t.Run(filepath.Base(o.Dir), func(t *testing.T) {
+			if skipped != "" {
+				t.Skip(skipped)
+			}
 			if o.Status == "fail" {
 				t.Errorf("%s: %s", o.Dir, o.Why)
 			}
@@ -185,7 +200,30 @@ func TestDevGoldensELF(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Skip("runs the linux/arm64 executables on a linux/arm64 host")
 	}
-	devGoldens(t, "--backend=arm64", "--flags=--target=linux/arm64 --ld=macho", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
+	devGoldensSkip(t, usesC, "--backend=arm64", "--flags=--target=linux/arm64 --ld=macho", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
+}
+
+// usesC says why the program in dir cannot link with --ld=macho: one of
+// its inputs is a C binding (`use c`, which `xo build --list-inputs`
+// lists as a file in a cbind directory, .xo/cbind or under go test the
+// cache's test-cbind: the program's own or a std module's, such as
+// std/sqlite's), whose C sources only cc compiles. "" for any other
+// program. native_sqlite_file failed TestDevGoldensELF whenever the short
+// run's sample drew it (2026-11-17, latent since 42932f374).
+func usesC(xo, root, dir string) string {
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--list-inputs", dir))
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if line != "" && strings.HasSuffix(filepath.Base(filepath.Dir(line)), "cbind") {
+			return "uses C (" + filepath.Base(line) + "): --ld=macho links no C sources"
+		}
+	}
+	return ""
 }
 
 // devRun runs another `xo dev` harness that prints `FAIL` lines and a
@@ -224,4 +262,25 @@ func TestDevCodegen(t *testing.T) {
 		backends = "arm64,llvm"
 	}
 	devRun(t, "codegen", "--backend="+backends, "-j", jobs(), "test/codegen")
+}
+
+// TestUsesC: usesC finds a C binding a std module brings (native_sqlite_file
+// uses std/sqlite, whose C is not in the golden's directory) and none in a
+// program without one, so TestDevGoldensELF skips the first and still fails
+// the second.
+func TestUsesC(t *testing.T) {
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if why := usesC(xo, root, filepath.Join(root, "internal/llvm/testdata/golden/native_sqlite_file")); !strings.Contains(why, "uses C (c_xo_sqlite_") {
+		t.Errorf("native_sqlite_file: usesC = %q, want a C binding of std/sqlite", why)
+	}
+	if why := usesC(xo, root, filepath.Join(root, "internal/llvm/testdata/golden/arith")); why != "" {
+		t.Errorf("arith: usesC = %q, want none", why)
+	}
 }
