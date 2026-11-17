@@ -1,0 +1,210 @@
+// grpcreflect stress program (decision 0616 section 2): a grpc server with std/grpcreflect over FILES generated proto
+// files (each imports up to two earlier ones, with messages, nested enums, extensions and a service) on a loopback
+// listener, and TASKS client tasks asking it. Each round a task asks a seeded question (a file by name, a symbol,
+// an extension, extension numbers, the services, or a name no file has) on its own stream and checks the answer
+// against what the Reflection answers for it locally; every tenth round asks three questions on one stream and
+// checks that a file goes once per stream. A background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute. Pass: every answer as expected, no fault, and the resident set at the
+// end within 10% or 4 MB of its median after the mark.
+//
+//   main [MINUTES (30); 0: 200 rounds per task] [TASKS (16)]
+use std/grpc
+use std/grpcreflect
+use std/http
+use std/protodesc
+
+const FILES: Int = 24
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn proto_src(i: Int) -> Str {
+  var deps: List[Int] = []
+  if i > 0 {
+    deps.push(i - 1)
+  }
+  if i > 3 {
+    deps.push(i / 2)
+  }
+  var src = "syntax = \"proto2\";\npackage p${i};\n"
+  for d in deps {
+    src = src + "import \"f${d}.proto\";\n"
+  }
+  src = src + "message M${i} {\n  optional string s = 1;\n  enum E${i} {\n    E${i}_A = 0;\n    E${i}_B = 1;\n  }\n  message N${i} {\n    optional int32 n = 1;\n  }\n  extensions 100 to 199;\n}\n"
+  for d in deps {
+    src = src + "extend p${d}.M${d} {\n  optional int32 x${i} = ${100 + i};\n}\n"
+  }
+  src + "service S${i} {\n  rpc Get(M${i}) returns (M${i});\n}\n"
+}
+
+fn build_files() -> List[protodesc.FileDesc] ! Str {
+  var out: List[protodesc.FileDesc] = []
+  for i in 0..FILES {
+    var deps: List[protodesc.FileDesc] = []
+    for f in out {
+      if proto_src(i).contains("import \"${f.name}\"") {
+        deps.push(f)
+      }
+    }
+    match protodesc.build_with_source_info(proto_src(i), "f${i}.proto", deps: deps) {
+      Ok(f) => out.push(f)
+      Err(e) => return Err("f${i}.proto: ${e}")
+    }
+  }
+  Ok(out)
+}
+
+fn question(x: Int) -> grpcreflect.Request {
+  let i = (x >> 20) % FILES
+  match (x >> 40) % 8 {
+    0 => grpcreflect.Request.FileByFilename(name: "f${i}.proto")
+    1 => grpcreflect.Request.FileContainingSymbol(symbol: "p${i}.M${i}.N${i}")
+    2 => grpcreflect.Request.FileContainingSymbol(symbol: "p${i}.S${i}.Get")
+    3 => grpcreflect.Request.FileContainingSymbol(symbol: "p${i}.M${i}.E${i}_B")
+    4 => grpcreflect.Request.FileContainingExtension(containing_type: "p${i}.M${i}", number: 100 + i + 1)
+    5 => grpcreflect.Request.AllExtensionNumbersOfType(type_name: "p${i}.M${i}")
+    6 => grpcreflect.Request.ListServices
+    _ => grpcreflect.Request.FileByFilename(name: "nope${i}.proto")
+  }
+}
+
+fn worker(os: Os, c: grpc.Client, r: grpcreflect.Reflection, t: Int, end: Time, rounds: Int) -> Int ! Str uses (net, clock) {
+  var x = next(t + 1)
+  var n = 0
+  while if rounds > 0 { n < rounds } else { os.clock.now() < end } {
+    x = next(x)
+    if n % 10 == 9 {
+      // three questions on one stream: each answer as the service gives it with the files the stream had
+      let qs = [question(x), question(next(x)), question(next(next(x)))]
+      var sent: Set[Str] = #{}
+      var want: List[grpcreflect.Answer] = []
+      for q in qs {
+        let (a, s2) = r.answer(q, sent)
+        sent = s2
+        want.push(a)
+      }
+      let got = c.call(grpcreflect.METHOD, {}, None, fn(cc) -> List[grpcreflect.Answer] ! grpc.Status {
+        for q in qs {
+          cc.send(grpcreflect.encode_request("", q))?
+        }
+        cc.close_send()
+        var out: List[grpcreflect.Answer] = []
+        while let Some(m) = cc.recv()? {
+          out.push(grpcreflect.decode_answer(m)?)
+        }
+        Ok(out)
+      }).map_err(fn(e) -> Str { "task ${t} round ${n}: ${e.display()}" })?
+      if got != want {
+        return Err("task ${t} round ${n}: a stream's answers differ")
+      }
+    } else {
+      let q = question(x)
+      let want = r.answer(q, #{}).0
+      let got = grpcreflect.ask(c, q).map_err(fn(e) -> Str { "task ${t} round ${n}: ${e.display()}" })?
+      if got != want {
+        return Err("task ${t} round ${n}: an answer differs")
+      }
+    }
+    n += 1
+  }
+  Ok(n)
+}
+
+fn rss_kib(os: Os) -> Int {
+  // stdproven sets XO_STRESS_CHECK=1 for the --check=all run, whose leak report judges memory there
+  if (os.env.get("XO_STRESS_CHECK") ?? "") == "1" { return 0 }
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 16 } else { 16 }
+  let rounds = if minutes == 0 { 200 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))
+  let files = build_files()?
+  var srv = grpc.server(clock)
+  for i in 0..FILES {
+    srv.unary("/p${i}.S${i}/Get", fn(_c, req) -> Bytes ! grpc.Status { Ok(req) })
+  }
+  var names = srv.services().map(fn(si) -> Str { si.name })
+  names.push("grpc.reflection.v1.ServerReflection")
+  names.push("grpc.reflection.v1alpha.ServerReflection")
+  let r = grpcreflect.new(files, names)
+  grpcreflect.register(srv, files)
+  let l = os.net.listen("127.0.0.1:0").map_err(fn(e) { "listen: ${e}" })?
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let addr = hs.addr()
+  let total = scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let after_mark = marked || clock.now() >= mark
+        samples.with(fn(var x) {
+          var (m, p) = x
+          if after_mark && v > 0 { m.push(v) }
+          x = (m, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs2: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      let c = grpc.client(http.client(os.net, timeout: 30s), "http://${addr}")
+      hs2.push(s.spawn(fn() -> Int ! Str { worker(os, c, r, t, end, rounds) }))
+    }
+    var n = 0
+    for h in hs2 {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (rss_after, peak) = samples.with_read(fn(x) { x })
+  let (at_mark, last) = rss_medians(rss_after)
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes 5 to 7), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("grpcreflect stress: ${total} rounds by ${tasks} tasks in ${minutes} min, every answer as expected, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// The resident set early and late, in KiB (decision 0616 as amended 2026-11-17): the median of the samples in the 2
+/// minutes after the mark and of the last 3 minutes' samples, 10 s apart; a short run takes a third of its samples
+/// each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}
