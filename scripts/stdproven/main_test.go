@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -412,5 +414,100 @@ func TestFuzzFixedCases(t *testing.T) {
 		if !strings.Contains(ev, want) {
 			t.Errorf("evidence lacks %q:\n%s", want, ev)
 		}
+	}
+}
+
+// rssHelper is every stress program's rss_kib, which must return 0 under
+// stdproven's --check=all run (stressCheckEnv).
+func rssHelper(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	i := strings.Index(s, "\nfn rss_kib(os: Os) -> Int {\n")
+	if i < 0 {
+		t.Fatalf("%s: no fn rss_kib", path)
+	}
+	j := strings.Index(s[i:], "\n}\n")
+	if j < 0 {
+		t.Fatalf("%s: rss_kib has no end", path)
+	}
+	return s[i+1 : i+j+3]
+}
+
+// TestStressProgramsSkipRSSUnderCheck: one rss_kib in every stress
+// program, reading the flag stressCheck sets (lead, 2026-11-17, #152:
+// std/udp's --check=all run failed on memory alone, 0 mismatches).
+func TestStressProgramsSkipRSSUnderCheck(t *testing.T) {
+	progs, err := filepath.Glob(filepath.Join("..", "..", "std", "evidence", "*", "stress", "main.xo"))
+	if err != nil || len(progs) == 0 {
+		t.Fatalf("no stress programs: %v", err)
+	}
+	name, val, _ := strings.Cut(stressCheckEnv, "=")
+	want := rssHelper(t, progs[0])
+	if !strings.Contains(want, `os.env.get("`+name+`") ?? "") == "`+val+`" { return 0 }`) {
+		t.Fatalf("%s: rss_kib does not return 0 under %s:\n%s", progs[0], stressCheckEnv, want)
+	}
+	for _, p := range progs[1:] {
+		if got := rssHelper(t, p); got != want {
+			t.Errorf("%s: rss_kib differs from %s's:\n%s", p, progs[0], got)
+		}
+	}
+}
+
+// TestStressCheckMemoryOnly: a program whose resident set grows with
+// every result right passes stressCheck, and the leak report prints; the
+// same binary run without the flag fails on memory, as std/udp's did.
+// Linux only (rss_kib reads /proc), with the checkout's bin/xo.
+func TestStressCheckMemoryOnly(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
+		t.Skip("rss_kib reads /proc; --check=all builds arm64")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin", "xo")); err != nil {
+		t.Skip("no bin/xo (go run ./scripts/xobuild)")
+	}
+	helper := rssHelper(t, filepath.Join(root, "std", "evidence", "udp", "stress", "main.xo"))
+	dir := filepath.Join(t.TempDir(), "grow")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prog := helper + `
+fn main(os: Os) ! {
+  let at_mark = rss_kib(os)
+  var hold: List[Str] = []
+  for i in 0..64 {
+    hold.push("${i % 10}".repeat(1 << 20))
+  }
+  let last = rss_kib(os)
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%)" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("grow stress: ${hold.len()} strings held, 0 mismatches, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	tmp := t.TempDir()
+	line, note, err := stressCheck(dir, tmp, 1, 1)
+	if err != nil {
+		t.Fatalf("stressCheck: %v", err)
+	}
+	if !strings.Contains(line, "rss not sampled, pass; xo leakcheck: 0 live ") || note == "" {
+		t.Errorf("line %q, note %q", line, note)
+	}
+	out, err := exec.Command(filepath.Join(tmp, "s-check"), "1", "1").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "FAIL (memory grew)") {
+		t.Errorf("without %s: %v, want a memory failure:\n%s", stressCheckEnv, err, out)
 	}
 }

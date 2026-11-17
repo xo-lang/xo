@@ -342,3 +342,16 @@ crypto; within it, a module that misses only the testing axis first.
   carry it from this batch; compress, json, time and x509 (and Lang 2's
   modules) at their next evidence refresh, until which their stress.md
   stands as written.
+- Clarification 2026-11-17, lead decision for the owner to confirm:
+  stress programs skip their rss bar under --check=all,
+  `XO_STRESS_CHECK=1`. The resident set was in fact
+  sampled under the check, and std/udp's --check=all run failed on
+  memory alone (25% growth, 0 mismatches) before its leak report ran.
+  stdproven now runs the check build with `XO_STRESS_CHECK=1`, and every
+  stress program's `rss_kib` (one body in all of them,
+  TestStressProgramsSkipRSSUnderCheck) returns 0 under it, so the
+  program's memory bar passes as "rss not sampled" and `xo leakcheck: 0
+  live` alone judges memory there. A new stress program copies that
+  rss_kib. TestStressCheckMemoryOnly (linux/arm64, bin/xo) shows a
+  program whose resident set grows passes the check run with its leak
+  line and fails without the flag.

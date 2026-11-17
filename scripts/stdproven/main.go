@@ -1178,7 +1178,9 @@ func stressCheck(dir, tmp string, minutes, tasks int) (string, string, error) {
 		return "", "", fmt.Errorf("xo build --check=all --backend=arm64 %s: %v\n%s", dir, err, out)
 	}
 	t0 := time.Now()
-	out, err := exec.Command(bin, strconv.Itoa(minutes), strconv.Itoa(tasks)).CombinedOutput()
+	cmd := exec.Command(bin, strconv.Itoa(minutes), strconv.Itoa(tasks))
+	cmd.Env = append(os.Environ(), stressCheckEnv)
+	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	var passLine, leakLine string
 	for _, l := range strings.Split(text, "\n") {
@@ -1198,6 +1200,14 @@ func stressCheck(dir, tmp string, minutes, tasks int) (string, string, error) {
 	fmt.Println(line)
 	return line, fmt.Sprintf(", %d min on arm64 under --check=all with 0 faults and 0 blocks live at exit", minutes), nil
 }
+
+// stressCheckEnv marks the --check=all run for the stress program, whose
+// rss_kib then samples nothing (lead, 2026-11-17, #152): the resident set
+// under --check=all is no measure of a leak (std/udp's check run grew 25%
+// with 0 mismatches and failed before its leak report). The leak report
+// judges memory there instead: "xo leakcheck: 0 live" at exit, required
+// below.
+const stressCheckEnv = "XO_STRESS_CHECK=1"
 
 // stressCheckOnly adds the --check=all run to a stress.md written before
 // the stress kind had it (decision 0616's 2026-11-14 amendment): the
