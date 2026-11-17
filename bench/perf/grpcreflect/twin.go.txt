@@ -1,0 +1,174 @@
+// The Go twin of main.xo: google.golang.org/grpc/reflection's v1 server and its generated client in one program over
+// loopback (insecure credentials: h2c with prior knowledge), serving the same FILES files built as descriptor
+// protos.
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/reflection"
+	rpb "google.golang.org/grpc/reflection/grpc_reflection_v1"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
+)
+
+const files = 24
+
+func deps(i int) []int {
+	var d []int
+	if i > 0 {
+		d = append(d, i-1)
+	}
+	if i > 3 {
+		d = append(d, i/2)
+	}
+	return d
+}
+
+// file is main.xo's proto_src(i) as a descriptor proto.
+func file(i int) *descriptorpb.FileDescriptorProto {
+	opt := descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+	str := descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum()
+	i32 := descriptorpb.FieldDescriptorProto_TYPE_INT32.Enum()
+	m := fmt.Sprintf("M%d", i)
+	f := &descriptorpb.FileDescriptorProto{
+		Name:    proto.String(fmt.Sprintf("f%d.proto", i)),
+		Package: proto.String(fmt.Sprintf("p%d", i)),
+		MessageType: []*descriptorpb.DescriptorProto{{
+			Name:  proto.String(m),
+			Field: []*descriptorpb.FieldDescriptorProto{{Name: proto.String("s"), Number: proto.Int32(1), Label: opt, Type: str, JsonName: proto.String("s")}},
+			NestedType: []*descriptorpb.DescriptorProto{{
+				Name:  proto.String(fmt.Sprintf("N%d", i)),
+				Field: []*descriptorpb.FieldDescriptorProto{{Name: proto.String("n"), Number: proto.Int32(1), Label: opt, Type: i32, JsonName: proto.String("n")}},
+			}},
+			EnumType: []*descriptorpb.EnumDescriptorProto{{
+				Name: proto.String(fmt.Sprintf("E%d", i)),
+				Value: []*descriptorpb.EnumValueDescriptorProto{
+					{Name: proto.String(fmt.Sprintf("E%d_A", i)), Number: proto.Int32(0)},
+					{Name: proto.String(fmt.Sprintf("E%d_B", i)), Number: proto.Int32(1)},
+				},
+			}},
+			ExtensionRange: []*descriptorpb.DescriptorProto_ExtensionRange{{Start: proto.Int32(100), End: proto.Int32(200)}},
+		}},
+		Service: []*descriptorpb.ServiceDescriptorProto{{
+			Name: proto.String(fmt.Sprintf("S%d", i)),
+			Method: []*descriptorpb.MethodDescriptorProto{{
+				Name: proto.String("Get"), InputType: proto.String(fmt.Sprintf(".p%d.%s", i, m)), OutputType: proto.String(fmt.Sprintf(".p%d.%s", i, m)),
+			}},
+		}},
+	}
+	for _, d := range deps(i) {
+		f.Dependency = append(f.Dependency, fmt.Sprintf("f%d.proto", d))
+		f.Extension = append(f.Extension, &descriptorpb.FieldDescriptorProto{
+			Name: proto.String(fmt.Sprintf("x%d_%d", i, d)), Number: proto.Int32(int32(100 + i)), Label: opt, Type: i32,
+			Extendee: proto.String(fmt.Sprintf(".p%d.M%d", d, d)), JsonName: proto.String(fmt.Sprintf("x%d%d", i, d)),
+		})
+	}
+	return f
+}
+
+func serve(l net.Listener) *grpc.Server {
+	set := &descriptorpb.FileDescriptorSet{}
+	for i := 0; i < files; i++ {
+		set.File = append(set.File, file(i))
+	}
+	reg, err := protodesc.NewFiles(set)
+	if err != nil {
+		panic(err)
+	}
+	types := new(protoregistry.Types)
+	reg.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
+		for i := 0; i < fd.Extensions().Len(); i++ {
+			if err := types.RegisterExtension(dynamicpb.NewExtensionType(fd.Extensions().Get(i))); err != nil {
+				panic(err)
+			}
+		}
+		return true
+	})
+	s := grpc.NewServer()
+	rpb.RegisterServerReflectionServer(s, reflection.NewServerV1(reflection.ServerOptions{Services: s, DescriptorResolver: reg, ExtensionResolver: types}))
+	// main.xo's register lists v1alpha too
+	s.RegisterService(&grpc.ServiceDesc{ServiceName: "grpc.reflection.v1alpha.ServerReflection", HandlerType: (*any)(nil)}, struct{}{})
+	go s.Serve(l)
+	return s
+}
+
+func count(r *rpb.ServerReflectionResponse) int {
+	if f := r.GetFileDescriptorResponse(); f != nil {
+		return len(f.GetFileDescriptorProto())
+	}
+	if l := r.GetListServicesResponse(); l != nil {
+		return len(l.GetService())
+	}
+	panic(fmt.Sprintf("unexpected answer %v", r))
+}
+
+func main() {
+	w := "stream"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	s := serve(l)
+	cc, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		panic(err)
+	}
+	c := rpb.NewServerReflectionClient(cc)
+	ctx := context.Background()
+	ask := func(req *rpb.ServerReflectionRequest) int {
+		st, err := c.ServerReflectionInfo(ctx)
+		if err != nil {
+			panic(err)
+		}
+		if err := st.Send(req); err != nil {
+			panic(err)
+		}
+		st.CloseSend()
+		r, err := st.Recv()
+		if err != nil {
+			panic(err)
+		}
+		return count(r)
+	}
+	sum := ask(&rpb.ServerReflectionRequest{MessageRequest: &rpb.ServerReflectionRequest_ListServices{ListServices: ""}})
+	switch w {
+	case "stream":
+		st, err := c.ServerReflectionInfo(ctx)
+		if err != nil {
+			panic(err)
+		}
+		for k := 0; k < 20000; k++ {
+			i := k % files
+			req := &rpb.ServerReflectionRequest{MessageRequest: &rpb.ServerReflectionRequest_FileContainingSymbol{FileContainingSymbol: fmt.Sprintf("p%d.M%d.N%d", i, i, i)}}
+			if err := st.Send(req); err != nil {
+				panic(err)
+			}
+			r, err := st.Recv()
+			if err != nil {
+				panic(err)
+			}
+			sum += count(r)
+		}
+		st.CloseSend()
+	case "files":
+		for k := 0; k < 1000; k++ {
+			sum += ask(&rpb.ServerReflectionRequest{MessageRequest: &rpb.ServerReflectionRequest_FileByFilename{FileByFilename: fmt.Sprintf("f%d.proto", files-1)}})
+		}
+	}
+	fmt.Println(w, sum)
+	cc.Close()
+	s.Stop()
+}

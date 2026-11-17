@@ -1,0 +1,104 @@
+// std/grpcreflect against google.golang.org/grpc/reflection: a reflection server and a client in one program over
+// loopback h2c, serving FILES proto files (each imports up to two earlier ones, with a message, a nested enum and
+// message, extensions and a service; the stress program's set). `stream` asks 20,000 questions on one stream, each
+// sent after the last answer came (a symbol of each file in turn, so after the first pass each answer is the one
+// file); `files` opens 1,000 streams, each asking for the last file, whose answer is it and every file it imports;
+// `none` starts the server and asks for the services once. Usage: `<program> none|stream|files`. Prints `<workload>
+// <checksum>` (the files and service names answered); the twin (twin.go.txt) prints the same.
+use std/grpc
+use std/grpcreflect
+use std/http
+use std/protodesc
+use std/protoparse
+
+const FILES: Int = 24
+
+fn proto_src(i: Int) -> Str {
+  var deps: List[Int] = []
+  if i > 0 {
+    deps.push(i - 1)
+  }
+  if i > 3 {
+    deps.push(i / 2)
+  }
+  var src = "syntax = \"proto2\";\npackage p${i};\n"
+  for d in deps {
+    src = src + "import \"f${d}.proto\";\n"
+  }
+  src = src + "message M${i} {\n  optional string s = 1;\n  enum E${i} {\n    E${i}_A = 0;\n    E${i}_B = 1;\n  }\n  message N${i} {\n    optional int32 n = 1;\n  }\n  extensions 100 to 199;\n}\n"
+  for d in deps {
+    src = src + "extend p${d}.M${d} {\n  optional int32 x${i}_${d} = ${100 + i};\n}\n"
+  }
+  src + "service S${i} {\n  rpc Get(M${i}) returns (M${i});\n}\n"
+}
+
+fn build_files() -> List[protodesc.FileDesc] {
+  var out: List[protodesc.FileDesc] = []
+  for i in 0..FILES {
+    var deps: List[protodesc.FileDesc] = []
+    for f in out {
+      if proto_src(i).contains("import \"${f.name}\"") {
+        deps.push(f)
+      }
+    }
+    let parsed = protoparse.parse(proto_src(i)).ok() ?? fault("f${i}.proto: parse")
+    match protodesc.build(parsed, "f${i}.proto", deps: deps) {
+      Ok(f) => out.push(f)
+      Err(e) => fault("f${i}.proto: ${e}")
+    }
+  }
+  out
+}
+
+fn count(a: grpcreflect.Answer) -> Int {
+  match a {
+    grpcreflect.Answer.Files(files) => files.len()
+    grpcreflect.Answer.Services(names) => names.len()
+    _ => fault("unexpected answer")
+  }
+}
+
+fn run(w: Str, c: grpc.Client) -> Int ! grpc.Status uses net.dial {
+  var sum = grpcreflect.list_services(c)?.len()
+  if w == "stream" {
+    sum += c.call(grpcreflect.METHOD, {}, None, fn(cc) -> Int ! grpc.Status {
+      var n = 0
+      for k in 0..20000 {
+        let i = k % FILES
+        cc.send(grpcreflect.encode_request("", grpcreflect.Request.FileContainingSymbol(symbol: "p${i}.M${i}.N${i}")))?
+        match cc.recv()? {
+          Some(m) => n += count(grpcreflect.decode_answer(m)?)
+          None => fault("stream ended")
+        }
+      }
+      cc.close_send()
+      n
+    })?
+  } else if w == "files" {
+    for _ in 0..1000 {
+      sum += count(grpcreflect.ask(c, grpcreflect.Request.FileByFilename(name: "f${FILES - 1}.proto"))?)
+    }
+  }
+  Ok(sum)
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "stream"
+  var srv = grpc.server(os.clock)
+  grpcreflect.register(srv, build_files())
+  let l = os.net.listen("127.0.0.1:0").ok() ?? fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() {
+      match hs.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let hc = http.client(os.net, timeout: 60s)
+    match run(w, grpc.client(hc, "http://${hs.addr()}")) {
+      Ok(sum) => os.stdio.println("${w} ${sum}")
+      Err(e) => os.stdio.println("${w} failed: ${e.display()}")
+    }
+  }
+}

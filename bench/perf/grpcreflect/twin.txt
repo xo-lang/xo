@@ -1,0 +1,6 @@
+# twincheck: grpcreflect: three workloads over loopback (none serves and lists the services once); Go is google.golang.org/grpc/reflection (Apache-2.0) over google.golang.org/protobuf (BSD-3-Clause), built from the module cache.
+require google.golang.org/grpc v1.85.0
+require google.golang.org/protobuf v1.36.12
+- - none
+- - stream
+- - files
