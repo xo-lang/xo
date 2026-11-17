@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/sql, Postgres): a text value that is not valid UTF-8 keeps its valid bytes, with U+FFFD for each invalid one; it was read as an empty Text.
+- Fix (std/sql, Postgres): a backend message of an unknown type, or rows ended by ReadyForQuery with no CommandComplete, is a Conn error and breaks the connection; the message was skipped and the rows returned.
 - Fix (use c, --race): `xo test --race` no longer reports a data race in `xo_c_enter` when tasks call C (std/sqlite's race run failed on it); the adapter's C call marks are not instrumented under ThreadSanitizer.
 - Perf (std/httpproxy): `proxy_for` reads the request URL's host and port directly instead of building an address and splitting it again; bench/perf/httpproxy_rules route on the Mac 0.43 s to 0.29 s (Go 0.31 s).
 - Fix (std/http, native): a server's memory grew with every streamed response (`http.stream`, std/sse, and each idle keep-alive connection's park): the runtime's table of stream functions never used a sent response's slot again (26 MB to 138 MB mapped in 60 s of streamed responses; 6 to 7 MB now; task #199).

@@ -76,6 +76,13 @@ test "decode b_key" {
   expect(decode(m)) == Ok(Backend.KeyData(pid: 77, secret: Bytes.from_hex("09080706") ?? b""))
 }
 
+test "decode refuses an unknown message type (pgproto3: unknown message type; was Other, skipped)" {
+  expect(decode(Bytes.from_hex("420000000d53454c454354203100") ?? b"")) == Err(WireErr.Bad(msg: "unknown message type: B"))
+  expect(decode(Bytes.from_hex("040000000400") ?? b"").is_err()) == true
+  expect(decode(Bytes.from_hex("c40000000e0001000000047b22227d") ?? b"").is_err()) == true
+  expect(decode(Bytes.from_hex("6400000006abcd") ?? b"")) == Ok(Backend.Other(kind: "d", body: Bytes.from_hex("abcd") ?? b""))
+}
+
 test "decode b_rowdesc" {
   let m = Bytes.from_hex("540000001b0001696400000040000001000000170004ffffffff0000") ?? b""
   expect(frame_len(m)) == Ok(Some(m.len()))

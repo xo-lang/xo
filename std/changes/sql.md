@@ -1,5 +1,33 @@
 # std/sql changes
 
+## 2026-11-17: fix: a Postgres stream out of step is a Conn error, not rows
+
+- Kind: fix
+- Commit: this push
+- Found by: task #219, `stdproven fuzz sql` (TestPgFuzz seed 2, N 5000: 5 cases differed from pgconn on arm64)
+- Go reference: github.com/jackc/pgx/v5 pgproto3 Frontend.Receive ("unknown message type") and pgconn
+  ResultReader (it ends a statement's rows only at CommandComplete, EmptyQueryResponse or ErrorResponse)
+- Test: std/native/llrt/pgwire_test.xo "decode refuses an unknown message type", std/native/llrt/pg_test.xo
+  "a fake server out of step" (both failed before: the message was skipped and the rows returned)
+- Shipped in: not yet released
+
+A backend message of a type pgproto3 does not know is refused ("malformed message: unknown message type:
+B") and breaks the connection; it was skipped. A ReadyForQuery that ends a statement's rows with no
+CommandComplete or error is refused the same way; the rows were returned as complete.
+
+## 2026-11-17: fix: a Postgres text value that is not UTF-8 keeps its bytes
+
+- Kind: fix
+- Commit: this push
+- Found by: task #219, `stdproven fuzz sql` (TestPgFuzz seed 2: 10 cases differed from pgconn on arm64)
+- Go reference: github.com/jackc/pgx/v5 pgconn (a DataRow value is the server's bytes, text as Go's string)
+- Test: std/native/llrt/pg_test.xo "a text value that is not UTF-8 keeps its valid bytes, U+FFFD for the
+  rest" (failed before: every value was an empty Text)
+- Shipped in: not yet released
+
+A DataRow value that is not valid UTF-8 (a SQL_ASCII database, a bytea cast to text) is decoded with each
+invalid byte as U+FFFD, then by its column type as before; the whole value read as an empty Text before.
+
 ## 2026-11-16: fix: Row.time reads SQLite's date and time text and Unix integers
 
 - Kind: fix

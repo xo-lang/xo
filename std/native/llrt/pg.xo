@@ -757,9 +757,12 @@ fn (p: PgConn) collect_of(described: Bool) -> Results ! sql.SqlErr uses net.dial
   var sets = 0
   var cur = sql.DriverResult{columns: [], rows: []}
   var oids: List[Int] = []
+  // a RowDescription's set not yet ended by CommandComplete or an error
+  var open = false
   while {
     match p.recv()? {
       RowDesc(fs) => {
+        open = true
         if sets > 1 {
           res.more.push(cur)
         }
@@ -786,8 +789,12 @@ fn (p: PgConn) collect_of(described: Bool) -> Results ! sql.SqlErr uses net.dial
           cur.rows.push(row)
         }
       }
-      CommandComplete(tag) => res.tag = tag
+      CommandComplete(tag) => {
+        res.tag = tag
+        open = false
+      }
       Error(f) => {
+        open = false
         if failed.is_none() {
           failed = Some(server_err(f))
         }
@@ -795,6 +802,9 @@ fn (p: PgConn) collect_of(described: Bool) -> Results ! sql.SqlErr uses net.dial
       Ready(_) => {
         if let Some(e) = failed {
           return Err(e)
+        }
+        if open {
+          return Err(p.unended())
         }
         if sets > 1 {
           res.more.push(cur)
@@ -835,6 +845,14 @@ fn (p: PgConn) row_of(oids: List[Int], vals: List[Bytes?]) -> List[sql.SqlValue]
 
 /// A DataRow before any RowDescription breaks the connection (pgconn:
 /// "unexpected DataRow message without preceding RowDescription").
+/// A ReadyForQuery that ends a statement's rows with no CommandComplete
+/// (pgconn reads on for one, to EOF): the stream is out of step, the
+/// connection broken.
+fn (p: PgConn) unended() -> sql.SqlErr {
+  p.broken.set(true)
+  conn_err("ReadyForQuery before the rows' CommandComplete")
+}
+
 fn (p: PgConn) row_first() -> sql.SqlErr {
   p.broken.set(true)
   conn_err("a DataRow before its RowDescription")
@@ -846,7 +864,9 @@ fn decode_row(oids: List[Int], vals: List[Bytes?]) -> List[sql.SqlValue] {
   for (i, v) in vals.indexed() {
     let oid = if i < oids.len() { oids[i] } else { OID_TEXT }
     row.push(match v {
-      Some(b) => decode_text(oid, b.to_str() ?? "")
+      // pgconn keeps a text value's bytes; bytes that are not UTF-8 become
+      // U+FFFD (to_str() ?? "" dropped the whole value).
+      Some(b) => decode_text(oid, b.to_str_lossy())
       None => sql.SqlValue.Null
     })
   }
@@ -864,6 +884,8 @@ pub struct PgCursor {
 struct CursorState {
   done: Bool
   failed: sql.SqlErr? = None
+  /// CommandComplete (or an error) ended the rows
+  ended: Bool = false
 }
 
 /// The next row, None at ReadyForQuery (or the statement's error there).
@@ -884,10 +906,18 @@ fn (c: PgCursor) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
               }
             }
           }
-          Error(f) => c.note_failure(server_err(f))
+          Error(f) => {
+            c.note_failure(server_err(f))
+            c.st.with(fn(var s) { s.ended = true })
+          }
+          CommandComplete(_) => c.st.with(fn(var s) { s.ended = true })
           Ready(_) => {
+            let ended = c.st.with(fn(s) { s.ended })
             if let Some(e) = c.finish() {
               return Err(e)
+            }
+            if !ended {
+              return Err(c.p.unended())
             }
             return None
           }

@@ -331,7 +331,10 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
       }
       Backend.RowDesc(fields: fs)
     }
-    _ => Backend.Other(kind: kind, body: r.rest())
+    // the other types pgproto3's Frontend knows (copy, function call,
+    // NegotiateProtocolVersion); any other type byte is refused, as there
+    "c" | "d" | "G" | "H" | "V" | "W" | "v" => Backend.Other(kind: kind, body: r.rest())
+    _ => return Err(WireErr.Bad(msg: "unknown message type: ${kind}"))
   }
 }
 

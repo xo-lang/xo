@@ -44,6 +44,14 @@ test "values: arrays, bytea, json, floats, timestamps" {
   expect(param_of(sql.SqlValue.Blob(b: b"\x01")).format) == 1
 }
 
+test "a text value that is not UTF-8 keeps its valid bytes, U+FFFD for the rest (pgconn keeps the bytes; was an empty Text)" {
+  expect(decode_row([OID_TEXT, 20, 1009], [Some(b"bad \xff utf8"), Some(b"-9\xb2"), Some(b"{a,b\xffc}")])) == [
+    sql.SqlValue.Text(s: "bad \u{FFFD} utf8"),
+    sql.SqlValue.Text(s: "-9\u{FFFD}"),
+    sql.SqlValue.Array(items: [sql.SqlValue.Text(s: "a"), sql.SqlValue.Text(s: "b\u{FFFD}c")]),
+  ]
+}
+
 test "a fake server: rows decoded by type, and an exec's count" {
   let l = os.net.listen("db.test:5432")?
   scope s {
@@ -58,6 +66,32 @@ test "a fake server: rows decoded by type, and an exec's count" {
     expect(rows[1].str_opt("name")) == Ok(None)
     expect(db.exec("UPDATE t SET x = 1").map(fn(r) { r.rows_affected })) == Ok(3)
     s.cancel()
+  }
+}
+
+test "a fake server out of step: rows ended by ReadyForQuery with no CommandComplete, or an unknown message type, are a Conn error (pgconn: unexpected EOF, unknown message type; were rows)" {
+  let l = os.net.listen("db.test:5432")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_hello_trust(), fk_unended_server).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"))?
+    expect(db.query("SELECT unended").err()) == Some(sql.SqlErr.Conn(msg: "ReadyForQuery before the rows' CommandComplete"))
+    expect(db.query_all("SELECT unended").err()) == Some(sql.SqlErr.Conn(msg: "ReadyForQuery before the rows' CommandComplete"))
+    expect(db.query("SELECT unknown").err()) == Some(sql.SqlErr.Conn(msg: "malformed message: unknown message type: B"))
+    expect(db.query("SELECT ok").map(fn(rs) { rs.len() })) == Ok(1)
+    s.cancel()
+  }
+}
+
+fn fk_unended_server(kind: Str, body: Bytes) -> Bytes {
+  if kind != "Q" {
+    return b""
+  }
+  let q = body[0..body.len() - 1].to_str() ?? ""
+  let head = fk_row_desc([("id", 23)]) + fk_data_row([Some("1")])
+  match q {
+    "SELECT unended" => head + fk_ready()
+    "SELECT unknown" => head + fk_m("B", fk_cs("SELECT 1")) + fk_ready()
+    _ => head + fk_complete("SELECT 1") + fk_ready()
   }
 }
 
