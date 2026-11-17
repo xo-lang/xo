@@ -50,6 +50,20 @@ func Atomic_max(_ *Task, a *Atomic[int64], n int64) int64 {
 	}
 }
 
+// Atomic_and is `a.and(mask)`: stores the value's bits and mask and
+// returns the old value (Go's atomic And).
+func Atomic_and(tk *Task, a *Atomic[int64], mask int64) int64 {
+	tk.Yield()
+	return a.n.And(mask)
+}
+
+// Atomic_or is `a.or(mask)`: stores the value's bits or mask and returns
+// the old value (Go's atomic Or).
+func Atomic_or(tk *Task, a *Atomic[int64], mask int64) int64 {
+	tk.Yield()
+	return a.n.Or(mask)
+}
+
 // Range_to_list is `(a..b).to_list()`.
 func Range_to_list(_ *Task, r Range[int64]) List[int64] {
 	var xs []int64

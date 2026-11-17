@@ -78,6 +78,8 @@ fn rs_append_quote(s: Str, b: Bytes) -> Str
 
 fn atomic_add(a: Atomic[Int], n: Int, at: Loc) -> Int
 fn atomic_max(a: Atomic[Int], n: Int) -> Int
+fn atomic_and(a: Atomic[Int], mask: Int) -> Int
+fn atomic_or(a: Atomic[Int], mask: Int) -> Int
 // The native heap in Xo (decision 0207 stage 3): the platform calls of
 // std/native/llrt/alloc.xo (no fault: out of memory exits with status
 // 70 as the C did). h is the calling thread's heap record, p a block's

@@ -4,7 +4,9 @@
 
 arm64 any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 arm64 atomic_add lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 atomic_and lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 arm64 atomic_max lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 atomic_or lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 arm64 cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 arm64 duration_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 duration_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
@@ -113,7 +115,9 @@ arm64 wasi_http_send the wasi:http component runtime is wasm only (compiler/wasm
 arm64 wasi_stdin_read the wasm stdin read is wasm only (compiler/wasm rt7.xo, decision 0447 stage 3); llrt stdin.xo calls it only in its Wasm32 arm
 llvm any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm atomic_add lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm atomic_and lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm atomic_max lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm atomic_or lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm duration_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm duration_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends

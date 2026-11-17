@@ -599,6 +599,8 @@ fn (a: Atomic[T]) get() -> T
 fn (a: Atomic[T]) set(v: T)
 fn (a: Atomic[Int]) add(n: Int) -> Int       // returns the new value
 fn (a: Atomic[Int]) max(n: Int) -> Int       // stores the larger value, returns it
+fn (a: Atomic[Int]) and(mask: Int) -> Int    // stores value & mask, returns the old value
+fn (a: Atomic[Int]) or(mask: Int) -> Int     // stores value | mask, returns the old value
 fn (a: Atomic[T]) swap(v: T) -> T
 fn (a: Atomic[T]) compare_and_swap(old: T, new: T) -> Bool
 
@@ -7613,7 +7615,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-588 declarations.
+590 declarations.
 
 ### Range
 
@@ -8125,6 +8127,8 @@ fn (a: Atomic[T]) get() -> T
 fn (a: Atomic[T]) set(v: T)
 fn (a: Atomic[Int]) add(n: Int) -> Int
 fn (a: Atomic[Int]) max(n: Int) -> Int
+fn (a: Atomic[Int]) and(mask: Int) -> Int
+fn (a: Atomic[Int]) or(mask: Int) -> Int
 fn (a: Atomic[T]) swap(v: T) -> T
 fn (a: Atomic[T]) compare_and_swap(old: T, new: T) -> Bool
 ```

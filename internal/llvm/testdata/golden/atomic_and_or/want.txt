@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+and 0 bad 0
+or -1 bad 0
+old 12 8 8 13 13 13 13 0
+set -1
+cleared 0
+--- stderr

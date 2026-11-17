@@ -990,7 +990,7 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
     }
     "Chan.close" => return b.rt("chan_close", -1, [h])
     "Chan.len" => return b.rt("chan_len", it, [h])
-    "Atomic.get" | "Atomic.set" | "Atomic.swap" | "Atomic.compare_and_swap" | "Atomic.add" | "Atomic.max" => {
+    "Atomic.get" | "Atomic.set" | "Atomic.swap" | "Atomic.compare_and_swap" | "Atomic.add" | "Atomic.max" | "Atomic.and" | "Atomic.or" => {
       b.det_point()
       if b.atomic_xo() {
         return b.atomic_op(key, fo, es, h, et, span)
@@ -1043,8 +1043,8 @@ fn (var b: Builder) atomic_xo() -> Bool {
   b.prelude_impl("llrt_atomic_add") >= 0
 }
 
-/// An Atomic operation as the inline atomics on its cell and Xo's add
-/// and max (decision 0200).
+/// An Atomic operation as the inline atomics on its cell and Xo's add,
+/// max, and, and or (decision 0200).
 fn (var b: Builder) atomic_op(key: Str, fo: Int, es: List[Expr?], h: Int, et: Int, span: Span) -> Int {
   let it = b.int_t()
   match key {
@@ -1058,6 +1058,8 @@ fn (var b: Builder) atomic_op(key: Str, fo: Int, es: List[Expr?], h: Int, et: In
       b.rt("slot_cas", b.bool_t(), [h, k, a0, a1, b.cint(ORD_SEQ_CST)])
     }
     "Atomic.add" => b.llrt("atomic_add", it, [h, b.io_arg(fo, es, 0, it), b.loc(span)])
+    "Atomic.and" => b.llrt("atomic_and", it, [h, b.io_arg(fo, es, 0, it)])
+    "Atomic.or" => b.llrt("atomic_or", it, [h, b.io_arg(fo, es, 0, it)])
     _ => b.llrt("atomic_max", it, [h, b.io_arg(fo, es, 0, it)])
   }
 }
@@ -1076,6 +1078,8 @@ fn (var b: Builder) atomic_c(key: Str, fo: Int, es: List[Expr?], h: Int, et: Int
       b.rt("atomic_cas", b.bool_t(), [h, a0, a1])
     }
     "Atomic.add" => b.rt("atomic_add", it, [h, b.io_arg(fo, es, 0, it), b.loc(span)])
+    "Atomic.and" => b.rt("atomic_and", it, [h, b.io_arg(fo, es, 0, it)])
+    "Atomic.or" => b.rt("atomic_or", it, [h, b.io_arg(fo, es, 0, it)])
     _ => b.rt("atomic_max", it, [h, b.io_arg(fo, es, 0, it)])
   }
 }

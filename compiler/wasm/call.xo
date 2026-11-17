@@ -1036,7 +1036,7 @@ fn rt_direct(name: Str) -> Bool {
 /// cooperative scheduler (core 7.4), so get, set, swap, and
 /// compare_and_swap on an Atomic (a handle) become rt.atomic_get and
 /// friends again, and the native prelude's llrt_atomic_add and
-/// llrt_atomic_max rt.atomic_add and rt.atomic_max: the program behaves
+/// llrt_atomic_max (and, or) rt.atomic_add and rt.atomic_max (and, or): the program behaves
 /// as before the port.
 fn atomics_to_runtime(m0: ssa.Module) -> ssa.Module {
   var m = m0
@@ -1052,7 +1052,7 @@ fn atomics_to_runtime(m0: ssa.Module) -> ssa.Module {
       }
       var to = ""
       var args: List[Int] = []
-      if name is "prelude.llrt_atomic_add" | "prelude.llrt_atomic_max" {
+      if name is "prelude.llrt_atomic_add" | "prelude.llrt_atomic_max" | "prelude.llrt_atomic_and" | "prelude.llrt_atomic_or" {
         to = "rt.${name.trim_prefix("prelude.llrt_")}"
         args = m.funcs[fi].args_copy(x.args)
       } else if name is "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" {

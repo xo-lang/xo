@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-11-16: feature: Atomic[Int].and and or
+
+- Kind: feature
+- Commit: this push
+- Found by: the std features audit (owner decision #52, task #183): sync/atomic's And and Or (Go 1.23) were gaps
+- Go reference: sync/atomic AndInt64, OrInt64, Int64.And, Int64.Or (go1.26)
+- Test: internal/llvm/testdata/golden/atomic_and_or (arm64, LLVM, wasm), a port of Go's TestAndInt64 and TestOrInt64 plus 64 tasks setting and clearing one bit each
+- Shipped in: not yet released
+
+`a.and(mask)` and `a.or(mask)` store the value's bits and (or) the mask
+and return the old value, as Go's. Native backends run a compare and
+swap loop in std/native/llrt/atomic.xo, the wasm runtime a load and a
+store at a scheduling point, the Go backend Go's atomic.Int64 And and Or.
+Go's Int32, Uint32 and Uint64 forms map to Atomic[Int] as their other
+methods do.
+
 ## 2026-11-16: fix: Float32.from_bits and to_bits keep a signaling NaN
 
 - Kind: fix

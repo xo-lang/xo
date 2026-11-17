@@ -1,4 +1,4 @@
-// Atomic[T]'s add and max, written in Xo over the runtime's atomics
+// Atomic[T]'s add, max, and, and or, written in Xo over the runtime's atomics
 // (decision 0200, the pilot port of decision 0195 prerequisite 1). The
 // SSA builders lower Atomic's get, set, swap, and compare_and_swap to
 // one inline atomic each (rt.slot_load and friends on the value's cell,
@@ -46,6 +46,27 @@ pub fn add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int {
     }
     old = rt.slot_load(a, SLOT, SEQ_CST)
   }
+}
+
+/// `a.and(mask)`: stores the value's bits and mask and returns the old
+/// value (Go's And: a compare and swap loop, as Go's on a CPU without
+/// LSE).
+pub fn and(a: Atomic[Int], mask: Int) -> Int {
+  var old = rt.slot_load(a, SLOT, SEQ_CST)
+  while !rt.slot_cas(a, SLOT, old, old & mask, SEQ_CST) {
+    old = rt.slot_load(a, SLOT, SEQ_CST)
+  }
+  old
+}
+
+/// `a.or(mask)`: stores the value's bits or mask and returns the old value
+/// (Go's Or).
+pub fn or(a: Atomic[Int], mask: Int) -> Int {
+  var old = rt.slot_load(a, SLOT, SEQ_CST)
+  while !rt.slot_cas(a, SLOT, old, old | mask, SEQ_CST) {
+    old = rt.slot_load(a, SLOT, SEQ_CST)
+  }
+  old
 }
 
 /// `a.max(n)`: stores the larger value and returns it (xo_atomic_max).

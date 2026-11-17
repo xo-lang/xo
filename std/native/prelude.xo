@@ -5991,7 +5991,7 @@ fn llrt_append_rune_quote(s: Str, r: Int) -> Str { show.append_rune_quote(s, r) 
 
 fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
 
-// Atomic's add and max (decision 0200): in Xo over the runtime's atomics
+// Atomic's add, max, and, and or (decision 0200): in Xo over the runtime's atomics
 // (std/native/llrt/atomic.xo); the SSA builders lower get, set, swap, and
 // compare_and_swap inline. Decision 0198 deleted the C path
 // (`XO_LLRT_C=atomic`).
@@ -5999,6 +5999,10 @@ fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
 fn llrt_atomic_add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int { atomic.add(a, n, at) }
 
 fn llrt_atomic_max(a: Atomic[Int], n: Int) -> Int { atomic.max(a, n) }
+
+fn llrt_atomic_and(a: Atomic[Int], mask: Int) -> Int { atomic.and(a, mask) }
+
+fn llrt_atomic_or(a: Atomic[Int], mask: Int) -> Int { atomic.or(a, mask) }
 
 // A scheduling point of a deterministic run (core 7.4, decision 0350):
 // the SSA builder calls it before an inline Atomic operation only in a

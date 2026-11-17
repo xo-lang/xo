@@ -1,0 +1,57 @@
+// Atomic[Int]'s and and or (Go 1.23 sync/atomic And and Or; std.md 2.7):
+// each stores the value's bits and (or) the mask and returns the old
+// value. A port of Go's TestAndInt64 and TestOrInt64 (sync/atomic
+// atomic_test.go, BSD license, The Go Authors): one bit per step over all
+// 64, the value checked after each and the old value returned. Then 64
+// tasks set one bit each with or and 64 clear one each with and.
+
+fn main(os: Os) {
+  // TestAndInt64: from all bits set, clear one bit at a time
+  let x = Atomic[Int].new(-1)
+  var j = -1
+  var bad = 0
+  for i in 0..64 {
+    let mask = 1.wrapping_shl(i)
+    let old = x.get()
+    let k = x.and(~mask)
+    j = j & ~mask
+    if x.get() != j || k != old {
+      bad = bad + 1
+    }
+  }
+  os.stdio.println("and ${x.get()} bad ${bad}")
+  // TestOrInt64: from zero, set one bit at a time
+  let y = Atomic[Int].new(0)
+  j = 0
+  for i in 0..64 {
+    let mask = 1.wrapping_shl(i)
+    let old = y.get()
+    let k = y.or(mask)
+    j = j | mask
+    if y.get() != j || k != old {
+      bad = bad + 1
+    }
+  }
+  os.stdio.println("or ${y.get()} bad ${bad}")
+  // the returned value is the old one
+  let z = Atomic[Int].new(12)
+  os.stdio.println("old ${z.and(10)} ${z.get()} ${z.or(5)} ${z.get()} ${z.or(0)} ${z.and(-1)} ${z.and(0)} ${z.get()}")
+  // concurrent: each task owns one bit
+  let bits = Atomic[Int].new(0)
+  scope s {
+    for i in 0..64 {
+      s.spawn(fn() {
+        let _ = bits.or(1.wrapping_shl(i))
+      })
+    }
+  }
+  os.stdio.println("set ${bits.get()}")
+  scope s {
+    for i in 0..64 {
+      s.spawn(fn() {
+        let _ = bits.and(~(1.wrapping_shl(i)))
+      })
+    }
+  }
+  os.stdio.println("cleared ${bits.get()}")
+}

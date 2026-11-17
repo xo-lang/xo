@@ -1210,6 +1210,12 @@ fn (a: Atomic[T]) set(v: T)
 fn (a: Atomic[Int]) add(n: Int) -> Int
 /// Stores n when it is larger and returns the value then held.
 fn (a: Atomic[Int]) max(n: Int) -> Int
+/// Stores the value's bits and mask and returns the old value (Go's atomic
+/// And, Go 1.23).
+fn (a: Atomic[Int]) and(mask: Int) -> Int
+/// Stores the value's bits or mask and returns the old value (Go's atomic
+/// Or, Go 1.23).
+fn (a: Atomic[Int]) or(mask: Int) -> Int
 /// Stores v and returns the old value (Go's atomic Swap).
 fn (a: Atomic[T]) swap(v: T) -> T
 /// Stores new if the value is old and returns whether it did (Go's
