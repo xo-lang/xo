@@ -1760,7 +1760,12 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     the test runs MB_CONFIRM more times (default 3) alone at it and at
     its parent; one that passes every run there, or fails at the parent
     too, goes to the lead as a load flake (`MAINBISECT-FLAKE`, an
-    `error=load flake` event), not a first bad commit. A one-commit range
+    `error=load flake` event), not a first bad commit. One that passes
+    every run alone at both then has its whole package run once at each
+    (#227; #226's os.Chdir leak was called a load flake): a package run
+    that fails at the commit is `MAINBISECT-ORDER`, an `error=passes
+    alone: order dependence or load` event naming both package results.
+    A one-commit range
     is confirmed on the host too (no host only with MB_CONFIRM=0). Its
     `bisect.done` event becomes a `bisect`
     alert to the first bad commit's owner (by the push that carried it,
