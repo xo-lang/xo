@@ -683,3 +683,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0689](0689-ui-live-push-views.md): Accepted (owner, 2026-11-16): std/ui live pages get the new view over their socket (push=1), rendered once per version and view for all of its pages, instead of a sync request each
 - [0692](0692-ui-commands.md): Proposed (xo-4c, 2026-11-17): std/ui commands, side effects a committed Msg asks for, run once on the instance that committed it, their results back as server Msgs
 - [0694](0694-ui-query-subset.md): Proposed (xo-4c, 2026-11-17): std/ui query subscriptions, `host(subset:)` sends each page only the part of the model its query asks for (0664 stage 4c)
+- [0695](0695-ui-realtime-rooms.md): Proposed (xo-4c, 2026-11-17): std/ui real-time rooms, a scope stepped on a fixed tick by one instance, binary deltas over the websocket, snapshots every few seconds (0686 step 7)
