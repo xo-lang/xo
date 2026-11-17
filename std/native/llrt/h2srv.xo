@@ -235,9 +235,14 @@ const C_PFREE = 752
 const C_PSTRIKE = 760
 const C_PLASTPING = 768
 const C_PRESET = 776
-const C_WPARK = 784
-const C_WREAD = 792
-const C_SIZE = 784 // own: this module\'s connection record, not the context
+/// the connection's age limit (H2Config max_connection_age, grpc-go's
+/// MaxConnectionAge with its +-10% jitter): when it is reached (0: none),
+/// and the grace after it (0: none; streams then run to their end)
+const C_AGE = 784
+const C_AGRACE = 792
+const C_WPARK = 800
+const C_WREAD = 808
+const C_SIZE = 800 // own: this module\'s connection record, not the context
 
 /// The connection record's size: wasm's has the park words after it.
 fn c_size() -> Int { if target.arch == TargetArch.Wasm32 { C_SIZE + 16 } else { C_SIZE } }
@@ -977,6 +982,14 @@ pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   sto(c, C_XCONN, if cfg != 0 { ld(cfg, 80) } else { 0 })
   sto(c, C_PMIN, if cfg != 0 { ld(cfg, 88) } else { 0 })
   sto(c, C_PFREE, if cfg != 0 { ld(cfg, 96) } else { 0 })
+  let age = if cfg != 0 { ld(cfg, 104) } else { 0 }
+  if age > 0 {
+    // grpc-go's jitter: the age +-10%, so connections made together do not all end together
+    let span = age / 5
+    let j = if span > 0 { ((now() ^ c) & 0x7fffffffffff) % span - span / 2 } else { 0 }
+    sto(c, C_AGE, now() + age + j)
+    sto(c, C_AGRACE, ld(cfg, 112))
+  }
   sto(c, C_LAST, now())
   sto(c, C_PEER_FRAME, 16384)
   sto(c, C_PEER_WIN, 65535)
@@ -1474,6 +1487,16 @@ pub fn (var h: H2Conn) next() -> H2Req? {
         return Some(h.request_of(st))
       }
     }
+    if ld(c, C_AGE) != 0 && now() >= ld(c, C_AGE) && !on(c, C_GOAWAY) {
+      // max_connection_age reached: grpc-go's Drain("max_age"), and the
+      // connection closes after the grace whatever its streams do
+      sto(c, C_AGE, 0)
+      sto(c, C_GOAWAY, 1)
+      put_goaway(c, ld(c, C_MAX_ID), E_NO, "max_age")
+      if ld(c, C_AGRACE) > 0 {
+        sto(c, C_DEADLINE, now() + ld(c, C_AGRACE))
+      }
+    }
     if on(c, C_STOP) && !on(c, C_GOAWAY) {
       sto(c, C_GOAWAY, 1)
       put_goaway(c, ld(c, C_MAX_ID), E_NO, "")
@@ -1567,6 +1590,9 @@ fn (h: H2Conn) idle() -> Int {
         until = pw
       }
     }
+    if ld(c, C_AGE) != 0 && (until == 0 || ld(c, C_AGE) < until) {
+      until = ld(c, C_AGE)
+    }
     if until != 0 {
       // a timer already due does not park: next() waits (returning at
       // once) and keepalive() sends the ping or ends the connection; a
@@ -1632,6 +1658,9 @@ fn (h: H2Conn) wait(x: Int) -> Bool {
       until = pw
     }
   }
+  if ld(c, C_AGE) != 0 && (until == 0 || ld(c, C_AGE) < until) {
+    until = ld(c, C_AGE)
+  }
   unlk(c)
   if tracerec.built() {
     rt.mem_store(x, ctx.C_WHY, tracerec.WHY_HTTP, 8)
@@ -1682,6 +1711,9 @@ fn (h: H2Conn) wait_wasm() -> Bool {
       until = pw
     }
   }
+  if ld(c, C_AGE) != 0 && (until == 0 || ld(c, C_AGE) < until) {
+    until = ld(c, C_AGE)
+  }
   rt.wasi_park_signal(c + C_WREAD)
   rt.wasi_park_wait(c + C_WPARK, until) == 1
 }
@@ -1692,6 +1724,10 @@ fn (h: H2Conn) wait_wasm() -> Bool {
 /// readIdleTimer).
 fn (h: H2Conn) keepalive() -> Bool {
   let c = h.c
+  // the age limit came: the loop sends its GOAWAY
+  if ld(c, C_AGE) != 0 && now() >= ld(c, C_AGE) && !poll.canceled() {
+    return true
+  }
   if poll.canceled() || ld(c, C_PIDLE) <= 0 || !on(c, C_GOT_SETTINGS) {
     return false
   }

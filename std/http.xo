@@ -576,6 +576,15 @@ struct H2Config {
   /// min_ping_interval set, two such PINGs less than 2 hours apart are a
   /// strike (grpc-go's PermitWithoutStream)
   ping_without_stream: Bool = false
+  /// a connection's age limit (0: none; grpc-go's MaxConnectionAge, with
+  /// its +-10% jitter): then GOAWAY NO_ERROR "max_age", no new streams,
+  /// and the connection closes once its streams are done. The native
+  /// servers only, as min_ping_interval.
+  max_connection_age: Duration = 0s
+  /// after the age, how long streams may run before the connection is
+  /// closed under them (0: until they end; grpc-go's
+  /// MaxConnectionAgeGrace)
+  max_connection_age_grace: Duration = 0s
 }
 
 /// The server speaking the protocols of p (Go's Server.Protocols;

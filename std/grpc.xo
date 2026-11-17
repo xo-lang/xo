@@ -882,6 +882,10 @@ pub struct ServerKeepalive {
   pub timeout: Duration = 20s
   pub min_time: Duration = 300s
   pub permit_without_stream: Bool = false
+  /// grpc-go's MaxConnectionAge (0: none) and MaxConnectionAgeGrace (0: until the streams end): a connection that
+  /// old gets GOAWAY "max_age" (with +-10% jitter) and is closed after the grace (H2Config max_connection_age)
+  pub max_connection_age: Duration = 0s
+  pub max_connection_age_grace: Duration = 0s
 }
 
 /// h with grpc-go's server keepalive (KeepaliveParams and KeepaliveEnforcementPolicy): its HTTP/2 settings'
@@ -889,7 +893,7 @@ pub struct ServerKeepalive {
 /// `with_idle_timeout` for `max_connection_idle`.
 pub fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server {
   let t = if p.time < 1s { 1s } else { p.time }
-  let out = h.with_h2_config(http.H2Config{send_ping_timeout: t, ping_timeout: p.timeout, min_ping_interval: p.min_time, ping_without_stream: p.permit_without_stream})
+  let out = h.with_h2_config(http.H2Config{send_ping_timeout: t, ping_timeout: p.timeout, min_ping_interval: p.min_time, ping_without_stream: p.permit_without_stream, max_connection_age: p.max_connection_age, max_connection_age_grace: p.max_connection_age_grace})
   if p.max_connection_idle > 0s { out.with_idle_timeout(p.max_connection_idle) } else { out }
 }
 
@@ -2221,7 +2225,9 @@ fn from_client_err(e: http.ClientErr) -> Status {
     Connect(msg) => status_new(Code.Unavailable, "connection error: ${msg}")
     // the connection lost under the call (a keepalive ping not acked, the server gone): grpc-go's transport
     // closing is Unavailable; x/net's errClientConnLost text, the same on the native backends
-    Protocol(msg) => if msg.ends_with("http2: client connection lost") { status_new(Code.Unavailable, msg) } else { status_new(Code.Internal, msg) }
+    // so is a connection the server closed after its GOAWAY (a max_connection_age's grace ran out): grpc-go's
+    // ErrConnClosing, Unavailable
+    Protocol(msg) => if msg.ends_with("http2: client connection lost") || msg.starts_with("http2: server sent GOAWAY and closed the connection") { status_new(Code.Unavailable, msg) } else { status_new(Code.Internal, msg) }
     InvalidUrl(msg) => status_new(Code.Internal, "invalid URL: ${msg}")
     // a TLS failure was Protocol before ClientErr.Tls (decision 0644):
     // the same status and text (grpc-go says Unavailable for a failed

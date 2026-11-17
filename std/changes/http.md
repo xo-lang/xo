@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-17: feature: HTTP/2 server connection age limit (H2Config max_connection_age, max_connection_age_grace)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc-go's keepalive.ServerParameters MaxConnectionAge and MaxConnectionAgeGrace)
+- Go reference: google.golang.org/grpc v1.79.2 internal/transport/http2_server.go keepalive (Drain("max_age"), the grace's close, the +-10% jitter of server.go)
+- Test: std/grpc_test.xo "keepalive_server ends a connection at max_connection_age after its grace, as grpc-go's"
+- Timing: none (one comparison per loop turn of a connection)
+- Shipped in: not yet released
+
 ## 2026-11-17: perf: a duplex request's piece written by another task wakes the pump's read
 
 - Kind: perf

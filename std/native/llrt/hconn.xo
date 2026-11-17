@@ -47,7 +47,7 @@ pub const SR_CLOSED = 80
 /// Whether plain connections may start HTTP/2 with prior knowledge
 /// (h2c, decision 0434: srv_h2c).
 pub const SR_H2C = 88
-/// the HTTP/2 settings block (hserve.srv_h2cfg): 13 words, 0 none
+/// the HTTP/2 settings block (hserve.srv_h2cfg): 15 words, 0 none
 pub const SR_H2CFG = 96
 /// Parked idle connections (decision 0449, hserve.xo hc_park): the lock
 /// word of the ready list (not SR_MU: srv_stop closes descriptors under

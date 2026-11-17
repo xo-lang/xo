@@ -1,6 +1,16 @@
 # std/grpc changes
 
 
+
+## 2026-11-17: feature: ServerKeepalive max_connection_age and max_connection_age_grace; a stream cut by a closed connection is Unavailable
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc-go's MaxConnectionAge and MaxConnectionAgeGrace were missing from ServerKeepalive)
+- Go reference: google.golang.org/grpc v1.79.2 keepalive.ServerParameters; a stream on a connection closed after GOAWAY is ErrConnClosing, Unavailable
+- Test: std/grpc_test.xo "keepalive_server ends a connection at max_connection_age after its grace, as grpc-go's" (the cut stream read Internal before)
+- Timing: none
+- Shipped in: not yet released
 ## 2026-11-17: feature: balancing over several addresses (with_addrs, with_dns, with_resolver, Balancer)
 
 - Kind: feature
