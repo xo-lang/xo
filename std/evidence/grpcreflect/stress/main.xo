@@ -32,7 +32,7 @@ fn proto_src(i: Int) -> Str {
   }
   src = src + "message M${i} {\n  optional string s = 1;\n  enum E${i} {\n    E${i}_A = 0;\n    E${i}_B = 1;\n  }\n  message N${i} {\n    optional int32 n = 1;\n  }\n  extensions 100 to 199;\n}\n"
   for d in deps {
-    src = src + "extend p${d}.M${d} {\n  optional int32 x${i} = ${100 + i};\n}\n"
+    src = src + "extend p${d}.M${d} {\n  optional int32 x${i}_${d} = ${100 + i};\n}\n"
   }
   src + "service S${i} {\n  rpc Get(M${i}) returns (M${i});\n}\n"
 }
