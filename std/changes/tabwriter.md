@@ -1,5 +1,19 @@
 # std/tabwriter changes
 
+## 2026-11-17: perf: a cell's width is counted from the written bytes
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88, the pad and right rows of bench/perf/tabwriter at 1.070 and 1.084 of Go (host 1)
+- Go reference: text/tabwriter Writer.updateWidth (utf8.RuneCount of the cell's text)
+- Test: internal/stdtest/testdata/corpus/tabwriter (Go's output, multibyte cells included); TestTabwriterFuzz
+- Timing: bench/perf/tabwriter pad at 60,000 tables on the Mac, 0.32 to 0.27 s user
+
+Each cell's width was found by decoding the buffered text byte by byte.
+`write` now notes where it last saw a byte over 0x7F: ASCII text adds
+its length, other text its rune count over the written bytes, and only
+text left from an earlier write is decoded from the buffer.
+
 ## 2026-11-16: perf: cell text and padding are written as slices
 
 - Kind: perf

@@ -79,14 +79,19 @@ pub fn writer(min_width: Int, tab_width: Int, padding: Int, pad_char: Int = 32, 
 
 pub fn (var w: TabWriter) write(data: Bytes) {
   var n = 0
+  // the last index of a byte at or over 0x80: a cell's text after it is
+  // ASCII, one rune a byte
+  var hi = -1
   for i in 0..data.len() {
     let ch = Int(data[i])
+    if ch >= 0x80 {
+      hi = i
+    }
     if w.end_char == 0 {
       // outside escape
       if ch == 9 || ch == 11 || ch == 10 || ch == 12 {
         // end of cell
-        w.append(data, n, i)
-        w.update_width()
+        w.add_text(data, n, i, hi < n)
         n = i + 1
         let ncells = w.terminate_cell(ch == 9)
         if ch == 10 || ch == 12 {
@@ -104,8 +109,7 @@ pub fn (var w: TabWriter) write(data: Bytes) {
         }
       } else if ch == ESCAPE {
         // start of escaped sequence
-        w.append(data, n, i)
-        w.update_width()
+        w.add_text(data, n, i, hi < n)
         n = i
         if w.flags & STRIP_ESCAPE != 0 {
           n += 1
@@ -114,8 +118,7 @@ pub fn (var w: TabWriter) write(data: Bytes) {
       } else if ch == 60 || ch == 38 {
         // possibly an html tag or entity
         if w.flags & FILTER_HTML != 0 {
-          w.append(data, n, i)
-          w.update_width()
+          w.add_text(data, n, i, hi < n)
           n = i
           w.start_escape(ch)
         }
@@ -281,6 +284,21 @@ fn (var w: TabWriter) format(pos0: Int, line0_in: Int, line1: Int) -> Int {
     this += 1
   }
   w.write_lines(pos, line0, line1)
+}
+
+/// append, then update_width: when no text waits to be counted, the
+/// width is the byte count of ASCII text (ascii: no byte over 0x7F) or
+/// else data's own runes (the buffer then ends where
+/// data[to] does, so a rune cut there counts as Go's DecodeRune counts it).
+fn (var w: TabWriter) add_text(data: Bytes, from: Int, to: Int, ascii: Bool) {
+  if w.pos == w.buf.len() {
+    w.append(data, from, to)
+    w.cell.width += if ascii { to - from } else { data[from..to].rune_count() }
+    w.pos = w.buf.len()
+  } else {
+    w.append(data, from, to)
+    w.update_width()
+  }
 }
 
 fn (var w: TabWriter) append(data: Bytes, from: Int, to: Int) {
