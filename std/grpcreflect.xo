@@ -112,6 +112,9 @@ fn (r: Reflection) files_from(f: protodesc.FileDesc?, sent0: Set[Str]) -> (Answe
   var sent = sent0
   var out: List[Bytes] = []
   var queue = [first]
+  // each file is walked once: files given as descriptors may import each other in a cycle, which a .proto parser
+  // rejects but a hand built or decoded FileDesc does not
+  var walked: Set[Str] = #{first.name}
   var at = 0
   while at < queue.len() {
     let cur = queue[at]
@@ -122,7 +125,10 @@ fn (r: Reflection) files_from(f: protodesc.FileDesc?, sent0: Set[Str]) -> (Answe
     }
     for d in cur.dependency {
       if let Some(df) = r.file_named(d) {
-        queue.push(df)
+        if !walked.contains(df.name) {
+          walked.add(df.name)
+          queue.push(df)
+        }
       }
     }
   }

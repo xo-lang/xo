@@ -76,3 +76,13 @@ test "a server's reflection service lists it and answers over the wire" uses (ne
     expect(got) == Err(grpc.Status{code: grpc.Code.InvalidArgument, message: "invalid MessageRequest: <nil>"})
   }
 }
+
+// files that import each other (a hand built FileDesc; a .proto parser rejects the cycle) are each sent once and the
+// walk ends: it looped for good before
+test "a cycle of imports ends the file walk, each file sent once" {
+  let a = protodesc.FileDesc{name: "a.proto", dependency: ["b.proto"]}
+  let b = protodesc.FileDesc{name: "b.proto", dependency: ["a.proto", "a.proto"]}
+  let r = new([a, b], [])
+  expect(names(r.answer(Request.FileByFilename(name: "a.proto"), #{}).0)) == ["a.proto", "b.proto"]
+  expect(names(r.answer(Request.FileByFilename(name: "b.proto"), #{}).0)) == ["b.proto", "a.proto"]
+}
