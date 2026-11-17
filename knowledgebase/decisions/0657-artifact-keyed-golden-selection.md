@@ -1,6 +1,6 @@
 # 0657: select gate goldens by their built binaries
 
-Status: Proposed (Xo Lang 2, 2026-11-15; owner decision through the lead)
+Status: Accepted (owner, 2026-11-17, on the lead's recommendation: off by default, turned on per host only after a measured net gate-time win). Proposed by Xo Lang 2, 2026-11-15
 
 ## Context
 

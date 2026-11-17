@@ -342,7 +342,7 @@ crypto; within it, a module that misses only the testing axis first.
   carry it from this batch; compress, json, time and x509 (and Lang 2's
   modules) at their next evidence refresh, until which their stress.md
   stands as written.
-- Clarification 2026-11-17, lead decision for the owner to confirm:
+- Clarification 2026-11-17 (lead decision, confirmed by the owner 2026-11-17):
   stress programs skip their rss bar under --check=all,
   `XO_STRESS_CHECK=1`. The resident set was in fact
   sampled under the check, and std/udp's --check=all run failed on
