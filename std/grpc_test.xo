@@ -453,3 +453,38 @@ fn md_with(m: Map[Str, Str], k: Str, v: Str) -> Map[Str, Str] {
   out[k] = v
   out
 }
+
+// grpc-go's WithDefaultCallOptions, OnFinish and peer.FromContext
+test "default call options, on_finish and the peer, as grpc-go's" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/d.D/Echo", fn(call, _req) -> Bytes ! Status {
+    let t = if call.timeout is Some(_) { "deadline" } else { "none" }
+    Ok("${call.metadata.get("x-a") ?? "-"} ${call.metadata.get("x-b") ?? "-"} ${t} ${call.peer}".bytes())
+  })
+  srv.unary("/d.D/Fail", fn(_c, _r) -> Bytes ! Status { Err(status_new(Code.NotFound, "gone")) })
+  srv.stream("/d.D/S", fn(_c, _r, send) -> () ! Status { send.send(b"s")? })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let ended = Mutex[List[Str]].new([])
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let base = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    let c = base.with_default_metadata({"x-a": "1", "x-b": "2"}).with_default_timeout(5s).with_on_finish(fn(m, st) {
+      let what = match st {
+        None => "ok"
+        Some(e) => "${e.code}"
+      }
+      ended.with(fn(var l: List[Str]) { l.push("${m} ${what}") })
+    })
+    // the call's own metadata wins; the default timeout is sent; the peer is the client's IP
+    expect(c.unary("/d.D/Echo", b"", {"x-b": "own"})) == Ok(b"1 own deadline 127.0.0.1")
+    expect(base.unary("/d.D/Echo", b"")) == Ok(b"- - none 127.0.0.1")
+    expect(c.unary("/d.D/Fail", b"")) == Err(status_new(Code.NotFound, "gone"))
+    let got = c.call("/d.D/S", {}, None, fn(cc) -> Bytes ! Status {
+      cc.close_send()
+      Ok(cc.recv()? ?? b"")
+    })
+    expect(got) == Ok(b"s")
+    expect(ended.with(fn(var l: List[Str]) -> List[Str] { l })) == ["/d.D/Echo ok", "/d.D/Fail NotFound", "/d.D/S ok"]
+  }
+}

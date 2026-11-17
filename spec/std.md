@@ -10861,7 +10861,7 @@ fn (c: Client) with_gzip() -> Client          // sends gzip compressed messages 
 fn bin_encode(data: Bytes) -> Str            // a `-bin` metadata value: unpadded standard base64
 fn bin_decode(value: Str) -> Bytes?          // padded or not; None when it is not base64
 // the server
-struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration?, client_stream: Bool, server_stream: Bool }
+struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration?, client_stream: Bool, server_stream: Bool, peer: Str }   // peer: the client's IP
 fn server(clock: Clock) -> Server
 fn (var s: Server) unary(method: Str, f: fn(Call, Bytes) -> Bytes ! Status)
 fn (var s: Server) stream(method: Str, f: fn(Call, Recv, Send) -> () ! Status, client_stream: Bool = true, server_stream: Bool = true)
@@ -10879,6 +10879,9 @@ struct CallOpts { metadata: Map[Str, Str], timeout: Duration? }
 type Invoker = fn(Str, Bytes, CallOpts) -> Bytes ! Status
 fn (c: Client) with_unary_interceptor(f: fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status) -> Client
 fn (c: Client) with_stream_interceptor(f: fn(Str, CallOpts) -> CallOpts ! Status) -> Client   // before a call opens
+fn (c: Client) with_default_metadata(md: Map[Str, Str]) -> Client   // grpc-go's WithDefaultCallOptions: a call's own metadata adds to it and wins
+fn (c: Client) with_default_timeout(d: Duration) -> Client          // for a call without a timeout of its own
+fn (c: Client) with_on_finish(f: fn(Str, Status?) -> ()) -> Client   // grpc-go's OnFinish: the method and the status (None for OK) when each call ends
 fn (r: Recv) next() -> Bytes? ! Status
 fn (s: Send) send(msg: Bytes) -> () ! Status
 fn (s: Send) set_trailer(name: Str, value: Str)

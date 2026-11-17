@@ -1,5 +1,16 @@
 # std/grpc changes
 
+## 2026-11-17: feature: default call options, on_finish and the peer
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (std Proven; scripts/stdaudit/map.txt grpc gap rows WithDefaultCallOptions, OnFinish, OnFinishCallOption, Peer, StatsHandler)
+- Go reference: google.golang.org/grpc v1.79.2 dialoptions.go WithDefaultCallOptions, rpc_util.go OnFinish, peer/peer.go
+- Test: std/grpc_test.xo "default call options, on_finish and the peer" (a call's own metadata winning over the defaults, the default timeout sent, on_finish for OK, an error and a stream, the peer's IP), arm64 and LLVM
+- Behavior difference: Call.peer is the client's IP without the port (grpc-go's Peer.Addr has both); StatsHandler is mapped partial to the interceptors and on_finish
+- Timing: none (a call copies the default metadata only when the client has some)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: interceptors (decision 0703)
 
 - Kind: feature

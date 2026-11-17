@@ -11,6 +11,7 @@ the text of every entry is unchanged).
 
 - Feature (std/protojson, std/prototext): proto2 extensions, written and read as `[full.name]` as protobuf-go does (task #228).
 - Feature (xo test): `--since=REV` runs only the tests a change since the git revision REV reaches (`--watch`'s selection, once), and `--std-module` runs of modules whose tests use only the fakes are cached like any other passed run (decision 0701).
+- Feature (std/grpc): `Client.with_default_metadata`, `with_default_timeout` and `with_on_finish` (grpc-go's WithDefaultCallOptions and OnFinish), and `Call.peer`, the client's IP.
 - Feature (std/grpc, decision 0703): interceptors: `Server.intercept` and `intercept_unary` around the server's methods, `Client.with_unary_interceptor` and `with_stream_interceptor` around calls, chained in registration order; `Call` has the method's `client_stream` and `server_stream`.
 - Feature (std/grpc): `Server.services()` lists the registered services and methods (grpc-go's GetServiceInfo), `Server.unknown(f)` serves calls to methods no service registered (UnknownServiceHandler), and `stream` takes `client_stream` and `server_stream` for the method's kind.
 - Fix (std/http, native HTTP/2 server): a second WINDOW_UPDATE that overflows a stream already reset for flow control is ignored (the stream gets RST_STREAM FLOW_CONTROL_ERROR, as net/http); it ended the connection (h2spec 6.9.1 #3).

@@ -237,6 +237,8 @@ pub struct Call {
   /// the method's kind as registered (grpc-go's StreamServerInfo): a unary method has neither
   pub client_stream: Bool = true
   pub server_stream: Bool = true
+  /// the client's IP address (grpc-go's peer.Peer Addr, which also has the port; std/http's Request keeps none)
+  pub peer: Str = ""
 }
 
 /// f with its effects counted at this call, as a function whose type has none: interceptors and handlers are stored
@@ -536,6 +538,51 @@ pub struct Client {
   /// with_unary_interceptor's and with_stream_interceptor's functions, in registration order
   pub unary_icpt: List[fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status] = []
   pub stream_icpt: List[fn(Str, CallOpts) -> CallOpts ! Status] = []
+  /// with_default_metadata and with_default_timeout (grpc-go's WithDefaultCallOptions)
+  pub default_md: Map[Str, Str] = {}
+  pub default_timeout: Duration? = None
+  /// with_on_finish's functions
+  pub on_finish: List[fn(Str, Status?) -> ()] = []
+}
+
+/// The client sending md with every call (grpc-go's WithDefaultCallOptions with metadata): a call's own metadata
+/// adds to it, and its value wins for a name in both.
+pub fn (c: Client) with_default_metadata(md: Map[Str, Str]) -> Client {
+  c with {default_md: md}
+}
+
+/// The client giving every call without a timeout of its own this one (WithDefaultCallOptions for a deadline).
+pub fn (c: Client) with_default_timeout(d: Duration) -> Client {
+  c with {default_timeout: Some(d)}
+}
+
+/// The client running f when each call ends (grpc-go's OnFinish), with the method and the call's status: None for
+/// OK. A streaming call ends when `call`'s function returns. f's effects are counted here.
+pub fn (c: Client) with_on_finish[fx: Effects](f: fn(Str, Status?) -> () uses fx) -> Client uses fx {
+  let g = pure1(fn(a: (Str, Status?)) { f(a.0, a.1) })
+  var fs = c.on_finish
+  fs.push(fn(m, st) { g((m, st)) })
+  c with {on_finish: fs}
+}
+
+/// A call's metadata and timeout after the client's defaults.
+fn (c: Client) opts(metadata: Map[Str, Str], timeout: Duration?) -> CallOpts {
+  var md = c.default_md
+  for (k, v) in metadata {
+    md[k] = v
+  }
+  CallOpts{metadata: md, timeout: timeout ?? c.default_timeout}
+}
+
+/// Runs the on_finish functions for a call that ended with r.
+fn (c: Client) finished[T](method: Str, r: Result[T, Status]) {
+  let st = match r {
+    Ok(_) => None
+    Err(e) => Some(e)
+  }
+  for f in c.on_finish {
+    f(method, st)
+  }
 }
 
 /// A call's options as a client interceptor sees them: the request metadata and the timeout.
@@ -605,12 +652,16 @@ fn send_too_large(n: Int, max: Int) -> Status {
 /// One unary call: the request message, the response message, or the call's status. `timeout` is sent as
 /// `grpc-timeout` and bounds the call (DeadlineExceeded).
 pub fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, timeout: Duration? = None) -> Bytes ! Status uses net.dial {
-  if c.unary_icpt.is_empty() {
-    return c.unary_call(method, req, metadata, timeout)
+  let o = c.opts(metadata, timeout)
+  let out = if c.unary_icpt.is_empty() {
+    c.unary_call(method, req, o.metadata, o.timeout)
+  } else {
+    let me = c
+    let g = pure1(fn(a: (Str, Bytes, CallOpts)) -> Result[Bytes, Status] { me.unary_call(a.0, a.1, a.2.metadata, a.2.timeout) })
+    run_invoke(c.unary_icpt, 0, method, req, o, fn(m, r, oo) -> Bytes ! Status { g((m, r, oo)) })
   }
-  let me = c
-  let g = pure1(fn(a: (Str, Bytes, CallOpts)) -> Result[Bytes, Status] { me.unary_call(a.0, a.1, a.2.metadata, a.2.timeout) })
-  run_invoke(c.unary_icpt, 0, method, req, CallOpts{metadata: metadata, timeout: timeout}, fn(m, r, o) -> Bytes ! Status { g((m, r, o)) })
+  c.finished(method, out)
+  out
 }
 
 /// One unary call, after the interceptors.
@@ -676,11 +727,19 @@ pub struct CallState {
 /// Runs `f` on a streaming call: `f` sends with `send`, ends the request with `close_send` and reads with `recv`.
 /// The call's status is the result of `recv` after the last message (an error when it is not OK).
 pub fn (c: Client) call[R, fx: Effects](method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status uses fx) -> R ! Status uses (fx, net.dial) {
-  var o = CallOpts{metadata: metadata, timeout: timeout}
+  var o = c.opts(metadata, timeout)
   for ic in c.stream_icpt {
-    o = ic(method, o)?
+    match ic(method, o) {
+      Ok(x) => o = x
+      Err(e) => {
+        c.finished(method, Err[(), Status](e))
+        return Err(e)
+      }
+    }
   }
-  c.call_opened(method, o.metadata, o.timeout, f)
+  let out = c.call_opened(method, o.metadata, o.timeout, f)
+  c.finished(method, out)
+  out
 }
 
 /// One streaming call, after the interceptors.
@@ -989,7 +1048,7 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
       md[lk] = v
     }
   }
-  let call = Call{method: method, metadata: md, timeout: timeout}
+  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip}
   let recv = Recv{body: body, st: Mutex[RecvState].new(RecvState{buf: b"", at: 0, done: false, gzip: (req.header("grpc-encoding") ?? "") == "gzip"}), max: max}
   // the head grpc-go's server writes: content-type, and grpc-encoding only when the responses are compressed
   var resp = http.stream(200, fn(w) -> () ! IoErr {
