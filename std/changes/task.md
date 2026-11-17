@@ -1,5 +1,21 @@
 # std/task changes
 
+## 2026-11-17: fix: a caught fault with a location no longer leaks
+
+- Kind: fix
+- Commit: this push
+- Found by: std/sse stress (task #199): max RSS grew through a 30 minute run of Str slices faulting inside isolate
+- Go reference: none
+- Test: golden fault_isolate_leak (100,000 caught faults of each kind grow max RSS under 2 MiB; split and fault grew 6.2 MB before)
+
+`task.isolate` catching a fault raised with a source location (a Str slice
+splitting a UTF-8 character, `fault(msg)`, contract failures) leaked about
+60 bytes per fault: std/native/llrt/fault.xo copied the location to the heap
+for the raise, and fault.set copies it again into the context, so the first
+copy was never freed. The location now goes into the per-thread message
+buffer after the message, and only a location that does not fit there is
+copied to the heap.
+
 ## 2026-11-11: refactor: std/task's Xo parts are one file on every backend (decisions 0588, 0597's amendment)
 
 - Kind: refactor

@@ -1,0 +1,71 @@
+// Faults caught by task.isolate leak nothing per fault (task #199): the
+// raises that take a location (a Str slice that splits a UTF-8 sequence,
+// fault(msg)) copied it into a block the record copies again, so every
+// fault leaked that block; a server isolating faulting handlers grew by
+// it. The list index fault (raised at a position) is the control.
+use std/task
+
+fn split(s: Str, n: Int) -> Int {
+  var faults = 0
+  for i in 0..n {
+    let k = 3 + i % 2
+    match task.isolate(fn() -> Int ! () { Ok(s[0..k].len()) }) {
+      Err(task.Isolated.Faulted(_)) => faults += 1
+      _ => ()
+    }
+  }
+  faults
+}
+
+fn raised(n: Int) -> Int {
+  var faults = 0
+  for i in 0..n {
+    match task.isolate(fn() -> Int ! () {
+      if i >= 0 {
+        fault("handler failed ${i}")
+      }
+      Ok(i)
+    }) {
+      Err(task.Isolated.Faulted(_)) => faults += 1
+      _ => ()
+    }
+  }
+  faults
+}
+
+fn index(xs: List[Int], n: Int) -> Int {
+  var faults = 0
+  for i in 0..n {
+    match task.isolate(fn() -> Int ! () { Ok(xs[3 + i % 2]) }) {
+      Err(task.Isolated.Faulted(_)) => faults += 1
+      _ => ()
+    }
+  }
+  faults
+}
+
+/// The peak resident set in KiB: a leak only grows it (the runtime's
+/// records come from malloc, which debug.mem_mapped does not count).
+fn rss_kib(os: Os) -> Int { os.proc.usage().max_rss / 1024 }
+
+fn grew(os: Os, before: Int) -> Str {
+  let d = rss_kib(os) - before
+  if d < 2048 { "under 2 MiB" } else { "${d} KiB" }
+}
+
+fn main(os: Os) {
+  let s = "ab日本cd".repeat(4)
+  let xs = [1, 2, 3]
+  // warm up: the heap's first chunks and the isolate's records
+  let _w = split(s, 2000) + raised(2000) + index(xs, 2000)
+  let n = 100000
+  var m = rss_kib(os)
+  let a = split(s, n)
+  os.stdio.println("split: ${a} faults, the heap grew ${grew(os, m)}")
+  m = rss_kib(os)
+  let b = raised(n)
+  os.stdio.println("fault: ${b} faults, the heap grew ${grew(os, m)}")
+  m = rss_kib(os)
+  let c = index(xs, n)
+  os.stdio.println("index: ${c} faults, the heap grew ${grew(os, m)}")
+}

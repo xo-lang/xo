@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+split: 100000 faults, the heap grew under 2 MiB
+fault: 100000 faults, the heap grew under 2 MiB
+index: 100000 faults, the heap grew under 2 MiB
+--- stderr

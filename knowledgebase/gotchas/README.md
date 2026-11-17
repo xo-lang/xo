@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [raise-location-copy-leaked.md](raise-location-copy-leaked.md): Observed 2026-11-17: every fault with a location caught by task.isolate leaked ~60 B (the heap copy of the location passed to a never-returning fire); max_rss shows it, mem_mapped does not
 - [http-client-pool-two-idle-per-host.md](http-client-pool-two-idle-per-host.md): Observed 2026-11-16: a load client of 100 simulated users per process redialed nearly every request (16,157 TIME_WAIT, ports used up): the process wide pool keeps 2 idle per host as Go's; use with_max_idle_per_host(N)
 - [http-client-pool-scope-differs.md](http-client-pool-scope-differs.md): Observed 2026-11-16: native clients share one idle pool per process while the go backend's with_expect_continue requests pool apart (expectTransport), so a traced GotConn reused differed; tests close the connection first and send with Connection: close
 - [generated-test-nested-list-literals-compile-memory.md](generated-test-nested-list-literals-compile-memory.md): Observed 2026-11-16: a fuzz generator's 3,000 cases of nested List[Int] literals took over 33 GB to compile; encode lists as Strs and parse them at run time

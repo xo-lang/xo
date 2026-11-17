@@ -37,7 +37,7 @@ fn event_of(t: Int, k: Int) -> (Str, Str) {
 }
 
 /// The stream of t from event `from`: Ok when it ended as planned.
-fn serve(w: http.BodyWriter, t: Int, from: Int, total: Int, conn: Int) -> () ! IoErr {
+fn serve(w: http.BodyWriter, t: Int, from: Int, total: Int, conn: Int, cuts: Atomic[Int]) -> () ! IoErr {
   // each connection its own length and cut: a stream that cut its only
   // event, asked for again from the same event, must not cut it again
   var x = next(t * 7919 + from * 31 + conn * 1000003 + 17)
@@ -55,8 +55,19 @@ fn serve(w: http.BodyWriter, t: Int, from: Int, total: Int, conn: Int) -> () ! I
     let text = sse.encode(data, event: name, id: Some("${k}"))
     if k == from + n - 1 && (x >> 33) % 4 == 0 {
       // cut inside the event: the subscriber must drop it and ask for it again
+      // half its bytes, backed off to the start of a UTF-8 sequence: the
+      // names and data hold é and 日本, and a Str slice inside one faults
+      // (the handler's fault ended the connection unseen, a stand-in cut)
       let cut = text.trim_suffix("\n")
-      sse.send(w, cut[0..cut.len() / 2])?
+      let b = cut.bytes()
+      var m = cut.len() / 2
+      while m > 0 && (Int(b[m]) & 0xC0) == 0x80 {
+        m -= 1
+      }
+      let _b = cuts.add(1)
+      let piece = cut[0..m]
+      let _e = cuts.add(-1)
+      sse.send(w, piece)?
       return Ok(())
     }
     sse.send(w, text)?
@@ -112,6 +123,10 @@ fn main(os: Os) ! {
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
   let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
   let streams = Atomic[Int].new(0)
+  // cuts begun and never made: a stream whose cut faulted (a fault logs
+  // and closes the connection, which the subscriber takes as a cut, so
+  // only this count shows it)
+  let cuts = Atomic[Int].new(0)
   var r = http.router()
   r.handle("GET /events", fn(req) {
     let t = Int.parse(req.query("t") ?? "") ?? 0
@@ -123,7 +138,7 @@ fn main(os: Os) ! {
       return http.text(204, "")
     }
     let conn = streams.add(1)
-    var resp = http.stream(200, fn(w) { serve(w, t, from, total, conn) })
+    var resp = http.stream(200, fn(w) { serve(w, t, from, total, conn, cuts) })
     for (k, v) in sse.headers() {
       resp = resp.with_header(k, v)
     }
@@ -172,6 +187,9 @@ fn main(os: Os) ! {
   let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
   let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
   os.stdio.println("sse stress: ${got} events by ${tasks} subscribers in ${minutes} min over ${streams.get()} streams, every event once and in order, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if cuts.get() != 0 {
+    return Err("${cuts.get()} cuts faulted before they were sent")
+  }
   if !mem_ok {
     return Err("memory grew ${growth}%")
   }

@@ -460,12 +460,37 @@ fn put_uint(b: Int, o: Int, n: Int) -> Int {
   d
 }
 
+/// The zero terminated copy of the ln bytes at lp for the message m
+/// (made by at): after m in the thread's message buffer when both fit,
+/// else a block never freed (zcopy). set copies the location into the
+/// record, so a block here was garbage the raise could not free: 40 to
+/// 70 bytes leaked by every fault raised with a location, which a server
+/// isolating faulting handlers grew by (task #199).
+fn loc_after(m: Int, lp: Int, ln: Int) -> Int {
+  let b = unwind.msg_buf()
+  if b != 0 && m == b {
+    let o = raw.cstr_len(m) + 1
+    if o + ln < unwind.MSG_BYTES {
+      rt.mem_copy(b + o, lp, ln)
+      rt.mem_store(b, o + ln, 0, 1)
+      return b + o
+    }
+  }
+  zcopy(lp, ln)
+}
+
 /// Raises the fault m at the ln bytes at lp.
-pub fn raise_str_at(m: Str, lp: Int, ln: Int) { fire(text(m), zcopy(lp, ln)) }
+pub fn raise_str_at(m: Str, lp: Int, ln: Int) {
+  let mb = text(m)
+  fire(mb, loc_after(mb, lp, ln))
+}
 
 /// `fault(msg)` and a failed contract (xo_fault_raise): the n bytes at p
 /// at the ln bytes at lp.
-pub fn raise(p: Int, n: Int, lp: Int, ln: Int) { fire(at(p, n), zcopy(lp, ln)) }
+pub fn raise(p: Int, n: Int, lp: Int, ln: Int) {
+  let mb = at(p, n)
+  fire(mb, loc_after(mb, lp, ln))
+}
 
 /// The unwind exit of a function (xo_fault_continue): when the context c
 /// (0 on a thread with none) unwinds a fault, raises it again from here,
