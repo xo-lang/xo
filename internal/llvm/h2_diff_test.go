@@ -1060,6 +1060,19 @@ func probeH2Raw(out *strings.Builder, addr string, p *testPKI) {
 			h.headers(1, false, h2Req("POST", "/echo")...)
 			h.frame(8, 0, 1, u32(1<<31-1))
 		}, 0},
+		{"stream window overflow twice", func(h *h2conn) {
+			// h2spec 6.9.1 #3: the first WINDOW_UPDATE resets the stream
+			// (FLOW_CONTROL_ERROR); the second is on a closed stream and
+			// ignored, the connection staying up (the native server took
+			// the reset stream's window for one a SETTINGS pushed past
+			// the limit and ended the connection, 2026-11-17)
+			// the two in one write, so the server reads them together
+			// (written apart, the reset went out and closed the stream
+			// before the second arrived)
+			h.headers(1, false, h2Req("POST", "/echo")...)
+			wu := []byte{0, 0, 4, 8, 0, 0, 0, 0, 1, 0x7f, 0xff, 0xff, 0xff}
+			h.write(append(append([]byte{}, wu...), wu...))
+		}, 0},
 		{"window update on an idle stream", func(h *h2conn) { h.frame(8, 0, 9, u32(1)) }, 0},
 		{"window update of 3 bytes", func(h *h2conn) { h.frame(8, 0, 0, []byte{0, 0, 1}) }, 0},
 		{"data over the window", func(h *h2conn) {

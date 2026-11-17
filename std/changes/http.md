@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-17: fix: a WINDOW_UPDATE after a stream's flow control reset no longer ends the HTTP/2 connection
+
+- Kind: fix
+- Commit: this push
+- Found by: h2spec v2.6.0 on linux/arm64 host 2 (6.9.1 #3), the h2c server against Go's net/http twin
+- Go reference: Go 1.26.11 net/http's HTTP/2 server (a frame on a closed stream is ignored)
+- Test: TestH2Diff probe "stream window overflow twice" (two WINDOW_UPDATEs of 2^31-1 in one write): RST_STREAM FLOW_CONTROL_ERROR with the connection open, as the Go backend; it read GOAWAY FLOW_CONTROL_ERROR before
+- Timing: none
+
+The native HTTP/2 server reset a stream whose window a WINDOW_UPDATE pushed past 2^31-1, as RFC 9113 6.9.1 says,
+but a second WINDOW_UPDATE read in the same batch found the reset stream, took its window for one a SETTINGS had
+pushed past the limit, and ended the whole connection with GOAWAY FLOW_CONTROL_ERROR. A stream the server reset now
+ignores the frames still in flight for it.
+
 ## 2026-11-17: fix: a native server's memory no longer grows with each streamed response
 
 - Kind: fix

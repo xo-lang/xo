@@ -2410,6 +2410,14 @@ fn (var h: H2Conn) frame_rest(ty: Int, flags: Int, sid: Int, len: Int, p: Int, d
       }
       return
     }
+    if on(st, S_DEAD) {
+      // a stream this connection reset (a stream error, such as the
+      // window overflow below) is closed: a WINDOW_UPDATE still in
+      // flight is ignored (RFC 9113 5.1; h2spec 6.9.1 #3 sends two in a
+      // row, and the second took the reset stream's window for one a
+      // SETTINGS pushed past the limit and ended the connection)
+      return
+    }
     if swin(c, st) > 0x7fffffff {
       // an earlier SETTINGS pushed it past the limit: RFC 9113 6.9.2
       conn_err(c, E_FLOW)
