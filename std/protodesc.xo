@@ -98,6 +98,8 @@ pub struct FieldDesc {
   /// json_name was on the wire, also when empty (protoc writes a field named `_` an empty one).
   pub json_name_set: Bool = false
   pub proto3_optional: Bool = false
+  /// proto3_optional was on the wire, also when false (protobuf-go writes it back).
+  pub proto3_optional_set: Bool = false
   pub unknown: Bytes = b""
 } derive Eq
 
@@ -290,7 +292,7 @@ fn enc_field(f: FieldDesc) -> Bytes {
   } else {
     pw.ws(o, 10, f.json_name)
   }
-  pw.wb(o, 17, f.proto3_optional)
+  pw.wbp(o, 17, f.proto3_optional, f.proto3_optional_set)
   o.write(f.unknown)
   o.freeze()
 }
@@ -438,6 +440,7 @@ fn dec_field(b: Bytes) -> FieldDesc ! protobuf.ProtoErr {
       d.json_name_set = true
     } else if f.num == 17 && pw.is_v(f) {
       d.proto3_optional = f.v != 0
+      d.proto3_optional_set = true
     } else {
       d.unknown = pw.cat(d.unknown, f.raw)
     }

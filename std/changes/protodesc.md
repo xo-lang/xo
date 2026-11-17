@@ -1,5 +1,23 @@
 # std/protodesc changes
 
+## 2026-11-16: fix: a proto3_optional written false is written back
+
+- Kind: fix
+- Commit: this push
+- Found by: task #27 (fuzz evidence for Proven): the new fuzz part of the protodesc corpus (random FileDescriptorProtos
+  from protobuf-go), seed 0, failed to round trip
+- Go reference: google.golang.org/protobuf v1.36.12 (descriptorpb keeps a proto2 bool's presence)
+- Test: std/protodesc_test.xo "proto3_optional written false is written back"; corpus protodesc's FUZZ and MUTATED
+  rows (120 random descriptors and 120 changed ones, arm64, llvm and go); internal/stdtest TestProtodescFuzz
+  (XO_PROTODESCFUZZ_SEED) for fresh seeds
+- Timing: none (one more Bool per field)
+- Shipped in: not yet released
+
+`decode` keeps whether `proto3_optional` was on the wire (`FieldDesc.proto3_optional_set`), so `encode` writes back
+a `proto3_optional: false` protobuf-go wrote, as it does `json_name`; before, those 3 bytes were dropped. A string
+field that is not UTF-8 is still refused (an Xo `Str` is UTF-8), where protobuf-go accepts any bytes in
+descriptor.proto's proto2 strings.
+
 ## 2026-11-16: fix: option values, number and bytes defaults, json_name, groups in extend blocks
 
 - Kind: fix

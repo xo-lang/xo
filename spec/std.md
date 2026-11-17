@@ -10965,7 +10965,8 @@ element (and each `{ ... }` of a repeated message field in a value), a bracketed
 map field's entry with its key and value also when not set. A number default is written as protoc writes it: an
 integer in decimal (`0x10` is `16`), a double with 15 significant digits (17 when 15 do not give it back) and a float
 with 6 (9), `inf` and `nan` as such; a bytes default C escaped (`\n \r \t \" \' \\`, other bytes outside printable
-ASCII as 3 octal digits). A field's `json_name` is always written, also when empty (`json_name_set`, kept by `decode`).
+ASCII as 3 octal digits). A field's `json_name` is always written, also when empty (`json_name_set`, kept by `decode`). A `proto3_optional`
+that `decode` read as false is written back (`proto3_optional_set`), as protobuf-go does.
 Checked byte for byte against protoc 36.2 on 51 files: the protoparse corpus files protoc compiles, descriptor.proto
 and the well known types they import, and proto2, proto3 and edition 2023 feature files
 (scripts/protocdesc writes those cases into std/protodesc_test.xo; it needs protoc, so it runs by hand).

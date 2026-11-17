@@ -75,7 +75,9 @@ func main() {
 		fmt.Fprintf(&o, "  (\"%s\", \"%s\", %d, %d, %d, %d, %d, \"%x\"),\n", fd.Path(), fd.Package(), m, f, e, s, me, b)
 	}
 	o.WriteString("]\n")
+	fuzzRows(&o)
 	o.WriteString(xoTests)
+	o.WriteString(fuzzTests)
 	os.Stdout.WriteString(o.String())
 }
 

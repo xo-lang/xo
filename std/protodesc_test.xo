@@ -22,6 +22,17 @@ test "the file name is field 1 and the package field 2" {
   expect(b) == b"\x0a\x07a.proto\x12\x01p"
 }
 
+test "proto3_optional written false is written back (protobuf-go keeps it)" {
+  // file "x", message M, field f = 1 with proto3_optional (17) false on the wire
+  let raw = b"\x0a\x01x\x22\x0d\x0a\x01M\x12\x08\x0a\x01f\x18\x01\x88\x01\x00"
+  let d = decode(raw).or_fault("decode")
+  expect(d.message_type[0].field[0].proto3_optional) == false
+  expect(d.message_type[0].field[0].proto3_optional_set) == true
+  expect(encode(d)) == raw
+  // not on the wire: not written
+  expect(encode(FileDesc{name: "x", message_type: [MessageDesc{name: "M", field: [FieldDesc{name: "f", number: 1}]}]})) == b"\x0a\x01x\x22\x0a\x0a\x01M\x12\x05\x0a\x01f\x18\x01"
+}
+
 test "an options message present but empty is written back" {
   let f = MethodDesc{name: "Get", input_type: "A", output_type: "B", options_set: true}
   let svc = ServiceDesc{name: "S", method: [f]}

@@ -14,7 +14,14 @@
 //     ParseFragment), random documents from markup pieces;
 //   - htmltok: htmltokoracle (x/net/html's Tokenizer) in each mode;
 //   - publicsuffix: psloracle (golang.org/x/net/publicsuffix), random
-//     domains.
+//     domains;
+//   - protodesc: protodescoracle (google.golang.org/protobuf's descriptorpb),
+//     random FileDescriptorProtos round tripped byte for byte, and changed
+//     bytes decoded whenever protobuf-go accepts them with UTF-8 strings;
+//   - protowkt: protowktoracle (protobuf-go's well known types), random
+//     Struct, Value, ListValue, Duration and Timestamp values;
+//   - prototext: prototextoracle (protobuf-go's encoding/prototext), random
+//     messages of every field kind written as text.
 package stdtest
 
 import (
@@ -60,6 +67,9 @@ func TestHtmlparseFuzz(t *testing.T)    { corpusFuzz(t, "htmlparse", "HTMLPARSEF
 func TestHtmltokFuzz(t *testing.T)      { corpusFuzz(t, "htmltok", "HTMLTOKFUZZ") }
 func TestPublicsuffixFuzz(t *testing.T) { corpusFuzz(t, "publicsuffix", "PUBLICSUFFIXFUZZ") }
 func TestRandomFuzz(t *testing.T)       { corpusFuzz(t, "random", "RANDOMFUZZ") }
+func TestProtodescFuzz(t *testing.T)    { corpusFuzz(t, "protodesc", "PROTODESCFUZZ") }
+func TestProtowktFuzz(t *testing.T)     { corpusFuzz(t, "protowkt", "PROTOWKTFUZZ") }
+func TestPrototextFuzz(t *testing.T)    { corpusFuzz(t, "prototext", "PROTOTEXTFUZZ") }
 
 // Seeds that found a bug in a generator, kept as tests of their own (#116).
 

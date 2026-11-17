@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/protodesc): `decode` then `encode` writes back a `proto3_optional: false` that was on the wire (`FieldDesc.proto3_optional_set`), as protobuf-go does.
 - Fix (xo run): a SIGHUP or SIGTERM sent to `xo run` alone is sent on to the program, which no longer keeps running after `xo run` ends (SIGHUP left it running with PPID 1; SIGINT is sent on as SIGTERM when standard input is not a terminal, as before).
 - Fix (LLVM backend, linux): a program whose loops LLVM computes with 128-bit division (`__udivti3`) failed to link ("clang failed"); the runtime now provides `__udivti3` and `__umodti3` for links with no C library.
 - Fix (std/protoparse, std/protodesc): protoc's string escapes (octal, hex, `\u`), `.5` numbers, type names split by spaces or comments, lists, `< >` messages and `[ext]` keys in option values, and groups in `extend` blocks parse; `build` writes repeated message options as separate elements, map entries in option values, number and bytes defaults and empty `json_name`s as protoc does.
