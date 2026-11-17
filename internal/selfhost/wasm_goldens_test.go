@@ -176,6 +176,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_tls_keys":              "TLS, which the host owns",
 	"http_tls_state":             "TLS, which the host owns",
 	"otlp_export":                "an in process collector on a listener, which a wasi component does not have",
+	"otlp_options":               "an in process collector on a listener, which a wasi component does not have",
 	"tls_verify_conn":            "TLS, which the host owns",
 	"http_trailers":              "trailers are not decided",
 	"metrics_text":               "its router is in main, over registries it prints; its handlers' effects are stdout's",

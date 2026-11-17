@@ -1,0 +1,35 @@
+// std/amqp's encode and decode of AMQP 1.0 values (task #259: the API had
+// no resolved call outside std's own tests): the smallest constructors
+// (null 0x40, true 0x41, smalluint 0x52, uint0 0x43, smalllong 0x55, str8
+// 0xa1, sym8 0xa3, list0 0x45, list32 0xd0 and map32 0xd1 as go-amqp
+// writes them, described 0x00), each
+// decoded back with the bytes it took.
+use std/amqp
+
+fn main(os: Os) {
+  let vs = [
+    amqp.Value.Null,
+    amqp.Value.Bool(v: true),
+    amqp.Value.UInt(v: 5),
+    amqp.Value.UInt(v: 0),
+    amqp.Value.Long(v: -3),
+    amqp.Value.Str(v: "hi"),
+    amqp.Value.Symbol(v: "s"),
+    amqp.Value.List(items: []),
+    amqp.Value.List(items: [amqp.Value.UInt(v: 1), amqp.Value.Str(v: "a")]),
+    amqp.Value.Map(pairs: [(amqp.Value.Symbol(v: "k"), amqp.Value.Int(v: 7))]),
+    amqp.Value.Described(descriptor: amqp.Value.ULong(v: 0x70), value: amqp.Value.List(items: [])),
+  ]
+  for v in vs {
+    let b = amqp.encode(v).or_fault("encode")
+    match amqp.decode(b + b"\xff") {
+      Ok((back, n)) => os.stdio.println("${b.to_hex()} took ${n} same ${back == v}")
+      Err(_) => os.stdio.println("${b.to_hex()} decode failed")
+    }
+  }
+  match amqp.decode(b"\xa1\x05ab") {
+    Ok(_) => os.stdio.println("short str8: ok")
+    Err(amqp.AmqpErr.Decode(msg)) => os.stdio.println("short str8: decode: ${msg}")
+    Err(_) => os.stdio.println("short str8: another error")
+  }
+}

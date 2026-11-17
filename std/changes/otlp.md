@@ -1,5 +1,18 @@
 # std/otlp changes
 
+## 2026-11-17: fix: ExportErr's text on the Go backend for the size limits, partial success and gRPC statuses
+
+- Kind: fix
+- Commit: this push
+- Found by: task #259 (main's standing TestStdAPICovered gaps: with_compression, with_encoding, with_max_request_size, with_max_response_size and grpc_exporter had no resolved call outside std's own tests; the golden written for them showed the Go backend's empty texts)
+- Go reference: OpenTelemetry Go otlptracehttp's request and response size errors, grpc-go's status text (`rpc error: code = CODE desc = MSG`)
+- Test: golden otlp_options (internal/llvm and internal/gen: JSON encoding, gzip, both size limits, the gRPC exporter giving up on a refused port), which failed on the Go backend before (it printed nothing for these errors)
+- Shipped in: not yet released
+
+On the Go backend `ExportErr.display()` gave "" for RequestTooLarge,
+ResponseTooLarge, Partial and Grpc; it now gives the native backends'
+texts.
+
 ## 2026-11-17: feature: log export (task #184)
 
 - Kind: feature

@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+json: ok
+gzip: ok
+request limit: request body too large: exceeded 10 bytes
+response limit: response body too large: exceeded 16 bytes
+response limit kept: ok
+grpc: grpc code 14 after 2 tries (export gave up after 2 tries: rpc error: code = Unavailable desc = m)
+traces application/json encoding=-
+traces application/x-protobuf encoding=gzip
+metrics encoding=-
+metrics encoding=gzip
+--- stderr

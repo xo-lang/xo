@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+40 took 1 same true
+41 took 1 same true
+5205 took 2 same true
+43 took 1 same true
+55fd took 2 same true
+a1026869 took 4 same true
+a30173 took 3 same true
+45 took 1 same true
+d000000009000000025201a10161 took 14 same true
+d10000000900000002a3016b5407 took 14 same true
+00537045 took 4 same true
+short str8: decode: unexpected end of data
+--- stderr

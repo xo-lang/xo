@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Breaking (std/protoparse): a .proto file with no `syntax` statement is proto2, as protoc reads it (it was proto3); add `syntax = "proto3";` to such a file. `parse` also rejects what protoc's grammar does (option names and values, map keys, signed field numbers, lowercase group names, numbers run into letters, a syntax other than proto2/proto3), with protocompile's error texts.
+- Fix (std/otlp, Go backend): `ExportErr` displays its text for RequestTooLarge, ResponseTooLarge, Partial and Grpc (it was empty).
 - Fix (std/tls): a TLS 1.3 server answers a handshake message Go cannot decode (a hello_request, end_of_early_data or server_hello_done with a body, a bad key_update or certificate_status) with decode_error, as Go does (it sent unexpected_message).
 - Fix (std/tls): a TLS 1.3 server answers a ClientHello whose early_data extension is not empty with decode_error, as Go does (it went on to protocol_version).
 - Feature (std/http): a response `Date` set to the empty string sends no `Date` (net/http's `Header["Date"] = nil`); std/grpc's server head uses it, so its header metadata has no `date`, as grpc-go's.

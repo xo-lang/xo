@@ -1,0 +1,68 @@
+// std/otlp's Exporter options against an in process collector (task #259:
+// the API had no resolved call outside std's own tests): JSON trace
+// encoding, gzip bodies, the request and response size limits, and the
+// OTLP/gRPC exporter giving up on an endpoint that refuses connections;
+// each ExportErr as its text (the Go backend printed nothing for the size
+// limits and the gRPC status before 2026-11-17).
+use std/http
+use std/otlp
+use std/trace
+use std/metrics
+use std/backoff
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let seen = Mutex[List[Str]].new([])
+  var r = http.router()
+  r.handle("POST /v1/traces", fn(req: http.Request) -> http.Response {
+    seen.with(fn(var l: List[Str]) { l.push("traces ${req.header("Content-Type") ?? "-"} encoding=${req.header("Content-Encoding") ?? "-"}") })
+    http.text(200, "")
+  })
+  r.handle("POST /v1/metrics", fn(req: http.Request) -> http.Response {
+    seen.with(fn(var l: List[Str]) { l.push("metrics encoding=${req.header("Content-Encoding") ?? "-"}") })
+    // a collector's answer of 64 bytes, read as its response
+    http.Response{status: 200, headers: {"Content-Type": "application/x-protobuf"}, body: b"x".repeat(64)}
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  let srv = http.server(l, r)
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let res = otlp.Resource{service: "svc"}
+    let fast = backoff.Backoff{initial: 1ms, max_interval: 2ms, randomization: 0.0, max_tries: 2}
+    let client = http.client(os.net, timeout: 5s)
+    let base = otlp.exporter(client, "http://${addr}/", res, os.clock, os.rand).with_backoff(fast)
+    let spans = [trace.Span{id: "abc", name: "request", start_ms: 1700000000000, micros: 1500, status: 200}]
+    let reg = metrics.registry()
+    reg.counter("c", "h").inc()
+    let show = fn(label: Str, r: Result[(), otlp.ExportErr]) {
+      match r {
+        Ok(_) => os.stdio.println("${label}: ok")
+        Err(otlp.ExportErr.Grpc(code, _, tries)) => {
+          let as_text = otlp.ExportErr.Grpc(code: code, message: "m", tries: tries)
+          os.stdio.println("${label}: grpc code ${code} after ${tries} tries (${as_text})")
+        }
+        Err(e) => os.stdio.println("${label}: ${e}")
+      }
+    }
+    show("json", base.with_encoding(otlp.Encoding.Json).send_traces(spans))
+    show("gzip", base.with_compression(otlp.Compression.Gzip).send_traces(spans))
+    show("request limit", base.with_max_request_size(10).send_traces(spans))
+    show("response limit", base.with_max_response_size(16).send_metrics(reg, 1700000000000))
+    show("response limit kept", base.with_max_response_size(0).with_compression(otlp.Compression.Gzip).send_metrics(reg, 1700000000000))
+    // a port nothing listens on: Unavailable, retried
+    let dead = os.net.listen("127.0.0.1:0").or_fault("listen")
+    let gone = dead.addr()
+    dead.close()
+    show("grpc", otlp.grpc_exporter(client, "http://${gone}", res, os.clock, os.rand).with_backoff(fast).send_metrics(reg, 1700000000000))
+    seen.with_read(fn(l: List[Str]) -> () {
+      for x in l {
+        os.stdio.println(x)
+      }
+    })
+  }
+}
