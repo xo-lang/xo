@@ -722,6 +722,7 @@ type Http_Response struct {
 	F_body    Bytes
 	XStream   func(*Task, Http_BodyWriter) Result[Unit, IoErr]
 	XFields   []string
+	XTLSState *tlsState
 }
 
 func (v Http_Response) XoEq(x any) bool {

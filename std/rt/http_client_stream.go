@@ -20,6 +20,13 @@ import (
 type Http_ClientStream struct {
 	Xhead Http_ResponseHead
 	Xs    *clientStream
+	// Xtls is the response's TLS handshake (Go's Response.TLS), nil plain
+	Xtls *tlsState
+}
+
+// M_tls_state is `s.tls_state()`: Go's Response.TLS of the stream's response.
+func (s Http_ClientStream) M_tls_state(tk *Task) Option[Http_TlsState] {
+	return tlsStateValue(tk, s.Xtls)
 }
 
 type clientStream struct {
@@ -140,7 +147,7 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 	}
 	return fx(tk, "http.open", true, func() []any { return []any{req.F_method, rawURL} }, func() Result[Http_ClientStream, Http_ClientErr] {
 		rec := newTraceRec(req)
-		body, cancel, head, trailer, e := c.openNet(tk, req, rawURL, rec)
+		body, cancel, head, trailer, ts, e := c.openNet(tk, req, rawURL, rec)
 		// the events up to the head (decision 0677)
 		rec.deliver(tk)
 		if body == nil {
@@ -154,7 +161,7 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 		// a dropped stream closes its body (the native counted handle's
 		// free hook)
 		runtime.SetFinalizer(s, func(x *clientStream) { x.release() })
-		return Ok[Http_ClientStream, Http_ClientErr](Http_ClientStream{Xhead: head, Xs: s})
+		return Ok[Http_ClientStream, Http_ClientErr](Http_ClientStream{Xhead: head, Xs: s, Xtls: ts})
 	})
 }
 

@@ -421,20 +421,20 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 		return Err[Http_Response](clientErr(4, err.Error()))
 	}
 	h, fields := responseFields(tk, resp)
-	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body), XFields: fields})
+	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body), XFields: fields, XTLSState: tlsStateOf(resp.TLS)})
 }
 
 // openNet is Client.open's exchange (decision 0404): the response's body
 // to read (nil on a failure, then e), the cancel that ends it, the head.
 // http_nonet.go has its stub, so a program without std/http links no
 // net/http.
-func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string, rec *traceRec) (io.ReadCloser, func(), Http_ResponseHead, func() map[string][]string, Http_ClientErr) {
+func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string, rec *traceRec) (io.ReadCloser, func(), Http_ResponseHead, func() map[string][]string, *tlsState, Http_ClientErr) {
 	resp, cancel, head, e := c.do(tk, req, rawURL, true, rec)
 	if resp == nil {
-		return nil, nil, head, nil, e
+		return nil, nil, head, nil, nil, e
 	}
 	// net/http fills (or makes) resp.Trailer when the body ends
-	return resp.Body, cancel, head, func() map[string][]string { return resp.Trailer }, e
+	return resp.Body, cancel, head, func() map[string][]string { return resp.Trailer }, tlsStateOf(resp.TLS), e
 }
 
 // do sends req and reads the response's head: the response (nil on a

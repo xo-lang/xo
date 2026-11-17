@@ -216,6 +216,9 @@ struct Response {
   /// with_late_head (decision 0699): a full duplex head waits for the
   /// first write or flush. Hidden.
   late: Bool = false
+  /// a client's response over TLS: what the handshake negotiated, for
+  /// tls_state (Go's Response.TLS). Hidden.
+  tls_neg: List[tlsneg.Negotiated] = []
 }
 
 /// The native stream number of r (0: none); a wasm stream's function
@@ -1613,11 +1616,18 @@ fn certs_of(ders: List[Bytes]) -> List[x509.Certificate] {
   out
 }
 
-fn request_tls_state(r: Request) -> http.TlsState? {
-  if r.tls_neg.is_empty() {
+fn request_tls_state(r: Request) -> http.TlsState? { neg_state(r.tls_neg) }
+
+/// Go's Response.TLS: the client connection's handshake, None over a
+/// plain connection or for a response the program built.
+fn response_tls_state(r: http.Response) -> http.TlsState? { neg_state(rt.cast[http.Response, Response](r).tls_neg) }
+
+/// The TlsState of a handshake's outcome, None for none.
+fn neg_state(neg: List[tlsneg.Negotiated]) -> http.TlsState? {
+  if neg.is_empty() {
     return None
   }
-  let n = r.tls_neg[0]
+  let n = neg[0]
   Some(http.TlsState{version: n.version, cipher_suite: n.cipher, server_name: n.server_name, resumed: n.resumed, peer_certificates: certs_of(n.peer), verified_chains: n.verified.map(fn(c) { certs_of(c) })})
 }
 fn request_raw_query(r: Request) -> Str { r.raw_query }
@@ -4330,6 +4340,8 @@ struct ClientStream {
   /// the request's trace (decision 0677): its events after the head go
   /// to on at the body's end or close
   tracer: List[Tracer] = []
+  /// what the connection's TLS handshake negotiated (tls_state)
+  neg: List[tlsneg.Negotiated] = []
 }
 
 struct StreamState {
@@ -4518,10 +4530,14 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   let gz = if r.gz { Some(compress.decompressor(compress.Format.Gzip)) } else { None }
   let idle = if req.idle_ns > 0 { req.idle_ns } else { c.timeout.nanos() }
   let st = StreamState{conn: if r.open { r.conn } else { None }, h2: r.h2, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle, dsrv: dsrv, src_close: req.src, tr: tr}
-  Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: r.status, headers: h}, st: Mutex[StreamState].new(st), tracer: tracer}))
+  Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: r.status, headers: h}, st: Mutex[StreamState].new(st), tracer: tracer, neg: r.neg}))
 }
 
 fn (s: ClientStream) head() -> http.ResponseHead { s.hd }
+
+/// Go's Response.TLS of the stream's response: None over a plain
+/// connection.
+fn (s: ClientStream) tls_state() -> http.TlsState? { neg_state(s.neg) }
 
 /// The next raw (undecoded) bytes of the body, None at its end.
 fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
@@ -5160,7 +5176,7 @@ fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.di
   // each received field; the Map joins a repeated name, Set-Cookie
   // excepted (decision 0288)
   let (h, fs) = fields_in(r.headers)
-  rt.cast[Response, http.Response](Response{status: r.status, headers: h, body: r.body, fields: fs})
+  rt.cast[Response, http.Response](Response{status: r.status, headers: h, body: r.body, fields: fs, tls_neg: r.neg})
 }
 
 // ---------------------------------------------------------------------------

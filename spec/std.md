@@ -2065,6 +2065,7 @@ fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr   /
 fn (p: StreamPart) header_values(name: Str) -> List[Str]   // every value of a part's header, in order
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) without_header(name: Str) -> Response            // Header.Del
+fn (r: Response) tls_state() -> TlsState?   // Go's resp.TLS: a client's response over TLS, what its handshake negotiated (the server's certificates, verified chains); None over a plain connection and for a Response built by hand
 fn (r: Response) header(name: Str) -> Str?          // case insensitive for a token name; any other name matches only exactly
 fn (r: Response) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288); found the way header is
 fn (r: Response) add_header(name: Str, value: Str) -> Response   // one more field of name
@@ -2319,6 +2320,7 @@ fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! ClientErr uses net.dial
 fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! ClientErr uses net.dial
 fn (s: ClientStream) close()
 fn (s: ClientStream) trailers() -> Map[Str, Str]   // the response's trailers, empty until read returned None (decision 0433)
+fn (s: ClientStream) tls_state() -> TlsState?   // as Response.tls_state, for an opened response
 
 enum ClientErr {
   InvalidUrl(msg: Str)

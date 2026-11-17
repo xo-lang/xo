@@ -988,7 +988,17 @@ type tlsState struct {
 
 // M_tls_state is `r.tls_state()`: Go's r.TLS.
 func (r Http_Request) M_tls_state(tk *Task) Option[Http_TlsState] {
-	s := r.XTLSState
+	return tlsStateValue(tk, r.XTLSState)
+}
+
+// M_tls_state is `resp.tls_state()`: Go's Response.TLS, None for a plain
+// connection or a response the program built.
+func (r Http_Response) M_tls_state(tk *Task) Option[Http_TlsState] {
+	return tlsStateValue(tk, r.XTLSState)
+}
+
+// tlsStateValue is the TlsState of a handshake, None for nil.
+func tlsStateValue(tk *Task, s *tlsState) Option[Http_TlsState] {
 	if s == nil {
 		return None[Http_TlsState]()
 	}

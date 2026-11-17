@@ -32,6 +32,7 @@ use native/llrt/process
 use native/llrt/raw
 use native/llrt/scan
 use native/llrt/hconn
+use native/llrt/tlsneg
 use native/rt
 use native/rthttp
 use native/llrt/raw as rawb
@@ -4575,6 +4576,9 @@ pub struct CResult {
   /// a failed TLS handshake's typed detail (decision 0644 T12): err is 4
   /// and msg the request's text, as without it
   pub tls: hclient.TlsFail? = None
+  /// what the response's TLS connection negotiated (Go's Response.TLS),
+  /// none over a plain connection
+  pub neg: List[tlsneg.Negotiated] = []
 }
 
 fn cfail(err: Int, msg: Str) -> CResult { CResult{err: err, msg: msg, status: 0, headers: [], body: b""} }
@@ -4916,6 +4920,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var status = 0
     var headers: List[Str] = []
     var rbody = b""
+    var neg: List[tlsneg.Negotiated] = []
     if wasiworld.component() {
       // a wasi:http component (decision 0447): the host holds the
       // connections and TLS; one whole exchange, under the same redirects
@@ -4929,6 +4934,9 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       jar_keep(jar_put, cut, headers)
     } else {
       var r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, true, hop_h2c, alpn, h2cfg, max_idle, tr)
+      // the handshake's outcome, read while r holds its connection (an
+      // HTTP/2 exchange that is not streamed ends inside h2_run)
+      neg = hclient.tls_neg(r)
       // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
       // after the head
       var h2x: H2X? = None
@@ -4943,6 +4951,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
           // the server did not take the request on the pooled connection:
           // it goes on a new one, as Transport retries it
           r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg, max_idle, tr)
+          neg = hclient.tls_neg(r)
           if hclient.h2(r) {
             h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn, tr)
           }
@@ -4965,6 +4974,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
           // (decision 0303)
           r = hclient.cl_start(conn_https, conn_addr, conn_name, body, when, roots, prefix, false, hop_h2c, alpn, h2cfg, max_idle, tr)
           h1 = hclient.reading(r)
+          neg = hclient.tls_neg(r)
           if hclient.h2(r) {
             h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn, tr)
           } else if h1 && stream {
@@ -5011,7 +5021,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
             // h1_round: the stream's reader closes it when done
             hb.keep = false
           }
-          return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: conn_https, addr: conn_addr, name: conn_name, gz: gz, h2: h2x}
+          return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: conn_https, addr: conn_addr, name: conn_name, gz: gz, h2: h2x, neg: neg}
         }
         // a redirect: its body read and dropped, its connection pooled
         // before the next hop
@@ -5055,7 +5065,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     if !follow || max_redirects <= 0 {
       // (max_redirects 0: CheckRedirect's ErrUseLastResponse, the 3xx
       // with its Location as sent; decision 0404)
-      return CResult{err: 0, msg: "", status: status, headers: headers, body: rbody}
+      return CResult{err: 0, msg: "", status: status, headers: headers, body: rbody, neg: neg}
     }
     last_loc = headers[li + 1]
     if redirects >= max_redirects {

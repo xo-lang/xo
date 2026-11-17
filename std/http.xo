@@ -491,6 +491,10 @@ fn (r: Response) with_cookie(c: Cookie) -> Response
 fn (r: Response) cookies() -> List[Cookie]
 /// The body as text; None if it is not valid UTF-8 (std.md 4.3).
 fn (r: Response) text() -> Str?
+/// A client's response over TLS: what its connection negotiated (Go's
+/// Response.TLS), the server's certificates in peer_certificates; None over
+/// a plain connection and for a response the program built.
+fn (r: Response) tls_state() -> TlsState?
 fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr
 
 struct Server {}
@@ -710,6 +714,10 @@ struct ClientStream {}
 /// the stream (redirects followed as send follows them).
 fn (c: Client) open(req: Request) -> ClientStream ! ClientErr uses net.dial
 fn (s: ClientStream) head() -> ResponseHead
+/// What the response's TLS connection negotiated (Go's Response.TLS): the
+/// server's certificates in peer_certificates and the chains that verified
+/// them; None over a plain connection.
+fn (s: ClientStream) tls_state() -> TlsState?
 /// The next bytes of the body, at most max, None at its end; a body cut
 /// short is Protocol (unexpected EOF), never an end.
 fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! ClientErr uses net.dial

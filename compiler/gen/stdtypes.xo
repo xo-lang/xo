@@ -21,7 +21,7 @@ fn prelude_builtin(name: Str) -> Bool {
 fn rt_extra_fields() -> List[(Str, List[Str])] {
   [
     ("Http_Request", ["\tXParams Map[string, string]", "\tXValues *reqValues", "\tXRawQuery string", "\tXFields []string", "\tXTimeout Duration", "\tXIdle Duration", "\tXExpect Duration", "\tXSrc bodySrc", "\tXRawPath string", "\tXHost string", "\tXTLS bool", "\tXTLSState *tlsState", "\tXProtocol string", "\tXTrace func(*Task, Http_TraceEvent) Result[Unit, Never]"]),
-    ("Http_Response", ["\tXStream func(*Task, Http_BodyWriter) Result[Unit, IoErr]", "\tXFields []string"]),
+    ("Http_Response", ["\tXStream func(*Task, Http_BodyWriter) Result[Unit, IoErr]", "\tXFields []string", "\tXTLSState *tlsState"]),
     ("Http_StreamPart", ["\tXFields []string"]),
   ]
 }

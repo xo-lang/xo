@@ -24,6 +24,19 @@ but a second WINDOW_UPDATE read in the same batch found the reset stream, took i
 pushed past the limit, and ended the whole connection with GOAWAY FLOW_CONTROL_ERROR. A stream the server reset now
 ignores the frames still in flight for it.
 
+## 2026-11-17: feature: the client's view of the TLS handshake
+
+- Kind: feature
+- Commit: this push
+- Found by: task #236 (grpc-go's authority validation needs the server certificate the client saw)
+- Go reference: Go 1.26.11 net/http (Response.TLS, a tls.ConnectionState)
+- Test: golden tls_mtls (get and open over HTTPS report TLS 1.3, the server leaf and one verified chain; a Response built by hand reports none)
+- Timing: none (the state is read once per exchange)
+
+`Response.tls_state()` and `ClientStream.tls_state()` return what the client's handshake negotiated, as
+`Request.tls_state()` does on the server: the version, ALPN, the server's certificates and the verified chains.
+None over a plain connection, as Go's nil resp.TLS.
+
 ## 2026-11-17: feature: headers set from a streamed response's function, and a full duplex head sent late
 
 - Kind: feature

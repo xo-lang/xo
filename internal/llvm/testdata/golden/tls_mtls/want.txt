@@ -26,5 +26,8 @@ other CA: remote error: tls: certificate required
 no clientAuth: remote error: tls: bad certificate
 good: 200 peers=1 leaf=good client chains=[good client>Xo Test CA]
 tls.client: HTTP/1.1 200 OK peers=1 leaf=good client chains=[good client>Xo Test CA]
+response tls: TLS 1.3 server=server certs=1 chains=1
+stream tls: TLS 1.3 server=server certs=1 chains=1
+built response tls: none
 done
 --- stderr

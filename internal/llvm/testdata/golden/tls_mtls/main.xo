@@ -115,6 +115,13 @@ fn get_refused_once(c: http.Client, url: Str) -> Result[http.Response, http.Clie
   r
 }
 
+fn tls_line(st: http.TlsState?) -> Str {
+  match st {
+    Some(t) => "${t.version} server=${if t.peer_certificates.is_empty() { "none" } else { t.peer_certificates[0].subject.common_name }} certs=${t.peer_certificates.len()} chains=${t.verified_chains.len()}"
+    None => "none"
+  }
+}
+
 fn main(os: Os) uses net, stdio, rand, clock {
   let now = os.clock.now()
   let ca = issue(os, "Xo Test CA", None, true, [], now)
@@ -173,8 +180,22 @@ fn main(os: Os) uses net, stdio, rand, clock {
           }
           Err(e) => os.stdio.println("tls.client: ${e}")
         }
+        // the client's view of the handshake (Go's Response.TLS): the server's certificate, verified by the CA
+        let good_c = clients[3].1
+        match good_c.get("https://${addr}/who") {
+          Ok(resp) => os.stdio.println("response tls: ${tls_line(resp.tls_state())}")
+          Err(e) => os.stdio.println("response tls: ${e}")
+        }
+        match good_c.open(http.new_request("GET", "https://${addr}/who", {}, b"")) {
+          Ok(st) => {
+            os.stdio.println("stream tls: ${tls_line(st.tls_state())}")
+            st.close()
+          }
+          Err(e) => os.stdio.println("stream tls: ${e}")
+        }
       }
     }
   }
+  os.stdio.println("built response tls: ${tls_line(http.Response{status: 200, headers: {}, body: b""}.tls_state())}")
   os.stdio.println("done")
 }

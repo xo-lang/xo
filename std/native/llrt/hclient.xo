@@ -1937,6 +1937,20 @@ pub fn put_deadline(r: rthttp.CResp, when: Int) {
   }
 }
 
+/// What the TLS handshake of r's connection negotiated (Go's
+/// Response.TLS): one entry over TLS, none for a plain connection. Read
+/// after cl_start, while r holds its connection (an HTTP/2 exchange's
+/// pooled one, as put_deadline).
+pub fn tls_neg(r: rthttp.CResp) -> List[tlsneg.Negotiated] {
+  let x = ld(rec(r), R_H2)
+  let c = if x != 0 && ld(x, X_PC) != 0 { ld(x, X_PC) + P_C } else { rec(r) + R_C }
+  if ld(rec(r), R_CN) == 0 && x == 0 {
+    return []
+  }
+  let tls = ld(c, C_TLS)
+  if tls == 0 { [] } else { [tlsio.negotiated_of(tls)] }
+}
+
 /// The bytes of an HTTP/2 response's body received and not yet taken
 /// (decision 0404 stage B2).
 pub fn h2_body_n(r: rthttp.CResp) -> Int { ld(rec(r), R_BODY_N) }
