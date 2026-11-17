@@ -696,3 +696,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0704](0704-heap-idle-magazine-trim.md): Proposed (xo-lang-1, 2026-11-17): a heap record gives back the magazines of size classes it has not used for a period (task #213)
 - [0705](0705-grpc-service-config.md): Accepted (owner, 2026-11-17): std/grpc service config and retries as grpc-go (typed ServiceConfig, its JSON, backoff with a Clock and Rand captured on the Client, retry buffer, pushback, throttling)
 - [0706](0706-proto-gen-grpc-stubs.md): Proposed (xo-lang-3, 2026-11-17): xo proto gen writes typed gRPC stubs (a client per service, a register function per rpc) for service blocks
+- [0707](0707-grpc-resolvers-balancing.md): Proposed (xo-4c, 2026-11-17): std/grpc resolvers (with_addrs, with_dns, with_resolver) and balancers PickFirst and RoundRobin, each address its own http.Client through with_dial_addr
