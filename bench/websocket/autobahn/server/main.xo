@@ -21,7 +21,7 @@ fn echo(c: websocket.WsConn) {
 fn main(os: Os) ! {
   let port = os.env.get("PORT") ?? "9001"
   var r = http.router()
-  r.handle("GET /", fn(req) { websocket.upgrade(req, echo, origins: ["*"], max_message: 67108864) })
+  r.handle("GET /", fn(req) { websocket.upgrade(req, echo, origins: ["*"], max_message: 67108864, compress: true) })
   let l = os.net.listen("0.0.0.0:${port}")?
   os.stdio.println("listening on ${l.addr()}")
   http.server(l, r).serve()?

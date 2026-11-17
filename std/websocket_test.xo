@@ -362,30 +362,50 @@ test "a compressed message past max_message is TooBig, the limit on its inflated
   }
 }
 
-// gorilla's Dialer: an answer that keeps context is refused
-test "dial refuses permessage-deflate with context takeover" {
-  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
-  let addr = l.addr()
-  scope s {
-    s.spawn_background(fn() {
-      let sc = l.accept().or_fault("accept")
-      var got = b""
-      while got.find("\r\n\r\n".bytes()) is None {
-        got = got + (sc.read(4096).or_fault("read") ?? b"")
-      }
-      var key = ""
-      for line in got.to_str_lossy().split("\r\n") {
-        if line.to_lower().starts_with("sec-websocket-key:") {
-          key = line[18..].trim()
+/// A hand written server's one connection: it answers the handshake
+/// with ext, then sends RFC 7692 7.2.3.1's compressed "Hello" frame.
+fn deflate_answer(l: Listener, ext: Str) uses net.listen {
+  let sc = l.accept().or_fault("accept")
+  var got = b""
+  while got.find("\r\n\r\n".bytes()) is None {
+    got = got + (sc.read(4096).or_fault("read") ?? b"")
+  }
+  var key = ""
+  for line in got.to_str_lossy().split("\r\n") {
+    if line.to_lower().starts_with("sec-websocket-key:") {
+      key = line[18..].trim()
+    }
+  }
+  let acc = base64.encode(crypto.digest(crypto.Hash.Sha1, (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").bytes()))
+  sc.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acc}\r\nSec-WebSocket-Extensions: ${ext}\r\n\r\n".bytes()).or_fault("write")
+  sc.write(b"\xc1\x07\xf2\x48\xcd\xc9\xc9\x07\x00").ignore_err("the client may have closed")
+  sc.read(10).ignore_err("the client closes")
+}
+
+// An answer whose server keeps context is refused (its messages cannot be
+// inflated alone); one without client_no_context_takeover is taken, since
+// this side never keeps context (RFC 7692 7.1.1.1; gorilla's Dialer
+// refuses it too, which fails Autobahn's client cases 12 and 13.1)
+test "dial refuses a server that keeps context, and takes an answer that lets the client keep it" {
+  for (ext, want) in [
+    ("permessage-deflate; client_no_context_takeover", "websocket: invalid compression negotiation"),
+    ("permessage-deflate", "websocket: invalid compression negotiation"),
+    ("permessage-deflate; server_no_context_takeover", "Hello"),
+    ("permessage-deflate; server_no_context_takeover; client_no_context_takeover", "Hello"),
+  ] {
+    let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+    let addr = l.addr()
+    scope s {
+      s.spawn_background(fn() { deflate_answer(l, ext) })
+      let got = match dial(os.net, "ws://${addr}/", compress: true) {
+        Err(e) => "${e}"
+        Ok(c) => {
+          let m = c.read().or_fault("read").data.to_str_lossy()
+          c.close().ignore_err("closing")
+          m
         }
       }
-      let acc = base64.encode(crypto.digest(crypto.Hash.Sha1, (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").bytes()))
-      sc.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acc}\r\nSec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover\r\n\r\n".bytes()).or_fault("write")
-      sc.read(10).ignore_err("the client closes")
-    })
-    match dial(os.net, "ws://${addr}/", compress: true) {
-      Err(e) => expect("${e}") == "websocket: invalid compression negotiation"
-      Ok(_) => fault("want an error")
+      expect(got) == want
     }
   }
 }

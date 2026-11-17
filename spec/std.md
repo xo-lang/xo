@@ -8697,8 +8697,11 @@ pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str
   is deflated alone. `upgrade(..., compress: true)` answers any
   `permessage-deflate` offer with `server_no_context_takeover;
   client_no_context_takeover`; `dial(..., compress: true)` offers the
-  same, and any `permessage-deflate` answer without both parameters is
-  `Handshake(101, "websocket: invalid compression negotiation")`. Once
+  same; a `permessage-deflate` answer without `server_no_context_takeover`
+  is `Handshake(101, "websocket: invalid compression negotiation")`, and
+  one without `client_no_context_takeover` is taken, since this side
+  never keeps context (RFC 7692 7.1.1.1; gorilla's Dialer refuses it,
+  which fails the Autobahn client cases 12 and 13.1). Once
   agreed, this side's data messages (`write`, `write_text`, a writer's,
   a prepared one) are deflated and sent with RSV1 on the first frame
   until `set_write_compression(false)`; a writer keeps its message whole

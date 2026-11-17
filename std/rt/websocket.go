@@ -973,12 +973,15 @@ func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string],
 		conn.Close()
 		return Err[Websocket_WsConn](wsHandshakeErr(int64(resp.StatusCode), "websocket: bad handshake"))
 	}
-	// gorilla's Dialer: a permessage-deflate answer must keep no context
-	// either way (errInvalidCompression), whether or not it was offered
+	// a permessage-deflate answer, offered or not, must keep no context on
+	// the server's side (its messages are inflated alone); without
+	// client_no_context_takeover it is taken, since this side never keeps
+	// context (RFC 7692 7.1.1.1; gorilla's Dialer refuses that too,
+	// errInvalidCompression, failing Autobahn's client cases 12 and 13.1)
 	pmd := false
 	for _, e := range wsExtensions(resp.Header.Values("Sec-Websocket-Extensions")) {
 		if e[0] == "permessage-deflate" && !pmd {
-			if !slices.Contains(e, "server_no_context_takeover") || !slices.Contains(e, "client_no_context_takeover") {
+			if !slices.Contains(e, "server_no_context_takeover") {
 				conn.Close()
 				return Err[Websocket_WsConn](wsHandshakeErr(int64(resp.StatusCode), "websocket: invalid compression negotiation"))
 			}

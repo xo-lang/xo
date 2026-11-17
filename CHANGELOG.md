@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fix (std/http, native HTTP/2 server): a second WINDOW_UPDATE that overflows a stream already reset for flow control is ignored (the stream gets RST_STREAM FLOW_CONTROL_ERROR, as net/http); it ended the connection (h2spec 6.9.1 #3).
+- Change (std/websocket): `dial(..., compress: true)` accepts a server's permessage-deflate answer without `client_no_context_takeover` (RFC 7692 allows it; gorilla refuses it), so the Autobahn client cases 12 and 13.1 pass; an answer without `server_no_context_takeover` is still refused.
 - Fix (std/protoparse): `parse` rejects files protoc rejects that it accepted: an enum's `allow_alias` with no aliases (or aliases without it), overlapping `reserved` or `extensions` ranges, and an option name with no value (`[import json_name = "j"]`), with protocompile's error texts.
 - Feature (prelude): `Str.to_title`, `Bytes.to_title`, `Bytes.runes`, `Bytes.lines`, `Bytes.join` and `Bytes.hex_dump` (Go's strings.ToTitle, bytes.ToTitle, Runes, Join and hex.Dump).
 - Fix (std/amqptest): the broker grants a client's sender link credit again as it spends it; a sender stopped at its 100,000th message (`BrokerState.link_credit`, default 100,000, sets the grant) (task #152).

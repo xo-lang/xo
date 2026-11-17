@@ -26,7 +26,7 @@ fn main(os: Os) ! {
   cc.close().ignore_err("the count was read")
   os.stdio.println("cases: ${n}")
   for i in 1..n + 1 {
-    match websocket.dial(os.net, "${base}/runCase?case=${i}&agent=xo", max_message: 67108864) {
+    match websocket.dial(os.net, "${base}/runCase?case=${i}&agent=xo", max_message: 67108864, compress: true) {
       Ok(c) => echo(c)
       Err(e) => os.stdio.println("case ${i}: ${e}")
     }

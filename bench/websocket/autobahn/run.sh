@@ -4,7 +4,8 @@
 # XO (default the checkout's bin/xo) for the host and run on port 9001,
 # crossbario/autobahn-testsuite in Docker (linux/amd64, emulated on an
 # arm64 Mac) connecting to it through host.docker.internal, cases 1 to 7
-# and 9 (10 and 12 to 13 are compression and the like, not offered).
+# and 9, and 12 and 13 (permessage-deflate: the server answers an offer and
+# the client offers it, no context takeover either way; 2026-11-17).
 # The client side: the fuzzingserver in Docker on port 9001 and
 # bench/websocket/autobahn/client dialing it for each case.
 #   bench/websocket/autobahn/run.sh OUT [server|client|both]

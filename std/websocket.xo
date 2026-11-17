@@ -142,7 +142,8 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
 /// bundle, when given, else the system's), as gorilla's Dialer: the
 /// handshake with headers and the protocols offered, the 101 and its
 /// Sec-WebSocket-Accept checked. compress (gorilla's EnableCompression)
-/// offers permessage-deflate with no context takeover; an answer with
-/// context takeover is Handshake(101, "websocket: invalid compression
-/// negotiation").
+/// offers permessage-deflate with no context takeover; an answer whose
+/// server keeps context (no server_no_context_takeover) is
+/// Handshake(101, "websocket: invalid compression negotiation"), one
+/// without client_no_context_takeover is taken (gorilla refuses it).
 fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"", compress: Bool = false) -> WsConn ! WsErr uses net.dial

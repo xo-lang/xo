@@ -75,7 +75,7 @@ fn main(os: Os) {
       os.stdio.println("compress ${z}: off ${c.read().or_fault("read plain").data.to_str_lossy()}")
       c.close(code: 1000, reason: "").or_fault("close")
     }
-    for ext in ["permessage-deflate; server_no_context_takeover; client_no_context_takeover", "permessage-deflate; server_no_context_takeover"] {
+    for ext in ["permessage-deflate; server_no_context_takeover", "permessage-deflate; client_no_context_takeover"] {
       let rl = os.net.listen("127.0.0.1:0").or_fault("raw listen")
       let raddr = rl.addr()
       let t = s.spawn(fn() -> Str {

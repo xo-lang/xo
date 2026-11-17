@@ -2831,7 +2831,7 @@ websocket.CloseTLSHandshake = not planned: close codes are Int (RFC 6455 7.4; Ws
 websocket.CloseTryAgainLater = not planned: close codes are Int (RFC 6455 7.4; WsConn.close(code, reason), WsErr.Closed(code, reason))
 websocket.CloseUnsupportedData = not planned: close codes are Int (RFC 6455 7.4; WsConn.close(code, reason), WsErr.Closed(code, reason))
 # websocket behavior checklist (decision 0655)
-websocket.behavior.autobahn = gap: no Autobahn testsuite run (decision 0313 stage 3)
+websocket.behavior.autobahn = bench/results/websocket-autobahn-2026-11-17.md: server and client, arm64 and Go backends, cases 1 to 7, 9, 12 and 13 (permessage-deflate), none failed
 websocket.behavior.permessage_deflate = std/websocket.upgrade (compress), std/websocket.dial (compress): RFC 7692 with no context takeover, gorilla's only mode
 websocket.behavior.fragments = websocket.WsConn.writer
 # jwt: github.com/golang-jwt/jwt/v5 v5.3.1 (outside.txt; decision 0655)

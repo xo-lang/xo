@@ -1210,12 +1210,15 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
     c.close()
     return Err(websocket.WsErr.Handshake(status: status, msg: "websocket: bad handshake"))
   }
-  // gorilla's Dialer: a permessage-deflate answer must keep no context
-  // either way (errInvalidCompression), whether or not it was offered
+  // a permessage-deflate answer, offered or not, must keep no context on
+  // the server's side (its messages are inflated alone); without
+  // client_no_context_takeover it is taken, since this side never keeps
+  // context (RFC 7692 7.1.1.1; gorilla's Dialer refuses that too,
+  // errInvalidCompression, failing Autobahn's client cases 12 and 13.1)
   var pmd = false
   for e in extensions(exts) {
     if e[0] == "permessage-deflate" && !pmd {
-      if !e.contains("server_no_context_takeover") || !e.contains("client_no_context_takeover") {
+      if !e.contains("server_no_context_takeover") {
         c.close()
         return Err(websocket.WsErr.Handshake(status: status, msg: "websocket: invalid compression negotiation"))
       }

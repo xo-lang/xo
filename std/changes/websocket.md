@@ -1,5 +1,16 @@
 # std/websocket changes
 
+## 2026-11-17: behavior: dial takes a permessage-deflate answer without client_no_context_takeover
+
+- Kind: behavior
+- Commit: this push
+- Found by: the Autobahn TestSuite's client cases 12.1 to 12.5 and 13.1 (task #235, bench/results/websocket-autobahn-2026-11-17.md)
+- Go reference: gorilla/websocket v1.5.3 client.go (errInvalidCompression unless both no_context_takeover parameters); RFC 7692 7.1.1.1
+- Behavior difference: gorilla refuses the answer; std/websocket takes it, since this side never keeps context. An answer without server_no_context_takeover is still refused
+- Test: std/websocket_test.xo "dial refuses a server that keeps context, and takes an answer that lets the client keep it" (fails before: the server_no_context_takeover only answer was refused), arm64 and LLVM; golden internal/gen websocket_deflate on the Go backend
+- Timing: none (the handshake's header check only)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: join (gorilla's JoinMessages)
 
 - Kind: feature
