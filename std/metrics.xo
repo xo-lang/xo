@@ -2498,21 +2498,22 @@ fn histogram_cell_add(cells: List[Atomic[Int]], i: Int, nb: Int, v: Float) {
   add_float(cells[2], v)
 }
 
-/// A number as Prometheus text: an integral value without a fraction.
+/// A number as client_golang's text format writes it (expfmt writeFloat):
+/// NaN, +Inf and -Inf, any zero as 0, else Go's shortest 'g' (1e+06,
+/// 123456, 1.2e-05). It printed whole numbers in full (800000000 for
+/// 8e+08) and every finite value past 1e300 as +Inf (metricsfuzz, task
+/// #261).
 fn num(v: Float) -> Str {
   if v != v {
     return "NaN"
   }
-  if v > 1.0e300 {
-    return "+Inf"
+  if v.is_inf() {
+    return if v > 0.0 { "+Inf" } else { "-Inf" }
   }
-  if v < -1.0e300 {
-    return "-Inf"
+  if v == 0.0 {
+    return "0"
   }
-  if v > -1.0e15 && v < 1.0e15 && v == Float(Int(v)) {
-    return "${Int(v)}"
-  }
-  "${v}"
+  v.to_general(-1)
 }
 
 fn escape_label(s: Str) -> Str {

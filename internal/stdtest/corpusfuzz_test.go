@@ -28,6 +28,8 @@
 //     and the same version for a file name;
 //   - testing: fakenetoracle (net/http's ServeMux), random sets of FakeNet
 //     patterns and requests: the pattern ServeMux picks and its wildcards;
+//   - metrics: metricsoracle (prometheus/client_golang v1.23.2), random
+//     registries and operations: the same text exposition;
 //   - protowkt: protowktoracle (protobuf-go's well known types), random
 //     Struct, Value, ListValue, Duration and Timestamp values;
 //   - embed: embedoracle (Go's io/fs over std/evidence/embed's stress
@@ -87,6 +89,7 @@ func TestMigrateFuzz(t *testing.T)      { corpusFuzz(t, "migratefuzz", "MIGRATEF
 func TestFakenetFuzz(t *testing.T)      { corpusFuzz(t, "fakenetfuzz", "FAKENETFUZZ") }
 func TestProtowktFuzz(t *testing.T)     { corpusFuzz(t, "protowkt", "PROTOWKTFUZZ") }
 func TestPrototextFuzz(t *testing.T)    { corpusFuzz(t, "prototext", "PROTOTEXTFUZZ") }
+func TestMetricsFuzz(t *testing.T)      { corpusFuzz(t, "metricsfuzz", "METRICSFUZZ") }
 func TestEmbedFuzz(t *testing.T)        { corpusFuzz(t, "embedfuzz", "EMBEDFUZZ") }
 
 // Seeds that found a bug in a generator, kept as tests of their own (#116).

@@ -1,5 +1,17 @@
 # std/metrics changes
 
+## 2026-11-17: fix: values print as client_golang's text format
+
+- Kind: fix (behavior change)
+- Commit: this push
+- Found by: the new metrics fuzz harness (metricsfuzz, task #261), against prometheus/client_golang v1.23.2's text exposition
+- Go reference: prometheus/common expfmt writeFloat (NaN, +Inf, -Inf, 0, else strconv 'g' -1)
+- Test: std/metrics_test.xo "values print as client_golang's text format"; corpus metricsfuzz (60 registries, arm64, llvm and go); TestMetricsFuzz (XO_METRICSFUZZ_SEED) for fresh seeds
+- Timing: none
+- Shipped in: not yet released
+
+Whole numbers printed in full (800000000 where client_golang writes 8e+08), and every finite value past 1e300 printed as +Inf. Values now print as Go's shortest 'g' (1e+06, 123456, 1.2e-05), any zero (-0 too) as 0, as client_golang's text format; OpenMetrics follows (its ".0" rule unchanged).
+
 ## 2026-11-16: feature: instrument_round_tripper_trace and InstrumentTrace (decision 0677)
 
 - Kind: feature

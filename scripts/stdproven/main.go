@@ -143,6 +143,7 @@ var harnesses = map[string][]harness{
 	"testing":      {{"TestFakenetFuzz", "XO_FAKENETFUZZ"}},
 	"protowkt":     {{"TestProtowktFuzz", "XO_PROTOWKTFUZZ"}},
 	"prototext":    {{"TestPrototextFuzz", "XO_PROTOTEXTFUZZ"}},
+	"metrics":      {{"TestMetricsFuzz", "XO_METRICSFUZZ"}},
 	"embed":        {{"TestEmbedFuzz", "XO_EMBEDFUZZ"}},
 	"backoff":      {{"TestBackoffFuzz", "XO_BACKOFFFUZZ"}},
 	"protowire":    {{"TestProtowireFuzz", "XO_PROTOWIREFUZZ"}},

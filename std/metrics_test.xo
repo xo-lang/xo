@@ -707,3 +707,21 @@ test "pid_from_file and pid_collector (NewPidFileFn, ProcessCollectorOpts.PidFn)
     Err(e) => expect(e.msg.starts_with("process metrics need /proc/")) == true
   }
 }
+
+test "values print as client_golang's text format: Go's shortest 'g', any zero 0 (metricsfuzz, task #261)" {
+  let r = registry()
+  let g = r.gauge("v", "", ["k"])
+  g.set(1000000.0, ["a"])
+  g.set(7.0e12, ["b"])
+  g.set(1.0e301, ["c"])
+  g.set(-0.0, ["d"])
+  g.set(123456.0, ["e"])
+  g.set(0.000012, ["f"])
+  let t = r.text()
+  expect(t.contains("v{k=\"a\"} 1e+06\n")) == true
+  expect(t.contains("v{k=\"b\"} 7e+12\n")) == true
+  expect(t.contains("v{k=\"c\"} 1e+301\n")) == true
+  expect(t.contains("v{k=\"d\"} 0\n")) == true
+  expect(t.contains("v{k=\"e\"} 123456\n")) == true
+  expect(t.contains("v{k=\"f\"} 1.2e-05\n")) == true
+}
