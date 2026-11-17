@@ -123,7 +123,7 @@ client.
 4. The Postgres store and bus, and the directory store; measured with 2,
    20, 200 and 2,000 users over several instances (syncs per second,
    latency, conflicts).
-5. The S3 store with the polling bus.
+5. The S3 store with the polling bus (both built 2026-11-16: object_store, Host.poll and poll_every).
 6. Views over two scopes (0672's user state).
 7. Real-time rooms, with a small multiplayer canvas game measured for
    input-to-screen latency, ticks per second per room, bytes per second

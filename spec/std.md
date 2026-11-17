@@ -11821,6 +11821,8 @@ pub const SERVER_CLIENT = "~server"
 fn (h: Host[M, E]) model(scope: Str? = None) -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
 fn (h: Host[M, E]) live() -> Int                        // open live connections
+fn (h: Host[M, E, fx, bx]) poll() -> Int uses (sync, fx)  // reads the store for each held scope, wakes those with news; answers how many
+fn (h: Host[M, E, fx, bx]) poll_every(tasks: task.Group, clock: Clock, every: Duration = 1s) uses (sync, fx, clock)  // poll in a task until canceled: the polling bus (0686)
 
 pub struct ClientIn[M, E] { pub model: M, pub pending: List[E], pub query: Str = "" }   // derive Json
 pub struct ClientOut { pub html: Str, pub awaiting: Int }                   // derive Json

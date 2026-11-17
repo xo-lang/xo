@@ -1893,6 +1893,53 @@ fn lease_key(key: Str) -> Str {
   "~lease/" + key
 }
 
+/// Reads the store for each scope this instance holds (the polling bus of
+/// decision 0686, for a store no notice service sits beside): a scope
+/// another instance appended to since this one last read it wakes its
+/// live pages, as a notice on a bus would. Answers how many scopes had
+/// news; a scope the store cannot read now is tried at the next poll.
+pub fn (h: Host[M, E, fx, bx, lx]) poll() -> Int uses (sync, fx) {
+  let held = h.slots.with_read(fn(m) {
+    var l: List[(Str, Slot[M, E, fx])] = []
+    for (k, sl) in m {
+      l.push((k, sl))
+    }
+    l
+  })
+  let wake = waker(h.slots, h.subs)
+  var news = 0
+  for (key, sl) in held {
+    let mine = sl.state.with_read(fn(c) { c.version() })
+    let heard = sl.latest.get()
+    let have = if heard > mine { heard } else { mine }
+    if let Ok(got) = (h.store.read)(key, have) {
+      if !got.is_empty() {
+        let b = got[got.len() - 1]
+        if b.after + b.count > have {
+          wake(key, b.after + b.count)
+          news += 1
+        }
+      }
+    }
+  }
+  news
+}
+
+/// Polls (Host.poll) every `every` in a task of tasks until it is
+/// canceled: with local_bus, Hosts on one store hear each other's appends
+/// within `every`, at one store read per held scope each time.
+pub fn (h: Host[M, E, fx, bx, lx]) poll_every(tasks: task.Group, clock: Clock, every: Duration = 1s) uses (sync, fx, clock) {
+  tasks.spawn_background(fn() -> () ! Never uses (sync, fx, clock) {
+    while !task.is_canceled() {
+      clock.sleep(every)
+      if task.is_canceled() {
+        break
+      }
+      let _news = h.poll()
+    }
+  })
+}
+
 // Group commit for scope key: unless another request is writing, appends
 // every queued sync as one batch, then what queued during that append,
 // until the queue is empty. Waiters get their answers on their channels.

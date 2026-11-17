@@ -495,6 +495,41 @@ test "two Hosts on one store and bus act as one, behind a load balancer (decisio
   b.unsubscribe(idb)
 }
 
+test "a Host that polls its store hears another instance's append and wakes its live pages (decision 0686)" {
+  // no bus between them: only the poll tells b
+  let st = memory_store()
+  let a = host_with(todo_app(), st, local_bus(), scope: "room")
+  let b = host_with(todo_app(), st, local_bus(), scope: "room")
+  expect(b.model().todos.len()) == 0
+  let (id, ch) = b.subscribe("bob", scope: Some("room"))
+  expect(b.poll()) == 0
+  a.apply(Msg.Add(id: "1", title: "from a"))
+  a.apply(Msg.Add(id: "2", title: "again"))
+  expect(ch.try_recv()) == None
+  expect(b.poll()) == 1
+  expect(ch.try_recv()) == Some(2)
+  // nothing new: no wake
+  expect(b.poll()) == 0
+  expect(ch.try_recv()) == None
+  expect(b.model().todos.len()) == 2
+  b.unsubscribe(id)
+}
+
+test "poll_every wakes a live page within its interval" {
+  let st = memory_store()
+  let a = host_with(todo_app(), st, local_bus(), scope: "room")
+  let b = host_with(todo_app(), st, local_bus(), scope: "room")
+  expect(b.model().todos.len()) == 0
+  let (id, ch) = b.subscribe("bob", scope: Some("room"))
+  scope g {
+    b.poll_every(g.group(), os.clock, every: 10ms)
+    a.apply(Msg.Add(id: "1", title: "from a"))
+    expect(ch.recv()) == Some(1)
+    g.cancel()
+  }
+  b.unsubscribe(id)
+}
+
 test "a Host on a store it shares catches up before it appends" {
   // no bus between them: a never hears of b, and still appends after b
   let st = memory_store()

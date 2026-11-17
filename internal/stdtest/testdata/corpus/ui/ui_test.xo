@@ -125,6 +125,23 @@ test "Scopes on one store and Hosts on one bus act as one (decision 0686)" {
   expect(h2.model().n) == 7
 }
 
+test "a Host polls its store for another instance's appends (decision 0686)" {
+  // no bus between them: only the poll tells h2
+  let st = ui.memory_store()
+  let h1 = ui.host_with(counter(), st, ui.local_bus(), scope: "room")
+  let h2 = ui.host_with(counter(), st, ui.local_bus(), scope: "room")
+  expect(h2.model().n) == 0
+  expect(h2.poll()) == 0
+  h1.try_apply(Act.Inc(by: 3))?
+  expect(h2.poll()) == 1
+  expect(h2.poll()) == 0
+  expect(h2.model().n) == 3
+  scope s {
+    h2.poll_every(s.group(), os.clock, every: 10ms)
+    s.cancel()
+  }
+}
+
 test "a directory store keeps a scope's log in files" {
   let st = ui.dir_store(os.fs, "/ui")
   expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == true

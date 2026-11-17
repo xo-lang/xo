@@ -110,7 +110,8 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] a bus reconnect makes a Host read the store | 0686 | `std/ui_test.xo:a resync notice makes a Host read the store it shares (a bus reconnect)`
 - [x] group commit: concurrent syncs share an append | 0686 | `std/ui_test.xo:syncs that arrive while an append is in flight share the next append (group commit)`
 - [x] leases: a hot scope's syncs forwarded to one instance | 0686 item 6 | `std/ui_test.xo:an instance that loses a race takes a lease, and the others forward that scope's syncs to it`
-- [ ] polling bus for the object store | 0686 plan step 5 | not built
+- [x] polling bus: a Host on a store without a notice service reads it for each held scope and wakes live pages with news | 0686 plan step 5 | std/ui_test.xo:a Host that polls its store hears another instance's append and wakes its live pages (decision 0686)
+- [x] polling on a timer: poll_every wakes a live page within its interval | 0686 plan step 5 | std/ui_test.xo:poll_every wakes a live page within its interval
 - [ ] 2/20/200/2,000 user measurements over several instances | 0686 plan step 4 | partial (four writers on Postgres, localstack, one real S3 run)
 - [ ] real-time rooms and the canvas game measurement | 0686 plan step 7 | open
 

@@ -17,6 +17,15 @@ while the lease lasts (`term_ms`, 10 s by default). Appends stay
 conditional, so an instance that has not seen a lease, or cannot reach
 its holder, still writes correctly. Off unless `lease:` is given.
 
+## 2026-11-16: feature: the polling bus (Host.poll, Host.poll_every)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #186 (std/ui feature audit, decision 0686 plan step 5)
+- Go reference: none
+- Test: std/ui "a Host that polls its store hears another instance's append and wakes its live pages (decision 0686)"; "poll_every wakes a live page within its interval"
+- Shipped in: not yet released
+
 ## 2026-11-16: fix: a subscriber that joins pg_bus after it listens hears -1
 
 - Kind: fix
