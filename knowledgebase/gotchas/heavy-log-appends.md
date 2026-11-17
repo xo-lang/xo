@@ -20,6 +20,11 @@ same NAME printed the first binary's IR.
 
 ## Fix
 
+Since 2026-11-16 (#165) heavy.sh enforces it: a NAME whose run is live
+is refused (exit 66) and an ended run's log moves to NAME-cmd.log.1, so
+NAME-cmd.log holds one run. `HEAVY_NAME_REUSE=1` (and nested runs under
+XO_HEAVY_SLOT) still append; with those, the advice below holds.
+
 - Write the job's output to its own file instead of reading the log:
   `XO_STD=... $X/bin/xo dev dump llvm DIR > $P/out-$v.ll` (no heavy.sh
   for a short read only command, or heavy.sh with a NAME unique to the

@@ -1364,9 +1364,12 @@ Exit 2 is a usage error or nothing recorded. A job started in the same
 command needs no wait: run `offload-gate.sh WT STEPS` or `pushq.sh WT
 --gated` itself in the background, and the harness wakes the session
 when it ends. The waits are for a job another command started (a chain,
-a gate queued earlier, a push from another worktree's script). Names
-stay unique per run (heavy.sh's NAME-cmd.log appends): a reused name
-waits on its newest run. Tested by scripts/lead/offload_gate_test.sh.
+a gate queued earlier, a push from another worktree's script). A NAME
+has one live run at a time: heavy.sh refuses a NAME whose run is live
+(exit 66, nothing written to its log) and moves an ended run's log to
+NAME-cmd.log.1, so each run starts a fresh log (#165; a nested run under
+XO_HEAVY_SLOT and `HEAVY_NAME_REUSE=1` append as before; tested by
+scripts/lead/heavy_name_test.sh). Tested by scripts/lead/offload_gate_test.sh.
 Last verified: 2026-11-15
 
 ## Coordinating (scripts/lead/README.md)
