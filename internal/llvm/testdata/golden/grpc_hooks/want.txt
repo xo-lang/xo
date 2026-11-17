@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+service g.G Hello client_stream=false server_stream=false
+service g.G Feed client_stream=true server_stream=true
+ok hello world. from ann
+err rpc error: code = PermissionDenied desc = not you
+ok no method /g.G/Nope
+feed ok a!,b!
+server /g.G/Hello
+server /g.G/Hello
+server /g.G/Nope
+server /g.G/Feed
+finished /g.G/Hello ok
+finished /g.G/Hello error
+finished /g.G/Nope ok
+finished /g.G/Feed ok
+--- stderr

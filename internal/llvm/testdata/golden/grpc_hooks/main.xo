@@ -1,0 +1,79 @@
+// std/grpc's server and client hooks (decision 0703, task #236): interceptors around every method and call, the
+// handler for unknown methods, the registered services, the client's default call options and on_finish.
+use std/grpc
+use std/http
+
+fn handlers(clock: Clock[clock], log: Mutex[List[Str]]) -> grpc.Server {
+  var srv = grpc.server(clock)
+  srv.unary("/g.G/Hello", fn(call, req) -> Bytes ! grpc.Status {
+    Ok("hello ${req.to_str_lossy()} from ${call.metadata.get("x-user") ?? "nobody"}".bytes())
+  })
+  srv.stream("/g.G/Feed", fn(_call, recv, send) -> () ! grpc.Status {
+    while let Some(m) = recv.next()? {
+      send.send(m + b"!")?
+    }
+  }, client_stream: true, server_stream: true)
+  srv.intercept(fn(call, recv, send, next) -> () ! grpc.Status {
+    log.with(fn(var l: List[Str]) { l.push("server ${call.method}") })
+    next(call, recv, send)
+  })
+  srv.intercept_unary(fn(call, req, next) -> Bytes ! grpc.Status {
+    if call.metadata.get("x-user") == Some("mallory") {
+      return Err(grpc.Status{code: grpc.Code.PermissionDenied, message: "not you", details: b""})
+    }
+    next(call, req)
+  })
+  srv.unknown(fn(call, _recv, send) -> () ! grpc.Status {
+    send.send("no method ${call.method}".bytes())?
+  })
+  srv
+}
+
+fn show[T: Display](r: Result[T, grpc.Status]) -> Str {
+  match r {
+    Ok(v) => "ok ${v}"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let log = Mutex[List[Str]].new([])
+  let srv = handlers(os.clock, log)
+  for si in srv.services() {
+    for m in si.methods {
+      os.stdio.println("service ${si.name} ${m.name} client_stream=${m.client_stream} server_stream=${m.server_stream}")
+    }
+  }
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    let ended = Mutex[List[Str]].new([])
+    let c = grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
+      .with_default_metadata({"x-user": "ann"})
+      .with_default_timeout(20s)
+      .with_unary_interceptor(fn(m, req, o, inv) -> Bytes ! grpc.Status { inv(m, req + b".", o) })
+      .with_stream_interceptor(fn(_m, o) -> grpc.CallOpts ! grpc.Status { Ok(o) })
+      .with_on_finish(fn(m, st) { ended.with(fn(var l: List[Str]) { l.push("${m} ${if st is None { "ok" } else { "error" }}") }) })
+    os.stdio.println(show(c.unary("/g.G/Hello", b"world").map(fn(b) -> Str { b.to_str_lossy() })))
+    os.stdio.println(show(c.unary("/g.G/Hello", b"x", {"x-user": "mallory"}).map(fn(b) -> Str { b.to_str_lossy() })))
+    os.stdio.println(show(c.unary("/g.G/Nope", b"").map(fn(b) -> Str { b.to_str_lossy() })))
+    let fed = c.call("/g.G/Feed", {}, None, fn(cc) -> List[Str] ! grpc.Status {
+      cc.send(b"a")?
+      cc.send(b"b")?
+      cc.close_send()
+      var out: List[Str] = []
+      while let Some(m) = cc.recv()? {
+        out.push(m.to_str_lossy())
+      }
+      Ok(out)
+    })
+    os.stdio.println("feed " + show(fed.map(fn(l) -> Str { l.join(",") })))
+    for e in log.with(fn(var l: List[Str]) -> List[Str] { l }) {
+      os.stdio.println(e)
+    }
+    for e in ended.with(fn(var l: List[Str]) -> List[Str] { l }) {
+      os.stdio.println("finished ${e}")
+    }
+  }
+}
