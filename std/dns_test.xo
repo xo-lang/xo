@@ -1,0 +1,337 @@
+// std/dns module tests (decision 0616 section 2: the race evidence runs
+// these under --race). The fake network has no UDP, so each test uses
+// (net, clock) and runs with xo test --real (stdproven race passes it).
+// A DNS server in the test (std/udp, and TCP on the same port for a
+// truncated answer) answers from a table, and a Resolver of that server
+// looks up records. After Go's net/lookup_test.go and dnsclient_test.go:
+// MX by preference and SRV by priority, a TXT record's strings joined,
+// a truncated answer asked again over TCP, PTR names of IPv4 and IPv6
+// addresses, records whose names are not domain names left out, no such
+// host, and many lookups at once.
+use std/udp
+
+fn be16(n: Int) -> Bytes { Bytes.from_list([UInt8((n >> 8) & 255), UInt8(n & 255)]) }
+
+fn be32(n: Int) -> Bytes { be16((n >> 16) & 65535) + be16(n & 65535) }
+
+/// A name as labels (no compression).
+fn wire_name(name: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  for l in name.trim_suffix(".").split(".") {
+    if !l.is_empty() {
+      b.write_byte(UInt8(l.len()))
+      b.write(l.bytes())
+    }
+  }
+  b.write_byte(0)
+  b.freeze()
+}
+
+/// TXT rdata of one record with these character-strings.
+fn txt(parts: List[Str]) -> Bytes {
+  var b = BytesBuilder.new()
+  for p in parts {
+    b.write_byte(UInt8(p.len()))
+    b.write(p.bytes())
+  }
+  b.freeze()
+}
+
+fn mx(pref: Int, host: Str) -> Bytes { be16(pref) + wire_name(host) }
+
+fn srv(pri: Int, weight: Int, port: Int, target: Str) -> Bytes { be16(pri) + be16(weight) + be16(port) + wire_name(target) }
+
+/// The server's records: "TYPE NAME" (NAME rooted, lower case) to the
+/// rdata of each answer. A name with no entry of any type is NXDOMAIN.
+fn table() -> Map[Str, List[Bytes]] {
+  {
+    "15 mail.example.": [mx(20, "b.mail.example."), mx(10, "a.mail.example."), mx(30, "c.mail.example.")],
+    "15 bad.example.": [mx(10, "a.bad.example."), mx(20, "no space.bad.example.")],
+    "15 allbad.example.": [mx(10, "no space."), mx(20, "a-.b.")],
+    "16 txt.example.": [txt(["v=spf1 ", "-all"]), txt(["second"])],
+    "16 long.example.": [txt(["a".repeat(200)]), txt(["b".repeat(200)]), txt(["c".repeat(200)])],
+    "33 _sip._tcp.svc.example.": [srv(20, 0, 5062, "t2.svc.example."), srv(10, 0, 5060, "t0.svc.example."), srv(10, 0, 5061, "t1.svc.example.")],
+    "33 plain.example.": [srv(0, 0, 80, "web.example.")],
+    "12 4.3.0.10.in-addr.arpa.": [wire_name("host4.example.")],
+    "12 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.": [wire_name("v6.example.")],
+    "1 a.mail.example.": [Bytes.from_list([UInt8(127), UInt8(0), UInt8(0), UInt8(1)])],
+  }
+}
+
+/// The answer to query q (over TCP when tcp): TC set when it does not
+/// fit 512 bytes of UDP; None for a query that does not parse.
+fn answer(t: Map[Str, List[Bytes]], q: Bytes, tcp: Bool) -> Bytes? {
+  if q.len() < 17 {
+    return None
+  }
+  var p = 12
+  var labels: List[Str] = []
+  while p < q.len() && q[p] != 0 {
+    let l = Int(q[p])
+    if p + 1 + l > q.len() {
+      return None
+    }
+    labels.push(q[p + 1..p + 1 + l].to_str() ?? "")
+    p += 1 + l
+  }
+  let qend = p + 5
+  if qend > q.len() {
+    return None
+  }
+  let name = labels.join(".").to_lower() + "."
+  let qtype = Int(q[qend - 4]) * 256 + Int(q[qend - 3])
+  var known = false
+  for k in t.keys() {
+    if k.ends_with(" ${name}") {
+      known = true
+    }
+  }
+  var body = BytesBuilder.new()
+  let rrs = t.get("${qtype} ${name}") ?? []
+  for rd in rrs {
+    // the owner is the question's name: a pointer to offset 12
+    body.write(b"\xc0\x0c" + be16(qtype) + be16(1) + be32(60) + be16(rd.len()) + rd)
+  }
+  let records = body.freeze()
+  let flags2 = if known { 0x80 } else { 0x83 }
+  let big = qend + records.len() > 512
+  let flags1 = 0x80 | (Int(q[2]) & 1) | if big && !tcp { 2 } else { 0 }
+  let head = q[0..2] + Bytes.from_list([UInt8(flags1), UInt8(flags2)]) + be16(1)
+  if big && !tcp {
+    return Some(head + be16(0) + be16(0) + be16(0) + q[12..qend])
+  }
+  Some(head + be16(rrs.len()) + be16(0) + be16(0) + q[12..qend] + records)
+}
+
+fn serve_udp(sock: udp.UdpConn, t: Map[Str, List[Bytes]], seen: Mutex[Int]) uses net {
+  while let Ok((q, from)) = sock.read_from() {
+    if let Some(m) = answer(t, q, false) {
+      seen.with(fn(var n) { n += 1 })
+      sock.write_to(m, from).ignore_err("a client's socket closed")
+    }
+  }
+}
+
+fn serve_tcp(c: ServerConn, t: Map[Str, List[Bytes]], seen: Mutex[Int]) -> () ! NetErr uses net.listen {
+  var buf = b""
+  while true {
+    while buf.len() < 2 || buf.len() < 2 + Int(buf[0]) * 256 + Int(buf[1]) {
+      match c.read(4096)? {
+        Some(more) => buf = buf + more
+        None => return Ok(())
+      }
+    }
+    let n = Int(buf[0]) * 256 + Int(buf[1])
+    let q = buf[2..2 + n]
+    buf = buf[2 + n..]
+    match answer(t, q, true) {
+      Some(m) => {
+        seen.with(fn(var x) { x += 1000 })
+        c.write(be16(m.len()) + m)?
+      }
+      None => return Ok(())
+    }
+  }
+  Ok(())
+}
+
+test "MX records come by preference, their hosts rooted" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    let got = r.lookup_mx(os.net, "mail.example.").or_fault("mx")
+    expect(got.map(fn(x) { "${x.pref} ${x.host}" })) == ["10 a.mail.example.", "20 b.mail.example.", "30 c.mail.example."]
+    // a name without its root dot is the same name
+    expect(r.lookup_mx(os.net, "MAIL.example").or_fault("mx unrooted").len()) == 3
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "a TXT record's strings are joined, one entry per record" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    let got = r.lookup_txt(os.net, "txt.example.").or_fault("txt")
+    expect(got.sort()) == ["second", "v=spf1 -all"]
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "an answer too long for UDP comes truncated and is asked again over TCP" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    s.spawn_background(fn() {
+      while let Ok(c) = tl.accept() {
+        serve_tcp(c, t, seen).ignore_err("the client closed")
+        c.close()
+      }
+    })
+    let got = r.lookup_txt(os.net, "long.example.").or_fault("txt over tcp")
+    expect(got.sort()) == ["a".repeat(200), "b".repeat(200), "c".repeat(200)]
+    // asked over UDP, then over TCP
+    expect(seen.with_read(fn(n) { n >= 1001 })) == true
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "SRV records come by priority; service and proto name _service._proto" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    let got = r.lookup_srv(os.net, "sip", "tcp", "svc.example.").or_fault("srv")
+    expect(got.len()) == 3
+    expect(got[0].priority) == 10
+    expect(got[1].priority) == 10
+    expect(got[2].priority) == 20
+    expect(got[2].target) == "t2.svc.example."
+    expect(got[2].port) == 5062
+    expect(got[0..2].map(fn(x) { x.port }).sort()) == [5060, 5061]
+    // service and proto both "": the name alone
+    let plain = r.lookup_srv(os.net, "", "", "plain.example.").or_fault("srv plain")
+    expect(plain.map(fn(x) { "${x.target}:${x.port}" })) == ["web.example.:80"]
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "lookup_addr asks the PTR names of an IPv4 and an IPv6 address" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    expect(r.lookup_addr(os.net, "10.0.3.4").or_fault("ptr v4")) == ["host4.example."]
+    expect(r.lookup_addr(os.net, "2001:db8::1").or_fault("ptr v6")) == ["v6.example."]
+    expect(r.lookup_addr(os.net, "not an ip").is_err()) == true
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "records whose names are not domain names are left out; none left is an error" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    let got = r.lookup_mx(os.net, "bad.example.").or_fault("mx bad")
+    expect(got.map(fn(x) { x.host })) == ["a.bad.example."]
+    match r.lookup_mx(os.net, "allbad.example.") {
+      Ok(xs) => fault("got ${xs.len()} records")
+      Err(e) => expect("${e}".contains("invalid names")) == true
+    }
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "a name the server does not know is no such host" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    for name in ["nothere.example.", "also.not.example."] {
+      match r.lookup_mx(os.net, name) {
+        Ok(xs) => fault("${name}: got ${xs.len()} records")
+        Err(e) => expect("${e}".contains("no such host")) == true
+      }
+    }
+    // a known name with no records of the type asked: an empty answer
+    match r.lookup_txt(os.net, "mail.example.") {
+      Ok(xs) => expect(xs) == []
+      Err(e) => expect("${e}".contains("no such host")) == true
+    }
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "many tasks look up at once" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  let total = scope s {
+    for _ in 0..2 {
+      s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    }
+    s.spawn_background(fn() {
+      while let Ok(c) = tl.accept() {
+        s.spawn_background(fn() {
+          serve_tcp(c, t, seen).ignore_err("the client closed")
+          c.close()
+        })
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for k in 0..8 {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        for i in 0..20 {
+          match (k + i) % 4 {
+            0 => {
+              let g = r.lookup_mx(os.net, "mail.example.").map_err(fn(e) { "mx ${k}/${i}: ${e}" })?
+              if g.len() != 3 || g[0].pref != 10 { return Err("mx ${k}/${i}: ${g.len()} records") }
+            }
+            1 => {
+              let g = r.lookup_txt(os.net, "long.example.").map_err(fn(e) { "txt ${k}/${i}: ${e}" })?
+              if g.len() != 3 { return Err("txt ${k}/${i}: ${g.len()} records") }
+            }
+            2 => {
+              let g = r.lookup_srv(os.net, "sip", "tcp", "svc.example.").map_err(fn(e) { "srv ${k}/${i}: ${e}" })?
+              if g.len() != 3 || g[2].priority != 20 { return Err("srv ${k}/${i}: ${g.len()} records") }
+            }
+            _ => {
+              let g = r.lookup_addr(os.net, "10.0.3.4").map_err(fn(e) { "ptr ${k}/${i}: ${e}" })?
+              if g != ["host4.example."] { return Err("ptr ${k}/${i}: ${g}") }
+            }
+          }
+        }
+        Ok(20)
+      }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.or_fault("task")
+    }
+    sock.close()
+    tl.close()
+    s.cancel()
+    n
+  }
+  expect(total) == 160
+}
