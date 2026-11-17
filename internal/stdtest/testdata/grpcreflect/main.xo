@@ -1,0 +1,85 @@
+// The server reflection oracle (task #236): `serve` prints its address and serves std/grpcreflect over b.proto and
+// a.proto (which imports b.proto, extends b.Resp and declares a.Svc) with a.Svc registered, `client ADDR` asks a
+// server. TestGrpcReflectInterop crosses them with grpc-go's reflection server and client
+// (internal/stdtest/grpcref/reflect.go); all four print want.txt.
+use std/grpc
+use std/grpcreflect
+use std/http
+use std/protodesc
+
+const B_PROTO: Str = "syntax = \"proto2\";\npackage b;\nmessage Resp {\n  optional string r = 1;\n  extensions 100 to 199;\n}\n"
+const A_PROTO: Str = "syntax = \"proto2\";\npackage a;\nimport \"b.proto\";\nmessage Req {\n  optional string q = 1;\n  enum Kind {\n    K0 = 0;\n    K1 = 1;\n  }\n  oneof pick {\n    int32 n = 2;\n  }\n}\nextend b.Resp {\n  optional int32 tag = 150;\n  optional int32 more = 120;\n}\nservice Svc {\n  rpc Get(Req) returns (b.Resp);\n}\n"
+
+fn handlers(clock: Clock[clock]) -> grpc.Server {
+  let b = protodesc.build_with_source_info(B_PROTO, "b.proto").or_fault("b.proto")
+  let a = protodesc.build_with_source_info(A_PROTO, "a.proto", deps: [b]).or_fault("a.proto")
+  var srv = grpc.server(clock)
+  srv.unary("/a.Svc/Get", fn(_call, req) -> Bytes ! grpc.Status { Ok(req) })
+  grpcreflect.register(srv, [a, b])
+  srv
+}
+
+fn file_names(a: grpcreflect.Answer) -> Str {
+  match a {
+    Files(fs) => {
+      var names: List[Str] = []
+      for f in fs {
+        match protodesc.decode(f) {
+          Ok(d) => names.push(d.name)
+          Err(e) => return "bad file: ${e}"
+        }
+      }
+      "[${names.join(" ")}]"
+    }
+    Error(code, msg) => "err code ${code}: ${msg}"
+    ExtensionNumbers(_, _) => "extension numbers"
+    Services(_) => "services"
+  }
+}
+
+fn ask(c: grpc.Client, req: grpcreflect.Request) -> grpcreflect.Answer {
+  match grpcreflect.ask(c, req) {
+    Ok(a) => a
+    Err(e) => grpcreflect.Answer.Error(code: -1, message: e.display())
+  }
+}
+
+fn calls(os: Os, c: grpc.Client) uses (net.dial, stdio) {
+  match grpcreflect.list_services(c) {
+    Ok(names) => os.stdio.println("list: [${names.sort().join(" ")}]")
+    Err(e) => os.stdio.println("list: err ${e.display()}")
+  }
+  for sym in ["a.Svc.Get", "a.Req.K1", "b.Resp", "a.Nope"] {
+    os.stdio.println("symbol ${sym}: ${file_names(ask(c, grpcreflect.Request.FileContainingSymbol(symbol: sym)))}")
+  }
+  for f in ["b.proto", "c.proto"] {
+    os.stdio.println("file ${f}: ${file_names(ask(c, grpcreflect.Request.FileByFilename(name: f)))}")
+  }
+  os.stdio.println("extension b.Resp 150: ${file_names(ask(c, grpcreflect.Request.FileContainingExtension(containing_type: "b.Resp", number: 150)))}")
+  match ask(c, grpcreflect.Request.AllExtensionNumbersOfType(type_name: "b.Resp")) {
+    ExtensionNumbers(base, nums) => os.stdio.println("extensions ${base}: [${nums.map(fn(n) -> Str { "${n}" }).join(" ")}]")
+    Error(code, msg) => os.stdio.println("extensions: err code ${code}: ${msg}")
+    Files(_) => os.stdio.println("extensions: files")
+    Services(_) => os.stdio.println("extensions: services")
+  }
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  if args.len() == 0 {
+    os.stdio.println("usage: serve | client ADDR")
+    return
+  }
+  if args[0] == "serve" {
+    match os.net.listen("127.0.0.1:0") {
+      Ok(l) => {
+        let hs = http.server(l, handlers(os.clock).router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+        os.stdio.println(hs.addr())
+        hs.serve().ignore_err("the test kills the process")
+      }
+      Err(e) => os.stdio.println("listen failed: ${e}")
+    }
+  } else {
+    calls(os, grpc.client(http.client(os.net, timeout: 30s), "http://${args[1]}"))
+  }
+}

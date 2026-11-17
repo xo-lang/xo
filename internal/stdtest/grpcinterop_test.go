@@ -31,6 +31,13 @@ func TestGrpcHealthInterop(t *testing.T) {
 
 // grpcCross builds testdata/NAME and the grpc-go oracle, then runs a client of one against a server of the other
 // (the oracle's modes refServe and refClient; the Xo program's serve and client), and with all, each with itself too.
+// TestGrpcReflectInterop crosses std/grpcreflect with grpc-go's reflection server and client (task #236): every
+// pairing of an Xo or grpc-go client with an Xo or grpc-go server lists the services and asks for files by symbol,
+// name and extension, and for extension numbers, as testdata/grpcreflect's want.txt says.
+func TestGrpcReflectInterop(t *testing.T) {
+	grpcCross(t, "grpcreflect", "reflectserve", "reflectclient", true)
+}
+
 func grpcCross(t *testing.T, name, refServe, refClient string, all bool) {
 	if testing.Short() {
 		t.Skip("builds an Xo program and the grpc-go oracle")

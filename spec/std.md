@@ -12595,3 +12595,39 @@ fn watch(c: grpc.Client, service: Str, f: fn(ServingStatus) -> Bool) -> () ! grp
 - A `Health` value shares its state between copies: register it on a server and keep it to set statuses.
 - Not yet: the client side health checking of grpc-go's service config (`healthCheckConfig`), which needs
   service config and load balancing (std/grpc has neither).
+
+## 90. std/grpcreflect
+
+gRPC server reflection, `grpc.reflection.v1.ServerReflection` and its `v1alpha` twin (task #236): a port of grpc-go
+v1.79.2's `reflection` package. A server lists its services and serves the FileDescriptorProtos of the files it was
+given (std/protodesc), so grpcurl and grpc-go's reflection client can call it without the .proto files. Interop with
+grpc-go's reflection server and client in every pairing: TestGrpcReflectInterop
+(internal/stdtest/testdata/grpcreflect).
+
+```xo
+const METHOD: Str                            // "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"; METHOD_ALPHA the v1alpha one
+fn register(var s: grpc.Server, files: List[protodesc.FileDesc])   // v1 and v1alpha; lists the services registered before it and itself
+fn new(files: List[protodesc.FileDesc], services: List[Str]) -> Reflection
+fn (r: Reflection) serve(recv: grpc.Recv, send: grpc.Send) -> () ! grpc.Status   // one ServerReflectionInfo stream
+fn (r: Reflection) answer(req: Request, sent: Set[Str]) -> (Answer, Set[Str])
+enum Request { FileByFilename(name: Str), FileContainingSymbol(symbol: Str), FileContainingExtension(containing_type: Str, number: Int),
+               AllExtensionNumbersOfType(type_name: Str), ListServices, Empty }
+enum Answer { Files(files: List[Bytes]), ExtensionNumbers(base_type: Str, numbers: List[Int]), Services(names: List[Str]), Error(code: Int, message: Str) }
+fn encode_request(host: Str, req: Request) -> Bytes
+fn decode_request(b: Bytes) -> (Str, Request) ! grpc.Status
+fn encode_response(host: Str, original: Bytes, a: Answer) -> Bytes
+fn decode_answer(b: Bytes) -> Answer ! grpc.Status
+// the client: one question on its own stream
+fn ask(c: grpc.Client, req: Request, host: Str = "") -> Answer ! grpc.Status
+fn list_services(c: grpc.Client) -> List[Str] ! grpc.Status
+fn file_by_filename(c: grpc.Client, name: Str) -> List[protodesc.FileDesc] ! grpc.Status
+fn file_containing_symbol(c: grpc.Client, symbol: Str) -> List[protodesc.FileDesc] ! grpc.Status
+```
+
+- A file answer is the file asked for and its imports breadth first, as grpc-go's FileDescWithDependencies: the
+  first always, the others only when the stream has not had them. An import not among the files is left out.
+- A symbol is any full name a file declares: message, nested message, enum, enum value (scoped beside its enum),
+  field, oneof, extension, service or method. Unknown names, files and extensions answer error code 5 "proto: not
+  found"; extension numbers are sorted. Services are listed sorted.
+- A request with no question ends the stream `InvalidArgument` "invalid MessageRequest: <nil>". The host a request
+  names comes back as the response's valid host, and the request itself as its original request.

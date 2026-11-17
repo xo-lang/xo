@@ -1,0 +1,78 @@
+// Behavior from grpc-go v1.79.2 reflection/serverreflection_test.go: list, file by name with its dependencies once
+// per stream, file by symbol and extension, extension numbers, not found, and an empty request.
+use std/grpc
+use std/http
+use std/protodesc
+
+const B_PROTO: Str = "syntax = \"proto2\";\npackage b;\nmessage Resp {\n  optional string r = 1;\n  extensions 100 to 199;\n}\n"
+const A_PROTO: Str = "syntax = \"proto2\";\npackage a;\nimport \"b.proto\";\nmessage Req {\n  optional string q = 1;\n  enum Kind {\n    K0 = 0;\n    K1 = 1;\n  }\n  oneof pick {\n    int32 n = 2;\n  }\n}\nextend b.Resp {\n  optional int32 tag = 150;\n  optional int32 more = 120;\n}\nservice Svc {\n  rpc Get(Req) returns (b.Resp);\n}\n"
+
+fn files() -> List[protodesc.FileDesc] {
+  let b = protodesc.build_with_source_info(B_PROTO, "b.proto").or_fault("b.proto")
+  let a = protodesc.build_with_source_info(A_PROTO, "a.proto", deps: [b]).or_fault("a.proto")
+  [a, b]
+}
+
+fn names(a: Answer) -> List[Str] {
+  match a {
+    Files(fs) => fs.map(fn(f) -> Str { (protodesc.decode(f).or_fault("decode")).name })
+    ExtensionNumbers(_, _) => ["extension numbers"]
+    Services(_) => ["services"]
+    Error(_, m) => ["error ${m}"]
+  }
+}
+
+test "answers as grpc-go's reflection server: files once per stream, symbols, extensions, not found" {
+  let r = new(files(), ["b.Z", "a.Svc"])
+  let (a1, s1) = r.answer(Request.FileByFilename(name: "a.proto"), #{})
+  expect(names(a1)) == ["a.proto", "b.proto"]
+  // b.proto was sent on this stream; a.proto, asked for, is sent again
+  let (a2, s2) = r.answer(Request.FileByFilename(name: "a.proto"), s1)
+  expect(names(a2)) == ["a.proto"]
+  let (a3, _s3) = r.answer(Request.FileByFilename(name: "b.proto"), s2)
+  expect(names(a3)) == ["b.proto"]
+  for sym in ["a.Svc", "a.Svc.Get", "a.Req", "a.Req.q", "a.Req.pick", "a.Req.Kind", "a.Req.K1", "a.tag"] {
+    expect(names(r.answer(Request.FileContainingSymbol(symbol: sym), #{}).0)) == ["a.proto", "b.proto"]
+  }
+  expect(names(r.answer(Request.FileContainingSymbol(symbol: "b.Resp"), #{}).0)) == ["b.proto"]
+  expect(r.answer(Request.FileContainingSymbol(symbol: "a.Nope"), #{}).0) == Answer.Error(code: 5, message: "proto: not found")
+  expect(r.answer(Request.FileByFilename(name: "c.proto"), #{}).0) == Answer.Error(code: 5, message: "proto: not found")
+  expect(names(r.answer(Request.FileContainingExtension(containing_type: "b.Resp", number: 150), #{}).0)) == ["a.proto", "b.proto"]
+  expect(r.answer(Request.FileContainingExtension(containing_type: "b.Resp", number: 151), #{}).0) == Answer.Error(code: 5, message: "proto: not found")
+  expect(r.answer(Request.AllExtensionNumbersOfType(type_name: "b.Resp"), #{}).0) == Answer.ExtensionNumbers(base_type: "b.Resp", numbers: [120, 150])
+  expect(r.answer(Request.AllExtensionNumbersOfType(type_name: "b.Nope"), #{}).0) == Answer.Error(code: 5, message: "proto: not found")
+  expect(r.answer(Request.ListServices, #{}).0) == Answer.Services(names: ["a.Svc", "b.Z"])
+}
+
+test "requests and responses round trip their wire form" {
+  for req in [Request.FileByFilename(name: "x.proto"), Request.FileContainingSymbol(symbol: "a.B"), Request.FileContainingExtension(containing_type: "a.B", number: 7), Request.AllExtensionNumbersOfType(type_name: "a.B"), Request.ListServices] {
+    expect(decode_request(encode_request("h", req))) == Ok(("h", req))
+  }
+  expect(decode_request(b"")) == Ok(("", Request.Empty))
+  for a in [Answer.Files(files: [b"\x0a\x01x", b""]), Answer.ExtensionNumbers(base_type: "a.B", numbers: [1, 300]), Answer.Services(names: ["s", "t"]), Answer.Error(code: 5, message: "proto: not found")] {
+    expect(decode_answer(encode_response("h", b"\x3a\x00", a))) == Ok(a)
+  }
+}
+
+test "a server's reflection service lists it and answers over the wire" uses (net, clock) {
+  var srv = grpc.server(os.clock)
+  srv.unary("/a.Svc/Get", fn(_c, req) -> Bytes ! grpc.Status { Ok(req) })
+  register(srv, files())
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = grpc.client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    expect(list_services(c)) == Ok(["a.Svc", "grpc.reflection.v1.ServerReflection", "grpc.reflection.v1alpha.ServerReflection"])
+    expect(file_containing_symbol(c, "a.Svc.Get").map(fn(fs) -> List[Str] { fs.map(fn(f) -> Str { f.name }) })) == Ok(["a.proto", "b.proto"])
+    expect(file_by_filename(c, "nope.proto")) == Err(grpc.Status{code: grpc.Code.NotFound, message: "proto: not found"})
+    // the request's host comes back as the valid host, and an empty request ends the stream
+    let got = c.call(METHOD_ALPHA, {}, None, fn(cc) -> Answer ! grpc.Status {
+      cc.send(encode_request("", Request.Empty))?
+      cc.close_send()
+      while let Some(_m) = cc.recv()? {}
+      Ok(Answer.Services(names: []))
+    })
+    expect(got) == Err(grpc.Status{code: grpc.Code.InvalidArgument, message: "invalid MessageRequest: <nil>"})
+  }
+}

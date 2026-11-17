@@ -240,6 +240,10 @@ func interopMain() bool {
 		healthServe()
 	case "healthclient":
 		healthClient(os.Args[2])
+	case "reflectserve":
+		reflectServe()
+	case "reflectclient":
+		reflectClient(os.Args[2])
 	case "cannedserve":
 		cannedServe(os.Args[2])
 	case "cannedclient":

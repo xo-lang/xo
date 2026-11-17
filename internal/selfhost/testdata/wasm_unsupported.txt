@@ -131,6 +131,7 @@ websocket_tls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 h
 conn_deadline_move # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_duplex # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpc_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+grpcreflect_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpc_hooks # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpchealth_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_duplex_h2tls # wasip1 # network: the network

@@ -1,0 +1,9 @@
+list: [a.Svc grpc.reflection.v1.ServerReflection grpc.reflection.v1alpha.ServerReflection]
+symbol a.Svc.Get: [a.proto b.proto]
+symbol a.Req.K1: [a.proto b.proto]
+symbol b.Resp: [b.proto]
+symbol a.Nope: err code 5: proto: not found
+file b.proto: [b.proto]
+file c.proto: err code 5: proto: not found
+extension b.Resp 150: [a.proto b.proto]
+extensions b.Resp: [120 150]

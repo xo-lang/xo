@@ -2575,7 +2575,7 @@ credentials.ErrConnDispatched = not planned: grpc-go's channelz and transport in
 # grpc behavior checklist (decision 0655: what a symbol diff misses; an open item is a gap)
 grpc.behavior.health = std/grpchealth.Health.register
 grpc.behavior.response_head = std/grpc's head sets Date empty, which std/http sends as no Date (as grpc-go's server; test "send and receive limits and response metadata")
-grpc.behavior.reflection = gap: no server reflection (grpc.reflection.v1)
+grpc.behavior.reflection = std/grpcreflect (grpc.reflection.v1 and v1alpha; TestGrpcReflectInterop)
 grpc.behavior.keepalive = partial: client and server pings over std/http's HTTP/2 PING settings (test "client keepalive closes a connection whose server stopped answering"); no enforcement policy (KeepaliveEnforcementPolicy)
 grpc.behavior.interceptors = std/grpc.Server.intercept, intercept_unary, Client.with_unary_interceptor (decision 0703): chained in registration order, the first outermost; client stream interceptors see the options only
 grpc.behavior.unix_targets = gap: no unix: targets (a Client takes an http base URL)

@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+services: a.Svc grpc.reflection.v1.ServerReflection grpc.reflection.v1alpha.ServerReflection
+symbol a.Svc.Get: [a.proto b.proto]
+file b.proto: [b.proto]
+file x.proto: err rpc error: code = NotFound desc = proto: not found
+--- stderr

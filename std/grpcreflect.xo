@@ -1,0 +1,469 @@
+// std/grpcreflect: gRPC server reflection, grpc.reflection.v1 and v1alpha
+// ServerReflection (task #236, grpc.behavior.reflection): a server lists
+// its services and serves the FileDescriptorProtos of the files it was
+// given, so that grpcurl and grpc-go's reflection client can call it
+// without the .proto files. A port of grpc-go v1.79.2's reflection
+// package (reflection/serverreflection.go and
+// reflection/internal/internal.go; Copyright 2016 gRPC authors, Apache
+// License 2.0): the same responses, the same "proto: not found" errors,
+// each file sent once per stream after the first, and a client for the
+// requests.
+use std/grpc
+use std/protobuf
+use std/protodesc
+use std/protowire
+
+/// The full method names of the service, v1 and the v1alpha that older clients ask.
+pub const METHOD: Str = "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"
+pub const METHOD_ALPHA: Str = "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"
+
+/// The files a reflection service answers from and the services it lists.
+pub struct Reflection {
+  files: List[protodesc.FileDesc]
+  services: List[Str]
+}
+
+/// A reflection service over files (each file's dependencies are found among files by name; one not given is left
+/// out of the answers, as grpc-go skips a placeholder) listing services.
+pub fn new(files: List[protodesc.FileDesc], services: List[Str]) -> Reflection {
+  Reflection{files: files, services: services}
+}
+
+/// Registers the service on s, v1 and v1alpha, as grpc-go's reflection.Register. It lists the services registered
+/// on s so far and itself: register it after the others.
+pub fn register(var s: grpc.Server, files: List[protodesc.FileDesc]) uses clock {
+  var names = s.services().map(fn(si) -> Str { si.name })
+  names.push("grpc.reflection.v1.ServerReflection")
+  names.push("grpc.reflection.v1alpha.ServerReflection")
+  let r = new(files, names)
+  s.stream(METHOD, fn(_call, recv, send) -> () ! grpc.Status { r.serve(recv, send) })
+  s.stream(METHOD_ALPHA, fn(_call, recv, send) -> () ! grpc.Status { r.serve(recv, send) })
+}
+
+/// A request as the client sent it: the host and one of the questions.
+pub enum Request {
+  FileByFilename(name: Str)
+  FileContainingSymbol(symbol: Str)
+  FileContainingExtension(containing_type: Str, number: Int)
+  AllExtensionNumbersOfType(type_name: Str)
+  ListServices
+  /// a request with none of them set
+  Empty
+} derive Eq
+
+/// The answer to one request.
+pub enum Answer {
+  /// serialized FileDescriptorProtos: the file asked for first, then those of its dependencies not yet sent
+  Files(files: List[Bytes])
+  ExtensionNumbers(base_type: Str, numbers: List[Int])
+  Services(names: List[Str])
+  Error(code: Int, message: Str)
+} derive Eq
+
+/// Serves one ServerReflectionInfo stream: each request is answered in turn until the client finishes sending.
+pub fn (r: Reflection) serve(recv: grpc.Recv, send: grpc.Send) -> () ! grpc.Status {
+  var sent: Set[Str] = #{}
+  while let Some(m) = recv.next()? {
+    let (host, req) = decode_request(m)?
+    if req is Request.Empty {
+      return Err(grpc.Status{code: grpc.Code.InvalidArgument, message: "invalid MessageRequest: <nil>", details: b""})
+    }
+    let a = r.answer(req, sent)
+    sent = a.1
+    send.send(encode_response(host, m, a.0))?
+  }
+  Ok(())
+}
+
+/// The answer to req, and the files sent on the stream after it.
+pub fn (r: Reflection) answer(req: Request, sent: Set[Str]) -> (Answer, Set[Str]) {
+  match req {
+    FileByFilename(name) => r.files_from(r.file_named(name), sent)
+    FileContainingSymbol(symbol) => r.files_from(r.file_of_symbol(symbol), sent)
+    FileContainingExtension(t, n) => r.files_from(r.file_of_extension(t, n), sent)
+    AllExtensionNumbersOfType(t) => {
+      if r.file_of_symbol(t) is None {
+        return (not_found(), sent)
+      }
+      var nums: List[Int] = []
+      for f in r.files {
+        for e in all_extensions(f) {
+          if trim_dot(e.extendee) == t {
+            nums.push(e.number)
+          }
+        }
+      }
+      (Answer.ExtensionNumbers(base_type: t, numbers: nums.sort()), sent)
+    }
+    ListServices => (Answer.Services(names: r.services.sort()), sent)
+    Empty => (Answer.Error(code: 3, message: "invalid MessageRequest: <nil>"), sent)
+  }
+}
+
+fn not_found() -> Answer { Answer.Error(code: 5, message: "proto: not found") }
+
+/// grpc-go's FileDescWithDependencies: the file and its imports breadth first, the first always and the others
+/// when the stream has not had them.
+fn (r: Reflection) files_from(f: protodesc.FileDesc?, sent0: Set[Str]) -> (Answer, Set[Str]) {
+  let first = match f {
+    Some(x) => x
+    None => return (not_found(), sent0)
+  }
+  var sent = sent0
+  var out: List[Bytes] = []
+  var queue = [first]
+  var at = 0
+  while at < queue.len() {
+    let cur = queue[at]
+    at += 1
+    if out.is_empty() || !sent.contains(cur.name) {
+      sent.add(cur.name)
+      out.push(protodesc.encode(cur))
+    }
+    for d in cur.dependency {
+      if let Some(df) = r.file_named(d) {
+        queue.push(df)
+      }
+    }
+  }
+  (Answer.Files(files: out), sent)
+}
+
+fn (r: Reflection) file_named(name: Str) -> protodesc.FileDesc? {
+  for f in r.files {
+    if f.name == name {
+      return Some(f)
+    }
+  }
+  None
+}
+
+fn trim_dot(s: Str) -> Str { if s.starts_with(".") { s[1..] } else { s } }
+
+fn qual(pkg: Str, name: Str) -> Str { if pkg.is_empty() { name } else { "${pkg}.${name}" } }
+
+/// The file declaring symbol: a message, enum, enum value, field, oneof, service, method or extension by its
+/// full name (protoregistry's FindDescriptorByName).
+fn (r: Reflection) file_of_symbol(symbol: Str) -> protodesc.FileDesc? {
+  for f in r.files {
+    if symbols(f).contains(symbol) {
+      return Some(f)
+    }
+  }
+  None
+}
+
+fn (r: Reflection) file_of_extension(containing_type: Str, number: Int) -> protodesc.FileDesc? {
+  for f in r.files {
+    for e in all_extensions(f) {
+      if trim_dot(e.extendee) == containing_type && e.number == number {
+        return Some(f)
+      }
+    }
+  }
+  None
+}
+
+/// Every full name f declares.
+fn symbols(f: protodesc.FileDesc) -> Set[Str] {
+  var out: Set[Str] = #{}
+  for m in f.message_type {
+    message_symbols(out, f.package, m)
+  }
+  for e in f.enum_type {
+    enum_symbols(out, f.package, e)
+  }
+  for e in f.extension {
+    out.add(qual(f.package, e.name))
+  }
+  for s in f.service {
+    let sn = qual(f.package, s.name)
+    out.add(sn)
+    for m in s.method {
+      out.add("${sn}.${m.name}")
+    }
+  }
+  out
+}
+
+fn message_symbols(var out: Set[Str], scope: Str, m: protodesc.MessageDesc) {
+  let n = qual(scope, m.name)
+  out.add(n)
+  for fd in m.field {
+    out.add("${n}.${fd.name}")
+  }
+  for o in m.oneof_decl {
+    out.add("${n}.${o.name}")
+  }
+  for e in m.extension {
+    out.add("${n}.${e.name}")
+  }
+  for nm in m.nested_type {
+    message_symbols(out, n, nm)
+  }
+  for e in m.enum_type {
+    enum_symbols(out, n, e)
+  }
+}
+
+/// An enum and its values, which protobuf scopes beside the enum, not inside it.
+fn enum_symbols(var out: Set[Str], scope: Str, e: protodesc.EnumDesc) {
+  out.add(qual(scope, e.name))
+  for v in e.value {
+    out.add(qual(scope, v.name))
+  }
+}
+
+/// The extensions f declares, at the top and inside its messages.
+fn all_extensions(f: protodesc.FileDesc) -> List[protodesc.FieldDesc] {
+  var out = f.extension
+  for m in f.message_type {
+    message_extensions(out, m)
+  }
+  out
+}
+
+fn message_extensions(var out: List[protodesc.FieldDesc], m: protodesc.MessageDesc) {
+  for e in m.extension {
+    out.push(e)
+  }
+  for nm in m.nested_type {
+    message_extensions(out, nm)
+  }
+}
+
+/// ServerReflectionRequest: its host and question.
+pub fn decode_request(b: Bytes) -> (Str, Request) ! grpc.Status {
+  let bad = fn(e: protobuf.ProtoErr) -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling request: ${e}", details: b""} }
+  let flds = protowire.walk(b).map_err(bad)?
+  var host = ""
+  var req = Request.Empty
+  for f in flds {
+    match (f.num, f.wire) {
+      (1, 2) => host = protowire.text(f).map_err(bad)?
+      (3, 2) => req = Request.FileByFilename(name: protowire.text(f).map_err(bad)?)
+      (4, 2) => req = Request.FileContainingSymbol(symbol: protowire.text(f).map_err(bad)?)
+      (5, 2) => {
+        var t = ""
+        var n = 0
+        for g in protowire.walk(f.data).map_err(bad)? {
+          match (g.num, g.wire) {
+            (1, 2) => t = protowire.text(g).map_err(bad)?
+            (2, 0) => n = int32(g.v)
+            _ => {}
+          }
+        }
+        req = Request.FileContainingExtension(containing_type: t, number: n)
+      }
+      (6, 2) => req = Request.AllExtensionNumbersOfType(type_name: protowire.text(f).map_err(bad)?)
+      (7, 2) => req = Request.ListServices
+      _ => {}
+    }
+  }
+  Ok((host, req))
+}
+
+/// A varint read as an int32 (the two's complement of its low 32 bits).
+fn int32(v: Int) -> Int {
+  let low = v & 0xffffffff
+  if low >= 0x80000000 { low - 0x100000000 } else { low }
+}
+
+/// A ServerReflectionRequest's bytes.
+pub fn encode_request(host: Str, req: Request) -> Bytes {
+  var o = BytesBuilder.new()
+  protowire.ws(o, 1, host)
+  match req {
+    FileByFilename(name) => protowire.wsa(o, 3, name)
+    FileContainingSymbol(symbol) => protowire.wsa(o, 4, symbol)
+    FileContainingExtension(t, n) => {
+      var e = BytesBuilder.new()
+      protowire.ws(e, 1, t)
+      protowire.wi(e, 2, n)
+      protowire.wm(o, 5, e.freeze())
+    }
+    AllExtensionNumbersOfType(t) => protowire.wsa(o, 6, t)
+    ListServices => protowire.wsa(o, 7, "")
+    Empty => {}
+  }
+  o.freeze()
+}
+
+/// A ServerReflectionResponse's bytes: the host, the request as it came, and the answer.
+pub fn encode_response(host: Str, original: Bytes, a: Answer) -> Bytes {
+  var o = BytesBuilder.new()
+  protowire.ws(o, 1, host)
+  protowire.wm(o, 2, original)
+  match a {
+    Files(files) => {
+      var r = BytesBuilder.new()
+      for f in files {
+        protowire.wm(r, 1, f)
+      }
+      protowire.wm(o, 4, r.freeze())
+    }
+    ExtensionNumbers(base, nums) => {
+      var r = BytesBuilder.new()
+      protowire.ws(r, 1, base)
+      if !nums.is_empty() {
+        var p = BytesBuilder.new()
+        for n in nums {
+          protowire.wv(p, n)
+        }
+        protowire.wm(r, 2, p.freeze())
+      }
+      protowire.wm(o, 5, r.freeze())
+    }
+    Services(names) => {
+      var r = BytesBuilder.new()
+      for n in names {
+        var s = BytesBuilder.new()
+        protowire.ws(s, 1, n)
+        protowire.wm(r, 1, s.freeze())
+      }
+      protowire.wm(o, 6, r.freeze())
+    }
+    Error(code, msg) => {
+      var r = BytesBuilder.new()
+      protowire.wi(r, 1, code)
+      protowire.ws(r, 2, msg)
+      protowire.wm(o, 7, r.freeze())
+    }
+  }
+  o.freeze()
+}
+
+/// A ServerReflectionResponse's answer.
+pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
+  let bad = fn(e: protobuf.ProtoErr) -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling response: ${e}", details: b""} }
+  var out = Answer.Error(code: 2, message: "the response has no answer")
+  for f in protowire.walk(b).map_err(bad)? {
+    // 1 is the host and 2 the request as sent: only the answers are walked
+    if f.wire != 2 || f.num < 4 || f.num > 7 {
+      continue
+    }
+    let inner = protowire.walk(f.data).map_err(bad)?
+    match f.num {
+      4 => out = Answer.Files(files: inner.filter(fn(g) -> Bool { g.num == 1 && g.wire == 2 }).map(fn(g) -> Bytes { g.data }))
+      5 => {
+        var base = ""
+        var nums: List[Int] = []
+        for g in inner {
+          match (g.num, g.wire) {
+            (1, 2) => base = protowire.text(g).map_err(bad)?
+            (2, 0) => nums.push(int32(g.v))
+            (2, 2) => {
+              for x in packed(g.data) {
+                nums.push(int32(x))
+              }
+            }
+            _ => {}
+          }
+        }
+        out = Answer.ExtensionNumbers(base_type: base, numbers: nums)
+      }
+      6 => {
+        var names: List[Str] = []
+        for g in inner {
+          if g.num == 1 && g.wire == 2 {
+            for h in protowire.walk(g.data).map_err(bad)? {
+              if h.num == 1 && h.wire == 2 {
+                names.push(protowire.text(h).map_err(bad)?)
+              }
+            }
+          }
+        }
+        out = Answer.Services(names: names)
+      }
+      7 => {
+        var code = 0
+        var msg = ""
+        for g in inner {
+          match (g.num, g.wire) {
+            (1, 0) => code = int32(g.v)
+            (2, 2) => msg = protowire.text(g).map_err(bad)?
+            _ => {}
+          }
+        }
+        out = Answer.Error(code: code, message: msg)
+      }
+      _ => {}
+    }
+  }
+  Ok(out)
+}
+
+/// The varints of a packed field.
+fn packed(b: Bytes) -> List[Int] {
+  var out: List[Int] = []
+  var v = 0
+  var shift = 0
+  for x in b {
+    let n = Int(x)
+    v = v | ((n & 127) << shift)
+    if n < 128 {
+      out.push(v)
+      v = 0
+      shift = 0
+    } else {
+      shift += 7
+    }
+  }
+  out
+}
+
+/// Asks one question on its own ServerReflectionInfo stream (grpc-go's reflection client sends each on one stream).
+pub fn ask(c: grpc.Client, req: Request, host: Str = "") -> Answer ! grpc.Status uses net.dial {
+  c.call(METHOD, {}, None, fn(cc) -> Answer ! grpc.Status {
+    cc.send(encode_request(host, req))?
+    cc.close_send()
+    match cc.recv()? {
+      Some(m) => decode_answer(m)
+      None => Err(grpc.Status{code: grpc.Code.Internal, message: "reflection: no response", details: b""})
+    }
+  })
+}
+
+/// The services a server lists.
+pub fn list_services(c: grpc.Client) -> List[Str] ! grpc.Status uses net.dial {
+  match ask(c, Request.ListServices)? {
+    Services(names) => Ok(names)
+    Error(code, msg) => Err(answer_status(code, msg))
+    Files(_) => Err(unexpected())
+    ExtensionNumbers(_, _) => Err(unexpected())
+  }
+}
+
+fn unexpected() -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "reflection: unexpected answer", details: b""} }
+
+/// The file declaring symbol and its dependencies, decoded.
+pub fn file_containing_symbol(c: grpc.Client, symbol: Str) -> List[protodesc.FileDesc] ! grpc.Status uses net.dial {
+  files_answer(ask(c, Request.FileContainingSymbol(symbol: symbol))?)
+}
+
+/// The file named name and its dependencies, decoded.
+pub fn file_by_filename(c: grpc.Client, name: Str) -> List[protodesc.FileDesc] ! grpc.Status uses net.dial {
+  files_answer(ask(c, Request.FileByFilename(name: name))?)
+}
+
+fn files_answer(a: Answer) -> List[protodesc.FileDesc] ! grpc.Status {
+  match a {
+    Files(files) => {
+      var out: List[protodesc.FileDesc] = []
+      for f in files {
+        match protodesc.decode(f) {
+          Ok(d) => out.push(d)
+          Err(e) => return Err(grpc.Status{code: grpc.Code.Internal, message: "reflection: ${e}", details: b""})
+        }
+      }
+      Ok(out)
+    }
+    Error(code, msg) => Err(answer_status(code, msg))
+    ExtensionNumbers(_, _) => Err(unexpected())
+    Services(_) => Err(unexpected())
+  }
+}
+
+fn answer_status(code: Int, msg: Str) -> grpc.Status {
+  grpc.Status{code: grpc.code_from(code) ?? grpc.Code.Unknown, message: msg, details: b""}
+}

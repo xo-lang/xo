@@ -1,0 +1,36 @@
+// std/grpcreflect (task #236): a server with reflection over a.proto and b.proto, and the client helpers asking it.
+use std/grpc
+use std/grpcreflect
+use std/http
+use std/protodesc
+
+const B_PROTO: Str = "syntax = \"proto3\";\npackage b;\nmessage Resp {\n  string r = 1;\n}\n"
+const A_PROTO: Str = "syntax = \"proto3\";\npackage a;\nimport \"b.proto\";\nmessage Req {\n  string q = 1;\n}\nservice Svc {\n  rpc Get(Req) returns (b.Resp);\n}\n"
+
+fn names(r: Result[List[protodesc.FileDesc], grpc.Status]) -> Str {
+  match r {
+    Ok(fs) => "[${fs.map(fn(f) -> Str { f.name }).join(" ")}]"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn main(os: Os) {
+  let b = protodesc.build_with_source_info(B_PROTO, "b.proto").or_fault("b.proto")
+  let a = protodesc.build_with_source_info(A_PROTO, "a.proto", deps: [b]).or_fault("a.proto")
+  var srv = grpc.server(os.clock)
+  srv.unary("/a.Svc/Get", fn(_call, req) -> Bytes ! grpc.Status { Ok(req) })
+  grpcreflect.register(srv, [a, b])
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    let c = grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
+    match grpcreflect.list_services(c) {
+      Ok(ns) => os.stdio.println("services: ${ns.join(" ")}")
+      Err(e) => os.stdio.println("services: err ${e.display()}")
+    }
+    os.stdio.println("symbol a.Svc.Get: ${names(grpcreflect.file_containing_symbol(c, "a.Svc.Get"))}")
+    os.stdio.println("file b.proto: ${names(grpcreflect.file_by_filename(c, "b.proto"))}")
+    os.stdio.println("file x.proto: ${names(grpcreflect.file_by_filename(c, "x.proto"))}")
+  }
+}
