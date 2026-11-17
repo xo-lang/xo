@@ -1,0 +1,630 @@
+// metrics stress program (decision 0616 section 2): 64 tasks run every
+// check of the metrics corpus (internal/stdtest/testdata/corpus/metrics,
+// checked against prometheus/client_golang: exposition text, collectors,
+// curried vectors, the API), each test of the corpus a check here with its
+// expectations as mismatches, for a fixed time. Left out: the 4 corpus
+// tests that use the system (a pid file, a failing send over the network,
+// the process collectors). A background task samples the resident set
+// every 10 s (Linux /proc/self/status). Pass: no mismatch, no fault, and
+// the resident set at the end within 10% or 4 MB of its sample at 5
+// minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/metrics
+use std/http
+
+/// One pass over every check (start unused: the checks share no state).
+fn pass(os: Os, start: Int) -> Int ! Str {
+  let _ = start
+  let m1 = check_1(os)
+  if m1 != "" {
+    return Err(m1)
+  }
+  let m2 = check_2(os)
+  if m2 != "" {
+    return Err(m2)
+  }
+  let m3 = check_3(os)
+  if m3 != "" {
+    return Err(m3)
+  }
+  let m4 = check_4(os)
+  if m4 != "" {
+    return Err(m4)
+  }
+  let m5 = check_5(os)
+  if m5 != "" {
+    return Err(m5)
+  }
+  let m6 = check_6(os)
+  if m6 != "" {
+    return Err(m6)
+  }
+  let m7 = check_7(os)
+  if m7 != "" {
+    return Err(m7)
+  }
+  let m8 = check_8(os)
+  if m8 != "" {
+    return Err(m8)
+  }
+  let m9 = check_9(os)
+  if m9 != "" {
+    return Err(m9)
+  }
+  let m10 = check_10(os)
+  if m10 != "" {
+    return Err(m10)
+  }
+  let m11 = check_11(os)
+  if m11 != "" {
+    return Err(m11)
+  }
+  let m12 = check_12(os)
+  if m12 != "" {
+    return Err(m12)
+  }
+  let m13 = check_13(os)
+  if m13 != "" {
+    return Err(m13)
+  }
+  let m14 = check_14(os)
+  if m14 != "" {
+    return Err(m14)
+  }
+  14
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(os, i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("metrics stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+// std/metrics' bucket helpers, gather, native_histogram, pid_from_file and
+// a Summary's curry and partial delete through the public API, after
+// prometheus/client_golang's TestBuckets, ExampleGatherers,
+// NewConstNativeHistogram, NewPidFileFn and testDeletePartialMatch (as
+// std/metrics_test.xo ports them inside the module). Written by hand
+// beside the generated metrics_test.xo.
+
+
+/// the corpus test "linear and exponential range buckets (TestBuckets)"
+fn check_1(os: Os) -> Str {
+  if (metrics.linear_buckets(-15.0, 5.0, 6)) != ([-15.0, -10.0, -5.0, 0.0, 5.0, 10.0]) {
+    return "check_1 line 9"
+  }
+  let got = metrics.exponential_buckets_range(1.0, 100.0, 10)
+  let want = [1.0, 1.6681, 2.7825, 4.6415, 7.7426, 12.9154, 21.5443, 35.9381, 59.9484, 100.0]
+  if (got.len()) != (want.len()) {
+    return "check_1 line 12"
+  }
+  for (i, w) in want.indexed() {
+    if ((got[i] - w).abs() < 1e-4) != (true) {
+      return "check_1 line 14"
+    }
+  }
+  ""
+}
+
+/// the corpus test "gather merges registries into one exposition, sorted (ExampleGatherers)"
+fn check_2(os: Os) -> Str {
+  let a = metrics.registry()
+  a.gauge("temperature_kelvin", "Temperature in Kelvin.", ["location"]).set(273.14, ["outside"])
+  let b = metrics.registry()
+  b.gauge("humidity_percent", "Humidity in %.", ["location"]).set(45.4, ["outside"])
+  let (t, errs) = metrics.gather([a, b])
+  if (errs.errors.len()) != (0) {
+    return "check_2 line 24"
+  }
+  if (t.split("\n")[0..6]) != ([
+    "# HELP humidity_percent Humidity in %.",
+    "# TYPE humidity_percent gauge",
+    "humidity_percent{location=\"outside\"} 45.4",
+    "# HELP temperature_kelvin Temperature in Kelvin.",
+    "# TYPE temperature_kelvin gauge",
+    "temperature_kelvin{location=\"outside\"} 273.14",
+  ]) {
+    return "check_2 line 32"
+  }
+  ""
+}
+
+/// the corpus test "native_histogram checks the schema and the counts (NewConstNativeHistogram)"
+fn check_3(os: Os) -> Str {
+  match metrics.native_histogram(3, 1.0, {1: 2}, {}, 1, 9) {
+    Ok(_) => fault("schema 9 passed")
+    Err(e) => if (e.msg) != ("invalid native histogram schema") { return "check_3 line 38" }
+  }
+  match metrics.native_histogram(3, 1.0, {1: 2}, {}, 2, 3) {
+    Ok(_) => fault("4 bucket counts for 3 observations passed")
+    Err(e) => if (e.msg) != ("the sum of all bucket populations exceeds the count of observations") { return "check_3 line 42" }
+  }
+  let h = metrics.native_histogram(5, Float.nan, {1: 2}, {}, 1, 3) ?? e => fault(e.msg)
+  if (h.zero_threshold) != (metrics.DEF_NATIVE_HISTOGRAM_ZERO_THRESHOLD) {
+    return "check_3 line 45"
+  }
+  ""
+}
+
+
+/// the corpus test "a curried Summary shares the series; delete_partial_match removes the matching ones (testDeletePartialMatch)"
+fn check_4(os: Os) -> Str {
+  let r = metrics.registry()
+  let s = r.summary("ss", "h", ["a", "b"])
+  let c = s.must_curry_with({"a": "z"})
+  c.observe(2.0, ["p"])
+  c.observe(3.0, ["q"])
+  s.observe(1.0, ["y", "p"])
+  if (r.text().contains("ss_sum{a=\"z\",b=\"p\"} 2\n")) != (true) {
+    return "check_4 line 67"
+  }
+  if (s.delete_partial_match({"a": "nope"})) != (0) {
+    return "check_4 line 68"
+  }
+  if (s.delete_partial_match({"a": "z"})) != (2) {
+    return "check_4 line 69"
+  }
+  if (r.text().contains("a=\"z\"")) != (false) {
+    return "check_4 line 70"
+  }
+  if (r.text().contains("ss_sum{a=\"y\",b=\"p\"} 1\n")) != (true) {
+    return "check_4 line 71"
+  }
+  ""
+}
+// std/metrics' collectors and registry helpers through the public API:
+// untyped_func, wrap, client_send, runtime_collector, build_info,
+// process_collector with ProcessCollector.update, and pid_collector, after
+// prometheus/client_golang's UntypedFunc, WrapRegistererWith,
+// InstrumentRoundTripperCounter, NewGoCollector, NewBuildInfoCollector and
+// NewProcessCollector (as std/metrics_test.xo ports them inside the
+// module). Written by hand beside the generated metrics_test.xo.
+
+
+/// the corpus test "untyped_func exposes an untyped series (UntypedFunc)"
+fn check_5(os: Os) -> Str {
+  let r = metrics.registry()
+  r.untyped_func("temp", "A temperature.", fn() -> Float uses sync { 21.5 })
+  if (r.text().contains("# TYPE temp untyped\ntemp 21.5\n")) != (true) {
+    return "check_5 line 85"
+  }
+  ""
+}
+
+/// the corpus test "wrap puts a prefix and constant labels on what is made through it (WrapRegistererWith)"
+fn check_6(os: Os) -> Str {
+  let r = metrics.registry()
+  let w = r.wrap(prefix: "app_", labels: {"zone": "b", "region": "a"})
+  w.counter("hits_total", "Hits.", ["path"]).inc(["/x"])
+  let n = w.wrap(prefix: "db_", labels: {"shard": "1"})
+  n.gauge("open", "Open.").set(3.0)
+  let t = r.text()
+  if (t.contains("app_hits_total{region=\"a\",zone=\"b\",path=\"/x\"} 1\n")) != (true) {
+    return "check_6 line 95"
+  }
+  if (t.contains("app_db_open{region=\"a\",shard=\"1\",zone=\"b\"} 3\n")) != (true) {
+    return "check_6 line 96"
+  }
+  if (w.text()) != (t) {
+    return "check_6 line 97"
+  }
+  ""
+}
+
+
+/// the corpus test "runtime_collector and build_info (NewGoCollector, NewBuildInfoCollector)"
+fn check_7(os: Os) -> Str {
+  let r = metrics.registry()
+  r.runtime_collector()
+  r.build_info(path: "example.com/app", version: "v1.2.3")
+  let t = r.text()
+  if (t.contains("# TYPE xo_heap_bytes gauge\nxo_heap_bytes ")) != (true) {
+    return "check_7 line 118"
+  }
+  if (t.contains("xo_build_info{checksum=\"unknown\",path=\"example.com/app\",version=\"v1.2.3\"} 1\n")) != (true) {
+    return "check_7 line 119"
+  }
+  ""
+}
+
+
+// std/metrics' curry_with, must_curry_with and delete_partial_match on a
+// Counter, Gauge and Histogram through the public API, after
+// prometheus/client_golang's testCurryVec and testDeletePartialMatch (as
+// std/metrics_test.xo ports them inside the module). Written by hand beside
+// the generated metrics_test.xo.
+
+
+/// the corpus test "a curried Counter shares the series; errors name the label (testCurryVec)"
+fn check_8(os: Os) -> Str {
+  let r = metrics.registry()
+  let c = r.counter("cc", "h", ["a", "b"])
+  c.must_curry_with({"a": "x"}).inc(["y"])
+  if (r.text().contains("cc{a=\"x\",b=\"y\"} 1\n")) != (true) {
+    return "check_8 line 151"
+  }
+  match c.must_curry_with({"a": "x"}).curry_with({"a": "z"}) {
+    Ok(_) => fault("currying a curried label succeeded")
+    Err(e) => if (e.msg) != ("label name \"a\" is already curried") { return "check_8 line 154" }
+  }
+  match c.curry_with({"foo": "bar"}) {
+    Ok(_) => fault("currying an unknown label succeeded")
+    Err(e) => if (e.msg) != ("1 unknown label(s) found during currying") { return "check_8 line 158" }
+  }
+  if (c.delete_partial_match({"a": "nope"})) != (0) {
+    return "check_8 line 160"
+  }
+  if (c.delete_partial_match({"b": "y"})) != (1) {
+    return "check_8 line 161"
+  }
+  if (r.text().contains("cc{")) != (false) {
+    return "check_8 line 162"
+  }
+  ""
+}
+
+/// the corpus test "a curried Gauge and Histogram (testCurryVec, testDeletePartialMatch)"
+fn check_9(os: Os) -> Str {
+  let r = metrics.registry()
+  let g = r.gauge("gg", "h", ["a", "b"])
+  let gc = g.curry_with({"b": "x"}) ?? e => fault(e.msg)
+  gc.set(4.0, ["y"])
+  g.must_curry_with({"b": "w"}).set(1.0, ["y"])
+  if (r.text().contains("gg{a=\"y\",b=\"x\"} 4\n")) != (true) {
+    return "check_9 line 171"
+  }
+  if (g.delete_partial_match({"b": "x"})) != (1) {
+    return "check_9 line 172"
+  }
+  if (r.text().contains("gg{a=\"y\",b=\"w\"} 1\n")) != (true) {
+    return "check_9 line 173"
+  }
+  let h = r.histogram("hh", "h", ["a", "b"], [1.0])
+  let hc = h.curry_with({"a": "p"}) ?? e => fault(e.msg)
+  hc.observe(0.5, ["q"])
+  h.must_curry_with({"a": "s"}).observe(2.0, ["q"])
+  if (r.text().contains("hh_count{a=\"p\",b=\"q\"} 1\n")) != (true) {
+    return "check_9 line 178"
+  }
+  if (h.delete_partial_match({"b": "q"})) != (2) {
+    return "check_9 line 179"
+  }
+  if (r.text().contains("hh_count{")) != (false) {
+    return "check_9 line 180"
+  }
+  ""
+}
+
+/// the corpus test "a counter, a gauge and a histogram expose Prometheus text (std.md 37)"
+fn check_10(os: Os) -> Str {
+  let r = metrics.registry()
+  let reqs = r.counter("requests_total", "Requests by route.", ["route"])
+  reqs.inc(["a"])
+  reqs.add(2.0, ["a"])
+  reqs.inc(["b"])
+  let inflight = r.gauge("in_flight", "Requests being served.")
+  inflight.set(3.0)
+  inflight.add(-1.0)
+  let b = metrics.latency_buckets()
+  if (b.len()) != (11) {
+    return "check_10 line 193"
+  }
+  if (b[0]) != (0.005) {
+    return "check_10 line 194"
+  }
+  if (b[10]) != (10.0) {
+    return "check_10 line 195"
+  }
+  // buckets is left to its default (latency_buckets(), the only call default
+  // in std), so this is the program that proves the default evaluates on
+  // every backend
+  let lat = r.histogram("req_seconds", "Request latency.", [])
+  // 0.25 and 0.5 are bucket bounds: each lands in its own bucket and every
+  // later one, since the counts are cumulative
+  lat.observe(0.25)
+  lat.observe(0.5)
+  let t = r.text()
+  // instruments in the order they were made, each with its HELP and TYPE
+  if (t.contains("# HELP requests_total Requests by route.\n# TYPE requests_total counter\n")) != (true) {
+    return "check_10 line 206"
+  }
+  if (t.contains("requests_total{route=\"a\"} 3\n")) != (true) {
+    return "check_10 line 207"
+  }
+  if (t.contains("requests_total{route=\"b\"} 1\n")) != (true) {
+    return "check_10 line 208"
+  }
+  if (t.contains("# HELP in_flight Requests being served.\n# TYPE in_flight gauge\n")) != (true) {
+    return "check_10 line 209"
+  }
+  if (t.contains("\nin_flight 2\n")) != (true) {
+    return "check_10 line 210"
+  }
+  if (t.contains("# TYPE req_seconds histogram\n")) != (true) {
+    return "check_10 line 211"
+  }
+  if (t.contains("req_seconds_bucket{le=\"0.005\"} 0\n")) != (true) {
+    return "check_10 line 212"
+  }
+  if (t.contains("req_seconds_bucket{le=\"0.1\"} 0\n")) != (true) {
+    return "check_10 line 213"
+  }
+  if (t.contains("req_seconds_bucket{le=\"0.25\"} 1\n")) != (true) {
+    return "check_10 line 214"
+  }
+  if (t.contains("req_seconds_bucket{le=\"0.5\"} 2\n")) != (true) {
+    return "check_10 line 215"
+  }
+  if (t.contains("req_seconds_bucket{le=\"10\"} 2\n")) != (true) {
+    return "check_10 line 216"
+  }
+  if (t.contains("req_seconds_bucket{le=\"+Inf\"} 2\n")) != (true) {
+    return "check_10 line 217"
+  }
+  if (t.contains("req_seconds_sum 0.75\n")) != (true) {
+    return "check_10 line 218"
+  }
+  if (t.contains("req_seconds_count 2\n")) != (true) {
+    return "check_10 line 219"
+  }
+  if (t.contains("xo_metrics_dropped_total 0\n")) != (true) {
+    return "check_10 line 220"
+  }
+  // one line per bucket plus +Inf, the sum and the count
+  let lines = t.split("\n")
+  var buckets = 0
+  for line in lines {
+    if line.contains("req_seconds_bucket{") {
+      buckets += 1
+    }
+  }
+  if (buckets) != (12) {
+    return "check_10 line 229"
+  }
+  // the exposition ends with a newline, so the last piece is empty
+  if (lines[lines.len() - 1]) != ("") {
+    return "check_10 line 231"
+  }
+  ""
+}
+
+/// the corpus test "a series is one per label value, and its labels are in the order the instrument named them"
+fn check_11(os: Os) -> Str {
+  let r = metrics.registry()
+  let c = r.counter("hits_total", "Hits.", ["method", "code"])
+  c.inc(["GET", "200"])
+  c.inc(["GET", "200"])
+  c.inc(["POST", "500"])
+  let t = r.text()
+  if (t.contains("hits_total{method=\"GET\",code=\"200\"} 2\n")) != (true) {
+    return "check_11 line 241"
+  }
+  if (t.contains("hits_total{method=\"POST\",code=\"500\"} 1\n")) != (true) {
+    return "check_11 line 242"
+  }
+  // two series, the two header lines of the instrument, and the three
+  // lines of the dropped counter, plus the empty piece after the last
+  // newline
+  if (t.split("\n").len()) != (8) {
+    return "check_11 line 246"
+  }
+  ""
+}
+
+/// the corpus test "remove drops one series and says whether there was one, reset drops them all (DeleteLabelValues, Reset)"
+fn check_12(os: Os) -> Str {
+  let r = metrics.registry()
+  let c = r.counter("jobs_total", "Jobs.", ["queue"])
+  c.inc(["a"])
+  c.inc(["b"])
+  let h = r.histogram("job_seconds", "Job time.", ["queue"], [1.0])
+  h.observe(0.5, ["a"])
+  h.observe(2.0, ["b"])
+  let s = r.summary("job_bytes", "Job size.", ["queue"], [(0.5, 0.05)])
+  s.observe(10.0, ["a"])
+  s.observe(20.0, ["b"])
+  if (c.remove(["a"])) != (true) {
+    return "check_12 line 260"
+  }
+  // a second remove finds nothing, and so do label values never seen
+  if (c.remove(["a"])) != (false) {
+    return "check_12 line 262"
+  }
+  if (c.remove(["zz"])) != (false) {
+    return "check_12 line 263"
+  }
+  if (h.remove(["b"])) != (true) {
+    return "check_12 line 264"
+  }
+  if (h.remove(["b"])) != (false) {
+    return "check_12 line 265"
+  }
+  if (s.remove(["a"])) != (true) {
+    return "check_12 line 266"
+  }
+  if (s.remove(["a"])) != (false) {
+    return "check_12 line 267"
+  }
+  let t = r.text()
+  if (t.contains("jobs_total{queue=\"a\"}")) != (false) {
+    return "check_12 line 269"
+  }
+  if (t.contains("jobs_total{queue=\"b\"} 1\n")) != (true) {
+    return "check_12 line 270"
+  }
+  if (t.contains("job_seconds_bucket{queue=\"b\"")) != (false) {
+    return "check_12 line 271"
+  }
+  if (t.contains("job_seconds_bucket{queue=\"a\",le=\"1\"} 1\n")) != (true) {
+    return "check_12 line 272"
+  }
+  if (t.contains("job_seconds_count{queue=\"a\"} 1\n")) != (true) {
+    return "check_12 line 273"
+  }
+  if (t.contains("job_bytes_sum{queue=\"a\"}")) != (false) {
+    return "check_12 line 274"
+  }
+  if (t.contains("job_bytes{queue=\"b\",quantile=\"0.5\"} 20\n")) != (true) {
+    return "check_12 line 275"
+  }
+  if (t.contains("job_bytes_count{queue=\"b\"} 1\n")) != (true) {
+    return "check_12 line 276"
+  }
+  c.reset()
+  h.reset()
+  s.reset()
+  let after = r.text()
+  if (after.contains("jobs_total{")) != (false) {
+    return "check_12 line 281"
+  }
+  if (after.contains("job_seconds_bucket{")) != (false) {
+    return "check_12 line 282"
+  }
+  if (after.contains("job_seconds_count{")) != (false) {
+    return "check_12 line 283"
+  }
+  if (after.contains("job_bytes{")) != (false) {
+    return "check_12 line 284"
+  }
+  if (after.contains("job_bytes_count{")) != (false) {
+    return "check_12 line 285"
+  }
+  // a series made again after reset starts from zero
+  c.inc(["b"])
+  if (r.text().contains("jobs_total{queue=\"b\"} 1\n")) != (true) {
+    return "check_12 line 288"
+  }
+  ""
+}
+
+/// the corpus test "handler_at answers the text exposition at the clock's time"
+fn check_13(os: Os) -> Str {
+  let r = metrics.registry()
+  let g = r.gauge("temp", "Temperature.")
+  g.set(21.5)
+  let serve = r.handler_at(os.clock)
+  let u = http.Url{scheme: "http", host: "h", port: None, path: "/metrics", query: {}}
+  let resp = serve(http.Request{method: "GET", path: "/metrics", url: u, headers: {}, body: b"", remote_ip: ""})
+  if (resp.status) != (200) {
+    return "check_13 line 298"
+  }
+  if (resp.headers.get("Content-Type")) != (Some("text/plain; version=0.0.4; charset=utf-8")) {
+    return "check_13 line 299"
+  }
+  let body = resp.body.to_str_lossy()
+  if (body) != (r.text(Some(os.clock.now()))) {
+    return "check_13 line 301"
+  }
+  if (body.contains("\ntemp 21.5\n")) != (true) {
+    return "check_13 line 302"
+  }
+  ""
+}
+
+/// the corpus test "the default latency buckets are the eleven up to ten seconds"
+fn check_14(os: Os) -> Str {
+  let b = metrics.latency_buckets()
+  if (b.len()) != (11) {
+    return "check_14 line 307"
+  }
+  if (b[0]) != (0.005) {
+    return "check_14 line 308"
+  }
+  if (b[5]) != (0.25) {
+    return "check_14 line 309"
+  }
+  if (b[10]) != (10.0) {
+    return "check_14 line 310"
+  }
+  let r = metrics.registry()
+  // the buckets argument is omitted: buckets = latency_buckets() is the
+  // only call default in std, and the Go backend rejected it until f623b4826
+  // ("unsupported std default value"), so this corpus is the cross backend
+  // proof that the default evaluates
+  let h = r.histogram("plain_seconds", "Buckets defaulted.", [])
+  h.observe(0.001)
+  h.observe(30.0)
+  let t = r.text()
+  for v in ["0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "10"] {
+    if (t.contains("plain_seconds_bucket{le=\"${v}\"} ")) != (true) {
+      return "check_14 line 321"
+    }
+  }
+  // 0.001 is under the first bound and 30 is over the last, so only +Inf
+  // counts both
+  if (t.contains("plain_seconds_bucket{le=\"0.005\"} 1\n")) != (true) {
+    return "check_14 line 325"
+  }
+  if (t.contains("plain_seconds_bucket{le=\"10\"} 1\n")) != (true) {
+    return "check_14 line 326"
+  }
+  if (t.contains("plain_seconds_bucket{le=\"+Inf\"} 2\n")) != (true) {
+    return "check_14 line 327"
+  }
+  if (t.contains("plain_seconds_sum 30.001\n")) != (true) {
+    return "check_14 line 328"
+  }
+  if (t.contains("plain_seconds_count 2\n")) != (true) {
+    return "check_14 line 329"
+  }
+  ""
+}
