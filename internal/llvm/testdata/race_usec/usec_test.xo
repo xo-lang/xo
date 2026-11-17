@@ -1,0 +1,33 @@
+// TestRaceUseC: a `use c` adapter's marks (xo_c_enter, xo_c_leave,
+// decision 0675) read the worker record from the thread's xo_tlocal
+// table. Under --race a task's fiber is switched to with no
+// synchronization, so the fiber's read of a pool thread's TLS raced
+// ThreadSanitizer's initialization of that TLS (std/sqlite's race
+// evidence, 2026-11-17). Many tasks on many workers give the race its
+// chances.
+use c "racec.h" link "racec.c"
+
+test "many tasks call C at once" {
+  var total = 0
+  for _ in 0..20 {
+    let sums = scope s {
+      var hs: List[Task[Int, Str]] = []
+      for i in 0..32 {
+        hs.push(s.spawn(fn() -> Int ! Str {
+          var n = 0
+          for k in 0..200 {
+            n = racec.racec_add(n, (i + k) & 1)
+          }
+          Ok(n)
+        }))
+      }
+      var t = 0
+      for h in hs {
+        t += h.await.or_fault("task")
+      }
+      t
+    }
+    total += sums
+  }
+  expect(total) == 20 * 32 * 100
+}

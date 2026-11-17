@@ -628,7 +628,13 @@ pub const CSEQ_WORD = 452
 /// monitor may read the old even value as the call starts either way),
 /// and a release store kept about half the marks' cost (#107's --ab, in
 /// CHANGELOG). A thread that is no worker has slot CSEQ_TLS_W zero and
-/// does nothing.
+/// does nothing. Under ThreadSanitizer (xo test --race) the marks are not
+/// instrumented and use plain volatile accesses: a task runs on a fiber
+/// with no happens-before edge to its pool thread
+/// (gotchas/tsan-fiber-switch-sync.md), so TSan reported the xo_tlocal
+/// read against the thread's TLS initialization, and an atomic, which TSan
+/// instruments even in a no_sanitize function, against the worker record
+/// (gotchas/tsan-fiber-reads-thread-tls.md).
 fn c_mark_prelude() -> Str {
   let w = "int64_t *w = (int64_t *)(intptr_t)xo_tlocal[${CSEQ_TLS_W}];"
   "#if defined(_WIN32)\n" +
@@ -637,7 +643,18 @@ fn c_mark_prelude() -> Str {
     "#else\n" +
     "#if defined(__APPLE__)\nextern __thread int64_t xo_tlocal[16];\n" +
     "#else\nextern __thread int64_t xo_tlocal[16] __attribute__((visibility(\"hidden\"), tls_model(\"initial-exec\")));\n#endif\n" +
-    "static inline void xo_c_enter(void) {\n\t${w}\n\tif (w) {\n\t\t__atomic_store_n(&w[${CSEQ_WORD}], __atomic_load_n(&w[${CSEQ_WORD}], __ATOMIC_RELAXED) + 1, __ATOMIC_RELAXED);\n\t}\n}\n" +
-    "static inline void xo_c_leave(void) {\n\t${w}\n\tif (w) {\n\t\tint64_t s = __atomic_load_n(&w[${CSEQ_WORD}], __ATOMIC_RELAXED);\n\t\tif (s & 1) {\n\t\t\t__atomic_store_n(&w[${CSEQ_WORD}], s + 1, __ATOMIC_RELAXED);\n\t\t}\n\t}\n}\n" +
+    "#if defined(__has_feature)\n#if __has_feature(thread_sanitizer)\n#define XO_C_TSAN 1\n#endif\n#endif\n" +
+    "#if defined(__SANITIZE_THREAD__) && !defined(XO_C_TSAN)\n#define XO_C_TSAN 1\n#endif\n" +
+    "#if defined(XO_C_TSAN)\n" +
+    "#define XO_C_MARK static inline __attribute__((no_sanitize(\"thread\")))\n" +
+    "#define XO_C_LOAD(p) (*(volatile int64_t *)(p))\n" +
+    "#define XO_C_STORE(p, v) (*(volatile int64_t *)(p) = (v))\n" +
+    "#else\n" +
+    "#define XO_C_MARK static inline\n" +
+    "#define XO_C_LOAD(p) __atomic_load_n((p), __ATOMIC_RELAXED)\n" +
+    "#define XO_C_STORE(p, v) __atomic_store_n((p), (v), __ATOMIC_RELAXED)\n" +
+    "#endif\n" +
+    "XO_C_MARK void xo_c_enter(void) {\n\t${w}\n\tif (w) {\n\t\tXO_C_STORE(&w[${CSEQ_WORD}], XO_C_LOAD(&w[${CSEQ_WORD}]) + 1);\n\t}\n}\n" +
+    "XO_C_MARK void xo_c_leave(void) {\n\t${w}\n\tif (w) {\n\t\tint64_t s = XO_C_LOAD(&w[${CSEQ_WORD}]);\n\t\tif (s & 1) {\n\t\t\tXO_C_STORE(&w[${CSEQ_WORD}], s + 1);\n\t\t}\n\t}\n}\n" +
     "#endif\n\n"
 }

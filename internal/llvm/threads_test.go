@@ -901,3 +901,31 @@ func TestRaceOrphanScope(t *testing.T) {
 		}
 	}
 }
+
+// TestRaceUseC: many tasks calling a C function at once. Every use c call
+// is wrapped in xo_c_enter and xo_c_leave (decision 0675), which read the
+// worker record from the pool thread's TLS. Tasks switch fibers without a
+// happens-before edge (gotchas/tsan-fiber-switch-sync.md), so
+// ThreadSanitizer saw that TLS read race with the thread's TLS
+// initialization (std/sqlite race evidence on linux/arm64, 2026-11-17).
+// The marks are now not instrumented under ThreadSanitizer.
+func TestRaceUseC(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		t.Skipf("ThreadSanitizer does not run here: %s", why)
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 3; round++ {
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--race", "."))
+		cmd.Dir = filepath.Join("testdata", "race_usec")
+		b, err := cmd.CombinedOutput()
+		if err != nil || strings.Contains(string(b), "ThreadSanitizer") {
+			t.Fatalf("round %d: xo test --race: %v\n%s", round, err, b)
+		}
+	}
+}
