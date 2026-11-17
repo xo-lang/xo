@@ -614,6 +614,11 @@ yourself.
   std/native/prelude.xo reaches every program. The full sweep stays in
   the tier (decision #69). Run it before pushing a new pub std
   declaration.
+- pushq's pre-pass runs `XO_CLI=bin/xo go run ./scripts/stdcoverage
+  -since=origin/main` when the push adds a `pub ` line to a std source
+  (gatelib gate_adds_pub_std; #269, 2026-11-17): a new public declaration
+  no program calls, and allow.txt does not name, refuses the push (about a
+  minute a module the push edits; the full sweep runs in the tier).
 - `go run ./scripts/stdcoverage` prints every std function and method no
   corpus or golden calls (internal/stdcoverage): std/*.xo and
   std/native/prelude.xo against the calls in internal/stdtest's corpora,
