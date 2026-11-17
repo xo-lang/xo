@@ -855,7 +855,7 @@ llvm_goldens() {
   # change, HEAD's IR is built only for the goldens that can reach it
   # (scripts/golden-std-deps.py: their imports' closure and the std files
   # their base IR names), and the others keep the base's lines; every
-  # golden for a compiler, std/rt, prelude or runtime change, or with no
+  # golden for a compiler, prelude or runtime change, or with no
   # deps file beside the base's manifest. XO_GATE_IR_SCOPE=0 builds every
   # golden.
   # (B) of the plan (lead, 2026-11-15): with every golden's

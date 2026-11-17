@@ -254,9 +254,12 @@ yourself.
   11 s for 742 on the Mac). When no golden reads a changed file, no IR is
   built. When at most `XO_GATE_IR_SCOPE_MAX` (300) do, the base's and
   HEAD's IR are built for those goldens alone; a std/csv.xo probe took 39 s
-  to select, where the base's whole manifest took 385 to 509 s. A compiler,
-  std/rt or removed std file change, or a larger scope, goes through the
-  IR manifests as before. `XO_GATE_IR_INPUTS=0` turns it off; the continuous
+  to select, where the base's whole manifest took 385 to 509 s. A compiler
+  or removed std file change, or a larger scope, goes through the IR
+  manifests as before. std/rt (the Go backend's runtime) is no IR input:
+  TestGolden runs LLVM alone (2026-11-17, #275: a std/rt/http.go edit beside
+  std/http.xo made the scope "all" and took 1,354 s to select; 119 goldens
+  without it). `XO_GATE_IR_INPUTS=0` turns it off; the continuous
   tier (ctier.sh, below) runs every golden.
 - Light push sets (owner, 2026-11-15, CLAUDE.md "Std Proven push"):
   `pushq.sh WT --needs` and the offload-gate planner ask only for

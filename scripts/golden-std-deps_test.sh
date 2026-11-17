@@ -38,7 +38,7 @@ t all "the prelude" std/native/prelude.xo
 t all "a module the runtime reaches" std/netip.xo
 t all "the runtime" std/native/llrt/atomic.xo
 t all "the compiler" compiler/ssa/x.xo
-t all "std/rt" std/rt/x.go
+t none "std/rt, the Go backend's runtime (#275)" std/rt/x.go std/rt/curg_arm64.s
 t all "a std file that is not a module source" std/VERSION
 t none "tests and docs" std/csv_test.xo std/changes/csv.md compiler/wasm/x.xo
 t none "files that make no IR" scripts/x.sh
@@ -61,5 +61,6 @@ ti c,d "a derive's codec is in the list" std/json.xo
 ti all "a removed std file" std/gone.xo
 ti all "the compiler" compiler/ssa/x.xo
 ti none "docs and scripts" std/changes/csv.md scripts/x.sh
+ti a,d "std/rt beside a std file: that file's goldens (#275)" std/rt/http.go std/bufio.xo
 [ "$fails" = 0 ] && echo "all passed"
 exit $((fails > 0))

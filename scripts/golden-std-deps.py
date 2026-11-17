@@ -16,7 +16,7 @@ keys are the closure, over the `use` lines of every std file of a key, of
 its own sources' std imports and the keys of the files its base IR names
 (which holds the modules the compiler adds by itself, a derive's codec).
 "all" when the change touches anything else that makes IR (the compiler
-but its wasm and Mach-O parts, std/rt, a std file that is not a module's
+but its wasm and Mach-O parts, a std file that is not a module's
 .xo source), a key the prelude's or the runtime's closure reaches (every
 program has them), or a golden that imports a module from outside std.
 
@@ -85,11 +85,14 @@ def by_inputs(root, d):
     for p in sys.stdin.read().split():
         if p.endswith(".md") or p.endswith("_test.xo"):
             continue
-        if p.startswith("std/changes/") or p.startswith("std/evidence/"):
+        # std/rt is the Go backend's runtime (Go and assembly): no LLVM IR
+        # reads it, and TestGolden runs LLVM alone (#275: a std/rt/http.go
+        # edit made a 119 golden scope "all", 1,354 s to select)
+        if p.startswith("std/changes/") or p.startswith("std/evidence/") or p.startswith("std/rt/"):
             continue
         if p.startswith("compiler/wasm/") or p.startswith("compiler/macho/"):
             continue
-        if p.startswith("compiler/") or p.startswith("std/rt/"):
+        if p.startswith("compiler/"):
             print("all"); return
         if p.startswith("std/"):
             if not p.endswith(".xo") or not os.path.exists(os.path.join(root, p)):
@@ -154,11 +157,14 @@ def main():
     for p in sys.stdin.read().split():
         if p.endswith(".md") or p.endswith("_test.xo"):
             continue
-        if p.startswith("std/changes/") or p.startswith("std/evidence/"):
+        # std/rt is the Go backend's runtime (Go and assembly): no LLVM IR
+        # reads it, and TestGolden runs LLVM alone (#275: a std/rt/http.go
+        # edit made a 119 golden scope "all", 1,354 s to select)
+        if p.startswith("std/changes/") or p.startswith("std/evidence/") or p.startswith("std/rt/"):
             continue
         if p.startswith("compiler/wasm/") or p.startswith("compiler/macho/"):
             continue
-        if p.startswith("compiler/") or p.startswith("std/rt/"):
+        if p.startswith("compiler/"):
             print("all"); return
         if p.startswith("std/"):
             if not p.endswith(".xo"):
