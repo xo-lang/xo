@@ -1,4 +1,4 @@
-// image: std/image draw of 1024 by 768 images (decision 0578 step 2), 5 passes, against
+// image: std/image draw of 1024 by 768 images (decision 0578 step 2), 5 passes (or the second argument's count), against
 // Go's image/draw (twin.go.txt). Usage: `<program> over|copy|src|gray|none`: copy draws an RGBA image into an RGBA one (Src); over composites an
 // RGBA image over an RGBA image, src copies an NRGBA image into an RGBA one (Src), gray
 // draws a Gray image into an RGBA one; none: the setup alone. Prints `<workload> <checksum>`;
@@ -41,6 +41,7 @@ fn noise(seed: Int, n: Int, premul: Bool) -> Bytes {
 
 fn main(os: Os) {
   let w = os.env.args().get(0) ?? "over"
+  let passes = Int.parse(os.env.args().get(1) ?? "5") ?? 5
   var dst = image.Image{width: W, height: H, model: image.Model.RGBA, pix: noise(1, W * H * 4, true)}
   var src = image.Image{width: W, height: H, model: image.Model.RGBA, pix: noise(2, W * H * 4, true)}
   if w == "src" {
@@ -51,7 +52,7 @@ fn main(os: Os) {
   }
   if w != "none" {
     let op = if w == "over" { image.Op.Over } else { image.Op.Src }
-    for _ in 0..5 {
+    for _ in 0..passes {
       dst.draw(image.Rect{x0: 0, y0: 0, x1: W, y1: H}, src, 0, 0, op)
     }
   }

@@ -2439,18 +2439,18 @@ func Image_draw_px(tk *Task, v_dp Bytes, v_di int64, v_sp Bytes, v_si int64, v_m
 	var v_sa int64 = int64(65535)
 	_ = v_sa
 	if v_mk == int64(0) {
-		v_sr = (int64(BytesAt(v_sp, v_si, "std/image.xo:1184:14")) * int64(257))
-		v_sg = (int64(BytesAt(v_sp, AddIUp(v_si, int64(1), "std/image.xo:1185:17"), "std/image.xo:1185:14")) * int64(257))
-		v_sb = (int64(BytesAt(v_sp, AddIUp(v_si, int64(2), "std/image.xo:1186:17"), "std/image.xo:1186:14")) * int64(257))
-		v_sa = (int64(BytesAt(v_sp, AddIUp(v_si, int64(3), "std/image.xo:1187:17"), "std/image.xo:1187:14")) * int64(257))
+		v_sa = (int64(BytesAt(v_sp, AddIUp(v_si, int64(3), "std/image.xo:1186:17"), "std/image.xo:1186:14")) * int64(257))
+		v_sr = (int64(BytesAt(v_sp, v_si, "std/image.xo:1187:14")) * int64(257))
+		v_sg = (int64(BytesAt(v_sp, AddIUp(v_si, int64(1), "std/image.xo:1188:17"), "std/image.xo:1188:14")) * int64(257))
+		v_sb = (int64(BytesAt(v_sp, AddIUp(v_si, int64(2), "std/image.xo:1189:17"), "std/image.xo:1189:14")) * int64(257))
 	} else {
 		if v_mk == int64(1) {
-			v_sa = (int64(BytesAt(v_sp, AddIUp(v_si, int64(3), "std/image.xo:1189:17"), "std/image.xo:1189:14")) * int64(257))
-			v_sr = ((int64(BytesAt(v_sp, v_si, "std/image.xo:1190:14")) * v_sa) / int64(255))
-			v_sg = ((int64(BytesAt(v_sp, AddIUp(v_si, int64(1), "std/image.xo:1191:17"), "std/image.xo:1191:14")) * v_sa) / int64(255))
-			v_sb = ((int64(BytesAt(v_sp, AddIUp(v_si, int64(2), "std/image.xo:1192:17"), "std/image.xo:1192:14")) * v_sa) / int64(255))
+			v_sa = (int64(BytesAt(v_sp, AddIUp(v_si, int64(3), "std/image.xo:1191:17"), "std/image.xo:1191:14")) * int64(257))
+			v_sr = ((int64(BytesAt(v_sp, v_si, "std/image.xo:1192:14")) * v_sa) / int64(255))
+			v_sg = ((int64(BytesAt(v_sp, AddIUp(v_si, int64(1), "std/image.xo:1193:17"), "std/image.xo:1193:14")) * v_sa) / int64(255))
+			v_sb = ((int64(BytesAt(v_sp, AddIUp(v_si, int64(2), "std/image.xo:1194:17"), "std/image.xo:1194:14")) * v_sa) / int64(255))
 		} else {
-			var v_g int64 = (int64(BytesAt(v_sp, v_si, "std/image.xo:1194:17")) * int64(257))
+			var v_g int64 = (int64(BytesAt(v_sp, v_si, "std/image.xo:1196:17")) * int64(257))
 			_ = v_g
 			v_sr = v_g
 			v_sg = v_g
@@ -2460,9 +2460,11 @@ func Image_draw_px(tk *Task, v_dp Bytes, v_di int64, v_sp Bytes, v_si int64, v_m
 	if v_over && (v_sa != int64(65535)) {
 		var v_a int64 = ((int64(65535) - v_sa) * int64(257))
 		_ = v_a
-		return (((Shl(((((int64(BytesAt(v_dp, v_di, "std/image.xo:1201:20"))*v_a)/int64(65535))+v_sr)>>int64(8)), int64(24), "std/image.xo:1201:13") | Shl(((((int64(BytesAt(v_dp, AddIUp(v_di, int64(1), "std/image.xo:1201:73"), "std/image.xo:1201:70"))*v_a)/int64(65535))+v_sg)>>int64(8)), int64(16), "std/image.xo:1201:63")) | Shl(((((int64(BytesAt(v_dp, AddIUp(v_di, int64(2), "std/image.xo:1201:127"), "std/image.xo:1201:124"))*v_a)/int64(65535))+v_sb)>>int64(8)), int64(8), "std/image.xo:1201:117")) | ((((int64(BytesAt(v_dp, AddIUp(v_di, int64(3), "std/image.xo:1201:179"), "std/image.xo:1201:176")) * v_a) / int64(65535)) + v_sa) >> int64(8)))
+		var v_da int64 = int64(BytesAt(v_dp, AddIUp(v_di, int64(3), "std/image.xo:1204:21"), "std/image.xo:1204:18"))
+		_ = v_da
+		return (((Shl(((((int64(BytesAt(v_dp, v_di, "std/image.xo:1205:20"))*v_a)/int64(65535))+v_sr)>>int64(8)), int64(24), "std/image.xo:1205:13") | Shl(((((int64(BytesAt(v_dp, AddIUp(v_di, int64(1), "std/image.xo:1205:73"), "std/image.xo:1205:70"))*v_a)/int64(65535))+v_sg)>>int64(8)), int64(16), "std/image.xo:1205:63")) | Shl(((((int64(BytesAt(v_dp, AddIUp(v_di, int64(2), "std/image.xo:1205:127"), "std/image.xo:1205:124"))*v_a)/int64(65535))+v_sb)>>int64(8)), int64(8), "std/image.xo:1205:117")) | ((((v_da * v_a) / int64(65535)) + v_sa) >> int64(8)))
 	}
-	return (((Shl((v_sr>>int64(8)), int64(24), "std/image.xo:1203:4") | Shl((v_sg>>int64(8)), int64(16), "std/image.xo:1203:24")) | Shl((v_sb>>int64(8)), int64(8), "std/image.xo:1203:44")) | (v_sa >> int64(8)))
+	return (((Shl((v_sr>>int64(8)), int64(24), "std/image.xo:1207:4") | Shl((v_sg>>int64(8)), int64(16), "std/image.xo:1207:24")) | Shl((v_sb>>int64(8)), int64(8), "std/image.xo:1207:44")) | (v_sa >> int64(8)))
 }
 
 func Image_draw_rgba_rows(tk *Task, v_dst Image_Image, v_src Image_Image, v_x0 int64, v_y0 int64, v_x1 int64, v_y1 int64, v_sp_x int64, v_sp_y int64, v_op Image_Op) Bytes {
@@ -2492,7 +2494,7 @@ func Image_draw_rgba_rows(tk *Task, v_dst Image_Image, v_src Image_Image, v_x0 i
 	}
 	var v_sbpp int64 = x_v259
 	_ = v_sbpp
-	var v_w int64 = SubS(v_x1, v_x0, "std/image.xo:1217:11")
+	var v_w int64 = SubS(v_x1, v_x0, "std/image.xo:1221:11")
 	_ = v_w
 	var v_dp Bytes = v_dst.F_pix
 	_ = v_dp
@@ -2506,57 +2508,57 @@ x_L261:
 		var v_y int64 = x_el263
 		_ = v_y
 		{
-			var v_rowstart int64 = Image_pix_off(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_dst), SubS(v_x0, v_dst.F_min_x, "std/image.xo:1221:33"), SubS(v_y, v_dst.F_min_y, "std/image.xo:1221:49"), int64(4))
+			var v_rowstart int64 = Image_pix_off(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_dst), SubS(v_x0, v_dst.F_min_x, "std/image.xo:1225:33"), SubS(v_y, v_dst.F_min_y, "std/image.xo:1225:49"), int64(4))
 			_ = v_rowstart
-			v_b.M_write(tk, BytesSlice(v_dp, v_pos, v_rowstart, true, true, "std/image.xo:1222:13"))
-			var v_si int64 = Image_pix_off(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), SubS(v_sp_x, v_src.F_min_x, "std/image.xo:1223:27"), SubS(AddS(v_sp_y, SubS(v_y, v_y0, "std/image.xo:1223:53"), "std/image.xo:1223:45"), v_src.F_min_y, "std/image.xo:1223:45"), v_sbpp)
+			v_b.M_write(tk, BytesSlice(v_dp, v_pos, v_rowstart, true, true, "std/image.xo:1226:13"))
+			var v_si int64 = Image_pix_off(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), SubS(v_sp_x, v_src.F_min_x, "std/image.xo:1227:27"), SubS(AddS(v_sp_y, SubS(v_y, v_y0, "std/image.xo:1227:53"), "std/image.xo:1227:45"), v_src.F_min_y, "std/image.xo:1227:45"), v_sbpp)
 			_ = v_si
 			var v_di int64 = v_rowstart
 			_ = v_di
 			if !(v_over) && (v_mk == int64(0)) {
-				v_b.M_write(tk, BytesSlice(v_spx, v_si, AddS(v_si, MulIK(v_w, int64(4), -2305843009213693952, 2305843009213693951, "std/image.xo:1227:28"), "std/image.xo:1227:23"), true, true, "std/image.xo:1227:15"))
-				v_pos = AddS(v_di, MulIK(v_w, int64(4), -2305843009213693952, 2305843009213693951, "std/image.xo:1228:18"), "std/image.xo:1228:13")
+				v_b.M_write(tk, BytesSlice(v_spx, v_si, AddS(v_si, MulIK(v_w, int64(4), -2305843009213693952, 2305843009213693951, "std/image.xo:1231:28"), "std/image.xo:1231:23"), true, true, "std/image.xo:1231:15"))
+				v_pos = AddS(v_di, MulIK(v_w, int64(4), -2305843009213693952, 2305843009213693951, "std/image.xo:1232:18"), "std/image.xo:1232:13")
 				continue x_L261
 			}
 			var v_x int64 = int64(0)
 			_ = v_x
 			if v_mk == int64(2) {
 				for {
-					if !(AddIUp(v_x, int64(1), "std/image.xo:1234:13") < v_w) {
+					if !(AddIUp(v_x, int64(1), "std/image.xo:1238:13") < v_w) {
 						break
 					}
 					{
-						v_b.M_write_be(tk, (Int_wrapping_shl(tk, ((int64(BytesAt(v_spx, v_si, "std/image.xo:1235:25"))*int64(16843008))|int64(255)), int64(32)) | ((int64(BytesAt(v_spx, AddIUp(v_si, int64(1), "std/image.xo:1235:82"), "std/image.xo:1235:78")) * int64(16843008)) | int64(255))), int64(8))
-						v_si = AddIUp(v_si, int64(2), "std/image.xo:1236:9")
-						v_di = AddIUp(v_di, int64(8), "std/image.xo:1237:9")
-						v_x = AddIUp(v_x, int64(2), "std/image.xo:1238:9")
+						v_b.M_write_be(tk, (Int_wrapping_shl(tk, ((int64(BytesAt(v_spx, v_si, "std/image.xo:1239:25"))*int64(16843008))|int64(255)), int64(32)) | ((int64(BytesAt(v_spx, AddIUp(v_si, int64(1), "std/image.xo:1239:82"), "std/image.xo:1239:78")) * int64(16843008)) | int64(255))), int64(8))
+						v_si = AddIUp(v_si, int64(2), "std/image.xo:1240:9")
+						v_di = AddIUp(v_di, int64(8), "std/image.xo:1241:9")
+						v_x = AddIUp(v_x, int64(2), "std/image.xo:1242:9")
 					}
 				}
 			}
 			for {
-				if !(AddIUp(v_x, int64(1), "std/image.xo:1241:11") < v_w) {
+				if !(AddIUp(v_x, int64(1), "std/image.xo:1245:11") < v_w) {
 					break
 				}
 				{
 					var v_p0 int64 = Image_draw_px(tk, v_dp, v_di, v_spx, v_si, v_mk, v_over)
 					_ = v_p0
-					var v_p1 int64 = Image_draw_px(tk, v_dp, AddIUp(v_di, int64(4), "std/image.xo:1243:28"), v_spx, AddS(v_si, v_sbpp, "std/image.xo:1243:41"), v_mk, v_over)
+					var v_p1 int64 = Image_draw_px(tk, v_dp, AddIUp(v_di, int64(4), "std/image.xo:1247:28"), v_spx, AddS(v_si, v_sbpp, "std/image.xo:1247:41"), v_mk, v_over)
 					_ = v_p1
 					x_a266 := int64(32)
 					v_b.M_write_be(tk, (Int_wrapping_shl(tk, v_p0, x_a266) | v_p1), int64(8))
-					v_si = AddS(v_si, (int64(2) * v_sbpp), "std/image.xo:1245:7")
-					v_di = AddIUp(v_di, int64(8), "std/image.xo:1246:7")
-					v_x = AddIUp(v_x, int64(2), "std/image.xo:1247:7")
+					v_si = AddS(v_si, (int64(2) * v_sbpp), "std/image.xo:1249:7")
+					v_di = AddIUp(v_di, int64(8), "std/image.xo:1250:7")
+					v_x = AddIUp(v_x, int64(2), "std/image.xo:1251:7")
 				}
 			}
 			if v_x < v_w {
 				v_b.M_write_be(tk, Image_draw_px(tk, v_dp, v_di, v_spx, v_si, v_mk, v_over), int64(4))
-				v_di = AddIUp(v_di, int64(4), "std/image.xo:1251:7")
+				v_di = AddIUp(v_di, int64(4), "std/image.xo:1255:7")
 			}
 			v_pos = v_di
 		}
 	}
-	v_b.M_write(tk, BytesSlice(v_dp, v_pos, Bytes_len(tk, v_dp), true, true, "std/image.xo:1255:11"))
+	v_b.M_write(tk, BytesSlice(v_dp, v_pos, Bytes_len(tk, v_dp), true, true, "std/image.xo:1259:11"))
 	return v_b.M_freeze(tk)
 }
 
@@ -2569,15 +2571,15 @@ func Image_draw_clip(tk *Task, v_dst Image_Image, v_r Image_Rect, v_src Image_Im
 	_ = v_x0
 	var v_y0 int64 = Image_imax(tk, v_r.F_y0, v_dst.F_min_y)
 	_ = v_y0
-	var v_x1 int64 = Image_imin(tk, v_r.F_x1, AddS(v_dst.F_min_x, v_dst.F_width, "std/image.xo:1267:23"))
+	var v_x1 int64 = Image_imin(tk, v_r.F_x1, AddS(v_dst.F_min_x, v_dst.F_width, "std/image.xo:1271:23"))
 	_ = v_x1
-	var v_y1 int64 = Image_imin(tk, v_r.F_y1, AddS(v_dst.F_min_y, v_dst.F_height, "std/image.xo:1268:23"))
+	var v_y1 int64 = Image_imin(tk, v_r.F_y1, AddS(v_dst.F_min_y, v_dst.F_height, "std/image.xo:1272:23"))
 	_ = v_y1
-	v_x0 = Image_imax(tk, v_x0, SubS(AddS(v_src.F_min_x, v_ox, "std/image.xo:1269:17"), v_spx, "std/image.xo:1269:17"))
-	v_y0 = Image_imax(tk, v_y0, SubS(AddS(v_src.F_min_y, v_oy, "std/image.xo:1270:17"), v_spy, "std/image.xo:1270:17"))
-	v_x1 = Image_imin(tk, v_x1, SubS(AddS(AddS(v_src.F_min_x, v_src.F_width, "std/image.xo:1271:17"), v_ox, "std/image.xo:1271:17"), v_spx, "std/image.xo:1271:17"))
-	v_y1 = Image_imin(tk, v_y1, SubS(AddS(AddS(v_src.F_min_y, v_src.F_height, "std/image.xo:1272:17"), v_oy, "std/image.xo:1272:17"), v_spy, "std/image.xo:1272:17"))
-	return Tuple6[int64, int64, int64, int64, int64, int64]{F0: v_x0, F1: v_y0, F2: v_x1, F3: v_y1, F4: AddS(v_spx, SubS(v_x0, v_ox, "std/image.xo:1273:27"), "std/image.xo:1273:20"), F5: AddS(v_spy, SubS(v_y0, v_oy, "std/image.xo:1273:44"), "std/image.xo:1273:37")}
+	v_x0 = Image_imax(tk, v_x0, SubS(AddS(v_src.F_min_x, v_ox, "std/image.xo:1273:17"), v_spx, "std/image.xo:1273:17"))
+	v_y0 = Image_imax(tk, v_y0, SubS(AddS(v_src.F_min_y, v_oy, "std/image.xo:1274:17"), v_spy, "std/image.xo:1274:17"))
+	v_x1 = Image_imin(tk, v_x1, SubS(AddS(AddS(v_src.F_min_x, v_src.F_width, "std/image.xo:1275:17"), v_ox, "std/image.xo:1275:17"), v_spx, "std/image.xo:1275:17"))
+	v_y1 = Image_imin(tk, v_y1, SubS(AddS(AddS(v_src.F_min_y, v_src.F_height, "std/image.xo:1276:17"), v_oy, "std/image.xo:1276:17"), v_spy, "std/image.xo:1276:17"))
+	return Tuple6[int64, int64, int64, int64, int64, int64]{F0: v_x0, F1: v_y0, F2: v_x1, F3: v_y1, F4: AddS(v_spx, SubS(v_x0, v_ox, "std/image.xo:1277:27"), "std/image.xo:1277:20"), F5: AddS(v_spy, SubS(v_y0, v_oy, "std/image.xo:1277:44"), "std/image.xo:1277:37")}
 }
 
 func Image_fs_clamp(tk *Task, v_v int64) int64 {
@@ -2599,15 +2601,15 @@ func Image_draw_clip_mask(tk *Task, v_dst Image_Image, v_r Image_Rect, v_src Ima
 	_ = v_x0
 	var v_y0 int64 = Image_imax(tk, v_r.F_y0, v_dst.F_min_y)
 	_ = v_y0
-	var v_x1 int64 = Image_imin(tk, v_r.F_x1, AddS(v_dst.F_min_x, v_dst.F_width, "std/image.xo:1294:23"))
+	var v_x1 int64 = Image_imin(tk, v_r.F_x1, AddS(v_dst.F_min_x, v_dst.F_width, "std/image.xo:1298:23"))
 	_ = v_x1
-	var v_y1 int64 = Image_imin(tk, v_r.F_y1, AddS(v_dst.F_min_y, v_dst.F_height, "std/image.xo:1295:23"))
+	var v_y1 int64 = Image_imin(tk, v_r.F_y1, AddS(v_dst.F_min_y, v_dst.F_height, "std/image.xo:1299:23"))
 	_ = v_y1
 	if !(v_uniform) {
-		v_x0 = Image_imax(tk, v_x0, SubS(AddS(v_src.F_min_x, v_ox, "std/image.xo:1297:19"), v_spx, "std/image.xo:1297:19"))
-		v_y0 = Image_imax(tk, v_y0, SubS(AddS(v_src.F_min_y, v_oy, "std/image.xo:1298:19"), v_spy, "std/image.xo:1298:19"))
-		v_x1 = Image_imin(tk, v_x1, SubS(AddS(AddS(v_src.F_min_x, v_src.F_width, "std/image.xo:1299:19"), v_ox, "std/image.xo:1299:19"), v_spx, "std/image.xo:1299:19"))
-		v_y1 = Image_imin(tk, v_y1, SubS(AddS(AddS(v_src.F_min_y, v_src.F_height, "std/image.xo:1300:19"), v_oy, "std/image.xo:1300:19"), v_spy, "std/image.xo:1300:19"))
+		v_x0 = Image_imax(tk, v_x0, SubS(AddS(v_src.F_min_x, v_ox, "std/image.xo:1301:19"), v_spx, "std/image.xo:1301:19"))
+		v_y0 = Image_imax(tk, v_y0, SubS(AddS(v_src.F_min_y, v_oy, "std/image.xo:1302:19"), v_spy, "std/image.xo:1302:19"))
+		v_x1 = Image_imin(tk, v_x1, SubS(AddS(AddS(v_src.F_min_x, v_src.F_width, "std/image.xo:1303:19"), v_ox, "std/image.xo:1303:19"), v_spx, "std/image.xo:1303:19"))
+		v_y1 = Image_imin(tk, v_y1, SubS(AddS(AddS(v_src.F_min_y, v_src.F_height, "std/image.xo:1304:19"), v_oy, "std/image.xo:1304:19"), v_spy, "std/image.xo:1304:19"))
 	}
 	x_l267 := func(v Option[Image_Image]) Option[Image_Image] {
 		if v.Some {
@@ -2618,12 +2620,12 @@ func Image_draw_clip_mask(tk *Task, v_dst Image_Image, v_r Image_Rect, v_src Ima
 	if x_l267.Some {
 		var v_m Image_Image = x_l267.V
 		_ = v_m
-		v_x0 = Image_imax(tk, v_x0, SubS(AddS(v_m.F_min_x, v_ox, "std/image.xo:1303:19"), v_mpx, "std/image.xo:1303:19"))
-		v_y0 = Image_imax(tk, v_y0, SubS(AddS(v_m.F_min_y, v_oy, "std/image.xo:1304:19"), v_mpy, "std/image.xo:1304:19"))
-		v_x1 = Image_imin(tk, v_x1, SubS(AddS(AddS(v_m.F_min_x, v_m.F_width, "std/image.xo:1305:19"), v_ox, "std/image.xo:1305:19"), v_mpx, "std/image.xo:1305:19"))
-		v_y1 = Image_imin(tk, v_y1, SubS(AddS(AddS(v_m.F_min_y, v_m.F_height, "std/image.xo:1306:19"), v_oy, "std/image.xo:1306:19"), v_mpy, "std/image.xo:1306:19"))
+		v_x0 = Image_imax(tk, v_x0, SubS(AddS(v_m.F_min_x, v_ox, "std/image.xo:1307:19"), v_mpx, "std/image.xo:1307:19"))
+		v_y0 = Image_imax(tk, v_y0, SubS(AddS(v_m.F_min_y, v_oy, "std/image.xo:1308:19"), v_mpy, "std/image.xo:1308:19"))
+		v_x1 = Image_imin(tk, v_x1, SubS(AddS(AddS(v_m.F_min_x, v_m.F_width, "std/image.xo:1309:19"), v_ox, "std/image.xo:1309:19"), v_mpx, "std/image.xo:1309:19"))
+		v_y1 = Image_imin(tk, v_y1, SubS(AddS(AddS(v_m.F_min_y, v_m.F_height, "std/image.xo:1310:19"), v_oy, "std/image.xo:1310:19"), v_mpy, "std/image.xo:1310:19"))
 	}
-	return Tuple8[int64, int64, int64, int64, int64, int64, int64, int64]{F0: v_x0, F1: v_y0, F2: v_x1, F3: v_y1, F4: AddS(v_spx, SubS(v_x0, v_ox, "std/image.xo:1308:27"), "std/image.xo:1308:20"), F5: AddS(v_spy, SubS(v_y0, v_oy, "std/image.xo:1308:44"), "std/image.xo:1308:37"), F6: AddS(v_mpx, SubS(v_x0, v_ox, "std/image.xo:1308:61"), "std/image.xo:1308:54"), F7: AddS(v_mpy, SubS(v_y0, v_oy, "std/image.xo:1308:78"), "std/image.xo:1308:71")}
+	return Tuple8[int64, int64, int64, int64, int64, int64, int64, int64]{F0: v_x0, F1: v_y0, F2: v_x1, F3: v_y1, F4: AddS(v_spx, SubS(v_x0, v_ox, "std/image.xo:1312:27"), "std/image.xo:1312:20"), F5: AddS(v_spy, SubS(v_y0, v_oy, "std/image.xo:1312:44"), "std/image.xo:1312:37"), F6: AddS(v_mpx, SubS(v_x0, v_ox, "std/image.xo:1312:61"), "std/image.xo:1312:54"), F7: AddS(v_mpy, SubS(v_y0, v_oy, "std/image.xo:1312:78"), "std/image.xo:1312:71")}
 }
 
 func Image_draw_general(tk *Task, v_dst *Image_Image, v_r Image_Rect, v_src Image_Image, v_uniform bool, v_uc Image_Color, v_spx int64, v_spy int64, v_mask Option[Image_Image], v_mpx int64, v_mpy int64, v_op Image_Op) {
@@ -2679,8 +2681,8 @@ func Image_draw_general(tk *Task, v_dst *Image_Image, v_r Image_Rect, v_src Imag
 					if v_uniform {
 						x_v277 = v_uc
 					} else {
-						x_a278 := AddS(v_sp_x, SubS(v_x, v_x0, "std/image.xo:1326:56"), "std/image.xo:1326:48")
-						x_a279 := AddS(v_sp_y, SubS(v_y, v_y0, "std/image.xo:1326:73"), "std/image.xo:1326:65")
+						x_a278 := AddS(v_sp_x, SubS(v_x, v_x0, "std/image.xo:1330:56"), "std/image.xo:1330:48")
+						x_a279 := AddS(v_sp_y, SubS(v_y, v_y0, "std/image.xo:1330:73"), "std/image.xo:1330:65")
 						x_v277 = Addr(func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src)).M_at(tk, x_a278, x_a279)
 					}
 					var v_sc Image_Color = x_v277
@@ -2696,35 +2698,35 @@ func Image_draw_general(tk *Task, v_dst *Image_Image, v_r Image_Rect, v_src Imag
 					if x_l280.Some {
 						var v_m Image_Image = x_l280.V
 						_ = v_m
-						x_a281 := AddS(v_mp_x, SubS(v_x, v_x0, "std/image.xo:1329:27"), "std/image.xo:1329:19")
-						x_a282 := AddS(v_mp_y, SubS(v_y, v_y0, "std/image.xo:1329:44"), "std/image.xo:1329:36")
+						x_a281 := AddS(v_mp_x, SubS(v_x, v_x0, "std/image.xo:1333:27"), "std/image.xo:1333:19")
+						x_a282 := AddS(v_mp_y, SubS(v_y, v_y0, "std/image.xo:1333:44"), "std/image.xo:1333:36")
 						v_ma = Addr(func(v Image_Image) Image_Image { v.XoMark(); return v }(v_m)).M_at(tk, x_a281, x_a282).F_a
 					}
 					if Eq((*v_dst).F_model, Image_Model{Tag: 4}) {
-						var v_di int64 = Image_pix_off(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }((*v_dst)), SubS(v_x, (*v_dst).F_min_x, "std/image.xo:1332:31"), SubS(v_y, (*v_dst).F_min_y, "std/image.xo:1332:46"), int64(4))
+						var v_di int64 = Image_pix_off(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }((*v_dst)), SubS(v_x, (*v_dst).F_min_x, "std/image.xo:1336:31"), SubS(v_y, (*v_dst).F_min_y, "std/image.xo:1336:46"), int64(4))
 						_ = v_di
 						if v_over {
-							var v_a int64 = ((int64(65535) - (MulS(v_sc.F_a, v_ma, "std/image.xo:1334:28") / int64(65535))) * int64(257))
+							var v_a int64 = ((int64(65535) - (MulS(v_sc.F_a, v_ma, "std/image.xo:1338:28") / int64(65535))) * int64(257))
 							_ = v_a
-							var v_rr int64 = ((AddS(MulS(int64(BytesAt((*v_dst).F_pix, v_di, "std/image.xo:1335:26")), v_a, "std/image.xo:1335:22"), MulS(v_sc.F_r, v_ma, "std/image.xo:1335:45"), "std/image.xo:1335:22") / int64(65535)) >> int64(8))
+							var v_rr int64 = ((AddS(MulS(int64(BytesAt((*v_dst).F_pix, v_di, "std/image.xo:1339:26")), v_a, "std/image.xo:1339:22"), MulS(v_sc.F_r, v_ma, "std/image.xo:1339:45"), "std/image.xo:1339:22") / int64(65535)) >> int64(8))
 							_ = v_rr
-							var v_gg int64 = ((AddS(MulS(int64(BytesAt((*v_dst).F_pix, AddIUp(v_di, int64(1), "std/image.xo:1336:34"), "std/image.xo:1336:26")), v_a, "std/image.xo:1336:22"), MulS(v_sc.F_g, v_ma, "std/image.xo:1336:49"), "std/image.xo:1336:22") / int64(65535)) >> int64(8))
+							var v_gg int64 = ((AddS(MulS(int64(BytesAt((*v_dst).F_pix, AddIUp(v_di, int64(1), "std/image.xo:1340:34"), "std/image.xo:1340:26")), v_a, "std/image.xo:1340:22"), MulS(v_sc.F_g, v_ma, "std/image.xo:1340:49"), "std/image.xo:1340:22") / int64(65535)) >> int64(8))
 							_ = v_gg
-							var v_bb int64 = ((AddS(MulS(int64(BytesAt((*v_dst).F_pix, AddIUp(v_di, int64(2), "std/image.xo:1337:34"), "std/image.xo:1337:26")), v_a, "std/image.xo:1337:22"), MulS(v_sc.F_b, v_ma, "std/image.xo:1337:49"), "std/image.xo:1337:22") / int64(65535)) >> int64(8))
+							var v_bb int64 = ((AddS(MulS(int64(BytesAt((*v_dst).F_pix, AddIUp(v_di, int64(2), "std/image.xo:1341:34"), "std/image.xo:1341:26")), v_a, "std/image.xo:1341:22"), MulS(v_sc.F_b, v_ma, "std/image.xo:1341:49"), "std/image.xo:1341:22") / int64(65535)) >> int64(8))
 							_ = v_bb
-							var v_aa int64 = ((AddS(MulS(int64(BytesAt((*v_dst).F_pix, AddIUp(v_di, int64(3), "std/image.xo:1338:34"), "std/image.xo:1338:26")), v_a, "std/image.xo:1338:22"), MulS(v_sc.F_a, v_ma, "std/image.xo:1338:49"), "std/image.xo:1338:22") / int64(65535)) >> int64(8))
+							var v_aa int64 = ((AddS(MulS(int64(BytesAt((*v_dst).F_pix, AddIUp(v_di, int64(3), "std/image.xo:1342:34"), "std/image.xo:1342:26")), v_a, "std/image.xo:1342:22"), MulS(v_sc.F_a, v_ma, "std/image.xo:1342:49"), "std/image.xo:1342:22") / int64(65535)) >> int64(8))
 							_ = v_aa
-							v_b.M_put_be(tk, v_di, (((Shl((v_rr&int64(255)), int64(24), "std/image.xo:1339:25") | Shl((v_gg&int64(255)), int64(16), "std/image.xo:1339:46")) | Shl((v_bb&int64(255)), int64(8), "std/image.xo:1339:67")) | (v_aa & int64(255))), int64(4))
+							v_b.M_put_be(tk, v_di, (((Shl((v_rr&int64(255)), int64(24), "std/image.xo:1343:25") | Shl((v_gg&int64(255)), int64(16), "std/image.xo:1343:46")) | Shl((v_bb&int64(255)), int64(8), "std/image.xo:1343:67")) | (v_aa & int64(255))), int64(4))
 						} else {
-							var v_rr_1 int64 = ((MulS(v_sc.F_r, v_ma, "std/image.xo:1341:21") / int64(65535)) >> int64(8))
+							var v_rr_1 int64 = ((MulS(v_sc.F_r, v_ma, "std/image.xo:1345:21") / int64(65535)) >> int64(8))
 							_ = v_rr_1
-							var v_gg_1 int64 = ((MulS(v_sc.F_g, v_ma, "std/image.xo:1342:21") / int64(65535)) >> int64(8))
+							var v_gg_1 int64 = ((MulS(v_sc.F_g, v_ma, "std/image.xo:1346:21") / int64(65535)) >> int64(8))
 							_ = v_gg_1
-							var v_bb_1 int64 = ((MulS(v_sc.F_b, v_ma, "std/image.xo:1343:21") / int64(65535)) >> int64(8))
+							var v_bb_1 int64 = ((MulS(v_sc.F_b, v_ma, "std/image.xo:1347:21") / int64(65535)) >> int64(8))
 							_ = v_bb_1
-							var v_aa_1 int64 = ((MulS(v_sc.F_a, v_ma, "std/image.xo:1344:21") / int64(65535)) >> int64(8))
+							var v_aa_1 int64 = ((MulS(v_sc.F_a, v_ma, "std/image.xo:1348:21") / int64(65535)) >> int64(8))
 							_ = v_aa_1
-							v_b.M_put_be(tk, v_di, (((Shl((v_rr_1&int64(255)), int64(24), "std/image.xo:1345:25") | Shl((v_gg_1&int64(255)), int64(16), "std/image.xo:1345:46")) | Shl((v_bb_1&int64(255)), int64(8), "std/image.xo:1345:67")) | (v_aa_1 & int64(255))), int64(4))
+							v_b.M_put_be(tk, v_di, (((Shl((v_rr_1&int64(255)), int64(24), "std/image.xo:1349:25") | Shl((v_gg_1&int64(255)), int64(16), "std/image.xo:1349:46")) | Shl((v_bb_1&int64(255)), int64(8), "std/image.xo:1349:67")) | (v_aa_1 & int64(255))), int64(4))
 						}
 					} else {
 						if v_ma == int64(0) {
@@ -2740,11 +2742,11 @@ func Image_draw_general(tk *Task, v_dst *Image_Image, v_r Image_Rect, v_src Imag
 									x_a284 := v_y
 									var v_dc Image_Color = Addr(func(v Image_Image) Image_Image { v.XoMark(); return v }((*v_dst))).M_at(tk, x_a283, x_a284)
 									_ = v_dc
-									var v_a_1 int64 = (int64(65535) - (MulS(v_sc.F_a, v_ma, "std/image.xo:1355:25") / int64(65535)))
+									var v_a_1 int64 = (int64(65535) - (MulS(v_sc.F_a, v_ma, "std/image.xo:1359:25") / int64(65535)))
 									_ = v_a_1
-									Image_store_color(tk, &v_b, func(v Image_Image) Image_Image { v.XoMark(); return v }((*v_dst)), v_x, v_y, Image_Color{F_r: (AddS(MulS(v_dc.F_r, v_a_1, "std/image.xo:1356:45"), MulS(v_sc.F_r, v_ma, "std/image.xo:1356:56"), "std/image.xo:1356:45") / int64(65535)), F_g: (AddS(MulS(v_dc.F_g, v_a_1, "std/image.xo:1356:80"), MulS(v_sc.F_g, v_ma, "std/image.xo:1356:91"), "std/image.xo:1356:80") / int64(65535)), F_b: (AddS(MulS(v_dc.F_b, v_a_1, "std/image.xo:1356:115"), MulS(v_sc.F_b, v_ma, "std/image.xo:1356:126"), "std/image.xo:1356:115") / int64(65535)), F_a: (AddS(MulS(v_dc.F_a, v_a_1, "std/image.xo:1356:150"), MulS(v_sc.F_a, v_ma, "std/image.xo:1356:161"), "std/image.xo:1356:150") / int64(65535))})
+									Image_store_color(tk, &v_b, func(v Image_Image) Image_Image { v.XoMark(); return v }((*v_dst)), v_x, v_y, Image_Color{F_r: (AddS(MulS(v_dc.F_r, v_a_1, "std/image.xo:1360:45"), MulS(v_sc.F_r, v_ma, "std/image.xo:1360:56"), "std/image.xo:1360:45") / int64(65535)), F_g: (AddS(MulS(v_dc.F_g, v_a_1, "std/image.xo:1360:80"), MulS(v_sc.F_g, v_ma, "std/image.xo:1360:91"), "std/image.xo:1360:80") / int64(65535)), F_b: (AddS(MulS(v_dc.F_b, v_a_1, "std/image.xo:1360:115"), MulS(v_sc.F_b, v_ma, "std/image.xo:1360:126"), "std/image.xo:1360:115") / int64(65535)), F_a: (AddS(MulS(v_dc.F_a, v_a_1, "std/image.xo:1360:150"), MulS(v_sc.F_a, v_ma, "std/image.xo:1360:161"), "std/image.xo:1360:150") / int64(65535))})
 								} else {
-									Image_store_color(tk, &v_b, func(v Image_Image) Image_Image { v.XoMark(); return v }((*v_dst)), v_x, v_y, Image_Color{F_r: (MulS(v_sc.F_r, v_ma, "std/image.xo:1358:44") / int64(65535)), F_g: (MulS(v_sc.F_g, v_ma, "std/image.xo:1358:66") / int64(65535)), F_b: (MulS(v_sc.F_b, v_ma, "std/image.xo:1358:88") / int64(65535)), F_a: (MulS(v_sc.F_a, v_ma, "std/image.xo:1358:110") / int64(65535))})
+									Image_store_color(tk, &v_b, func(v Image_Image) Image_Image { v.XoMark(); return v }((*v_dst)), v_x, v_y, Image_Color{F_r: (MulS(v_sc.F_r, v_ma, "std/image.xo:1362:44") / int64(65535)), F_g: (MulS(v_sc.F_g, v_ma, "std/image.xo:1362:66") / int64(65535)), F_b: (MulS(v_sc.F_b, v_ma, "std/image.xo:1362:88") / int64(65535)), F_a: (MulS(v_sc.F_a, v_ma, "std/image.xo:1362:110") / int64(65535))})
 								}
 							}
 						}
@@ -2879,12 +2881,12 @@ func Image_new_distrib(tk *Task, v_kind int64, v_dw int64, v_sw int64) Image_Dis
 		{
 			var v_c float64 = (float64((float64(v_x)+float64(0.5))*v_scale) - float64(0.5))
 			_ = v_c
-			var v_i int64 = FloatToInt[int64](Float_floor(tk, (v_c-v_half_width)), "std/image.xo:1409:13")
+			var v_i int64 = FloatToInt[int64](Float_floor(tk, (v_c-v_half_width)), "std/image.xo:1413:13")
 			_ = v_i
 			if v_i < int64(0) {
 				v_i = int64(0)
 			}
-			var v_j int64 = FloatToInt[int64](Float_ceil(tk, (v_c+v_half_width)), "std/image.xo:1413:13")
+			var v_j int64 = FloatToInt[int64](Float_ceil(tk, (v_c+v_half_width)), "std/image.xo:1417:13")
 			_ = v_j
 			if v_j > v_sw {
 				v_j = v_sw
@@ -2928,7 +2930,7 @@ func Image_new_distrib(tk *Task, v_kind int64, v_dw int64, v_sw int64) Image_Dis
 			_ = v_total
 			var v_l int64 = List_len[int64](tk, v_d.F_cc)
 			_ = v_l
-			x_it296 := Range[int64]{Lo: List_At(v_lo, v_k, "std/image.xo:1428:18"), Hi: List_At(v_hi, v_k, "std/image.xo:1428:25"), Incl: false}
+			x_it296 := Range[int64]{Lo: List_At(v_lo, v_k, "std/image.xo:1432:18"), Hi: List_At(v_hi, v_k, "std/image.xo:1432:25"), Incl: false}
 		x_L297:
 			for x_i298 := x_it296.Lo; x_i298 < x_it296.Hi; x_i298++ {
 				x_el299 := x_i298
@@ -2936,7 +2938,7 @@ func Image_new_distrib(tk *Task, v_kind int64, v_dw int64, v_sw int64) Image_Dis
 				var v_coord int64 = x_el299
 				_ = v_coord
 				{
-					var v_t float64 = float64((List_At(v_center, v_k, "std/image.xo:1429:16") - float64(v_coord)) * v_arg_scale)
+					var v_t float64 = float64((List_At(v_center, v_k, "std/image.xo:1433:16") - float64(v_coord)) * v_arg_scale)
 					_ = v_t
 					if Cmp(v_t, float64(0.0)) < 0 {
 						v_t = FNeg(v_t)
@@ -3009,7 +3011,7 @@ func Image_ftou(tk *Task, v_f float64) int64 {
 	if Cmp(v_x, float64(65536.0)) >= 0 {
 		return int64(65535)
 	}
-	return FloatToInt[int64](v_x, "std/image.xo:1465:3")
+	return FloatToInt[int64](v_x, "std/image.xo:1469:3")
 }
 
 func Image_image_opaque(tk *Task, v_im Image_Image) bool {
@@ -3045,8 +3047,8 @@ func Image_image_opaque(tk *Task, v_im Image_Image) bool {
 				var v_x int64 = x_el317
 				_ = v_x
 				{
-					x_a318 := AddS(v_im.F_min_x, v_x, "std/image.xo:1484:16")
-					x_a319 := AddS(v_im.F_min_y, v_y, "std/image.xo:1484:30")
+					x_a318 := AddS(v_im.F_min_x, v_x, "std/image.xo:1488:16")
+					x_a319 := AddS(v_im.F_min_y, v_y, "std/image.xo:1488:30")
 					if Addr(func(v Image_Image) Image_Image { v.XoMark(); return v }(v_im)).M_at(tk, x_a318, x_a319).F_a != int64(65535) {
 						return false
 					}
@@ -3068,13 +3070,13 @@ func Image_abl_tap(tk *Task, v_src Image_Image, v_sx int64, v_sy int64) Tuple4[f
 func Image_abl_pos(tk *Task, v_d int64, v_scale float64, v_n int64) Tuple4[int64, int64, float64, float64] {
 	var v_s float64 = (float64((float64(v_d)+float64(0.5))*v_scale) - float64(0.5))
 	_ = v_s
-	var v_s0 int64 = FloatToInt[int64](v_s, "std/image.xo:1502:12")
+	var v_s0 int64 = FloatToInt[int64](v_s, "std/image.xo:1506:12")
 	_ = v_s0
 	var v_f0 float64 = (v_s - float64(v_s0))
 	_ = v_f0
 	var v_f1 float64 = (float64(1.0) - v_f0)
 	_ = v_f1
-	var v_s1 int64 = AddIUp(v_s0, int64(1), "std/image.xo:1505:12")
+	var v_s1 int64 = AddIUp(v_s0, int64(1), "std/image.xo:1509:12")
 	_ = v_s1
 	if Cmp(v_s, float64(0.0)) < 0 {
 		v_s0 = int64(0)
@@ -3082,9 +3084,9 @@ func Image_abl_pos(tk *Task, v_d int64, v_scale float64, v_n int64) Tuple4[int64
 		v_f0 = float64(0.0)
 		v_f1 = float64(1.0)
 	} else {
-		if v_s1 > SubIDown(v_n, int64(1), "std/image.xo:1511:18") {
-			v_s0 = SubIDown(v_n, int64(1), "std/image.xo:1512:10")
-			v_s1 = SubIDown(v_n, int64(1), "std/image.xo:1513:10")
+		if v_s1 > SubIDown(v_n, int64(1), "std/image.xo:1515:18") {
+			v_s0 = SubIDown(v_n, int64(1), "std/image.xo:1516:10")
+			v_s1 = SubIDown(v_n, int64(1), "std/image.xo:1517:10")
 			v_f0 = float64(1.0)
 			v_f1 = float64(0.0)
 		}
@@ -3093,7 +3095,7 @@ func Image_abl_pos(tk *Task, v_d int64, v_scale float64, v_n int64) Tuple4[int64
 }
 
 func Image_abl_pixel(tk *Task, v_src Image_Image, v_sr Image_Rect, v_sx0 int64, v_sx1 int64, v_xf0 float64, v_xf1 float64, v_sy0 int64, v_sy1 int64, v_yf0 float64, v_yf1 float64) Image_Color {
-	x_let322 := Image_abl_tap(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), AddS(v_sr.F_x0, v_sx0, "std/image.xo:1521:43"), AddS(v_sr.F_y0, v_sy0, "std/image.xo:1521:56"))
+	x_let322 := Image_abl_tap(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), AddS(v_sr.F_x0, v_sx0, "std/image.xo:1525:43"), AddS(v_sr.F_y0, v_sy0, "std/image.xo:1525:56"))
 	_ = x_let322
 	var v_r00 float64 = x_let322.F0
 	_ = v_r00
@@ -3103,7 +3105,7 @@ func Image_abl_pixel(tk *Task, v_src Image_Image, v_sr Image_Rect, v_sx0 int64, 
 	_ = v_b00
 	var v_a00 float64 = x_let322.F3
 	_ = v_a00
-	x_let323 := Image_abl_tap(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), AddS(v_sr.F_x0, v_sx1, "std/image.xo:1522:43"), AddS(v_sr.F_y0, v_sy0, "std/image.xo:1522:56"))
+	x_let323 := Image_abl_tap(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), AddS(v_sr.F_x0, v_sx1, "std/image.xo:1526:43"), AddS(v_sr.F_y0, v_sy0, "std/image.xo:1526:56"))
 	_ = x_let323
 	var v_r10 float64 = x_let323.F0
 	_ = v_r10
@@ -3113,7 +3115,7 @@ func Image_abl_pixel(tk *Task, v_src Image_Image, v_sr Image_Rect, v_sx0 int64, 
 	_ = v_b10
 	var v_a10 float64 = x_let323.F3
 	_ = v_a10
-	x_let324 := Image_abl_tap(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), AddS(v_sr.F_x0, v_sx0, "std/image.xo:1523:43"), AddS(v_sr.F_y0, v_sy1, "std/image.xo:1523:56"))
+	x_let324 := Image_abl_tap(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), AddS(v_sr.F_x0, v_sx0, "std/image.xo:1527:43"), AddS(v_sr.F_y0, v_sy1, "std/image.xo:1527:56"))
 	_ = x_let324
 	var v_r01 float64 = x_let324.F0
 	_ = v_r01
@@ -3123,7 +3125,7 @@ func Image_abl_pixel(tk *Task, v_src Image_Image, v_sr Image_Rect, v_sx0 int64, 
 	_ = v_b01
 	var v_a01 float64 = x_let324.F3
 	_ = v_a01
-	x_let325 := Image_abl_tap(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), AddS(v_sr.F_x0, v_sx1, "std/image.xo:1524:43"), AddS(v_sr.F_y0, v_sy1, "std/image.xo:1524:56"))
+	x_let325 := Image_abl_tap(tk, func(v Image_Image) Image_Image { v.XoMark(); return v }(v_src), AddS(v_sr.F_x0, v_sx1, "std/image.xo:1528:43"), AddS(v_sr.F_y0, v_sy1, "std/image.xo:1528:56"))
 	_ = x_let325
 	var v_r11 float64 = x_let325.F0
 	_ = v_r11
@@ -3149,5 +3151,5 @@ func Image_abl_pixel(tk *Task, v_src Image_Image, v_sr Image_Rect, v_sx0 int64, 
 	_ = v_hb1
 	var v_ha1 float64 = (float64(v_xf1*v_a01) + float64(v_xf0*v_a11))
 	_ = v_ha1
-	return Image_Color{F_r: (FloatToInt[int64]((float64(v_yf1*v_hr0)+float64(v_yf0*v_hr1)), "std/image.xo:1533:12") & int64(65535)), F_g: (FloatToInt[int64]((float64(v_yf1*v_hg0)+float64(v_yf0*v_hg1)), "std/image.xo:1533:51") & int64(65535)), F_b: (FloatToInt[int64]((float64(v_yf1*v_hb0)+float64(v_yf0*v_hb1)), "std/image.xo:1533:90") & int64(65535)), F_a: (FloatToInt[int64]((float64(v_yf1*v_ha0)+float64(v_yf0*v_ha1)), "std/image.xo:1533:129") & int64(65535))}
+	return Image_Color{F_r: (FloatToInt[int64]((float64(v_yf1*v_hr0)+float64(v_yf0*v_hr1)), "std/image.xo:1537:12") & int64(65535)), F_g: (FloatToInt[int64]((float64(v_yf1*v_hg0)+float64(v_yf0*v_hg1)), "std/image.xo:1537:51") & int64(65535)), F_b: (FloatToInt[int64]((float64(v_yf1*v_hb0)+float64(v_yf0*v_hb1)), "std/image.xo:1537:90") & int64(65535)), F_a: (FloatToInt[int64]((float64(v_yf1*v_ha0)+float64(v_yf0*v_ha1)), "std/image.xo:1537:129") & int64(65535))}
 }

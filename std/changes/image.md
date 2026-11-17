@@ -1,5 +1,15 @@
 # std/image changes
 
+## 2026-11-16: perf: Over and NRGBA draws check each pixel's bounds once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #103 lever 2 (Lang 2's #88 levers: eight bounds-checked byte loads per pixel)
+- Go reference: image/draw drawCopyOver, drawNRGBAOver, drawNRGBASrc
+- Test: TestStdCorpora image ("Image.draw is Go's draw.Draw"); bench/perf/image twincheck output matches Go
+- Timing: bench/perf/image at 200 passes (new optional pass count), xo bench --ab on linux/arm64 host 1: over 0.954 (0.952 to 0.958), src 0.923 (0.827 to 0.998). Each pixel reads its last sample first, so that index check covers the other three; the arm64 backend does not yet merge sibling constant-offset checks itself
+- Shipped in: not yet released
+
 ## 2026-11-16: perf: drawing a Gray image into an RGBA one replicates each sample
 
 - Kind: perf

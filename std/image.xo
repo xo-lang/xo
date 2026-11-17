@@ -1181,10 +1181,12 @@ fn draw_px(dp: Bytes, di: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
   var sb = 0
   var sa = 65535
   if mk == 0 {
+    // the last sample first: its index check covers the three before it
+    // (the arm64 backend's ranges drop their checks; #103 lever 2)
+    sa = Int(sp[si + 3]) * 257
     sr = Int(sp[si]) * 257
     sg = Int(sp[si + 1]) * 257
     sb = Int(sp[si + 2]) * 257
-    sa = Int(sp[si + 3]) * 257
   } else if mk == 1 {
     sa = Int(sp[si + 3]) * 257
     sr = Int(sp[si]) * sa / 255
@@ -1198,7 +1200,9 @@ fn draw_px(dp: Bytes, di: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
   }
   if over && sa != 65535 {
     let a = (65535 - sa) * 257
-    return ((((Int(dp[di]) * a) / 65535 + sr) >> 8) << 24) | ((((Int(dp[di + 1]) * a) / 65535 + sg) >> 8) << 16) | ((((Int(dp[di + 2]) * a) / 65535 + sb) >> 8) << 8) | (((Int(dp[di + 3]) * a) / 65535 + sa) >> 8)
+    // the last destination sample first, as the source's above
+    let da = Int(dp[di + 3])
+    return ((((Int(dp[di]) * a) / 65535 + sr) >> 8) << 24) | ((((Int(dp[di + 1]) * a) / 65535 + sg) >> 8) << 16) | ((((Int(dp[di + 2]) * a) / 65535 + sb) >> 8) << 8) | (((da * a) / 65535 + sa) >> 8)
   }
   ((sr >> 8) << 24) | ((sg >> 8) << 16) | ((sb >> 8) << 8) | (sa >> 8)
 }
