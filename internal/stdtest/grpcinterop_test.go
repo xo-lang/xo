@@ -27,14 +27,14 @@ import (
 // testdata/grpcinterop/want.txt. The oracle (internal/stdtest/grpcref) is a Go module built offline (GOPROXY=off); the
 // test skips when it cannot be built. Heavy (two builds): skipped with -short.
 func TestGrpcInterop(t *testing.T) {
-	grpcCross(t, "grpcinterop", "serve", "client", false)
+	grpcCross(t, "grpcinterop", "serve", "client", false, true)
 }
 
 // TestGrpcHealthInterop crosses std/grpchealth with grpc-go's health package (decision 0546 item 5): every pairing of
 // an Xo or grpc-go client with an Xo or grpc-go server makes the calls of testdata/grpchealth (Check, List, Watch
 // through status changes, Shutdown and Resume) and must print want.txt; grpc-go with itself checks want.txt.
 func TestGrpcHealthInterop(t *testing.T) {
-	grpcCross(t, "grpchealth", "healthserve", "healthclient", true)
+	grpcCross(t, "grpchealth", "healthserve", "healthclient", true, false)
 }
 
 // grpcCross builds testdata/NAME and the grpc-go oracle, then runs a client of one against a server of the other
@@ -43,10 +43,12 @@ func TestGrpcHealthInterop(t *testing.T) {
 // pairing of an Xo or grpc-go client with an Xo or grpc-go server lists the services and asks for files by symbol,
 // name and extension, and for extension numbers, as testdata/grpcreflect's want.txt says.
 func TestGrpcReflectInterop(t *testing.T) {
-	grpcCross(t, "grpcreflect", "reflectserve", "reflectclient", true)
+	grpcCross(t, "grpcreflect", "reflectserve", "reflectclient", true, false)
 }
 
-func grpcCross(t *testing.T, name, refServe, refClient string, all bool) {
+// tls: the mutual TLS pairings too (serve-tls and client-tls), which only testdata/grpcinterop and grpcref's
+// interop modes have (they failed TestGrpcHealthInterop and TestGrpcReflectInterop at 2c5618c53, run for every caller)
+func grpcCross(t *testing.T, name, refServe, refClient string, all, tls bool) {
 	if testing.Short() {
 		t.Skip("builds an Xo program and the grpc-go oracle")
 	}
@@ -129,6 +131,9 @@ func grpcCross(t *testing.T, name, refServe, refClient string, all bool) {
 		})
 	}
 
+	if !tls {
+		return
+	}
 	// mutual TLS with per-RPC credentials that require it (map.txt grpc.behavior.mtls)
 	certs := filepath.Join(dir, "certs")
 	writeGrpcCerts(t, certs)
