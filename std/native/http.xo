@@ -4444,6 +4444,8 @@ struct PolledBody {
   started: Bool = false
   /// the bytes of the pieces queued so far
   pushed: Int = 0
+  /// h2_pump's token while it waits in a read for the next piece (task #293), 0 when it is not
+  armed: Int = 0
 }
 
 /// A source over f that never blocks, for HTTP/2's pump: the first call
@@ -4455,6 +4457,16 @@ struct PolledBody {
 fn poll_source(f: fn(Int) -> http1.BodyPart uses sync, spawn: fn(fn() -> () uses sync) uses sync, written: List[fn() -> Int uses sync] = []) -> fn(Int) -> http1.BodyPart uses sync {
   let q = Mutex[PolledBody].new(PolledBody{})
   fn(max: Int) -> http1.BodyPart {
+    if max < -1 {
+      // h2_pump around its read tick (task #293): -3 - token arms the wake when nothing is queued (wait: armed),
+      // -2 disarms
+      let tok = if max == -2 { 0 } else { -3 - max }
+      let queued = q.with(fn(var s: PolledBody) -> Bool {
+        s.armed = if s.items.is_empty() { tok } else { 0 }
+        !s.items.is_empty()
+      })
+      return http1.BodyPart{data: "", end: false, err: "", wait: !queued}
+    }
     // one with: whether this call starts the feeder, and the next piece
     let (first, piece, pushed) = q.with(fn(var s: PolledBody) -> (Bool, http1.BodyPart, Int) {
       let was = s.started
@@ -4471,6 +4483,11 @@ fn poll_source(f: fn(Int) -> http1.BodyPart uses sync, spawn: fn(fn() -> () uses
           q.with(fn(var s: PolledBody) {
             s.items.push(p)
             s.pushed += p.data.len()
+            // under the lock, so the pump cannot disarm and put its deadline back first
+            if s.armed != 0 {
+              http1.h2_wake(s.armed)
+              s.armed = 0
+            }
           })
           if p.end || !p.err.is_empty() {
             break

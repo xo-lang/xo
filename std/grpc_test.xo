@@ -945,3 +945,96 @@ test "a service config's balancer policy, as grpc-go's parser" {
   expect(target_host_port("http://svc.test")) == ("svc.test", "443")
   expect(target_host_port("https://[::1]:8443/x")) == ("::1", "8443")
 }
+
+// task #293: a message another task sends while this one waits in recv goes out at once; the native h2 client's pump
+// waited in its 10 ms read tick for it (300 rounds of a 1 ms pause, then the send: about 3.3 s at the tick, 0.4 s
+// with the wake; the budget is 1.5 s)
+test "a message another task sends while recv waits does not wait for the h2 read tick" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.stream("/e.E/Echo", fn(_call, recv, send) -> () ! Status {
+    while true {
+      match recv.next()? {
+        Some(m) => send.send(m)?
+        None => break
+      }
+    }
+    Ok(())
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
+    // the stream is open (the first round trip) before the timed rounds
+    let t0 = Mutex[Duration].new(0s)
+    let got = c.call("/e.E/Echo", {}, None, fn(cc) -> Int ! Status {
+      cc.send(b"first")?
+      let _ = cc.recv()?
+      let go = Chan[Int].new(1)
+      var n = 0
+      let start = os.clock.now()
+      scope inner {
+        inner.spawn(fn() {
+          while let Some(i) = go.recv() {
+            os.clock.sleep(1ms)
+            cc.send("m${i}".bytes()).ignore_err("the call fails below")
+          }
+        })
+        for i in 0..300 {
+          go.send(i)
+          if cc.recv()? == Some("m${i}".bytes()) {
+            n += 1
+          }
+        }
+        go.close()
+      }
+      t0.with(fn(var d: Duration) { d = os.clock.now() - start })
+      cc.close_send()
+      Ok(n)
+    })
+    expect(got) == Ok(300)
+    expect(t0.with(fn(var d: Duration) -> Duration { d }) < 1500ms) == true
+  }
+}
+
+// task #293, Lang 3's review: a recv cancelled while it waits (the pump armed in its read) disarms on the way out,
+// so the next send's piece wakes no freed exchange; the client goes on calling
+test "a recv cancelled while it waits leaves the stream's wake disarmed" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.stream("/e.E/Echo", fn(_call, recv, send) -> () ! Status {
+    while true {
+      match recv.next()? {
+        Some(m) => send.send(m)?
+        None => break
+      }
+    }
+    Ok(())
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
+    for _ in 0..20 {
+      c.call("/e.E/Echo", {}, None, fn(cc) -> Int ! Status {
+        cc.send(b"first")?
+        let _ = cc.recv()?
+        scope inner {
+          inner.spawn(fn() { cc.recv().ignore_err("cancelled") })
+          os.clock.sleep(15ms)
+          inner.cancel()
+        }
+        for i in 0..5 {
+          cc.send("after${i}".bytes()).ignore_err("the stream may be gone")
+        }
+        os.clock.sleep(5ms)
+        cc.close_send()
+        Ok(0)
+      }).ignore_err("a cancelled recv may end the call")
+    }
+    expect(c.call("/e.E/Echo", {}, None, fn(cc) -> Bytes? ! Status {
+      cc.send(b"again")?
+      cc.recv()
+    })) == Ok(Some(b"again"))
+  }
+}

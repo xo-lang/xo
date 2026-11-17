@@ -203,7 +203,12 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
   task (a gRPC send then recv) goes out at once instead of after the tick;
   with nothing written the pump reads at once (a stream that only
   receives: 10,000 messages took the same 2 to 3 ms). A piece written by
-  another task while the pump waits in its read still waits for the tick.
+  another task while the pump waits in its read went out after the tick
+  until task #293 (2026-11-17): before its tick read the pump arms the
+  poll source with its record (under the source's lock), and a piece the
+  feeder queues then puts the connection's deadline in the past and kicks
+  its descriptor (hclient.h2_wake_rec), so the read returns at once; the
+  pump disarms before it puts its deadline back. Not on wasm.
 - mTLS, TLS 1.3 native (0aa379fa2): all five ClientAuth modes match Go.
   TLS 1.2 client auth, server and client, native too (checked against
   crypto/tls at MaxVersion TLS 1.2). `with_cert` also works with the system roots (a copy of the roots record).

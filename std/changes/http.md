@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-17: perf: a duplex request's piece written by another task wakes the pump's read
+
+- Kind: perf
+- Commit: this commit
+- Found by: task #293, the follow-up to #286 (a piece written while the pump waited in its 10 ms read tick went out after the tick)
+- Go reference: net/http2 Transport writes a request body from its own goroutine (transport.go writeRequestBody), so a piece goes out when written
+- Test: std/grpc_test.xo "a message another task sends while recv waits does not wait for the h2 read tick" (300 rounds within 1.5 s; over 1.5 s before)
+- Timing: none beyond the test (one lock and, while the pump waits, a deadline store and a descriptor kick per piece)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: Client.with_dial_addr
 
 - Kind: feature

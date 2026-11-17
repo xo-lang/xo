@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (std/http, std/grpc): on the native backends a piece of a streamed HTTP/2 request body written by another task while the client waits for the response (one task sends on a gRPC stream while another receives) goes out at once; it waited up to 10 ms.
 - Feature (std/grpc): a client can spread its calls over several addresses, as grpc-go's built-in balancers: `with_addrs`, `with_dns`, `with_resolver`, and `with_balancer(Balancer.PickFirst | Balancer.RoundRobin)`, also read from a service config's `loadBalancingConfig` (decision 0707).
 - Feature (std/http): `Client.with_dial_addr(addr)` dials one address (`host:port` or `unix:PATH`) for every request, as a Go Transport.DialContext that ignores the address; the URL keeps Host and the TLS name.
 - Feature (std/grpc): `unix:///path` and `unix:path` targets call a server on a Unix domain socket, as grpc-go's.

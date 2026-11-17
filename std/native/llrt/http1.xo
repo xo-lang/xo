@@ -3335,6 +3335,9 @@ fn h2_trailers(var x: H2X) {
 const SRC_YIELDS = 64
 
 /// Runs the exchange x on r until stop (H2_TO_*), a failure, or its end.
+/// A duplex body's feeder queued a piece while h2_pump was armed with token (task #293): wake its read.
+pub fn h2_wake(token: Int) { hclient.h2_wake_rec(token) }
+
 pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
   // a stream's read usually comes right after its write (a gRPC send,
   // then recv): the feeder gets its yields again
@@ -3429,6 +3432,7 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
     // then read with a short deadline, and poll the source again (the
     // request deadline is put back)
     var tick = false
+    var armed = false
     var orig = 0
     if x.src_wait {
       orig = hclient.get_deadline(r)
@@ -3436,6 +3440,19 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
       if orig == 0 || t < orig {
         hclient.put_deadline(r, t)
         tick = true
+        // a piece another task writes while this read waits wakes it (task
+        // #293): the source's feeder ends the read's deadline and kicks the
+        // descriptor. Armed after the deadline is set, so a wake before the
+        // read finds it past; a piece already queued skips the read.
+        if target.arch != TargetArch.Wasm32 {
+          let a = x.src[x.src.len() - 1](-3 - hclient.rec_addr(r))
+          if !a.wait {
+            hclient.put_deadline(r, orig)
+            x.src_wait = false
+            continue
+          }
+          armed = true
+        }
       }
     }
     // the keepalive: a read idle for send_ping_timeout sends a PING, and
@@ -3450,7 +3467,17 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
         kick = true
       }
     }
-    let f = hclient.h2_read(r)
+    var f = ""
+    if armed {
+      // disarmed before the deadline is put back, so a wake cannot land after it, and on every way out of the read
+      // (a cancel or fault unwinding through it), so the feeder never wakes a freed exchange (Lang 3's review)
+      defer {
+        let _d = x.src[x.src.len() - 1](-2)
+      }
+      f = hclient.h2_read(r)
+    } else {
+      f = hclient.h2_read(r)
+    }
     if tick || kick {
       hclient.put_deadline(r, orig)
     }
