@@ -1,5 +1,21 @@
 # std/compress changes
 
+## 2026-11-16: perf: a reset Stream keeps its hash tables; the bit count row copy is one memmove
+
+- Kind: perf
+- Commit: this push
+- Found by: task #101, a profile of bench/perf/archive zip_writer (_bzero from Deflater.reset at 5.3%, bit_counts at 8.3%)
+- Go reference: compress/flate deflate.go compressor.reset (Go zeroes hashHead and hashPrev); huffman_code.go bitCounts (copy)
+- Test: std/native/llrt/flate_test.xo "resets move the hash offset past old entries, then clear at the cap"; zip_writer output byte for byte the same
+- Timing: bench/perf/archive zip_writer, 7.12G to 6.55G instructions retired on the Mac (-8.0%): 6.72G from the reset, 6.55G from the copy
+
+Stream.reset no longer zeroes the 640 KB of hash tables: it moves the
+hash offset past every stored entry, so each one reads as a position
+before the window, and clears the tables only when the offset would
+reach fill's rebase cap. ZipWriter resets one Stream per file. The
+bit count builder copies a leaf count row with one memmove, as Go's
+copy does.
+
 ## 2026-11-16: perf: Huffman bit counts and the match chain walk without checks
 
 - Kind: perf

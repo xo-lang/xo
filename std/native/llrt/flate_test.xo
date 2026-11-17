@@ -175,3 +175,25 @@ test "a reset stream writes what a new stream writes" {
     expect(s.take()) == again
   }
 }
+
+test "resets move the hash offset past old entries, then clear at the cap" {
+  // reset leaves the hash tables as they are and moves hash_offset past
+  // every entry, so a stale entry never reads as a match; near fill's
+  // rebase cap it clears them instead
+  let text = reset_text(2)
+  var f = new_stream(6)
+  f.write(text)
+  f.close()
+  let want = f.take()
+  var s = new_stream(6)
+  for round in 0..4 {
+    if round == 2 {
+      s.d.hash_offset = 16777216 - 10
+    }
+    s.reset()
+    s.write(text)
+    s.close()
+    expect(s.take()) == want
+  }
+  expect(s.d.hash_offset < 16777216) == true
+}

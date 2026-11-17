@@ -581,15 +581,12 @@ fn bit_counts(freqs: List[Int], max_bits0: Int) -> List[Int] {
       ws[34 + level] = list[c]
     } else {
       ws[17 + level] = ws[51 + level]
-      // Go's copy(leafCounts[level][:level], leafCounts[level-1]): row
-      // offsets under 374, so no overflow checks in the loop
+      // Go's copy(leafCounts[level][:level], leafCounts[level-1]) as one
+      // memmove: ws is this call's own list (never shared, so a store in
+      // place is safe), the rows 17 words apart and level at most 16
+      let e = rt.obj_addr(ws).wrapping_add(rt.layout(2))
       let dst = level.wrapping_mul(17).wrapping_add(85)
-      let src = dst.wrapping_sub(17)
-      var k = 0
-      while k < level {
-        ws[dst.wrapping_add(k)] = ws[src.wrapping_add(k)]
-        k = k.wrapping_add(1)
-      }
+      rt.mem_copy(e.wrapping_add(dst * 8), e.wrapping_add((dst - 17) * 8), level * 8)
       ws[68 + ws[level] - 1] = 2
     }
     ws[68 + level] -= 1
@@ -2379,8 +2376,18 @@ fn deflater_for(level: Int) -> Deflater {
 /// short streams (zip's files) without allocating 640 KB each (Go's zip
 /// keeps Writers in a sync.Pool for this).
 fn (var d: Deflater) reset() {
-  raw.clear_u32s(d.hash_head)
-  raw.clear_u32s(d.hash_prev)
+  // Every stored entry is at most window_end + hash_offset, so moving
+  // hash_offset past that makes each one read as a position before 0,
+  // which find_match and deflate reject: the 640 KB of tables need no
+  // clearing until the offset would pass fill's rebase threshold.
+  let next = d.hash_offset + d.window_end + 1
+  if next > 16777216 {
+    raw.clear_u32s(d.hash_head)
+    raw.clear_u32s(d.hash_prev)
+    d.hash_offset = 1
+  } else {
+    d.hash_offset = next
+  }
   d.data = b""
   d.base = 0
   d.index = 0
@@ -2393,7 +2400,6 @@ fn (var d: Deflater) reset() {
   d.offset = 0
   d.max_insert_index = 0
   d.chain_head = -1
-  d.hash_offset = 1
   d.blocks.w = BitWriter{out: [], bits: 0, nbits: 0}
 }
 
