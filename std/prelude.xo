@@ -608,6 +608,11 @@ fn (s: Str) to_title() -> Str
 /// f applied to every rune of s (strings.Map); None (Go's negative
 /// mapping) drops the rune, and s itself, not a copy, when nothing changes.
 fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx
+/// s with each `$name` and `${name}` replaced by f(name), as a shell
+/// would (Go's os.Expand): a name is letters, digits and `_`, or one of
+/// `*#$@!?-` and a digit; `${}` and an unclosed `${` are dropped, and a `$`
+/// before anything else, or at the end, is kept.
+fn (s: Str) expand[E, fx: Effects](f: fn(Str) -> Str ! E uses fx) -> Str ! E uses fx
 /// s with every non-overlapping old replaced by new (Go's
 /// strings.ReplaceAll).
 fn (s: Str) replace(old: Str, new: Str) -> Str
@@ -1570,6 +1575,15 @@ fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 /// recording) through Fs's stat and create_dir_all.
 fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs
 
+/// s with each `$name` and `${name}` replaced by env's value of the
+/// variable, "" when it is not set (Go's os.ExpandEnv; Str.expand's
+/// syntax). A free function, not a method of Env, so every type that
+/// satisfies Env still does.
+fn expand_env(env: Env, s: Str) -> Str uses env
+/// The directory for temporary files (Go's os.TempDir), read through env:
+/// TMPDIR, else /tmp; on Windows TMP, TEMP, USERPROFILE, else C:/Windows
+/// (GetTempPath's order), with / separators and no trailing one.
+fn temp_dir(env: Env) -> Str uses env
 /// The path of the executable `name` (Go's exec.LookPath, decision 0606):
 /// a name with a `/` (or `\` on Windows) is tried as it is; otherwise each
 /// directory of PATH from env (split on `:`, `;` on Windows; an empty

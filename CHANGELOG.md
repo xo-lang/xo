@@ -21,6 +21,7 @@ the text of every entry is unchanged).
 - Fix (std/embed): `Dir.sub(".")` is the whole Dir, as Go's `fs.Sub(fsys, ".")` (it was empty), and `Dir.fs().glob(".")` returns `["."]`, as the real Fs (it returned nothing) (task #233).
 - Fix (std/testing): of the FakeNet patterns a request matches, the one Go's ServeMux would pick wins (`/{$}` over `/`, `GET /` over `/{rest...}`, `/{a}/` over `/{rest...}`); it was the first registered among those with the most literal segments (task #233).
 - Feature (prelude): `Int.reverse_bits` and `Int.div_wide_unsigned` (Go's bits.Reverse64 and bits.Div64).
+- Feature (prelude): `Str.expand`, `expand_env(env, s)` and `temp_dir(env)` (Go's os.Expand, ExpandEnv and TempDir, read through the Env capability).
 - Fix (std/sql, Postgres): a column name (or any backend message string) that is not valid UTF-8 keeps its valid bytes, with U+FFFD for each invalid one; it was read as an empty string.
 - Fix (std/protojson): an integer map key is read as Go's strconv.ParseInt and ParseUint read it: a sign and leading zeros are allowed, an exponent, fraction or space is an error (it was read as a quoted number).
 - Feature (std/toml): `decode(text, strict: true)` rejects keys and tables the type has no field for (go-toml's DisallowUnknownFields) with `DecodeErr.Strict`, each `StrictErr` giving the line, column, key and go-toml's context text. `DecodeErr` is open, so existing matches are unchanged.

@@ -1,0 +1,35 @@
+// Go's os.TempDir rule for a program (the prelude's temp_dir, task
+// #231): the variables to read, in order, and the directory their values
+// give. The prelude's temp_dir reads them through the program's Env
+// capability, so a test's FakeEnv decides it; the compiler and the
+// runtime's own temporary directory is hostpath.temp_dir's.
+
+/// The variables os.TempDir reads: TMPDIR on Unix; GetTempPath's TMP,
+/// TEMP and USERPROFILE on Windows.
+pub fn names(windows: Bool) -> List[Str] {
+  if windows { ["TMP", "TEMP", "USERPROFILE"] } else { ["TMPDIR"] }
+}
+
+/// The directory for values, names' variables in order ("" for unset):
+/// the first set one, else /tmp (C:/Windows on Windows); on Windows with /
+/// separators and no trailing one (GetTempPath's trailing \ dropped, as
+/// Go's tempDir does).
+pub fn choose(windows: Bool, values: List[Str]) -> Str {
+  var d = ""
+  for v in values {
+    if d == "" {
+      d = v
+    }
+  }
+  if !windows {
+    return if d == "" { "/tmp" } else { d }
+  }
+  if d == "" {
+    d = "C:/Windows"
+  }
+  d = d.replace("\\", "/")
+  if d.len() > 3 && d.ends_with("/") {
+    d = d[0..d.len() - 1]
+  }
+  d
+}

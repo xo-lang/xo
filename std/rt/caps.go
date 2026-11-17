@@ -1595,6 +1595,35 @@ func (noStdio) M_read_all_bytes(*Task) Result[Bytes, IoErr] { return Ok[Bytes, I
 // Prelude_look_path is `look_path(env, fs, name)` (decision 0606): Go's
 // exec.LookPath rules through Fs's stat and mode, as the native prelude's,
 // so every Fs answers the same way on both backends.
+// Prelude_expand_env is `expand_env(env, s)`: os.ExpandEnv through env.
+func Prelude_expand_env(tk *Task, env Env, s string) string {
+	return os.Expand(s, func(name string) string { return env.M_get(tk, name).V })
+}
+
+// Prelude_temp_dir is `temp_dir(env)`: os.TempDir through env.
+func Prelude_temp_dir(tk *Task, env Env) string {
+	if runtime.GOOS != "windows" {
+		if d := env.M_get(tk, "TMPDIR").V; d != "" {
+			return d
+		}
+		return "/tmp"
+	}
+	d := ""
+	for _, name := range []string{"TMP", "TEMP", "USERPROFILE"} {
+		if d == "" {
+			d = env.M_get(tk, name).V
+		}
+	}
+	if d == "" {
+		d = "C:/Windows"
+	}
+	d = strings.ReplaceAll(d, "\\", "/")
+	if len(d) > 3 && strings.HasSuffix(d, "/") {
+		d = d[:len(d)-1]
+	}
+	return d
+}
+
 func Prelude_look_path(tk *Task, env Env, fs Fs, name string) Result[string, ProcErr] {
 	win := runtime.GOOS == "windows"
 	notFound := Err[string](ProcErr{Tag: 1, P: ProcErr_NotFound{F_cmd: name}})

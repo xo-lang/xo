@@ -244,6 +244,7 @@ fn (s: Str) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str !
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
 fn (s: Str) to_title() -> Str                // strings.ToTitle: Rune.to_title on each rune
 fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx        // strings.Map; None drops the rune, and s itself when nothing changes
+fn (s: Str) expand[E, fx: Effects](f: fn(Str) -> Str ! E uses fx) -> Str ! E uses fx   // os.Expand: $name and ${name} replaced by f(name)
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str  // the first n copies (strings.Replace); n below 0 for every one, 0 for none
 fn (s: Str) repeat(n: Int) -> Str            // strings.Repeat; empty for 0, a fault below 0
@@ -1514,6 +1515,8 @@ fn (p: Proc) usage() -> ProcUsage            // this process's CPU time and peak
 fn (p: Proc) children_usage() -> ProcUsage   // the waited children's
 fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read)
     // Go's exec.LookPath through env's PATH and fs (decision 0606), below
+fn expand_env(env: Env, s: Str) -> Str uses env   // os.ExpandEnv through env: s.expand with env's values, "" when unset
+fn temp_dir(env: Env) -> Str uses env        // os.TempDir through env: TMPDIR, else /tmp (Windows: TMP, TEMP, USERPROFILE, C:/Windows)
 
 struct ProcUsage { user: Duration, system: Duration, max_rss: Int }
 enum Signal { Hangup, Interrupt, Quit, Terminate, User1, User2, WindowChange }
@@ -7643,7 +7646,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-598 declarations.
+601 declarations.
 
 ### Range
 
@@ -7897,6 +7900,7 @@ fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
 fn (s: Str) to_title() -> Str
 fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx
+fn (s: Str) expand[E, fx: Effects](f: fn(Str) -> Str ! E uses fx) -> Str ! E uses fx
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str
 fn (s: Str) repeat(n: Int) -> Str
@@ -8588,6 +8592,8 @@ fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs
+fn expand_env(env: Env, s: Str) -> Str uses env
+fn temp_dir(env: Env) -> Str uses env
 fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read)
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
 fn copy_stream(dst: Stream, src: Stream) -> Int ! CopyErr[NetErr, NetErr] uses net

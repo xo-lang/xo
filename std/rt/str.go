@@ -2,6 +2,7 @@ package rt
 
 import (
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"unicode"
@@ -412,6 +413,26 @@ func Str_split_where[E any](tk *Task, s string, f func(*Task, Rune) Result[bool,
 // dropping it (strings.Map, with the option in place of Go's negative
 // rune). No copy until the first rune that changes; a malformed byte
 // counts as a change, a valid U+FFFD that maps to itself does not.
+func Str_expand[E any](tk *Task, s string, f func(*Task, string) Result[string, E]) Result[string, E] {
+	// os.Expand, with f's error stopping it
+	var bad *Result[string, E]
+	out := os.Expand(s, func(name string) string {
+		if bad != nil {
+			return ""
+		}
+		r := f(tk, name)
+		if !r.Ok {
+			bad = &r
+			return ""
+		}
+		return r.V
+	})
+	if bad != nil {
+		return ErrTr[string](bad.E, bad.Tr)
+	}
+	return Ok[string, E](out)
+}
+
 func Str_map_runes[E any](tk *Task, s string, f func(*Task, Rune) Result[Option[Rune], E]) Result[string, E] {
 	var first Option[Rune]
 	firstSize := 0

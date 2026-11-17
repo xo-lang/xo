@@ -37,6 +37,7 @@ use native/llrt/twflags
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
+use native/llrt/tempdir
 use native/llrt/jsontext
 use native/llrt/logstate
 use native/llrt/num
@@ -3990,6 +3991,84 @@ fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read {
 
 /// look_path (std.md 3.1, Go's exec.LookPath, decision 0606): through
 /// Fs's stat and mode only, so every Fs answers the same way.
+/// Go's os: isShellSpecialVar.
+fn shell_special(c: Int) -> Bool {
+  c == 42 || c == 35 || c == 36 || c == 64 || c == 33 || c == 63 || c == 45 || (c >= 48 && c <= 57)
+}
+
+fn shell_alnum(c: Int) -> Bool { c == 95 || (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) }
+
+/// Go's os.getShellName on s's bytes from i: the name and the bytes it
+/// takes.
+fn shell_name(b: Bytes, i: Int) -> (Str, Int) {
+  let n = b.len() - i
+  if Int(b[i]) == 123 {
+    if n > 2 && shell_special(Int(b[i + 1])) && Int(b[i + 2]) == 125 {
+      return (b[i + 1..i + 2].to_str_lossy(), 3)
+    }
+    for k in 1..n {
+      if Int(b[i + k]) == 125 {
+        if k == 1 {
+          return ("", 2)
+        }
+        return (b[i + 1..i + k].to_str_lossy(), k + 1)
+      }
+    }
+    return ("", 1)
+  }
+  if shell_special(Int(b[i])) {
+    return (b[i..i + 1].to_str_lossy(), 1)
+  }
+  var k = 0
+  while k < n && shell_alnum(Int(b[i + k])) {
+    k += 1
+  }
+  (b[i..i + k].to_str_lossy(), k)
+}
+
+/// Go's os.Expand.
+fn str_expand[E, fx: Effects](s: Str, f: fn(Str) -> Str ! E uses fx) -> Str ! E uses fx {
+  let b = s.bytes()
+  var out = BytesBuilder.new()
+  var changed = false
+  var i = 0
+  var j = 0
+  while j < b.len() {
+    if Int(b[j]) == 36 && j + 1 < b.len() {
+      changed = true
+      out.write(b[i..j])
+      let (name, w) = shell_name(b, j + 1)
+      if name == "" && w > 0 {
+        // bad syntax: the characters are dropped
+      } else if name == "" {
+        out.write_byte(36)
+      } else {
+        out.write(f(name)?.bytes())
+      }
+      j += w
+      i = j + 1
+    }
+    j += 1
+  }
+  if !changed {
+    return s
+  }
+  out.write(b[i..])
+  out.freeze().to_str_lossy()
+}
+
+fn expand_env(env: Env, s: Str) -> Str uses env { s.expand(fn(name: Str) -> Str { env.get(name) ?? "" }) }
+
+/// Go's os.TempDir through env (llrt/tempdir.xo's rule).
+fn temp_dir(env: Env) -> Str uses env {
+  let win = fs_windows()
+  var vals: List[Str] = []
+  for name in tempdir.names(win) {
+    vals.push(env.get(name) ?? "")
+  }
+  tempdir.choose(win, vals)
+}
+
 fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read) {
   let win = fs_windows()
   let has_sep = name.contains("/") || (win && name.contains("\\"))

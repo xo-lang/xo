@@ -14,12 +14,14 @@ import (
 // itself (it cannot import the compiler), mysql.xo names MySQL's default
 // Unix socket /tmp/mysql.sock (go-sql-driver's default for unix() with no
 // path, decision 0648 item 2; a server's fixed address, not a temporary
-// directory), and the others use /tmp only as the last cache directory of
+// directory), tempdir.xo is a program's os.TempDir rule (the prelude's
+// temp_dir, read through its Env capability, task #231), and the others use /tmp only as the last cache directory of
 // a machine with no home (not a temporary directory).
 var tmpAllowed = map[string]bool{
 	"compiler/hostpath/hostpath.xo": true,
 	"std/native/llrt/dump.xo":       true,
 	"std/native/llrt/mysql.xo":      true,
+	"std/native/llrt/tempdir.xo":    true,
 	"compiler/check/deps.xo":        true,
 	"compiler/cli/modules/env.xo":   true,
 	"compiler/cli/dev/bisect.xo":    true,

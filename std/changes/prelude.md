@@ -52,6 +52,20 @@ unchanged; a thread with no worker record keeps the system call.
 divides the unsigned 128 bit word (hi, lo) by y and returns the quotient
 and remainder, a fault (Go's panic) when y is 0 or not above hi.
 
+## 2026-11-17: feature: Str.expand, expand_env and temp_dir
+
+- Kind: feature
+- Commit: this push
+- Found by: task #231 (std Proven; scripts/stdaudit/map.txt os gap rows Expand, ExpandEnv, TempDir)
+- Go reference: os.Expand, os.ExpandEnv, os.TempDir (go1.26; Expand's getShellName ported byte for byte)
+- Test: internal/llvm/testdata/golden/str_expand_env (arm64, LLVM, Go backend): os/env_test.go's expandTests with its testGetenv, plus names after `_` and digits, `${a b}` and non-ASCII text, and expand_env and temp_dir through a user Env; want.txt Go's output
+- Shipped in: not yet released
+
+`s.expand(f)` replaces `$name` and `${name}` with f(name) as Go's
+os.Expand does; `expand_env(env, s)` and `temp_dir(env)` are os.ExpandEnv
+and os.TempDir read through an Env capability, so a test's FakeEnv or
+an attenuated Env decides them.
+
 ## 2026-11-16: feature: Atomic[Int].and and or
 
 - Kind: feature

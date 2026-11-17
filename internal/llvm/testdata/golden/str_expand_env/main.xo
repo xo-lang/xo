@@ -1,0 +1,48 @@
+// Go's os.Expand (os/env_test.go's expandTests with its testGetenv),
+// os.ExpandEnv and os.TempDir through a user Env (task #231).
+struct MapEnv {
+  table: Map[Str, Str]
+}
+
+fn (e: MapEnv) get(name: Str) -> Str? { e.table.get(name) }
+fn (e: MapEnv) vars() -> Map[Str, Str] { e.table }
+fn (e: MapEnv) args() -> List[Str] { [] }
+fn (e: MapEnv) program() -> Str { "prog" }
+fn (e: MapEnv) home() -> Str ! EnvErr { Ok("/home/fake") }
+fn (e: MapEnv) only(names: List[Str]) -> Env {
+  var m: Map[Str, Str] = {}
+  for n in names {
+    if let Some(v) = e.table.get(n) {
+      m[n] = v
+    }
+  }
+  MapEnv{table: m}
+}
+fn (e: MapEnv) config_dir() -> Str ! EnvErr { Ok("/home/fake/.config") }
+fn (e: MapEnv) cache_dir() -> Str ! EnvErr { Ok("/home/fake/.cache") }
+fn (e: MapEnv) local_app_data() -> Str ! EnvErr { Err(EnvErr.Missing(name: "LocalAppData")) }
+fn (e: MapEnv) hostname() -> Str { "fakehost" }
+
+fn test_getenv(s: Str) -> Str {
+  match s {
+    "*" => "all the args"
+    "#" => "NARGS"
+    "$" => "PID"
+    "1" => "ARGUMENT1"
+    "HOME" => "/usr/gopher"
+    "H" => "(Value of H)"
+    "home_1" => "/usr/foo"
+    "_" => "underscore"
+    _ => ""
+  }
+}
+
+fn main(os: Os) {
+  let ins = ["", "$*", "$$", "\${*}", "$1", "\${1}", "now is the time", "$HOME", "$home_1", "\${HOME}", "\${H}OME", "A$$$#$1$H$home_1*B", "start$+middle$^end$", "mixed$|bag$$$", "$", "$}", "\${", "\${}", "$_x \${_} $9z \${a b} é$HOME"]
+  for s in ins {
+    os.stdio.println("${s.quote()} ${s.expand(test_getenv).quote()}")
+  }
+  let e: Env = MapEnv{table: {"USER": "gopher", "TMPDIR": "/x/tmp", "TMP": "/x/tmp"}}
+  os.stdio.println(expand_env(e, "hi $USER, \${USER}s: $MISSING.").quote())
+  os.stdio.println(temp_dir(e))
+}
