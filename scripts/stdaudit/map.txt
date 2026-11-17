@@ -828,7 +828,7 @@ slog.NewTextHandler = std/log.Format.Text
 slog.SetDefault = std/log.configure
 slog.Handler = std/log.Handler
 slog.NewMultiHandler = std/log.multi
-slog.* = not planned: Attr, Value and Kind are interpolated fields (Logger.with takes typed values); handler internals follow the Handler gap
+slog.* = not planned: Attr, Value and Kind are interpolated fields (Logger.with takes typed values); handler internals are std/log.Handler and Record (decision 0617 C)
 
 # testing: test blocks, expect, std/testing fakes (core 9)
 testing.T.Run = not planned: one test block per case, or a loop inside one
@@ -3062,8 +3062,8 @@ go-amqp.NewSelectorFilter = std/amqp.Source (field filter)
 go-amqp.SASLType = std/amqp.Sasl
 go-amqp.SASLTypePlain = std/amqp.Sasl
 go-amqp.SASLTypeAnonymous = std/amqp.Sasl.Anonymous
-go-amqp.SASLTypeExternal = gap: no SASL EXTERNAL (a TLS client certificate as the identity)
-go-amqp.SASLTypeXOAUTH2 = gap: no SASL XOAUTH2
+go-amqp.SASLTypeExternal = std/amqp.Sasl.External
+go-amqp.SASLTypeXOAUTH2 = std/amqp.Sasl.Xoauth2
 go-amqp.Error = std/amqp.WireError
 go-amqp.ErrCond = std/amqp.WireError
 go-amqp.ErrCondConnectionForced = std/amqp.WireError (condition symbol)

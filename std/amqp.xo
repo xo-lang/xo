@@ -347,6 +347,14 @@ pub enum Sasl {
   None
   Plain(user: Str, password: Str)
   Anonymous
+  /// EXTERNAL: the identity comes from outside the exchange (a TLS client certificate); response is the
+  /// authorization identity sent as the initial response, usually empty (go-amqp's SASLTypeExternal)
+  External(response: Str)
+  /// XOAUTH2 (go-amqp's SASLTypeXOAUTH2): an OAuth 2 bearer token for user. The bearer must be non-empty
+  /// printable ASCII and the user must not hold \x01. A server that refuses the token sends its error as
+  /// a challenge first; the client answers it with an empty response and the Auth error carries both.
+  /// go-amqp's frame size override has no counterpart: SASL frames here are not held to the peer's frame size.
+  Xoauth2(user: Str, bearer: Str)
 }
 
 pub struct ConnOptions {
@@ -2520,6 +2528,16 @@ fn run_sasl(var c: ConnState, sasl: Sasl, hostname: Str) -> () ! AmqpErr uses (n
       initial = b.freeze()
     }
     Anonymous => { mech = "ANONYMOUS" }
+    External(response) => {
+      mech = "EXTERNAL"
+      initial = response.bytes()
+    }
+    Xoauth2(user, bearer) => {
+      mech = "XOAUTH2"
+      if !xoauth2_bearer_ok(bearer) { return Err(AmqpErr.Auth(code: -1, msg: "unacceptable bearer token")) }
+      if user.contains("\x01") { return Err(AmqpErr.Auth(code: -1, msg: "unacceptable username")) }
+      initial = "user=${user}\x01auth=Bearer ${bearer}\x01\x01".bytes()
+    }
   }
   exchange_header(c, 3)?
   let first = read_frame(c)?
@@ -2532,18 +2550,48 @@ fn run_sasl(var c: ConnState, sasl: Sasl, hostname: Str) -> () ! AmqpErr uses (n
     _ => return Err(proto_err("expected sasl-mechanisms"))
   }
   st_send(c, Frame{channel: UInt16(0), body: FrameBody.SaslInit(v: SaslInit{mechanism: mech, initial_response: initial, hostname: hostname})})?
-  let out = read_frame(c)?
-  match out.body {
-    SaslOutcome(o) => {
-      if Int(o.code) != 0 {
-        return Err(AmqpErr.Auth(code: Int(o.code), msg: o.additional_data.to_str() ?? ""))
+  var challenge: Option[Bytes] = None
+  while true {
+    let out = read_frame(c)?
+    match out.body {
+      SaslOutcome(o) => {
+        if Int(o.code) == 0 { return Ok(()) }
+        let extra = o.additional_data.to_str() ?? ""
+        match challenge {
+          Some(ch) => return Err(AmqpErr.Auth(code: Int(o.code),
+            msg: "SASL XOAUTH2 auth failed with code ${hex_code(Int(o.code))}: ${extra} : ${ch.to_str() ?? ""}"))
+          None => return Err(AmqpErr.Auth(code: Int(o.code), msg: extra))
+        }
       }
+      SaslChallenge(x) => {
+        if mech != "XOAUTH2" {
+          return Err(AmqpErr.Auth(code: -1, msg: "the server sent a SASL challenge, which ${mech} does not use"))
+        }
+        match challenge {
+          Some(ch) => return Err(AmqpErr.Auth(code: -1,
+            msg: "SASL XOAUTH2 unexpected additional error response received during exchange. Initial error response: ${ch.to_str() ?? ""}, additional response: ${x.challenge.to_str() ?? ""}"))
+          None => {}
+        }
+        challenge = Some(x.challenge)
+        st_send(c, Frame{channel: UInt16(0), body: FrameBody.SaslResponse(v: SaslResponse{response: b""})})?
+      }
+      _ => return Err(proto_err("expected sasl-outcome"))
     }
-    SaslChallenge(_) => return Err(AmqpErr.Auth(code: -1, msg: "the server sent a SASL challenge, which ${mech} does not use"))
-    _ => return Err(proto_err("expected sasl-outcome"))
   }
   Ok(())
 }
+
+/// go-amqp's check of an XOAUTH2 bearer: non-empty, every byte printable ASCII (0x20 to 0x7e).
+fn xoauth2_bearer_ok(b: Str) -> Bool {
+  if b.len() == 0 { return false }
+  for x in b.bytes() {
+    if Int(x) < 0x20 || Int(x) > 0x7e { return false }
+  }
+  true
+}
+
+/// Go's %#00x of a sasl-code: 0x1, 0x2 and so on.
+fn hex_code(n: Int) -> Str { "0x${n.to_str_base(16)}" }
 
 fn handshake(var c: ConnState, opts: ConnOptions, hostname: Str) -> () ! AmqpErr uses (net.dial, clock) {
   run_sasl(c, opts.sasl, hostname)?

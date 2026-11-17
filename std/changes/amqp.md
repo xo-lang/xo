@@ -29,6 +29,23 @@ Found with it, not fixed here: on the native backends `Float32.from_bits` quiets
 sets the quiet bit), so a float32 sNaN does not round trip through std/amqp there; the Go backend
 keeps the bits. Reported to the lead; the fuzz compares those values quieted.
 
+## 2026-11-17: feature: SASL EXTERNAL and XOAUTH2
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #184 (stdcov feature gaps: go-amqp's SASLTypeExternal and SASLTypeXOAUTH2)
+- Go reference: github.com/Azure/go-amqp v1.7.0 sasl.go
+- Test: std/amqp_test.xo's "SASL EXTERNAL ...", "SASL XOAUTH2 ...", "a refused XOAUTH2 token ..." and "XOAUTH2 refuses ..." tests
+
+`Sasl.External(response)` sends response as the EXTERNAL initial response
+(the identity comes from the TLS client certificate). `Sasl.Xoauth2(user,
+bearer)` sends `user=U\x01auth=Bearer B\x01\x01`; a server that refuses
+the token sends its error as a challenge, the client answers with an empty
+response, and the Auth error reads as go-amqp's ("SASL XOAUTH2 auth failed
+with code 0x1: ..."), as does a second challenge, an empty or unprintable
+bearer and a user holding `\x01`. go-amqp's frame size override has no
+counterpart: SASL frames are not held to the peer's frame size here.
+
 ## 2026-11-15: perf: `parse_addr` finds its separators with `find` and `rfind`
 
 - Kind: perf

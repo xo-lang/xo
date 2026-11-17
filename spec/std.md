@@ -10366,7 +10366,10 @@ pub fn decode_frame(b: Bytes, max_size: Int = 4294967295) -> (Frame, Int) ! Amqp
 ### 64.2 The connection (stage 2b-i)
 
 ```
-enum Sasl { None, Plain(user: Str, password: Str), Anonymous }
+enum Sasl { None, Plain(user: Str, password: Str), Anonymous, External(response: Str), Xoauth2(user: Str, bearer: Str) }
+// External sends response (the authorization identity, usually empty) as EXTERNAL's initial response;
+// Xoauth2 sends "user=U\x01auth=Bearer B\x01\x01", answers a refusing server's challenge with an empty
+// response, and gives go-amqp's error texts (an empty or unprintable bearer, a user holding \x01, a refused token)
 struct ConnOptions { container_id: Str = "", hostname: Str = "", max_frame_size: Int = 65536, channel_max: Int = 65535,
                      idle_timeout_ms: Int = 0, properties: List[(Str, Value)] = [], sasl: Sasl = Sasl.None,
                      tls_roots: tls.Roots? = None, tls_verify: tls.Verify = tls.Verify.Full }

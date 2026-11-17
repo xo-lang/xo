@@ -253,6 +253,12 @@ fn serve(l: Listener, sasl: Bool, accept_auth: Bool, peer_error: Bool) uses net.
       return
     }
   }
+  serve_amqp(sc, buf, peer_error)
+}
+
+/// The scripted peer after SASL: open, begin, end and close.
+fn serve_amqp(sc: ServerConn, start: Bytes, peer_error: Bool) uses net.listen {
+  var buf = start
   buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", buf)
   let (o, rest) = peer_frame(sc, buf)
   buf = rest
@@ -326,6 +332,119 @@ test "a refused SASL login is an Auth error" {
       Err(AmqpErr.Auth(code, _)) => expect(code) == 1
       Err(_) => fault("wrong error")
     }
+  }
+}
+
+/// A SASL peer offering offer: it checks the sasl-init's mechanism and initial response, sends each of
+/// challenges (reading the client's sasl-response to each, which must be empty), then the outcome code
+/// with extra as its additional data; a code of 0 goes on to open and close.
+fn serve_sasl(l: Listener, offer: List[Str], mech: Str, initial: Bytes, challenges: List[Bytes], code: Int, extra: Bytes) uses net.listen {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x03\x01\x00\x00", b"")
+  peer_send(sc, 0, FrameBody.SaslMechanisms(v: SaslMechanisms{mechanisms: offer}))
+  let (f, rest) = peer_frame(sc, buf)
+  buf = rest
+  match f.body {
+    SaslInit(i) => {
+      expect(i.mechanism) == mech
+      expect(i.initial_response) == initial
+    }
+    _ => fault("expected sasl-init")
+  }
+  for ch in challenges {
+    peer_send(sc, 0, FrameBody.SaslChallenge(v: SaslChallenge{challenge: ch}))
+    let (r, rest2) = peer_frame(sc, buf)
+    buf = rest2
+    match r.body {
+      SaslResponse(x) => expect(x.response) == b""
+      _ => fault("expected sasl-response")
+    }
+  }
+  peer_send(sc, 0, FrameBody.SaslOutcome(v: SaslOutcome{code: UInt8.wrapping_from(code), additional_data: extra}))
+  if code != 0 {
+    sc.close()
+    return
+  }
+  serve_amqp(sc, buf, false)
+}
+
+fn dial_err(r: Result[Connection, AmqpErr]) -> Str uses (net.dial, clock) {
+  match r {
+    Ok(c) => {
+      var cc = c
+      cc.close().or_fault("close")
+      "ok"
+    }
+    Err(e) => e.debug()
+  }
+}
+
+test "SASL EXTERNAL sends the authorization identity, then opens (go-amqp's SASLTypeExternal)" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_sasl(l, ["PLAIN", "EXTERNAL"], "EXTERNAL", b"", [], 0, b"") })
+    expect(dial_err(dial(os.net, l.addr(), ConnOptions{container_id: "tester", sasl: Sasl.External(response: "")}))) == "ok"
+  }
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen 2")
+  scope s {
+    s.spawn(fn() { serve_sasl(l2, ["EXTERNAL"], "EXTERNAL", b"app", [], 1, b"no cert") })
+    expect(dial_err(dial(os.net, l2.addr(), ConnOptions{container_id: "tester", sasl: Sasl.External(response: "app")}))) == "Auth(code: 1, msg: \"no cert\")"
+  }
+}
+
+test "SASL XOAUTH2 sends user and bearer as go-amqp does, then opens" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_sasl(l, ["XOAUTH2"], "XOAUTH2", b"user=someone@example.com\x01auth=Bearer tok.en-1\x01\x01", [], 0, b"") })
+    expect(dial_err(dial(os.net, l.addr(), ConnOptions{container_id: "tester", sasl: Sasl.Xoauth2(user: "someone@example.com", bearer: "tok.en-1")}))) == "ok"
+  }
+}
+
+test "a refused XOAUTH2 token: the challenge, an empty response, and Go's error text" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let want = b"user=u\x01auth=Bearer t\x01\x01"
+  scope s {
+    s.spawn(fn() { serve_sasl(l, ["XOAUTH2"], "XOAUTH2", want, [b"{\"status\":\"401\"}"], 1, b"denied") })
+    expect(dial_err(dial(os.net, l.addr(), ConnOptions{container_id: "tester", sasl: Sasl.Xoauth2(user: "u", bearer: "t")}))) ==
+      "Auth(code: 1, msg: \"SASL XOAUTH2 auth failed with code 0x1: denied : {\\\"status\\\":\\\"401\\\"}\")"
+  }
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen 2")
+  scope s {
+    s.spawn(fn() {
+      let sc = l2.accept().or_fault("accept")
+      var buf = peer_header(sc, b"AMQP\x03\x01\x00\x00", b"")
+      peer_send(sc, 0, FrameBody.SaslMechanisms(v: SaslMechanisms{mechanisms: ["XOAUTH2"]}))
+      let (_, rest) = peer_frame(sc, buf)
+      buf = rest
+      peer_send(sc, 0, FrameBody.SaslChallenge(v: SaslChallenge{challenge: b"first"}))
+      let (_, rest2) = peer_frame(sc, buf)
+      buf = rest2
+      peer_send(sc, 0, FrameBody.SaslChallenge(v: SaslChallenge{challenge: b"second"}))
+      sc.close()
+    })
+    expect(dial_err(dial(os.net, l2.addr(), ConnOptions{container_id: "tester", sasl: Sasl.Xoauth2(user: "u", bearer: "t")}))) ==
+      "Auth(code: -1, msg: \"SASL XOAUTH2 unexpected additional error response received during exchange. Initial error response: first, additional response: second\")"
+  }
+}
+
+test "XOAUTH2 refuses an empty or unprintable bearer and a user holding \\x01 before dialing out SASL" {
+  for b in ["", "tok\nen", "tók"] {
+    let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+    scope s {
+      s.spawn(fn() {
+        let sc = l.accept().or_fault("accept")
+        sc.close()
+      })
+      expect(dial_err(dial(os.net, l.addr(), ConnOptions{container_id: "tester", sasl: Sasl.Xoauth2(user: "u", bearer: b)}))) == "Auth(code: -1, msg: \"unacceptable bearer token\")"
+    }
+  }
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() {
+      let sc = l.accept().or_fault("accept")
+      sc.close()
+    })
+    expect(dial_err(dial(os.net, l.addr(), ConnOptions{container_id: "tester", sasl: Sasl.Xoauth2(user: "a\x01b", bearer: "t")}))) == "Auth(code: -1, msg: \"unacceptable username\")"
   }
 }
 
