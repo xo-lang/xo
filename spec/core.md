@@ -1331,7 +1331,8 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   Buffers wire codec, read through `protobuf.marshal` and `protobuf.unmarshal`.
   `derive Proto(name: "pkg.Msg")` gives the message's full name
   (`protobuf.message_name` and `descriptor`, decision 0683; without it the
-  module path and the type name). Every field carries its number as a `proto` tag, `name proto "N": T`, with
+  module path and the type name, where a module without an xo.mod takes its
+  directory's name, the same from any working directory). Every field carries its number as a `proto` tag, `name proto "N": T`, with
   the options `zigzag` (sint32, sint64), `fixed` (fixed and sfixed types) and
   `unpacked` (a List of numbers, Bools or enums written one key per element,
   proto2's default `repeated` form) after a comma. A field of type Int, Int32, UInt32, UInt64, Float, Float32,

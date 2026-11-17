@@ -2095,6 +2095,20 @@ fn proto_keyed(enc: Str, num: Int, wire: Int, v: Str) -> Str {
 /// Float, Str, Bytes and nested Proto struct fields, with Option (explicit presence) and List (packed
 /// for the numeric types), proto3 implicit presence otherwise (a zero value is not written), fields
 /// in declaration order.
+// proto_module_path is the module path in a default `derive Proto` full
+// name: a module without an xo.mod has the cwd relative directory as its
+// path ("." built in place, "a/b" from above), so it takes the directory's
+// own name, which is the same from any cwd (task #192: the
+// proto_descriptor golden printed "..Plain" on the linux/amd64 harness,
+// which builds with `cd DIR && xo build .`)
+fn (var c: Checker) proto_module_path(m: Int) -> Str {
+  let md = c.mods[m]
+  if md.is_std || c.find_mod_root(md.dir).is_some() {
+    return md.path
+  }
+  base(c.abs(md.dir))
+}
+
 fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enums: Map[Str, Str], oneofs: Map[Str, List[(Int, Str, Str)]]) -> Emit? {
   var e = em
   let sp = sd.name.span
@@ -2420,7 +2434,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
     }
   }
   if full.is_empty() {
-    let mp = if file >= 0 && file < c.files.len() { c.mods[c.files[file].module].path } else { "" }
+    let mp = if file >= 0 && file < c.files.len() { c.proto_module_path(c.files[file].module) } else { "" }
     full = if mp.is_empty() { n } else { "${mp}.${n}" }
   }
   e.ln("${pub_}fn proto_desc__${n}() -> protobuf.MessageDesc {", sp)

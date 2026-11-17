@@ -52,7 +52,7 @@ fn main(os: Os) {
   os.stdio.println(protobuf.message_name[Tree]())
   os.stdio.println(protobuf.message_name[Leaf]())
   let pn = protobuf.message_name[Plain]()
-  os.stdio.println("plain ${pn.ends_with("/proto_descriptor.Plain")}")
+  os.stdio.println("plain ${pn == "proto_descriptor.Plain"}")
   // the recursive field's descriptor is Tree's own
   let d = protobuf.descriptor[Tree]()
   if let Some(m) = d.fields[6].message {

@@ -75,7 +75,8 @@ files, 95df33e0e). The rows left need the code `derive Proto` generates
    ```
    The full name is `derive Proto(name: "pkg.Msg")`, which `xo proto gen`
    writes from the `.proto` package; without it, the Xo module path and
-   type name. `message` is a function so recursive messages need no cycle
+   type name (a module without an xo.mod: its directory's name, the same
+   from any working directory; task #192, 2026-11-17). `message` is a function so recursive messages need no cycle
    in data. std uses it for `protobuf.message_name[T]()`,
    `protowkt.new_field_mask[T](paths) -> FieldMask ! WktErr`,
    `protowkt.is_valid_mask[T](fm) -> Bool` and `FieldMask.append[T]`
