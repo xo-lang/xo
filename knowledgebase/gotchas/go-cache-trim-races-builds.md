@@ -57,3 +57,13 @@ Fix: the Go build caches keep a floor of OFF_PRUNE_GO_FLOOR_MIN (240)
 minutes in every pass and cap (offload-prune.sh gofloor;
 offload-prune_test.sh: a 90 minute go-build entry and gocache file are
 kept).
+
+Observed again 2026-11-17 (#294), the other way: host 2 at 14 GB free,
+the prune "freed nothing it could reach". xo's gocache held 18.8 GB, all
+1 to 4 hours old, under the fixed 240 minute floor. The floor is now the
+oldest running go process's age plus OFF_PRUNE_GO_MARGIN_MIN (75): a
+build that started S minutes ago reads only files whose mtime is under
+S + 60 minutes (Go's hourly refresh). OFF_PRUNE_GO_FLOOR_MIN still sets
+a fixed floor. offload-prune_test.sh: a 30 minute go process keeps a 90
+minute file and frees a 200 minute one; with none running, 90 minutes
+goes and 40 minutes stays.
