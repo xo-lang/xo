@@ -1,0 +1,110 @@
+// The health checking oracle (decision 0546 item 5): `serve` prints its address and serves std/grpchealth with
+// "a.A" NOT_SERVING plus /t.Ctl/Set, `client ADDR` makes the calls against a server. TestGrpcHealthInterop crosses
+// them with grpc-go's health server and client (internal/stdtest/grpcref/health.go); all four print want.txt.
+use std/grpc
+use std/grpchealth
+use std/http
+
+/// /t.Ctl/Set's request: a HealthCheckRequest whose service is "SERVICE=STATUS", "!shutdown" or "!resume".
+fn ctl_request(v: Str) -> Bytes {
+  var o = BytesBuilder.new()
+  o.write_byte(10)
+  o.write_byte(UInt8.wrapping_from(v.len()))
+  o.write_str(v)
+  o.freeze()
+}
+
+fn ctl_value(b: Bytes) -> Str {
+  if b.len() < 2 || b[0] != 10 {
+    return ""
+  }
+  b[2..].to_str() ?? ""
+}
+
+fn handlers(clock: Clock[clock]) -> grpc.Server {
+  var srv = grpc.server(clock)
+  let h = grpchealth.new()
+  h.set_serving_status("a.A", grpchealth.ServingStatus.NotServing)
+  h.register(srv)
+  srv.unary("/t.Ctl/Set", fn(_call, req) -> Bytes ! grpc.Status {
+    let v = ctl_value(req)
+    if v == "!shutdown" {
+      h.shutdown()
+    } else if v == "!resume" {
+      h.resume()
+    } else if let Some((name, st)) = v.cut("=") {
+      h.set_serving_status(name, grpchealth.status_of(Int.parse(st) ?? 0))
+    }
+    Ok(b"")
+  })
+  srv
+}
+
+fn check(c: grpc.Client, service: Str) -> Str {
+  match grpchealth.check(c, service) {
+    Ok(s) => s.name()
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn calls(os: Os, c: grpc.Client) {
+  let set = fn(v: Str) {
+    c.unary("/t.Ctl/Set", ctl_request(v)).or_fault("set ${v}")
+  }
+  os.stdio.println("check: ${check(c, "")}")
+  os.stdio.println("check a.A: ${check(c, "a.A")}")
+  os.stdio.println("check nope: ${check(c, "nope")}")
+  match grpchealth.list(c) {
+    Ok(m) => {
+      var parts: List[Str] = []
+      for k in m.keys().sort() {
+        parts.push("\"${k}\"=${m.get(k).or_fault("listed").name()}")
+      }
+      os.stdio.println("list: ${parts.join(" ")}")
+    }
+    Err(e) => os.stdio.println("list: err ${e.display()}")
+  }
+  let seen = Mutex[List[Str]].new([])
+  let res = grpchealth.watch(c, "b.B", fn(st) -> Bool {
+    let n = seen.with(fn(var l) {
+      l.push(st.name())
+      l.len()
+    })
+    if n == 1 {
+      set("b.B=1")
+      set("b.B=1")
+    } else if n == 2 {
+      set("b.B=2")
+    }
+    n < 3
+  })
+  if let Err(e) = res {
+    seen.with(fn(var l) { l.push("err ${e.display()}") })
+  }
+  os.stdio.println("watch b.B: ${seen.with_read(fn(l) { l })}")
+  set("!shutdown")
+  set("c.C=1")
+  os.stdio.println("shutdown: ${check(c, "")} ${check(c, "a.A")} ${check(c, "c.C")}")
+  set("!resume")
+  os.stdio.println("resume: ${check(c, "")} ${check(c, "a.A")} ${check(c, "b.B")}")
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  if args.len() == 0 {
+    os.stdio.println("usage: serve | client ADDR")
+    return
+  }
+  if args[0] == "serve" {
+    match os.net.listen("127.0.0.1:0") {
+      Ok(l) => {
+        let hs = http.server(l, handlers(os.clock).router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+        os.stdio.println(hs.addr())
+        hs.serve().ignore_err("the test kills the process")
+      }
+      Err(e) => os.stdio.println("listen failed: ${e}")
+    }
+  } else {
+    calls(os, grpc.client(http.client(os.net, timeout: 30s), "http://${args[1]}"))
+  }
+}

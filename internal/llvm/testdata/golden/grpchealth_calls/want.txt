@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+check: SERVING NOT_SERVING err rpc error: code = NotFound desc = unknown service
+list: ""=SERVING(1) "a.A"=NOT_SERVING(2)
+watch b.B: ["SERVICE_UNKNOWN", "SERVING", "NOT_SERVING"]
+shutdown: NOT_SERVING NOT_SERVING err rpc error: code = NotFound desc = unknown service
+resume: SERVING SERVING SERVING 3 7
+done
+--- stderr

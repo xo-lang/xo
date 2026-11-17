@@ -19,6 +19,19 @@ import (
 // testdata/grpcinterop/want.txt. The oracle (internal/stdtest/grpcref) is a Go module built offline (GOPROXY=off); the
 // test skips when it cannot be built. Heavy (two builds): skipped with -short.
 func TestGrpcInterop(t *testing.T) {
+	grpcCross(t, "grpcinterop", "serve", "client", false)
+}
+
+// TestGrpcHealthInterop crosses std/grpchealth with grpc-go's health package (decision 0546 item 5): every pairing of
+// an Xo or grpc-go client with an Xo or grpc-go server makes the calls of testdata/grpchealth (Check, List, Watch
+// through status changes, Shutdown and Resume) and must print want.txt; grpc-go with itself checks want.txt.
+func TestGrpcHealthInterop(t *testing.T) {
+	grpcCross(t, "grpchealth", "healthserve", "healthclient", true)
+}
+
+// grpcCross builds testdata/NAME and the grpc-go oracle, then runs a client of one against a server of the other
+// (the oracle's modes refServe and refClient; the Xo program's serve and client), and with all, each with itself too.
+func grpcCross(t *testing.T, name, refServe, refClient string, all bool) {
 	if testing.Short() {
 		t.Skip("builds an Xo program and the grpc-go oracle")
 	}
@@ -30,7 +43,7 @@ func TestGrpcInterop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, err := testtmp.Dir("xo-grpcinterop-")
+	dir, err := testtmp.Dir("xo-" + name + "-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,18 +55,18 @@ func TestGrpcInterop(t *testing.T) {
 	if out, err := b.CombinedOutput(); err != nil {
 		t.Skipf("the grpc-go oracle cannot be built here: %v\n%s", err, out)
 	}
-	prog := filepath.Join(dir, "interop")
-	if out, err := exec.Command(xo, "build", "-o", prog, filepath.Join(root, "internal", "stdtest", "testdata", "grpcinterop")).CombinedOutput(); err != nil {
+	prog := filepath.Join(dir, name)
+	if out, err := exec.Command(xo, "build", "-o", prog, filepath.Join(root, "internal", "stdtest", "testdata", name)).CombinedOutput(); err != nil {
 		t.Fatalf("xo build: %v\n%s", err, out)
 	}
-	want, err := os.ReadFile(filepath.Join(root, "internal", "stdtest", "testdata", "grpcinterop", "want.txt"))
+	want, err := os.ReadFile(filepath.Join(root, "internal", "stdtest", "testdata", name, "want.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// serve starts a server binary and returns its address; the cleanup stops it.
-	serve := func(bin string) string {
-		cmd := exec.Command(bin, "serve")
+	serve := func(t *testing.T, bin, mode string) string {
+		cmd := exec.Command(bin, mode)
 		out, err := cmd.StdoutPipe()
 		if err != nil {
 			t.Fatal(err)
@@ -78,22 +91,26 @@ func TestGrpcInterop(t *testing.T) {
 			return ""
 		}
 	}
-	run := func(bin, addr string) string {
-		out, err := exec.Command(bin, "client", addr).CombinedOutput()
+	run := func(t *testing.T, bin, mode, addr string) string {
+		out, err := exec.Command(bin, mode, addr).CombinedOutput()
 		if err != nil {
-			t.Fatalf("%s client: %v\n%s", bin, err, out)
+			t.Fatalf("%s %s: %v\n%s", bin, mode, err, out)
 		}
 		return string(out)
 	}
-
-	t.Run("xo client, grpc-go server", func(t *testing.T) {
-		if got := run(prog, serve(ref)); got != string(want) {
-			t.Errorf("got:\n%swant:\n%s", got, want)
-		}
-	})
-	t.Run("grpc-go client, xo server", func(t *testing.T) {
-		if got := run(ref, serve(prog)); got != string(want) {
-			t.Errorf("got:\n%swant:\n%s", got, want)
-		}
-	})
+	type side struct{ who, bin, serve, client string }
+	xs := side{"xo", prog, "serve", "client"}
+	gs := side{"grpc-go", ref, refServe, refClient}
+	pairs := [][2]side{{xs, gs}, {gs, xs}}
+	if all {
+		pairs = append(pairs, [2]side{gs, gs}, [2]side{xs, xs})
+	}
+	for _, p := range pairs {
+		c, s := p[0], p[1]
+		t.Run(c.who+" client, "+s.who+" server", func(t *testing.T) {
+			if got := run(t, c.bin, c.client, serve(t, s.bin, s.serve)); got != string(want) {
+				t.Errorf("got:\n%swant:\n%s", got, want)
+			}
+		})
+	}
 }

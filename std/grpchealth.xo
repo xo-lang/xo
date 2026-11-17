@@ -1,0 +1,308 @@
+// std/grpchealth: the gRPC health checking service, grpc.health.v1.Health
+// (decision 0546 item 5): Check, List and Watch served on a grpc.Server
+// with a status per service, and a client for the three. A port of
+// grpc-go v1.79.2's health package (health/server.go and
+// grpc_health_v1/health.pb.go; Copyright 2017 gRPC authors, Apache
+// License 2.0): the same statuses, the same 100 service bound on List, and
+// the same codes and texts for an unknown service and an ended stream.
+use std/grpc
+use std/protobuf
+use std/protowire
+
+/// The full method names of the service.
+pub const CHECK: Str = "/grpc.health.v1.Health/Check"
+pub const LIST: Str = "/grpc.health.v1.Health/List"
+pub const WATCH: Str = "/grpc.health.v1.Health/Watch"
+
+/// grpc-go's maxAllowedServices: a List of more services is ResourceExhausted.
+const MAX_LIST: Int = 100
+
+/// A service's serving status (HealthCheckResponse.ServingStatus). `Other`
+/// holds a number the enum does not name, as an open proto3 enum keeps it.
+pub enum ServingStatus {
+  Unknown
+  Serving
+  NotServing
+  /// Watch only: the service is not registered
+  ServiceUnknown
+  Other(n: Int)
+}
+
+/// The status's number on the wire.
+pub fn (s: ServingStatus) number() -> Int {
+  match s {
+    Unknown => 0
+    Serving => 1
+    NotServing => 2
+    ServiceUnknown => 3
+    Other(n) => n
+  }
+}
+
+/// The status of a wire number.
+pub fn status_of(n: Int) -> ServingStatus {
+  match n {
+    0 => ServingStatus.Unknown
+    1 => ServingStatus.Serving
+    2 => ServingStatus.NotServing
+    3 => ServingStatus.ServiceUnknown
+    _ => ServingStatus.Other(n)
+  }
+}
+
+/// The enum value's name as grpc-go prints it (`SERVING`), the number for one it does not name.
+pub fn (s: ServingStatus) name() -> Str {
+  match s {
+    Unknown => "UNKNOWN"
+    Serving => "SERVING"
+    NotServing => "NOT_SERVING"
+    ServiceUnknown => "SERVICE_UNKNOWN"
+    Other(n) => "${n}"
+  }
+}
+
+struct Watcher {
+  id: Int
+  ch: Chan[Int]
+}
+
+struct State {
+  shutdown: Bool
+  statuses: Map[Str, Int]
+  watchers: Map[Str, List[Watcher]]
+  next: Int
+}
+
+/// The health service's state: a status for each service ("" is the
+/// server as a whole, SERVING from the start), shared by every copy.
+pub struct Health {
+  st: Mutex[State]
+}
+
+/// A health service whose overall status ("") is SERVING (grpc-go's NewServer).
+pub fn new() -> Health {
+  Health{st: Mutex.new(State{shutdown: false, statuses: {"": 1}, watchers: {}, next: 0})}
+}
+
+/// Sets service's status and tells its watchers. Ignored after `shutdown` until `resume`.
+pub fn (h: Health) set_serving_status(service: Str, status: ServingStatus) {
+  h.st.with(fn(var s) {
+    if !s.shutdown {
+      set_locked(s, service, status.number())
+    }
+  })
+}
+
+fn set_locked(var s: State, service: Str, n: Int) {
+  s.statuses[service] = n
+  for w in s.watchers.get(service) ?? [] {
+    // the watcher keeps only the newest status (grpc-go drains its channel of one)
+    let _old = w.ch.try_recv()
+    let _sent = w.ch.try_send(n)
+  }
+}
+
+/// Sets every service NOT_SERVING and ignores later `set_serving_status` calls until `resume`
+/// (for a server going down: clients move to other backends).
+pub fn (h: Health) shutdown() {
+  h.st.with(fn(var s) {
+    s.shutdown = true
+    for k in s.statuses.keys() {
+      set_locked(s, k, 2)
+    }
+  })
+}
+
+/// Sets every service SERVING and takes `set_serving_status` calls again.
+pub fn (h: Health) resume() {
+  h.st.with(fn(var s) {
+    s.shutdown = false
+    for k in s.statuses.keys() {
+      set_locked(s, k, 1)
+    }
+  })
+}
+
+/// service's status, as Check answers it: `NotFound` "unknown service" for one never set.
+pub fn (h: Health) check(service: Str) -> ServingStatus ! grpc.Status {
+  match h.st.with_read(fn(s) { s.statuses.get(service) }) {
+    Some(n) => Ok(status_of(n))
+    None => Err(grpc.Status{code: grpc.Code.NotFound, message: "unknown service"})
+  }
+}
+
+/// Every service's status, as List answers it: `ResourceExhausted` past 100 services.
+pub fn (h: Health) list() -> Map[Str, ServingStatus] ! grpc.Status {
+  let m = h.st.with_read(fn(s) { s.statuses })
+  if m.len() > MAX_LIST {
+    return Err(grpc.Status{code: grpc.Code.ResourceExhausted, message: "server health list exceeds maximum capacity: ${MAX_LIST}"})
+  }
+  var out: Map[Str, ServingStatus] = {}
+  for (k, n) in m {
+    out[k] = status_of(n)
+  }
+  Ok(out)
+}
+
+/// Registers Check, List and Watch on s. Watch sends the service's status
+/// at once (SERVICE_UNKNOWN for one never set) and then each change, until
+/// the client goes. A watcher whose client went is dropped at the next
+/// change of its service, when its send fails (grpc-go drops it when the
+/// stream's context ends).
+pub fn (h: Health) register(var s: grpc.Server) uses clock {
+  s.unary(CHECK, fn(_call, req) -> Bytes ! grpc.Status {
+    let service = read_request(req)?
+    Ok(response(h.check(service)?.number()))
+  })
+  s.unary(LIST, fn(_call, req) -> Bytes ! grpc.Status {
+    if let Err(e) = protowire.walk(req) {
+      return Err(unmarshal_err(e))
+    }
+    let m = h.list()?
+    var o = BytesBuilder.new()
+    for k in m.keys().sort() {
+      var e = BytesBuilder.new()
+      protowire.wsa(e, 1, k)
+      protowire.wm(e, 2, response(m.get(k).or_fault("listed").number()))
+      protowire.wm(o, 1, e.freeze())
+    }
+    Ok(o.freeze())
+  })
+  s.stream(WATCH, fn(_call, recv, send) -> () ! grpc.Status {
+    let req = match recv.next()? {
+      Some(m) => m
+      None => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: client sent no request message"})
+    }
+    let service = read_request(req)?
+    let ch = Chan[Int].new(cap: 1)
+    let id = h.st.with(fn(var st) {
+      let _sent = ch.try_send(st.statuses.get(service) ?? 3)
+      st.next += 1
+      var ws = st.watchers.get(service) ?? []
+      ws.push(Watcher{id: st.next, ch: ch})
+      st.watchers[service] = ws
+      st.next
+    })
+    defer h.st.with(fn(var st) {
+      // xo:allow XO0804 id is this watcher's own, fixed when it was added
+      let ws = (st.watchers.get(service) ?? []).filter(fn(w) { w.id != id })
+      if ws.is_empty() {
+        let _gone = st.watchers.remove(service)
+      } else {
+        st.watchers[service] = ws
+      }
+    })
+    var last = -1
+    while let Some(n) = ch.recv() {
+      if n == last {
+        continue
+      }
+      last = n
+      if send.send(response(n)).is_err() {
+        return Err(grpc.Status{code: grpc.Code.Canceled, message: "Stream has ended."})
+      }
+    }
+    Err(grpc.Status{code: grpc.Code.Canceled, message: "Stream has ended."})
+  })
+}
+
+fn unmarshal_err(e: protobuf.ProtoErr) -> grpc.Status {
+  grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling request: ${e}"}
+}
+
+/// HealthCheckRequest's service (field 1, the last one on the wire wins).
+fn read_request(req: Bytes) -> Str ! grpc.Status {
+  let fs = match protowire.walk(req) {
+    Ok(fs) => fs
+    Err(e) => return Err(unmarshal_err(e))
+  }
+  var service = ""
+  for f in fs {
+    if f.num == 1 && f.wire == 2 {
+      service = match protowire.text(f) {
+        Ok(t) => t
+        Err(e) => return Err(unmarshal_err(e))
+      }
+    }
+  }
+  Ok(service)
+}
+
+fn request(service: Str) -> Bytes {
+  var o = BytesBuilder.new()
+  protowire.ws(o, 1, service)
+  o.freeze()
+}
+
+/// HealthCheckResponse with status n (proto3: UNKNOWN is left out).
+fn response(n: Int) -> Bytes {
+  var o = BytesBuilder.new()
+  protowire.wi(o, 1, n)
+  o.freeze()
+}
+
+/// The status in a HealthCheckResponse (the last field 1 wins).
+fn read_response(b: Bytes) -> ServingStatus ! grpc.Status {
+  let fs = match protowire.walk(b) {
+    Ok(fs) => fs
+    Err(e) => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: failed to unmarshal the received message: ${e}"})
+  }
+  var n = 0
+  for f in fs {
+    if f.num == 1 && f.wire == 0 {
+      n = Int(Int32.wrapping_from(f.v))
+    }
+  }
+  Ok(status_of(n))
+}
+
+/// Asks the server for service's status ("" for the server as a whole).
+pub fn check(c: grpc.Client, service: Str, timeout: Duration? = None) -> ServingStatus ! grpc.Status uses net.dial {
+  read_response(c.unary(CHECK, request(service), {}, timeout)?)
+}
+
+/// Asks the server for every service's status.
+pub fn list(c: grpc.Client, timeout: Duration? = None) -> Map[Str, ServingStatus] ! grpc.Status uses net.dial {
+  let b = c.unary(LIST, b"", {}, timeout)?
+  let fs = match protowire.walk(b) {
+    Ok(fs) => fs
+    Err(e) => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: failed to unmarshal the received message: ${e}"})
+  }
+  var out: Map[Str, ServingStatus] = {}
+  for f in fs {
+    if f.num != 1 || f.wire != 2 {
+      continue
+    }
+    let es = match protowire.walk(f.data) {
+      Ok(es) => es
+      Err(e) => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: failed to unmarshal the received message: ${e}"})
+    }
+    var k = ""
+    var v = ServingStatus.Unknown
+    for e in es {
+      if e.num == 1 && e.wire == 2 {
+        k = protowire.text(e).ok() ?? ""
+      } else if e.num == 2 && e.wire == 2 {
+        v = read_response(e.data)?
+      }
+    }
+    out[k] = v
+  }
+  Ok(out)
+}
+
+/// Watches service: f gets the status at once and then each change, and
+/// returns false to stop watching (the call ends OK). The server's end of
+/// the stream is its status as an error.
+pub fn watch[fx: Effects](c: grpc.Client, service: Str, f: fn(ServingStatus) -> Bool uses fx) -> () ! grpc.Status uses (fx, net.dial) {
+  c.call(WATCH, {}, None, fn(cc) -> () ! grpc.Status uses (fx, net.dial) {
+    cc.send(request(service))?
+    cc.close_send()
+    while let Some(m) = cc.recv()? {
+      if !f(read_response(m)?) {
+        return Ok(())
+      }
+    }
+    Ok(())
+  })
+}

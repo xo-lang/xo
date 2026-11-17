@@ -1,0 +1,79 @@
+// The gRPC health service (std/grpchealth, decision 0546 item 5) in one program over h2c: Check, List and Watch
+// from a client, the server side's statuses set directly, shutdown and resume. TestGrpcHealthInterop checks the
+// same calls against grpc-go's health server and client.
+use std/grpc
+use std/grpchealth
+use std/http
+
+fn check(c: grpc.Client, service: Str) -> Str {
+  match grpchealth.check(c, service) {
+    Ok(s) => s.name()
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn calls(os: Os, h: grpchealth.Health, c: grpc.Client) {
+  os.stdio.println("check: ${check(c, "")} ${check(c, "a.A")} ${check(c, "nope")}")
+  match grpchealth.list(c) {
+    Ok(m) => {
+      var parts: List[Str] = []
+      for k in m.keys().sort() {
+        let st = m.get(k).or_fault("listed")
+        parts.push("\"${k}\"=${st.name()}(${st.number()})")
+      }
+      os.stdio.println("list: ${parts.join(" ")}")
+    }
+    Err(e) => os.stdio.println("list: err ${e.display()}")
+  }
+  let seen = Mutex[List[Str]].new([])
+  let res = grpchealth.watch(c, "b.B", fn(st) -> Bool {
+    let n = seen.with(fn(var l) {
+      l.push(st.name())
+      l.len()
+    })
+    if n == 1 {
+      h.set_serving_status("b.B", grpchealth.ServingStatus.Serving)
+      h.set_serving_status("b.B", grpchealth.ServingStatus.Serving)
+    } else if n == 2 {
+      h.set_serving_status("b.B", grpchealth.ServingStatus.NotServing)
+    }
+    n < 3
+  })
+  if let Err(e) = res {
+    seen.with(fn(var l) { l.push("err ${e.display()}") })
+  }
+  os.stdio.println("watch b.B: ${seen.with_read(fn(l) { l })}")
+  h.shutdown()
+  h.set_serving_status("c.C", grpchealth.ServingStatus.Serving)
+  os.stdio.println("shutdown: ${check(c, "")} ${check(c, "a.A")} ${check(c, "c.C")}")
+  h.resume()
+  let local = match h.check("b.B") {
+    Ok(s) => s.name()
+    Err(e) => "err ${e.display()}"
+  }
+  let n = match h.list() {
+    Ok(m) => m.len()
+    Err(_) => -1
+  }
+  os.stdio.println("resume: ${check(c, "")} ${check(c, "a.A")} ${local} ${n} ${grpchealth.status_of(7).name()}")
+}
+
+fn main(os: Os) {
+  let h = grpchealth.new()
+  h.set_serving_status("a.A", grpchealth.ServingStatus.NotServing)
+  var srv = grpc.server(os.clock)
+  h.register(srv)
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+      scope s {
+        s.spawn_background(fn() {
+          hs.serve().ignore_err("the program ends the server")
+        })
+        calls(os, h, grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}"))
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

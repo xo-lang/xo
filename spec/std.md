@@ -12466,3 +12466,39 @@ the node is not the parent's child and leaves it in `nodes`, detached, to be add
 node indexes: `ancestors` from the parent up, `child_nodes` in order, `descendants` in document order without the
 node itself. Tests: the html5lib tree-construction files and a differential against x/net v0.62.0
 (internal/stdtest/testdata/corpus/htmlparse), Go's parse, render and iter tests (std/htmlparse_test.xo).
+
+## 89. std/grpchealth
+
+The gRPC health checking service, `grpc.health.v1.Health` (decision 0546 item 5): a port of grpc-go v1.79.2's
+`health` package, served on a `grpc.Server` (section 68) and called with a `grpc.Client`. Statuses are per service
+name; "" is the server as a whole, SERVING from the start. Interop with grpc-go's health server and client in every
+pairing: TestGrpcHealthInterop (internal/stdtest/testdata/grpchealth).
+
+```xo
+enum ServingStatus { Unknown, Serving, NotServing, ServiceUnknown, Other(n: Int) }  // Other: a number the enum does not name
+fn (s: ServingStatus) number() -> Int
+fn (s: ServingStatus) name() -> Str          // SERVING, NOT_SERVING, ... as grpc-go prints them
+fn status_of(n: Int) -> ServingStatus
+const CHECK: Str                             // "/grpc.health.v1.Health/Check"; LIST and WATCH likewise
+// the server
+fn new() -> Health                           // grpc-go's health.NewServer
+fn (h: Health) set_serving_status(service: Str, status: ServingStatus)
+fn (h: Health) shutdown()                    // every service NOT_SERVING; later sets ignored until resume
+fn (h: Health) resume()                      // every service SERVING; sets taken again
+fn (h: Health) check(service: Str) -> ServingStatus ! grpc.Status
+fn (h: Health) list() -> Map[Str, ServingStatus] ! grpc.Status
+fn (h: Health) register(var s: grpc.Server)  // serves Check, List and Watch
+// the client
+fn check(c: grpc.Client, service: Str, timeout: Duration? = None) -> ServingStatus ! grpc.Status
+fn list(c: grpc.Client, timeout: Duration? = None) -> Map[Str, ServingStatus] ! grpc.Status
+fn watch(c: grpc.Client, service: Str, f: fn(ServingStatus) -> Bool) -> () ! grpc.Status
+```
+
+- Check of a service never set is `NotFound` "unknown service"; List of more than 100 services is
+  `ResourceExhausted` (grpc-go's maxAllowedServices).
+- Watch sends the service's status at once (SERVICE_UNKNOWN for one never set), then each change; a repeat of the
+  last status sent is not sent again, and between two sends only the newest status is kept. The client's `watch`
+  calls `f` with each status until `f` returns false (the call then ends OK) or the server ends the stream.
+- A `Health` value shares its state between copies: register it on a server and keep it to set statuses.
+- Not yet: the client side health checking of grpc-go's service config (`healthCheckConfig`), which needs
+  service config and load balancing (std/grpc has neither).

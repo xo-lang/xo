@@ -62,3 +62,4 @@ std/hpke
 std/migrate
 std/ui
 std/brotli
+std/grpchealth

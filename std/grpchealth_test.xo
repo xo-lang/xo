@@ -1,0 +1,88 @@
+// Behavior from grpc-go v1.79.2 health/server_internal_test.go and server_test.go.
+use std/grpc
+use std/http
+use std/testing
+
+test "statuses and their wire numbers" {
+  for n in 0..5 {
+    expect(status_of(n).number()) == n
+  }
+  expect(status_of(1)) == ServingStatus.Serving
+  expect(status_of(9).name()) == "9"
+  expect(ServingStatus.ServiceUnknown.name()) == "SERVICE_UNKNOWN"
+  expect(response(0)) == b""
+  expect(response(2)) == b"\x08\x02"
+  expect(read_response(b"\x08\x01\x08\x02")) == Ok(ServingStatus.NotServing)
+  expect(read_request(request("a.B"))) == Ok("a.B")
+  expect(read_request(b"")) == Ok("")
+  expect(read_request(b"\x0a\x05ab").is_err()) == true
+}
+
+test "check, set, shutdown and resume as grpc-go's server" {
+  let h = new()
+  expect(h.check("")) == Ok(ServingStatus.Serving)
+  expect(h.check("x")) == Err(grpc.Status{code: grpc.Code.NotFound, message: "unknown service"})
+  h.set_serving_status("x", ServingStatus.NotServing)
+  expect(h.check("x")) == Ok(ServingStatus.NotServing)
+  h.shutdown()
+  expect(h.check("")) == Ok(ServingStatus.NotServing)
+  // ignored while shut down
+  h.set_serving_status("x", ServingStatus.Serving)
+  h.set_serving_status("y", ServingStatus.Serving)
+  expect(h.check("x")) == Ok(ServingStatus.NotServing)
+  expect(h.check("y").is_err()) == true
+  h.resume()
+  expect(h.check("x")) == Ok(ServingStatus.Serving)
+  expect(h.list().or_fault("list").len()) == 2
+}
+
+test "list stops past 100 services" {
+  let h = new()
+  for i in 0..99 {
+    h.set_serving_status("s${i}", ServingStatus.Serving)
+  }
+  expect(h.list().or_fault("list").len()) == 100
+  h.set_serving_status("one more", ServingStatus.Serving)
+  expect(h.list()) == Err(grpc.Status{code: grpc.Code.ResourceExhausted, message: "server health list exceeds maximum capacity: 100"})
+}
+
+test "check, list and watch over HTTP/2" uses (net, clock) {
+  let h = new()
+  h.set_serving_status("a.A", ServingStatus.NotServing)
+  var srv = grpc.server(os.clock)
+  h.register(srv)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() {
+      hs.serve().ignore_err("the test ends the server")
+    })
+    let c = grpc.client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    expect(check(c, "")) == Ok(ServingStatus.Serving)
+    expect(check(c, "a.A")) == Ok(ServingStatus.NotServing)
+    match check(c, "nope") {
+      Err(st) => expect((st.code, st.message)) == (grpc.Code.NotFound, "unknown service")
+      Ok(v) => fault("unknown service answered ${v.name()}")
+    }
+    let m = list(c).or_fault("list")
+    expect(m.get("")) == Some(ServingStatus.Serving)
+    expect(m.get("a.A")) == Some(ServingStatus.NotServing)
+    expect(m.len()) == 2
+    // a watch of a service set later: SERVICE_UNKNOWN, then each change, a repeat sent once
+    let seen = Mutex[List[Str]].new([])
+    watch(c, "b.B", fn(st) -> Bool {
+      let n = seen.with(fn(var l) {
+        l.push(st.name())
+        l.len()
+      })
+      if n == 1 {
+        h.set_serving_status("b.B", ServingStatus.Serving)
+        h.set_serving_status("b.B", ServingStatus.Serving)
+      } else if n == 2 {
+        h.set_serving_status("b.B", ServingStatus.NotServing)
+      }
+      n < 3
+    }).or_fault("watch")
+    expect(seen.with_read(fn(l) { l })) == ["SERVICE_UNKNOWN", "SERVING", "NOT_SERVING"]
+  }
+}

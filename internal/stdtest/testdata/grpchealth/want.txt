@@ -1,0 +1,7 @@
+check: SERVING
+check a.A: NOT_SERVING
+check nope: err rpc error: code = NotFound desc = unknown service
+list: ""=SERVING "a.A"=NOT_SERVING
+watch b.B: ["SERVICE_UNKNOWN", "SERVING", "NOT_SERVING"]
+shutdown: NOT_SERVING NOT_SERVING err rpc error: code = NotFound desc = unknown service
+resume: SERVING SERVING SERVING

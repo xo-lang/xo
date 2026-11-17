@@ -236,6 +236,10 @@ func interopMain() bool {
 		interopServe()
 	case "client":
 		interopClient(os.Args[2])
+	case "healthserve":
+		healthServe()
+	case "healthclient":
+		healthClient(os.Args[2])
 	case "cannedserve":
 		cannedServe(os.Args[2])
 	case "cannedclient":
