@@ -22,27 +22,59 @@ type traceRec struct {
 	mu  sync.Mutex
 	evs []Http_TraceEvent
 	on  func(*Task, Http_TraceEvent) Result[Unit, Never]
+	// conn: GotConn was recorded; wrote is closed when WroteRequest is
+	conn  bool
+	wrote chan struct{}
+	once  sync.Once
 }
+
+// traceWroteWait bounds deliver's wait for WroteRequest: a request whose
+// connection failed before its write never reports one.
+const traceWroteWait = time.Second
 
 // newTraceRec is req's recorder, nil without with_trace.
 func newTraceRec(req Http_Request) *traceRec {
 	if req.XTrace == nil {
 		return nil
 	}
-	return &traceRec{on: req.XTrace}
+	return &traceRec{on: req.XTrace, wrote: make(chan struct{})}
 }
 
 func (r *traceRec) add(tag int, p any) {
 	r.mu.Lock()
 	r.evs = append(r.evs, Http_TraceEvent{Tag: tag, P: p})
+	if tag == 2 {
+		r.conn = true
+	}
 	r.mu.Unlock()
+	if tag == 10 {
+		r.once.Do(func() { close(r.wrote) })
+	}
 }
 
 // deliver gives the events recorded so far to on, in order (none for a nil
-// recorder).
+// recorder). Once a connection was got it first waits (at most
+// traceWroteWait) for WroteRequest: net/http calls WroteHeaders and
+// WroteRequest on the connection's writer goroutine (HTTP/2's request
+// writer, HTTP/1's writeLoop), and RoundTrip can return on the response
+// before that goroutine records them, so under CPU load send returned
+// without them and a later call got them (task #151: http_client_trace's
+// "https: reused" on host 1 with every CPU busy). The native backends write
+// the request on the calling task, so they always have them by then.
 func (r *traceRec) deliver(tk *Task) {
 	if r == nil {
 		return
+	}
+	r.mu.Lock()
+	conn := r.conn
+	r.mu.Unlock()
+	if conn {
+		t := time.NewTimer(traceWroteWait)
+		select {
+		case <-r.wrote:
+		case <-t.C:
+		}
+		t.Stop()
 	}
 	r.mu.Lock()
 	evs := r.evs

@@ -41,10 +41,10 @@ fn take(got: Mutex[List[http.TraceEvent]]) -> List[http.TraceEvent] {
   })
 }
 
-/// Prints the events delivered during a call made between t0 and t1, and
-/// whether their times are in order within it.
-fn print(os: Os, what: Str, evs: List[http.TraceEvent], addr: Str, t0: Time, t1: Time, only_dns: Bool = false) {
-  os.stdio.println("${what}:")
+/// Writes the events delivered during a call made between t0 and t1 to
+/// out, and whether their times are in order within it.
+fn print(var out: StrBuilder, what: Str, evs: List[http.TraceEvent], addr: Str, t0: Time, t1: Time, only_dns: Bool = false) {
+  out.write("${what}:\n")
   var prev = t0
   var ordered = true
   for e in evs {
@@ -54,39 +54,28 @@ fn print(os: Os, what: Str, evs: List[http.TraceEvent], addr: Str, t0: Time, t1:
     prev = e.at()
     let l = line(e, addr)
     if !only_dns || l.starts_with("DNS") {
-      os.stdio.println("  ${l}")
+      out.write("  ${l}\n")
     }
   }
   if !ordered {
-    os.stdio.println("  times out of order")
+    out.write("  times out of order\n")
   }
 }
 
-fn main(os: Os) ! {
-  var r = http.router()
-  r.handle("GET /ok", fn(_req) { http.text(200, "ok") })
-  r.handle("POST /echo", fn(req) { http.text(200, req.body.to_str() ?? "") })
-  r.handle("GET /redir", fn(req) { http.redirect(req, "/ok", 302) })
-  r.handle("GET /big", fn(_req) { http.text(200, "x".repeat(100000)) })
-  r.handle("GET /close", fn(_req) { http.text(200, "bye").with_header("Connection", "close") })
+/// The plain HTTP exchanges against a server of their own (so a fresh
+/// pool), as the lines to print.
+fn plain(os: Os, r: http.Router, on: fn(http.TraceEvent) uses sync, got: Mutex[List[http.TraceEvent]]) -> Str ! {
   let l = os.net.listen("127.0.0.1:0")?
-  let tls_l = os.net.listen("127.0.0.1:0")?
-  let cert = http.tls_cert(good_cert(), good_key())?
   let srv = http.server(l, r)
-  let secure = http.server(tls_l, r).with_tls([cert])
   let addr = srv.addr()
-  let port = addr.split(":")[1]
-  let saddr = secure.addr()
   // a port nothing listens on
   let gone = os.net.listen("127.0.0.1:0")?
   let gaddr = gone.addr()
   gone.close()
-  let got = Mutex[List[http.TraceEvent]].new([])
-  let on = fn(e: http.TraceEvent) uses sync { got.with(fn(var l: List[http.TraceEvent]) { l.push(e) }) }
   let base = "http://${addr}"
+  var out = StrBuilder.new()
   scope s {
     s.spawn_background(fn() { let _ = srv.serve().is_ok() })
-    s.spawn_background(fn() { let _ = secure.serve().is_ok() })
     let c = http.client(os.net, timeout: 10s)
     for (what, method, path) in [("a fresh connection", "GET", "/ok"), ("the same connection reused", "GET", "/ok"), ("a POST", "POST", "/echo"), ("a redirect: two exchanges", "GET", "/redir"), ("a response that closes its connection", "GET", "/close"), ("a POST expecting 100 Continue", "POST", "/echo"), ("then a new connection", "GET", "/ok")] {
       var req = http.new_request(method, base + path, body: if method == "POST" { b"hello" } else { b"" }).with_trace(on)
@@ -98,42 +87,61 @@ fn main(os: Os) ! {
       let t0 = os.clock.now()
       let res = c.send(req)
       let t1 = os.clock.now()
-      print(os, what, take(got), addr, t0, t1)
+      print(out, what, take(got), addr, t0, t1)
       match res {
-        Ok(resp) => os.stdio.println("  -> ${resp.status} ${resp.text() ?? ""}")
-        Err(e) => os.stdio.println("  -> ${e}")
+        Ok(resp) => out.write("  -> ${resp.status} ${resp.text() ?? ""}\n")
+        Err(e) => out.write("  -> ${e}\n")
       }
     }
     let t0 = os.clock.now()
     let res = c.send(http.new_request("GET", "http://${gaddr}/ok").with_trace(on))
     let t1 = os.clock.now()
-    print(os, "a refused dial", take(got), gaddr, t0, t1)
-    os.stdio.println("  -> ok=${res.is_ok()}")
+    print(out, "a refused dial", take(got), gaddr, t0, t1)
+    out.write("  -> ok=${res.is_ok()}\n")
 
     // a streamed body: the events to the head at open, the rest at its end
     let t2 = os.clock.now()
     let st = c.open(http.new_request("GET", base + "/big").with_trace(on))?
     let t3 = os.clock.now()
-    print(os, "open: up to the head", take(got), addr, t2, t3)
+    print(out, "open: up to the head", take(got), addr, t2, t3)
     let body = st.read_all()?
     let t4 = os.clock.now()
-    print(os, "the body read to its end (${body.len()} bytes)", take(got), addr, t3, t4)
+    print(out, "the body read to its end (${body.len()} bytes)", take(got), addr, t3, t4)
     st.close()
-    os.stdio.println("  close after the end delivers ${take(got).len()} more")
+    out.write("  close after the end delivers ${take(got).len()} more\n")
     let st2 = c.open(http.new_request("GET", base + "/big").with_trace(on))?
     let t5 = os.clock.now()
-    print(os, "open again: the connection reused", take(got), addr, t4, t5)
+    print(out, "open again: the connection reused", take(got), addr, t4, t5)
     st2.close()
     let t6 = os.clock.now()
-    print(os, "closed before its end: not offered to the pool", take(got), addr, t5, t6)
+    print(out, "closed before its end: not offered to the pool", take(got), addr, t5, t6)
+    s.cancel()
+  }
+  Ok(out.freeze())
+}
 
+/// The name lookup and the TLS exchanges, against servers of their own, as
+/// the lines to print.
+fn rest(os: Os, r: http.Router, on: fn(http.TraceEvent) uses sync, got: Mutex[List[http.TraceEvent]]) -> Str ! {
+  let l = os.net.listen("127.0.0.1:0")?
+  let tls_l = os.net.listen("127.0.0.1:0")?
+  let cert = http.tls_cert(good_cert(), good_key())?
+  let srv = http.server(l, r)
+  let secure = http.server(tls_l, r).with_tls([cert])
+  let addr = srv.addr()
+  let port = addr.split(":")[1]
+  let saddr = secure.addr()
+  var out = StrBuilder.new()
+  scope s {
+    s.spawn_background(fn() { let _ = srv.serve().is_ok() })
+    s.spawn_background(fn() { let _ = secure.serve().is_ok() })
     // a name looked up (its addresses' order and dial attempts vary by
     // system: the lookup alone)
     let t7 = os.clock.now()
     let nres = http.client(os.net).send(http.new_request("GET", "http://localhost:${port}/ok").with_trace(on))
     let t8 = os.clock.now()
-    print(os, "localhost looked up", take(got), addr, t7, t8, only_dns: true)
-    os.stdio.println("  -> ok=${nres.is_ok()}")
+    print(out, "localhost looked up", take(got), addr, t7, t8, only_dns: true)
+    out.write("  -> ok=${nres.is_ok()}\n")
 
     // TLS
     let tc = http.client(os.net).with_roots(ca_pem())?
@@ -141,10 +149,89 @@ fn main(os: Os) ! {
       let t9 = os.clock.now()
       let tres = tc.send(http.new_request("GET", "https://${saddr}/ok").with_trace(on))
       let t10 = os.clock.now()
-      print(os, what, take(got), saddr, t9, t10)
-      os.stdio.println("  -> ok=${tres.is_ok()}")
+      print(out, what, take(got), saddr, t9, t10)
+      out.write("  -> ok=${tres.is_ok()}\n")
     }
     s.cancel()
+  }
+  Ok(out.freeze())
+}
+
+/// Whether an exchange in text that got a connection reports its request
+/// written after its response's first byte (a request without 100
+/// Continue). Go's writer goroutine records WroteHeaders and WroteRequest
+/// when it runs again after the write, so a starved CPU can put them after
+/// the response the write caused.
+fn out_of_order(text: Str) -> Bool {
+  var conn = false
+  var cont = false
+  var first = false
+  for l in (text + "end:\n").split("\n") {
+    if !l.starts_with(" ") {
+      // a new exchange
+      conn = false
+      cont = false
+      first = false
+      continue
+    }
+    if l.contains("GotConn") { conn = true }
+    if l.contains("Got100Continue") { cont = true }
+    if l.contains("GotFirstResponseByte") { first = true }
+    if conn && first && !cont && (l.contains("WroteHeaders") || l.contains("WroteRequest")) {
+      return true
+    }
+  }
+  false
+}
+
+/// How many exchanges in text dialed instead of reusing a connection.
+fn dials(text: Str) -> Int {
+  var n = 0
+  for l in text.split("\n") {
+    if l.contains("GotConn reused=false") {
+      n += 1
+    }
+  }
+  n
+}
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /ok", fn(_req) { http.text(200, "ok") })
+  r.handle("POST /echo", fn(req) { http.text(200, req.body.to_str() ?? "") })
+  r.handle("GET /redir", fn(req) { http.redirect(req, "/ok", 302) })
+  r.handle("GET /big", fn(_req) { http.text(200, "x".repeat(100000)) })
+  r.handle("GET /close", fn(_req) { http.text(200, "bye").with_header("Connection", "close") })
+  let got = Mutex[List[http.TraceEvent]].new([])
+  let on = fn(e: http.TraceEvent) uses sync { got.with(fn(var l: List[http.TraceEvent]) { l.push(e) }) }
+
+  // Go's net/http keeps a connection only when its writer reports the
+  // request written within 50 ms of the response
+  // (maxWriteWaitBeforeConnReuse), so a starved CPU can drop one, and the
+  // next exchange dials (task #151: 2 of 10 runs under load). Three
+  // exchanges dial by design (the first, after the closing response, and
+  // after the 100 Continue POST): a run with more runs again, up to 5
+  // times, and a pool that never keeps a connection still fails every time.
+  // So does a run whose writer goroutine recorded its request written
+  // after the response (out_of_order).
+  var text = plain(os, r, on, got)?
+  var tries = 1
+  while (dials(text) != 3 || out_of_order(text)) && tries < 5 {
+    text = plain(os, r, on, got)?
+    tries += 1
+  }
+  for l in text.trim_end_chars("\n").split("\n") {
+    os.stdio.println(l)
+  }
+
+  var more = rest(os, r, on, got)?
+  tries = 1
+  while out_of_order(more) && tries < 5 {
+    more = rest(os, r, on, got)?
+    tries += 1
+  }
+  for l in more.trim_end_chars("\n").split("\n") {
+    os.stdio.println(l)
   }
 }
 

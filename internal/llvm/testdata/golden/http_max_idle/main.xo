@@ -4,6 +4,11 @@
 // another's connection. Default (2): sequential requests reuse one
 // connection. -1: none is kept, so every request dials. 8: two rounds of
 // 8 concurrent requests reuse the first round's connections (at most 8).
+// Go's net/http keeps a connection only when its writer reports the
+// request written within 50 ms of the response (maxWriteWaitBeforeConnReuse),
+// so a starved CPU can drop one (task #151: 2 of 10 runs under load): a
+// phase whose count is off runs again, up to 5 times, and a pool that
+// never keeps a connection still fails every time.
 use std/http
 
 fn serve_conn(c: ServerConn) {
@@ -36,7 +41,8 @@ fn get(client: http.Client, url: Str) -> Bool {
   }
 }
 
-fn phase(os: Os, name: Str, client: http.Client, rounds: Int, width: Int) ! {
+/// The connections a phase's server accepted and the requests that failed.
+fn phase(os: Os, client: http.Client, rounds: Int, width: Int) -> (Int, Int) ! {
   let l = os.net.listen("127.0.0.1:0")?
   let url = "http://${l.addr()}/"
   let accepts = Atomic.new(0)
@@ -66,17 +72,28 @@ fn phase(os: Os, name: Str, client: http.Client, rounds: Int, width: Int) ! {
     }
     l.close()
   }
-  let n = accepts.get()
+  Ok((accepts.get(), fails.get()))
+}
+
+/// Runs a phase until its server accepted want(n) connections, at most 5
+/// times, and prints the last run.
+fn report(os: Os, name: Str, client: http.Client, rounds: Int, width: Int, want: fn(Int) -> Bool) ! {
+  var (n, f) = phase(os, client, rounds, width)?
+  var tries = 1
+  while (!want(n) || f > 0) && tries < 5 {
+    (n, f) = phase(os, client, rounds, width)?
+    tries += 1
+  }
   if width == 1 {
-    os.stdio.println("${name}: ${rounds} requests, ${n} connections, ${fails.get()} failed")
+    os.stdio.println("${name}: ${rounds} requests, ${n} connections, ${f} failed")
   } else {
-    os.stdio.println("${name}: ${rounds} rounds of ${width}, at most ${width} connections: ${n <= width}, ${fails.get()} failed")
+    os.stdio.println("${name}: ${rounds} rounds of ${width}, at most ${width} connections: ${n <= width}, ${f} failed")
   }
 }
 
 fn main(os: Os) ! {
   let c = http.client(os.net, timeout: 5s)
-  phase(os, "default", c, 4, 1)?
-  phase(os, "none", c.with_max_idle_per_host(-1), 4, 1)?
-  phase(os, "eight", c.with_max_idle_per_host(8), 2, 8)?
+  report(os, "default", c, 4, 1, fn(n: Int) -> Bool { n == 1 })?
+  report(os, "none", c.with_max_idle_per_host(-1), 4, 1, fn(n: Int) -> Bool { n == 4 })?
+  report(os, "eight", c.with_max_idle_per_host(8), 2, 8, fn(n: Int) -> Bool { n <= 8 })?
 }

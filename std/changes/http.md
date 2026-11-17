@@ -1,5 +1,26 @@
 # std/http changes
 
+## 2026-11-16: fix: a traced send on the Go backend delivers its WroteHeaders and WroteRequest
+
+- Kind: fix
+- Commit: this push
+- Found by: task #151: internal/llvm TestGoldenGoParity/http_client_trace failed in the 6 h tier on host 4 and passed alone
+- Go reference: net/http/httptrace (the hooks run on the connection's writer goroutine: http2 writeRequest, HTTP/1 writeLoop)
+- Test: internal/llvm TestGoParityUnderLoad (XO_TEST_GO_PARITY_LOAD=N, every CPU busy): http_client_trace differed in 5 of 20 and 6 of 20 runs on host 1 before, 0 of 30 after; http_max_idle 0 of 30
+- Timing: none
+
+On the Go backend `send` (and `open` at the head) could return before
+the connection's writer goroutine recorded WroteHeaders and
+WroteRequest, most often for an HTTP/2 request under CPU load, so the
+traced function missed them or got them with a later call. Delivery
+now waits (at most a second) for WroteRequest once a connection was
+got, as the native backends, which write the request on the calling
+task, always had it. The goldens http_client_trace and http_max_idle
+also run a part again (up to 5 times) when Go's pool timing dropped a
+connection (a request written more than 50 ms before its writer
+reported it is not reused) or the writer recorded its events after the
+response.
+
 ## 2026-11-16: fix: http.server on FakeNet serves raw connections
 
 - Kind: fix
