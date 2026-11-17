@@ -956,6 +956,21 @@ pub fn sink_end(s: rthttp.Sink) -> Bool {
   http1.stream_end(h, ld(k, SK_STATUS), ld(k, SK_STATE), p, n, trl)
 }
 
+/// Sets header name (canonical) to value on stream sink s's response
+/// while its head has not gone out (decision 0699, BodyWriter.set_header):
+/// the connection's header, which the head is made from at the first emit
+/// (http1.emit, h2srv.xo head_queue) or at the end; false once it went
+/// out, and on a buffer sink (collect keeps its head itself).
+pub fn sink_set_header(s: rthttp.Sink, name: Str, value: Str) -> Bool {
+  let k = rt.obj_addr(s)
+  // a byte written, even still buffered, fixes the head (Go's first Write)
+  if ld(k, SK_CONN) == 0 || ld(k, SK_STARTED) != 0 || ld(k, SK_FAILED) != 0 || ld(k, SK_N) != 0 {
+    return false
+  }
+  http1.header_set(hconn.handle(ld(k, SK_HC)), name, value)
+  true
+}
+
 /// Adds trailer name: value to stream sink s (decision 0433), sent after
 /// the body when the response is chunked (HTTP/1.1) or on HTTP/2; name
 /// is canonical (http1.trailer_key) and value has no line break.

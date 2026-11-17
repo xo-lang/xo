@@ -27,6 +27,22 @@ func (r Http_Response) M_with_full_duplex(_ *Task) Http_Response {
 	return r
 }
 
+// M_with_late_head is `resp.with_late_head()` (decision 0699): full duplex
+// with the head left to the first write or flush (bodyWriter.fdl).
+func (r Http_Response) M_with_late_head(_ *Task) Http_Response {
+	inner := r.XStream
+	if inner == nil {
+		return r
+	}
+	r.XStream = func(tk *Task, w Http_BodyWriter) Result[Unit, IoErr] {
+		if w.w.fdl != nil {
+			w.w.fdl()
+		}
+		return inner(tk, w)
+	}
+	return r
+}
+
 // Http_PipeWriter is `http.PipeWriter`: the writing end of http.pipe.
 type Http_PipeWriter struct {
 	w *io.PipeWriter

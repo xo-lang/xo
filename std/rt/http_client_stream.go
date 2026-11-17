@@ -373,10 +373,16 @@ func openMem(tk *Task, c Http_Client, fd fakeDispatcher, req Http_Request, rawUR
 			Chan_send(tk, headCh, memHead{failed: true, err: r.E})
 		} else {
 			resp := r.V
-			Chan_send(tk, headCh, memHead{resp: resp})
 			if resp.XStream != nil {
-				resp.XStream(tk, Http_BodyWriter{w: &bodyWriter{w: memChunkWriter{tk: tk, ch: chunks, closed: closed}}})
-			} else if len(resp.F_body) > 0 {
+				// the head at the first write or flush, or the end, so the
+				// function may set headers (decision 0699); a full duplex
+				// stream's at once (fd), its client may wait for it
+				hk := keptHead(tk, &resp)
+				hk.send = func(h Http_Response) { Chan_send(tk, headCh, memHead{resp: h}) }
+				stream := resp.XStream
+				stream(tk, Http_BodyWriter{w: &bodyWriter{w: memChunkWriter{tk: tk, ch: chunks, closed: closed}, sh: hk.set, start: hk.out, fd: hk.out}})
+				hk.out()
+			} else if Chan_send(tk, headCh, memHead{resp: resp}); len(resp.F_body) > 0 {
 				Chan_send(tk, chunks, resp.F_body)
 			}
 		}

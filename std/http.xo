@@ -447,6 +447,10 @@ fn (w: BodyWriter) flush() -> () ! IoErr
 /// Host, Trailer, ...) is dropped. Not sent on a response with a
 /// Content-Length.
 fn (w: BodyWriter) set_trailer(name: Str, value: Str)
+/// Sets response header name to value while the head has not gone out (Go's `w.Header().Set` before the first
+/// Write or Flush, decision 0699): before the first write or flush, or the function's end; false once the head is
+/// sent (the header is not sent then). A full duplex response sends its head at once unless `with_late_head`.
+fn (w: BodyWriter) set_header(name: Str, value: Str) -> Bool
 /// The response declaring trailer names in its `Trailer` header (HTTP/1.1;
 /// decision 0433); set_trailer sends a name whether declared or not.
 fn (r: Response) with_trailer_names(names: List[Str]) -> Response
@@ -457,6 +461,10 @@ fn (r: Response) with_trailer_names(names: List[Str]) -> Response
 /// sends the body after its own timeout. HTTP/1.1 only needs it; an
 /// HTTP/2 stream always is.
 fn (r: Response) with_full_duplex() -> Response
+/// A full duplex response whose head waits for the first write or flush, or the function's end, as Go's
+/// EnableFullDuplex (decision 0699), so `BodyWriter.set_header` can still add to it: for a protocol whose client
+/// sends without waiting for the head (gRPC).
+fn (r: Response) with_late_head() -> Response
 /// A body written by one task while another sends it (Go's io.Pipe,
 /// decision 0433): the reader goes to Request.with_body_reader, each
 /// write waits until the request has taken its bytes.

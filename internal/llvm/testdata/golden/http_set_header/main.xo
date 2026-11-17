@@ -1,0 +1,115 @@
+// A streamed response's headers set from its function (decision 0699):
+// BodyWriter.set_header takes a header until the head goes out, at the
+// first write or flush or when the function returns, as a net/http
+// handler's w.Header() until its first Write; then it answers false. A
+// full duplex response sends its head at once (with_full_duplex), one
+// made with with_late_head leaves it to the first write. A value with CR
+// or LF is refused. Over HTTP/1.1, HTTP/2 and Router.call (the response
+// collected). The Go backend (net/http) and the native one must agree.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /write", fn(_req) {
+    http.stream(200, fn(w) {
+      let a = w.set_header("x-a", "1")
+      let bad = w.set_header("x-bad", "v\r\nx-evil: 1")
+      w.write("a=${a} bad=${bad}".bytes())?
+      let b = w.set_header("x-b", "2")
+      w.write(" b=${b}".bytes())?
+    })
+  })
+  r.handle("GET /flush", fn(_req) {
+    http.stream(200, fn(w) {
+      let c = w.set_header("X-C", "3")
+      w.flush()?
+      let d = w.set_header("x-d", "4")
+      w.write("c=${c} d=${d}".bytes())?
+    })
+  })
+  r.handle("GET /nobody", fn(_req) {
+    http.stream(204, fn(w) {
+      let _e = w.set_header("x-e", "5")
+    })
+  })
+  r.handle("GET /replace", fn(_req) {
+    http.stream(200, fn(w) {
+      let f = w.set_header("content-type", "text/x-late")
+      w.write("f=${f}".bytes())?
+    }).with_header("content-type", "text/plain")
+  })
+  r.handle_stream("POST /duplex", fn(_req, b) {
+    http.stream(200, fn(w) {
+      let g = w.set_header("x-g", "7")
+      let data = b.read_all()?
+      w.write("g=${g} ${data.len()}".bytes())?
+    }).with_full_duplex()
+  })
+  r.handle_stream("POST /late", fn(_req, b) {
+    http.stream(200, fn(w) {
+      let data = b.read_all()?
+      let h = w.set_header("x-h", "8")
+      w.write("h=${h} ${data.len()}".bytes())?
+    }).with_late_head()
+  })
+  r
+}
+
+fn hs(h: http.ResponseHead) -> Str {
+  var parts: List[Str] = []
+  for k in ["X-A", "X-Bad", "X-Evil", "X-B", "X-C", "X-D", "X-E", "Content-Type", "X-G", "X-H"] {
+    if let Some(v) = h.headers.get(k) {
+      parts.push("${k}=${v}")
+    }
+  }
+  parts.join(" ")
+}
+
+fn get(os: Os, c: http.Client, label: Str, method: Str, url: Str) {
+  let body = if method == "POST" { "payload".bytes() } else { b"" }
+  match c.open(http.new_request(method, url, {}, body)) {
+    Ok(s) => {
+      match s.read_all() {
+        Ok(b) => os.stdio.println("${label}: ${s.head().status} [${hs(s.head())}] ${b.to_str() ?? "?"}")
+        Err(e) => os.stdio.println("${label}: ${e}")
+      }
+    }
+    Err(e) => os.stdio.println("${label}: ${e}")
+  }
+}
+
+fn run(os: Os, c: http.Client, proto: Str, base: Str) {
+  for p in ["write", "flush", "nobody", "replace"] {
+    get(os, c, "${proto} ${p}", "GET", "${base}/${p}")
+  }
+  get(os, c, "${proto} duplex", "POST", "${base}/duplex")
+  get(os, c, "${proto} late", "POST", "${base}/late")
+}
+
+fn main(os: Os) {
+  let r = routes()
+  for p in ["write", "flush", "replace"] {
+    let resp = r.call(http.new_request("GET", "http://x/${p}"))
+    var parts: List[Str] = []
+    for k in ["X-A", "X-B", "X-C", "X-D", "Content-Type"] {
+      if let Some(v) = resp.header(k) {
+        parts.push("${k}=${v}")
+      }
+    }
+    os.stdio.println("call ${p}: ${resp.status} [${parts.join(" ")}] ${resp.text() ?? "?"}")
+  }
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes()).with_protocols(#{http.Protocol.Http1, http.Protocol.UnencryptedHttp2})
+      scope s {
+        s.spawn_background(fn() {
+          srv.serve().ignore_err("the program ends the server")
+        })
+        run(os, http.client(os.net, timeout: 60s), "h1", "http://${srv.addr()}")
+        run(os, http.client(os.net, timeout: 60s).with_protocols(#{http.Protocol.UnencryptedHttp2}), "h2", "http://${srv.addr()}")
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

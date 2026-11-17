@@ -2045,8 +2045,10 @@ pub fn file_server(fs: Fs, strip: Str = "") -> fn(Request) -> Response uses fs.r
 fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (w: BodyWriter) set_trailer(name: Str, value: Str)   // a trailer after the body (decision 0433)
+fn (w: BodyWriter) set_header(name: Str, value: Str) -> Bool   // a header while the head has not gone out (decision 0699): it goes at the first write or flush, or when the function returns; false after, or for a value with CR or LF
 fn (r: Response) with_trailer_names(names: List[Str]) -> Response   // the `Trailer` header (HTTP/1.1)
-fn (r: Response) with_full_duplex() -> Response   // the stream may read the request body while it writes (decision 0433)
+fn (r: Response) with_full_duplex() -> Response   // the stream may read the request body while it writes (decision 0433); the head goes at once
+fn (r: Response) with_late_head() -> Response   // full duplex, the head left to the first write or flush, so set_header works (decision 0699)
 pub fn pipe() -> (PipeWriter, BodyReader)          // a body one task writes while the client sends it (Go's io.Pipe)
 struct PipeWriter {}
 fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr   // held before the reader's first read (up to 64 KiB), then waits for the reader; Io("io: read/write on closed pipe") after close
@@ -10932,6 +10934,8 @@ fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server
 fn (r: Recv) next() -> Bytes? ! Status
 fn (s: Send) send(msg: Bytes) -> () ! Status
 fn (s: Send) set_trailer(name: Str, value: Str)
+fn (s: Send) set_header(name: Str, value: Str) -> () ! Status   // grpc-go SetHeader (decision 0699): Internal "transport: SendHeader called multiple times" once the head went out
+fn (s: Send) send_header(md: Map[Str, Str] = {}) -> () ! Status   // grpc-go SendHeader: md added, the head sent now
 // the client
 fn client(c: http.Client, base: Str) -> Client      // base: http(s)://host:port, or a target name: dns:///host:port, passthrough:///host:port, host:port
 fn (c: Client) target() -> Str                      // grpc-go's ClientConn.Target: as given

@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+call write: 200 [X-A=1] a=true bad=false b=false
+call flush: 200 [X-C=3] c=true d=false
+call replace: 200 [Content-Type=text/x-late] f=true
+h1 write: 200 [X-A=1 Content-Type=text/plain; charset=utf-8] a=true bad=false b=false
+h1 flush: 200 [X-C=3] c=true d=false
+h1 nobody: 204 [X-E=5] 
+h1 replace: 200 [Content-Type=text/x-late] f=true
+h1 duplex: 200 [] g=false 7
+h1 late: 200 [Content-Type=text/plain; charset=utf-8 X-H=8] h=true 7
+h2 write: 200 [X-A=1 Content-Type=text/plain; charset=utf-8] a=true bad=false b=false
+h2 flush: 200 [X-C=3] c=true d=false
+h2 nobody: 204 [X-E=5] 
+h2 replace: 200 [Content-Type=text/x-late] f=true
+h2 duplex: 200 [] g=false 7
+h2 late: 200 [Content-Type=text/plain; charset=utf-8 X-H=8] h=true 7
+done
+--- stderr

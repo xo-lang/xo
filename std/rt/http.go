@@ -1177,7 +1177,8 @@ func (r Http_Response) collect(tk *Task) Http_Response {
 		return r
 	}
 	var buf bytes.Buffer
-	bw := Http_BodyWriter{w: &bodyWriter{w: &buf}}
+	hk := keptHead(tk, &r)
+	bw := Http_BodyWriter{w: &bodyWriter{w: &buf, sh: hk.set, start: hk.out}}
 	r.XStream(tk, bw)
 	r.XStream = nil
 	r.F_body = Bytes(buf.String())
@@ -1197,6 +1198,21 @@ type bodyWriter struct {
 	// fd asks the server for full duplex and sends the head (decision
 	// 0433; with_full_duplex), nil when collected
 	fd func()
+	// fdl asks for full duplex and leaves the head to the first write or
+	// flush (decision 0699; with_late_head)
+	fdl func()
+	// sh sets a response header while the head has not gone out (decision
+	// 0699; set_header), false after; start sends the head (once), at the
+	// first write or flush. Either may be nil.
+	sh    func(k, v string) bool
+	start func()
+	// out: the head went out (headOut ran); pend: trailers set before it,
+	// applied right after it, so net/http, which copies w.Header() at
+	// WriteHeader, sees them after the head as before decision 0699 (a
+	// trailer of a response with no body is then dropped, as the native
+	// server drops it; http_trailers' want_go.txt)
+	out  bool
+	pend [][2]string
 	// h1: an HTTP/1.1 server's response. net/http frames a body that ends
 	// with the handler within its buffer with a Content-Length, from the
 	// headers it had at WriteHeader, and so drops a trailer set later;
@@ -1217,6 +1233,7 @@ func (w *bodyWriter) trailerFlush() {
 		w.flushNext = true
 		return
 	}
+	w.headOut()
 	w.fl.Flush()
 	w.flushed = true
 }
@@ -1228,6 +1245,7 @@ func (w Http_BodyWriter) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
 	}
 	w.w.mu.Lock()
 	defer w.w.mu.Unlock()
+	w.w.headOut()
 	if _, err := w.w.w.Write([]byte(data)); err != nil {
 		return Err[Unit](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
 	}
@@ -1245,13 +1263,81 @@ func (w Http_BodyWriter) M_flush(tk *Task) Result[Unit, IoErr] {
 	if tk.Canceled() {
 		return Err[Unit](IoErr{Tag: 3})
 	}
+	w.w.mu.Lock()
+	w.w.headOut()
 	if w.w.fl != nil {
-		w.w.mu.Lock()
 		w.w.flushed = true
 		w.w.mu.Unlock()
 		w.w.fl.Flush()
+	} else {
+		w.w.mu.Unlock()
 	}
 	return Ok[Unit, IoErr](Unit{})
+}
+
+// headOut sends the head if it has not gone out (start), then the
+// trailers set before it; w.mu is held.
+func (w *bodyWriter) headOut() {
+	if w.out {
+		return
+	}
+	w.out = true
+	if w.start != nil {
+		w.start()
+	}
+	p := w.pend
+	w.pend = nil
+	for _, kv := range p {
+		if w.tr != nil {
+			w.tr(kv[0], kv[1])
+			w.trailerFlush()
+		}
+	}
+}
+
+// M_set_header is `w.set_header(name, value)` (decision 0699): the header
+// while the head has not gone out.
+func (w Http_BodyWriter) M_set_header(_ *Task, name, value string) bool {
+	if w.w.sh == nil || strings.ContainsAny(value, "\r\n") {
+		return false
+	}
+	w.w.mu.Lock()
+	defer w.w.mu.Unlock()
+	return w.w.sh(textproto.CanonicalMIMEHeaderKey(name), value)
+}
+
+// headKeep is the head of a response whose stream runs into a buffer or a
+// FakeNet exchange: set_header changes r's headers until out runs.
+type headKeep struct {
+	tk   *Task
+	r    *Http_Response
+	sent bool
+	// send: the head goes to the client (a FakeNet exchange), nil when collected
+	send func(Http_Response)
+}
+
+func keptHead(tk *Task, r *Http_Response) *headKeep {
+	r.F_headers.XoMark() // a copy (decision 0335)
+	return &headKeep{tk: tk, r: r}
+}
+
+func (h *headKeep) set(k, v string) bool {
+	if h.sent {
+		return false
+	}
+	Map_put(h.tk, &h.r.F_headers, k, v)
+	h.r.XFields = withoutField(h.r.XFields, k)
+	return true
+}
+
+func (h *headKeep) out() {
+	if h.sent {
+		return
+	}
+	h.sent = true
+	if h.send != nil {
+		h.send(*h.r)
+	}
 }
 
 // ---------------------------------------------------------------------------

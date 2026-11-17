@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+x-early=1 x-sent=2 x-late=-
+again: rpc error: code = Internal desc = transport: SendHeader called multiple times
+late: rpc error: code = Internal desc = transport: SendHeader called multiple times
+done
+--- stderr

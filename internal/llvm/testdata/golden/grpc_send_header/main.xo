@@ -1,0 +1,55 @@
+// grpc-go's SetHeader and SendHeader on a stream (std/grpc Send.set_header and send_header, decision 0699): headers set
+// before the head goes out reach the client's ClientCall.header, a second send_header is Internal, and a set_header
+// after the head is refused. TestGrpcInterop checks the same against grpc-go.
+use std/grpc
+use std/http
+
+fn main(os: Os) {
+  var srv = grpc.server(os.clock)
+  srv.stream("/t.S/Head", fn(_call, recv, send) -> () ! grpc.Status {
+    let _req = recv.next()?
+    send.set_header("x-early", "1")?
+    send.send_header({"x-sent": "2"})?
+    let again = match send.send_header() {
+      Ok(_) => "ok"
+      Err(e) => e.display()
+    }
+    let late = match send.set_header("x-late", "3") {
+      Ok(_) => "ok"
+      Err(e) => e.display()
+    }
+    send.send("again: ${again}".bytes())?
+    send.send("late: ${late}".bytes())?
+  })
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+      scope s {
+        s.spawn_background(fn() {
+          hs.serve().ignore_err("the program ends the server")
+        })
+        let c = grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
+        let res = c.call("/t.S/Head", {}, None, fn(cc) -> List[Str] ! grpc.Status uses net.dial {
+          cc.send(b"")?
+          cc.close_send()
+          let h = cc.header()?
+          var lines = ["x-early=${h.get("x-early") ?? "-"} x-sent=${h.get("x-sent") ?? "-"} x-late=${h.get("x-late") ?? "-"}"]
+          while let Some(m) = cc.recv()? {
+            lines.push(m.to_str() ?? "?")
+          }
+          Ok(lines)
+        })
+        match res {
+          Ok(lines) => {
+            for l in lines {
+              os.stdio.println(l)
+            }
+          }
+          Err(e) => os.stdio.println("call: ${e.display()}")
+        }
+      }
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+  os.stdio.println("done")
+}

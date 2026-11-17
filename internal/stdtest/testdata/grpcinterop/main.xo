@@ -12,6 +12,21 @@ fn handlers(clock: Clock[clock]) -> grpc.Server {
     }
     if call.metadata.get("x-md") == Some("1") {
       send.set_trailer("x-t", "tv")
+      // header metadata set, then sent with more; after that set_header and send_header fail
+      var late: List[Str] = []
+      if let Err(e) = send.set_header("x-h", "hv") {
+        late.push("set ${e.display()}")
+      }
+      if let Err(e) = send.send_header({"x-s": "sv"}) {
+        late.push("send ${e.display()}")
+      }
+      if let Err(e) = send.set_header("x-z", "zv") {
+        late.push("set2 ${e.display()}")
+      }
+      if let Err(e) = send.send_header() {
+        late.push("send2 ${e.display()}")
+      }
+      send.set_trailer("x-late", late.join("; "))
     }
     send.send(req + (call.metadata.get("x-who") ?? "").bytes())?
   })

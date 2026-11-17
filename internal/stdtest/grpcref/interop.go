@@ -59,6 +59,21 @@ func interopHandler(_ any, s grpc.ServerStream) error {
 		}
 		if first("x-md") == "1" {
 			s.SetTrailer(metadata.Pairs("x-t", "tv"))
+			// header metadata set, then sent with more; after that SetHeader and SendHeader fail
+			late := []string{}
+			if err := s.SetHeader(metadata.Pairs("x-h", "hv")); err != nil {
+				late = append(late, "set "+err.Error())
+			}
+			if err := s.SendHeader(metadata.Pairs("x-s", "sv")); err != nil {
+				late = append(late, "send "+err.Error())
+			}
+			if err := s.SetHeader(metadata.Pairs("x-z", "zv")); err != nil {
+				late = append(late, "set2 "+err.Error())
+			}
+			if err := s.SendHeader(nil); err != nil {
+				late = append(late, "send2 "+err.Error())
+			}
+			s.SetTrailer(metadata.Pairs("x-late", strings.Join(late, "; ")))
 		}
 		return sendMsg(s, append(req, first("x-who")...))
 	case "/t.S/Big":

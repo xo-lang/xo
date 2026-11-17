@@ -213,6 +213,9 @@ struct Response {
   /// and keeps the request body readable while the stream writes (Xo
   /// Lang 3's http1w part reads it). Hidden.
   duplex: Bool = false
+  /// with_late_head (decision 0699): a full duplex head waits for the
+  /// first write or flush. Hidden.
+  late: Bool = false
 }
 
 /// The native stream number of r (0: none); a wasm stream's function
@@ -325,6 +328,9 @@ struct BodyWriter {
   wt: Mutex[List[Str]]? = None
   /// wasm: the component's response, written as it is made (serve_component)
   wo: Mutex[WasiOut]? = None
+  /// the head while the writer keeps it (collect, a FakeNet exchange,
+  /// wasm): set_header changes it until the first write or flush
+  hp: Mutex[HeadPend]? = None
   /// a FakeNet duplex exchange (open_mem): the chunks go to the client's
   /// stream as they are written
   wm: MemOut? = None
@@ -334,6 +340,17 @@ struct BodyWriter {
 /// (Client.open under FakeNet, Go's httptest-style duplex): the handler runs
 /// in a task of the test, the head and the body chunks come through channels
 /// (only channels and tasks, so the scheduler's record and replay hold).
+/// A head not sent yet (decision 0699, BodyWriter.set_header) where the
+/// writer keeps it: a collected stream's headers, and a FakeNet exchange's
+/// head (sent through m at the first write or flush, or the end).
+struct HeadPend {
+  sent: Bool
+  status: Int
+  headers: Map[Str, Str]
+  fields: List[Str]
+  m: MemOut? = None
+}
+
 struct MemOut {
   head: Chan[MemHead]
   chunks: Chan[Bytes]
@@ -2702,17 +2719,19 @@ fn collect(r0: http.Response) -> http.Response {
       if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](a) {
         let m = Mutex[Bytes].new(b"")
         let t = Mutex[List[Str]].new([])
-        f(BodyWriter{wb: Some(m), wt: Some(t)}).ignore_err("a failed stream ends its body")
+        let hp = Mutex[HeadPend].new(HeadPend{sent: false, status: r.status, headers: r.headers, fields: r.fields})
+        f(BodyWriter{wb: Some(m), wt: Some(t), hp: Some(hp)}).ignore_err("a failed stream ends its body")
+        let head = hp.with(fn(var x) { x })
         // the trailers as Go's TrailerPrefix headers (net/http's
         // ResponseRecorder keeps them apart; Router.call has only headers)
-        var h = r.headers
+        var h = head.headers
         let tr = t.with(fn(var l) { l })
         var i = 0
         while i + 1 < tr.len() {
           h["${TRAILER_PREFIX}${tr[i]}"] = tr[i + 1]
           i += 2
         }
-        return rt.cast[Response, http.Response](r with {headers: h, body: m.with(fn(var b) { b }), stream: None})
+        return rt.cast[Response, http.Response](r with {headers: h, fields: head.fields, body: m.with(fn(var b) { b }), stream: None})
       }
     }
     return r0
@@ -2721,15 +2740,18 @@ fn collect(r0: http.Response) -> http.Response {
     return r0
   }
   var body = "".bytes()
+  var head = HeadPend{sent: false, status: r.status, headers: r.headers, fields: r.fields}
   let fs = hserve.stream_get(sid(r), false)
   if !fs.is_empty() {
     if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
       let s = hserve.sink_buf()
-      f(BodyWriter{s: Some(s)}).ignore_err("a stream that fails ends its body there, as std/rt's collect")
+      let hp = Mutex[HeadPend].new(head)
+      f(BodyWriter{s: Some(s), hp: Some(hp)}).ignore_err("a stream that fails ends its body there, as std/rt's collect")
+      head = hp.with(fn(var x) { x })
       body = hserve.sink_take(s)
     }
   }
-  rt.cast[Response, http.Response](r with {body: body, stream: None})
+  rt.cast[Response, http.Response](r with {headers: head.headers, fields: head.fields, body: body, stream: None})
 }
 
 /// A trailer after the body (decision 0433): the name canonical, Go's
@@ -2762,6 +2784,60 @@ fn (w: BodyWriter) set_trailer(name: Str, value: Str) {
   }
 }
 
+/// Response header name set to value until the head goes out (decision
+/// 0699): kept by the writer (collect, a FakeNet exchange), by a wasm
+/// component's response, or in the connection's header (hserve's sink).
+fn (w: BodyWriter) set_header(name: Str, value: Str) -> Bool {
+  let k = http1.canonical_key(name)
+  if value.contains("\n") || value.contains("\r") {
+    return false
+  }
+  if let Some(hp) = w.hp {
+    return hp.with(fn(var x) -> Bool {
+      if x.sent {
+        return false
+      }
+      x.headers.put(k, value)
+      x.fields = without_field(x.fields, k)
+      true
+    })
+  }
+  if wasiworld.component() {
+    if let Some(o) = w.wo {
+      return o.with(fn(var x) -> Bool {
+        if x.sent {
+          return false
+        }
+        var h = x.r.headers
+        h.put(k, value)
+        x.r = x.r with {headers: h, fields: without_field(x.r.fields, k)}
+        true
+      })
+    }
+    return false
+  }
+  if w.wm is Some(_) {
+    // a FakeNet exchange whose head went out at once
+    return false
+  }
+  hserve.sink_set_header(w.sink(), k, value)
+}
+
+/// The writer's kept head is out: a FakeNet exchange's goes to the client
+/// now (its first write or flush, or the function's end).
+fn (w: BodyWriter) head_out() {
+  if let Some(hp) = w.hp {
+    hp.with(fn(var x) {
+      if !x.sent {
+        x.sent = true
+        if let Some(m) = x.m {
+          m.head.send(MemHead{status: x.status, headers: x.headers, err: None})
+        }
+      }
+    })
+  }
+}
+
 /// The sink of a writer off wasm.
 fn (w: BodyWriter) sink() -> rthttp.Sink { w.s ?? fault("a BodyWriter off wasm has a sink") }
 
@@ -2781,6 +2857,7 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
 /// Bytes past the compressor to where w writes: the sink, or on wasm the
 /// buffer or the component's response; false when the connection closed.
 fn (w: BodyWriter) put(out: Bytes) -> Bool {
+  w.head_out()
   if wasiworld.component() {
     if let Some(m) = w.wb {
       m.with(fn(var b) { b = b + out })
@@ -2810,6 +2887,7 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
+  w.head_out()
   if w.wm is Some(_) {
     return Ok(())
   }
@@ -3599,8 +3677,9 @@ fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   if id != 0 {
     // a streamed body goes out as f makes it (std/rt's serve)
     let s = hserve.sink_conn(hc, resp.status, resp.headers.get("Trailer") != None)
-    if duplex {
+    if duplex && !resp.late {
       // the head now: the client may wait for it before it sends more
+      // (with_late_head, decision 0699: at the first write or flush)
       let _ = hserve.sink_flush(s)
     }
     let fs = hserve.stream_get(id, true)
@@ -4041,6 +4120,13 @@ fn traceevent_name(e: http.TraceEvent) -> Str {
 
 /// with_full_duplex (decision 0433): the response marked; HTTP/2 streams
 /// are full duplex already.
+/// with_late_head (decision 0699): full duplex, its head at the first
+/// write or flush.
+fn response_with_late_head(r: http.Response) -> http.Response {
+  let n = rt.cast[http.Response, Response](response_with_full_duplex(r))
+  rt.cast[Response, http.Response](n with {late: true})
+}
+
 fn response_with_full_duplex(r: http.Response) -> http.Response {
   let n = rt.cast[http.Response, Response](r)
   rt.cast[Response, http.Response](n with {duplex: true})
@@ -5112,16 +5198,30 @@ fn mem_serve(req: Request, raw: Str, m: MemOut, roots: rthttp.Roots) {
   match send_mem(req, raw, roots, true) {
     Ok(resp0) => {
       let resp = rt.cast[http.Response, Response](resp0)
-      m.head.send(MemHead{status: resp.status, headers: resp.headers, err: None})
       var wrote = false
+      var fs: List[rt.Any] = []
       if sid(resp) != 0 {
-        let fs = hserve.stream_get(sid(resp), false)
-        if !fs.is_empty() {
-          if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
-            wrote = true
-            f(BodyWriter{wm: Some(m)}).ignore_err("a stream that fails ends its body there, as collect")
-          }
+        fs = hserve.stream_get(sid(resp), false)
+      }
+      var f0: List[fn(BodyWriter) -> () ! IoErr] = []
+      if !fs.is_empty() {
+        if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
+          f0.push(f)
         }
+      }
+      if f0.is_empty() || (resp.duplex && !resp.late) {
+        // the head at once (a full duplex stream's client may wait for it)
+        m.head.send(MemHead{status: resp.status, headers: resp.headers, err: None})
+        if !f0.is_empty() {
+          wrote = true
+          f0[0](BodyWriter{wm: Some(m)}).ignore_err("a stream that fails ends its body there, as collect")
+        }
+      } else {
+        // the head at the first write or flush, or the end (decision 0699)
+        wrote = true
+        let w = BodyWriter{wm: Some(m), hp: Some(Mutex[HeadPend].new(HeadPend{sent: false, status: resp.status, headers: resp.headers, fields: resp.fields, m: Some(m)}))}
+        f0[0](w).ignore_err("a stream that fails ends its body there, as collect")
+        w.head_out()
       }
       if !wrote && !resp.body.is_empty() {
         select {

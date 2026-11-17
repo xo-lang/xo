@@ -20,6 +20,7 @@
 cmd_inherit # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.exec)
 conn_close_write # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 copy_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_set_header # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 log_sinks # wasip1 # network: the network (`rt.net_status`, log.conn_sink's connection): WASI preview1 has no sockets
 metrics_client_trace # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_dialer # wasip1 # network: WASI preview1 has no sockets
@@ -134,6 +135,7 @@ grpc_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has 
 grpcreflect_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpc_hooks # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpchealth_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+grpc_send_header # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_duplex_h2tls # wasip1 # network: the network
 http_ipv6_url # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 host_usage # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)

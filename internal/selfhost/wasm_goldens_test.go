@@ -139,6 +139,7 @@ var componentGoldens = []struct {
 // a connection, TLS, HTTP/2 or a raw socket, which the wasi:http handler has
 // no way to reach or leaves to the host.
 var componentGoldensNotRun = map[string]string{
+	"http_set_header":            "it listens on a socket of its own for its HTTP/1.1 and HTTP/2 clients to call (and drives Router.call from main), which a component cannot; set_header itself is plain std/http",
 	"http_cross_origin":          "it drives the router in process with Router.call and prints each response from main; a component only serves requests (CrossOrigin is plain std/http)",
 	"http_timeout_handler":       "it drives the router in process with Router.call and prints each response from main; a component only serves requests (the middleware is plain std/http on task.with_timeout)",
 	"http_escaped_path":          "it listens on a socket of its own for new_request's client to call, which a component cannot; TestWasmComponentClient runs the client",

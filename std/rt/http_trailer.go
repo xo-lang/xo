@@ -70,6 +70,11 @@ func (w Http_BodyWriter) M_set_trailer(_ *Task, name, value string) {
 	}
 	w.w.mu.Lock()
 	defer w.w.mu.Unlock()
+	if w.w.start != nil && !w.w.out {
+		// before the head (decision 0699's late head): kept until it goes out
+		w.w.pend = append(w.w.pend, [2]string{k, value})
+		return
+	}
 	if w.w.tr != nil {
 		w.w.tr(k, value)
 		w.w.trailerFlush()
@@ -142,9 +147,9 @@ type trailerSrc struct {
 	src   io.Reader
 	names []string // declared in the request's head
 	f     func(*Task) Result[Map[string, string], Never]
-	tk   *Task
-	hdr  map[string][]string // the request's Trailer, set by Client.do
-	done bool
+	tk    *Task
+	hdr   map[string][]string // the request's Trailer, set by Client.do
+	done  bool
 }
 
 // Close closes the body under the trailers (bodyReaderSrc.Close).

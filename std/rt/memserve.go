@@ -129,7 +129,8 @@ func serveRawMem(tk *Task, e *memEnd, r Http_Router) {
 		out := resp.F_body
 		if resp.XStream != nil {
 			var buf bytes.Buffer
-			resp.XStream(tk, Http_BodyWriter{w: &bodyWriter{w: &buf}})
+			hk := keptHead(tk, &resp)
+			resp.XStream(tk, Http_BodyWriter{w: &bodyWriter{w: &buf, sh: hk.set, start: hk.out}})
 			out = Bytes(buf.Bytes())
 		}
 		h := http.Header{}

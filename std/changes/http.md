@@ -24,6 +24,19 @@ but a second WINDOW_UPDATE read in the same batch found the reset stream, took i
 pushed past the limit, and ended the whole connection with GOAWAY FLOW_CONTROL_ERROR. A stream the server reset now
 ignores the frames still in flight for it.
 
+## 2026-11-17: feature: headers set from a streamed response's function, and a full duplex head sent late
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (decision 0699: grpc-go's SetHeader and SendHeader)
+- Go reference: Go 1.26.11 net/http (w.Header() until the first Write or Flush; ResponseController.EnableFullDuplex sends nothing)
+- Test: golden http_set_header over HTTP/1.1, HTTP/2 and Router.call; the Go backend, native and LLVM print the same
+- Timing: none (one check per write)
+
+`BodyWriter.set_header(name, value)` sets a header until the head goes out (the first write or flush, or the
+function's return) and answers false after. `Response.with_late_head()` is `with_full_duplex` with the head left
+to the first write or flush; `with_full_duplex` still sends it at once.
+
 ## 2026-11-17: fix: a native server's memory no longer grows with each streamed response
 
 - Kind: fix

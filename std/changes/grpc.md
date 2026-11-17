@@ -71,6 +71,19 @@
 - Timing: none (registration only; a call's path is unchanged)
 - Shipped in: not yet released
 
+## 2026-11-17: feature: response header metadata from a stream handler (SetHeader, SendHeader)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #89 (decision 0699)
+- Go reference: grpc-go v1.79.2 grpc.SetHeader, grpc.SendHeader (ErrIllegalHeaderWrite after the head)
+- Test: TestGrpcInterop's md line: a handler sets x-h, sends x-s, then both calls fail with grpc-go's Internal text, Xo and grpc-go crossed as client and server
+- Timing: none
+
+`Send.set_header(name, value)` adds header metadata until the first message, `send_header` or the status;
+`Send.send_header(md)` sends the head now. After that both are `Internal` "transport: SendHeader called multiple
+times". Calls are served with `http.Response.with_late_head`.
+
 ## 2026-11-17: fix: a compressed message above the receive limit is ResourceExhausted, as grpc-go
 
 - Kind: fix

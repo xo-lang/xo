@@ -317,6 +317,47 @@ pub struct Send {
   pub gzip: Bool = false
   /// the server's send limit (Server.with_max_send)
   pub max_send: Int = 2147483647
+  /// whether the response head went out (grpc-go's isHeaderSent): send_header, or the first message
+  pub head_sent: Mutex[Bool] = Mutex.new(false)
+}
+
+/// grpc-go's ErrIllegalHeaderWrite: header metadata after the head went out.
+fn illegal_header() -> Status { status_new(Code.Internal, "transport: SendHeader called multiple times") }
+
+/// Adds header metadata to the response head (grpc-go's grpc.SetHeader): sent with the first message, at
+/// `send_header`, or with the status; Internal "transport: SendHeader called multiple times" once the head went out.
+/// The name is made lower case; a `-bin` value is sent as given (encode it with `bin_encode`).
+pub fn (s: Send) set_header(name: Str, value: Str) -> () ! Status {
+  let ok = s.head_sent.with(fn(var sent) -> Bool {
+    !sent && s.w.set_header(name.to_lower(), value)
+  })
+  if !ok {
+    return Err(illegal_header())
+  }
+}
+
+/// Sends the response head now with md added (grpc-go's grpc.SendHeader); a second call, or one after a message,
+/// is Internal "transport: SendHeader called multiple times".
+pub fn (s: Send) send_header(md: Map[Str, Str] = {}) -> () ! Status {
+  let ok = s.head_sent.with(fn(var sent) -> Bool {
+    if sent {
+      return false
+    }
+    for (k, v) in md {
+      if !s.w.set_header(k.to_lower(), v) {
+        return false
+      }
+    }
+    sent = true
+    true
+  })
+  if !ok {
+    return Err(illegal_header())
+  }
+  match s.w.flush() {
+    Ok(_) => Ok(())
+    Err(e) => Err(status_new(Code.Unavailable, "${e}"))
+  }
 }
 
 /// Sends one message (a frame is flushed at once).
@@ -330,6 +371,7 @@ fn send_framed(s: Send, f: Bytes, prefix: Str) -> () ! Status {
   if f.len() - 5 > s.max_send {
     return Err(status_new(Code.ResourceExhausted, "${prefix}trying to send message larger than max (${f.len() - 5} vs. ${s.max_send})"))
   }
+  s.head_sent.with(fn(var sent) { sent = true })
   match s.w.write(f) {
     Ok(_) => ()
     Err(e) => return Err(status_new(Code.Unavailable, "${e}"))
@@ -1169,7 +1211,7 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
       }
     }
     finish(w, st)
-  }).with_header("content-type", "application/grpc").with_header("date", "").with_full_duplex()
+  }).with_header("content-type", "application/grpc").with_header("date", "").with_late_head()
   if gz {
     resp = resp.with_header("grpc-encoding", "gzip")
   }

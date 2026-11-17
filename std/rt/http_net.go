@@ -201,8 +201,28 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			}
 			return
 		}
-		w.WriteHeader(int(resp.F_status))
+		status := int(resp.F_status)
+		if resp.XStream == nil {
+			w.WriteHeader(status)
+		}
 		if resp.XStream != nil {
+			// the head at the first write or flush, or the end, so the
+			// function may still set headers (decision 0699; net/http
+			// sends w.Header() as WriteHeader found it)
+			started := false
+			start := func() {
+				if !started {
+					started = true
+					w.WriteHeader(status)
+				}
+			}
+			sh := func(k, v string) bool {
+				if started {
+					return false
+				}
+				wh.Set(k, v)
+				return true
+			}
 			fl, _ := w.(http.Flusher)
 			var out io.Writer = w
 			var tee *bytes.Buffer
@@ -214,9 +234,15 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			fd := func() {
 				rc := http.NewResponseController(w)
 				rc.EnableFullDuplex()
+				start()
 				rc.Flush()
 			}
-			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: out, fl: fl, tr: tr, fd: fd, h1: hr.ProtoMajor == 1}})
+			fdl := func() { http.NewResponseController(w).EnableFullDuplex() }
+			bw := &bodyWriter{w: out, fl: fl, tr: tr, fd: fd, fdl: fdl, sh: sh, start: start, h1: hr.ProtoMajor == 1}
+			resp.XStream(reqTask, Http_BodyWriter{w: bw})
+			bw.mu.Lock()
+			bw.headOut()
+			bw.mu.Unlock()
 			if tee != nil {
 				resp.XStream = nil
 				resp.F_body = Bytes(tee.String())

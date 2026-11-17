@@ -79,7 +79,7 @@ func (f gzipFlusher) Flush() {
 func gzipStream(inner func(*Task, Http_BodyWriter) Result[Unit, IoErr], level int) func(*Task, Http_BodyWriter) Result[Unit, IoErr] {
 	return func(tk *Task, w Http_BodyWriter) Result[Unit, IoErr] {
 		gz, _ := gzip.NewWriterLevel(gzipWriterTo{tk: tk, w: w}, level)
-		r := inner(tk, Http_BodyWriter{w: &bodyWriter{w: gz, fl: gzipFlusher{tk: tk, gz: gz, out: w}, tr: w.w.tr}})
+		r := inner(tk, Http_BodyWriter{w: &bodyWriter{w: gz, fl: gzipFlusher{tk: tk, gz: gz, out: w}, tr: w.w.tr, sh: w.w.sh}})
 		if err := gz.Close(); err != nil {
 			if ie, ok := err.(ioErrValue); ok {
 				return Err[Unit](ie.e)
@@ -124,7 +124,7 @@ func (f coderFlusher) Flush() {
 func codedStream(inner func(*Task, Http_BodyWriter) Result[Unit, IoErr], mk func(*Task) Result[Http_BodyCoder, Never]) func(*Task, Http_BodyWriter) Result[Unit, IoErr] {
 	return func(tk *Task, w Http_BodyWriter) Result[Unit, IoErr] {
 		c := mk(tk).V
-		r := inner(tk, Http_BodyWriter{w: &bodyWriter{w: coderWriter{tk: tk, c: c, w: w}, fl: coderFlusher{tk: tk, c: c, out: w}, tr: w.w.tr}})
+		r := inner(tk, Http_BodyWriter{w: &bodyWriter{w: coderWriter{tk: tk, c: c, w: w}, fl: coderFlusher{tk: tk, c: c, out: w}, tr: w.w.tr, sh: w.w.sh}})
 		if b := c.F_finish(tk).V; len(b) > 0 {
 			if wr := w.M_write(tk, b); !wr.Ok && r.Ok {
 				return Err[Unit](wr.E)
