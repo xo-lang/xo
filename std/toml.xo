@@ -15,8 +15,10 @@ struct TomlErr {
 fn (e: TomlErr) display() -> Str
 
 /// The document decoded into T by the rules of json.decode; a document
-/// that is not valid TOML is TomlErr.
-fn decode[T: Json](text: Str) -> T ! DecodeErr
+/// that is not valid TOML is TomlErr. With `strict` (go-toml's
+/// Decoder.DisallowUnknownFields) a key or table T has no field for is
+/// an error, DecodeErr.Strict listing each one in document order.
+fn decode[T: Json](text: Str, strict: Bool = false) -> T ! DecodeErr
 /// The document as JSON text, its keys in document order.
 fn to_json(text: Str) -> Str ! TomlErr
 /// v as a TOML document, laid out as pelletier/go-toml/v2's Marshal: a
@@ -47,10 +49,35 @@ struct EncodeOptions {
 /// `encode` with opts (go-toml's NewEncoder with its setters).
 fn encode_with[T: Json](v: T, opts: EncodeOptions) -> Str ! TomlErr
 
-/// Why decode failed: the text is not TOML, or its values do not fit T.
+/// Why decode failed: the text is not TOML, its values do not fit T, or
+/// (strict decode) it has keys T has no field for (go-toml's
+/// StrictMissingError, whose text Strict displays as: `strict mode:
+/// fields in the document are missing in the target struct`).
 open enum DecodeErr {
   Syntax(err: TomlErr)
   Value(err: json.DecodeErr)
+  Strict(errs: List[StrictErr])
 }
+
+/// A key of the document that a strict decode found no field for
+/// (go-toml's DecodeError in a StrictMissingError). Displays as
+/// `toml: line 3: unknown field server.port`.
+struct StrictErr {
+  /// the key's line and byte column, from 1
+  line: Int
+  column: Int
+  /// the full key, a part a level (go-toml's Key): `[server]` then
+  /// `a.b = 1` is ["server", "a", "b"]
+  key: List[Str]
+  /// "unknown field" for a key and value, "missing table" for a `[table]`
+  /// or `[[array of tables]]` header (the keys under it are not listed)
+  msg: Str
+  /// go-toml's DecodeError.String(): up to 3 lines either side of the
+  /// key's, the key underlined with `~` and msg. go-toml's
+  /// StrictMissingError.String() is these joined by "\n---\n".
+  context: Str
+}
+
+fn (e: StrictErr) display() -> Str
 
 fn (e: DecodeErr) display() -> Str

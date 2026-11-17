@@ -2,6 +2,7 @@ package rt
 
 import (
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -26,8 +27,15 @@ func (e Toml_DecodeErr) M_display(tk *Task) string {
 		return p.F_err.M_display(tk)
 	case Toml_DecodeErr_Value:
 		return p.F_err.M_display(tk)
+	case Toml_DecodeErr_Strict:
+		return "strict mode: fields in the document are missing in the target struct"
 	}
 	return ""
+}
+
+// M_display is `toml: line 3: unknown field a.b`.
+func (e Toml_StrictErr) M_display(*Task) string {
+	return "toml: line " + strconv.FormatInt(e.F_line, 10) + ": " + e.F_msg + " " + strings.Join(List_Slice(e.F_key), ".")
 }
 
 type tomlTable struct {
@@ -37,6 +45,10 @@ type tomlTable struct {
 	dotted   bool // created by a dotted key
 	inline   bool // an inline table: closed
 	implicit bool // created on the way to a header or a dotted key
+	// a strict decode's key spans (the whole dotted key of a key and
+	// value), and a header table's key span in its header
+	spans  map[string][2]int
+	hs, he int
 }
 
 type tomlArray struct {
@@ -45,19 +57,26 @@ type tomlArray struct {
 }
 
 type tomlParser struct {
-	s    string
-	i    int
-	line int
-	err  *Toml_TomlErr
+	s      string
+	i      int
+	line   int
+	err    *Toml_TomlErr
+	ks, ke int // the span of the last key read
 }
 
-func newTomlTable() *tomlTable { return &tomlTable{vals: map[string]any{}} }
+func newTomlTable() *tomlTable { return &tomlTable{vals: map[string]any{}, spans: map[string][2]int{}} }
 
 func (t *tomlTable) set(k string, v any) {
 	if _, ok := t.vals[k]; !ok {
 		t.keys = append(t.keys, k)
 	}
 	t.vals[k] = v
+}
+
+// setAt is set with the key's span (the parser's last key).
+func (p *tomlParser) setAt(t *tomlTable, k string, v any) {
+	t.set(k, v)
+	t.spans[k] = [2]int{p.ks, p.ke}
 }
 
 func (p *tomlParser) fail(msg string) {
@@ -146,6 +165,9 @@ func (p *tomlParser) key() []string {
 	var parts []string
 	for {
 		p.ws()
+		if len(parts) == 0 {
+			p.ks = p.i
+		}
 		switch c := p.peek(); {
 		case c == '"':
 			if strings.HasPrefix(p.s[p.i:], `"""`) {
@@ -169,6 +191,7 @@ func (p *tomlParser) key() []string {
 			}
 			p.fail("expected a key, found " + strconv.QuoteRune(p.rune()))
 		}
+		p.ke = p.i
 		p.ws()
 		if p.peek() != '.' {
 			return parts
@@ -619,12 +642,15 @@ func (p *tomlParser) inlineTable() any {
 	}
 	for {
 		k := p.key()
+		ks, ke := p.ks, p.ke
 		p.ws()
 		if p.peek() != '=' {
 			p.fail("expected = after a key")
 		}
 		p.i++
-		p.assign(t, k, p.value())
+		v := p.value()
+		p.ks, p.ke = ks, ke
+		p.assign(t, k, v)
 		p.ws()
 		switch p.peek() {
 		case ',':
@@ -650,7 +676,7 @@ func (p *tomlParser) assign(t *tomlTable, k []string, v any) {
 		if !ok {
 			n := newTomlTable()
 			n.dotted = true
-			t.set(part, n)
+			p.setAt(t, part, n)
 			t = n
 			continue
 		}
@@ -664,7 +690,7 @@ func (p *tomlParser) assign(t *tomlTable, k []string, v any) {
 	if _, ok := t.vals[last]; ok {
 		p.fail("key " + strconv.Quote(strings.Join(k, ".")) + " is already defined")
 	}
-	t.set(last, v)
+	p.setAt(t, last, v)
 }
 
 // header walks to (creating) the table of a [header] or [[header]].
@@ -677,13 +703,15 @@ func (p *tomlParser) header(root *tomlTable, k []string, array bool) *tomlTable 
 			if last && array {
 				n := newTomlTable()
 				n.header = true
-				t.set(part, &tomlArray{elems: []any{n}, tables: true})
+				n.hs, n.he = p.ks, p.ke
+				p.setAt(t, part, &tomlArray{elems: []any{n}, tables: true})
 				return n
 			}
 			n := newTomlTable()
 			n.implicit = !last
 			n.header = last
-			t.set(part, n)
+			n.hs, n.he = p.ks, p.ke
+			p.setAt(t, part, n)
 			t = n
 			continue
 		}
@@ -700,6 +728,7 @@ func (p *tomlParser) header(root *tomlTable, k []string, array bool) *tomlTable 
 					p.fail("table " + strconv.Quote(strings.Join(k, ".")) + " is already defined")
 				}
 				v.header, v.implicit = true, false
+				v.hs, v.he = p.ks, p.ke
 			}
 			t = v
 		case *tomlArray:
@@ -712,6 +741,7 @@ func (p *tomlParser) header(root *tomlTable, k []string, array bool) *tomlTable 
 				}
 				n := newTomlTable()
 				n.header = true
+				n.hs, n.he = p.ks, p.ke
 				v.elems = append(v.elems, n)
 				return n
 			}
@@ -769,6 +799,7 @@ func tomlParse(text string) (root *tomlTable, err *Toml_TomlErr) {
 			continue
 		}
 		k := p.key()
+		ks, ke := p.ks, p.ke
 		p.ws()
 		if p.peek() != '=' {
 			p.fail("expected = after a key")
@@ -778,7 +809,9 @@ func tomlParse(text string) (root *tomlTable, err *Toml_TomlErr) {
 		if p.eof() || p.peek() == '\n' || p.peek() == '\r' || p.peek() == '#' {
 			p.fail("expected a value after =")
 		}
-		p.assign(cur, k, p.value())
+		v := p.value()
+		p.ks, p.ke = ks, ke
+		p.assign(cur, k, v)
 		p.eol()
 	}
 }
@@ -895,16 +928,219 @@ func Toml_to_json(_ *Task, text string) Result[string, Toml_TomlErr] {
 }
 
 // Toml_decode is `toml.decode[T](text)`.
-func Toml_decode[T any](tk *Task, text string) Result[T, Toml_DecodeErr] {
-	tree, err := tomlDoc(text)
+func Toml_decode[T any](tk *Task, text string, strict bool) Result[T, Toml_DecodeErr] {
+	root, err := tomlParse(text)
 	if err != nil {
 		return Err[T](Toml_DecodeErr{Tag: 1, P: Toml_DecodeErr_Syntax{F_err: *err}})
+	}
+	tree, msg := tomlTree(root)
+	if msg != "" {
+		return Err[T](Toml_DecodeErr{Tag: 1, P: Toml_DecodeErr_Syntax{F_err: Toml_TomlErr{F_msg: msg}}})
 	}
 	var v T
 	if e := JsonDec(tk, &v, tree, JsonRoot); e != nil {
 		return Err[T](Toml_DecodeErr{Tag: 2, P: Toml_DecodeErr_Value{F_err: *e}})
 	}
+	if strict {
+		if errs := tomlStrict[T](tk, text, root, tree, v); len(errs) > 0 {
+			return Err[T](Toml_DecodeErr{Tag: 3, P: Toml_DecodeErr_Strict{F_errs: ListFromSlice(errs)}})
+		}
+	}
 	return Ok[T, Toml_DecodeErr](v)
+}
+
+// Strict decode, as std/native/toml.xo's: a key the decoded value's JSON
+// lacks is probed (its value replaced by a string) and is unknown when T
+// decodes the same value.
+
+const tomlStrictProbe = "toml strict probe 7f3c"
+
+type tomlSpot struct {
+	start, end int
+	keys       []string
+	msg        string
+}
+
+func tomlStrict[T any](tk *Task, text string, root *tomlTable, tree any, v T) []Toml_StrictErr {
+	base := string(Json_encode(tk, v))
+	got, _ := jsonParse([]byte(base))
+	unknown := func(path []any) bool {
+		var w T
+		if e := JsonDec(tk, &w, tomlReplace(tree, path), JsonRoot); e != nil {
+			return false
+		}
+		return string(Json_encode(tk, w)) == base
+	}
+	var spots []tomlSpot
+	var walk func(x any, path []any, keys []string, got any)
+	walk = func(x any, path []any, keys []string, got any) {
+		switch t := x.(type) {
+		case *tomlTable:
+			o, ok := got.(*jsonObj)
+			if !ok {
+				return
+			}
+			for _, k := range t.keys {
+				kp := append(append([]any{}, path...), k)
+				kk := append(append([]string{}, keys...), k)
+				g, ok := o.vals[k]
+				if ok {
+					walk(t.vals[k], kp, kk, g)
+				} else if unknown(kp) {
+					spots = append(spots, tomlMissing(t, k, kk, true)...)
+				}
+			}
+		case *tomlArray:
+			items, ok := got.([]any)
+			if !ok || len(items) != len(t.elems) {
+				return
+			}
+			for i, e := range t.elems {
+				walk(e, append(append([]any{}, path...), i), keys, items[i])
+			}
+		}
+	}
+	walk(root, nil, nil, got)
+	sort.SliceStable(spots, func(i, j int) bool { return spots[i].start < spots[j].start })
+	var out []Toml_StrictErr
+	for _, x := range spots {
+		line, ls := 1, 0
+		for j := 0; j < x.start; j++ {
+			if text[j] == '\n' {
+				line++
+				ls = j + 1
+			}
+		}
+		col := x.start - ls + 1
+		out = append(out, Toml_StrictErr{F_line: int64(line), F_column: int64(col), F_key: ListFromSlice(x.keys), F_msg: x.msg, F_context: tomlContext(text, line-1, col, x.end-x.start, x.msg)})
+	}
+	return out
+}
+
+// tomlReplace is tree with the value at path (keys and indexes) the probe.
+func tomlReplace(x any, path []any) any {
+	if len(path) == 0 {
+		return tomlStrictProbe
+	}
+	switch k := path[0].(type) {
+	case string:
+		o, ok := x.(*jsonObj)
+		if !ok {
+			return x
+		}
+		n := &jsonObj{keys: o.keys, vals: make(map[string]any, len(o.vals))}
+		for kk, vv := range o.vals {
+			n.vals[kk] = vv
+		}
+		n.vals[k] = tomlReplace(o.vals[k], path[1:])
+		return n
+	case int:
+		a, ok := x.([]any)
+		if !ok {
+			return x
+		}
+		n := append([]any{}, a...)
+		n[k] = tomlReplace(a[k], path[1:])
+		return n
+	}
+	return x
+}
+
+// tomlMissing reports t's key k as go-toml does (std/native/toml.xo
+// strict_missing).
+func tomlMissing(t *tomlTable, k string, keys []string, kvs bool) []tomlSpot {
+	sp := t.spans[k]
+	field := tomlSpot{start: sp[0], end: sp[1], keys: keys, msg: "unknown field"}
+	var out []tomlSpot
+	switch x := t.vals[k].(type) {
+	case *tomlTable:
+		switch {
+		case x.inline:
+			if kvs {
+				out = append(out, field)
+			}
+		case x.header:
+			out = append(out, tomlSpot{start: x.hs, end: x.he, keys: keys, msg: "missing table"})
+			out = append(out, tomlMissingAll(x, keys, false)...)
+		default:
+			out = append(out, tomlMissingAll(x, keys, kvs && x.dotted)...)
+		}
+	case *tomlArray:
+		if !x.tables {
+			if kvs {
+				out = append(out, field)
+			}
+			break
+		}
+		for _, e := range x.elems {
+			et := e.(*tomlTable)
+			out = append(out, tomlSpot{start: et.hs, end: et.he, keys: keys, msg: "missing table"})
+			out = append(out, tomlMissingAll(et, keys, false)...)
+		}
+	default:
+		if kvs {
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+func tomlMissingAll(t *tomlTable, keys []string, kvs bool) []tomlSpot {
+	var out []tomlSpot
+	for _, k := range t.keys {
+		out = append(out, tomlMissing(t, k, append(append([]string{}, keys...), k), kvs)...)
+	}
+	return out
+}
+
+// tomlContext is go-toml's buildHumanContext.
+func tomlContext(doc string, li, column, n int, msg string) string {
+	lines := strings.Split(doc, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimSuffix(l, "\r")
+	}
+	first, last := max(li-3, 0), min(li+3, len(lines)-1)
+	for first < li && lines[first] == "" {
+		first++
+	}
+	for last > li && lines[last] == "" {
+		last--
+	}
+	width := len(strconv.Itoa(last + 1))
+	var b strings.Builder
+	line := func(idx int) {
+		num := strconv.Itoa(idx + 1)
+		b.WriteString(strings.Repeat(" ", width-len(num)))
+		b.WriteString(num)
+		b.WriteByte('|')
+		if lines[idx] != "" {
+			b.WriteByte(' ')
+			b.WriteString(lines[idx])
+		}
+		b.WriteByte('\n')
+	}
+	for idx := first; idx <= li; idx++ {
+		line(idx)
+	}
+	b.WriteString(strings.Repeat(" ", width))
+	b.WriteString("| ")
+	b.WriteString(strings.Repeat(" ", column-1))
+	tildes := n
+	if li < len(lines) {
+		if avail := len(lines[li]) - column + 1; tildes > avail {
+			tildes = avail
+		}
+	}
+	b.WriteString(strings.Repeat("~", max(tildes, 1)))
+	if msg != "" {
+		b.WriteByte(' ')
+		b.WriteString(msg)
+	}
+	b.WriteByte('\n')
+	for idx := li + 1; idx <= last; idx++ {
+		line(idx)
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // Toml_encode is `toml.encode(v)`: pelletier/go-toml/v2's Marshal layout

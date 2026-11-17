@@ -1,5 +1,21 @@
 # std/toml changes
 
+## 2026-11-17: feature: strict decode (go-toml's DisallowUnknownFields)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #222 (std Proven; scripts/stdaudit/map.txt go-toml gap rows DisallowUnknownFields and StrictMissingError)
+- Go reference: github.com/pelletier/go-toml/v2 v2.4.3 strict.go, errors.go (StrictMissingError, buildHumanContext), unmarshaler_test.go (ExampleDecoder_DisallowUnknownFields, TestDecoderStrict, TestIssue866)
+- Test: std/toml_test.xo "strict:" tests (go-toml's expected texts byte for byte), arm64 and llvm; the Go backend gives the same output (scratch program, both backends)
+- Timing: none (`decode` without strict unchanged: spans are kept only when strict)
+
+`toml.decode[T](text, strict: true)` fails with `DecodeErr.Strict(errs)`
+when the document has a key or table T has no field for. Each `StrictErr`
+holds the line, column, full key, "unknown field" or "missing table", and
+go-toml's context text. derive Json names no keys, so a key the decoded
+value lacks is probed: replaced by a string, the same decoded value means
+T ignores it (a field omitempty leaves out is still known).
+
 ## 2026-11-16: feature: encode_with and EncodeOptions (go-toml's Encoder settings)
 
 - Kind: feature

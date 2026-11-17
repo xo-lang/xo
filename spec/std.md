@@ -6026,9 +6026,12 @@ use std/json
 
 struct TomlErr { line: Int, msg: Str }   // displays as `toml: line 3: expected a value after =`
                                          // (line 0, an encode error: `toml: msg`)
-open enum DecodeErr { Syntax(err: TomlErr), Value(err: json.DecodeErr) }   // displays as the inner error
+open enum DecodeErr { Syntax(err: TomlErr), Value(err: json.DecodeErr),   // displays as the inner error
+                      Strict(errs: List[StrictErr]) }   // `strict mode: fields in the document are missing in the target struct`
+struct StrictErr { line: Int, column: Int, key: List[Str], msg: Str, context: Str }
+                                         // displays as `toml: line 3: unknown field server.port`
 
-pub fn decode[T: Json](text: Str) -> T ! DecodeErr
+pub fn decode[T: Json](text: Str, strict: Bool = false) -> T ! DecodeErr
 pub fn to_json(text: Str) -> Str ! TomlErr
 pub fn encode[T: Json](v: T) -> Str ! TomlErr
 struct EncodeOptions {                   // go-toml's Encoder setters
@@ -6073,6 +6076,20 @@ fn load(fs: Fs) -> Config ! Error uses fs.read {
   keys take field defaults, unknown keys are ignored, `Duration` fields
   take `"1m30s"` text, an offset date-time decodes into `Time`, and a
   local date or time into `Str`.
+- `strict: true` (go-toml's `Decoder.DisallowUnknownFields`) makes a
+  key or table T has no field for an error: `DecodeErr.Strict` lists a
+  `StrictErr` for each, in document order. A key and value (an inline
+  table too) is `"unknown field"` with its whole dotted key; a `[table]`
+  or `[[array of tables]]` header T has no field for is `"missing table"`
+  and the keys under it are not listed (headers under it are). `key` is
+  the full key from the root (`[server]` then `a.b = 1` is `["server",
+  "a", "b"]`); `line` and `column` (bytes, from 1) are where the key
+  starts; `context` is go-toml's `DecodeError.String()`: up to three
+  lines either side, the key underlined with `~` and the message
+  (go-toml's `StrictMissingError.String()` joins them with `"\n---\n"`).
+  A key is known when T reads it: the decoded value's `json.to_value`
+  has it, or replacing its value with a string changes what T decodes,
+  so a map takes every key and a field `omitempty` leaves out is known.
 - `inf` and `nan` are errors (JSON has no form for them).
 - All of TOML 1.0 is read: comments, bare, quoted, and dotted keys,
   basic and literal strings and their multi-line forms (a line ending

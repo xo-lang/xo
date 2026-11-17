@@ -28,6 +28,12 @@ struct TomlTable {
   dotted: Bool
   inline: Bool
   implicit: Bool
+  /// a strict decode's key spans: keys[i] from spans[2i] to spans[2i+1]
+  /// (byte offsets; the whole dotted key of a key and value)
+  spans: List[Int]
+  /// a header table's key span in its header
+  hs: Int
+  he: Int
 }
 
 struct TomlArray {
@@ -41,6 +47,11 @@ struct TomlParser {
   line: Int
   tables: List[TomlTable]
   arrays: List[TomlArray]
+  /// keep key spans (decode's strict)
+  strict: Bool
+  /// the span of the last key read
+  ks: Int
+  ke: Int
 }
 
 fn tomlerr_display(e: toml.TomlErr) -> Str {
@@ -54,8 +65,11 @@ fn decodeerr_display(e: toml.DecodeErr) -> Str {
   match e {
     toml.DecodeErr.Syntax(err) => tomlerr_display(err)
     toml.DecodeErr.Value(err) => "${err}"
+    toml.DecodeErr.Strict(_) => "strict mode: fields in the document are missing in the target struct"
   }
 }
+
+fn stricterr_display(e: toml.StrictErr) -> Str { "toml: line ${e.line}: ${e.msg} ${e.key.join(".")}" }
 
 fn (p: TomlParser) err(msg: Str) -> toml.TomlErr { toml.TomlErr{line: p.line, msg: msg} }
 
@@ -95,7 +109,7 @@ fn rune_str(r: Rune) -> Str {
 /// back by the JSON writer, was about 9% of decode).
 const SMALL_TABLE: Int = 8
 
-fn new_table() -> TomlTable { TomlTable{keys: [], vals: [], index: {}, header: false, dotted: false, inline: false, implicit: false} }
+fn new_table() -> TomlTable { TomlTable{keys: [], vals: [], index: {}, header: false, dotted: false, inline: false, implicit: false, spans: [], hs: 0, he: 0} }
 
 /// The value of key k in table t, or None.
 fn (p: TomlParser) lookup(t: Int, k: Str) -> TomlVal? {
@@ -123,6 +137,10 @@ fn (var p: TomlParser) add_table(t: TomlTable) -> Int {
 fn (var p: TomlParser) set(t: Int, k: Str, v: TomlVal) {
   p.tables[t].keys.push(k)
   p.tables[t].vals.push(v)
+  if p.strict {
+    p.tables[t].spans.push(p.ks)
+    p.tables[t].spans.push(p.ke)
+  }
   let n = p.tables[t].keys.len()
   if n == SMALL_TABLE + 1 {
     for i in 0..n {
@@ -206,6 +224,9 @@ fn (var p: TomlParser) key() -> List[Str] ! toml.TomlErr {
   var parts: List[Str] = []
   while {
     p.ws()
+    if parts.len() == 0 {
+      p.ks = p.i
+    }
     let c = p.peek()
     if c == 34 {
       if p.rest_has("\"\"\"") {
@@ -232,6 +253,7 @@ fn (var p: TomlParser) key() -> List[Str] ! toml.TomlErr {
       }
       return Err(p.err("expected a key, found ${p.rune_text()}"))
     }
+    p.ke = p.i
     p.ws()
     if p.peek() != 46 {
       return Ok(parts)
@@ -804,12 +826,15 @@ fn (var p: TomlParser) inline_table() -> TomlVal ! toml.TomlErr {
   }
   while {
     let k = p.key()?
+    let (ks, ke) = (p.ks, p.ke)
     p.ws()
     if p.peek() != 61 {
       return Err(p.err("expected = after a key"))
     }
     p.i += 1
     let v = p.value()?
+    p.ks = ks
+    p.ke = ke
     p.assign(t, k, v)?
     p.ws()
     if p.peek() == 44 {
@@ -873,12 +898,12 @@ fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
     match p.lookup(t, part) {
       None => {
         if last && array {
-          let n = p.add_table(new_table() with {header: true})
+          let n = p.add_table(new_table() with {header: true, hs: p.ks, he: p.ke})
           p.arrays.push(TomlArray{elems: [TomlVal.Tab(id: n)], tables: true})
           p.set(t, part, TomlVal.Arr(id: p.arrays.len() - 1))
           return Ok(n)
         }
-        let n = p.add_table(new_table() with {implicit: !last, header: last})
+        let n = p.add_table(new_table() with {implicit: !last, header: last, hs: p.ks, he: p.ke})
         p.set(t, part, TomlVal.Tab(id: n))
         t = n
       }
@@ -896,6 +921,8 @@ fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
           }
           p.tables[sub].header = true
           p.tables[sub].implicit = false
+          p.tables[sub].hs = p.ks
+          p.tables[sub].he = p.ke
         }
         t = sub
       }
@@ -907,7 +934,7 @@ fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
           if !array {
             return Err(p.err("table ${k[0..i + 1].join(".").quote()} is already an array of tables"))
           }
-          let n = p.add_table(new_table() with {header: true})
+          let n = p.add_table(new_table() with {header: true, hs: p.ks, he: p.ke})
           p.arrays[a].elems.push(TomlVal.Tab(id: n))
           return Ok(n)
         }
@@ -958,6 +985,7 @@ fn (var p: TomlParser) document() -> () ! toml.TomlErr {
     // list of parts; anything else goes through key()
     let one = p.bare_key_alone()
     let k = if one == "" { p.key()? } else { [] }
+    let (ks, ke) = (p.ks, p.ke)
     p.ws()
     if p.peek() != 61 {
       return Err(p.err("expected = after a key"))
@@ -968,6 +996,8 @@ fn (var p: TomlParser) document() -> () ! toml.TomlErr {
       return Err(p.err("expected a value after ="))
     }
     let v = p.value()?
+    p.ks = ks
+    p.ke = ke
     if one == "" {
       p.assign(cur, k, v)?
     } else {
@@ -997,6 +1027,8 @@ fn (var p: TomlParser) bare_key_alone() -> Str {
     return ""
   }
   p.i = j
+  p.ks = st
+  p.ke = j
   raw.str_slice(p.s, st, j)
 }
 
@@ -1074,8 +1106,13 @@ fn (p: TomlParser) write_json(var out: BytesBuilder, v: TomlVal) {
 }
 
 fn json_bytes(text: Str) -> Bytes ! toml.TomlErr {
-  var p = TomlParser{s: text, i: 0, line: 1, tables: [], arrays: []}
+  var p = TomlParser{s: text, i: 0, line: 1, tables: [], arrays: [], strict: false, ks: 0, ke: 0}
   p.document()?
+  p.json()
+}
+
+fn (p: TomlParser) json() -> Bytes {
+  let text = p.s
   // JSON text is about as long as the TOML it came from: sized once, not
   // grown from empty (2026-10-27: its growth was 12% of decode)
   var out = BytesBuilder.with_capacity(text.len() + text.len() / 4 + 16)
@@ -1085,7 +1122,10 @@ fn json_bytes(text: Str) -> Bytes ! toml.TomlErr {
 
 fn to_json(text: Str) -> Str ! toml.TomlErr { json_bytes(text)?.to_str() ?? "" }
 
-fn decode[T: Json](text: Str) -> T ! toml.DecodeErr {
+fn decode[T: Json](text: Str, strict: Bool = false) -> T ! toml.DecodeErr {
+  if strict {
+    return decode_strict[T](text)
+  }
   let j = match json_bytes(text) {
     Ok(b) => b
     Err(e) => return Err(toml.DecodeErr.Syntax(err: e))
@@ -1094,6 +1134,296 @@ fn decode[T: Json](text: Str) -> T ! toml.DecodeErr {
     Ok(v) => Ok(v)
     Err(e) => Err(toml.DecodeErr.Value(err: e))
   }
+}
+
+// Strict decode (go-toml's DisallowUnknownFields). derive Json names no
+// keys, so a key is known when T reads it: the document is decoded, and
+// each key the decoded value's json.to_value lacks (an unknown key, or a
+// field omitempty left out) is probed: its value replaced by a string no
+// field of T reads as it is (a wrong type is an error; a Str field
+// keeps it, so it differs from any other value). The same decoded value means T ignored
+// the key.
+
+const STRICT_PROBE: Str = "toml strict probe 7f3c"
+
+enum TomlStep {
+  Key(k: Str)
+  Idx(i: Int)
+}
+
+/// A key T has no field for: table t's key i, whose full key is keys.
+struct TomlMiss {
+  t: Int
+  i: Int
+  keys: List[Str]
+}
+
+/// An error to report: the key's span, its full key and the message.
+struct TomlSpot {
+  start: Int
+  end: Int
+  keys: List[Str]
+  msg: Str
+}
+
+fn decode_strict[T: Json](text: Str) -> T ! toml.DecodeErr {
+  var p = TomlParser{s: text, i: 0, line: 1, tables: [], arrays: [], strict: true, ks: 0, ke: 0}
+  match p.document() {
+    Ok(_) => ()
+    Err(e) => return Err(toml.DecodeErr.Syntax(err: e))
+  }
+  let j = p.json()
+  let v = match js.decode[T](j) {
+    Ok(v) => v
+    Err(e) => return Err(toml.DecodeErr.Value(err: e))
+  }
+  let doc = js.parse_value(j.to_str() ?? "").ok() ?? js.Value.Null
+  // the probes decode doc's text: the base comes the same way (a number's
+  // text can differ from the TOML's)
+  let base = match js.decode[T](doc.encode().bytes()) {
+    Ok(b) => js.to_value(b)
+    Err(_) => js.to_value(v)
+  }
+  let misses = strict_table[T](p, doc, base.encode(), 0, [], [], base)
+  if misses.len() == 0 {
+    return Ok(v)
+  }
+  var spots: List[TomlSpot] = []
+  for m in misses {
+    spots = spots + strict_missing(p, p.tables[m.t], m.i, m.keys, true)
+  }
+  if spots.len() == 0 {
+    return Ok(v)
+  }
+  // in document order, as go-toml reports them
+  let order = spots.sort_by(fn(x: TomlSpot) -> Int { x.start })
+  Err(toml.DecodeErr.Strict(errs: order.map(fn(x: TomlSpot) -> toml.StrictErr { strict_err(text, x) })))
+}
+
+/// The keys of table t (at path in doc) T has no field for: got is the
+/// decoded value's part there, base the whole decoded value's JSON.
+fn strict_table[T: Json](p: TomlParser, doc: js.Value, base: Str, t: Int, path: List[TomlStep], keys: List[Str], got: js.Value) -> List[TomlMiss] {
+  var out: List[TomlMiss] = []
+  let tb = p.tables[t]
+  for i in 0..tb.keys.len() {
+    let k = tb.keys[i]
+    var kp = path.clone()
+    kp.push(TomlStep.Key(k: k))
+    var kk = keys.clone()
+    kk.push(k)
+    match got.get(k) {
+      Some(g) => out = out + strict_value[T](p, doc, base, tb.vals[i], kp, kk, g)
+      None => {
+        if strict_unknown[T](doc, base, kp) {
+          out.push(TomlMiss{t: t, i: i, keys: kk})
+        }
+      }
+    }
+  }
+  out
+}
+
+fn strict_value[T: Json](p: TomlParser, doc: js.Value, base: Str, v: TomlVal, path: List[TomlStep], keys: List[Str], got: js.Value) -> List[TomlMiss] {
+  var out: List[TomlMiss] = []
+  match v {
+    TomlVal.Tab(id) => {
+      if got is js.Value.Object(_) {
+        out = out + strict_table[T](p, doc, base, id, path, keys, got)
+      }
+    }
+    TomlVal.Arr(id) => {
+      let elems = p.arrays[id].elems
+      match got {
+        js.Value.List(items) => {
+          if items.len() == elems.len() {
+            for j in 0..elems.len() {
+              var ep = path.clone()
+              ep.push(TomlStep.Idx(i: j))
+              out = out + strict_value[T](p, doc, base, elems[j], ep, keys, items[j])
+            }
+          }
+        }
+        _ => ()
+      }
+    }
+    TomlVal.Text(_) | TomlVal.Num(_) | TomlVal.Flag(_) => ()
+  }
+  out
+}
+
+/// Whether T ignores the value at path: the document with it replaced by
+/// STRICT_PROBE decodes to the same value.
+fn strict_unknown[T: Json](doc: js.Value, base: Str, path: List[TomlStep]) -> Bool {
+  let d = strict_replace(doc, path, 0)
+  match js.decode[T](d.encode().bytes()) {
+    Ok(v) => js.to_value(v).encode() == base
+    Err(_) => false
+  }
+}
+
+fn strict_replace(v: js.Value, path: List[TomlStep], i: Int) -> js.Value {
+  if i == path.len() {
+    return js.Value.Str(s: STRICT_PROBE)
+  }
+  match path[i] {
+    TomlStep.Key(k) => {
+      match v {
+        js.Value.Object(fields) => {
+          var out: List[(Str, js.Value)] = []
+          for (fk, fv) in fields {
+            if fk == k {
+              out.push((fk, strict_replace(fv, path, i + 1)))
+            } else {
+              out.push((fk, fv))
+            }
+          }
+          js.Value.Object(fields: out)
+        }
+        _ => v
+      }
+    }
+    TomlStep.Idx(n) => {
+      match v {
+        js.Value.List(items) => {
+          var out: List[js.Value] = []
+          for j in 0..items.len() {
+            out.push(if j == n { strict_replace(items[j], path, i + 1) } else { items[j] })
+          }
+          js.Value.List(items: out)
+        }
+        _ => v
+      }
+    }
+  }
+}
+
+/// Reports tb's key i, which T has no field for, as go-toml does: a key
+/// and value (and an inline table) is an unknown field; a header table
+/// is a missing table, and the headers under it are too, but not its
+/// keys; a table of dotted keys or one a header only passes through
+/// holds the keys reported. kvs: report keys and values (false under a
+/// missing table).
+fn strict_missing(p: TomlParser, tb: TomlTable, i: Int, keys: List[Str], kvs: Bool) -> List[TomlSpot] {
+  let field = TomlSpot{start: if tb.spans.len() > 2 * i { tb.spans[2 * i] } else { 0 }, end: if tb.spans.len() > 2 * i { tb.spans[2 * i + 1] } else { 0 }, keys: keys, msg: "unknown field"}
+  var out: List[TomlSpot] = []
+  match tb.vals[i] {
+    TomlVal.Tab(id) => {
+      let st = p.tables[id]
+      if st.inline {
+        if kvs {
+          out.push(field)
+        }
+      } else if st.header {
+        out.push(TomlSpot{start: st.hs, end: st.he, keys: keys, msg: "missing table"})
+        out = out + strict_missing_all(p, id, keys, false)
+      } else {
+        out = out + strict_missing_all(p, id, keys, kvs && st.dotted)
+      }
+    }
+    TomlVal.Arr(id) => {
+      let a = p.arrays[id]
+      if !a.tables {
+        if kvs {
+          out.push(field)
+        }
+      } else {
+        for e in a.elems {
+          if let TomlVal.Tab(eid) = e {
+            let et = p.tables[eid]
+            out.push(TomlSpot{start: et.hs, end: et.he, keys: keys, msg: "missing table"})
+            out = out + strict_missing_all(p, eid, keys, false)
+          }
+        }
+      }
+    }
+    TomlVal.Text(_) | TomlVal.Num(_) | TomlVal.Flag(_) => {
+      if kvs {
+        out.push(field)
+      }
+    }
+  }
+  out
+}
+
+fn strict_missing_all(p: TomlParser, t: Int, keys: List[Str], kvs: Bool) -> List[TomlSpot] {
+  var out: List[TomlSpot] = []
+  let tb = p.tables[t]
+  for i in 0..tb.keys.len() {
+    var kk = keys.clone()
+    kk.push(tb.keys[i])
+    out = out + strict_missing(p, tb, i, kk, kvs)
+  }
+  out
+}
+
+/// x as a StrictErr of document s: its line and column, and context.
+fn strict_err(s: Str, x: TomlSpot) -> toml.StrictErr {
+  var line = 1
+  var ls = 0
+  for j in 0..x.start {
+    if raw.str_byte(s, j) == 10 {
+      line += 1
+      ls = j + 1
+    }
+  }
+  let column = x.start - ls + 1
+  toml.StrictErr{line: line, column: column, key: x.keys, msg: x.msg, context: toml_context(s, line - 1, column, x.end - x.start, x.msg)}
+}
+
+/// go-toml's buildHumanContext: up to 3 lines either side of line index
+/// li (empty ones at the window's edges dropped), numbered, the span
+/// underlined with ~ (to the end of its line at most) and msg.
+fn toml_context(doc: Str, li: Int, column: Int, n: Int, msg: Str) -> Str {
+  var lines: List[Str] = []
+  for l in doc.split("\n") {
+    lines.push(if l.ends_with("\r") { l[0..l.len() - 1] } else { l })
+  }
+  var first = if li - 3 < 0 { 0 } else { li - 3 }
+  var last = if li + 3 > lines.len() - 1 { lines.len() - 1 } else { li + 3 }
+  while first < li && lines[first] == "" {
+    first += 1
+  }
+  while last > li && lines[last] == "" {
+    last -= 1
+  }
+  let width = "${last + 1}".len()
+  var b = StrBuilder.new()
+  for idx in first..li + 1 {
+    b.write(toml_context_line(lines[idx], idx, width))
+    b.write("\n")
+  }
+  b.write(" ".repeat(width))
+  b.write("| ")
+  b.write(" ".repeat(column - 1))
+  var tildes = n
+  if li < lines.len() {
+    let avail = lines[li].len() - column + 1
+    if tildes > avail {
+      tildes = avail
+    }
+  }
+  if tildes < 1 {
+    tildes = 1
+  }
+  b.write("~".repeat(tildes))
+  if msg != "" {
+    b.write(" ")
+    b.write(msg)
+  }
+  for idx in li + 1..last + 1 {
+    b.write("\n")
+    b.write(toml_context_line(lines[idx], idx, width))
+  }
+  b.freeze()
+}
+
+fn toml_context_line(line: Str, idx: Int, width: Int) -> Str {
+  let num = "${idx + 1}"
+  let pad = " ".repeat(width - num.len())
+  if line == "" {
+    return "${pad}${num}|"
+  }
+  "${pad}${num}| ${line}"
 }
 
 // encode (std.md 19): pelletier/go-toml/v2's Marshal (encodeTable,

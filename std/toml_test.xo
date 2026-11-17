@@ -188,3 +188,119 @@ test "a missing key takes the field's default, in json and in toml" {
   let t: Owner = decode("name = \"x\"\n").or_fault("toml")
   expect(t.admin) == false
 }
+
+// strict decode: go-toml's Decoder.DisallowUnknownFields
+// (unmarshaler_test.go ExampleDecoder_DisallowUnknownFields,
+// TestDecoderStrict, TestIssue866), plus fields Xo writes differently.
+
+struct S13 {
+  key1: Str
+  key3: Str
+} derive Json
+
+struct S14 {
+  key1: Str
+  key4: Str
+} derive Json
+
+struct Bare {
+  z: Int = 0
+} derive Json
+
+struct Inst {
+  req: List[List[Str]]
+  res: List[List[Str]]
+} derive Json
+
+struct Pipeline {
+  mapping: Map[Str, Inst]
+} derive Json
+
+struct Pipelines {
+  pipelines: Map[Str, Pipeline]
+} derive Json
+
+struct Omit {
+  n as "n,omitempty": Int = 0
+  s as "s,omitempty": Str = ""
+  o: Int? = None
+} derive Json
+
+fn strict_errs[T: Json](doc: Str) -> List[StrictErr] {
+  match decode[T](doc, strict: true) {
+    Ok(_) => []
+    Err(DecodeErr.Strict(errs)) => errs
+    Err(e) => fault("not a strict error: ${e}")
+  }
+}
+
+fn strict_text(errs: List[StrictErr]) -> Str { errs.map(fn(e: StrictErr) -> Str { e.context }).join("\n---\n") }
+
+test "strict: an unknown key is an error with its line and context (go-toml's example)" {
+  let doc = "\nkey1 = \"value1\"\nkey2 = \"value2\"\nkey3 = \"value3\"\n"
+  let r = decode[S13](doc, strict: true)
+  expect(r.is_err()) == true
+  let e = match r {
+    Err(e) => e
+    Ok(_) => fault("decoded")
+  }
+  expect("${e}") == "strict mode: fields in the document are missing in the target struct"
+  let errs = strict_errs[S13](doc)
+  expect(errs.len()) == 1
+  expect(errs[0].line) == 3
+  expect(errs[0].column) == 1
+  expect(errs[0].key) == ["key2"]
+  expect(errs[0].msg) == "unknown field"
+  expect("${errs[0]}") == "toml: line 3: unknown field key2"
+  expect(strict_text(errs)) == "2| key1 = \"value1\"\n3| key2 = \"value2\"\n | ~~~~ unknown field\n4| key3 = \"value3\""
+  // without strict the key is ignored
+  let s = decode[S13](doc).or_fault("decode")
+  expect(s.key3) == "value3"
+}
+
+test "strict: go-toml's TestDecoderStrict cases" {
+  let many = "\nkey1 = \"value1\"\nkey2 = \"missing2\"\nkey3 = \"missing3\"\nkey4 = \"value4\"\n"
+  expect(strict_text(strict_errs[S14](many))) == "2| key1 = \"value1\"\n3| key2 = \"missing2\"\n | ~~~~ unknown field\n4| key3 = \"missing3\"\n5| key4 = \"value4\"\n---\n2| key1 = \"value1\"\n3| key2 = \"missing2\"\n4| key3 = \"missing3\"\n | ~~~~ unknown field\n5| key4 = \"value4\""
+  let dotted = strict_errs[Bare]("a.short.key=\"foo\"")
+  expect(strict_text(dotted)) == "1| a.short.key=\"foo\"\n | ~~~~~~~~~~~ unknown field"
+  expect(dotted[0].key) == ["a", "short", "key"]
+  let table = strict_errs[Bare]("\n[foo]\nbar = 42\n")
+  expect(strict_text(table)) == "2| [foo]\n |  ~~~ missing table\n3| bar = 42"
+  expect(table[0].key) == ["foo"]
+  expect(strict_text(strict_errs[Bare]("\n[[foo]]\nbar = 42"))) == "2| [[foo]]\n |   ~~~ missing table\n3| bar = 42"
+  // each decodes without strict
+  expect(decode[S14](many).is_ok()) == true
+  expect(decode[Bare]("a.short.key=\"foo\"").is_ok()) == true
+  expect(decode[Bare]("\n[foo]\nbar = 42\n").is_ok()) == true
+  expect(decode[Bare]("\n[[foo]]\nbar = 42").is_ok()) == true
+}
+
+test "strict: a map takes every key (go-toml's TestIssue866)" {
+  let doc = "\n[pipelines.register]\nmapping.inst.req = [\n    [\"param1\", \"value1\"],\n]\nmapping.inst.res = [\n    [\"param2\", \"value2\"],\n]\n"
+  let p = decode[Pipelines](doc, strict: true).or_fault("strict")
+  expect(p.pipelines.get_or_fault("register", "decoded").mapping.get_or_fault("inst", "decoded").req[0][0]) == "param1"
+}
+
+test "strict: keys in tables and arrays of tables, with their full key" {
+  let doc = "title = \"t\"\nratio = 1.5\nextra = 1\n[server]\nhost = \"h\"\nport = 1\ntags = []\nnope.deep = 2\n[[owners]]\nname = \"a\"\n[[owners]]\nname = \"b\"\nrole = \"x\"\n[gone]\n[gone.sub]\n"
+  let errs = strict_errs[Config](doc)
+  expect(errs.map(fn(e: StrictErr) -> Str { "${e}" })) == [
+    "toml: line 3: unknown field extra",
+    "toml: line 8: unknown field server.nope.deep",
+    "toml: line 13: unknown field owners.role",
+    "toml: line 14: missing table gone",
+    "toml: line 15: missing table gone.sub",
+  ]
+  expect(errs[3].column) == 2
+  // an inline table is one unknown field; one inside a known table reports its key
+  let inl = strict_errs[Config]("title = \"t\"\nratio = 1.0\nowners = []\nx = {a = 1, b = 2}\nserver = {host = \"h\", port = 1, tags = [], y = 3}\n")
+  expect(inl.map(fn(e: StrictErr) -> Str { "${e}" })) == ["toml: line 4: unknown field x", "toml: line 5: unknown field server.y"]
+}
+
+test "strict: a field omitempty leaves out, or a None, is still known" {
+  // to_value leaves these keys out of the decoded value; strict finds
+  // T reads them
+  let o = decode[Omit]("n = 0\ns = \"\"\no = 0\n", strict: true).or_fault("strict")
+  expect(o.n) == 0
+  expect(strict_errs[Omit]("n = 0\nq = 0\n").map(fn(e: StrictErr) -> Str { "${e}" })) == ["toml: line 2: unknown field q"]
+}

@@ -8,5 +8,6 @@ package rt
 var (
 	_ func(*Toml_TomlErr, *Task) string                = (*Toml_TomlErr).M_display
 	_ func(*Task, string) Result[string, Toml_TomlErr] = Toml_to_json
+	_ func(*Toml_StrictErr, *Task) string              = (*Toml_StrictErr).M_display
 	_ func(*Toml_DecodeErr, *Task) string              = (*Toml_DecodeErr).M_display
 )
