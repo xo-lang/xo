@@ -82,8 +82,12 @@ SIGTERM as SIGTERM, SIGINT as SIGTERM when standard input is not a
 terminal (on a terminal Ctrl-C reaches the program through the process
 group). Test: cmd/xo TestRunSignalEndsProgram (SIGHUP to `xo run`; the
 program was left running before). SIGALRM (perl's alarm) and SIGKILL
-still end `xo run` alone: the next step is the parent-death watch above,
-a native runtime and std/rt change that `xo run` turns on with an
-environment variable (no newer std API in compiler/). Until it lands,
-time the built binary itself, as in the first Fix.
+still end `xo run` alone and stay open by choice (lead, 2026-11-16): the
+Signal enum has no Alarm (adding one is a breaking prelude change), and
+neither std nor llrt has an exec that would let `xo run` become the
+program. Time the built binary instead: `xo build -o BIN DIR`, then run
+BIN under the alarm. On darwin the ccguard hook blocks an alarm or
+timeout wrapper around `xo run` (scripts/lead/ccguard/rules.ts
+checkAlarmRun; replayed over 322,504 past agent commands on 2026-11-16, it
+blocked 102, all real).
 
