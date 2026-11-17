@@ -1,3 +1,5 @@
+use std/protodesc
+use std/protojson
 test "g_fast gives g_text's answer wherever it gives one" {
   var cases: List[Float] = [0.0, -0.0, 3.0, -3.0, 1.5, 100.0, 123456.0, 999999.0, 999999.5, 1000000.0, 0.1, 0.0001,
     0.00011, 0.00001, 0.000099, -0.001, 1e20, 1e21, 2.5e-7, 123456.789, 0.5]
@@ -43,4 +45,14 @@ test "each control byte and invalid UTF-8 byte is escaped as \\xNN" {
       expect((c, got)) == (c, want.freeze())
     }
   }
+}
+
+/// A registry of one empty message p.M.
+fn over_max_reg() -> protojson.Registry {
+  let set = protodesc.encode(protodesc.FileDesc{name: "a.proto", package: "p", message_type: [protodesc.MessageDesc{name: "M"}]})
+  protojson.registry_from_set(b"\x0a\x11" + set).or_fault("registry")
+}
+
+test "marshal fails a field number over 536870911, as proto.Unmarshal does first" {
+  expect(marshal(over_max_reg(), "p.M", b"\xca\xc7\xa3\xe8\x22\x00").is_ok()) == false
 }

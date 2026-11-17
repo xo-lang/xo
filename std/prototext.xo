@@ -353,7 +353,7 @@ fn g_text(s: Str) -> Str {
 }
 
 fn walk_(b: Bytes) -> List[pw.Fld] ! TextErr {
-  match pw.walk(b) {
+  match pw.fields(b) {
     Ok(l) => Ok(l)
     Err(e) => Err(terr("proto: ${e.display()}"))
   }
@@ -798,7 +798,7 @@ fn msg_out(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, data: Byt
 /// value marshals; else nothing written and false (the Any's own fields
 /// then).
 fn any_out(var e: Enc, r: protojson.Registry, data: Bytes, depth: Int) -> Bool {
-  let fl = match pw.walk(data) {
+  let fl = match pw.fields(data) {
     Ok(l) => l
     Err(_) => return false
   }
@@ -2128,7 +2128,7 @@ fn is_message_set(info: protojson.MsgInfo) -> Bool {
   if info.d.options.is_empty() {
     return false
   }
-  for f in (pw.walk(info.d.options) ?? _e => []) {
+  for f in (pw.fields(info.d.options) ?? _e => []) {
     if f.num == 1 && f.wire == 0 && f.v != 0 {
       return true
     }
@@ -2711,7 +2711,7 @@ fn is_packed(info: protojson.MsgInfo, fd: protodesc.FieldDesc) -> Bool {
   }
   var packed = info.proto3
   if !fd.options.is_empty() {
-    for f in (pw.walk(fd.options) ?? _e => []) {
+    for f in (pw.fields(fd.options) ?? _e => []) {
       if f.num == 2 && f.wire == 0 {
         packed = f.v != 0
       }

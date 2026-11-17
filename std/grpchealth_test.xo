@@ -86,3 +86,7 @@ test "check, list and watch over HTTP/2" uses (net, clock) {
     expect(seen.with_read(fn(l) { l })) == ["SERVICE_UNKNOWN", "SERVING", "NOT_SERVING"]
   }
 }
+
+test "a request with a field number over 536870911 fails to unmarshal, as grpc-go's codec" {
+  expect(read_request(b"\xca\xc7\xa3\xe8\x22\x00").is_ok()) == false
+}

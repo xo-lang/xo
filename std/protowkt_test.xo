@@ -338,3 +338,12 @@ test "field mask is_valid (fieldmaskpb TestIsValid)" {
     expect(FieldMask{paths: paths}.is_valid(files, msg)) == want
   }
 }
+
+test "decode_value, decode_struct and decode_list_value fail a field number over 536870911, as proto.Unmarshal" {
+  let bad = b"\xca\xc7\xa3\xe8\x22\x00"
+  expect(decode_value(bad).is_ok()) == false
+  expect(decode_struct(bad).is_ok()) == false
+  expect(decode_list_value(bad).is_ok()) == false
+  // decode_timestamp (the derived decoder) already failed it
+  expect(decode_timestamp(bad).is_ok()) == false
+}

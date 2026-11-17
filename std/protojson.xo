@@ -139,7 +139,7 @@ fn add_exts_in(var r: Registry, m: protodesc.MessageDesc, pre: Str) {
 /// A registry of a serialized FileDescriptorSet.
 pub fn registry_from_set(set: Bytes) -> Registry ! protobuf.ProtoErr {
   var files: List[protodesc.FileDesc] = []
-  for f in pw.walk(set)? {
+  for f in pw.fields(set)? {
     if f.num == 1 && f.wire == 2 {
       files.push(protodesc.decode(f.data)?)
     }
@@ -254,7 +254,7 @@ fn jerr(text: Str) -> JsonErr { JsonErr{text: text} }
 
 fn msg_is_map(m: protodesc.MessageDesc) -> Bool {
   if !m.options.is_empty() {
-    for f in (pw.walk(m.options) ?? _e => []) {
+    for f in (pw.fields(m.options) ?? _e => []) {
       if f.num == 7 && f.wire == 0 && f.v != 0 {
         return true
       }
@@ -275,7 +275,7 @@ struct Feat {
 
 fn feat_apply(base: Feat, set: Bytes) -> Feat {
   var out = base
-  for f in (pw.walk(set) ?? _e => []) {
+  for f in (pw.fields(set) ?? _e => []) {
     if f.wire != 0 {
       continue
     }
@@ -298,7 +298,7 @@ fn feat_in(base: Feat, options: Bytes, num: Int) -> Feat {
   if options.is_empty() {
     return out
   }
-  for f in (pw.walk(options) ?? _e => []) {
+  for f in (pw.fields(options) ?? _e => []) {
     if f.num == num && f.wire == 2 {
       out = feat_apply(out, f.data)
     }
@@ -309,7 +309,7 @@ fn feat_in(base: Feat, options: Bytes, num: Int) -> Feat {
 /// options with the `packed` member (field 2) set to v, any earlier one dropped.
 fn with_packed(options: Bytes, v: Bool) -> Bytes {
   var out: Bytes = b""
-  for f in (pw.walk(options) ?? _e => []) {
+  for f in (pw.fields(options) ?? _e => []) {
     if f.num != 2 {
       out = out + f.raw
     }
@@ -372,7 +372,7 @@ fn add_msg(var r: Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
 }
 
 fn walk_(b: Bytes) -> List[pw.Fld] ! JsonErr {
-  match pw.walk(b) {
+  match pw.fields(b) {
     Ok(l) => Ok(l)
     Err(e) => Err(jerr("proto: ${e.display()}"))
   }
@@ -1967,7 +1967,7 @@ fn is_packed(info: MsgInfo, fd: protodesc.FieldDesc) -> Bool {
   }
   var packed = info.proto3
   if !fd.options.is_empty() {
-    for f in (pw.walk(fd.options) ?? _e => []) {
+    for f in (pw.fields(fd.options) ?? _e => []) {
       if f.num == 2 && f.wire == 0 {
         packed = f.v != 0
       }

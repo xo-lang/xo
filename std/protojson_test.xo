@@ -53,3 +53,13 @@ test "an integer map key takes a sign and leading zeros, never an exponent, frac
   expect(key_v(i32, "-2147483648")) == Some(-2147483648)
   expect(key_v(u64, "0018446744073709551615")) == Some(-1)
 }
+
+/// A registry of one empty message p.M.
+fn over_max_reg() -> Registry {
+  let set = protodesc.encode(protodesc.FileDesc{name: "a.proto", package: "p", message_type: [protodesc.MessageDesc{name: "M"}]})
+  registry_from_set(b"\x0a\x11" + set).or_fault("registry")
+}
+
+test "marshal fails a field number over 536870911, as proto.Unmarshal does first" {
+  expect(marshal(over_max_reg(), "p.M", b"\xca\xc7\xa3\xe8\x22\x00").is_ok()) == false
+}

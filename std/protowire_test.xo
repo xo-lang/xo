@@ -2181,3 +2181,12 @@ const WRITE: List[(Int, Int, Str)] = [
   (271163800, -1, "ffffffffffffffffff01c499b48a08"),
   (2048, 177370950745, "d9d887e19405858001"),
 ]
+
+test "fields fails a field number over 536870911, as proto.Unmarshal (walk reads it, as ConsumeField)" {
+  // field 1,168,186,489, wire type 2, length 0 (xo-4c's grpcreflect fuzz, 2026-11-17)
+  let bad = b"\xca\xc7\xa3\xe8\x22\x00"
+  expect(walk(bad).is_ok()) == true
+  expect(fields(bad).err()) == Some(protobuf.ProtoErr.BadTag)
+  // 536870911 itself is a valid number
+  expect(fields(b"\xfa\xff\xff\xff\x0f\x00").map(fn(fs) { fs[0].num }).ok()) == Some(536870911)
+}

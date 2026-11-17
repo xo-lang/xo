@@ -360,3 +360,7 @@ test "build: a name declared twice is an error, as protobuf-go's NewFile (desc_i
   expect(dup_err("syntax = \"proto2\";\npackage p;\nmessage A { extensions 100 to 200; extend A { optional int32 x = 100; } optional int32 x = 1; }\n")) == "descriptor \"p.A.x\" already declared"
   expect(dup_err("syntax = \"proto2\";\npackage p;\nmessage A { extensions 100 to 200; }\nextend A { optional int32 x = 104; optional int32 y = 105; }\n")) == "ok"
 }
+
+test "decode fails a field number over 536870911, as proto.Unmarshal" {
+  expect(decode(b"\xca\xc7\xa3\xe8\x22\x00").is_ok()) == false
+}

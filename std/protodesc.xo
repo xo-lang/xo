@@ -225,7 +225,7 @@ fn last_text(f: pw.Fld, bad: Int) -> (Str, Int) {
 pub fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr {
   var d = FileDesc{name: "", package: "", dependency: [], public_dependency: [], weak_dependency: [], message_type: [], enum_type: [], service: [], extension: [], options: b"", source_code_info: b"", syntax: "", edition: 0}
   var bad = 0
-  for f in pw.walk(data)? {
+  for f in pw.fields(data)? {
     if f.num == 1 && pw.is_s(f) {
       (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
@@ -388,7 +388,7 @@ fn enc_service(s: ServiceDesc) -> Bytes {
 
 fn dec_range(b: Bytes) -> ReservedRange ! protobuf.ProtoErr {
   var r = ReservedRange{start: 0, end: 0}
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_v(f) {
       r.start = f.v
     } else if f.num == 2 && pw.is_v(f) {
@@ -400,7 +400,7 @@ fn dec_range(b: Bytes) -> ReservedRange ! protobuf.ProtoErr {
 
 fn dec_ext_range(b: Bytes) -> ExtensionRange ! protobuf.ProtoErr {
   var r = ExtensionRange{start: 0, end: 0, options: b""}
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_v(f) {
       r.start = f.v
     } else if f.num == 2 && pw.is_v(f) {
@@ -416,7 +416,7 @@ fn dec_ext_range(b: Bytes) -> ExtensionRange ! protobuf.ProtoErr {
 fn dec_oneof(b: Bytes) -> OneofDesc ! protobuf.ProtoErr {
   var d = OneofDesc{name: "", options: b""}
   var bad = 0
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_s(f) {
       (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
@@ -431,7 +431,7 @@ fn dec_oneof(b: Bytes) -> OneofDesc ! protobuf.ProtoErr {
 fn dec_field(b: Bytes) -> FieldDesc ! protobuf.ProtoErr {
   var d = FieldDesc{name: "", extendee: "", number: 0, label: 0, kind: 0, type_name: "", default_value: "", options: b"", oneof_index: None, json_name: "", proto3_optional: false, unknown: b""}
   var bad = 0
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_s(f) {
       (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
@@ -468,7 +468,7 @@ fn dec_field(b: Bytes) -> FieldDesc ! protobuf.ProtoErr {
 fn dec_value(b: Bytes) -> EnumValueDesc ! protobuf.ProtoErr {
   var d = EnumValueDesc{name: "", number: 0, options: b""}
   var bad = 0
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_s(f) {
       (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_v(f) {
@@ -485,7 +485,7 @@ fn dec_value(b: Bytes) -> EnumValueDesc ! protobuf.ProtoErr {
 fn dec_enum(b: Bytes) -> EnumDesc ! protobuf.ProtoErr {
   var d = EnumDesc{name: "", value: [], options: b"", reserved_range: [], reserved_name: []}
   var bad = 0
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_s(f) {
       (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
@@ -506,7 +506,7 @@ fn dec_enum(b: Bytes) -> EnumDesc ! protobuf.ProtoErr {
 fn dec_message(b: Bytes) -> MessageDesc ! protobuf.ProtoErr {
   var d = MessageDesc{name: "", field: [], extension: [], nested_type: [], enum_type: [], extension_range: [], oneof_decl: [], options: b"", reserved_range: [], reserved_name: []}
   var bad = 0
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_s(f) {
       (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
@@ -537,7 +537,7 @@ fn dec_message(b: Bytes) -> MessageDesc ! protobuf.ProtoErr {
 fn dec_method(b: Bytes) -> MethodDesc ! protobuf.ProtoErr {
   var d = MethodDesc{name: "", input_type: "", output_type: "", options: b"", client_streaming: false, server_streaming: false, streaming_set: 0}
   var bad = 0
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_s(f) {
       (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
@@ -562,7 +562,7 @@ fn dec_method(b: Bytes) -> MethodDesc ! protobuf.ProtoErr {
 fn dec_service(b: Bytes) -> ServiceDesc ! protobuf.ProtoErr {
   var d = ServiceDesc{name: "", method: [], options: b""}
   var bad = 0
-  for f in pw.walk(b)? {
+  for f in pw.fields(b)? {
     if f.num == 1 && pw.is_s(f) {
       (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {

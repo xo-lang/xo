@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fix (std/grpcreflect): a reflection request or response with a field numbered above 536870911 fails to decode, as protobuf-go's (it was skipped as an unknown field).
+- Fix (std/protodesc, std/protojson, std/prototext, std/protowkt, std/grpchealth): a message with a field numbered above 536870911 (protowire.MaxValidNumber) fails to decode (BadTag), as protobuf-go's proto.Unmarshal; it was read.
 - Fix (std/protodesc): `build` returns an error for a name the file declares twice (two extensions of one name, an enum value and a message), as protoc and protobuf-go's protodesc.NewFile ("descriptor \"p.x\" already declared"); it returned the descriptor.
 - Fix (std/grpcreflect): a response whose packed extension numbers end in a varint cut short (or longer than 10 bytes) is an error, as protobuf-go reads it; it read as no numbers.
 - Perf (std/http, std/grpc): on the native backends a client that writes the next piece of a streamed HTTP/2 request body and then reads (a gRPC `send` then `recv`) no longer waits for the pump's 10 ms read tick: a round on one stream took 11 ms and now takes about 0.1 ms.

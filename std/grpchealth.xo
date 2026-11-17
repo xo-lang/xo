@@ -155,7 +155,7 @@ pub fn (h: Health) register(var s: grpc.Server) uses clock {
     Ok(response(h.check(service)?.number()))
   })
   s.unary(LIST, fn(_call, req) -> Bytes ! grpc.Status {
-    if let Err(e) = protowire.walk(req) {
+    if let Err(e) = protowire.fields(req) {
       return Err(unmarshal_err(e))
     }
     let m = h.list()?
@@ -212,7 +212,7 @@ fn unmarshal_err(e: protobuf.ProtoErr) -> grpc.Status {
 
 /// HealthCheckRequest's service (field 1, the last one on the wire wins).
 fn read_request(req: Bytes) -> Str ! grpc.Status {
-  let fs = match protowire.walk(req) {
+  let fs = match protowire.fields(req) {
     Ok(fs) => fs
     Err(e) => return Err(unmarshal_err(e))
   }
@@ -243,7 +243,7 @@ fn response(n: Int) -> Bytes {
 
 /// The status in a HealthCheckResponse (the last field 1 wins).
 fn read_response(b: Bytes) -> ServingStatus ! grpc.Status {
-  let fs = match protowire.walk(b) {
+  let fs = match protowire.fields(b) {
     Ok(fs) => fs
     Err(e) => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: failed to unmarshal the received message: ${e}"})
   }
@@ -264,7 +264,7 @@ pub fn check(c: grpc.Client, service: Str, timeout: Duration? = None) -> Serving
 /// Asks the server for every service's status.
 pub fn list(c: grpc.Client, timeout: Duration? = None) -> Map[Str, ServingStatus] ! grpc.Status uses net.dial {
   let b = c.unary(LIST, b"", {}, timeout)?
-  let fs = match protowire.walk(b) {
+  let fs = match protowire.fields(b) {
     Ok(fs) => fs
     Err(e) => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: failed to unmarshal the received message: ${e}"})
   }
@@ -273,7 +273,7 @@ pub fn list(c: grpc.Client, timeout: Duration? = None) -> Map[Str, ServingStatus
     if f.num != 1 || f.wire != 2 {
       continue
     }
-    let es = match protowire.walk(f.data) {
+    let es = match protowire.fields(f.data) {
       Ok(es) => es
       Err(e) => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: failed to unmarshal the received message: ${e}"})
     }

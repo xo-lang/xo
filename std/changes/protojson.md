@@ -1,5 +1,19 @@
 # std/protojson changes
 
+## 2026-11-17: fix: a field number over 536870911 fails to decode
+
+- Kind: fix
+- Commit: this push
+- Found by: task #292: xo-4c's grpcreflect fuzz (TestGrpcReflectFuzz) found a field numbered 1,168,186,489 that
+  protowire.walk reads, as protowire.ConsumeField does, and protobuf-go's proto.Unmarshal fails
+- Go reference: protobuf-go internal/impl/decode.go (num > protowire.MaxValidNumber is errDecode)
+- Test: std/protojson_test.xo (fails before: the bytes decoded)
+- Shipped in: not yet released
+
+`marshal` and `normalize` of wire bytes fail with BadTag for a field numbered above 536870911 (protowire.MaxValidNumber), as protobuf-go's
+proto.Unmarshal; before, the field was read (or kept as unknown). The messages are read with the new
+std/protowire `fields`, walk with that check.
+
 ## 2026-11-17: feature: proto2 extensions
 
 - Kind: feature

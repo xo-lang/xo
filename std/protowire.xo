@@ -55,6 +55,19 @@ pub fn walk(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
   Ok(out)
 }
 
+/// A message's fields as proto.Unmarshal reads them: walk's, with every number at most 536870911
+/// (protowire.MaxValidNumber; walk, as protowire.ConsumeField, reads numbers up to 2^31-1, and
+/// protobuf-go's decoder fails a larger one with errDecode).
+pub fn fields(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
+  let fs = walk(b)?
+  for f in fs {
+    if f.num > protobuf.MAX_VALID_NUMBER {
+      return Err(protobuf.ProtoErr.BadTag)
+    }
+  }
+  Ok(fs)
+}
+
 pub fn text(f: Fld) -> Str ! protobuf.ProtoErr {
   match f.data.to_str() {
     Some(s) => Ok(s)
