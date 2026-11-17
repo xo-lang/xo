@@ -213,7 +213,9 @@ fn (var r: Rd) cstr() -> Str ! WireErr {
   var i = r.at
   while i < r.b.len() && r.b[i] != 0 { i += 1 }
   if i >= r.b.len() { return Err(WireErr.Bad(msg: "string without its terminating zero")) }
-  let s = r.b[r.at..i].to_str() ?? ""
+  // pgproto3 keeps a string's bytes; bytes that are not UTF-8 become U+FFFD
+  // (to_str() ?? "" dropped the whole name, as #219 did for values)
+  let s = r.b[r.at..i].to_str_lossy()
   r.at = i + 1
   s
 }

@@ -89,6 +89,17 @@ test "decode b_rowdesc" {
   expect(decode(m)) == Ok(Backend.RowDesc(fields: [Field{name: "id", table_oid: 16384, column: 1, type_oid: 23, size: 4, modifier: -1, format: 0}]))
 }
 
+test "decode b_rowdesc: a column name that is not UTF-8 keeps its bytes with U+FFFD (pgproto3 keeps them; was empty)" {
+  // stdproven fuzz sql, TestPgFuzz seed 3 case 1528: column "c0" then byte 0x80;
+  // the second name is "1" for pgproto3 too (the mutated message shifts it)
+  let m = Bytes.from_hex("540000003000026330800000000000000000001a0004ffffffff0000633100000000000000000000150002ffffffff0000") ?? b""
+  let names = match decode(m) {
+    Ok(RowDesc(fs)) => fs.map(fn(f) { f.name })
+    _ => []
+  }
+  expect(names) == ["c0\u{FFFD}", "1"]
+}
+
 test "decode b_datarow" {
   let m = Bytes.from_hex("440000001300030000000137ffffffff00000000") ?? b""
   expect(frame_len(m)) == Ok(Some(m.len()))

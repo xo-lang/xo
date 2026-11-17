@@ -1,5 +1,19 @@
 # std/sql changes
 
+## 2026-11-17: fix: a Postgres column name that is not UTF-8 keeps its bytes
+
+- Kind: fix
+- Commit: this push
+- Found by: `stdproven fuzz sql` (TestPgFuzz seed 3: 1 of 5000 cases differed from pgconn on arm64)
+- Go reference: github.com/jackc/pgx/v5 pgproto3 (a RowDescription name and every other message string
+  is the server's bytes as Go's string)
+- Test: std/native/llrt/pgwire_test.xo "decode b_rowdesc: a column name that is not UTF-8 keeps its bytes
+  with U+FFFD" (failed before: the name was empty)
+- Shipped in: not yet released
+
+A string in a backend message (a column name, an error or notice field, a parameter status) that is not
+valid UTF-8 is read with each invalid byte as U+FFFD; it read as an empty string before.
+
 ## 2026-11-17: fix: a Postgres stream out of step is a Conn error, not rows
 
 - Kind: fix
