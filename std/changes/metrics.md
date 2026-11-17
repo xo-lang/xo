@@ -1,5 +1,17 @@
 # std/metrics changes
 
+## 2026-11-17: fix: a counter's whole adds wrap as an unsigned 64-bit count
+
+- Kind: fix
+- Commit: this push
+- Found by: the metrics fuzz harness on the Mac (seed 7, registry 1130; task #261)
+- Go reference: prometheus/client_golang counter.Add (valInt, a uint64)
+- Test: std/metrics_test.xo "whole counter adds past 2^63 wrap as client_golang's uint64 valInt"; metricsfuzz seeds 3, 7 and 11 at 5000 registries
+- Timing: none
+- Shipped in: not yet released
+
+The earlier fix today sent whole adds below 2^63 to the integer cell with a plain Int add, so 6e+17 then 9e+18 faulted as an integer overflow. The cell is now an unsigned 64-bit count that wraps, as Go's valInt, taking whole adds below 2^64, and reads back as an unsigned number.
+
 ## 2026-11-17: fix: a whole counter add up to 2^63 is exact
 
 - Kind: fix (behavior change)

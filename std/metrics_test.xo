@@ -736,3 +736,15 @@ test "a whole counter add up to 2^63 is exact, as client_golang's valInt (metric
   c.add(888.0)
   expect(r.text().contains("m 9.000000000000017e+17\n")) == true
 }
+
+test "whole counter adds past 2^63 wrap as client_golang's uint64 valInt (metricsfuzz seed 7, task #261)" {
+  let r = registry()
+  let c = r.counter("m", "", [])
+  c.add(6.0e17)
+  c.add(9.0e18)
+  c.add(1.0e19)
+  c.add(0.5)
+  // 6e17 + 9e18 + 1e19 is 1.96e19, past 2^64: Go's uint64 wraps to
+  // 1.96e19 - 2^64 = 1153255926290448384
+  expect(r.text().contains("m 1.1532559262904484e+18\n")) == true
+}

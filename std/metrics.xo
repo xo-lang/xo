@@ -2414,24 +2414,39 @@ fn cells_of(f: Family, values: List[Str]) -> List[Atomic[Int]]? {
   }
 }
 
-/// Adds n >= 0 to a counter's cells: a whole n below 2^63 to cell 1 (an
-/// integer, unused by a counter otherwise) with one atomic add, else to
-/// cell 0's float with a compare and swap loop (client_golang's valInt
-/// and valBits, whose integer path takes any whole n below 2^64); the
-/// value is their sum. The limit was 2^53, so a whole 9e+17 went to the
-/// float and the fractions added after it rounded differently from Go
-/// (metricsfuzz seed 3, task #261).
+/// Adds n >= 0 to a counter's cells: a whole n below 2^64 to cell 1, an
+/// unsigned 64-bit count that wraps (unused by a counter otherwise), else
+/// to cell 0's float with a compare and swap loop: client_golang's valInt
+/// (a uint64 that wraps) and valBits; the value is their sum. Whole adds
+/// went to the float from 2^53, so fractions after a 9e+17 rounded unlike
+/// Go; then with a 2^63 limit and a plain Int add, 6e17 + 9e18 faulted
+/// as an Int overflow (metricsfuzz seeds 3 and 7, task #261).
 fn counter_cells_add(cells: List[Atomic[Int]], n: Float) {
-  if n < 9223372036854775808.0 && n == Float(Int(n)) {
-    let _n = cells[1].add(Int(n))
-    return
+  if n < 18446744073709551616.0 && n == n.trunc() {
+    let k = if n < 9223372036854775808.0 { Int(n) } else { Int(n - 9223372036854775808.0).wrapping_add(Int.min) }
+    while true {
+      let old = cells[1].get()
+      if cells[1].compare_and_swap(old, old.wrapping_add(k)) {
+        return
+      }
+    }
   }
   add_float(cells[0], n)
 }
 
+/// x's 64 bits read as an unsigned number, rounded once (Go's
+/// float64(uint64)): halved with its low bit kept as a sticky bit, then
+/// doubled, for x past Int.max.
+fn unsigned_float(x: Int) -> Float {
+  if x >= 0 {
+    return Float(x)
+  }
+  Float(x.shr_logical(1) | (x & 1)) * 2.0
+}
+
 /// A counter's value: cell 0's float plus cell 1's whole part.
 fn counter_value(cells: List[Atomic[Int]]) -> Float {
-  load(cells[0]) + Float(cells[1].get())
+  load(cells[0]) + unsigned_float(cells[1].get())
 }
 
 /// Adds d to the label values' series (a counter's cells, else cell 0) when it exists, under
