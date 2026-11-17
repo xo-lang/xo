@@ -4088,7 +4088,7 @@ http2.UnknownFrame.Payload = not planned: the frame layer is internal to std/htt
 http2.VerboseLogs = not planned: debug switches of x/net
 http2.WindowUpdateFrame = not planned: the frame layer is internal to std/http (net/http exposes none either); TestH2Diff checks it frame by frame
 http2.WriteScheduler = not planned: the write scheduler is internal (round robin, as net/http's default)
-http2.behavior.h2spec = gap: no run of the h2spec suite itself (TestH2Diff has 70 raw frame cases in its style)
+http2.behavior.h2spec = bench/results/h2spec-2026-11-17.md: h2spec v2.6.0, h2c 140 and TLS 141 of 146, the same failures and replies as Go's net/http; the one Xo only failure (6.9.1 #3) fixed in d9e6a97b6
 # pgx, pgconn, pgtype, pgxpool: github.com/jackc/pgx/v5 v5.12.0 (outside.txt; decision 0655)
 pgconn.AfterConnectFunc = not planned: settings come from the connection string and open's arguments, dialing through its Net (decision 0278)
 pgconn.Batch = not planned: a batch is a List[std/sql.BatchQuery] given to Db.batch (decision 0648 item 15)
