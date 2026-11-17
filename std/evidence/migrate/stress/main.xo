@@ -35,7 +35,7 @@ fn insert(v: Int, who: Str) -> Str { "-- +goose Up\nINSERT INTO owners (owner_na
 fn applied(st: List[migrate.Status]) -> List[(Int, Bool)] { st.map(fn(s) { (s.version, s.applied_at.is_some()) }) }
 
 /// The plain path: n extra one row migrations after OWNERS and SEED.
-fn check_up(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
+fn check_up(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock, log) {
   let db = sql.memory().map_err(fn(e) { "memory: ${e}" })?
   let n = 1 + i % 6
   var ms = [mig("00001_owners.sql", OWNERS)?, mig("00002_seed.sql", SEED)?]
@@ -70,7 +70,7 @@ fn check_up(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
   Ok(4)
 }
 
-fn check_partial(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
+fn check_partial(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock, log) {
   let db = sql.memory().map_err(fn(e) { "memory: ${e}" })?
   let ms = [
     mig("00001_users_table.sql", OWNERS)?,
@@ -103,7 +103,7 @@ fn check_partial(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
   Ok(3)
 }
 
-fn check_missing(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
+fn check_missing(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock, log) {
   let db = sql.memory().map_err(fn(e) { "memory: ${e}" })?
   let table = if i % 3 == 0 { "xo_migrations" } else { "schema_${i % 5}" }
   let first = [mig("00001_owners.sql", OWNERS)?, mig("00003_seed.sql", SEED)?]
@@ -157,7 +157,7 @@ fn check_parse(i: Int) -> Int ! Str {
   Ok(3)
 }
 
-fn pass(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
+fn pass(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock, log) {
   var n = check_up(clock, i)?
   n += check_partial(clock, i)?
   n += check_missing(clock, i)?
@@ -187,7 +187,7 @@ fn main(os: Os) ! {
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
-  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
   let ops = scope s {
     s.spawn_background(fn() {
       var marked = false
@@ -231,5 +231,3 @@ fn main(os: Os) ! {
     return Err("memory grew ${growth}%")
   }
 }
-
-
