@@ -715,14 +715,15 @@ fn pull[fx: Effects](st: RecvState, max: Int, more: fn() -> Bytes? ! Status uses
           if !s.gzip {
             return Err(status_new(Code.Internal, "grpc: compressed message received without a grpc-encoding"))
           }
-          match compress.gunzip(msg, max + 1) {
-            Ok(plain) => {
-              if plain.len() > max {
-                return Err(status_new(Code.ResourceExhausted, "grpc: received message after decompression larger than max (${max})"))
+          // grpc-go's decompress for a registered compressor (rpc_util.go): the limit and its text
+          match compress.gunzip(msg, max) {
+            Ok(plain) => return Ok((Some(plain), s))
+            Err(e) => {
+              if e.msg.contains("exceeds max_size") {
+                return Err(status_new(Code.ResourceExhausted, "grpc: received message after decompression larger than max ${max}"))
               }
-              return Ok((Some(plain), s))
+              return Err(status_new(Code.Internal, "grpc: failed to decompress the received message"))
             }
-            Err(_) => return Err(status_new(Code.Internal, "grpc: failed to decompress the received message"))
           }
         }
         return Ok((Some(msg), s))

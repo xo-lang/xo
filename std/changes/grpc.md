@@ -1,5 +1,19 @@
 # std/grpc changes
 
+## 2026-11-17: fix: a compressed message above the receive limit is ResourceExhausted, as grpc-go
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #89, reading grpc-go's rpc_util.go decompress beside std/grpc's pull while adding the client limits
+- Go reference: google.golang.org/grpc v1.79.2 rpc_util.go decompress ("grpc: received message after decompression
+  larger than max N")
+- Test: TestGrpcInterop line gziplimit (a gzip response of 2,000 bytes against a 100 byte limit: Xo said Internal
+  "grpc: failed to decompress the received message" before)
+- Shipped in: not yet released
+
+gunzip stopped at the limit with an error, which pull reported as a failed decompression; it is now
+ResourceExhausted with grpc-go's text.
+
 ## 2026-11-17: feature: response metadata and message size limits on the client and server
 
 - Kind: feature (behavior change)

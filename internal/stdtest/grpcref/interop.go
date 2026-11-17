@@ -207,6 +207,7 @@ func interopClient(addr string) {
 	fmt.Println("recvlimit: " + unaryOpts("/t.S/Echo", "hi ", []grpc.CallOption{grpc.MaxCallRecvMsgSize(2)}, "x-who", "bob"))
 	fmt.Println("sendlimit: " + unaryOpts("/t.S/Echo", "hi ", []grpc.CallOption{grpc.MaxCallSendMsgSize(2)}))
 	fmt.Println("big: " + unary("/t.S/Big", "x"))
+	fmt.Println("gziplimit: " + unaryOpts("/t.S/Big", "x", []grpc.CallOption{grpc.UseCompressor(gzip.Name), grpc.MaxCallRecvMsgSize(100)}))
 }
 
 // showMD prints metadata as name=value pairs sorted by name, a name's values joined by commas.

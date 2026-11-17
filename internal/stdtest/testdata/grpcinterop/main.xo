@@ -123,6 +123,7 @@ fn calls(os: Os, c: grpc.Client) {
   os.stdio.println("recvlimit: ${show(c.with_max_recv(2).unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
   os.stdio.println("sendlimit: ${show(c.with_max_send(2).unary("/t.S/Echo", "hi ".bytes()))}")
   os.stdio.println("big: ${show(c.unary("/t.S/Big", b"x"))}")
+  os.stdio.println("gziplimit: ${show(c.with_gzip().with_max_recv(100).unary("/t.S/Big", b"x"))}")
 }
 
 fn show_md(md: Map[Str, Str]) -> Str {

@@ -9,3 +9,4 @@ md: ok hi bob header [content-type=application/grpc] trailer [x-t=tv]
 recvlimit: err rpc error: code = ResourceExhausted desc = grpc: received message larger than max (6 vs. 2)
 sendlimit: err rpc error: code = ResourceExhausted desc = trying to send message larger than max (3 vs. 2)
 big: err rpc error: code = ResourceExhausted desc = trying to send message larger than max (2000 vs. 1000)
+gziplimit: err rpc error: code = ResourceExhausted desc = grpc: received message after decompression larger than max 100
