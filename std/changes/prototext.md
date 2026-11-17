@@ -1,5 +1,17 @@
 # std/prototext changes
 
+## 2026-11-16: perf: a byte's \xNN escape is one write from a table
+
+- Kind: perf
+- Commit: this push
+- Found by: XO_PROF=cpu of bench/perf/prototext marshal (quote_to and hex_to under w_string)
+- Go reference: none (same output)
+- Test: prototext_test.xo "each control byte and invalid UTF-8 byte is escaped as \\xNN" (all 256 bytes against hex_to)
+- Timing: bench/perf/prototext marshal, linux/arm64 host 1, xo bench --ab 15 rounds against the previous build: wall 0.939 (0.93 to 0.953), max RSS 1.0
+
+A control byte or a byte that is not UTF-8 is written as its four bytes from a 1,024 byte constant, not as a
+backslash, an x and two hex digits.
+
 ## 2026-11-16: perf: a plain decimal double is written without a rewrite
 
 - Kind: perf

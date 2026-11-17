@@ -27,3 +27,20 @@ test "g_fast gives g_text's answer wherever it gives one" {
   // the fast path covers most of the decimal values (1876 of these)
   expect(fast > 1500) == true
 }
+
+test "each control byte and invalid UTF-8 byte is escaped as \\xNN" {
+  for c in 0..256 {
+    var b = BytesBuilder.new()
+    b.write_byte(UInt8(c))
+    var out = StrBuilder.new()
+    quote_to(out, b.freeze(), false)
+    let got = out.freeze()
+    if c < 0x20 && c != 0x0a && c != 0x0d && c != 0x09 || c == 0x7f || c >= 0x80 {
+      var want = StrBuilder.new()
+      want.write("\"\\x")
+      hex_to(want, c, 2)
+      want.write("\"")
+      expect((c, got)) == (c, want.freeze())
+    }
+  }
+}
