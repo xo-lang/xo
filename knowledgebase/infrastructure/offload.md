@@ -384,6 +384,13 @@ libc6-riscv64-cross` plus `dpkg-deb -x` unpack it under /work/rvtools/root,
 and `qemu-riscv64 -L /work/rvtools/root/usr/riscv64-linux-gnu PROG` runs a
 glibc program. The script is the lead notes' `lang1/rv/qemu2-remote.sh`.
 
+h2spec on host 2 (owner-built, 2026-11-17): `/home/xo/h2spec/bin/h2spec`,
+built from tag v2.6.0, commit 70ac2294010887f48b18e2d64f5cccd48421fad1. Its
+`--version` prints "2.0.0 (Unknown)" because the version comes from build
+ldflags; the commit is what identifies it. std/http's HTTP/2 row runs it
+against an Xo server on the host (spec/std.md HTTP/2, std-coverage.md).
+Last verified: 2026-11-17.
+
 **`--ab` stays on the first host.** The lane's name is outside `arm64*` so
 `ab-host.sh` does not pick it, because of these controls: identical compiler
 and std on both sides (8fe1f704b and d1cd6520c, a script-only commit), self
