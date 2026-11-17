@@ -1423,6 +1423,12 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   floor, gate cap, quiet windows and stagger still hold it. The history is
   ~/xo-lead/heavyd-runs.json (heavyd history.go). Takes effect once the
   lead restarts heavyd.
+- Main's xo is prebuilt on the pass hosts (#264, cost:xo-cold-build,
+  2026-11-17: gates cold-built xo, about 150 s p50): when main moves, xw
+  runs scripts/lead/xo-prewarm.sh, which builds main's xo key on each of
+  hosts 2 and 3 that lacks it (a gate of gate.sh's `xo` step only, outside
+  the lanes, nice 19), so a gate whose change leaves the key equal to
+  main's starts its tests at once.
 - Gates on an offload host (owner, 2026-11-07): `OFFGATE_AGENT=NAME ~/xo-lead/agents/offload-gate.sh WORKTREE
   [STEP...]` runs `scripts/gate.sh` on the pass/fail host for a committed worktree, with no hand made bundle or
   host script: it bundles HEAD and origin/main (only the commits the host lacks, so no detached HEAD or

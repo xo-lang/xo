@@ -1122,6 +1122,7 @@ for step in "$@"; do
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
   repo) ;; # ran first, above
+  xo) ;; # only the xobuild above: xo-prewarm.sh's build of main's xo on a host (#264)
   short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|corpuscheck|alloff|fp|warm|chkcache|warmseq|stdwasm|devllvm)
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
