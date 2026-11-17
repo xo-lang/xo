@@ -9,6 +9,7 @@ use std/compress
 use std/http
 use std/task
 use std/json
+use std/x509
 
 /// The 17 canonical status codes (their numbers are the wire values of `grpc-status`).
 pub enum Code {
@@ -242,6 +243,8 @@ pub struct Call {
   pub peer: Str = ""
   /// the connection's security (grpc-go's peer AuthInfo): "tls" with the TLS state, or "insecure"
   pub auth_info: AuthInfo = insecure_info()
+  /// the request's `:authority` (the Host header over HTTP/1.1; grpc-go's ":authority" metadata)
+  pub authority: Str = ""
 }
 
 /// A connection's protection (grpc-go's credentials.SecurityLevel), ordered: a level below another is weaker.
@@ -290,6 +293,49 @@ pub fn insecure_info() -> AuthInfo {
 /// The AuthInfo of a TLS connection (grpc-go's TLSInfo: PrivacyAndIntegrity).
 pub fn tls_info(state: http.TlsState?) -> AuthInfo {
   AuthInfo{auth_type: "tls", level: SecurityLevel.PrivacyAndIntegrity, tls: state}
+}
+
+/// Whether the connection may carry a call whose `:authority` is authority (grpc-go's AuthorityValidator, TLSInfo's
+/// and insecure's ValidateAuthority): over TLS one of the server's certificates must cover its host (x509's
+/// VerifyHostname, the port left out), else Err "credentials: invalid authority \"A\": " and the certificates'
+/// errors (`<nil>` for a "tls" AuthInfo without certificates); without TLS any authority is valid.
+pub fn (a: AuthInfo) validate_authority(authority: Str) -> () ! Str {
+  if a.auth_type != "tls" {
+    return Ok(())
+  }
+  validate_certs(match a.tls {
+    Some(t) => t.peer_certificates
+    None => []
+  }, authority)
+}
+
+fn validate_certs(certs: List[x509.Certificate], authority: Str) -> () ! Str {
+  let host = authority_host(authority)
+  var errs: List[Str] = []
+  for cert in certs {
+    match cert.verify_hostname(host) {
+      Ok(_) => return Ok(())
+      Err(e) => errs.push("${e}")
+    }
+  }
+  // errors.Join of none is nil, printed "<nil>"
+  Err("credentials: invalid authority ${go_quote(authority)}: ${if errs.is_empty() { "<nil>" } else { errs.join("\n") }}")
+}
+
+/// authority's host: net.SplitHostPort's, the whole authority when it has no port (or is not host:port).
+fn authority_host(authority: Str) -> Str {
+  if authority.starts_with("[") {
+    if let Some((h, rest)) = authority[1..].cut("]") {
+      if rest.starts_with(":") && !rest[1..].contains(":") {
+        return h
+      }
+    }
+    return authority
+  }
+  match authority.cut(":") {
+    Some((h, port)) => if port.contains(":") { authority } else { h }
+    None => authority
+  }
 }
 
 /// Whether ai meets level (grpc-go's credentials.CheckSecurityLevel): Err "AuthInfo is nil" for None, Ok for an
@@ -684,6 +730,12 @@ pub struct Client {
   pub retry_off: Bool = false
   pub max_attempts: Int = 5
   pub retry_buffer: Int = 262144
+  /// every call's `:authority` (grpc-go's WithAuthority), "" for the base URL's host
+  pub authority: Str = ""
+  /// this client's calls' `:authority` (grpc-go's CallAuthority), checked against the server's certificate
+  pub call_authority: Str = ""
+  /// the connections that check a call authority, one client per authority, shared by the copies of the client
+  checked: Mutex[Map[Str, http.Client]] = Mutex.new({})
 }
 
 /// The client sending md with every call (grpc-go's WithDefaultCallOptions with metadata): a call's own metadata
@@ -1167,6 +1219,61 @@ pub fn (c: Client) with_per_rpc_creds(cr: PerRpcCreds) -> Client {
   c with {creds: l}
 }
 
+/// Every call's `:authority` is a (grpc-go's WithAuthority, in place of the base URL's host), and over https a is the
+/// server name the handshake checks the certificate against (unless the http.Client has its own,
+/// `with_server_name`); per-RPC credentials see it in their audience.
+pub fn (c: Client) with_authority(a: Str) -> Client {
+  var h = c.http
+  if c.base.starts_with("https://") && h.tls_options().server_name == "" {
+    h = h.with_server_name(authority_host(a))
+  }
+  c with {authority: a, http: h}
+}
+
+/// The calls of the returned client carry `:authority` a (grpc-go's CallAuthority, the AuthorityOverrideCallOption),
+/// over the client's own. Over https a must be valid for the server's certificate (`AuthInfo.validate_authority`),
+/// checked on the connection before any request byte is sent; else the call fails Unavailable "failed to validate
+/// authority" and the server never sees it. Over http:// any authority goes.
+pub fn (c: Client) with_call_authority(a: Str) -> Client {
+  c with {call_authority: a}
+}
+
+/// The `:authority` of c's calls, "" for the base URL's host.
+fn call_authority_of(c: Client) -> Str {
+  if c.call_authority != "" { c.call_authority } else { c.authority }
+}
+
+/// The http.Client a call goes on: with a call authority over https, one whose new connections check it.
+fn conn_of(c: Client) -> http.Client {
+  if c.call_authority == "" || !c.base.starts_with("https://") {
+    return c.http
+  }
+  let a = c.call_authority
+  let base = c.http
+  c.checked.with(fn(var m) -> http.Client {
+    match m.get(a) {
+      Some(h) => h
+      None => {
+        let h = base.with_verify_conn(fn(certs) -> () ! Str { validate_certs(certs, a) })
+        m[a] = h
+        h
+      }
+    }
+  })
+}
+
+/// A failed open as the call's status: a call authority the connection refused is grpc-go's Unavailable
+/// "failed to validate authority".
+fn open_err(c: Client, e: http.ClientErr) -> Status {
+  if c.call_authority != "" {
+    let t = "${e}"
+    if let Some(i) = t.find("credentials: invalid authority ") {
+      return status_new(Code.Unavailable, "failed to validate authority ${go_quote(c.call_authority)} : ${t[i..]}")
+    }
+  }
+  from_client_err(e)
+}
+
 /// The calls of the returned client carry cr's metadata (grpc-go's PerRPCCredsCallOption, the grpc.PerRPCCredentials
 /// call option), after the client's own credentials. With `require_tls` over `http://` a call is Unauthenticated.
 pub fn (c: Client) with_call_creds(cr: PerRpcCreds) -> Client {
@@ -1189,9 +1296,12 @@ fn creds_metadata(c: Client, method: Str, md: Map[Str, Str]) -> Map[Str, Str] ! 
     return Ok(md)
   }
   let secure = c.base.starts_with("https://")
-  var host = c.base.trim_prefix("https://").trim_prefix("http://")
-  if let Some((h, _)) = host.cut("/") {
-    host = h
+  var host = call_authority_of(c)
+  if host == "" {
+    host = c.base.trim_prefix("https://").trim_prefix("http://")
+    if let Some((h, _)) = host.cut("/") {
+      host = h
+    }
   }
   host = host.trim_suffix(":443")
   let pos = method.rfind("/") ?? method.len()
@@ -1320,9 +1430,13 @@ fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], 
   if let Some(d) = timeout {
     r = r.with_timeout(d)
   }
-  let st = match c.http.open(r) {
+  let auth = call_authority_of(c)
+  if auth != "" {
+    r = r.with_host(auth)
+  }
+  let st = match conn_of(c).open(r) {
     Ok(s) => s
-    Err(e) => return (Err(from_client_err(e)), false, None)
+    Err(e) => return (Err(open_err(c, e)), false, None)
   }
   let head = st.head()
   if let Some(e) = head_status(head) {
@@ -1400,15 +1514,20 @@ fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str]
   if let Some(d) = timeout {
     r = r.with_timeout(d)
   }
+  let auth = call_authority_of(c)
+  if auth != "" {
+    r = r.with_host(auth)
+  }
+  let hc = conn_of(c)
   let head = Chan[(http.ClientStream?, Status?)].new(1)
   let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: c.max_recv, gzip: c.gzip, max_send: c.max_send}
   var result: R? = None
   var failure: Status? = None
   scope s {
     s.spawn(fn() {
-      match c.http.open(r) {
+      match hc.open(r) {
         Ok(st) => head.send((Some(st), None))
-        Err(e) => head.send((None, Some(from_client_err(e))))
+        Err(e) => head.send((None, Some(open_err(c, e))))
       }
     })
     match f(cc) {
@@ -1714,7 +1833,7 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
       md[lk] = v
     }
   }
-  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip, auth_info: if req.tls() { tls_info(req.tls_state()) } else { insecure_info() }}
+  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip, auth_info: if req.tls() { tls_info(req.tls_state()) } else { insecure_info() }, authority: req.host()}
   let recv = Recv{body: body, st: Mutex[RecvState].new(RecvState{buf: b"", at: 0, done: false, gzip: (req.header("grpc-encoding") ?? "") == "gzip"}), max: max}
   // the head grpc-go's server writes: content-type, and grpc-encoding only when the responses are compressed
   var resp = http.stream(200, fn(w) -> () ! IoErr {

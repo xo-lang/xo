@@ -1,6 +1,7 @@
 // gRPC credentials (std/grpc, grpc-go's credentials package): security levels and CheckSecurityLevel, the
 // AuthInfo a handler sees, and per-RPC credentials on the client and on one call, with grpc-go's errors for
-// credentials that need TLS over cleartext and for a control plane status (gRFC A54). The TLS case runs against
+// credentials that need TLS over cleartext and for a control plane status (gRFC A54); the :authority of a client
+// (WithAuthority) and of a call (CallAuthority), and AuthorityValidator without TLS. The TLS cases run against
 // grpc-go in TestGrpcInterop.
 use std/grpc
 use std/http
@@ -9,6 +10,13 @@ fn level_line(ai: grpc.AuthInfo?, l: grpc.SecurityLevel) -> Str {
   match grpc.check_security_level(ai, l) {
     Ok(_) => "${l.display()} (${l.number()}) ok"
     Err(e) => "${l.display()} (${l.number()}) ${e}"
+  }
+}
+
+fn checked(r: Result[(), Str]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => e
   }
 }
 
@@ -21,11 +29,14 @@ fn main(os: Os) {
   os.stdio.println("none needs ${level_line(None, grpc.SecurityLevel.NoSecurity)}")
   let old = grpc.AuthInfo{auth_type: "old", level: grpc.SecurityLevel.InvalidSecurityLevel}
   os.stdio.println("old needs ${level_line(Some(old), grpc.SecurityLevel.PrivacyAndIntegrity)}")
+  os.stdio.println("insecure validates any.example: ${checked(grpc.insecure_info().validate_authority("any.example"))}")
+  os.stdio.println("tls without certificates validates any.example: ${checked(grpc.tls_info(None).validate_authority("any.example"))}")
 
   var srv = grpc.server(os.clock)
   srv.unary("/t.S/Who", fn(call, _req) -> Bytes ! grpc.Status {
     Ok("${call.auth_info.auth_type} ${call.auth_info.level.display()} authorization=${call.metadata.get("authorization") ?? "-"} x-call=${call.metadata.get("x-call") ?? "-"}".bytes())
   })
+  srv.unary("/t.S/Authority", fn(call, _req) -> Bytes ! grpc.Status { Ok(call.authority.bytes()) })
   match os.net.listen("127.0.0.1:0") {
     Ok(l) => {
       let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
@@ -51,6 +62,7 @@ fn main(os: Os) {
         let call = c.with_call_creds(grpc.PerRpcCreds{metadata: fn(_ri) -> Map[Str, Str] ! grpc.Status uses sync { Ok({"x-call": "1"}) }, require_tls: false})
         show("call creds", call.unary("/t.S/Who", b""))
         show("own metadata wins", c.unary("/t.S/Who", b"", {"authorization": "mine"}))
+        show("authority creds", c.with_authority("svc.example:443").unary("/t.S/Who", b""))
         for line in seen.with_read(fn(l) { l }) {
           os.stdio.println("creds saw: ${line}")
         }
@@ -61,6 +73,27 @@ fn main(os: Os) {
         }
         show("creds fail Unauthenticated", fail(grpc.Code.Unauthenticated).unary("/t.S/Who", b""))
         show("creds fail NotFound", fail(grpc.Code.NotFound).unary("/t.S/Who", b""))
+        let auth = fn(label: Str, cl: grpc.Client) {
+          match cl.unary("/t.S/Authority", b"") {
+            Ok(b) => os.stdio.println("${label}: ${(b.to_str() ?? "?").replace(addr, "ADDR")}")
+            Err(e) => os.stdio.println("${label}: ${e.display()}")
+          }
+        }
+        auth("authority", base)
+        let svc = base.with_authority("svc.example:50051")
+        auth("with authority", svc)
+        auth("call authority over cleartext", svc.with_call_authority("other.example"))
+        let streamed = svc.with_call_authority("streamed.example").call("/t.S/Authority", {}, None, fn(cc) -> Str ! grpc.Status uses net.dial {
+          cc.send(b"")?
+          cc.close_send()
+          let m = cc.recv()? ?? b""
+          let _end = cc.recv()?
+          Ok(m.to_str() ?? "?")
+        })
+        match streamed {
+          Ok(a) => os.stdio.println("call authority, streaming call: ${a}")
+          Err(e) => os.stdio.println("call authority, streaming call: ${e.display()}")
+        }
       }
     }
     Err(e) => os.stdio.println("listen failed: ${e}")

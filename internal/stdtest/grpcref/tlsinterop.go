@@ -68,6 +68,10 @@ func tlsServe(dir string) {
 		if _, err := recvMsg(s); err != nil {
 			return err
 		}
+		if m, _ := grpc.MethodFromServerStream(s); m == "/t.S/Authority" {
+			md, _ := metadata.FromIncomingContext(s.Context())
+			return sendMsg(s, []byte(strings.Join(md.Get(":authority"), ",")))
+		}
 		return sendMsg(s, []byte(whoAnswer(s.Context())))
 	}
 	srv := grpc.NewServer(grpc.Creds(creds), grpc.UnknownServiceHandler(who), grpc.ForceServerCodecV2(bytesCodec{}))
@@ -112,4 +116,25 @@ func tlsClient(addr, dir string) {
 	for _, s := range seen {
 		fmt.Println("creds: " + strings.ReplaceAll(s, addr, "ADDR"))
 	}
+	// the :authority the server sees: the target's, a valid CallAuthority, one the certificate does not cover
+	// (refused before the call goes out), and WithAuthority's (the handshake's server name too)
+	authority := func(label string, cc *grpc.ClientConn, opts ...grpc.CallOption) {
+		out := []byte(nil)
+		opts = append(opts, grpc.ForceCodecV2(bytesCodec{}))
+		if err := cc.Invoke(ctx, "/t.S/Authority", &in, &out, opts...); err != nil {
+			fmt.Println(label + ": err " + err.Error())
+		} else {
+			fmt.Println(label + ": " + strings.ReplaceAll(string(out), addr, "ADDR"))
+		}
+	}
+	authority("authority", cc)
+	authority("call authority", cc, grpc.CallAuthority("127.0.0.1:8443"))
+	authority("call authority bad", cc, grpc.CallAuthority("auth.example.com:8443"))
+	wa, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds), grpc.WithAuthority("127.0.0.1:9443"))
+	if err != nil {
+		panic(err)
+	}
+	defer wa.Close()
+	authority("with authority", wa)
+	authority("with authority, call authority", wa, grpc.CallAuthority("127.0.0.1"))
 }

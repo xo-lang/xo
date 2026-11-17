@@ -138,11 +138,18 @@ func grpcCross(t *testing.T, name, refServe, refClient string, all, tls bool) {
 	certs := filepath.Join(dir, "certs")
 	writeGrpcCerts(t, certs)
 	wantTLS := "who: auth tls PrivacyAndIntegrity TLS 1.3 client=grpc client chains=1 authorization=Bearer tls-token\n" +
-		"creds: /t.S/Who https://ADDR/t.S tls PrivacyAndIntegrity\n"
+		"creds: /t.S/Who https://ADDR/t.S tls PrivacyAndIntegrity\n" +
+		// grpc-go's WithAuthority, CallAuthority and TLSInfo.ValidateAuthority (map.txt grpc.WithAuthority)
+		"authority: ADDR\n" +
+		"call authority: 127.0.0.1:8443\n" +
+		"call authority bad: err rpc error: code = Unavailable desc = failed to validate authority \"auth.example.com:8443\" : credentials: invalid authority \"auth.example.com:8443\": x509: certificate is not valid for any names, but wanted to match auth.example.com\n" +
+		"with authority: 127.0.0.1:9443\n" +
+		"with authority, call authority: 127.0.0.1\n"
 	for _, c := range []struct{ name, client, server string }{
 		{"tls: xo client, grpc-go server", prog, ref},
 		{"tls: grpc-go client, xo server", ref, prog},
 		{"tls: xo client, xo server", prog, prog},
+		{"tls: grpc-go client, grpc-go server", ref, ref},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			addr := serve(t, c.server, "serve-tls", certs)

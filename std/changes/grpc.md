@@ -92,6 +92,20 @@
 - Timing: none (registration only; a call's path is unchanged)
 - Shipped in: not yet released
 
+## 2026-11-17: feature: the :authority of a client and of a call, and its validation
+
+- Kind: feature
+- Commit: this push
+- Found by: task #236 (grpc-go's WithAuthority, CallAuthority, AuthorityValidator; stdaudit gaps)
+- Go reference: grpc-go v1.79.2 dialoptions.go WithAuthority, rpc_util.go CallAuthority, credentials/tls.go ValidateAuthority, internal/transport/http2_client.go NewStream
+- Test: TestGrpcInterop tls cases (xo and grpc-go, each way and with themselves: the :authority the server sees, a call authority the certificate does not cover failing Unavailable with grpc-go's text); golden grpc_creds (over cleartext, unary and streaming, the audience)
+- Timing: none (a call authority over https has its own connections, checked once per connection)
+
+`Client.with_authority(a)` sets every call's `:authority` and, over https, the server name the handshake checks.
+`Client.with_call_authority(a)` sets the calls' `:authority`, checked against the server's certificates before any
+request byte goes out. `AuthInfo.validate_authority` is grpc-go's AuthorityValidator; a handler's `Call.authority` is
+the request's `:authority`.
+
 ## 2026-11-17: feature: per-RPC credentials, security levels and the peer's AuthInfo
 
 - Kind: feature

@@ -177,6 +177,7 @@ fn tls_serve(os: Os, dir: Str) {
   let (ca, srv_cert, _) = tls_files(os, dir)
   var srv = grpc.server(os.clock)
   srv.unary("/t.S/Who", fn(call, _req) -> Bytes ! grpc.Status { Ok(who(call).bytes()) })
+  srv.unary("/t.S/Authority", fn(call, _req) -> Bytes ! grpc.Status { Ok(call.authority.bytes()) })
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   let hs = http.server(l, srv.router()).with_client_auth(tls.ClientAuth.RequireAndVerify, roots: Some(tls.roots(ca).or_fault("roots"))).with_tls([srv_cert])
   os.stdio.println(hs.addr())
@@ -199,6 +200,20 @@ fn tls_client(os: Os, addr: Str, dir: Str) {
   for l in seen.with_read(fn(l) { l }) {
     os.stdio.println("creds: ${l.replace(addr, "ADDR")}")
   }
+  // the :authority the server sees: the base URL's, a valid call authority, one the certificate does not cover
+  // (refused before the call goes out), and with_authority's (the handshake's server name too)
+  let authority = fn(label: Str, cl: grpc.Client) {
+    match cl.unary("/t.S/Authority", b"x") {
+      Ok(b) => os.stdio.println("${label}: ${(b.to_str() ?? "?").replace(addr, "ADDR")}")
+      Err(e) => os.stdio.println("${label}: err ${e.display()}")
+    }
+  }
+  authority("authority", c)
+  authority("call authority", c.with_call_authority("127.0.0.1:8443"))
+  authority("call authority bad", c.with_call_authority("auth.example.com:8443"))
+  let wa = grpc.client(hc, "https://${addr}").with_authority("127.0.0.1:9443")
+  authority("with authority", wa)
+  authority("with authority, call authority", wa.with_call_authority("127.0.0.1"))
 }
 
 fn main(os: Os) {

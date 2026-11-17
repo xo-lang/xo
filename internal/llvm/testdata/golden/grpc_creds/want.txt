@@ -7,14 +7,22 @@ insecure needs PrivacyAndIntegrity (3) requires SecurityLevel PrivacyAndIntegrit
 tls needs PrivacyAndIntegrity (3) ok
 none needs NoSecurity (1) AuthInfo is nil
 old needs PrivacyAndIntegrity (3) ok
+insecure validates any.example: ok
+tls without certificates validates any.example: credentials: invalid authority "any.example": <nil>
 client creds: insecure NoSecurity authorization=Bearer t x-call=-
 call creds: insecure NoSecurity authorization=Bearer t x-call=1
 own metadata wins: insecure NoSecurity authorization=mine x-call=-
+authority creds: insecure NoSecurity authorization=Bearer t x-call=-
 creds saw: /t.S/Who https://ADDR/t.S insecure
 creds saw: /t.S/Who https://ADDR/t.S insecure
 creds saw: /t.S/Who https://ADDR/t.S insecure
+creds saw: /t.S/Who https://svc.example/t.S insecure
 tls creds over cleartext: rpc error: code = Unauthenticated desc = transport: cannot send secure credentials on an insecure connection
 creds fail Unauthenticated: rpc error: code = Unauthenticated desc = no token
 creds fail NotFound: rpc error: code = Internal desc = transport: received per-RPC creds error with illegal status: rpc error: code = NotFound desc = no token
+authority: ADDR
+with authority: svc.example:50051
+call authority over cleartext: other.example
+call authority, streaming call: streamed.example
 done
 --- stderr

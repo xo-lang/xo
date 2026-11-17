@@ -10907,7 +10907,7 @@ fn (c: Client) with_gzip() -> Client          // sends gzip compressed messages 
 fn bin_encode(data: Bytes) -> Str            // a `-bin` metadata value: unpadded standard base64
 fn bin_decode(value: Str) -> Bytes?          // padded or not; None when it is not base64
 // the server
-struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration?, client_stream: Bool, server_stream: Bool, peer: Str, auth_info: AuthInfo }   // peer: the client's IP
+struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration?, client_stream: Bool, server_stream: Bool, peer: Str, auth_info: AuthInfo, authority: Str }   // peer: the client's IP; authority: the request's :authority
 fn server(clock: Clock) -> Server
 fn (var s: Server) unary(method: Str, f: fn(Call, Bytes) -> Bytes ! Status)
 fn (var s: Server) stream(method: Str, f: fn(Call, Recv, Send) -> () ! Status, client_stream: Bool = true, server_stream: Bool = true)
@@ -10978,6 +10978,9 @@ struct RequestInfo { method: Str, audience: Str, auth_info: AuthInfo }      // a
 struct PerRpcCreds { metadata: fn(RequestInfo) -> Map[Str, Str] ! Status uses sync, require_tls: Bool = true }
 fn (c: Client) with_per_rpc_creds(cr: PerRpcCreds) -> Client   // WithPerRPCCredentials: every call
 fn (c: Client) with_call_creds(cr: PerRpcCreds) -> Client      // the PerRPCCredentials call option: after the client's
+fn (c: Client) with_authority(a: Str) -> Client           // WithAuthority: every call's :authority, over https the server name too
+fn (c: Client) with_call_authority(a: Str) -> Client      // CallAuthority: the calls' :authority, checked against the server's certificate
+fn (a: AuthInfo) validate_authority(authority: Str) -> () ! Str   // AuthorityValidator (TLSInfo's and insecure's ValidateAuthority)
 ```
 
 - Per-RPC credentials run before each call, the client's first and then the call's; their names are made lower case and
@@ -10988,6 +10991,12 @@ fn (c: Client) with_call_creds(cr: PerRpcCreds) -> Client      // the PerRPCCred
   status: ...". A handler's `Call.auth_info` is the connection's: "tls" with the TLS state (client certificates and
   verified chains under `http.Server.with_client_auth`), or "insecure". TLS itself is std/http's (`with_roots`,
   `with_cert`, `with_tls`, `with_client_auth`), so grpc-go's TransportCredentials constructors have no counterpart.
+  A call's `:authority` is the call authority, else the client's (`with_authority`), else the base URL's host; per-RPC
+  credentials see it in their audience. Over https a call authority must be covered by one of the server's
+  certificates (x509's VerifyHostname on its host): the connection checks it before any request byte is sent, and a
+  call it does not cover fails Unavailable "failed to validate authority \"A\" : credentials: invalid authority
+  \"A\": " and the x509 errors, the server never seeing it. Each call authority has its own connections. Over
+  `http://` any authority goes.
 
 - One call is one HTTP/2 stream: `application/grpc`, `te: trailers`, 5 byte frames, the status in the `grpc-status` and
   `grpc-message` trailers (percent encoded as grpc-go does, any byte), `grpc-timeout` as grpc-go encodes it (at most 8
