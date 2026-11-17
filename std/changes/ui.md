@@ -28,6 +28,22 @@ racing sessions with "type ... already exists" (42710) or "relation ...
 already exists" (42P07); sql_store took that as an error and the instance
 did not start. Both now mean the table is there.
 
+## 2026-11-17: feature: real-time rooms (decision 0695)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #186 (std/evidence/ui/features.md, decision 0686 plan step 7)
+- Go reference: none
+- Test: std/ui "a room frame carries a view as a delta from the last, and reads back to it", "a room steps on its tick, sends each player its view and ack, and starts again from its snapshot (decision 0695)"
+- Timing: examples/ui-arena on the Mac Studio, 20 Hz: 4,000 players at 25.7 ms p50 and 50.3 ms p99 input to frame, no late ticks; 60 Hz: 1,000 players at 8.8 ms and 17.2 ms (decision 0695)
+- Shipped in: not yet released
+
+`ui.rooms(ui.game(init, step, view), store, tasks, clock, hz:)` runs
+rooms of a game on a fixed tick, with the state in memory and a snapshot
+in the store every `snapshot_ms`; each player gets binary frames of its
+view (a delta from the last when smaller) over a websocket mounted at
+`/_xo/room`, and `/_xo/room.js` is the browser client.
+
 ## 2026-11-17: feature: commands, server side effects a Msg asks for (decision 0692)
 
 - Kind: feature

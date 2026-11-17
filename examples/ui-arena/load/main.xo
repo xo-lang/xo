@@ -1,0 +1,115 @@
+// A load client for ui-arena: ROOMS rooms of PER players each, every
+// player sending RATE moves a second for SECS seconds, measuring each
+// move's latency to the first frame whose ack includes it, and the bytes
+// and frames each player is sent.
+//
+//   xo run ./load -- 127.0.0.1:8080 ROOMS PER SECS RATE [STAGGER_US] [FIRST_ROOM]
+//
+// Dials are 1000 us apart by default: a burst of 2,000 dials at once
+// overflows macOS's listen backlog of 128 and the kernel resets some
+// connections, for an Xo server and a Go net/http server alike.
+use std/json
+use std/ui
+use std/websocket
+use example.com/uiarena/arena
+
+struct Up {
+  s: Int
+  i: arena.Move
+} derive Json
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let addr = args.get(0) ?? "127.0.0.1:8080"
+  let rooms = Int.parse(args.get(1) ?? "10") ?? 10
+  let per = Int.parse(args.get(2) ?? "4") ?? 4
+  let secs = Int.parse(args.get(3) ?? "10") ?? 10
+  let rate = Int.parse(args.get(4) ?? "10") ?? 10
+  // microseconds between dials (0: all at once)
+  let stagger = Int.parse(args.get(5) ?? "1000") ?? 1000
+  // rooms are r<FIRST_ROOM>.., so several clients can share a server
+  let first = Int.parse(args.get(6) ?? "0") ?? 0
+  let start = os.clock.now()
+  let lat = Mutex[List[Int]].new([])
+  let bytes = Atomic[Int].new(0)
+  let frames = Atomic[Int].new(0)
+  let failed = Atomic[Int].new(0)
+  let stop = Atomic[Int].new(0)
+  scope s {
+    for rm in 0..rooms {
+      for pl in 0..per {
+        if stagger > 0 {
+          os.clock.sleep(Duration.from_nanos(stagger * 1000))
+        }
+        s.spawn_background(fn() {
+          let w = websocket.dial(os.net, "ws://${addr}/_xo/room?room=r${first + rm}") ?? e => {
+            if failed.add(1) <= 3 {
+              match e {
+                websocket.WsErr.Handshake(status: st, msg: m) => os.stdio.println("dial: status ${st} ${m} at ${os.clock.since(start).millis()} ms")
+                _ => os.stdio.println("dial: ${e}")
+              }
+            }
+            return
+          }
+          // send time of each seq (a ring), read when an ack covers it
+          var ring: List[Atomic[Int]] = []
+          for _i in 0..1024 {
+            ring.push(Atomic[Int].new(0))
+          }
+          let t0 = os.clock.now()
+          scope p {
+            p.spawn_background(fn() {
+              var last = b""
+              var acked = 0
+              while true {
+                let m = w.read().ok() ?? break
+                let _b = bytes.add(m.data.len())
+                let _n = frames.add(1)
+                let (_t, ack, v) = ui.room_view(last, m.data) ?? break
+                last = v
+                if ack > acked {
+                  let now = os.clock.since(t0).micros()
+                  var done: List[Int] = []
+                  for k in acked + 1..ack + 1 {
+                    done.push(now - ring[k % 1024].get())
+                  }
+                  acked = ack
+                  lat.with(fn(var l) {
+                    for d in done {
+                      l.push(d)
+                    }
+                  })
+                }
+              }
+            })
+            var seq = 0
+            // players start spread over one interval
+            os.clock.sleep(Duration.from_millis((rm * per + pl) * (1000 / rate) / (rooms * per)))
+            while stop.get() == 0 {
+              seq += 1
+              let _old = ring[seq % 1024].swap(os.clock.since(t0).micros())
+              let dx = if seq % 2 == 0 { 5 } else { -5 }
+              if let Err(e) = w.write_text(json.encode_str(Up{s: seq, i: arena.Move{dx: dx, dy: 0}})) {
+                if failed.add(1) <= 8 {
+                  os.stdio.println("write: ${e}")
+                }
+                break
+              }
+              // jittered (0.5 to 1.5 intervals) so sends do not lock to the tick
+              os.clock.sleep(Duration.from_millis((1000 / rate) * (50 + (seq * 37 + pl * 11 + rm * 7) % 101) / 100))
+            }
+            os.clock.sleep(200ms)
+            w.close().ignore_err("close")
+          }
+        })
+      }
+    }
+    os.clock.sleep(Duration.from_millis(secs * 1000))
+    let _s = stop.swap(1)
+  }
+  let l = lat.with_read(fn(x) { x.sort() })
+  let n = l.len()
+  let pick = fn(q: Int) -> Int { if n == 0 { 0 } else { l[(n - 1) * q / 100] } }
+  let players = rooms * per
+  os.stdio.println("players=${players} rooms=${rooms} moves=${n} p50us=${pick(50)} p99us=${pick(99)} maxus=${pick(100)} frames_per_player_s=${frames.get() / players / secs} bytes_per_player_s=${bytes.get() / players / secs} failed=${failed.get()}")
+}

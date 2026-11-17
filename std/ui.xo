@@ -19,6 +19,7 @@
 // runs update and view itself and shows each event at once; without one
 // it is a thin client that shows the server's rendered view.
 
+use std/binary
 use std/compress
 use std/crypto
 use std/html
@@ -3195,5 +3196,451 @@ window.addEventListener("popstate",function(ev){
   visit(location.href,{mode:"pop"});
 });
 // nav-end
+})();
+"""#
+
+// ---- Real-time rooms (decision 0695) ----
+
+/// What a room's step is given each tick (decision 0695): the events the
+/// room received since the last tick, in the order it received them.
+pub enum RoomEvent[I] {
+  /// A connection of player opened (a player may hold several).
+  Join(player: Str)
+  /// A connection of player closed.
+  Leave(player: Str)
+  /// An input a connection of player sent.
+  Input(player: Str, input: I)
+}
+
+/// A real-time game (decision 0695): a room's state S starts at init
+/// (given the room's key) or the room's last snapshot, steps on a fixed
+/// tick through step with the tick's events, and each player is sent
+/// view's bytes of it, as a delta from the bytes they were last sent (a
+/// fixed layout keeps deltas small).
+pub struct Game[S, I] {
+  pub init: fn(Str) -> S
+  pub step: fn(S, List[RoomEvent[I]]) -> S
+  pub view: fn(S, Str) -> Bytes
+}
+
+pub fn game[S, I](init: fn(Str) -> S, step: fn(S, List[RoomEvent[I]]) -> S, view: fn(S, Str) -> Bytes) -> Game[S, I] {
+  Game{init: init, step: step, view: view}
+}
+
+// A room's events since the last tick, and each connection's newest
+// input seq.
+struct Inbox[I] {
+  events: List[RoomEvent[I]]
+  seqs: Map[Int, Int]
+}
+
+// What a connection is sent next: the tick, the newest of its input seqs
+// the state includes, and its view. A slow connection skips to the
+// newest.
+struct RoomOut {
+  tick: Int
+  ack: Int
+  view: Bytes
+}
+
+struct RoomConn {
+  player: Str
+  out: Chan[RoomOut]
+}
+
+// An open room: its inbox and connections; its state lives in its tick
+// task.
+struct Room[I] {
+  key: Str
+  inbox: Mutex[Inbox[I]]
+  conns: Mutex[Map[Int, RoomConn]]
+  tick: Atomic[Int]
+}
+
+// An input as a connection sends it: its seq (from 1) and the input.
+struct RoomUp[I] {
+  s: Int
+  i: I
+} derive Json
+
+/// The rooms of a Game (decision 0695), each stepped hz times a second by
+/// a task of the instance serving it while a player is connected, and
+/// for idle_ms after the last leaves; its state is put in store as a
+/// snapshot every snapshot_ms and when it closes, never per input, and a
+/// room opened again starts from its snapshot. One instance serves a
+/// room (route a room's connections to one instance until rooms take a
+/// lease).
+pub struct Rooms[S: Json, I: Json, fx: Effects] {
+  game: Game[S, I]
+  store: Store[fx]
+  tasks: task.Group
+  clock: Clock
+  hz: Int
+  snapshot_ms: Int
+  idle_ms: Int
+  // the player of a request (None: 401); without it each connection is
+  // a player of its own
+  auth: (fn(http.Request) -> Str? uses sync)?
+  // the room a player asks for by name is (None: 404); without it the
+  // name itself
+  room_of: (fn(Str, Str) -> Str?)?
+  open: Mutex[Map[Str, Room[I]]]
+  next: Atomic[Int]
+  ticks: Atomic[Int]
+  step_us: Atomic[Int]
+  late: Atomic[Int]
+  snaps: Atomic[Int]
+}
+
+/// Rooms of g whose snapshots go to store and whose tick tasks run in
+/// tasks.
+pub fn rooms[S: Json, I: Json, fx: Effects](g: Game[S, I], store: Store[fx], tasks: task.Group, clock: Clock[clock], hz: Int = 20, snapshot_ms: Int = 5000, idle_ms: Int = 10000, auth: (fn(http.Request) -> Str? uses sync)? = None, room_of: (fn(Str, Str) -> Str?)? = None) -> Rooms[S, I, fx] {
+  Rooms{
+    game: g, store: store, tasks: tasks, clock: clock,
+    hz: if hz < 1 { 1 } else { hz }, snapshot_ms: snapshot_ms, idle_ms: idle_ms,
+    auth: auth, room_of: room_of,
+    open: Mutex[Map[Str, Room[I]]].new({}),
+    next: Atomic[Int].new(0), ticks: Atomic[Int].new(0), step_us: Atomic[Int].new(0),
+    late: Atomic[Int].new(0), snaps: Atomic[Int].new(0),
+  }
+}
+
+/// What the rooms did: open rooms, ticks stepped, time in step and view
+/// (microseconds), ticks that started late, and snapshots put.
+pub struct RoomStats {
+  pub open: Int
+  pub ticks: Int
+  pub step_us: Int
+  pub late: Int
+  pub snapshots: Int
+}
+
+pub fn (r: Rooms[S, I, fx]) stats() -> RoomStats uses sync {
+  RoomStats{open: r.open.with_read(fn(m) { m.len() }), ticks: r.ticks.get(), step_us: r.step_us.get(), late: r.late.get(), snapshots: r.snaps.get()}
+}
+
+/// The tick room key is at, None when it is not open.
+pub fn (r: Rooms[S, I, fx]) tick_of(key: Str) -> Int? uses sync {
+  r.open.with_read(fn(m) { m.get(key) }).map(fn(x) { x.tick.get() })
+}
+
+// Adds a connection of player to room key, opening it (and starting its
+// tick task) when it is not open.
+fn (r: Rooms[S, I, fx]) join(key: Str, player: Str) -> (Room[I], Int, RoomConn) uses (sync, fx, clock) {
+  let id = r.next.add(1)
+  let c = RoomConn{player: player, out: Chan[RoomOut].new(cap: 1)}
+  let (room, fresh) = r.open.with(fn(var m) -> (Room[I], Bool) {
+    if let Some(x) = m.get(key) {
+      x.conns.with(fn(var cs) { cs.put(id, c) })
+      return (x, false)
+    }
+    var cs: Map[Int, RoomConn] = {}
+    cs.put(id, c)
+    let x = Room{key: key, inbox: Mutex[Inbox[I]].new(Inbox{events: [], seqs: {}}), conns: Mutex[Map[Int, RoomConn]].new(cs), tick: Atomic[Int].new(0)}
+    m.put(key, x)
+    (x, true)
+  })
+  room.inbox.with(fn(var b) { b.events.push(RoomEvent.Join(player: player)) })
+  if fresh {
+    r.tasks.spawn_background(fn() -> () ! Never uses (sync, fx, clock) { r.run(room) })
+  }
+  (room, id, c)
+}
+
+fn (r: Rooms[S, I, fx]) leave(room: Room[I], id: Int, player: Str) uses sync {
+  room.conns.with(fn(var cs) { let _c = cs.remove(id) })
+  room.inbox.with(fn(var b) {
+    let _s = b.seqs.remove(id)
+    b.events.push(RoomEvent.Leave(player: player))
+  })
+}
+
+// Keeps room key's state at tick as its snapshot.
+fn (r: Rooms[S, I, fx]) snapshot(key: Str, s: S, tick: Int) uses fx {
+  if (r.store.put_snapshot)(key, Batch{after: tick, count: 0, data: json.encode_str(s).bytes()}) is Ok(_) {
+    let _n = r.snaps.add(1)
+  }
+}
+
+// A room's tick task: steps the state hz times a second and hands each
+// connection its view; closes the room idle_ms after its last connection
+// left.
+fn (r: Rooms[S, I, fx]) run(room: Room[I]) uses (sync, fx, clock) {
+  let g = r.game
+  var tick = 0
+  var s = (g.init)(room.key)
+  if let Ok(Some(b)) = (r.store.snapshot)(room.key) {
+    if let Some(t) = b.data.to_str() {
+      if let Ok(x) = json.decode_str[S](t) {
+        s = x
+        tick = b.after
+      }
+    }
+  }
+  room.tick.set(tick)
+  let every = Duration.from_nanos(1000000000 / r.hz)
+  let snap_every = if r.snapshot_ms <= 0 { 0 } else { (r.snapshot_ms * r.hz + 999) / 1000 }
+  let idle_ticks = (r.idle_ms * r.hz + 999) / 1000
+  var snapped = tick
+  var idle = 0
+  var next = r.clock.now()
+  while !task.is_canceled() {
+    let t0 = r.clock.now()
+    let (events, seqs) = room.inbox.with(fn(var b) -> (List[RoomEvent[I]], Map[Int, Int]) {
+      let ev = b.events
+      b.events = []
+      (ev, b.seqs)
+    })
+    s = (g.step)(s, events)
+    tick += 1
+    room.tick.set(tick)
+    let conns = room.conns.with_read(fn(m) { m.entries() })
+    var views: Map[Str, Bytes] = {}
+    for (id, c) in conns {
+      var v = b""
+      if let Some(x) = views.get(c.player) {
+        v = x
+      } else {
+        v = (g.view)(s, c.player)
+        views.put(c.player, v)
+      }
+      let out = RoomOut{tick: tick, ack: seqs.get(id) ?? 0, view: v}
+      if !c.out.try_send(out) {
+        let _old = c.out.try_recv()
+        let _sent = c.out.try_send(out)
+      }
+    }
+    let _t = r.ticks.add(1)
+    let _u = r.step_us.add(r.clock.since(t0).micros())
+    if snap_every > 0 && tick - snapped >= snap_every {
+      r.snapshot(room.key, s, tick)
+      snapped = tick
+    }
+    if conns.is_empty() {
+      idle += 1
+      if idle >= idle_ticks {
+        let closed = r.open.with(fn(var m) -> Bool {
+          if room.conns.with_read(fn(cs) { cs.is_empty() }) {
+            let _x = m.remove(room.key)
+            return true
+          }
+          false
+        })
+        if closed {
+          // the Leave events still waiting are stepped first
+          let rest = room.inbox.with(fn(var b) -> List[RoomEvent[I]] {
+            let ev = b.events
+            b.events = []
+            ev
+          })
+          if !rest.is_empty() {
+            s = (g.step)(s, rest)
+            tick += 1
+          }
+          r.snapshot(room.key, s, tick)
+          return
+        }
+      }
+    } else {
+      idle = 0
+    }
+    next = next + every
+    let wait = next - r.clock.now()
+    if wait > 0s {
+      r.clock.sleep(wait)
+    } else {
+      // behind: the next tick starts now, never a burst to catch up
+      let _l = r.late.add(1)
+      next = r.clock.now()
+    }
+  }
+}
+
+/// One frame a room sends a connection (decision 0695): a kind byte (0:
+/// the whole view, 1: a delta from last), the tick and the newest input
+/// seq of the connection's the state includes (uvarints), then the view
+/// or the delta: the view's length, then runs of (bytes kept from last,
+/// bytes that follow, those bytes), the rest kept from last. The smaller
+/// of the two is sent.
+pub fn room_frame(last: Bytes, tick: Int, ack: Int, view: Bytes) -> Bytes {
+  var b = BytesBuilder.new()
+  let n = view.len()
+  let m = last.len()
+  var d = BytesBuilder.new()
+  d.write(binary.uvarint(n))
+  var i = 0
+  var prev = 0
+  while i < n {
+    if i < m && view[i] == last[i] {
+      i += 1
+      continue
+    }
+    var j = i + 1
+    while j < n {
+      if j < m && view[j] == last[j] {
+        // a run of fewer than 4 equal bytes is cheaper sent than skipped
+        var k = j
+        while k < n && k < m && view[k] == last[k] && k - j < 4 {
+          k += 1
+        }
+        if k - j >= 4 || k == n {
+          break
+        }
+        j = k
+      } else {
+        j += 1
+      }
+    }
+    d.write(binary.uvarint(i - prev))
+    d.write(binary.uvarint(j - i))
+    d.write(view[i..j])
+    prev = j
+    i = j
+  }
+  let delta = d.freeze()
+  if m > 0 && delta.len() < n {
+    b.write_byte(UInt8(1))
+    b.write(binary.uvarint(tick))
+    b.write(binary.uvarint(ack))
+    b.write(delta)
+  } else {
+    b.write_byte(UInt8(0))
+    b.write(binary.uvarint(tick))
+    b.write(binary.uvarint(ack))
+    b.write(view)
+  }
+  b.freeze()
+}
+
+/// A room frame read against the view last read (room_frame): its tick,
+/// ack and view; None when it is not a frame of that view.
+pub fn room_view(last: Bytes, frame: Bytes) -> (Int, Int, Bytes)? {
+  if frame.is_empty() {
+    return None
+  }
+  let kind = Int(frame[0])
+  let (tick, a) = binary.get_uvarint(frame, 1) ?? return None
+  let (ack, c) = binary.get_uvarint(frame, 1 + a) ?? return None
+  var at = 1 + a + c
+  if kind == 0 {
+    return Some((tick, ack, frame[at..frame.len()].clone()))
+  }
+  if kind != 1 {
+    return None
+  }
+  let (n, w) = binary.get_uvarint(frame, at) ?? return None
+  at += w
+  if n > last.len() + frame.len() {
+    return None
+  }
+  var out = BytesBuilder.with_capacity(n)
+  var pos = 0
+  while at < frame.len() {
+    let (skip, w1) = binary.get_uvarint(frame, at) ?? return None
+    at += w1
+    let (cnt, w2) = binary.get_uvarint(frame, at) ?? return None
+    at += w2
+    if pos + skip > last.len() || at + cnt > frame.len() || pos + skip + cnt > n {
+      return None
+    }
+    out.write(last[pos..pos + skip])
+    out.write(frame[at..at + cnt])
+    pos += skip + cnt
+    at += cnt
+  }
+  if n > pos {
+    if n > last.len() {
+      return None
+    }
+    out.write(last[pos..n])
+  }
+  Some((tick, ack, out.freeze()))
+}
+
+// A connection of player to room key: inputs in, frames out.
+fn serve_room[S: Json, I: Json, fx: Effects](r: Rooms[S, I, fx], conn: websocket.WsConn, key: Str, player: Str) uses (sync, fx, clock) {
+  let (room, id, c) = r.join(key, player)
+  defer r.leave(room, id, player)
+  scope s {
+    s.spawn_background(fn() {
+      // nothing is sent for a tick that changed neither the view nor the
+      // ack (the first frame always goes)
+      var last = b""
+      var acked = -1
+      for o in c.out {
+        if o.view == last && o.ack == acked {
+          continue
+        }
+        let f = room_frame(last, o.tick, o.ack, o.view)
+        if conn.write(websocket.Message{kind: websocket.Kind.Binary, data: f}) is Err(_) {
+          break
+        }
+        last = o.view
+        acked = o.ack
+      }
+    })
+    s.spawn_background(fn() {
+      let _ = task.stopping().recv()
+      conn.close(code: 1001, reason: "server stopping").ignore_err("stopping")
+    })
+    while true {
+      let m = conn.read().ok() ?? break
+      let t = m.data.to_str() ?? continue
+      let u = json.decode_str[RoomUp[I]](t).ok() ?? continue
+      room.inbox.with(fn(var b) {
+        b.events.push(RoomEvent.Input(player: player, input: u.i))
+        b.seqs.put(id, u.s)
+      })
+    }
+  }
+}
+
+/// Serves the rooms: a room's websocket at prefix/_xo/room?room=NAME,
+/// and the browser's room client at prefix/_xo/room.js (xoRoom(url,
+/// onframe) connects, calls onframe(view, tick, ack) with each view as a
+/// Uint8Array, and answers an object whose send(input) sends an input
+/// and answers its seq).
+pub fn (r: Rooms[S, I, fx]) mount(var router: http.Router, prefix: Str = "") uses (sync, fx, clock) {
+  router.handle("GET ${prefix}/_xo/room.js", fn(req) -> http.Response ! Never {
+    http.Response{status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache"}, body: ROOM_JS.bytes()}
+  })
+  router.handle("GET ${prefix}/_xo/room", fn(req) -> http.Response ! Never uses (sync, fx, clock) {
+    let name = req.query("room") ?? ""
+    var p = ""
+    if let Some(a) = r.auth {
+      p = a(req) ?? return http.text(401, "std/ui: sign in first")
+    } else {
+      p = "p${r.next.add(1)}"
+    }
+    var key = name
+    if let Some(f) = r.room_of {
+      key = f(name, p) ?? return http.text(404, "std/ui: no such room")
+    }
+    websocket.upgrade(req, fn(conn) { serve_room(r, conn, key, p) })
+  })
+}
+
+/// The browser's room client (served at prefix/_xo/room.js).
+const ROOM_JS = r#"""(function(){
+"use strict";
+function uv(b,o){var x=0,s=1,c;do{c=b[o.i++];x+=(c&127)*s;s*=128;}while(c&128);return x;}
+window.xoRoom=function(url,onframe){
+  var last=new Uint8Array(0),seq=0,ws=null,wait=250,q=[];
+  function open(){
+    ws=new WebSocket(url);ws.binaryType="arraybuffer";
+    ws.onopen=function(){wait=250;last=new Uint8Array(0);while(q.length)ws.send(q.shift());};
+    ws.onmessage=function(e){
+      var f=new Uint8Array(e.data),o={i:1},kind=f[0],tick=uv(f,o),ack=uv(f,o),v;
+      if(kind===0){v=f.slice(o.i);}
+      else{var n=uv(f,o),pos=0;v=new Uint8Array(n);
+        while(o.i<f.length){var k=uv(f,o),c=uv(f,o);v.set(last.subarray(pos,pos+k),pos);pos+=k;v.set(f.subarray(o.i,o.i+c),pos);pos+=c;o.i+=c;}
+        if(pos<n)v.set(last.subarray(pos,n),pos);}
+      last=v;onframe(v,tick,ack);
+    };
+    ws.onclose=function(){setTimeout(open,wait);wait=Math.min(wait*2,5000);};
+  }
+  open();
+  return{send:function(input){seq++;var t=JSON.stringify({s:seq,i:input});if(ws&&ws.readyState===1)ws.send(t);else q.push(t);return seq;}};
+};
 })();
 """#

@@ -113,7 +113,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] polling bus: a Host on a store without a notice service reads it for each held scope and wakes live pages with news | 0686 plan step 5 | std/ui_test.xo:a Host that polls its store hears another instance's append and wakes its live pages (decision 0686)
 - [x] polling on a timer: poll_every wakes a live page within its interval | 0686 plan step 5 | std/ui_test.xo:poll_every wakes a live page within its interval
 - [x] 2/20/200/2,000 user measurements over several instances | 0686 plan step 4 | 0686 "Users over several instances (2026-11-17)": 2 to 2,000 users on 4 instances, room and own scopes, closed and paced, every Msg stored once
-- [ ] real-time rooms and the canvas game measurement | 0686 plan step 7 | open
+- [x] real-time rooms and the canvas game measurement | 0686 plan step 7, 0695 | `std/ui_test.xo:a room steps on its tick, sends each player its view and ack, and starts again from its snapshot (decision 0695)`; examples/ui-arena load (decision 0695 Consequences)
 
 ## Live push views (0689)
 

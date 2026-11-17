@@ -11931,6 +11931,19 @@ fn (var c: Scope[M, E]) reply(client: Str, ver: Int) -> Down[M, E] ! Str uses sy
 fn (c: Scope[M, E]) model() -> M
 fn (c: Scope[M, E]) version() -> Int
 fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
+// Real-time rooms (decision 0695)
+pub enum RoomEvent[I] { Join(player: Str), Leave(player: Str), Input(player: Str, input: I) }
+pub struct Game[S, I] { pub init: fn(Str) -> S, pub step: fn(S, List[RoomEvent[I]]) -> S, pub view: fn(S, Str) -> Bytes }
+pub fn game[S, I](init: fn(Str) -> S, step: fn(S, List[RoomEvent[I]]) -> S, view: fn(S, Str) -> Bytes) -> Game[S, I]
+pub fn rooms[S: Json, I: Json, fx: Effects](g: Game[S, I], store: Store[fx], tasks: task.Group, clock: Clock, hz: Int = 20,
+    snapshot_ms: Int = 5000, idle_ms: Int = 10000, auth: (fn(http.Request) -> Str? uses sync)? = None,
+    room_of: (fn(Str, Str) -> Str?)? = None) -> Rooms[S, I, fx]
+pub struct RoomStats { pub open: Int, pub ticks: Int, pub step_us: Int, pub late: Int, pub snapshots: Int }
+fn (r: Rooms[S, I, fx]) mount(var router: http.Router, prefix: Str = "") uses (sync, fx, clock)
+fn (r: Rooms[S, I, fx]) stats() -> RoomStats uses sync
+fn (r: Rooms[S, I, fx]) tick_of(key: Str) -> Int? uses sync
+pub fn room_frame(last: Bytes, tick: Int, ack: Int, view: Bytes) -> Bytes
+pub fn room_view(last: Bytes, frame: Bytes) -> (Int, Int, Bytes)?
 ```
 
 - `update` and `view` are fn types without `uses`, so the checker
@@ -12220,6 +12233,31 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   scrolling at 390 px; with the live websocket another tab saw each add
   in 1 to 10 ms (about 1.7 s by polling) and a reconnect's queued work in
   102 ms (1,147 ms).
+
+- Real-time rooms (decision 0695) are for games and other state that
+  moves on a clock, apart from Hosts: a room's state lives in one task
+  of the instance serving it, steps `hz` times a second through
+  `step` with the tick's `RoomEvent`s (joins, leaves and inputs in
+  arrival order), and goes to the store only as a snapshot every
+  `snapshot_ms` and when the room closes, `idle_ms` after its last
+  player leaves; a room opened again starts from its snapshot. A late
+  tick is counted in `stats().late` and the next starts at once (no
+  burst to catch up). Each player is sent `view(state, player)` as a
+  binary frame (`room_frame`: a kind byte, the tick and the ack, the
+  newest input seq of the connection the state includes, as uvarints,
+  then the whole view or a delta from the bytes last sent, whichever is
+  smaller); a connection's outbox holds one frame, so a slow connection
+  skips to the newest. Inputs are JSON text messages `{"s": seq, "i":
+  input}`. `mount` serves the websocket at `prefix/_xo/room?room=NAME`
+  (`auth` names the player or answers 401, `room_of(name, player)` maps
+  the name to a room key or answers 404) and `prefix/_xo/room.js`,
+  whose `xoRoom(url, onframe)` reconnects, rebuilds each view and calls
+  `onframe(view, tick, ack)`; its `send(input)` answers the seq. One
+  instance serves a room: route a room's connections to one instance.
+  Tested by std/ui_test.xo (a frame's delta reads back to its view; a
+  room steps on its tick, sends each player its view and ack, and
+  starts again from its snapshot); examples/ui-arena is a canvas game
+  with a load client (decision 0695 has its measurements).
 
 ## 87. std/brotli
 

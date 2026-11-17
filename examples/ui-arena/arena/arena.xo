@@ -1,0 +1,126 @@
+// A real-time arena for std/ui rooms (decision 0695): each player moves a
+// dot with the arrow keys, and a ball bounces around the field every
+// tick, so each tick changes the view as a game's does.
+use std/ui
+
+/// The field is W by H units; a room holds up to SLOTS players.
+pub const W = 1000
+pub const H = 600
+pub const SLOTS = 32
+
+pub struct Dot {
+  pub slot: Int
+  pub x: Int
+  pub y: Int
+} derive Json
+
+pub struct World {
+  pub dots: Map[Str, Dot]
+  pub bx: Int
+  pub by: Int
+  pub vx: Int
+  pub vy: Int
+} derive Json
+
+/// A move: units on each axis, each at most 20.
+pub struct Move {
+  pub dx: Int
+  pub dy: Int
+} derive Json
+
+fn clamp(v: Int, lo: Int, hi: Int) -> Int {
+  if v < lo { lo } else if v > hi { hi } else { v }
+}
+
+fn free_slot(dots: Map[Str, Dot]) -> Int {
+  let used = dots.values().map(fn(d) { d.slot })
+  for i in 0..SLOTS {
+    if !used.contains(i) {
+      return i
+    }
+  }
+  -1
+}
+
+pub fn step(w: World, events: List[ui.RoomEvent[Move]]) -> World {
+  var dots = w.dots
+  for e in events {
+    match e {
+      ui.RoomEvent.Join(player: p) => {
+        if dots.get(p) == None {
+          let s = free_slot(dots)
+          if s >= 0 {
+            dots.put(p, Dot{slot: s, x: 50 + s * 29, y: H / 2})
+          }
+        }
+      }
+      ui.RoomEvent.Leave(player: p) => { let _d = dots.remove(p) }
+      ui.RoomEvent.Input(player: p, input: m) => {
+        if let Some(d) = dots.get(p) {
+          dots.put(p, Dot{slot: d.slot, x: clamp(d.x + clamp(m.dx, -20, 20), 0, W), y: clamp(d.y + clamp(m.dy, -20, 20), 0, H)})
+        }
+      }
+    }
+  }
+  var vx = w.vx
+  var vy = w.vy
+  let bx = w.bx + vx
+  let by = w.by + vy
+  if bx <= 0 || bx >= W { vx = -vx }
+  if by <= 0 || by >= H { vy = -vy }
+  World{dots: dots, bx: clamp(bx, 0, W), by: clamp(by, 0, H), vx: vx, vy: vy}
+}
+
+fn put16(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8.wrapping_from(v % 256))
+  b.write_byte(UInt8.wrapping_from(v / 256))
+}
+
+/// A player's view, a fixed layout so each tick's delta is the bytes that
+/// moved: the player's slot (255: none), the ball (x, y), then each slot's
+/// dot (1 if taken, x, y), numbers 2 bytes little endian.
+pub fn view(w: World, player: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  let me = w.dots.get(player).map(fn(d) { d.slot }) ?? 255
+  b.write_byte(UInt8.wrapping_from(me))
+  put16(b, w.bx)
+  put16(b, w.by)
+  var at: List[Dot?] = List[Dot?].filled(SLOTS, None)
+  for d in w.dots.values() {
+    at[d.slot] = Some(d)
+  }
+  for o in at {
+    if let Some(d) = o {
+      b.write_byte(UInt8(1))
+      put16(b, d.x)
+      put16(b, d.y)
+    } else {
+      b.write_byte(UInt8(0))
+      put16(b, 0)
+      put16(b, 0)
+    }
+  }
+  b.freeze()
+}
+
+pub fn game() -> ui.Game[World, Move] {
+  ui.game(fn(key) { World{dots: {}, bx: W / 2, by: H / 2, vx: 7, vy: 5} }, step, view)
+}
+
+/// The page: a canvas drawn from each view, arrow keys send moves.
+pub const PAGE = r#"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Arena</title>
+<style>body{margin:0;background:#111;color:#ddd;font:14px system-ui}canvas{display:block;margin:12px auto;background:#1c1c1c;max-width:100%}p{text-align:center}</style></head>
+<body><canvas id="c" width="1000" height="600"></canvas><p id="s">connecting</p>
+<script src="/_xo/room.js"></script><script>
+var c=document.getElementById("c"),g=c.getContext("2d"),s=document.getElementById("s"),room=new URLSearchParams(location.search).get("room")||"lobby";
+function u16(v,i){return v[i]|(v[i+1]<<8);}
+var r=xoRoom((location.protocol==="https:"?"wss://":"ws://")+location.host+"/_xo/room?room="+encodeURIComponent(room),function(v,tick,ack){
+  g.clearRect(0,0,1000,600);var me=v[0];
+  g.fillStyle="#fc4";g.beginPath();g.arc(u16(v,1),u16(v,3),8,0,7);g.fill();
+  for(var i=0;i<32;i++){var o=5+i*5;if(!v[o])continue;g.fillStyle=i===me?"#4cf":"#9a9";g.fillRect(u16(v,o+1)-6,u16(v,o+3)-6,12,12);}
+  s.textContent="room "+room+", tick "+tick+", input "+ack;
+});
+var keys={ArrowLeft:[-10,0],ArrowRight:[10,0],ArrowUp:[0,-10],ArrowDown:[0,10]};
+addEventListener("keydown",function(e){var k=keys[e.key];if(k){e.preventDefault();r.send({dx:k[0],dy:k[1]});}});
+</script></body></html>
+"""#

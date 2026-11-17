@@ -22,3 +22,6 @@ waits for the pruner too, which runs until the job ends.
 
 Wait for the job's own processes by the PIDs captured at launch:
 `pids="$pids $!"` after each `&`, then `wait $pids`.
+
+Observed again 2026-11-17 (std/ui arena load matrix on host 2): the first
+run finished, the job idled until OFF_IDLE_MIN; `wait "$sp"` fixed it.

@@ -1,0 +1,36 @@
+// The ui-arena server: rooms of the arena game (decision 0695).
+//
+//   xo run ./server -- :8080            serves until stopped
+//   xo run ./server -- :8080 30         serves 30 s, then prints the rooms' stats
+use std/http
+use std/log
+use std/ui
+use example.com/uiarena/arena
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let addr = args.get(0) ?? ":8080"
+  let secs = Int.parse(args.get(1) ?? "0") ?? 0
+  let hz = Int.parse(args.get(2) ?? "20") ?? 20
+  scope s {
+    let rs = ui.rooms(arena.game(), ui.memory_store(), s.group(), os.clock, hz: hz)
+    var r = http.router()
+    rs.mount(r)
+    r.handle("GET /", fn(req) -> http.Response ! Never {
+      http.Response{status: 200, headers: {"Content-Type": "text/html; charset=utf-8"}, body: arena.PAGE.bytes()}
+    })
+    let l = os.net.listen(addr)?
+    log.info("listening", {"addr": l.addr(), "hz": "${hz}"})
+    let srv = http.server(l, r)
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    if secs <= 0 {
+      while true {
+        os.clock.sleep(1h)
+      }
+    }
+    os.clock.sleep(Duration.from_millis(secs * 1000))
+    let st = rs.stats()
+    os.stdio.println("rooms open=${st.open} ticks=${st.ticks} step_us=${st.step_us} late=${st.late} snapshots=${st.snapshots}")
+    s.cancel()
+  }
+}

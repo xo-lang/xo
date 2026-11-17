@@ -271,3 +271,46 @@ test "each principal's own state follows it across devices (decision 0672)" {
   expect(d3.state) == "\"\""
   expect(r.call(http.new_request("GET", "/", headers: {"X-User": "ann"})).text()?.contains("draft=milk")) == true
 }
+
+fn tally(key: Str) -> Int { 0 }
+
+fn tally_step(n: Int, events: List[ui.RoomEvent[Int]]) -> Int {
+  var t = n
+  for e in events {
+    match e {
+      ui.RoomEvent.Join(player: _p) => { t += 100 }
+      ui.RoomEvent.Leave(player: _p) => { t -= 100 }
+      ui.RoomEvent.Input(player: _p, input: i) => { t += i }
+    }
+  }
+  t
+}
+
+fn tally_view(n: Int, player: Str) -> Bytes { "${player}=${n}".bytes() }
+
+test "rooms serve their client, ask who a player is and which room, and frame views as deltas (decision 0695)" {
+  let f1 = ui.room_frame(b"", 1, 0, b"p1=100")
+  let f2 = ui.room_frame(b"p1=100", 2, 1, b"p1=105")
+  let (t, a, v) = ui.room_view(b"p1=100", f2) ?? return
+  expect((t, a, v)) == (2, 1, b"p1=105")
+  expect(ui.room_view(b"", f1).map(fn(x) { x.2 })) == Some(b"p1=100")
+  expect(tally_step(0, [ui.RoomEvent.Join(player: "a"), ui.RoomEvent.Input(player: "a", input: 5)])) == 105
+  scope s {
+    let g = ui.game(tally, tally_step, tally_view)
+    let rs = ui.rooms(g, ui.memory_store(), s.group(), os.clock, hz: 30,
+      auth: Some(fn(req: http.Request) -> Str? uses sync { req.header("X-User") }),
+      room_of: Some(fn(name: Str, player: Str) -> Str? { if name == "open" { Some("room-open") } else { None } }))
+    var r = http.router()
+    rs.mount(r, prefix: "/game")
+    let js = r.call(http.new_request("GET", "/game/_xo/room.js"))
+    expect(js.status) == 200
+    expect(js.text()?.contains("xoRoom")) == true
+    expect(r.call(http.new_request("GET", "/game/_xo/room?room=open")).status) == 401
+    let q = http.new_request("GET", "/game/_xo/room?room=closed").with_header("X-User", "ann")
+    expect(r.call(q).status) == 404
+    let st = rs.stats()
+    expect((st.open, st.ticks, st.late, st.snapshots)) == (0, 0, 0, 0)
+    expect(rs.tick_of("room-open")) == None
+    s.cancel()
+  }
+}

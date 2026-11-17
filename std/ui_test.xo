@@ -2287,3 +2287,114 @@ test "predict folds the principal's pending acts over their state, so an offline
   let bad = predict(a, ClientIn{model: a.init, pending: [], user: Some(d), upending: ["{"]})
   expect(bad.html.contains("draft: <")) == true
 }
+
+// ---- real-time rooms (decision 0695) ----
+
+test "a room frame carries a view as a delta from the last, and reads back to it" {
+  let views = [b"", b"a", b"hello world", b"hello there", b"hellO world!!", b"h", b"", b"0123456789abcdef0123456789abcdef", b"0123456789abcdeX0123456789abcdef", b"x123456789abcdef0123456789abcdeY"]
+  for last in views {
+    for v in views {
+      let f = room_frame(last, 7, 3, v)
+      expect(room_view(last, f)) == Some((7, 3, v))
+    }
+  }
+  // one byte changed in a long view is sent as a few bytes, not the view
+  var big = BytesBuilder.new()
+  for i in 0..1000 {
+    big.write_byte(UInt8.wrapping_from(i))
+  }
+  let a = big.freeze()
+  var c = BytesBuilder.new()
+  c.write(a[0..500])
+  c.write_byte(UInt8(255))
+  c.write(a[501..1000])
+  let b = c.freeze()
+  let f = room_frame(a, 1, 0, b)
+  expect(f.len() < 16) == true
+  expect(room_view(a, f)) == Some((1, 0, b))
+  // a frame that does not fit the last view is refused, not read past
+  expect(room_view(b"", f)) == None
+  expect(room_view(a, b"")) == None
+  expect(room_view(a, b"\x09")) == None
+}
+
+struct Arena {
+  pos: Map[Str, Int]
+  steps: Int
+} derive Json
+
+fn arena() -> Game[Arena, Int] {
+  game(
+    fn(key) { Arena{pos: {}, steps: 0} },
+    fn(s, events) {
+      var p = s.pos
+      for e in events {
+        match e {
+          RoomEvent.Join(player: who) => p.put(who, p.get(who) ?? 0)
+          RoomEvent.Leave(player: who) => { let _x = p.remove(who) }
+          RoomEvent.Input(player: who, input: d) => p.put(who, (p.get(who) ?? 0) + d)
+        }
+      }
+      Arena{pos: p, steps: s.steps + 1}
+    },
+    fn(s, player) { "${player}=${s.pos.get(player) ?? 0} n=${s.pos.len()}".bytes() },
+  )
+}
+
+// Reads frames from w until want holds for the view; answers it and the
+// frame's ack.
+fn room_until(w: websocket.WsConn, from: Bytes, want: fn(Str) -> Bool) -> (Bytes, Int) {
+  var last = from
+  while true {
+    let m = w.read().or_fault("read")
+    let (_t, ack, v) = room_view(last, m.data) ?? fault("not a frame of the last view")
+    last = v
+    if want(v.to_str_lossy()) {
+      return (v, ack)
+    }
+  }
+  fault("unreachable")
+}
+
+test "a room steps on its tick, sends each player its view and ack, and starts again from its snapshot (decision 0695)" {
+  let st = memory_store()
+  scope g {
+    let rs = rooms(arena(), st, g.group(), os.clock, hz: 100, snapshot_ms: 50, idle_ms: 50)
+    var r = http.router()
+    rs.mount(r)
+    let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+    let srv = http.server(l, r)
+    let addr = srv.addr()
+    g.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let a = websocket.dial(os.net, "ws://${addr}/_xo/room?room=r1").or_fault("dial a")
+    let b = websocket.dial(os.net, "ws://${addr}/_xo/room?room=r1").or_fault("dial b")
+    let (va, _x) = room_until(a, b"", fn(v) { v.ends_with(" n=2") })
+    let pa = va.to_str_lossy().split("=")[0]
+    a.write_text(json.encode_str(RoomUp{s: 1, i: 5})).or_fault("send")
+    a.write_text(json.encode_str(RoomUp{s: 2, i: 2})).or_fault("send")
+    let (v2, ack) = room_until(a, va, fn(v) { v.starts_with("${pa}=7 ") })
+    expect((v2.to_str_lossy(), ack)) == ("${pa}=7 n=2", 2)
+    // b sees the room too, with its own view
+    let (vb, _y) = room_until(b, b"", fn(v) { v.ends_with(" n=2") })
+    expect(vb.to_str_lossy().starts_with(pa)) == false
+    expect(rs.stats().open) == 1
+    // the room closes idle_ms after the last leaves, with a snapshot
+    b.close().or_fault("close b")
+    a.close().or_fault("close a")
+    while rs.stats().open > 0 {
+      os.clock.sleep(1ms)
+    }
+    let snap = (st.snapshot)("r1").or_fault("snapshot") ?? fault("no snapshot")
+    let saved = json.decode_str[Arena](snap.data.to_str_lossy()).or_fault("decode")
+    expect(saved.pos.len()) == 0
+    expect(snap.after > 0) == true
+    // opened again, it continues from its snapshot's tick and state
+    let c = websocket.dial(os.net, "ws://${addr}/_xo/room?room=r1").or_fault("dial c")
+    let m = c.read().or_fault("read c")
+    let (tick, _a, _v) = room_view(b"", m.data) ?? fault("frame")
+    expect(tick > snap.after) == true
+    expect(rs.stats().snapshots >= 1) == true
+    c.close().or_fault("close c")
+    g.cancel()
+  }
+}
