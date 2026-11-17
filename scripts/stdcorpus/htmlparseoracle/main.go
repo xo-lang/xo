@@ -221,10 +221,20 @@ func dump(n *html.Node) (string, error) {
 }
 
 // parse runs one case and returns the dump, or "ERR " and the error text.
-func parse(tc *testCase) (out string) {
+func parse(tc *testCase) string {
+	s, _ := parseCase(tc)
+	return s
+}
+
+// parseCase is parse, and whether x/net/html panicked: a panic (a nil
+// pointer in its foreign-content handling, for one, on
+// `</button></html></tr>text` in an svg fragment with scripting on) is no
+// answer an implementation should copy, so a random case that panics is
+// dropped (#152: fuzz seed 33 failed on its "ERR runtime error" want).
+func parseCase(tc *testCase) (out string, panicked bool) {
 	defer func() {
 		if x := recover(); x != nil {
-			out = fmt.Sprintf("ERR %v", x)
+			out, panicked = fmt.Sprintf("ERR %v", x), true
 		}
 	}()
 	opt := html.ParseOptionEnableScripting(tc.scripting)
@@ -232,14 +242,14 @@ func parse(tc *testCase) (out string) {
 	if tc.tag == "" {
 		d, err := html.ParseWithOptions(strings.NewReader(tc.text), opt)
 		if err != nil {
-			return "ERR " + err.Error()
+			return "ERR " + err.Error(), isPanic(err)
 		}
 		doc = d
 	} else {
 		ctx := &html.Node{Data: tc.tag, DataAtom: atom.Lookup([]byte(tc.tag)), Namespace: tc.ns, Type: html.ElementNode}
 		nodes, err := html.ParseFragmentWithOptions(strings.NewReader(tc.text), ctx, opt)
 		if err != nil {
-			return "ERR " + err.Error()
+			return "ERR " + err.Error(), isPanic(err)
 		}
 		doc = &html.Node{Type: html.DocumentNode}
 		for _, n := range nodes {
@@ -248,9 +258,27 @@ func parse(tc *testCase) (out string) {
 	}
 	s, err := dump(doc)
 	if err != nil {
-		return "ERR " + err.Error()
+		return "ERR " + err.Error(), false
 	}
-	return s
+	return s, false
+}
+
+// isPanic: x/net/html's parser recovers a panic and returns it as
+// fmt.Errorf("%s", panicErr), which keeps only the text, so a runtime
+// panic shows as an error starting "runtime error: ".
+func isPanic(err error) bool {
+	return strings.HasPrefix(err.Error(), "runtime error: ")
+}
+
+// keepRandom drops the random cases x/net/html panics on.
+func keepRandom(cs []*testCase) []*testCase {
+	var out []*testCase
+	for _, tc := range cs {
+		if _, p := parseCase(tc); !p {
+			out = append(out, tc)
+		}
+	}
+	return out
 }
 
 func dash(s string) string {
@@ -415,7 +443,7 @@ func xoCorpus(goVersion string) string {
 	for _, in := range curated {
 		docs = append(docs, &testCase{text: in, scripting: true})
 	}
-	docs = append(docs, randomCases(1200)...)
+	docs = append(docs, keepRandom(randomCases(1200))...)
 	for _, tc := range docs {
 		fmt.Fprintf(&o, "  (\"%s\", \"%s\", \"%s\", %v, \"%s\"),\n", q(tc.text), q(tc.ns), q(tc.tag), tc.scripting, q(parse(tc)))
 		n++
