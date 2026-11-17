@@ -1,0 +1,111 @@
+exit 0
+--- stdout
+a fresh connection:
+  GetConn ADDR
+  ConnectStart tcp ADDR
+  ConnectDone tcp ADDR err=none
+  GotConn reused=false was_idle=false idle=none
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  PutIdleConn err=none
+  -> 200 ok
+the same connection reused:
+  GetConn ADDR
+  GotConn reused=true was_idle=true idle=some
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  PutIdleConn err=none
+  -> 200 ok
+a POST:
+  GetConn ADDR
+  GotConn reused=true was_idle=true idle=some
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  PutIdleConn err=none
+  -> 200 hello
+a redirect: two exchanges:
+  GetConn ADDR
+  GotConn reused=true was_idle=true idle=some
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  PutIdleConn err=none
+  GetConn ADDR
+  GotConn reused=true was_idle=true idle=some
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  PutIdleConn err=none
+  -> 200 ok
+a response that closes its connection:
+  GetConn ADDR
+  GotConn reused=true was_idle=true idle=some
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  -> 200 bye
+a POST expecting 100 Continue:
+  GetConn ADDR
+  ConnectStart tcp ADDR
+  ConnectDone tcp ADDR err=none
+  GotConn reused=false was_idle=false idle=none
+  WroteHeaders
+  GotFirstResponseByte
+  Got100Continue
+  WroteRequest err=none
+  -> 200 hello
+then a new connection:
+  GetConn ADDR
+  ConnectStart tcp ADDR
+  ConnectDone tcp ADDR err=none
+  GotConn reused=false was_idle=false idle=none
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  PutIdleConn err=none
+  -> 200 ok
+a refused dial:
+  GetConn ADDR
+  ConnectStart tcp ADDR
+  ConnectDone tcp ADDR err=dial tcp ADDR: connect: connection refused
+  -> ok=false
+open: up to the head:
+  GetConn ADDR
+  GotConn reused=true was_idle=true idle=some
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+the body read to its end (100000 bytes):
+  PutIdleConn err=none
+  close after the end delivers 0 more
+open again: the connection reused:
+  GetConn ADDR
+  GotConn reused=true was_idle=true idle=some
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+closed before its end: not offered to the pool:
+localhost looked up:
+  -> ok=true
+https: a fresh connection:
+  GetConn ADDR
+  ConnectStart tcp ADDR
+  ConnectDone tcp ADDR err=none
+  TLSHandshakeStart
+  TLSHandshakeDone TLS 1.3 alpn=h2 err=none
+  GotConn reused=false was_idle=false idle=none
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  -> ok=true
+https: reused:
+  GetConn ADDR
+  GotConn reused=true was_idle=true idle=some
+  WroteHeaders
+  WroteRequest err=none
+  GotFirstResponseByte
+  -> ok=true
+--- stderr

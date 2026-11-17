@@ -4,6 +4,7 @@ auth refused: 403 403 403
 sched: 200 true
 heap: true
 unknown route: 404
+mem_total: true
 profile: 501 true
 second during the first: 501
 profile again: 501 true

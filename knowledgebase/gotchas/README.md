@@ -1450,3 +1450,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-oracle-panic-as-want.md](go-oracle-panic-as-want.md): a fuzz want of "ERR runtime error"; x/net/html recovers its panics as plain errors, so the oracle drops those cases
 - [gate-env-leaks-into-push.md](gate-env-leaks-into-push.md): an exported OFF_MAX_MIN from a gate failed the next push; pushq now clears gate-only settings (#169)
 - [evidence-rounds-share-worktree.md](evidence-rounds-share-worktree.md): Observed 2026-11-16: two std evidence rounds on one host shared its worktree and log, and leftover untracked evidence blocked the next checkout once main had it; one round per host (lock), a log per round, clear evidence before checkout
+- [golden-want-edit-misses-target-wants.md](golden-want-edit-misses-target-wants.md): a want.txt edit left want_wasm.txt and want_windows.txt behind; main's wasm goldens went red (#194; Observed)
