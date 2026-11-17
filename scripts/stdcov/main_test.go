@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -157,5 +159,41 @@ func TestMissing(t *testing.T) {
 	}
 	if m := missing("zzdone", mark{level: "Proven"}, mark{level: "Proven"}, mark{level: "Proven"}); m != nil {
 		t.Fatalf("missing of an all-Proven module = %v, want nil", m)
+	}
+}
+
+// TestFeatAudit: decision 0691: a module no Go package maps to is Proven
+// when std/evidence/MODULE/features.md lists every feature with a test that
+// exists and none open; Solid otherwise, naming what is open.
+func TestFeatAudit(t *testing.T) {
+	old, oldBG := repo, beyondGo
+	defer func() { repo, beyondGo = old, oldBG }()
+	repo = t.TempDir()
+	rowsByMod = map[string][]string{}
+	beyondGo = map[string]string{"ws": "Go has no websocket in std"}
+	write := func(p, s string) {
+		p = filepath.Join(repo, p)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("test/golden/ui_live/main.xo", "")
+	write("std/ui_test.xo", "")
+	write("std/evidence/ui/features.md", "# std/ui features\n\n- [x] live pages | decision 0689 | test/golden/ui_live\n- [x] slots | decision 0670 | `std/ui_test.xo:test_slot`\n")
+	write("std/evidence/half/features.md", "- [x] a | decision 1 | std/ui_test.xo\n- [ ] b | decision 2 | streaming not done\n- [x] c | decision 3 |\n- [x] d | decision 4 | std/gone_test.xo\n")
+	write("std/evidence/empty/features.md", "# nothing yet\n")
+	for _, c := range []struct{ mod, level, text string }{
+		{"ui", "Proven", "feature audit: all 2 features tested, none open (decision 0691)"},
+		{"half", "Solid", "feature audit: 1 of 4 features tested, 1 open (b), 2 done without a test (c (no test), d (no file std/gone_test.xo))"},
+		{"empty", "Solid", "feature audit lists no feature (decision 0691)"},
+		{"ws", "Solid", "beyond Go: Go has no websocket in std; no feature audit yet (decision 0691)"},
+		{"none", "Solid", "no Go package maps to it; no feature audit yet (decision 0691)"},
+	} {
+		if f := feat(c.mod); f.level != c.level || f.text != c.text {
+			t.Errorf("feat(%s) = %s %q, want %s %q", c.mod, f.level, f.text, c.level, c.text)
+		}
 	}
 }

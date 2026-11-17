@@ -271,7 +271,9 @@ of them pgx's, mostly pgtype's value types), 0 unreviewed, 0 stale. With a row
 for every std module (2026-11-15, the 13 rows below the OTLP row and eight Go
 package rows): 215 doc-named, 240 matched, 3423 mapped, 8986 skipped, 1433 gaps,
 0 unreviewed, 0 stale. A module's open gaps keep its features mark below
-Proven (scripts/stdcov, decision 0655). Use is counted over GOROOT/src
+Proven (scripts/stdcov, decision 0655). A module that no row names (std/ui) is
+scored by its feature audit instead, `std/evidence/MODULE/features.md`: every
+feature its ADRs promise with a test, Proven when none is open (decision 0691). Use is counted over GOROOT/src
 (go1.26.1, outside cmd) and the pinned modules of scripts/stdaudit/corpus.txt
 (chi, gin, cobra, pgx, aws-sdk-go-v2, client_golang, mux): files that use the
 symbol; method counts are an upper bound (any `.Name` selector in a file that

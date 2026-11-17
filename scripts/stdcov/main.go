@@ -627,11 +627,16 @@ func count(xs []string) map[string]int {
 
 func feat(m string) mark {
 	st := rowsByMod[m]
+	if len(st) == 0 {
+		if a, ok := featureAudit(m); ok {
+			return a
+		}
+	}
 	if b, ok := beyondGo[m]; ok && len(st) == 0 {
-		return mark{"Solid", "beyond Go: " + b, ""}
+		return mark{"Solid", "beyond Go: " + b + "; no feature audit yet (decision 0691)", ""}
 	}
 	if len(st) == 0 {
-		return mark{"Solid", "no Go package maps to it; covers its own domain's common uses", ""}
+		return mark{"Solid", "no Go package maps to it; no feature audit yet (decision 0691)", ""}
 	}
 	c := count(st)
 	if c["unaudited"] > 0 && c["partial"] == 0 && c["planned"] == 0 {
@@ -659,6 +664,75 @@ func feat(m string) mark {
 		text += fmt.Sprintf(" (%d not planned by category, decision 0655 rule 8)", n)
 	}
 	return mark{"Proven", text, "knowledgebase/infrastructure/std-coverage.md"}
+}
+
+// featureAudit reads std/evidence/MODULE/features.md, the feature audit of a
+// module no Go package maps to (decision 0691). Each item is a line
+//
+//   - [x] FEATURE | DECISION | TEST
+//   - [ ] FEATURE | DECISION | what is open
+//
+// where TEST is a repo path, optionally with ":Name", that exists. Proven
+// needs at least one item, no open item, and a test on every done item.
+func featureAudit(m string) (mark, bool) {
+	rel := filepath.Join("std/evidence", m, "features.md")
+	data, err := os.ReadFile(filepath.Join(repo, rel))
+	if err != nil {
+		return mark{}, false
+	}
+	var done int
+	var open, bad []string
+	for _, l := range strings.Split(string(data), "\n") {
+		l = strings.TrimSpace(l)
+		var isDone bool
+		switch {
+		case strings.HasPrefix(l, "- [x] "):
+			isDone = true
+		case strings.HasPrefix(l, "- [ ] "):
+		default:
+			continue
+		}
+		f := strings.Split(l[6:], "|")
+		name := strings.TrimSpace(f[0])
+		if !isDone {
+			open = append(open, name)
+			continue
+		}
+		t := ""
+		if len(f) >= 3 {
+			t = strings.TrimSpace(f[2])
+		}
+		path := strings.SplitN(strings.Trim(t, "`"), ":", 2)[0]
+		if path == "" {
+			bad = append(bad, name+" (no test)")
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(repo, path)); err != nil {
+			bad = append(bad, name+" (no file "+path+")")
+			continue
+		}
+		done++
+	}
+	list := func(xs []string) string {
+		if len(xs) > 4 {
+			xs = append(append([]string(nil), xs[:4]...), fmt.Sprintf("%d more", len(xs)-4))
+		}
+		return strings.Join(xs, ", ")
+	}
+	switch {
+	case len(open) > 0 || len(bad) > 0:
+		text := fmt.Sprintf("feature audit: %d of %d features tested", done, done+len(open)+len(bad))
+		if len(open) > 0 {
+			text += fmt.Sprintf(", %d open (%s)", len(open), list(open))
+		}
+		if len(bad) > 0 {
+			text += fmt.Sprintf(", %d done without a test (%s)", len(bad), list(bad))
+		}
+		return mark{"Solid", text, rel}, true
+	case done == 0:
+		return mark{"Solid", "feature audit lists no feature (decision 0691)", rel}, true
+	}
+	return mark{"Proven", fmt.Sprintf("feature audit: all %d features tested, none open (decision 0691)", done), rel}, true
 }
 
 // ---- evidence (decision 0616)
@@ -1242,7 +1316,7 @@ func main() {
 	w("| Testing | own tests | Go's tests ported or a Go differential; parsers fuzzed | also `--race` and load stress clean, long fuzz runs, security reviewed where it applies (crypto, tls, http, x509) |")
 	w("| Performance | not measured, or measured and above 2x Go | measured against Go, within 2x | at or better than Go on its benchmark |")
 	w("")
-	w("How a mark is read here: *Features* from the rows of the coverage table that name the module (all done and no open function level gap of their Go packages in the audit, `scripts/stdaudit/map.txt`, is Proven; any partial row or open gap is Solid; a module with no Go package is Solid and says so). *Testing* from the committed corpus of Go's tests under `internal/stdtest/testdata/corpus`, Go differential tests, and fuzz tests for modules that parse untrusted input. *Performance* from a committed result file with a Go twin; an internal helper module (htmlent, uniclass, protowire) takes the lowest performance mark among the modules that use it. A mark with no committed evidence is Early, so a missing result is the gap to close, not a hidden number. The dates are those of the result files, which can be older than this page; a re-run can only move a mark if the file is replaced. Proven testing evidence (`std/evidence/MODULE`) counts while the module's source hash matches the one it ran at, or for 90 days and one minor release: the hash covers the module's own files (`std/MODULE.xo`, `std/native/MODULE.xo`, `std/native/MODULE_native.xo` and the module specific `std/native/llrt` files they reach), the same files of every std module it uses, and `std/internal.xo`, but not the shared runtime (the allocator, scheduler, I/O and OS layer and the prelude), which its own tests, the fixed point and the full tier cover (decision 0616 section 3).")
+	w("How a mark is read here: *Features* from the rows of the coverage table that name the module (all done and no open function level gap of their Go packages in the audit, `scripts/stdaudit/map.txt`, is Proven; any partial row or open gap is Solid; a module no Go package maps to is Proven when its feature audit, `std/evidence/MODULE/features.md`, lists every feature with a test and none open, and Solid otherwise, decision 0691). *Testing* from the committed corpus of Go's tests under `internal/stdtest/testdata/corpus`, Go differential tests, and fuzz tests for modules that parse untrusted input. *Performance* from a committed result file with a Go twin; an internal helper module (htmlent, uniclass, protowire) takes the lowest performance mark among the modules that use it. A mark with no committed evidence is Early, so a missing result is the gap to close, not a hidden number. The dates are those of the result files, which can be older than this page; a re-run can only move a mark if the file is replaced. Proven testing evidence (`std/evidence/MODULE`) counts while the module's source hash matches the one it ran at, or for 90 days and one minor release: the hash covers the module's own files (`std/MODULE.xo`, `std/native/MODULE.xo`, `std/native/MODULE_native.xo` and the module specific `std/native/llrt` files they reach), the same files of every std module it uses, and `std/internal.xo`, but not the shared runtime (the allocator, scheduler, I/O and OS layer and the prelude), which its own tests, the fixed point and the full tier cover (decision 0616 section 3).")
 	w("")
 	w("Today: overall %d Proven, %d Solid, %d Early of %d (prelude and %d modules). Per axis, features %d/%d/%d, testing %d/%d/%d, performance %d/%d/%d (Proven/Solid/Early). No module has the committed `--race`, load stress, long fuzz and security review evidence that Proven testing needs yet.",
 		lvc["Proven"], lvc["Solid"], lvc["Early"], len(rows), nmods,
