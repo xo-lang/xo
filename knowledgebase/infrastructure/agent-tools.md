@@ -1648,6 +1648,24 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     more std modules; `PUSHQ_PARTIAL=1` makes it `--partial`). Detached,
     it never fails or slows the push (scripts/lead/xwhook.sh
     xw_task_push; #122, 2026-11-16).
+  - The tools mark the task (#246, owner 2026-11-17: xw bookkeeping was
+    2 to 3 calls a commit): `XW_TASK=ID` on a heavy.sh or offload-gate.sh
+    run binds task ID to that worktree (the git dir's xw-task file) and
+    marks it started, once; offload-gate.sh then marks gate on every run
+    in the worktree, and pushq.sh marks the push for PUSHQ_TASK or the
+    bound task. `pushq.sh WT --gated --done ID` (or `--docs --done ID`)
+    marks the push and then done. Detached, none of them fails or slows
+    its tool (xwhook.sh xw_task_bind, xw_task_of, xw_task_mark; tested
+    by xwhook_test.sh and pushq_prelane_test.sh). Agents call only `xw
+    task ack` and `xw task block` (and `done` for a task with no push).
+  - ccguard refuses a status-only command (a `--status` of heavy.sh,
+    pushq.sh or offload-gate.sh, `xw status|jobs|sessions`, tail, cat or
+    head of a .log, .out, .output or .result file) repeated within 10
+    minutes in the same session, and names the `--wait` forms (#246:
+    polls were 2.4 to 2.9 a commit). A backgrounded one is a wait and is
+    not counted (scripts/lead/ccguard rules.ts checkRepeatStatus; state
+    in ~/xo-lead/notes/ccguard-polls/SESSION.json). Last verified:
+    2026-11-17.
   - `xw ack ID` for each decision sent to you (`xw decisions --open
     --agent NAME`), in the tool round you read it.
     The Claude Code hook (scripts/lead/xw-cc-hook.sh, `xw cc-inbox`)

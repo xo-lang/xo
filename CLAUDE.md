@@ -75,9 +75,13 @@ differs from this file, this file is current.
    HEAD origin/main)"`), never onto a moved origin/main. No attribution
    lines in commits.
 7. Update the knowledgebase in the same change (below), then report and
-   hand over (token budget, below). Mark the task as it moves: `xw task
-   start|gate|done ID`, `xw task push ID SHA`, `xw task block ID REASON`
-   (a block also goes to the lead).
+   hand over (token budget, below). The tools mark the task (#246): name
+   it once with `XW_TASK=ID` on the first heavy.sh or offload-gate.sh run
+   in its worktree (start, then gate), `PUSHQ_TASK=ID` or the binding
+   marks the push, and `pushq.sh WT --gated --done ID` the last push
+   (push, then done). You call only `xw task ack ID` and `xw task block
+   ID REASON` (a block also goes to the lead); `xw task done ID` for a
+   task that ends without a push.
 
 Never wait idle: while a gate, push, or long run goes, work the next item
 in another worktree. Only an empty queue stops you; then ask the lead.
