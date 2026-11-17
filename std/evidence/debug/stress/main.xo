@@ -1,0 +1,238 @@
+// debug stress program (decision 0616 section 2): 64 tasks call the debug
+// router (debug.router) in process and the memory functions at once.
+// std/debug has no Go counterpart (decision 0325), so each answer is
+// checked against the documented contract (spec/std.md 36): /sched is 200
+// with the 37 counters of llrt/entry.xo's STAT_NAMES in order as
+// `name value` lines after the "counters are off" comment, then heap_live, fds_open, timers_pending, heap_chunks, heap_cache_bytes
+// and heap_aged_bytes, each a count; a request auth refuses is 403 on
+// every route; /heap is 409 (the sampler is off); /profile (two tasks, one second
+// at 1000 Hz) is 200 with the container, 409 while the other runs, or 501
+// in a build without profiles; an unknown path is 404 and POST /sched 405;
+// mem_mapped is positive,
+// mem_peak at least every mem_mapped read before it and never falls,
+// mem_total the same positive value on every call; mem_label (empty,
+// short, past its 255 byte limit), mem_budget (a 64 to 71 GiB budget, 0
+// at the end) and mem_trim run concurrently with the rest. A background
+// task samples the resident set every 10 s (Linux /proc/self/status).
+// Pass: no mismatch, no fault, and the resident set at the end within 10%
+// or 4 MB of its sample at 5 minutes.
+//
+// Not here: /sched?on=1 and heap_start, which cannot be undone and make
+// the program print the counters and write xo-prof.xoraw at exit, after
+// the summary line stdproven reads (std/debug's module tests cover them).
+//
+// Usage: stress [MINUTES (30)] [TASKS (64)]
+use std/debug
+use std/http
+
+const PROFILE_TYPE = "application/x-xo-profile"
+
+const STATS = "spawn steal inject wake idle_sleep spin_round fiber_park fiber_new thread_wait thread_wake lock_slow spin_yield net_read net_write net_again poll_return poll_event poll_wake rt_section rt_defer rt_overflow fiber_live fiber_peak mon_tick mon_wake defer futex_wait futex_wake lock_inject lock_pd lock_pool lock_park lock_http lock_chan lock_mutex lock_task preempt"
+
+const TAIL = "heap_live fds_open timers_pending heap_chunks heap_cache_bytes heap_aged_bytes"
+
+struct World {
+  open: http.Router
+  shut: http.Router
+  total: Int             // mem_total at start
+  long_label: Str
+}
+
+fn get(r: http.Router, method: Str, path: Str, query: Map[Str, Str]) -> http.Response {
+  let u = http.Url{scheme: "http", host: "h", port: None, path: path, query: query}
+  r.call(http.Request{method: method, path: path, url: u, headers: {}, body: b"", remote_ip: ""})
+}
+
+/// Checks a /sched body; "" when it holds, else what failed.
+fn check_sched(body: Str) -> Str {
+  var lines = body.lines()
+  if lines.is_empty() {
+    return "sched: empty body"
+  }
+  if lines[0] != "# the counters are off: ?on=1 turns them on, XO_RTSTATS=1 at start" {
+    return "sched: comment ${lines[0]}"
+  }
+  var k = 1
+  var names: List[Str] = []
+  for n in STATS.split(" ") {
+    names.push(n)
+  }
+  for n in TAIL.split(" ") {
+    if n != "heap_live" {
+      names.push(n)
+    }
+  }
+  var j = 0
+  while k < lines.len() {
+    let line = lines[k]
+    let parts = line.split(" ")
+    if parts.len() != 2 {
+      return "sched: line ${line}"
+    }
+    let v = Int.parse(parts[1]) ?? -1
+    if v < 0 {
+      return "sched: value ${line}"
+    }
+    if parts[0] == "heap_live" {
+      // only when the heap counts; right after preempt
+      if j != STATS.split(" ").len() {
+        return "sched: heap_live at ${j}"
+      }
+    } else {
+      if j >= names.len() || parts[0] != names[j] {
+        return "sched: name ${parts[0]} at ${j}"
+      }
+      j += 1
+    }
+    k += 1
+  }
+  if j != names.len() {
+    return "sched: ${j} of ${names.len()} names"
+  }
+  ""
+}
+
+fn pass(w: World, t: Int, i: Int, var last_peak: Int) -> (Int, Int) ! Str {
+  var ops = 0
+  let s = get(w.open, "GET", "/sched", {})
+  if s.status != 200 || s.headers.get("Content-Type") != Some("text/plain; charset=utf-8") {
+    return Err("sched status ${s.status}")
+  }
+  let msg = check_sched(s.body.to_str_lossy())
+  if msg != "" {
+    return Err(msg)
+  }
+  ops += 1
+  for p in ["/sched", "/heap", "/profile"] {
+    let r = get(w.shut, "GET", p, {})
+    if r.status != 403 || r.body.to_str_lossy() != "forbidden\n" {
+      return Err("auth ${p}: ${r.status}")
+    }
+    ops += 1
+  }
+  let h = get(w.open, "GET", "/heap", {})
+  if h.status != 409 {
+    return Err("heap status ${h.status}")
+  }
+  ops += 1
+  if get(w.open, "GET", "/nope", {}).status != 404 {
+    return Err("unknown path not 404")
+  }
+  if get(w.open, "POST", "/sched", {}).status != 405 {
+    return Err("POST /sched not 405")
+  }
+  ops += 2
+  if t < 2 && i % 50 == t {
+    let r = get(w.open, "GET", "/profile", {"seconds": "1", "hz": "1000"})
+    if r.status == 200 {
+      if r.headers.get("Content-Type") != Some(PROFILE_TYPE) || r.body.is_empty() {
+        return Err("profile 200 without the container")
+      }
+    } else if r.status != 409 && r.status != 501 {
+      return Err("profile status ${r.status}")
+    }
+    ops += 1
+  }
+  let m = debug.mem_mapped()
+  let pk = debug.mem_peak()
+  if m <= 0 {
+    return Err("mem_mapped ${m}")
+  }
+  if pk < m || pk < last_peak {
+    return Err("mem_peak ${pk} under ${m} or ${last_peak}")
+  }
+  if debug.mem_total() != w.total {
+    return Err("mem_total changed")
+  }
+  ops += 3
+  debug.mem_label(if i % 3 == 0 { "" } else if i % 3 == 1 { "task ${t} pass ${i}" } else { w.long_label })
+  debug.mem_budget((64 + i % 8) * 1024 * 1024 * 1024)
+  ops += 2
+  if i % 256 == 255 {
+    debug.mem_trim()
+    ops += 1
+  }
+  Ok((ops, pk))
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let total = debug.mem_total()
+  if total <= 0 {
+    return Err("mem_total ${total}")
+  }
+  var long_label = ""
+  while long_label.len() < 300 {
+    long_label = "${long_label}the stress program's label "
+  }
+  let w = World{
+    open: debug.router(clock, fn(_) { true }),
+    shut: debug.router(clock, fn(_) { false }),
+    total: total,
+    long_label: long_label,
+  }
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        var peak = 0
+        while clock.now() < end {
+          let (k, p) = pass(w, t, i, peak)?
+          n += k
+          peak = p
+          i += 1
+        }
+        n
+      }))
+    }
+    var sum = 0
+    for h in hs {
+      sum += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    sum
+  }
+  debug.mem_budget(0)
+  debug.mem_label("")
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("debug stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}

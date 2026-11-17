@@ -1,0 +1,335 @@
+// task stress program (decision 0616 section 2): 64 tasks run std/task's
+// pieces at once, each pass checking the documented answers (spec/std.md
+// 7, core 7.1): map_concurrent keeps input order, gives each item's
+// result or error and never runs more than its limit at once;
+// map_concurrent_until gives the fast items' results and TimedOut for the
+// ones still sleeping at its deadline; a semaphore of 3 permits never
+// lets a fourth in; a Once shared by 8 tasks runs its function once and
+// hands every caller the same value (or the same error); isolate turns
+// an index fault into Faulted, an error into Failed and a value into Ok;
+// with_timeout gives a quick call's value and TimedOut for one that
+// sleeps past it, with deadline Some inside and None outside; with_budget
+// stops an endless loop with Exceeded("steps") and passes a short one;
+// a group's tasks (s.group()) give their values; is_canceled and
+// stop_requested stay false. A background task samples the resident set
+// every 10 s (Linux /proc/self/status). Pass: no mismatch, no fault, and
+// the resident set at the end within 10% or 4 MB of its sample at 5
+// minutes.
+//
+// Usage: stress [MINUTES (30)] [TASKS (64)]
+use std/task
+
+fn check_map(i: Int) -> Int ! Str {
+  let limit = 1 + i % 8
+  let n = 16 + i % 17
+  var items: List[Int] = []
+  for k in 0..n {
+    items.push(k * 3 + i % 5)
+  }
+  let now = Atomic[Int].new(0)
+  let most = Atomic[Int].new(0)
+  let rs = task.map_concurrent(items, limit, fn(x: Int) -> Int ! Str {
+    let c = now.add(1)
+    most.max(c)
+    defer now.add(-1)
+    if x % 7 == 3 {
+      return Err("seven ${x}")
+    }
+    x * x
+  })
+  if rs.len() != n {
+    return Err("map_concurrent: ${rs.len()} results of ${n}")
+  }
+  for k in 0..n {
+    let x = items[k]
+    let want: Result[Int, Str] = if x % 7 == 3 { Err("seven ${x}") } else { Ok(x * x) }
+    if rs[k] != want {
+      return Err("map_concurrent: item ${k}")
+    }
+  }
+  if most.get() > limit || most.get() < 1 {
+    return Err("map_concurrent: ${most.get()} at once, limit ${limit}")
+  }
+  Ok(n)
+}
+
+fn check_until(clock: Clock, i: Int) -> Int ! Str uses clock {
+  // items 0, 2, 4, 6: at once; 1, 3, 5, 7: sleep past the deadline
+  let items = [0, 1, 2, 3, 4, 5, 6, 7]
+  let rs = task.map_concurrent_until(clock, 20ms, items, 8, fn(x: Int) -> Int ! Str uses clock {
+    if x % 2 == 1 {
+      clock.sleep(2s)
+    }
+    if x == 4 && i % 2 == 0 {
+      return Err("four")
+    }
+    x + 100
+  })
+  for k in 0..8 {
+    let ok = match rs[k] {
+      Ok(v) => k % 2 == 0 && v == k + 100 && !(k == 4 && i % 2 == 0)
+      Err(task.Timed.TimedOut) => k % 2 == 1
+      Err(task.Timed.Failed(e)) => k == 4 && i % 2 == 0 && e == "four"
+    }
+    if !ok {
+      return Err("map_concurrent_until: item ${k}")
+    }
+  }
+  Ok(8)
+}
+
+fn check_semaphore() -> Int ! Str {
+  let sem = task.semaphore(3)
+  let now = Atomic[Int].new(0)
+  let most = Atomic[Int].new(0)
+  let sum = scope s {
+    var hs: List[Task[Int, Str]] = []
+    for k in 0..12 {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        sem.with(fn() -> Int ! Str {
+          let c = now.add(1)
+          most.max(c)
+          defer now.add(-1)
+          k
+        })
+      }))
+    }
+    var t = 0
+    for h in hs {
+      t += h.await?
+    }
+    t
+  }
+  if sum != 66 {
+    return Err("semaphore: sum ${sum}")
+  }
+  if most.get() > 3 || most.get() < 1 {
+    return Err("semaphore: ${most.get()} at once")
+  }
+  Ok(12)
+}
+
+fn check_once(i: Int) -> Int ! Str {
+  let o = task.once[Int, Str]()
+  let runs = Atomic[Int].new(0)
+  let fail = i % 3 == 0
+  let got = scope s {
+    var hs: List[Task[Result[Int, Str], Str]] = []
+    for _ in 0..8 {
+      hs.push(s.spawn(fn() -> Result[Int, Str] ! Str {
+        Ok(o.get(fn() -> Int ! Str {
+          runs.add(1)
+          if fail {
+            return Err("once ${i}")
+          }
+          i * 7
+        }))
+      }))
+    }
+    var out: List[Result[Int, Str]] = []
+    for h in hs {
+      out.push(h.await?)
+    }
+    out
+  }
+  if runs.get() != 1 {
+    return Err("once: ran ${runs.get()} times")
+  }
+  let want: Result[Int, Str] = if fail { Err("once ${i}") } else { Ok(i * 7) }
+  for r in got {
+    if r != want {
+      return Err("once: a caller got another answer")
+    }
+  }
+  Ok(8)
+}
+
+fn check_isolate(i: Int) -> Int ! Str {
+  let xs = [1, 2, 3]
+  match task.isolate(fn() -> Int ! Str { xs[3 + i % 4] }) {
+    Err(task.Isolated.Faulted(f)) => {
+      if f.msg.is_empty() || !f.location.contains("main.xo") {
+        return Err("isolate: fault ${f.msg} at ${f.location}")
+      }
+    }
+    _ => return Err("isolate: no fault")
+  }
+  match task.isolate(fn() -> Int ! Str { Err("bad ${i}") }) {
+    Err(task.Isolated.Failed(e)) => {
+      if e != "bad ${i}" {
+        return Err("isolate: error ${e}")
+      }
+    }
+    _ => return Err("isolate: no error")
+  }
+  match task.isolate(fn() -> Int ! Str { xs[i % 3] }) {
+    Ok(v) => {
+      if v != i % 3 + 1 {
+        return Err("isolate: value ${v}")
+      }
+    }
+    _ => return Err("isolate: no value")
+  }
+  Ok(3)
+}
+
+fn check_timeout(clock: Clock, i: Int) -> Int ! Str uses clock {
+  if task.deadline(clock) != None {
+    return Err("deadline outside with_timeout")
+  }
+  let t0 = clock.now()
+  match task.with_timeout(clock, 10s, fn() -> Int ! Str uses clock {
+    let d = task.deadline(clock) ?? t0
+    if d <= t0 || d > clock.now() + 10s {
+      return Err("deadline ${d}")
+    }
+    i + 1
+  }) {
+    Ok(v) => {
+      if v != i + 1 {
+        return Err("with_timeout: value ${v}")
+      }
+    }
+    Err(e) => return Err("with_timeout: ${e}")
+  }
+  match task.with_timeout(clock, 5ms, fn() -> Int ! Str uses clock {
+    clock.sleep(5s)
+    0
+  }) {
+    Err(task.Timed.TimedOut) => {}
+    _ => return Err("with_timeout: no timeout")
+  }
+  Ok(2)
+}
+
+fn check_budget(clock: Clock, i: Int) -> Int ! Str uses clock {
+  match task.with_budget(clock, task.budget(steps: 10000), fn() -> Int ! Str {
+    var n = 0
+    while true {
+      n += 1
+    }
+    n
+  }) {
+    Err(task.Budgeted.Exceeded(r)) => {
+      if r != "steps" {
+        return Err("with_budget: exceeded ${r}")
+      }
+    }
+    _ => return Err("with_budget: endless loop finished")
+  }
+  match task.with_budget(clock, task.budget(steps: 1000000), fn() -> Int ! Str {
+    var n = 0
+    for k in 0..(10 + i % 10) {
+      n += k
+    }
+    n
+  }) {
+    Ok(v) => {
+      let m = 10 + i % 10
+      if v != m * (m - 1) / 2 {
+        return Err("with_budget: value ${v}")
+      }
+    }
+    Err(e) => return Err("with_budget: ${e}")
+  }
+  Ok(2)
+}
+
+fn check_group(i: Int) -> Int ! Str {
+  let sum = scope s {
+    let g = s.group()
+    var hs: List[Task[Int, Str]] = []
+    for k in 0..6 {
+      hs.push(g.spawn(fn() -> Int ! Str { k * i }))
+    }
+    var t = 0
+    for h in hs {
+      t += h.await?
+    }
+    t
+  }
+  if sum != 15 * i {
+    return Err("group: sum ${sum}")
+  }
+  if task.is_canceled() || task.stop_requested() {
+    return Err("canceled or stopping")
+  }
+  Ok(6)
+}
+
+fn pass(clock: Clock, i: Int) -> Int ! Str uses clock {
+  var n = check_map(i)?
+  n += check_semaphore()?
+  n += check_once(i)?
+  n += check_isolate(i)?
+  n += check_group(i)?
+  n += check_budget(clock, i)?
+  if i % 8 == 0 {
+    n += check_timeout(clock, i)?
+    n += check_until(clock, i)?
+  }
+  Ok(n)
+}
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(clock, i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("task stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}

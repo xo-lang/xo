@@ -1,0 +1,225 @@
+// embed stress program (decision 0616 section 2): 64 tasks read the 14
+// files of data/ (embedded at build time: text, UTF-8, binary that is not
+// UTF-8, an empty file, a 70,001 byte file, directories four deep)
+// against Go's embed.FS over the same directory (go1.26.11). Each pass
+// checks every file's size and CRC-32 through Dir.read and Fs.read, that
+// read_text is None exactly where Go's utf8.Valid is false, contains,
+// paths, len, stat, Fs.walk against fs.WalkDir's order, read_dir against
+// ReadDir, glob against fs.Glob, and sub against fs.Sub, for a fixed
+// time. A background task samples the resident set every 10 s (Linux
+// /proc/self/status). Pass: no mismatch, no fault, and the resident set at
+// the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/crc32
+use std/embed
+
+const SITE: embed.Dir = embed("data")
+
+fn fserr(what: Str, e: FsErr) -> Str {
+  "${what}: ${e}"
+}
+
+/// One pass over the checks, starting at file start: the operations
+/// done, or the first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  var ops = 0
+  let f = SITE.fs()
+  var files: List[Str] = []
+  for k in 0..WALK.len() {
+    let (p, dir, size, sum, utf8) = WALK[(start + k) % WALK.len()]
+    let info = f.stat(p).map_err(fn(e) { fserr("stat ${p}", e) })?
+    let i = info ?? return Err("stat ${p}: missing")
+    if i.is_dir != dir || (!dir && i.size != size) {
+      return Err("stat ${p}: dir ${i.is_dir} size ${i.size}, want ${dir} ${size}")
+    }
+    ops += 1
+    if dir {
+      if SITE.contains(p) {
+        return Err("contains ${p}: a directory")
+      }
+      continue
+    }
+    files.push(p)
+    let d = SITE.read(p) ?? return Err("read ${p}: missing")
+    if d.len() != size || crc32.checksum(d) != sum {
+      return Err("read ${p}: ${d.len()} bytes crc ${crc32.checksum(d)}, want ${size} ${sum}")
+    }
+    let g = f.read(p).map_err(fn(e) { fserr("Fs.read ${p}", e) })?
+    if g != d {
+      return Err("Fs.read ${p}: differs from Dir.read")
+    }
+    if SITE.read_text(p).is_some() != utf8 || !SITE.contains(p) {
+      return Err("read_text ${p}: some ${SITE.read_text(p).is_some()}, want ${utf8}")
+    }
+    ops += 3
+  }
+  files = files.sort()
+  if SITE.paths() != files || SITE.len() != files.len() {
+    return Err("paths ${SITE.paths()}, want ${files}")
+  }
+  let w = f.walk(".").map_err(fn(e) { fserr("walk", e) })?
+  if w.len() != WALK.len() {
+    return Err("walk: ${w.len()} entries, want ${WALK.len()}")
+  }
+  for k in 0..w.len() {
+    let (p, dir, _, _, _) = WALK[k]
+    if w[k].path != p || w[k].is_dir != dir {
+      return Err("walk ${k}: ${w[k].path} dir ${w[k].is_dir}, want ${p} ${dir}")
+    }
+  }
+  ops += 1
+  for (dir, want) in READ_DIR {
+    let es = f.read_dir(dir).map_err(fn(e) { fserr("read_dir ${dir}", e) })?
+    var got = StrBuilder.new()
+    for e in es {
+      got.write(e.name)
+      if e.is_dir {
+        got.write("/")
+      }
+      got.write(" ")
+    }
+    let s = got.freeze()
+    if s != want {
+      return Err("read_dir ${dir}: ${s}, want ${want}")
+    }
+    ops += 1
+  }
+  for (pat, want) in GLOB {
+    let m = f.glob(pat).map_err(fn(e) { fserr("glob ${pat}", e) })?
+    let s = "[${m.join(" ")}]"
+    if s != want {
+      return Err("glob ${pat}: ${s}, want ${want}")
+    }
+    ops += 1
+  }
+  let js = SITE.sub("data/js")
+  if js.paths() != ["app.js", "lib/x.js", "lib/y.js"] || js.len() != 3 {
+    return Err("sub data/js: ${js.paths()}")
+  }
+  let lib = SITE.sub("data").sub("js/lib")
+  let x = lib.read("x.js") ?? return Err("sub data, js/lib: no x.js")
+  if x != (SITE.read("data/js/lib/x.js") ?? b"") || lib.contains("y.js") != true || lib.contains("app.js") {
+    return Err("sub data, js/lib: x.js differs or app.js seen")
+  }
+  let sf = f.sub("data/deep")
+  let e = sf.read_text("a/b/e.txt").map_err(fn(e) { fserr("Fs.sub read", e) })?
+  if e != (SITE.read_text("data/deep/a/b/e.txt") ?? "") {
+    return Err("Fs.sub data/deep: a/b/e.txt differs")
+  }
+  ops += 3
+  ops
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("embed stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+// Go's embed.FS over data/ (go1.26.11, Xo Lang 3, 2026-11-16): fs.WalkDir
+// from "." (path, directory, size, ChecksumIEEE, utf8.Valid), ReadDir
+// (names, directories with a trailing slash) and fs.Glob.
+const WALK: List[(Str, Bool, Int, Int, Bool)] = [
+  ("data", true, 0, 0, false),
+  ("data/a.txt", false, 1493, 490516867, true),
+  ("data/big.txt", false, 70001, 3999823845, true),
+  ("data/bin.dat", false, 1576, 1682331084, false),
+  ("data/css", true, 0, 0, false),
+  ("data/css/print.css", false, 2258, 3781930876, true),
+  ("data/css/site.css", false, 700, 2049122110, true),
+  ("data/deep", true, 0, 0, false),
+  ("data/deep/a", true, 0, 0, false),
+  ("data/deep/a/b", true, 0, 0, false),
+  ("data/deep/a/b/c", true, 0, 0, false),
+  ("data/deep/a/b/c/d.txt", false, 721, 4241839516, true),
+  ("data/deep/a/b/e.txt", false, 494, 986597381, true),
+  ("data/empty.txt", false, 0, 0, true),
+  ("data/img", true, 0, 0, false),
+  ("data/img/logo.bin", false, 1588, 2301016876, false),
+  ("data/js", true, 0, 0, false),
+  ("data/js/app.js", false, 1769, 3921863647, true),
+  ("data/js/lib", true, 0, 0, false),
+  ("data/js/lib/x.js", false, 1357, 2246451477, true),
+  ("data/js/lib/y.js", false, 1456, 954939130, true),
+  ("data/notes.md", false, 1537, 774288515, true),
+  ("data/z", true, 0, 0, false),
+  ("data/z/last.txt", false, 659, 2909754507, true),
+]
+
+const READ_DIR: List[(Str, Str)] = [
+  ("data", "a.txt big.txt bin.dat css/ deep/ empty.txt img/ js/ notes.md z/ "),
+  ("data/css", "print.css site.css "),
+  ("data/js", "app.js lib/ "),
+  ("data/js/lib", "x.js y.js "),
+  ("data/deep/a/b", "c/ e.txt "),
+  ("data/img", "logo.bin "),
+]
+
+const GLOB: List[(Str, Str)] = [
+  ("data/*.txt", "[data/a.txt data/big.txt data/empty.txt]"),
+  ("data/css/*", "[data/css/print.css data/css/site.css]"),
+  ("data/js/*/*.js", "[data/js/lib/x.js data/js/lib/y.js]"),
+  ("data/deep/*/*/e.txt", "[data/deep/a/b/e.txt]"),
+  ("data/*", "[data/a.txt data/big.txt data/bin.dat data/css data/deep data/empty.txt data/img data/js data/notes.md data/z]"),
+  ("data/[a-c]*", "[data/a.txt data/big.txt data/bin.dat data/css]"),
+  ("data/js/?ib/x.js", "[data/js/lib/x.js]"),
+]

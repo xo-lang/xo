@@ -1,0 +1,232 @@
+// migrate stress program (decision 0616 section 2): 64 tasks each run
+// goose style migrations on their own sql.memory database, over and over,
+// checking the answers std/migrate's tests port from pressly/goose
+// v3.27.3 (provider_run_test.go's up_and_down_all, tx_partial_errors and
+// TestPending; parser_test.go's TestSplitStatements): up applies pending
+// versions in order once, then nothing; status reports each with its
+// applied time; a failing statement leaves the migrations before it and
+// none of itself; a pending version below the newest applied one is
+// Missing unless allow_missing; NO TRANSACTION statements before a
+// failure stay; a bad version table name is refused; collect refuses a
+// duplicate version. A background task samples the resident set every
+// 10 s (Linux /proc/self/status). Pass: no mismatch, no fault, and the
+// resident set at the end within 10% or 4 MB of its sample at 5 minutes.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use std/embed
+use std/migrate
+use std/sql
+
+const OWNERS = "-- +goose Up\nCREATE TABLE owners ( owner_name TEXT NOT NULL );\n\n-- +goose Down\nDROP TABLE owners;\n"
+const SEED = "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('seed-user-1');\nINSERT INTO owners (owner_name) VALUES ('seed-user-2');\nINSERT INTO owners (owner_name) VALUES ('seed-user-3');\n"
+const MULTILINE = "-- +goose Up\nCREATE TABLE post (\n\t\tid int NOT NULL,\n\t\ttitle text,\n\t\tbody text,\n\t\tPRIMARY KEY(id)\n);                  -- 1st stmt\n\n-- comment\nSELECT 2;           -- 2nd stmt\nSELECT 3; SELECT 3; -- 3rd stmt\nSELECT 4;           -- 4th stmt\n\n-- +goose Down\n-- comment\nDROP TABLE post;    -- 1st stmt\n"
+
+fn mig(name: Str, text: Str) -> migrate.Migration ! Str {
+  migrate.parse(name, text).map_err(fn(e) { "parse ${name}: ${e}" })
+}
+
+fn owners(db: sql.Db) -> Int ! Str uses net.dial {
+  let row = db.query_one("SELECT count(*) AS n FROM owners").map_err(fn(e) { "count: ${e}" })?
+  row.int("n").map_err(fn(e) { "count: ${e}" })
+}
+
+fn insert(v: Int, who: Str) -> Str { "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('${who}-${v}');\n" }
+
+fn applied(st: List[migrate.Status]) -> List[(Int, Bool)] { st.map(fn(s) { (s.version, s.applied_at.is_some()) }) }
+
+/// The plain path: n extra one row migrations after OWNERS and SEED.
+fn check_up(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
+  let db = sql.memory().map_err(fn(e) { "memory: ${e}" })?
+  let n = 1 + i % 6
+  var ms = [mig("00001_owners.sql", OWNERS)?, mig("00002_seed.sql", SEED)?]
+  var want: List[Int] = [1, 2]
+  for k in 0..n {
+    ms.push(mig("${k + 3}_more.sql", insert(k, "u"))?)
+    want.push(k + 3)
+  }
+  // apply in any order of the list: versions run in order
+  if i % 2 == 1 {
+    ms = ms.reverse()
+  }
+  let before = migrate.status_list(db, ms, dialect: migrate.Dialect.Memory).map_err(fn(e) { "status: ${e}" })?
+  if applied(before) != want.map(fn(v) { (v, false) }) {
+    return Err("status before: ${applied(before):?}")
+  }
+  let got = migrate.up_list(db, ms, clock, dialect: migrate.Dialect.Memory).map_err(fn(e) { "up: ${e}" })?
+  if got != want {
+    return Err("up applied ${got:?}, want ${want:?}")
+  }
+  if owners(db)? != 3 + n {
+    return Err("owners after up")
+  }
+  let again = migrate.up_list(db, ms, clock, dialect: migrate.Dialect.Memory).map_err(fn(e) { "up again: ${e}" })?
+  if !again.is_empty() || owners(db)? != 3 + n {
+    return Err("second up applied ${again:?}")
+  }
+  let after = migrate.status_list(db, ms, dialect: migrate.Dialect.Memory).map_err(fn(e) { "status: ${e}" })?
+  if applied(after) != want.map(fn(v) { (v, true) }) {
+    return Err("status after: ${applied(after):?}")
+  }
+  Ok(4)
+}
+
+fn check_partial(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
+  let db = sql.memory().map_err(fn(e) { "memory: ${e}" })?
+  let ms = [
+    mig("00001_users_table.sql", OWNERS)?,
+    mig("00002_partial_error.sql", "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('kept-only-on-success');\nINSERT INTO invalid_table_${i % 9} (x) VALUES ('v');\n")?,
+    mig("00003_insert_data.sql", SEED)?,
+  ]
+  match migrate.up_list(db, ms, clock, dialect: migrate.Dialect.Memory) {
+    Err(migrate.MigrateErr.Failed(v, name, k, err)) => {
+      if (v, name, k) != (2, "00002_partial_error.sql", 1) || err.display() != "no such table: invalid_table_${i % 9}" {
+        return Err("partial: Failed(${v}, ${name}, ${k}, ${err})")
+      }
+    }
+    r => return Err("partial: want Failed, got ${r:?}")
+  }
+  if owners(db)? != 0 {
+    return Err("partial: the failed migration's row stayed")
+  }
+  let st = migrate.status_list(db, ms, dialect: migrate.Dialect.Memory).map_err(fn(e) { "status: ${e}" })?
+  if st.map(fn(s) { s.applied_at.is_some() }) != [true, false, false] {
+    return Err("partial: status")
+  }
+  // NO TRANSACTION: the statement before the failure stays
+  let nt = mig("00002_nt.sql", "-- +goose NO TRANSACTION\n-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('a');\nINSERT INTO nope (x) VALUES (1);\n")?
+  if nt.tx {
+    return Err("NO TRANSACTION parsed as tx")
+  }
+  if migrate.up_list(db, [ms[0], nt], clock, dialect: migrate.Dialect.Memory).is_ok() || owners(db)? != 1 {
+    return Err("NO TRANSACTION: want one row kept")
+  }
+  Ok(3)
+}
+
+fn check_missing(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
+  let db = sql.memory().map_err(fn(e) { "memory: ${e}" })?
+  let table = if i % 3 == 0 { "xo_migrations" } else { "schema_${i % 5}" }
+  let first = [mig("00001_owners.sql", OWNERS)?, mig("00003_seed.sql", SEED)?]
+  if migrate.up_list(db, first, clock, table: table, dialect: migrate.Dialect.Memory).map_err(fn(e) { "up: ${e}" })? != [1, 3] {
+    return Err("missing: first up")
+  }
+  let all = [first[0], mig("00002_one.sql", insert(2, "two"))?, first[1]]
+  match migrate.up_list(db, all, clock, table: table, dialect: migrate.Dialect.Memory) {
+    Err(e) => {
+      if e != migrate.MigrateErr.Missing(versions: [2]) || !e.display().contains("missing (out-of-order) migration") {
+        return Err("missing: ${e}")
+      }
+    }
+    Ok(vs) => return Err("missing: want Missing, got ${vs:?}")
+  }
+  if owners(db)? != 3 {
+    return Err("missing: rows changed")
+  }
+  if migrate.up_list(db, all, clock, table: table, dialect: migrate.Dialect.Memory, allow_missing: true).map_err(fn(e) { "up: ${e}" })? != [2] || owners(db)? != 4 {
+    return Err("missing: allow_missing")
+  }
+  let bad = "x; DROP TABLE owners ${i % 7}"
+  match migrate.up_list(db, all, clock, table: bad, dialect: migrate.Dialect.Memory) {
+    Err(e) => {
+      if e != migrate.MigrateErr.Table(name: bad) {
+        return Err("table: ${e}")
+      }
+    }
+    Ok(_) => return Err("table: want Table")
+  }
+  Ok(4)
+}
+
+fn check_parse(i: Int) -> Int ! Str {
+  let m = mig("00007_post.sql", MULTILINE)?
+  if m.version != 7 || m.up.len() != 4 || m.down != ["DROP TABLE post;    -- 1st stmt"] || m.up[2] != "SELECT 3; SELECT 3; -- 3rd stmt" {
+    return Err("parse MULTILINE")
+  }
+  if migrate.version_of("dir/${i + 1}_x.sql") != Some(i + 1) || migrate.version_of("x.sql") != None || migrate.version_of("0_x.sql") != None {
+    return Err("version_of")
+  }
+  let files = embed.Dir{files: {"0001_a.sql": OWNERS.bytes(), "01_b.sql": SEED.bytes()}}
+  match migrate.collect(files) {
+    Err(migrate.MigrateErr.Duplicate(v, _, _)) => {
+      if v != 1 {
+        return Err("collect: duplicate ${v}")
+      }
+    }
+    r => return Err("collect: want Duplicate, got ${r:?}")
+  }
+  Ok(3)
+}
+
+fn pass(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
+  var n = check_up(clock, i)?
+  n += check_partial(clock, i)?
+  n += check_missing(clock, i)?
+  n += check_parse(i)?
+  Ok(n)
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let samples = Mutex.new((0, 0, 0))   // (rss at the mark, last rss, peak)
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        samples.with(fn(var t) {
+          let (m, _, p) = t
+          t = (if now_marked { r } else { m }, r, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(clock, i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (at_mark, last, peak) = samples.with_read(fn(t) { t })
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark, ${last / 1024} MB at the end (${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("migrate stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+
