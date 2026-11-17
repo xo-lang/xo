@@ -1511,12 +1511,32 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   rebuild (41 to 75 s) run before pushq takes the merge lane, and the
   lane only re-checks (0.3 s), so the rebuild no longer holds the lane
   (lead, 2026-11-11); the log line says `(before the lane)`.
-  `PUSHQ_PRE_REBASE=1` (opt in) also rebases a worktree that is behind
-  origin/main before the lane, so that check applies after a real
-  rebase too (3 of 4 in-lane rebuilds on 2026-11-10); the old merge
-  base goes to the lane as `--base`, so the overlap still counts from
-  the gate's commit, and a conflict is aborted and left to the lane.
-  Last verified: 2026-11-11.
+  Checks before the lane (task #232, on by default since 2026-11-17;
+  `PUSHQ_PRE_REBASE=0` turns it off): pushq first runs itself once
+  with `PUSHQ_PHASE=pre`, with no push lock and no lane, which rebases
+  the worktree onto origin/main (Markdown add/add conflicts resolved
+  as in the lane) and runs every check: the content rules, stdcorpus
+  -check, the fast repo checks (internal/repotest and the two listed
+  tests), stdgen -check, the prelude interface check, TestStdChecks,
+  TestVetCostStd and the new goldens. A failed check ends the push
+  there, before the wait (log lines say `(before the lane)`). The lane
+  run then rebases and pushes, and reruns a check only when the commits
+  main gained since the pre pass touch its inputs: stdgen on
+  `std/*.xo`, `scripts/stdgen/` or `compiler/gen/`; TestStdChecks on
+  `std/` or `cmd/xo/`; the corpus check on a corpus main's commits
+  bring in; the fast checks when main's commits share a two-level
+  directory with the push's (documentation included: two decisions of
+  one number) or change internal/repotest, xotool or selfhost. The log
+  names what it did not rerun. A HEAD changed after the pre pass runs
+  every check in the lane. The gate's base goes to both runs as
+  `--base`, so the overlap still counts from the gate's commit; a
+  conflict in the pre pass is left to the lane. Before: a median lane
+  hold of 188 s (about 19 pushes an hour) and a median wait of 33 min
+  (p90 49, max 57; xw jobs, 41 pushes, 3 hours to 08:45 2026-11-17).
+  Tested by scripts/lead/pushq_prelane_test.sh (a bare origin and a
+  stub heavyd whose lease lands commits on main during the wait;
+  checks recorded, not run, through `PUSHQ_TEST_CHECKS`).
+  Last verified: 2026-11-17.
   Pushes wait in heavyd's `merge` lane (decision 0451, 2026-10-31), so
   `~/xo-lead/agents/heavy.sh --status` shows the push queue; with no
   daemon pushq queues on its own lock as before.
