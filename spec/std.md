@@ -2615,8 +2615,19 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
     ping_timeout: Duration = 0s         // the wait for its ack; 15 s
     write_byte_timeout: Duration = 0s   // no write progress closes the connection; none
     extended_connect: Bool = false      // RFC 8441 extended CONNECT (decision 0687; Go's GODEBUG=http2xconnect=1)
+    min_ping_interval: Duration = 0s    // least time between a client's PINGs; not enforced
+    ping_without_stream: Bool = false   // PINGs may come with no stream open
   }
   ```
+
+  With `min_ping_interval` the server counts a client's PINGs as
+  grpc-go's keepalive enforcement (http2_server.go handlePing): a PING
+  sooner than it after the last one (2 hours while no stream is open,
+  unless `ping_without_stream`), with no HEADERS or DATA sent between
+  them, is a strike, and the third ends the connection with GOAWAY
+  ENHANCE_YOUR_CALM, debug data "too_many_pings"; every PING is acked
+  first. The native servers only: the Go backend's net/http has no
+  such check and ignores both fields.
 
   With `extended_connect` the server's SETTINGS carry
   ENABLE_CONNECT_PROTOCOL 1 and a request may carry `:protocol`
@@ -10931,7 +10942,7 @@ fn (c: Client) with_on_finish(f: fn(Str, Status?) -> ()) -> Client   // grpc-go'
 // keepalive (grpc-go's keepalive package) over std/http's HTTP/2 PING settings, which these replace
 struct ClientKeepalive { time: Duration = 0s, timeout: Duration = 20s }   // time 0: no pings; below 10 s: 10 s
 fn (c: Client) with_keepalive(p: ClientKeepalive) -> Client
-struct ServerKeepalive { max_connection_idle: Duration = 0s, time: Duration = 7200s, timeout: Duration = 20s }
+struct ServerKeepalive { max_connection_idle: Duration = 0s, time: Duration = 7200s, timeout: Duration = 20s, min_time: Duration = 300s, permit_without_stream: Bool = false }   // min_time, permit_without_stream: grpc-go's EnforcementPolicy (http.H2Config min_ping_interval)
 fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server
 fn (r: Recv) next() -> Bytes? ! Status
 fn (s: Send) send(msg: Bytes) -> () ! Status

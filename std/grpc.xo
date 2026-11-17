@@ -834,17 +834,24 @@ pub fn (c: Client) with_keepalive(p: ClientKeepalive) -> Client {
 /// grpc-go's keepalive.ServerParameters: a connection with no call for `max_connection_idle` is closed (0 never),
 /// and after `time` with nothing read the server sends a PING and closes the connection when no ack comes within
 /// `timeout`. Times below 1 s are 1 s, as grpc-go's. MaxConnectionAge and MaxConnectionAgeGrace are not supported.
+/// `min_time` and `permit_without_stream` are grpc-go's keepalive.EnforcementPolicy: a client PING sooner than
+/// `min_time` after its last (2 hours while no call is open, unless `permit_without_stream`), with no response
+/// sent between them, is a strike, and the third closes the connection with GOAWAY ENHANCE_YOUR_CALM
+/// "too_many_pings" (http.H2Config `min_ping_interval`; the native backends only).
 pub struct ServerKeepalive {
   pub max_connection_idle: Duration = 0s
   pub time: Duration = 7200s
   pub timeout: Duration = 20s
+  pub min_time: Duration = 300s
+  pub permit_without_stream: Bool = false
 }
 
-/// h with grpc-go's server keepalive (KeepaliveParams): its HTTP/2 settings' `send_ping_timeout` and
-/// `ping_timeout`, which this replaces, and `with_idle_timeout` for `max_connection_idle`.
+/// h with grpc-go's server keepalive (KeepaliveParams and KeepaliveEnforcementPolicy): its HTTP/2 settings'
+/// `send_ping_timeout`, `ping_timeout`, `min_ping_interval` and `ping_without_stream`, which this replaces, and
+/// `with_idle_timeout` for `max_connection_idle`.
 pub fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server {
   let t = if p.time < 1s { 1s } else { p.time }
-  let out = h.with_h2_config(http.H2Config{send_ping_timeout: t, ping_timeout: p.timeout})
+  let out = h.with_h2_config(http.H2Config{send_ping_timeout: t, ping_timeout: p.timeout, min_ping_interval: p.min_time, ping_without_stream: p.permit_without_stream})
   if p.max_connection_idle > 0s { out.with_idle_timeout(p.max_connection_idle) } else { out }
 }
 

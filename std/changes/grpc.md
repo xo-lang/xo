@@ -1,5 +1,15 @@
 # std/grpc changes
 
+## 2026-11-17: feature: server keepalive enforcement (ServerKeepalive min_time, permit_without_stream)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc-go's KeepaliveEnforcementPolicy)
+- Go reference: google.golang.org/grpc v1.79.2 keepalive.EnforcementPolicy, internal/transport/http2_server.go handlePing
+- Test: std/grpc_test.xo "keepalive_server closes a connection that pings too often, as grpc-go's enforcement policy"
+- Timing: none
+- Shipped in: not yet released
+
 ## 2026-11-17: fix: a handler that sends nothing ends the call trailers-only, as grpc-go
 
 - Kind: fix

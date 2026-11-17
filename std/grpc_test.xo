@@ -537,6 +537,62 @@ test "keepalive_server sets the HTTP/2 pings and the idle timeout" uses (net, cl
   }
 }
 
+/// The frame types read from h2 (whole frames only) and, for a GOAWAY, its error code and debug text.
+fn h2_frames(h2: Bytes) -> List[Str] {
+  var out: List[Str] = []
+  var i = 0
+  while i + 9 <= h2.len() {
+    let n = (Int(h2[i]) << 16) | (Int(h2[i + 1]) << 8) | Int(h2[i + 2])
+    if i + 9 + n > h2.len() {
+      break
+    }
+    let ty = Int(h2[i + 3])
+    if ty == 7 {
+      let code = (Int(h2[i + 13]) << 24) | (Int(h2[i + 14]) << 16) | (Int(h2[i + 15]) << 8) | Int(h2[i + 16])
+      out.push("goaway ${code} ${h2[i + 17..i + 9 + n].to_str_lossy()}")
+    } else if ty == 6 {
+      out.push(if (Int(h2[i + 4]) & 1) != 0 { "ping ack" } else { "ping" })
+    } else {
+      out.push("type ${ty}")
+    }
+    i = i + 9 + n
+  }
+  out
+}
+
+// grpc-go's keepalive enforcement (http2_server.go handlePing, maxPingStrikes 2): a client's PING sooner than
+// min_time after its last is a strike, and the third ends the connection with GOAWAY ENHANCE_YOUR_CALM (11)
+// "too_many_pings"; the PINGs are acked first. With no call open the least gap is 2 hours.
+test "keepalive_server closes a connection that pings too often, as grpc-go's enforcement policy" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/k.K/Ok", fn(_c, req) -> Bytes ! Status { Ok(req) })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = keepalive_server(http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2}), ServerKeepalive{min_time: 1s})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = os.net.dial(hs.addr()).or_fault("dial")
+    let ping = b"\x00\x00\x08\x06\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08"
+    c.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00\x00\x00\x00\x00" + ping + ping + ping).or_fault("write")
+    // three PINGs: the first is no strike, the next two are; all acked, no GOAWAY
+    var got = b""
+    while h2_frames(got).filter(fn(f) { f == "ping ack" }).len() < 3 {
+      got = got + (c.read(4096).or_fault("read") ?? fault("closed after 3 pings: ${h2_frames(got)}"))
+    }
+    expect(h2_frames(got).filter(fn(f) { f.starts_with("goaway") })) == []
+    // the fourth is the third strike
+    c.write(ping).or_fault("write 4")
+    while {
+      match c.read(4096).or_fault("read 4") {
+        Some(x) => got = got + x
+        None => break
+      }
+    }
+    let fs = h2_frames(got)
+    expect(fs.filter(fn(f) { f == "ping ack" }).len()) == 4
+    expect(fs.last()) == Some("goaway 11 too_many_pings")
+  }
+}
+
 // grpc-go's target parsing (clientconn.go parseTargetAndFindResolver, the default scheme dns) and ClientConn.Target and
 // CanonicalTarget
 test "target names: dns, passthrough and a bare host:port, as grpc-go's" uses (net, clock) {

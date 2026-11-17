@@ -565,6 +565,17 @@ struct H2Config {
   /// and a request may carry `:protocol` (Request.protocol). Off, as in
   /// Go, such a request is a stream error (PROTOCOL_ERROR).
   extended_connect: Bool = false
+  /// the least time between a client's PINGs (0: not enforced; grpc-go's
+  /// keepalive.EnforcementPolicy MinTime). A PING sooner than this after
+  /// the last one, with no HEADERS or DATA sent between them, is a
+  /// strike, and the third ends the connection with GOAWAY
+  /// ENHANCE_YOUR_CALM "too_many_pings". The native servers only; Go's
+  /// net/http has no such check, so the Go backend ignores it.
+  min_ping_interval: Duration = 0s
+  /// PINGs may come while no stream is open; otherwise, with
+  /// min_ping_interval set, two such PINGs less than 2 hours apart are a
+  /// strike (grpc-go's PermitWithoutStream)
+  ping_without_stream: Bool = false
 }
 
 /// The server speaking the protocols of p (Go's Server.Protocols;

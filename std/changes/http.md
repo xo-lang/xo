@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-17: feature: HTTP/2 PING rate enforcement (H2Config min_ping_interval, ping_without_stream)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc-go's keepalive.EnforcementPolicy needs a PING rate check in the h2 server; decision 83)
+- Go reference: google.golang.org/grpc v1.79.2 internal/transport/http2_server.go handlePing (maxPingStrikes 2, defaultPingTimeout 2 h, resetPingStrikes on HEADERS and DATA); Go's net/http has no such check
+- Test: std/grpc_test.xo "keepalive_server closes a connection that pings too often, as grpc-go's enforcement policy" (three PINGs acked with no GOAWAY, the fourth acked then GOAWAY ENHANCE_YOUR_CALM "too_many_pings")
+- Timing: none (one branch per received PING)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: a Date set empty sends no Date
 
 - Kind: feature

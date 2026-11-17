@@ -98,6 +98,12 @@ const S_ENABLE_CONNECT = 8
 
 /// The server's limits: net/http's defaults (http2configFromServer).
 const MAX_STREAMS = 250
+/// grpc-go's maxPingStrikes: the strikes a client's PINGs may earn
+/// before the connection ends (ping_policy)
+const MAX_PING_STRIKES = 2
+/// grpc-go's defaultPingTimeout: the least gap between PINGs while no
+/// stream is open, unless they are permitted without one (2 hours, ns)
+const PING_IDLE_MIN = 7200000000000
 const MAX_FRAME = 1048576
 /// DefaultMaxHeaderBytes plus 10 times 32
 const MAX_HLIST = 1048896
@@ -218,9 +224,20 @@ const C_OWED = 728
 /// extended CONNECT is on (H2Config extended_connect, decision 0687):
 /// SETTINGS_ENABLE_CONNECT_PROTOCOL 1 was sent and :protocol is admitted
 const C_XCONN = 736
-const C_WPARK = 744
-const C_WREAD = 752
-const C_SIZE = 744 // own: this module\'s connection record, not the context
+/// PING rate enforcement (H2Config min_ping_interval and
+/// ping_without_stream; grpc-go's keepalive.EnforcementPolicy,
+/// http2_server.go handlePing): the least time between a client's PINGs
+/// (0: not enforced), 1 when PINGs may come with no stream open, the
+/// strikes so far, the last PING's time, and 1 when HEADERS or DATA went
+/// out since (the next PING then clears the strikes)
+const C_PMIN = 744
+const C_PFREE = 752
+const C_PSTRIKE = 760
+const C_PLASTPING = 768
+const C_PRESET = 776
+const C_WPARK = 784
+const C_WREAD = 792
+const C_SIZE = 784 // own: this module\'s connection record, not the context
 
 /// The connection record's size: wasm's has the park words after it.
 fn c_size() -> Int { if target.arch == TargetArch.Wasm32 { C_SIZE + 16 } else { C_SIZE } }
@@ -384,6 +401,9 @@ fn bstr(x: Int, k: Int) -> Str { raw.str_at(ld(x, k), ld(x, k + 8)) }
 // Frames into the connection's output (h2w.xo writes them)
 
 fn fh(c: Int, len: Int, ty: Int, flags: Int, sid: Int) {
+  if ty == T_DATA {
+    sto(c, C_PRESET, 1)
+  }
   room(c, C_WB, 9)
   grew(c, C_WB, h2w.frame_head(tail(c, C_WB), len, ty, flags, sid))
 }
@@ -412,6 +432,7 @@ fn put_setting(c: Int, id: Int, v: Int) {
 /// CONTINUATION frames of at most the peer's frame size.
 fn put_block(c: Int, sid: Int, bp: Int, bn: Int, end_stream: Bool) {
   let max = ld(c, C_PEER_FRAME)
+  sto(c, C_PRESET, 1)
   room(c, C_WB, h2w.block_room(bn, max))
   grew(c, C_WB, h2w.block(tail(c, C_WB), sid, bp, bn, end_stream, max))
 }
@@ -629,7 +650,32 @@ fn close_stream(c: Int, st: Int) {
 
 /// Ends the connection with a GOAWAY of code (a connection error);
 /// nothing more is read or answered.
-fn conn_err(c: Int, code: Int) {
+/// Counts a client's PING against the enforcement policy as grpc-go's
+/// handlePing: HEADERS or DATA sent since the last PING clears the
+/// strikes; otherwise a PING sooner than C_PMIN after the last one (2
+/// hours with no stream open, unless C_PFREE) is a strike, and the third
+/// ends the connection with GOAWAY ENHANCE_YOUR_CALM "too_many_pings".
+fn ping_policy(c: Int) {
+  let t = now()
+  let last = ld(c, C_PLASTPING)
+  sto(c, C_PLASTPING, t)
+  if ld(c, C_PRESET) != 0 {
+    sto(c, C_PRESET, 0)
+    sto(c, C_PSTRIKE, 0)
+    return
+  }
+  let gap = if ld(c, C_NOPEN) < 1 && ld(c, C_PFREE) == 0 { PING_IDLE_MIN } else { ld(c, C_PMIN) }
+  if last != 0 && last + gap > t {
+    inc(c, C_PSTRIKE, 1)
+  }
+  if ld(c, C_PSTRIKE) > MAX_PING_STRIKES {
+    conn_err_debug(c, E_CALM, "too_many_pings")
+  }
+}
+
+fn conn_err(c: Int, code: Int) { conn_err_debug(c, code, "") }
+
+fn conn_err_debug(c: Int, code: Int, debug: Str) {
   if on(c, C_FAILED) {
     return
   }
@@ -640,7 +686,7 @@ fn conn_err(c: Int, code: Int) {
   }
   sto(c, C_FAILED, 1)
   sto(c, C_GOAWAY, 1)
-  put_goaway(c, ld(c, C_MAX_ID), code, "")
+  put_goaway(c, ld(c, C_MAX_ID), code, debug)
   // net/http closes a second after the GOAWAY (goAwayTimeout)
   sto(c, C_DEADLINE, now() + 1000000000)
 }
@@ -929,6 +975,8 @@ pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   sto(c, C_ETAB, if cfg != 0 { ld(cfg, 64) } else { 0 })
   sto(c, C_HLIST, if cfg != 0 && ld(cfg, 72) > 0 { ld(cfg, 72) } else { MAX_HLIST })
   sto(c, C_XCONN, if cfg != 0 { ld(cfg, 80) } else { 0 })
+  sto(c, C_PMIN, if cfg != 0 { ld(cfg, 88) } else { 0 })
+  sto(c, C_PFREE, if cfg != 0 { ld(cfg, 96) } else { 0 })
   sto(c, C_LAST, now())
   sto(c, C_PEER_FRAME, 16384)
   sto(c, C_PEER_WIN, 65535)
@@ -2386,6 +2434,9 @@ fn (var h: H2Conn) frame_rest(ty: Int, flags: Int, sid: Int, len: Int, p: Int, d
     if (flags & F_ACK) == 0 {
       fh(c, 8, T_PING, F_ACK, 0)
       put(c, C_WB, p, 8)
+      if ld(c, C_PMIN) > 0 {
+        ping_policy(c)
+      }
     } else {
       sto(c, C_PDEAD, 0)
     }

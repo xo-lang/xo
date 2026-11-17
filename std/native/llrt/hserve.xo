@@ -552,16 +552,19 @@ pub fn srv_alpn(s: rthttp.Srv, alpn: List[Str]) { tlssrv.srv_alpn(srec(s), hconn
 /// is each one's default, an out of range one is clamped as Go's
 /// configFromServer does): max concurrent streams, max read frame size,
 /// the connection's and each stream's receive window, the HPACK table
-/// the peer may use; xconnect turns extended CONNECT on (decision 0687).
-pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_win: Int, table: Int, ping_idle: Int = 0, ping_wait: Int = 0, write_to: Int = 0, enc_table: Int = 0, xconnect: Bool = false) {
+/// the peer may use; xconnect turns extended CONNECT on (decision 0687);
+/// ping_min and ping_free are the PING rate policy (h2srv ping_policy).
+pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_win: Int, table: Int, ping_idle: Int = 0, ping_wait: Int = 0, write_to: Int = 0, enc_table: Int = 0, xconnect: Bool = false, ping_min: Int = 0, ping_free: Bool = false) {
   let a = srec(s)
   var blk = ld(a, hconn.SR_H2CFG)
   if blk == 0 {
-    blk = rt.heap_large(88)
+    blk = rt.heap_large(104)
     st(a, hconn.SR_H2CFG, blk)
     st(blk, 72, 0)
   }
   st(blk, 80, if xconnect { 1 } else { 0 })
+  st(blk, 88, if ping_min > 0 { ping_min } else { 0 })
+  st(blk, 96, if ping_free { 1 } else { 0 })
   st(blk, 0, if streams > 0 { streams } else { 250 })
   st(blk, 8, if frame >= 16384 && frame <= 16777215 { frame } else { 1048576 })
   st(blk, 16, if conn_win >= 65535 { conn_win } else { 1048576 })
