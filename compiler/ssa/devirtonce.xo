@@ -1,0 +1,294 @@
+// Closures called once (task #211): a closure with captures that its
+// function makes and calls exactly once, its only use, becomes a direct
+// call of a copy of the closure's function in which each capture is an
+// owned parameter. The reference counting then sees the captures move
+// into the call: `r.buf.with(fn(var st) { st.spans.push(s) })` moves s
+// into the list instead of retaining each of its heap fields when it is
+// read from the environment and releasing them again when the
+// environment is dropped, and no environment is allocated.
+
+/// The most clones one module gets.
+const ONCE_MAX_CLONES = 512
+
+/// Rewrites the closures made and called once (devirt_once). Off under
+/// XO_PASSES=-devirt_once and on wasm.
+pub fn (var b: Builder) devirt_once() {
+  if b.m.passes_off.contains("devirt_once") || b.wasm {
+    return
+  }
+  var clones: Map[Str, Int] = {}
+  var no: Map[Str, Bool] = {}
+  let n = b.m.funcs.len()
+  for fi in 0..n {
+    if clones.len() >= ONCE_MAX_CLONES {
+      return
+    }
+    let sites = once_sites(b.m.funcs[fi])
+    if sites.is_empty() {
+      continue
+    }
+    var changed = false
+    for (c, cv) in sites {
+      let fname = b.m.funcs[fi].name_of(b.m.funcs[fi].values[c])
+      if no.contains(fname) {
+        continue
+      }
+      var ci = clones.get(fname) ?? -1
+      if ci < 0 {
+        let g = b.m.func_index(fname)
+        if g < 0 || g == fi || b.m.externs.contains(fname) || !once_callee(b.m.funcs[g]) {
+          no[fname] = true
+          continue
+        }
+        ci = b.m.add_clone(once_clone(b.m.funcs[g], b.once_name(fname)))
+        clones[fname] = ci
+      }
+      let cname = b.m.funcs[ci].name
+      var f = b.m.funcs[fi]
+      once_rewrite(f, c, cv, cname)
+      b.m.funcs[fi] = f
+      changed = true
+    }
+    if changed && fi < b.m.body_ids.len() {
+      b.m.body_ids[fi] = ""
+    }
+    if changed {
+      b.m.funcs[fi].ckey = ""
+    }
+  }
+}
+
+/// The closures of f (Closure values with captures) whose one use is as
+/// the function of one CallValue, as (closure, call) pairs.
+fn once_sites(f: Func) -> List[(Int, Int)] {
+  var cands: List[Int] = []
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op == Op.Closure && !x.args.is_empty() {
+        cands.push(v)
+      }
+    }
+  }
+  if cands.is_empty() {
+    return []
+  }
+  // per candidate: its uses, and the call when the one use is a call's
+  // function
+  var nuse: Map[Int, Int] = {}
+  var call: Map[Int, Int] = {}
+  for c in cands {
+    nuse[c] = 0
+  }
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      for (k, a) in f.args_indexed(x.args) {
+        if nuse.contains(a) {
+          nuse[a] = (nuse.get(a) ?? 0) + 1
+          if k == 0 && x.op == Op.CallValue {
+            call[a] = v
+          } else {
+            // any other use (a call's argument, a field, a store) keeps
+            // the closure a value
+            nuse[a] = 1000
+          }
+        }
+      }
+    }
+  }
+  for e in f.edges {
+    for a in e.args {
+      if nuse.contains(a) {
+        nuse[a] = 1000
+      }
+    }
+  }
+  for d in f.dbinds {
+    if nuse.contains(d.value) {
+      nuse[d.value] = 1000
+    }
+  }
+  var out: List[(Int, Int)] = []
+  for c in cands {
+    if (nuse.get(c) ?? 0) == 1 && call.contains(c) {
+      out.push((c, call.get(c) ?? -1))
+    }
+  }
+  out
+}
+
+/// Whether the closure function g may be cloned with its captures as
+/// parameters: a closure function (called through values, not an entry
+/// or an export) whose
+/// environment parameter is read only by Capture, and whose captures the
+/// environment owns.
+fn once_callee(g: Func) -> Bool {
+  if !g.indirect || g.entry || !g.export.is_empty() || !g.skip.is_empty() || g.captures.is_empty() || g.blocks.is_empty() || g.blocks[0].params.is_empty() {
+    return false
+  }
+  for cb in g.cap_borrowed {
+    if cb {
+      return false
+    }
+  }
+  for k in g.var_params {
+    if k == 0 {
+      return false
+    }
+  }
+  let env = g.blocks[0].params[0]
+  for bl in g.blocks {
+    for v in bl.instrs {
+      let x = g.values[v]
+      for a in g.args_iter(x.args) {
+        if a == env && x.op != Op.Capture {
+          return false
+        }
+      }
+      if x.op == Op.Capture && g.arg(x.args, 0) != env {
+        return false
+      }
+    }
+  }
+  for e in g.edges {
+    for a in e.args {
+      if a == env {
+        return false
+      }
+    }
+  }
+  for d in g.dbinds {
+    if d.value == env {
+      return false
+    }
+  }
+  true
+}
+
+/// The name of the clone of closure function name.
+fn (b: Builder) once_name(name: Str) -> Str {
+  var n = "${name}#once"
+  var i = 0
+  while b.m.func_at.contains(n) {
+    i += 1
+    n = "${name}#once.${i}"
+  }
+  n
+}
+
+/// g with its environment parameter gone and capture i parameter
+/// (params - 1 + i) instead: the first Capture of each capture becomes
+/// the parameter, every other one's uses use it.
+fn once_clone(g: Func, name: Str) -> Func {
+  var f = g
+  f.name = name
+  f.ckey = ""
+  f.indirect = false
+  let ncap = f.captures.len()
+  let caps = f.captures
+  f.captures = []
+  f.cap_borrowed = []
+  f.borrowed = []
+  var vps: List[Int] = []
+  for k in f.var_params {
+    vps.push(k - 1)
+  }
+  f.var_params = vps
+  var param: List[Int] = []
+  for _ in 0..ncap {
+    param.push(-1)
+  }
+  // capture value -> its parameter, for the reads after the first
+  var repl: Map[Int, Int] = {}
+  for bi in 0..f.blocks.len() {
+    var keep: List[Int] = []
+    for v in f.blocks[bi].instrs {
+      let x = f.values[v]
+      if x.op != Op.Capture {
+        keep.push(v)
+        continue
+      }
+      let i = auxw_int(x.aux)
+      if param[i] < 0 {
+        param[i] = v
+        f.values[v].op = Op.Param
+        f.values[v].args = Args{}
+        f.values[v].aux = AuxW.None
+        f.values[v].pi = -1
+        f.values[v].lp = 0
+        f.values[v].tb = with_block(f.values[v].tb, 0)
+      } else {
+        repl[v] = param[i]
+      }
+    }
+    f.blocks[bi].instrs = keep
+  }
+  var ps: List[Int] = []
+  for (k, p) in f.blocks[0].params.indexed() {
+    if k > 0 {
+      ps.push(p)
+    }
+  }
+  f.blocks[0].params = ps
+  for i in 0..ncap {
+    if param[i] < 0 {
+      param[i] = f.add_param(0, caps[i])
+    } else {
+      f.blocks[0].params.push(param[i])
+    }
+  }
+  if !repl.is_empty() {
+    for bl in 0..f.blocks.len() {
+      for v in f.blocks[bl].instrs {
+        for k in 0..f.values[v].args.len() {
+          let a = f.arg(f.values[v].args, k)
+          if repl.contains(a) {
+            f.set_arg(v, k, repl.get(a) ?? a)
+          }
+        }
+      }
+    }
+    for e in 0..f.edges.len() {
+      for k in 0..f.edges[e].args.len() {
+        let a = f.edges[e].args[k]
+        if repl.contains(a) {
+          f.edges[e].args[k] = repl.get(a) ?? a
+        }
+      }
+    }
+    for d in 0..f.dbinds.len() {
+      if repl.contains(f.dbinds[d].value) {
+        f.dbinds[d].value = repl.get(f.dbinds[d].value) ?? f.dbinds[d].value
+      }
+    }
+  }
+  renumber(f)
+  f
+}
+
+/// Makes call cv of f (a CallValue of closure c) a call of cname with
+/// its arguments and then c's captures, and removes c.
+fn once_rewrite(var f: Func, c: Int, cv: Int, cname: Str) {
+  var args: List[Int] = []
+  for (k, a) in f.args_indexed(f.values[cv].args) {
+    if k > 0 {
+      args.push(a)
+    }
+  }
+  for a in f.args_iter(f.values[c].args) {
+    args.push(a)
+  }
+  f.values[cv].op = Op.Call
+  f.values[cv].aux = f.pack(Aux.S(s: cname))
+  f.set_args(cv, args)
+  let bl = block_of(f.values[c].tb)
+  var keep: List[Int] = []
+  for v in f.blocks[bl].instrs {
+    if v != c {
+      keep.push(v)
+    }
+  }
+  f.blocks[bl].instrs = keep
+  f.values[c].tb = with_block(f.values[c].tb, -1)
+}

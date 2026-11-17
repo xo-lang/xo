@@ -23,6 +23,10 @@ pub fn passes() -> List[Str] {
     // compiler/ssa specialize.xo (decision 0368): a callee per call
     // site constant argument (a closure of nothing or a literal)
     "specialize_args",
+    // compiler/ssa devirtonce.xo (task #211): a closure with captures
+    // made and called once becomes a direct call of a copy of its
+    // function that takes the captures as owned parameters
+    "devirt_once",
     "chain_pads",
     // compiler/ssa chainpads.xo: a landing pad's releases newest first,
     // so neighboring pads end alike (tail_merge_cold shares the ends)

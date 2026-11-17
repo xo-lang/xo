@@ -1,0 +1,31 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): closures made
+// and called once (devirt_once, task #211).
+
+struct Ring {
+  names: List[Str]
+}
+
+// The with body captures s and is made and called once: it becomes a
+// direct call of a copy of its function with s as a parameter (or that
+// copy inlined), so push makes no environment and calls through no
+// function value (blr).
+fn push(m: Mutex[Ring], s: Str) {
+  // arm64: -"blr x[0-9]+"
+  m.with(fn(var r) { r.names.push(s) })
+}
+
+// A closure that escapes (returned) keeps its environment.
+fn adder(s: Str) -> fn(Str) -> Str {
+  fn(t) { s + t }
+}
+
+fn main(os: Os) {
+  let m = Mutex.new(Ring{names: []})
+  for i in 0..3 {
+    push(m, "n${i}")
+  }
+  let f = adder("a")
+  os.stdio.println(f("b"))
+  let n = m.with(fn(var r) -> Int { r.names.len() })
+  os.stdio.println("${n}")
+}

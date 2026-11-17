@@ -138,7 +138,9 @@ fn raises(m: Module, f: Func, x: Value, faults: List[Bool]) -> Bool {
   }
   let g = user_callee(m, f, x)
   if g >= 0 {
-    return faults[g]
+    // a direct call of one that catches (devirt_once's clone of such a
+    // closure) returns on a fault too
+    return faults[g] && !m.funcs[g].catches
   }
   false
 }
@@ -1646,5 +1648,6 @@ pub fn (var b: Builder) run_passes() {
   b.add_landings()
   b.cleanup_all()
   b.specialize_args()
+  b.devirt_once()
   b.insert_rc()
 }

@@ -3165,6 +3165,9 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
     // counting so its caches see the clones as functions
     b.specialize_args()
     t = lap(os, o.phases, "specialize_args", t)
+    // closures made and called once (task #211)
+    b.devirt_once()
+    t = lap(os, o.phases, "devirt_once", t)
     let rk = rc_cached(os, b, release, module_jobs(os, b.m.funcs.len()), o.phases, lazy)
     t = lap(os, o.phases, "insert_rc", t)
     Lowered{b: b, tu: tu, t: t, rc_keys: rk}
