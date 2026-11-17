@@ -342,7 +342,7 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
   if g.one_leaf_enum(b, kind, sym, t, all) {
     return
   }
-  if kind == "dup" && g.dup_in_place(b, sym, t, all) {
+  if kind is "dup" | "drop" && g.rc_in_place(b, kind, sym, t, all) {
     return
   }
   var out = 0
@@ -461,7 +461,7 @@ fn (var g: G) one_str_leaf(t: Int) -> (Int, Leaf) {
   (vi, ls[0])
 }
 
-/// Whether the dup of leaf l is done inline by dup_in_place.
+/// Whether the dup or drop of leaf l is done inline by rc_in_place.
 fn (var g: G) dup_inline(l: Leaf) -> Bool {
   match g.kind(l.t) {
     Str | List | Box | Handle | Func => true
@@ -493,14 +493,16 @@ fn (var g: G) dup_word(var b: List[Str], lk: ssa.Kind, off: Int, lbl: Str) {
   b.push(g.inc_text(r, "x10", "w11", lbl, false))
 }
 
-/// The dup helper of an enum, struct, or tuple whose heap leaves are all
-/// retained inline (a Str, List, Box, Handle, function value, or an enum
-/// leaf whose one heap leaf is a Str or a List): each object is read
-/// where the value came, x0 to x7 or the caller's stack past them, with
-/// no frame and no word stored, where agg_rc stored every word first
+/// The dup or drop helper of an enum, struct, or tuple whose heap leaves
+/// are all counted inline (a Str, List, Box, Handle, function value, or
+/// an enum leaf whose one heap leaf is a Str or a List): each object is
+/// read where the value came, x0 to x7 or the caller's stack past them,
+/// with no frame and no word stored, where agg_rc stored every word first
 /// (`dup http.Url?`, 18 words, was 13% of bench/perf/httpproxy_rules
-/// route, 2026-11-17); false when a leaf needs a call.
-fn (var g: G) dup_in_place(var b: List[Str], sym: Str, t: Int, all: List[Leaf]) -> Bool {
+/// route and `drop http.Url?` 15%, 2026-11-17). A drop that releases the
+/// last reference saves x0 to x7 around the call that frees the object
+/// (drop_free), the only frame; false when a leaf needs a call.
+fn (var g: G) rc_in_place(var b: List[Str], kind: Str, sym: Str, t: Int, all: List[Leaf]) -> Bool {
   for l in all {
     if !g.dup_inline(l) {
       return false
@@ -534,39 +536,88 @@ fn (var g: G) dup_in_place(var b: List[Str], sym: Str, t: Int, all: List[Leaf]) 
       let next = "${sym}_ip_v${vi}"
       b.push("\tcmp x0, #${vi}\n\tb.ne ${next}\n")
       for (li, l) in ls.indexed() {
-        g.dup_leaf_in_place(b, l, "${sym}_ip${vi}l${li}")
+        g.leaf_in_place(b, kind, l, "${sym}_ip${vi}l${li}")
       }
       b.push("\tb ${done}\n${next}:\n")
     }
   } else {
     for (li, l) in all.indexed() {
-      g.dup_leaf_in_place(b, l, "${sym}_ipl${li}")
+      g.leaf_in_place(b, kind, l, "${sym}_ipl${li}")
     }
   }
   b.push("${done}:\n\tret\n")
   true
 }
 
-/// Retains leaf l of a dup_in_place helper's value.
-fn (var g: G) dup_leaf_in_place(var b: List[Str], l: Leaf, lbl: Str) {
+/// Retains or releases (kind) leaf l of an rc_in_place helper's value.
+fn (var g: G) leaf_in_place(var b: List[Str], kind: Str, l: Leaf, lbl: Str) {
   let lk = g.kind(l.t)
   match lk {
-    Str | List | Box | Handle => g.dup_word(b, lk, l.off, lbl)
+    Str | List | Box | Handle => g.rc_word(b, kind, l.t, l.off, lbl)
     Func => {
       // the environment word; null: no captures
       let r = arg_word(b, l.off + 1, "x9")
       b.push("\tcbz ${r}, ${lbl}_done\n")
-      b.push(g.inc_text(r, "x10", "w11", lbl, false))
+      if kind == "dup" {
+        b.push(g.inc_text(r, "x10", "w11", lbl, false))
+      } else {
+        b.push(g.dec_text(r, "x10", "w11", lbl, "${lbl}_free", "${lbl}_done"))
+        g.drop_free(b, r, "\tldr x1, [x0, #8]\n", "xo_x_obj_rc_defer_n", lbl)
+      }
       b.push("${lbl}_done:\n")
     }
     _ => {
       let (vi, il) = g.one_str_leaf(l.t)
       let tag = arg_word(b, l.off, "x12")
-      b.push("\tcmp ${tag}, #${vi}\n\tb.ne ${lbl}_done\n")
-      g.dup_word(b, g.kind(il.t), l.off + il.off, lbl)
-      b.push("${lbl}_done:\n")
+      b.push("\tcmp ${tag}, #${vi}\n\tb.ne ${lbl}_skip\n")
+      g.rc_word(b, kind, il.t, l.off + il.off, lbl)
+      b.push("${lbl}_skip:\n")
     }
   }
+}
+
+/// Retains or releases (kind) the Str, List, Box, or Handle of type lt at
+/// word off of an rc_in_place helper's value, labels from lbl.
+fn (var g: G) rc_word(var b: List[Str], kind: Str, lt: Int, off: Int, lbl: Str) {
+  let lk = g.kind(lt)
+  if kind == "dup" {
+    g.dup_word(b, lk, off, lbl)
+    return
+  }
+  let r = arg_word(b, off, "x9")
+  if g.inl_str() && lk == ssa.Kind.Str {
+    // an inline Str has no object to release (decision 0370)
+    b.push("\ttbnz ${r}, #0, ${lbl}_done\n")
+  }
+  b.push(g.dec_text(r, "x10", "w11", lbl, "${lbl}_free", "${lbl}_done"))
+  match lk {
+    Str => g.drop_free(b, r, "", "xo_x_obj_rc_free", lbl)
+    Handle => g.drop_free(b, r, "", "xo_x_obj_h_free", lbl)
+    Box => g.drop_free(b, r, g.addr("x1", g.box_drop(lt)), "xo_x_obj_rc_defer_n", lbl)
+    _ => {
+      let et = g.m.types[lt].elems[0]
+      var set = imm_text(g.esize(et), "x1")
+      if g.heap(et) {
+        set += g.addr("x2", g.elem_helper("drop", et))
+      } else {
+        set += "\tmov x2, #0\n"
+      }
+      g.drop_free(b, r, set, "xo_x_obj_rl_free_n", lbl)
+    }
+  }
+  b.push("${lbl}_done:\n")
+}
+
+/// The cold end of an rc_in_place drop whose release of the object at
+/// register r was the last (label ${lbl}_free): x0 to x7, the value's
+/// words, saved under a frame record around the call of the runtime's fname
+/// with the object in x0 and set's arguments, then on to ${lbl}_done.
+fn (var g: G) drop_free(var b: List[Str], r: Str, set: Str, fname: Str, lbl: Str) {
+  b.push("${lbl}_free:\n\tstp x29, x30, [sp, #-80]!\n\tmov x29, sp\n\tstp x0, x1, [sp, #16]\n\tstp x2, x3, [sp, #32]\n\tstp x4, x5, [sp, #48]\n\tstp x6, x7, [sp, #64]\n")
+  if r != "x0" {
+    b.push("\tmov x0, ${r}\n")
+  }
+  b.push("${set}\tbl ${g.sym(fname)}\n\tldp x0, x1, [sp, #16]\n\tldp x2, x3, [sp, #32]\n\tldp x4, x5, [sp, #48]\n\tldp x6, x7, [sp, #64]\n\tldp x29, x30, [sp], #80\n\tb ${lbl}_done\n")
 }
 
 /// The body of the dupp, dropp, or sharep helper of an enum, struct, or

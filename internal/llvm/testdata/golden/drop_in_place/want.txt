@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+25831 14 3806
+a-6-a string long enough to live on the heap y-6-a string long enough to live on the heap 2
+--- stderr

@@ -1,0 +1,100 @@
+// The drop helper of a struct, tuple, or enum whose heap leaves are all
+// released inline reads each object where the value came, x0 to x7 or
+// the caller's stack past them, and only a last reference saves x0 to x7
+// around the call that frees it (arm64 rc.xo rc_in_place, task #103:
+// `drop http.Url?` stored all 18 words first). Records of 20 words (heap
+// Strs, a List[Str] and a List[Int], function values with and without
+// captures, Str? fields, some past x7 so read from the stack), a Rec?, and
+// a recursive enum (its Box leaves) are dropped by value, some holding
+// the last reference and some not; XO_LEAKCHECK=1 (as every golden runs)
+// fails a missed release, and an extra one faults.
+
+struct Rec {
+  a: Str
+  n: Int
+  b: Str
+  xs: List[Str]
+  c: Str?
+  d: Str
+  f: fn(Int) -> Int
+  e: Str?
+  g: Str
+  ys: List[Int]
+}
+
+enum Tree {
+  Leaf(s: Str)
+  Node(l: Tree, r: Tree)
+}
+
+fn long(p: Str, i: Int) -> Str {
+  "${p}-${i}-a string long enough to live on the heap"
+}
+
+fn mk(i: Int) -> Rec {
+  let s = long("cap", i)
+  let f = if i % 2 == 0 { fn(x: Int) -> Int { x + s.len() } } else { fn(x: Int) -> Int { x * 2 } }
+  Rec{
+    a: long("a", i),
+    n: i,
+    b: if i % 4 == 0 { "b" } else { long("b", i) },
+    xs: [long("x", i), long("y", i)],
+    c: if i % 3 == 0 { None } else { Some(long("c", i)) },
+    d: long("d", i),
+    f: f,
+    e: if i % 2 == 0 { Some(long("e", i)) } else { None },
+    g: long("g", i * 7),
+    ys: [i, i + 1],
+  }
+}
+
+// r is dropped here: the last reference when the caller passed its own
+fn sum(r: Rec) -> Int {
+  r.a.len() + r.n + r.b.len() + r.xs.len() + (r.c ?? "").len() + r.d.len() + r.f(r.n) + (r.e ?? "").len() + r.g.len() + r.ys.len()
+}
+
+fn osum(o: Rec?) -> Int {
+  if let Some(r) = o {
+    return r.n + r.g.len()
+  }
+  -1
+}
+
+fn tree(d: Int, i: Int) -> Tree {
+  if d == 0 {
+    return Tree.Leaf(long("t", i))
+  }
+  Tree.Node(l: tree(d - 1, 2 * i), r: tree(d - 1, 2 * i + 1))
+}
+
+fn size(t: Tree) -> Int {
+  match t {
+    Leaf(s) => s.len()
+    Node(l, r) => size(l) + size(r)
+  }
+}
+
+fn main(os: Os) {
+  var t = 0
+  var kept: List[Rec] = []
+  for i in 0..40 {
+    t += sum(mk(i))
+    let r = mk(i)
+    if i % 3 == 0 {
+      kept.push(r)
+    }
+    t += sum(r)
+    let o: Rec? = if i % 5 == 0 { None } else { Some(mk(i)) }
+    t += osum(o)
+  }
+  var z = 0
+  for i in 0..6 {
+    let tr = tree(i, i)
+    z += size(tr)
+    if i % 2 == 0 {
+      z += size(tree(i, i + 1))
+    }
+  }
+  os.stdio.println("${t} ${kept.len()} ${z}")
+  os.stdio.println("${kept[2].a} ${kept[2].xs[1]} ${kept[3].f(1)}")
+}

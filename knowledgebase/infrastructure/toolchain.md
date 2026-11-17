@@ -3283,7 +3283,11 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   LLVM backend uses too), `regalloc.go` (liveness, live ranges with holes, move
   coalescing, greedy first fit by spill weight, spill slots),
   `emit.go` (frames, parallel moves, fault stubs with operand recovery),
-  `rc.go` (dup and drop helpers in assembly), `lsr.go` (decision 0054:
+  `rc.go` (dup and drop helpers in assembly; since 2026-11-17 the helper
+  for an enum or struct whose heap leaves are all Str, List, Box, Handle,
+  Func or a one-Str enum works in place from the argument registers and
+  stack words, with no frame and no call per leaf, task #103; golden
+  `dup_in_place`), `lsr.go` (decision 0054:
   loops found on the SSA, pointer induction variables for list element
   accesses, induction variable bounds, `xs[i + c]` from xs[i]'s pointer,
   rotation of a back edge at a bounds check (`_c` labels), integer `ldp`
