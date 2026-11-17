@@ -37,11 +37,15 @@ func main() {
 	programs := flag.Bool("programs", false, "print the program directories a `xo dev edges` sweep runs over, one per line: the file -dirs reads")
 	sweep := flag.Bool("sweep", false, "the resolved coverage: run `xo dev edges` ($XO_CLI) over every program directory, as TestStdAPICovered does, instead of the name scan")
 	listDir := flag.String("list", "", "with -edges: write `uncovered.txt`, `over.txt` and `under.txt` in this directory, one `module.symbol (kind)` an entry, `[impl]` on a method whose name a covered interface method has (so a sharded audit's lists can be merged)")
+	since := flag.String("since", "", "the check of a change (task #259): the std modules a change since this git revision edits, and those its edited programs used, each declaration needing a resolved call from a program whose build reads the module ($XO_CLI lists inputs and sweeps only those) or an allow.txt line; exit 1 when one has neither")
 	flag.Parse()
 	root, err := xotool.Root()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stdcoverage:", err)
 		os.Exit(1)
+	}
+	if *since != "" {
+		os.Exit(checkSince(root, *since))
 	}
 	if *programs {
 		dirs, err := stdcoverage.ProgramDirs(root)
@@ -276,4 +280,35 @@ func writeList(listDir, name string, keys []string, impls map[string]bool) {
 		fmt.Fprintln(os.Stderr, "stdcoverage:", err)
 		os.Exit(1)
 	}
+}
+
+// checkSince is -since: the added declarations, their check, the status.
+func checkSince(root, base string) int {
+	xo := os.Getenv("XO_CLI")
+	if xo == "" {
+		fmt.Fprintln(os.Stderr, "stdcoverage -since needs XO_CLI, the xo to sweep with")
+		return 2
+	}
+	work, err := os.MkdirTemp("", "stdcov-since-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+		return 2
+	}
+	defer os.RemoveAll(work)
+	modules, swept, open, failed, err := stdcoverage.CheckEdited(root, xo, work, base, stdcoverage.Jobs())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stdcoverage -since:", err)
+		return 2
+	}
+	fmt.Printf("stdcoverage -since=%s: %d module(s) checked (%s), %d program(s) swept\n", base, len(modules), strings.Join(modules, " "), len(swept))
+	code := 0
+	for _, f := range failed {
+		fmt.Printf("xo dev edges failed, so its calls are not counted: %s\n", f)
+		code = 1
+	}
+	for _, e := range open {
+		fmt.Printf("%s.%s (%s) has no resolved call from a corpus or golden: add one, or a line to internal/stdcoverage/allow.txt with the reason it cannot have one\n", e.Module, e.Symbol, e.Kind)
+		code = 1
+	}
+	return code
 }

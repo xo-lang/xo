@@ -43,6 +43,12 @@ func Sweep(root, xo, work string, jobs int) (edges []Edge, failed []string, err 
 	if err != nil {
 		return nil, nil, err
 	}
+	return SweepDirs(root, xo, work, jobs, dirs)
+}
+
+// SweepDirs is Sweep over the program directories dirs (relative to root)
+// only.
+func SweepDirs(root, xo, work string, jobs int, dirs []string) (edges []Edge, failed []string, err error) {
 	// XO_STDCOV_ONLY (a regular expression) sweeps only the programs it
 	// matches, to look at a few; the coverage it gives is not std's
 	if only := os.Getenv("XO_STDCOV_ONLY"); only != "" {

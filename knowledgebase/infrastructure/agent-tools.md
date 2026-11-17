@@ -602,6 +602,18 @@ yourself.
   deque): its bar is spec/std.md's declared surface plus that checklist.
   scripts/stdcov reads both: a module is features Proven only with no open
   gap and no done outside row left unpinned.
+- `XO_CLI=bin/xo go run ./scripts/stdcoverage -since=BASE` (task #259,
+  owner 2026-11-17): TestStdAPICovered on the std modules a change since
+  BASE edits, plus the modules a program the change edits or deletes used
+  at BASE (they may have lost their last caller): every declaration of
+  those modules needs a resolved call from a program whose `xo build
+  --list-inputs` reads one of the module's files, or an allow.txt line.
+  About a minute for one module (toml 68 s, amqp 61 s, grpchealth 82 s
+  on the Mac, XO_STDCOV_JOBS=8) where the full sweep takes up to 29
+  minutes and no longer fits a 30 minute lease; an edit to
+  std/native/prelude.xo reaches every program. The full sweep stays in
+  the tier (decision #69). Run it before pushing a new pub std
+  declaration.
 - `go run ./scripts/stdcoverage` prints every std function and method no
   corpus or golden calls (internal/stdcoverage): std/*.xo and
   std/native/prelude.xo against the calls in internal/stdtest's corpora,

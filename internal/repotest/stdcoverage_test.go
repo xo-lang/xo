@@ -23,7 +23,9 @@ import (
 // time, default 2; about an hour in tier 69 with NumCPU jobs, 417 s and
 // about 4 GB at 2 alone on host 2), so it runs where XO_STDCOV_SWEEP=1 and XO_CLI name an xo:
 // gate.sh's stdcov step, run when named and by the 8-hourly tier.
-// `go run ./scripts/stdcoverage -sweep` prints the same list.
+// `go run ./scripts/stdcoverage -sweep` prints the same list, and
+// `-since=BASE` checks only the modules a change edits (task #259), in
+// about a minute.
 func TestStdAPICovered(t *testing.T) {
 	if os.Getenv("XO_STDCOV_SWEEP") != "1" {
 		t.Skip("the resolved sweep runs in gate.sh's stdcov step (XO_STDCOV_SWEEP=1 with XO_CLI)")
