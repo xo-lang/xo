@@ -156,7 +156,7 @@ fn build_flags(args: List[Str]) -> List[Str] {
     }
     let name = a.trim_prefix("-").trim_prefix("-").split("=")[0]
     let takes = !a.contains("=") && vals.contains(name) && i + 1 < args.len()
-    if !(name is "watch" | "grace") {
+    if !(name is "watch" | "grace" | "since") {
       out.push(a)
       if takes {
         out.push(args[i + 1])

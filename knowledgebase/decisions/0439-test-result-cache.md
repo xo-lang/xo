@@ -2,6 +2,8 @@
 
 Status: Accepted (owner, 2026-10-30)
 
+Amended by 0701 (2026-11-17): `xo test --since=REV` runs this selection once against a git revision; --std-module runs of modules whose tests use only the fakes are stored (stage 2).
+
 ## Context
 
 `xo test` keeps its test binary in the run cache (decision 0360's test

@@ -902,6 +902,10 @@ yourself.
   differences).
 - `scripts/gate-http.sh OUTDIR [STEP...]`, `scripts/fuzz-http.sh OUTDIR
   [SECONDS]`.
+- `xo test --since=REV DIR` and `xo test --std-module=M --since=REV`
+  run once, only the tests a change since REV (your merge base) reaches;
+  an unchanged `--std-module` run of a module whose tests use only the
+  fakes replays its stored result in about 50 ms (decision 0701).
 - `xo test --watch DIR` reruns only the tests an edit reaches (a test
   that names a changed function, an edited or new test; `a` and Enter
   runs all); `xo run --watch DIR` restarts the program only when the

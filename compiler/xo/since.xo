@@ -1,0 +1,293 @@
+// xo test --since=BASE (decision 0701): one run of the tests a change
+// since the git revision BASE reaches, --watch's selection (decision 0267)
+// as a one-shot. A test runs when it is new or its text changed, or when
+// it names a declaration that changed or that names one that did,
+// transitively, over the files of what is tested: the module (every .xo
+// file below its root) or, with --std-module=M, M's own files. A change
+// to a source file outside them (another module, std for a program,
+// compiler/) runs every test; a change only to other files (docs) runs
+// none. Names, not the checker's calls, so the set errs toward running:
+// a passing --since run is as good as a full run for the change. The
+// selection goes to a child `xo test` in XO_TEST_ONLY, as --watch's.
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
+use std/crypto
+
+/// A top level declaration of a file: its name (a test's string), the
+/// hash of its text, the identifiers its text names, and whether it is a
+/// test block.
+struct DeclSum {
+  name: Str
+  hash: Str
+  words: Map[Str, Bool]
+  is_test: Bool
+}
+
+/// git's standard output for args run in dir, None when git fails.
+fn git_out(os: Os, dir: Str, args: List[Str]) -> Str? {
+  match os.proc.cmd("git", args).dir(dir).output() {
+    Ok(r) => if r.code == 0 { r.stdout.to_str() } else { None }
+    Err(_) => None
+  }
+}
+
+fn decl_sum(name: Bytes, src: Bytes, s: parser.Span, is_test: Bool) -> DeclSum {
+  let text = src[s.start.offset..s.end.offset]
+  DeclSum{name: name.to_str() ?? "", hash: crypto.sha256(text).to_hex(), words: words_of(text), is_test: is_test}
+}
+
+/// The declarations of the source src of path.
+fn decls_of(path: Str, src: Bytes) -> List[DeclSum] {
+  var out: List[DeclSum] = []
+  let r = parser.parse_file(path.bytes(), src, false)
+  for d in r.file.decls {
+    match d {
+      FnDecl(d: x) => out.push(decl_sum(x.name.name, src, x.span, false))
+      StructDecl(d: x) => out.push(decl_sum(x.name.name, src, x.span, false))
+      EnumDecl(d: x) => out.push(decl_sum(x.name.name, src, x.span, false))
+      InterfaceDecl(d: x) => out.push(decl_sum(x.name.name, src, x.span, false))
+      TypeDecl(d: x) => out.push(decl_sum(x.name.name, src, x.span, false))
+      ConstDecl(d: x) => out.push(decl_sum(x.name.name, src, x.span, false))
+      TestDecl(d: x) => {
+        let name = match x.name {
+          Some(l) => lit_text(l)
+          None => ""
+        }
+        out.push(decl_sum(name.bytes(), src, x.span, true))
+      }
+      BadDecl(_) => {}
+    }
+  }
+  out
+}
+
+/// Whether a changed file can change what a test build compiles: a
+/// source of Xo, C or assembly, or a module file.
+fn source_file(p: Str) -> Bool {
+  p.ends_with(".xo") || p.ends_with(".c") || p.ends_with(".h") || p.ends_with(".s") || p.ends_with("/xo.mod") || p.ends_with("/xo.lock") || p.ends_with("/xo.work") || p == "xo.mod"
+}
+
+/// The files of what is tested: --std-module=M's own (M.xo, its
+/// directory, native/M.xo and native/M_native.xo, and their tests), else
+/// every watched .xo file below root.
+fn since_files(os: Os, o: Opts, root: Str) -> List[Str] {
+  var out: List[Str] = []
+  if !o.std_module.is_empty() {
+    let std = abs_path(o.wd, o.std).trim_suffix("/")
+    let rel = o.std_module.trim_prefix("std/")
+    var cands = ["${std}/${rel}.xo", "${std}/${rel}_test.xo"]
+    if !rel.starts_with("native/") {
+      cands = cands + ["${std}/native/${rel}.xo", "${std}/native/${rel}_native.xo", "${std}/native/${rel}_test.xo"]
+    }
+    for c in cands {
+      if os.fs.exists(c).ok() ?? false {
+        out.push(c)
+      }
+    }
+    for e in os.fs.read_dir("${std}/${rel}").ok() ?? [] {
+      if !e.is_dir && e.name.ends_with(".xo") {
+        out.push("${std}/${rel}/${e.name}")
+      }
+    }
+    return out
+  }
+  // xo:allow XO0903 a walk it cannot do selects every test: no stale result
+  for fi in os.fs.walk(root).ok() ?? [] {
+    let rel = fi.path.trim_prefix(root + "/")
+    if !fi.is_dir && rel.ends_with(".xo") && watched_path(rel) {
+      out.push(fi.path)
+    }
+  }
+  out
+}
+
+/// What --since decided: the revision compared against, the changed
+/// source files, and the selected tests with why (None for every test,
+/// with why_all saying why).
+struct SinceSel {
+  base: Str
+  changed: List[Str] = []
+  only: List[(Str, Str)]? = None
+  why_all: Str = ""
+}
+
+/// The revision a bare --since means: the merge base of HEAD and
+/// origin/main (main when there is no origin).
+fn since_base(os: Os, root: Str, base: Str) -> Str {
+  if base != "@merge-base" {
+    return base
+  }
+  for up in ["origin/main", "main"] {
+    if let Some(mb) = git_out(os, root, ["merge-base", "HEAD", up]) {
+      return mb.trim()
+    }
+  }
+  "HEAD"
+}
+
+/// The tests to run for a change since base (see SinceSel).
+fn since_selection(os: Os, o: Opts, root: Str, base0: Str) -> Result[SinceSel, Str] {
+  let base = since_base(os, root, base0)
+  // paths relative to the repository's top, which git names through
+  // root's prefix (root itself may be reached through a symbolic link:
+  // macOS's /var is /private/var to git)
+  let prefix = match git_out(os, root, ["rev-parse", "--show-prefix"]) {
+    Some(t) => t.trim()
+    None => return Err("--since needs a git checkout: ${root} is not in one")
+  }
+  if git_out(os, root, ["rev-parse", "--verify", "--quiet", "${base}^{commit}"]) is None {
+    return Err("--since=${base}: no such commit")
+  }
+  // a file as git names it (from the top) for one below root
+  let git_rel = fn(f: Str) -> Str { prefix + f.trim_prefix(root + "/") }
+  var changed: List[Str] = []
+  for args in [["diff", "--name-only", "--relative", base, "--"], ["ls-files", "--others", "--exclude-standard"]] {
+    for l in (git_out(os, root, args) ?? "").split("\n") {
+      if !l.is_empty() && source_file(l) {
+        changed.push("${root}/${l}")
+      }
+    }
+  }
+  // a source changed outside root (diff --relative leaves those out)
+  for l in (git_out(os, root, ["diff", "--name-only", base, "--"]) ?? "").split("\n") {
+    if !l.is_empty() && source_file(l) && !l.starts_with(prefix) {
+      return Ok(SinceSel{base: base, changed: [l], why_all: "${l} changed, outside what is tested"})
+    }
+  }
+  let files = since_files(os, o, root)
+  var mine: Map[Str, Bool] = {}
+  for f in files {
+    mine[f] = true
+  }
+  var touched: List[Str] = []
+  for c in changed {
+    if !mine.contains(c) {
+      // a source outside what is tested: every test
+      return Ok(SinceSel{base: base, changed: changed, why_all: "${c.trim_prefix(root + "/")} changed, outside what is tested"})
+    }
+    touched.push(c)
+  }
+  if touched.is_empty() {
+    return Ok(SinceSel{base: base, changed: changed, only: Some([])})
+  }
+  // the declarations each touched file had at base and has now
+  // each changed declaration's reason: "changed" or the name it names
+  var moved: Map[Str, Str] = {}
+  var new_tests: Map[Str, Bool] = {}
+  for f in touched {
+    let old = decls_of(f, (git_out(os, root, ["show", "${base}:${git_rel(f)}"]) ?? "").bytes())
+    // xo:allow XO0903 a file deleted since base has no declarations now
+    let now = decls_of(f, os.fs.read(f).ok() ?? "".bytes())
+    var before: Map[Str, Bool] = {}
+    for d in old {
+      before["${d.is_test}\n${d.name}\n${d.hash}"] = true
+    }
+    var after: Map[Str, Bool] = {}
+    for d in now {
+      after["${d.is_test}\n${d.name}\n${d.hash}"] = true
+      if !before.contains("${d.is_test}\n${d.name}\n${d.hash}") {
+        if d.is_test { new_tests[d.name] = true } else { moved[d.name] = "changed" }
+      }
+    }
+    for d in old {
+      if !d.is_test && !after.contains("${d.is_test}\n${d.name}\n${d.hash}") {
+        moved[d.name] = "changed"
+      }
+    }
+  }
+  // every declaration of the files now, for the closure over names
+  var all: List[DeclSum] = []
+  for f in files {
+    // xo:allow XO0903 an unreadable file adds no names: its tests still run on a direct change
+    all = all + decls_of(f, os.fs.read(f).ok() ?? "".bytes())
+  }
+  var grew = true
+  while grew {
+    grew = false
+    for d in all {
+      if !d.is_test && !moved.contains(d.name) {
+        if let Some(w) = d.words.keys().find(fn(w) { moved.contains(w) }) {
+          moved[d.name] = "names ${w}"
+          grew = true
+        }
+      }
+    }
+  }
+  var run: Map[Str, Str] = {}
+  for d in all {
+    if !d.is_test || run.contains(d.name) {
+      continue
+    }
+    if new_tests.contains(d.name) {
+      run[d.name] = "new or edited"
+    } else if let Some(w) = d.words.keys().sort().find(fn(w) { moved.contains(w) }) {
+      let how = moved.get(w) ?? "changed"
+      run[d.name] = if how == "changed" { "names ${w}, changed" } else { "names ${w}, which ${how}" }
+    }
+  }
+  var only: List[(Str, Str)] = []
+  for n in run.keys().sort() {
+    only.push((n, run.get(n) ?? ""))
+  }
+  Ok(SinceSel{base: base, changed: touched, only: Some(only)})
+}
+
+fn since_json(sel: SinceSel) -> Str {
+  let strs = fn(xs: List[Str]) -> Str { "[" + xs.map(fn(x: Str) { json_str(x) }).join(",") + "]" }
+  let tests = match sel.only {
+    Some(ns) => "[" + ns.map(fn(p: (Str, Str)) { "{\"name\":${json_str(p.0)},\"why\":${json_str(p.1)}}" }).join(",") + "]"
+    None => "null"
+  }
+  "{\"since\":${json_str(sel.base)},\"changed\":${strs(sel.changed)},\"selected\":${tests},\"all\":${json_str(sel.why_all)}}"
+}
+
+/// `xo test --since=BASE`: the selected tests in one child run.
+fn since_test(os: Os, o: Opts, args: List[Str]) -> Int {
+  let root = if o.std_module.is_empty() { abs_path(o.wd, line_root(os, o.wd, o.dirs[0])) } else { abs_path(o.wd, o.std) }
+  let sel = match since_selection(os, o, root, o.since) {
+    Ok(s) => s
+    Err(e) => {
+      os.stdio.eprintln("xo test: ${e}")
+      return 2
+    }
+  }
+  // with --json the selection is a line of its own, before the run's
+  if o.json {
+    os.stdio.println(since_json(sel))
+  }
+  let short = if sel.base.len() > 12 { sel.base[0..12] } else { sel.base }
+  var only: List[Str]? = None
+  if let Some(picked) = sel.only {
+    let names = picked.map(fn(p: (Str, Str)) { p.0 })
+    if names.is_empty() {
+      os.stdio.eprintln("xo test --since=${short}: no test reaches the ${sel.changed.len()} changed source file(s)")
+      if !o.json {
+        os.stdio.println("ok: 0 passed, 0 failed, 0 skipped")
+      }
+      return 0
+    }
+    os.stdio.eprintln("xo test --since=${short}: running ${names.len()} test(s) a change reaches")
+    only = Some(names)
+  } else {
+    os.stdio.eprintln("xo test --since=${short}: ${sel.why_all}: every test runs")
+  }
+  // the child's output relayed through this process's stdio (not
+  // inherited), so a caller that captures xo's output sees the run
+  // --std-module (among the flags) takes no directory
+  var words = ["test"] + build_flags(args) + (if o.std_module.is_empty() { dir_words(o) } else { [] })
+  var cmd = os.proc.cmd(check.executable(os.env, os.fs), words).dir(o.wd).set_env("PWD", o.wd).set_env("XO_STD", o.std)
+  if let Some(names) = only {
+    cmd = cmd.set_env("XO_TEST_ONLY", names.join("\n"))
+  }
+  match cmd.output() {
+    Ok(r) => {
+      os.stdio.print(r.stdout.to_str_lossy())
+      os.stdio.eprint(r.stderr.to_str_lossy())
+      r.code
+    }
+    Err(e) => {
+      os.stdio.eprintln("xo test: ${e}")
+      1
+    }
+  }
+}

@@ -229,6 +229,14 @@ fn main(os0: Os) ! {
     os.stdio.eprintln("xo ${o.cmd}: --watch is a flag of xo run and xo test")
     os.proc.exit(2)
   }
+  if !o.since.is_empty() {
+    // decision 0701: one run of the tests a change since BASE reaches
+    if o.cmd != "test" {
+      os.stdio.eprintln("xo ${o.cmd}: --since is a flag of xo test")
+      os.proc.exit(2)
+    }
+    os.proc.exit(since_test(os, o, args))
+  }
   if o.cmd == "test" && o.dirs.len() == 1 && o.walk.len() == 1 {
     // decision 0515 point 5: a walk of a workspace of PER_MODULE_MIN
     // members or more tests each member in its own child, so no process
@@ -400,7 +408,7 @@ fn main(os0: Os) ! {
         var hto = o.topts
         hto.target = test_target(o)
         // a passed run of this binary, seed and flags replayed (decision 0439)
-        let code = run_tests_cached(os, ctx, o.run_key, result_key(os, ctx, o.run_key, hto, o.std_module, 0), hit.bin, hit.tests, hto)
+        let code = run_tests_cached(os, ctx, o.run_key, result_key(os, ctx, o.run_key, hto, o.std_module, abs_path(o.wd, o.std), 0), hit.bin, hit.tests, hto)
         prof_tests(os, o.topts)
         os.fs.remove(hit.bin).ignore_err("a prune removes it later")
         os.proc.exit(code)
@@ -506,7 +514,7 @@ fn main(os0: Os) ! {
     // a WASI test module runs one test per process (TestOpts.single)
     to.single = backend == "wasm"
     let pdbs = start_pdbs(os, ctx)
-    let code = run_tests_cached(os, ctx, o.run_key, result_key(os, ctx, o.run_key, to, o.std_module, o.run_start), nb.bin, nb.tests, to)
+    let code = run_tests_cached(os, ctx, o.run_key, result_key(os, ctx, o.run_key, to, o.std_module, abs_path(o.wd, o.std), o.run_start), nb.bin, nb.tests, to)
     wait_pdbs(os, "xo test", pdbs)
     prof_tests(os, to)
     if !o.trace.is_empty() {

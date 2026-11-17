@@ -160,6 +160,9 @@ struct Opts {
   /// _test.xo tests run, as `use` names it below std (`json`,
   /// `native/http`, `native/llrt/scan`); "" for none.
   std_module: Str = ""
+  /// --since=BASE (test, decision 0701): run only the tests a change
+  /// since the git revision BASE reaches.
+  since: Str = ""
   /// --watch (run, decision 0267): rebuild on a change, restart when the
   /// binary changed; --grace: how long a restart waits for the program
   /// to exit after SIGTERM.
@@ -189,7 +192,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "lib", "profile", "check", "std-module", "grace", "opt"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "lib", "profile", "check", "std-module", "grace", "opt", "since"]
 }
 
 /// The boolean flags.
@@ -521,7 +524,10 @@ fn parse_args(os: Os, args: List[Str]) -> Opts {
     if name == "h" || name == "help" {
       help(os, o.cmd)
     }
-    if vals.contains(name) {
+    if name == "since" && !has_value {
+      // a bare --since (decision 0701): the merge base with origin/main
+      o.since = "@merge-base"
+    } else if vals.contains(name) {
       if !has_value {
         if i + 1 >= args.len() {
           usage(os, o.cmd, "flag needs an argument: -${name}")
@@ -677,6 +683,8 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.manifest = v
   } else if name == "entitlement" {
     o.entitlements.push(v)
+  } else if name == "since" {
+    o.since = v
   } else if name == "seed" {
     o.topts.seed = int_flag(os, o.cmd, name, v)
   } else if name == "opt" {

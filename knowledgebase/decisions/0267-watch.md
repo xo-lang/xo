@@ -4,6 +4,8 @@ Status: Accepted (owner, 2026-10-18, through the lead: the scope below);
 written and implemented by Xo Lang 3 2026-10-18 (compiler/xo/watch.xo;
 cmd/xo TestRunWatch, TestTestWatch)
 
+Amended by 0701 (2026-11-17): `xo test --since=REV` runs this selection once against a git revision; --std-module runs of modules whose tests use only the fakes are stored (stage 2).
+
 ## Context
 
 An agent or a person editing a service runs it, edits, stops it, builds,

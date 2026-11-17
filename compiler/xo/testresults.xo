@@ -4,7 +4,9 @@
 // flags prints it again instead of running the tests, as Go's test cache
 // replays a passed package. Never a run that could see the machine: one
 // with --real, a binary that links a `use go` or C binding (the build
-// writes no pure marker), a --std-module run, or one that failed.
+// writes no pure marker), a --std-module run of a module whose tests
+// reach the machine (decision 0701: std/native/llrt, or a test file that
+// uses a native/ module), or one that failed.
 
 use github.com/xo-lang/xo/compiler/check
 
@@ -17,8 +19,8 @@ type Printed = List[(Bool, Str)]
 /// run is not cacheable. since > 0 (a build that just stored the entry)
 /// takes the entry only when it was written since then, so a store that
 /// did not happen never pairs this binary with older inputs.
-fn result_key(os: Os, ctx: Ctx, run_key: Str, o: TestOpts, std_module: Str, since: Int) -> Str {
-  if run_key.is_empty() || o.real || !std_module.is_empty() || o.count == 1 || (os.env.get("XO_TEST_CACHE") ?? "") == "off" || !o.profile.is_empty() || !o.trace.is_empty() || !o.only.is_empty() {
+fn result_key(os: Os, ctx: Ctx, run_key: Str, o: TestOpts, std_module: Str, std: Str, since: Int) -> Str {
+  if run_key.is_empty() || o.real || (!std_module.is_empty() && !std_module_fake_only(os, std, std_module)) || o.count == 1 || (os.env.get("XO_TEST_CACHE") ?? "") == "off" || !o.profile.is_empty() || !o.trace.is_empty() || !o.only.is_empty() {
     return ""
   }
   let m = "${run_entry(ctx, run_key)}.m"
@@ -37,6 +39,44 @@ fn result_key(os: Os, ctx: Ctx, run_key: Str, o: TestOpts, std_module: Str, sinc
   k.data(inputs)
   k.str("run=${o.run} seed=${o.seed} explore=${o.explore} cases=${o.cases} timeout=${o.timeout.millis()} v=${o.verbose} json=${o.json} fail_empty=${o.fail_empty}")
   k.sum()
+}
+
+/// Whether the --std-module run of m sees only the fakes (decision 0701,
+/// 0439's stage 2): m is not under std/native/llrt (its tests make system
+/// calls) and no test file of m uses a native/ module (llrt, rt, the
+/// runtime: they reach the machine past the TestOs fakes). A `uses` test
+/// still never runs without --real, and a binding still leaves no pure
+/// marker, so those runs stay unstored as for a program.
+fn std_module_fake_only(os: Os, std: Str, m: Str) -> Bool {
+  let rel = m.trim_prefix("std/")
+  if rel.starts_with("native/llrt") || rel == "native/rt" {
+    return false
+  }
+  let root = std.trim_suffix("/")
+  var files: List[Str] = []
+  if os.fs.exists("${root}/${rel}_test.xo").ok() ?? false {
+    files.push("${root}/${rel}_test.xo")
+  }
+  for e in os.fs.read_dir("${root}/${rel}").ok() ?? [] {
+    if !e.is_dir && e.name.ends_with("_test.xo") {
+      files.push("${root}/${rel}/${e.name}")
+    }
+  }
+  if files.is_empty() {
+    return false
+  }
+  for f in files {
+    let text = match os.fs.read(f) {
+      Ok(b) => b.to_str_lossy()
+      Err(_) => return false
+    }
+    for l in text.lines() {
+      if l.trim().starts_with("use native/") {
+        return false
+      }
+    }
+  }
+  true
 }
 
 /// The file of a run key's pure marker, beside its run cache entry:
