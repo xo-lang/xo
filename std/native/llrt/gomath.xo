@@ -209,18 +209,32 @@ pub fn log(x: Float) -> Float {
   let l5 = 0.1818357216161805
   let l6 = 0.15313837699209373
   let l7 = 0.14798198605116586
-  if is_nan(x) || is_inf(x, 1) {
-    return x
+  // the common case first: x positive, normal and finite, its sign and
+  // exponent bits (one shift) between 1 and 2046, frexp done on the bits
+  // (task #87: is_nan, is_inf and frexp's own checks were a third of
+  // bench/perf/random zipf). The same arithmetic follows, so the result
+  // is the same bits.
+  let xb = bits(x)
+  let se = xb.shr_logical(SHIFT)
+  var f1 = 0.0
+  var ki = 0
+  if se >= 1 && se < MASK {
+    f1 = from_bits((xb & ~MASK.wrapping_shl(SHIFT)) | (BIAS - 1).wrapping_shl(SHIFT))
+    ki = se - BIAS + 1
+  } else {
+    if is_nan(x) || is_inf(x, 1) {
+      return x
+    }
+    if x < 0.0 {
+      return nan()
+    }
+    if x == 0.0 {
+      return inf(-1)
+    }
+    let (f1_0, ki_0) = frexp(x)
+    f1 = f1_0
+    ki = ki_0
   }
-  if x < 0.0 {
-    return nan()
-  }
-  if x == 0.0 {
-    return inf(-1)
-  }
-  let (f1_0, ki_0) = frexp(x)
-  var f1 = f1_0
-  var ki = ki_0
   if f1 < SQRT2_2 {
     f1 = f1 * 2.0
     ki -= 1

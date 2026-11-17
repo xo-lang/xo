@@ -1,0 +1,23 @@
+// Float.log's result bits over 2,400 inputs from 1e-310 (subnormal) to
+// past 1e300, the specials and the frexp boundary near sqrt(2)/2, against
+// Go's math.Log built without fused multiply adds (strict floats, decision
+// 0287). Task #87 gave log a fast path for positive normal finite inputs
+// that does frexp on the bits; the result must not change by one bit.
+fn main(os: Os) {
+  let io = os.stdio
+  var h = 0
+  var x = 1e-310
+  for k in 0..2400 {
+    let b = x.log().to_bits()
+    h = (h * 31 + b) & 0xFFFFFFFFFFFF
+    if k % 400 == 0 {
+      io.println("${k} ${b}")
+    }
+    x = x * 1.37
+  }
+  io.println("hash ${h}")
+  for v in [0.7071067811865476, 0.7071067811865475, 1.0, 0.5, 2.0, 4.9e-324, 2.2250738585072014e-308, 1.7976931348623157e308, 0.0, -0.0, Float.inf] {
+    io.println("${v.log().to_bits()}")
+  }
+  io.println("${(-1.0).log().is_nan()} ${(0.0 - Float.inf).log().is_nan()} ${Float.nan.log().is_nan()}")
+}
