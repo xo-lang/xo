@@ -1,5 +1,17 @@
 # std/amqp changes
 
+## 2026-11-17: fix: a null application-properties key is an error, as go-amqp
+
+- Kind: fix (behavior change)
+- Commit: this commit
+- Found by: TestAmqpFuzz seed 9 (task #152, fuzz evidence on darwin/arm64)
+- Go reference: github.com/Azure/go-amqp v1.7.0 readString ("type code 0x40 is not a recognized string type")
+- Test: std/amqp_test.xo "an application-properties key is a str or sym, never null, as go-amqp"; TestAmqpFuzz seeds 9 and 10
+- Timing: none (one comparison per key)
+- Shipped in: not yet released
+
+decode_message read a null (0x40) application-properties key as the key "" and kept the message; it is now refused with "application-properties key is null". The fuzz oracle (scripts/stdcorpus/amqporacle) also counts a header ttl past what Go's time.Duration holds in milliseconds as one go-amqp cannot represent (go-amqp wraps it; std/amqp keeps the wire value).
+
 ## 2026-11-16: fix: compound values and booleans decode as go-amqp reads them (task #115)
 
 - Kind: fix (behavior change)

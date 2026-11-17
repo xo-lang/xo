@@ -242,19 +242,29 @@ func fzNote(s string) {
 // fzSections: the section codes of b, which go-amqp decodes, found by decoding its prefixes
 // that end where a described section could start (00 53 CODE, or 00 80 and an 8 byte code).
 func fzSections(b []byte) []byte {
-	code := func(p int) (byte, bool) {
-		if p+2 < len(b) && b[p] == 0 && b[p+1] == 0x53 {
-			return b[p+2], true
-		}
-		if p+9 < len(b) && b[p] == 0 && b[p+1] == 0x80 {
-			return b[p+9], true
-		}
-		return 0, false
-	}
 	var out []byte
+	for _, p := range fzSectionAt(b) {
+		out = append(out, fzCode(b, p))
+	}
+	return out
+}
+
+// fzCode is the section code of the descriptor at p (00 53 CODE, or 00 80 and an 8 byte code).
+func fzCode(b []byte, p int) byte {
+	if b[p+1] == 0x53 {
+		return b[p+2]
+	}
+	return b[p+9]
+}
+
+// fzSectionAt: where fzSections' sections start.
+func fzSectionAt(b []byte) []int {
+	described := func(p int) bool {
+		return p+2 < len(b) && b[p] == 0 && b[p+1] == 0x53 || p+9 < len(b) && b[p] == 0 && b[p+1] == 0x80
+	}
+	var out []int
 	for p := 0; p < len(b); p++ {
-		c, ok := code(p)
-		if !ok {
+		if !described(p) {
 			continue
 		}
 		if p > 0 {
@@ -263,9 +273,41 @@ func fzSections(b []byte) []byte {
 				continue
 			}
 		}
-		out = append(out, c)
+		out = append(out, p)
 	}
 	return out
+}
+
+// fzTTLPastDuration: a header section with a long or ulong (0x80, 0x81) past what time.Duration
+// holds in milliseconds. go-amqp's MessageHeader.TTL is a time.Duration (the ttl times
+// time.Millisecond), which wraps there; std/amqp keeps the wire value. The only header fields
+// that can be 8 bytes wide are ttl and delivery-count, and go-amqp refuses a delivery-count past
+// a uint32, so a decoded header with such a value has an unrepresentable ttl.
+func fzTTLPastDuration(b []byte) bool {
+	at := fzSectionAt(b)
+	for i, p := range at {
+		if fzCode(b, p) != 0x70 {
+			continue
+		}
+		end := len(b)
+		if i+1 < len(at) {
+			end = at[i+1]
+		}
+		for q := p + 3; q+9 <= end; q++ {
+			if b[q] != 0x80 && b[q] != 0x81 {
+				continue
+			}
+			v := uint64(0)
+			for _, x := range b[q+1 : q+9] {
+				v = v<<8 | uint64(x)
+			}
+			lim := uint64(math.MaxInt64 / int64(time.Millisecond))
+			if b[q] == 0x80 && v > lim || b[q] == 0x81 && (int64(v) > int64(lim) || int64(v) < -int64(lim)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // fzRefused: std/amqp's documented departures from go-amqp, which accepts every one of them: a
@@ -334,6 +376,9 @@ func fzDecode(b []byte) (out string) {
 			}
 		}
 		return "error"
+	}
+	if m.Header != nil && fzTTLPastDuration(b) {
+		return "unsupported"
 	}
 	fzBadUTF8 = false
 	func() {

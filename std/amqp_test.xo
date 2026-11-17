@@ -51,6 +51,16 @@ test "bad input is an error, never a fault" {
   }
 }
 
+test "an application-properties key is a str or sym, never null, as go-amqp (TestAmqpFuzz seed 9, task #152)" {
+  // go-amqp's readString refuses 0x40 ("type code 0x40 is not a
+  // recognized string type"); std/amqp read a null key as ""
+  expect(decode_message(hb("005374c1050240a10178")).is_err()) == true
+  let m = decode_message(hb("005374c10702a1016ba10178")).or_fault("str key")
+  expect(m.app_properties) == Some([("k", Value.Str(v: "x"))])
+  let y = decode_message(hb("005374c10702a3016ba10178")).or_fault("sym key")
+  expect(y.app_properties) == Some([("k", Value.Str(v: "x"))])
+}
+
 test "lists and maps read their count of elements, booleans any nonzero byte, as go-amqp (TestAmqpFuzz, task #115)" {
   // go-amqp's readListHeader and readMapHeader check the size against the
   // bytes left, then read count elements; readBool takes any byte but 0

@@ -841,7 +841,12 @@ pub fn decode_message(b: Bytes) -> Message ! AmqpErr {
         group_id: want_strv(at(items, 10))?, group_sequence: gs, reply_to_group_id: want_strv(at(items, 12))?})
     } else if c == 0x74 {
       var out: List[(Str, Value)] = []
-      for (k, x) in want_pairs(f)? { out.push((want_str(k)?, x)) }
+      // a key is a str or sym: go-amqp's readString refuses null, which
+      // want_str reads as "" (TestAmqpFuzz seed 9, task #152)
+      for (k, x) in want_pairs(f)? {
+        if k == Value.Null { return Err(dec_err("application-properties key is null")) }
+        out.push((want_str(k)?, x))
+      }
       app = Some(out)
     } else if c == 0x75 {
       if kinds != 0 && kinds != 1 { return Err(dec_err("mixed body sections")) }
