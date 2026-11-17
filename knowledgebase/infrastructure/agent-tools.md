@@ -1415,6 +1415,14 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   of gate waits on host 2 in 3 h against 53 on host 3; gatelib.sh
   gate_lane_pick over `heavy.sh --status`, host 2 on a tie,
   OFFGATE_PICK=0 keeps host 2); the 5 minute reroute still moves it.
+- heavyd starts a short Mac gate-class job regardless of the load
+  (#263, cost:mac-load-wait, 2026-11-17: 2,207 gate jobs in 24 h with a
+  median run of 4 s waited 12.3 h in total, mostly on the load ceiling): a
+  job whose name stem (the name less its run counters and hashes) ran 3
+  times or more with a p90 under 60 s skips the load wait; the memory
+  floor, gate cap, quiet windows and stagger still hold it. The history is
+  ~/xo-lead/heavyd-runs.json (heavyd history.go). Takes effect once the
+  lead restarts heavyd.
 - Gates on an offload host (owner, 2026-11-07): `OFFGATE_AGENT=NAME ~/xo-lead/agents/offload-gate.sh WORKTREE
   [STEP...]` runs `scripts/gate.sh` on the pass/fail host for a committed worktree, with no hand made bundle or
   host script: it bundles HEAD and origin/main (only the commits the host lacks, so no detached HEAD or
