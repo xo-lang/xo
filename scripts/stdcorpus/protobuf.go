@@ -123,6 +123,62 @@ func protoField(r *rand.Rand, depth int) []byte {
 }
 
 // protoMutate changes a few bytes of in, or cuts it.
+// protoQuietFl sets the quiet bit of every signaling NaN a field 8 (S.fl, a
+// float) with wire type 5 holds in b, as smsg does for its marshal cases: the
+// oracle's dynamicpb holds a float32 as a float64, and widening quiets a
+// signaling NaN, where Go's generated code and std/protobuf keep its bits
+// (stdproven fuzz protobuf seed 3, 2026-11-17;
+// gotchas/float32-signaling-nan-backends.md). It reads tags until one does not
+// parse; bytes it cannot read are left as they are.
+func protoQuietFl(in []byte) []byte {
+	b := append([]byte(nil), in...)
+	uvarint := func(i int) (uint64, int) {
+		var v uint64
+		for s := 0; i < len(b) && s < 64; s += 7 {
+			c := b[i]
+			i++
+			v |= uint64(c&0x7f) << s
+			if c < 0x80 {
+				return v, i
+			}
+		}
+		return 0, -1
+	}
+	for i := 0; i < len(b); {
+		tag, j := uvarint(i)
+		if j < 0 {
+			break
+		}
+		switch tag & 7 {
+		case 0:
+			if _, j = uvarint(j); j < 0 {
+				return b
+			}
+		case 1:
+			j += 8
+		case 2:
+			n, k := uvarint(j)
+			if k < 0 || n > uint64(len(b)) {
+				return b
+			}
+			j = k + int(n)
+		case 3, 4:
+		case 5:
+			if tag>>3 == 8 && j+4 <= len(b) {
+				x := uint32(b[j]) | uint32(b[j+1])<<8 | uint32(b[j+2])<<16 | uint32(b[j+3])<<24
+				if x&0x7f800000 == 0x7f800000 && x&0x007fffff != 0 {
+					b[j+2] |= 0x40
+				}
+			}
+			j += 4
+		default:
+			return b
+		}
+		i = j
+	}
+	return b
+}
+
 func protoMutate(r *rand.Rand, in []byte) []byte {
 	b := append([]byte(nil), in...)
 	if len(b) == 0 {
@@ -303,7 +359,7 @@ func protobufCorpus() string {
 		if tr.Intn(4) == 0 {
 			b = protoMutate(tr, b)
 		}
-		add("sunmsg", b)
+		add("sunmsg", protoQuietFl(b))
 	}
 	// Option, List and nested fields: marshal (rmsg) and unmarshal (runmsg) against dynamicpb
 	join := func(p []string) string {

@@ -42,3 +42,14 @@ still a quiet NaN, as on the hardware.
 How to avoid: a Float32 is a double inside the native backends; never
 convert through `Float32(...)` where the bits must survive.
 
+
+## The oracle quiets, not Xo (2026-11-17)
+
+The generator's quiet bit cannot go after all: the protobuf oracle
+(internal/stdtest/protoref) decodes into dynamicpb, which holds a float32
+as a float64, so a signaling NaN comes back from Go quieted, while Go's
+generated code and std/protobuf keep its bits. `stdproven fuzz protobuf`
+seed 3 hit it on an unmarshal (sunmsg) input: field 8 `0xffa18e1c` was
+written back as `0xffe18e1c` by the oracle. scripts/stdcorpus now quiets
+a field-8 signaling NaN in sunmsg inputs too (protoQuietFl,
+TestProtoQuietFl); the seed 0 corpus is unchanged.
