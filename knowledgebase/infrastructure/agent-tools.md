@@ -1410,6 +1410,11 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   runs at once (HEAVY_QUICK_MAX) hold it. It is stopped past 60 s
   (HEAVY_QUICK_SEC) or 4 GB (HEAVY_QUICK_MAX_GB), so anything longer is a
   gate. Without heavyd the fallback runs it as a gate.
+- A plain gate with no host named starts on the pass host (2 or 3) whose
+  heavyd lane has the shortest queue at submit (#258, 2026-11-17: 245 min
+  of gate waits on host 2 in 3 h against 53 on host 3; gatelib.sh
+  gate_lane_pick over `heavy.sh --status`, host 2 on a tie,
+  OFFGATE_PICK=0 keeps host 2); the 5 minute reroute still moves it.
 - Gates on an offload host (owner, 2026-11-07): `OFFGATE_AGENT=NAME ~/xo-lead/agents/offload-gate.sh WORKTREE
   [STEP...]` runs `scripts/gate.sh` on the pass/fail host for a committed worktree, with no hand made bundle or
   host script: it bundles HEAD and origin/main (only the commits the host lacks, so no detached HEAD or
