@@ -1,5 +1,15 @@
 # std/grpc changes
 
+## 2026-11-17: feature: services, unknown and a stop that waits for handlers
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (std Proven; scripts/stdaudit/map.txt grpc gap rows GetServiceInfo, ServiceInfo, MethodInfo, UnknownServiceHandler, WaitForHandlers)
+- Go reference: google.golang.org/grpc v1.79.2 server.go GetServiceInfo, ServiceInfo, MethodInfo, UnknownServiceHandler (handleStream's unknown path) and WaitForHandlers
+- Test: std/grpc_test.xo "services lists the registered methods by service", "unknown serves the methods no service registered" (unknown service, unknown method, a stream, a non gRPC 404, Unimplemented without it), "a stop waits for the running handlers", arm64 and LLVM
+- Timing: none (registration only; a call's path is unchanged)
+- Shipped in: not yet released
+
 ## 2026-11-17: fix: a compressed message above the receive limit is ResourceExhausted, as grpc-go
 
 - Kind: fix

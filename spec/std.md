@@ -10864,7 +10864,11 @@ fn bin_decode(value: Str) -> Bytes?          // padded or not; None when it is n
 struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration? }
 fn server(clock: Clock) -> Server
 fn (var s: Server) unary(method: Str, f: fn(Call, Bytes) -> Bytes ! Status)
-fn (var s: Server) stream(method: Str, f: fn(Call, Recv, Send) -> () ! Status)
+fn (var s: Server) stream(method: Str, f: fn(Call, Recv, Send) -> () ! Status, client_stream: Bool = true, server_stream: Bool = true)
+fn (var s: Server) unknown(f: fn(Call, Recv, Send) -> () ! Status)   // grpc-go's UnknownServiceHandler
+fn (s: Server) services() -> List[ServiceInfo]   // grpc-go's GetServiceInfo, by service name
+struct ServiceInfo { name: Str, methods: List[MethodInfo] }
+struct MethodInfo { name: Str, client_stream: Bool, server_stream: Bool }
 fn (s: Server) router() -> http.Router
 fn (r: Recv) next() -> Bytes? ! Status
 fn (s: Send) send(msg: Bytes) -> () ! Status
@@ -10888,7 +10892,14 @@ fn (c: Client) with_max_send(n: Int) -> Client
 - One call is one HTTP/2 stream: `application/grpc`, `te: trailers`, 5 byte frames, the status in the `grpc-status` and
   `grpc-message` trailers (percent encoded as grpc-go does, any byte), `grpc-timeout` as grpc-go encodes it (at most 8
   digits, the unit that keeps them). A method nobody registered, and a path no service has, answer `Unimplemented` in
-  the trailers of a 200 response with grpc-go's texts; a request without `application/grpc` is 415.
+  the trailers of a 200 response with grpc-go's texts; a request without `application/grpc` is 415. With `unknown`,
+  such a call (an unknown service or an unknown method of a known one) runs its handler as a stream method instead,
+  `Call.method` the path asked for; a request that is not a gRPC POST still gets the router's 404.
+- `services` lists each service with a registered method, sorted by name, its methods in registration order with
+  their kind: `unary` is neither stream, `stream` is both unless `client_stream` or `server_stream` says otherwise
+  (grpc-go takes them from the generated StreamDesc).
+- A stop waits for the running handlers (grpc-go's WaitForHandlers(true)): the calls are `http.Server` requests, which
+  `serve` waits for when its scope ends (std 4.4); grpc-go's default Stop does not wait.
 - `unary` is `stream` with one message each way. A handler reads `Recv.next` until None (the client finished sending)
   and writes with `Send.send`; returning Ok ends the call with OK, an error with its status. Server streaming,
   client streaming and bidirectional calls differ only in how the handler and the `ClientCall` use them.

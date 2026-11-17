@@ -314,6 +314,49 @@ pub struct Server {
   pub clock: Clock[clock]
   /// the largest message a handler may send (grpc-go's MaxSendMsgSize; math.MaxInt32 by default)
   pub max_send: Int = 2147483647
+  /// each registered method's kind, in registration order (services)
+  pub infos: List[MethodInfo] = []
+  /// unknown registered a handler for methods no route has (router keeps it)
+  pub has_unknown: Bool = false
+}
+
+/// A registered method as grpc-go's MethodInfo: its name within the service (`Method` of
+/// `/package.Service/Method`) and whether the client and the server send streams.
+pub struct MethodInfo {
+  pub name: Str
+  pub client_stream: Bool
+  pub server_stream: Bool
+}
+
+/// A registered service as grpc-go's ServiceInfo: its full name (`package.Service`) and its methods in
+/// registration order.
+pub struct ServiceInfo {
+  pub name: Str
+  pub methods: List[MethodInfo]
+}
+
+/// grpc-go's Server.GetServiceInfo: every service with a registered method, by name.
+pub fn (s: Server) services() -> List[ServiceInfo] {
+  var names: List[Str] = []
+  var by: Map[Str, List[MethodInfo]] = {}
+  for i in 0..s.methods.len() {
+    let full = s.methods[i]
+    let at = full[1..].find("/") ?? (full.len() - 1)
+    let svc = full[1..at + 1]
+    if !by.contains(svc) {
+      names.push(svc)
+      by[svc] = []
+    }
+    var ms = by.get(svc) ?? []
+    ms.push(s.infos[i] with {name: full[at + 2..]})
+    by[svc] = ms
+  }
+  names = names.sort()
+  var out: List[ServiceInfo] = []
+  for n in names {
+    out.push(ServiceInfo{name: n, methods: by.get(n) ?? []})
+  }
+  out
 }
 
 /// A server with grpc-go's 4 MiB receive limit. `clock` times the deadlines clients send: a handler still running at
@@ -342,24 +385,48 @@ pub fn (var s: Server) unary[fx: Effects](method: Str, f: fn(Call, Bytes) -> Byt
     }
     let resp = f(call, req)?
     send_framed(send, frame_msg(resp, send.gzip), "grpc: ")?
-  })
+  }, client_stream: false, server_stream: false)
 }
 
 /// Registers a method of any kind: a handler reads the request messages from `Recv` and writes the responses to
-/// `Send`; returning Ok ends the call with OK, an error with its status.
-pub fn (var s: Server) stream[fx: Effects](method: Str, f: fn(Call, Recv, Send) -> () ! Status uses fx) uses (fx, clock) {
+/// `Send`; returning Ok ends the call with OK, an error with its status. client_stream and server_stream are the
+/// method's kind as `services` lists it (grpc-go's StreamDesc), a bidirectional stream by default.
+pub fn (var s: Server) stream[fx: Effects](method: Str, f: fn(Call, Recv, Send) -> () ! Status uses fx, client_stream: Bool = true, server_stream: Bool = true) uses (fx, clock) {
   let max = s.max_recv
   let max_send = s.max_send
   let clock = s.clock
   s.methods.push(method)
+  s.infos.push(MethodInfo{name: method, client_stream: client_stream, server_stream: server_stream})
   s.routes.handle_stream("POST ${method}", fn(req, body) -> http.Response {
     serve_call(f, clock, max, max_send, method, req, body)
+  })
+}
+
+/// grpc-go's UnknownServiceHandler: f serves every call to a method no service registered (an unknown service, or
+/// an unknown method of a known one), as a stream method; `Call.method` is the method the client asked for. Without
+/// it such a call is `Unimplemented`.
+pub fn (var s: Server) unknown[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx) uses (fx, clock) {
+  let max = s.max_recv
+  let max_send = s.max_send
+  let clock = s.clock
+  s.has_unknown = true
+  // a route for every path, so the request body streams as a registered method's does; the methods'
+  // own routes are more specific and win
+  s.routes.handle_stream("/{path...}", fn(req, body) -> http.Response {
+    let ct = req.header("content-type") ?? ""
+    if !ct.starts_with("application/grpc") || req.method != "POST" {
+      return http.not_found()
+    }
+    serve_call(f, clock, max, max_send, req.path, req, body)
   })
 }
 
 /// The routes to give `http.server`, with `http.Protocol.UnencryptedHttp2` (or TLS and ALPN h2) in its protocols.
 pub fn (s: Server) router() -> http.Router {
   var r = s.routes
+  if s.has_unknown {
+    return r
+  }
   let methods = s.methods
   r.not_found(fn(req) -> http.Response {
     let ct = req.header("content-type") ?? ""

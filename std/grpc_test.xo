@@ -227,3 +227,104 @@ test "send and receive limits and response metadata, as grpc-go" uses (net, cloc
     expect(c.with_max_recv(1).unary("/s.S/Five", b"")) == Err(status_new(Code.ResourceExhausted, "grpc: trying to send message larger than max (5 vs. 3)"))
   }
 }
+
+test "services lists the registered methods by service, as grpc-go's GetServiceInfo" uses clock {
+  var srv = server(os.clock)
+  srv.unary("/b.Svc/Get", fn(_c, req) -> Bytes ! Status { Ok(req) })
+  srv.stream("/b.Svc/Watch", fn(_c, _r, _s) -> () ! Status { Ok(()) }, client_stream: false)
+  srv.stream("/a.Other/Upload", fn(_c, _r, _s) -> () ! Status { Ok(()) }, server_stream: false)
+  srv.stream("/b.Svc/Chat", fn(_c, _r, _s) -> () ! Status { Ok(()) })
+  let got = srv.services()
+  expect(got.map(fn(si) -> Str { si.name })) == ["a.Other", "b.Svc"]
+  expect(got[0].methods) == [MethodInfo{name: "Upload", client_stream: true, server_stream: false}]
+  expect(got[1].methods) == [
+    MethodInfo{name: "Get", client_stream: false, server_stream: false},
+    MethodInfo{name: "Watch", client_stream: false, server_stream: true},
+    MethodInfo{name: "Chat", client_stream: true, server_stream: true},
+  ]
+  expect(server(os.clock).services()) == []
+}
+
+test "unknown serves the methods no service registered, as grpc-go's UnknownServiceHandler" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/k.Known/Echo", fn(_c, req) -> Bytes ! Status { Ok(b"known " + req) })
+  srv.unknown(fn(call, recv, send) -> () ! Status {
+    while true {
+      match recv.next()? {
+        Some(m) => send.send("${call.method} ".bytes() + m)?
+        None => break
+      }
+    }
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    expect(c.unary("/k.Known/Echo", b"a")) == Ok(b"known a")
+    // an unknown service and an unknown method of a known one
+    expect(c.unary("/x.Nope/Get", b"b")) == Ok(b"/x.Nope/Get b")
+    expect(c.unary("/k.Known/Other", b"c")) == Ok(b"/k.Known/Other c")
+    // a stream: each message as it comes
+    let got = c.call("/x.Nope/Stream", {}, None, fn(cc) -> List[Str] ! Status {
+      cc.send(b"1")?
+      cc.send(b"2")?
+      cc.close_send()
+      var out: List[Str] = []
+      while let Some(m) = cc.recv()? {
+        out.push(m.to_str_lossy())
+      }
+      Ok(out)
+    })
+    expect(got) == Ok(["/x.Nope/Stream 1", "/x.Nope/Stream 2"])
+    // not gRPC: a 404 as before
+    let r = http.client(os.net, timeout: 10s).with_protocols(#{http.Protocol.UnencryptedHttp2}).send(http.new_request("GET", "http://${hs.addr()}/x")).or_fault("get")
+    expect(r.status) == 404
+  }
+  // without unknown, the same call is Unimplemented
+  var plain = server(os.clock)
+  plain.unary("/k.Known/Echo", fn(_c, req) -> Bytes ! Status { Ok(req) })
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs2 = http.server(l2, plain.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs2.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 10s), "http://${hs2.addr()}")
+    expect(c.unary("/x.Nope/Get", b"b")) == Err(status_new(Code.Unimplemented, "unknown service x.Nope"))
+  }
+}
+
+test "a stop waits for the running handlers, as grpc-go's WaitForHandlers" uses (net, clock) {
+  let started = Chan[Bool].new(1)
+  let release = Chan[Bool].new(1)
+  var srv = server(os.clock)
+  srv.unary("/w.W/Slow", fn(_c, req) -> Bytes ! Status {
+    started.send(true)
+    let _ = release.recv()
+    Ok(b"done " + req)
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let addr = hs.addr()
+  let result = Chan[Str].new(1)
+  scope outer {
+    outer.spawn(fn() {
+      let c = client(http.client(os.net, timeout: 10s), "http://${addr}")
+      match c.unary("/w.W/Slow", b"x") {
+        Ok(b) => result.send(b.to_str_lossy())
+        Err(st) => result.send(st.display())
+      }
+    })
+    outer.spawn(fn() {
+      let _ = started.recv()
+      // after the server's scope has ended and its stop began
+      os.clock.sleep(200ms)
+      release.send(true)
+    })
+    scope inner {
+      inner.spawn_background(fn() { hs.serve().ignore_err("stopped") })
+      let _ = started.recv()
+      started.send(true)
+    }
+  }
+  expect(result.recv()) == Some("done x")
+}
