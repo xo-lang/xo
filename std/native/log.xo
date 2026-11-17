@@ -242,6 +242,27 @@ fn norm(fs: Map[Str, log.Value]) -> Map[Str, log.Value] {
 
 /// A record's fields: the flat text view (Record.fields, dotted keys)
 /// and the values (Record.values, groups nested), by Go's group rules.
+/// expand's values alone: a JSON record needs no text view (each field's
+/// dyn_text), only the values (task #271: std/log json against
+/// log/slog).
+fn expand_values(fields: Map[Str, Debug]) -> Map[Str, log.Value] {
+  var vs: Map[Str, log.Value] = {}
+  for (k, v) in fields {
+    let val = value_of(v)
+    match val {
+      log.Value.Group(_) => {
+        var one: Map[Str, log.Value] = {}
+        one.put(k, val)
+        for (k2, v2) in norm(one) {
+          vs.put(k2, v2)
+        }
+      }
+      _ => vs.put(k, val)
+    }
+  }
+  vs
+}
+
 fn expand(fields: Map[Str, Debug]) -> (Map[Str, Str], Map[Str, log.Value]) {
   var fs: Map[Str, Str] = {}
   var vs: Map[Str, log.Value] = {}
@@ -450,6 +471,11 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
     return
   }
   if level < logstate.level() {
+    return
+  }
+  if logstate.json() && !testworld.on() {
+    // a JSON record outside a test: the values only (no text view)
+    rt.eprintln(go_html(format_json(level, msg, expand_values(fields), from)))
     return
   }
   let (fs, vs) = expand(fields)

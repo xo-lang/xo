@@ -1,5 +1,19 @@
 # std/log changes
 
+## 2026-11-17: perf: a JSON record skips the fields' text view
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/log json 1.204 of log/slog's wall on host 1, 1.184 on the Mac)
+- Go reference: log/slog's JSONHandler (values encoded as they come)
+- Test: the log module tests; golden log_json_keys (the same lines as before)
+- Timing: Mac, 1,000,000 JSON records: 0.72 s to 0.67 s user (the write per record, as slog's, is most of the rest); host 1 `xo bench --ab` (ab-host.sh 404753408 abf4ac162, n=3) wall 0.983 (0.976 to 0.984), better: the write dominates there, so json stays about 1.18 of slog
+- Shipped in: not yet released
+
+A record written as JSON outside a test built the fields' text view (each
+value's text) as well as their values, and used only the values; it now
+builds the values alone.
+
 ## 2026-11-17: perf: JSON records through log.configure are built in one string
 
 - Kind: perf
