@@ -1,5 +1,23 @@
 # std/brotli changes
 
+## 2026-11-16: perf: the encoder's hash tables hold uint32s, as Go's do (task #156)
+
+- Kind: perf (memory)
+- Commit: this push
+- Found by: xw-1's brotli stress run (host 2: rss 3183 to 3613 MB, the 10% rule failed)
+- Go reference: andybalholm/brotli's h5, h6, h10 and hashToBinaryTree (`[]uint32`)
+- Test: std/brotli_test.xo "a quality 9 encode holds its hash table as Go's uint32s, 32 MB, not 64" (fails before: mem_peak rose about 64 MB)
+- Shipped in: not yet released
+
+The bucket tables of qualities 2 to 9 and the binary tree of qualities 10 and 11 were `List[Int]`,
+8 bytes a position where Go keeps 4: a quality 9 encode of a few KB filled a 64 MB table (`(1 << 15) << 8`
+entries, touched all over by the hash), Go's 32 MB. They are `List[UInt32]` now, each position stored
+as Go's `uint32(...)` stores it; the output is unchanged (the corpus and the stress program compare
+bytes with andybalholm's). On amd64 llvm the 64 task stress program's resident set at its 5 minute
+mark fell from 3150 MB to about 1350 MB (max 4.29 GB to 2.30 GB): memory use halved. No speed
+claim (that needs a host 1 `xo bench --ab`, decision 0340). Why 3 GB at all: 64 tasks each in a quality 7 to 11 encode at once, 16 to 64 MB
+of table each; the growth the stress run saw tracks how many are live at a sample, not a leak.
+
 
 
 ## 2026-11-16: feature: brotli.responses, br response compression (HTTPCompressor)

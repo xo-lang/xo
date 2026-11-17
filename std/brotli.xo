@@ -3468,7 +3468,9 @@ struct Enc {
   h_sweep: Int
   h_hash_len: Int
   h_use_dict: Bool
-  buckets: List[Int]
+  // positions as Go's []uint32 holds them (a List[Int] took twice Go's
+  // memory: 64 MB a quality 9 encode; task #156)
+  buckets: List[UInt32]
   h_lookahead: Int
   h_num_last: Int
   h_block_bits: Int
@@ -3485,7 +3487,7 @@ struct Enc {
   h_free: List[Int]
   h_window_mask: Int
   h_invalid: Int
-  h_forest: List[Int]
+  h_forest: List[UInt32]
   dict_lookups: Int
   dict_matches: Int
   npostfix: Int
@@ -3680,7 +3682,7 @@ fn hash_quickly(var e: Enc, i: Int) -> Int {
 
 fn store_quickly(var e: Enc, ix: Int) {
   let key = hash_quickly(e, ix & e.rb.mask)
-  e.buckets[key + (ix >> 3) % e.h_sweep] = ix
+  e.buckets[key + (ix >> 3) % e.h_sweep] = UInt32(ix & MASK32)
 }
 
 fn hasher_store(var e: Enc, ix: Int) {
@@ -3777,7 +3779,7 @@ fn find_longest_quickly(var e: Enc, cur_ix: Int, max_length: Int, max_backward: 
           sr.score = best_score
           compare_char = e.rb.buf[cur_m + best_len]
           if e.h_sweep == 1 {
-            e.buckets[key] = cur_ix
+            e.buckets[key] = UInt32(cur_ix & MASK32)
             return
           }
         }
@@ -3785,8 +3787,8 @@ fn find_longest_quickly(var e: Enc, cur_ix: Int, max_length: Int, max_backward: 
     }
   }
   if e.h_sweep == 1 {
-    let p0 = e.buckets[key]
-    e.buckets[key] = cur_ix
+    let p0 = Int(e.buckets[key])
+    e.buckets[key] = UInt32(cur_ix & MASK32)
     let backward = cur_ix - p0
     let prev = p0 & mask
     if compare_char != e.rb.buf[prev + best_len_in] {
@@ -3807,7 +3809,7 @@ fn find_longest_quickly(var e: Enc, cur_ix: Int, max_length: Int, max_backward: 
     }
   } else {
     for i in 0..e.h_sweep {
-      let p0 = e.buckets[key + i]
+      let p0 = Int(e.buckets[key + i])
       let backward = cur_ix - p0
       let prev = p0 & mask
       if compare_char != e.rb.buf[prev + best_len] {
@@ -3833,7 +3835,7 @@ fn find_longest_quickly(var e: Enc, cur_ix: Int, max_length: Int, max_backward: 
   if e.h_use_dict && min_score == sr.score {
     search_dict(e, cur_m, max_length, max_backward + gap, max_distance, sr, true)
   }
-  e.buckets[key + (cur_ix >> 3) % e.h_sweep] = cur_ix
+  e.buckets[key + (cur_ix >> 3) % e.h_sweep] = UInt32(cur_ix & MASK32)
 }
 
 fn find_longest(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, gap: Int, max_distance: Int, var sr: Sr) {
@@ -4654,13 +4656,13 @@ fn h10_store_and_find(var e: Enc, cur_ix: Int, max_length: Int, max_backward: In
   let key = h10_hash(e.rb.buf, cur_m)
   let wm = e.h_window_mask
   var best_len = best_len0
-  var prev_ix = e.buckets[key]
+  var prev_ix = Int(e.buckets[key])
   var node_left = 2 * (cur_ix & wm)
   var node_right = 2 * (cur_ix & wm) + 1
   var best_len_left = 0
   var best_len_right = 0
   if reroot {
-    e.buckets[key] = cur_ix
+    e.buckets[key] = UInt32(cur_ix & MASK32)
   }
   var depth = 64
   while true {
@@ -4668,8 +4670,8 @@ fn h10_store_and_find(var e: Enc, cur_ix: Int, max_length: Int, max_backward: In
     let prev_m = prev_ix & mask
     if backward <= 0 || backward > max_backward || depth == 0 {
       if reroot {
-        e.h_forest[node_left] = e.h_invalid
-        e.h_forest[node_right] = e.h_invalid
+        e.h_forest[node_left] = UInt32(e.h_invalid)
+        e.h_forest[node_right] = UInt32(e.h_invalid)
       }
       break
     }
@@ -4689,17 +4691,17 @@ fn h10_store_and_find(var e: Enc, cur_ix: Int, max_length: Int, max_backward: In
     if e.rb.buf[cur_m + len] > e.rb.buf[prev_m + len] {
       best_len_left = len
       if reroot {
-        e.h_forest[node_left] = prev_ix
+        e.h_forest[node_left] = UInt32(prev_ix & MASK32)
       }
       node_left = 2 * (prev_ix & wm) + 1
-      prev_ix = e.h_forest[node_left]
+      prev_ix = Int(e.h_forest[node_left])
     } else {
       best_len_right = len
       if reroot {
-        e.h_forest[node_right] = prev_ix
+        e.h_forest[node_right] = UInt32(prev_ix & MASK32)
       }
       node_right = 2 * (prev_ix & wm)
-      prev_ix = e.h_forest[node_right]
+      prev_ix = Int(e.h_forest[node_right])
     }
     depth -= 1
   }
@@ -6250,7 +6252,7 @@ fn hash_h5(var e: Enc, i: Int) -> Int {
 fn store_h5(var e: Enc, ix: Int) {
   let key = hash_h5(e, ix & e.rb.mask)
   let n = e.h_num[key]
-  e.buckets[(key << e.h_block_bits) + (n & ((1 << e.h_block_bits) - 1))] = ix
+  e.buckets[(key << e.h_block_bits) + (n & ((1 << e.h_block_bits) - 1))] = UInt32(ix & MASK32)
   e.h_num[key] = (n + 1) & 0xFFFF
 }
 
@@ -6297,7 +6299,7 @@ fn find_longest_h5(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, 
   var i = n
   while i > down {
     i -= 1
-    let p0 = e.buckets[base + (i & bmask)]
+    let p0 = Int(e.buckets[base + (i & bmask)])
     let backward = cur_ix - p0
     if backward > max_backward {
       break
@@ -6318,7 +6320,7 @@ fn find_longest_h5(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, 
       }
     }
   }
-  e.buckets[base + (n & bmask)] = cur_ix
+  e.buckets[base + (n & bmask)] = UInt32(cur_ix & MASK32)
   e.h_num[key] = (n + 1) & 0xFFFF
   if min_score == sr.score {
     search_dict(e, cur_m, max_length, max_backward + gap, max_distance, sr, false)
@@ -6453,7 +6455,7 @@ fn hasher_setup(var e: Enc, position: Int, input_size: Int, is_last: Bool) {
       e.h_mask64 = -1
       e.h_mask64 = e.h_mask64.shr_logical(64 - 8 * 5)
       e.h_num = zero_ints(1 << e.h_bucket_bits)
-      e.buckets = zero_ints(1 << (e.h_bucket_bits + e.h_block_bits))
+      e.buckets = List[UInt32].filled(1 << (e.h_bucket_bits + e.h_block_bits), 0)
     } else if t >= 40 && t <= 42 {
       e.h_lookahead = 4
       e.h_num_banks = if t == 42 { 512 } else { 1 }
@@ -6474,12 +6476,12 @@ fn hasher_setup(var e: Enc, position: Int, input_size: Int, is_last: Bool) {
       e.h_lookahead = 128
       e.h_window_mask = (1 << e.lgwin) - 1
       e.h_invalid = (0 - e.h_window_mask) & MASK32
-      var bk = List[Int].with_capacity(1 << 17)
+      var bk = List[UInt32].with_capacity(1 << 17)
       for _ in 0..1 << 17 {
-        bk.push(e.h_invalid)
+        bk.push(UInt32(e.h_invalid))
       }
       e.buckets = bk
-      e.h_forest = zero_ints(2 << e.lgwin)
+      e.h_forest = List[UInt32].filled(2 << e.lgwin, 0)
     }
     if t == 5 || t == 6 || t == 10 || (t >= 40 && t <= 42) {
       e.h_made = true
@@ -6505,7 +6507,7 @@ fn hasher_setup(var e: Enc, position: Int, input_size: Int, is_last: Bool) {
       e.h_use_dict = false
     }
     if !e.h_made {
-      e.buckets = zero_ints((1 << e.h_bucket_bits) + e.h_sweep)
+      e.buckets = List[UInt32].filled((1 << e.h_bucket_bits) + e.h_sweep, 0)
       e.h_made = true
     }
   }

@@ -46,6 +46,21 @@ fn outcome(data: Bytes) -> Str {
   }
 }
 
+// first: mem_peak is the run's high-water mark, so a test after a larger
+// allocation could not see this one's
+test "a quality 9 encode holds its hash table as Go's uint32s, 32 MB, not 64" {
+  var b = BytesBuilder.new()
+  for i in 0..400 {
+    b.write_str("brotli ${i % 37} window ")
+  }
+  let data = b.freeze()
+  let before = debug.mem_peak()
+  expect(decode(encode(data, 9))) == Ok(data)
+  // 0 on the Go backend; natively H5's (1 << 15) << 8 bucket table took 8
+  // bytes a position, 64 MB for this 9 KB input (andybalholm's: 32 MB; task #156)
+  expect(debug.mem_peak() - before < 41943040) == true
+}
+
 test "andybalholm round trips" {
   for (kind, seed, n, q, w, s) in ROUND_TRIPS {
     let want = gen(kind, seed, n)
