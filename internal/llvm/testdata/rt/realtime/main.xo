@@ -139,6 +139,11 @@ fn test_allocs(r: Run) {
     Err(task.Isolated.Failed(_)) => r.check(false, "a section that allocated failed")
   }
   r.check(internal.rt_queued() == 0, "the fault left frees queued")
+  // xs is read after the section, so the closure's copy of it is shared and
+  // the store copies (without this use the capture was xs's last use: a
+  // closure made and called once became a direct call (decision 0697) that
+  // moved xs in, and the store wrote in place with no allocation)
+  r.check(xs[0] == 1, "the caller's list changed: ${xs}")
 }
 
 fn section(var xs: List[Str], e: Str) -> Int uses realtime {
