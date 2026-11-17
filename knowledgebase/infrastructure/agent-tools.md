@@ -1759,6 +1759,12 @@ Last verified: 2026-11-15
     stop a push (a note in pushq.log); `PUSHQ_HOLDS=0` skips the check.
     Tested by scripts/lead/pushq_hold_test.sh (a stub xw, about 3 s).
     Last verified: 2026-11-15.
+  - pushq clears every gate-only setting (`OFF_*`, `OFFGATE_*`,
+    `OFFLOAD_*`, `GATE_*`) at start and logs the names ("cleared
+    gate-only settings: ..." in pushq.log): a gate's OFF_MAX_MIN=40 in
+    the same shell reached TestOffloadGateLease and failed the push
+    (#169, gotchas/gate-env-leaks-into-push.md). Tested by
+    scripts/lead/pushq_env_test.sh. Last verified: 2026-11-16.
   - Fire and forget: a down xw never fails heavy.sh, pushq or
     offload-gate (events spool under ~/xo-lead/xw/spool).
   - board.sh stays for claims and a one-line NOW until it becomes a

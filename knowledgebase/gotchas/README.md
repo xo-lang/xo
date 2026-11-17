@@ -1447,3 +1447,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [effect-param-not-inferred-from-closure-args.md](effect-param-not-inferred-from-closure-args.md): `let p = term.func_port(closures uses sync)` is typed `Port[()]` (XO0701 at its use); annotate `let p: term.Port[sync]` (Observed 2026-11-16)
 - [sepcomp-thunk-shared.md](sepcomp-thunk-shared.md): link fails on a duplicate `NAME.value` thunk from std's object and the program (Observed)
 - [go-oracle-panic-as-want.md](go-oracle-panic-as-want.md): a fuzz want of "ERR runtime error"; x/net/html recovers its panics as plain errors, so the oracle drops those cases
+- [gate-env-leaks-into-push.md](gate-env-leaks-into-push.md): an exported OFF_MAX_MIN from a gate failed the next push; pushq now clears gate-only settings (#169)
