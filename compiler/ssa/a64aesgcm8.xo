@@ -6,8 +6,8 @@
 // blocks, the round keys held in registers (Go's K0 to KLAST), xors and
 // stores them, and hashes each block's ciphertext as it is stored with
 // Karatsuba's three products (the table's p0 ^ p1, ghash_blocks' third
-// word), summed over the eight blocks and reduced once (a64aesgcm.xo's
-// reduction). The AES chains of the next round do not depend on the
+// word), summed over the eight blocks and reduced once (Go's reduce, the
+// table's powers times x^-1: gcm8_reduce). The AES chains of the next round do not depend on the
 // GHASH of this one, so the core overlaps them without the instruction
 // level interleave of the four block kernel. Opening hashes the
 // ciphertext it loads before it stores the block over it, so it works in
@@ -173,39 +173,31 @@ fn gcm8_interleave(a: List[Str], g: List[Str]) -> List[Str] {
   t
 }
 
-/// The sums' reduction into the state v16: Karatsuba's middle term
-/// (v10 ^ v8 ^ v9), then a64aesgcm.xo's reduction with its registers
-/// renamed (v23 -> v8, v24 -> v9, v25 -> v10, v26 to v30 -> v11 to v15,
-/// v31 -> v19, zero v8 -> v16; the state written last).
+/// The sums' reduction into the state v16, Go's reduce (gcm_arm64.s):
+/// Karatsuba's middle term (v10 ^ v8 ^ v9) folded into the 256 bit
+/// product (v9, v8), then two products by the polynomial's constant
+/// (v19). It is Go's because the table holds each power times x^-1 (Go's
+/// "H<<1 mod poly", cpu.ghash8_xinv), so the product needs no shift by
+/// one: 14 instructions where a64aesgcm.xo's reduction with its shifts
+/// took 27, and opening 16 KiB records went from 1.07x Go's time to 0.99x
+/// on the Mac (2026-11-17). v16 is zero through it (the state written
+/// last).
 fn gcm8_reduce() -> List[Str] {
   [
     "eor v10.16b, v10.16b, v8.16b",
     "eor v10.16b, v10.16b, v9.16b",
     "movi v16.16b, #0",
-    "shl v14.2d, v8.2d, #1",
-    "pmull v15.1q, v14.1d, v19.1d",
-    "ext v11.16b, v16.16b, v10.16b, #8",
-    "ext v12.16b, v10.16b, v16.16b, #8",
-    "eor v8.16b, v8.16b, v11.16b",
-    "eor v9.16b, v9.16b, v12.16b",
-    "ushr v11.2d, v8.2d, #63",
-    "ushr v12.2d, v9.2d, #63",
-    "shl v8.2d, v8.2d, #1",
-    "shl v9.2d, v9.2d, #1",
-    "ext v13.16b, v16.16b, v11.16b, #8",
-    "ext v11.16b, v11.16b, v12.16b, #8",
-    "eor v8.16b, v8.16b, v13.16b",
+    "ext v11.16b, v10.16b, v16.16b, #8",
+    "ext v10.16b, v16.16b, v10.16b, #8",
+    "eor v8.16b, v8.16b, v10.16b",
     "eor v9.16b, v9.16b, v11.16b",
-    "ext v12.16b, v8.16b, v9.16b, #8",
-    "ext v13.16b, v16.16b, v14.16b, #8",
-    "eor v12.16b, v12.16b, v15.16b",
-    "eor v12.16b, v12.16b, v13.16b",
-    "pmull v11.1q, v12.1d, v19.1d",
-    "trn2 v13.2d, v12.2d, v9.2d",
-    "ext v14.16b, v16.16b, v12.16b, #8",
-    "eor v13.16b, v13.16b, v11.16b",
-    "eor v13.16b, v13.16b, v14.16b",
-    "ext v16.16b, v13.16b, v13.16b, #8",
+    "pmull v11.1q, v8.1d, v19.1d",
+    "ext v8.16b, v8.16b, v8.16b, #8",
+    "eor v8.16b, v8.16b, v11.16b",
+    "pmull v11.1q, v8.1d, v19.1d",
+    "eor v9.16b, v9.16b, v11.16b",
+    "ext v9.16b, v9.16b, v9.16b, #8",
+    "eor v16.16b, v8.16b, v9.16b",
   ]
 }
 
@@ -214,8 +206,8 @@ fn gcm8_reduce() -> List[Str] {
 /// the counter block at iv (as aes_ctr_lines), and the GHASH of the
 /// ciphertext (dst when sealing, src when opening) into the state at y
 /// with the eight H powers at hp (H^8 first, 24 bytes each, as
-/// ghash_blocks' table); p, q and c scratch registers for dst, src and the
-/// bytes left.
+/// ghash_blocks' table, each power times x^-1: cpu.ghash8_xinv); p, q and
+/// c scratch registers for dst, src and the bytes left.
 pub fn aes_gcm8_lines(nr: Int, seal: Bool, dst: Str, src: Str, rk: Str, iv: Str, n: Str, y: Str, hp: Str, p: Str, q: Str, c: Str) -> List[Str] {
   var t = [
     "stp d8, d9, [sp, #-64]!",

@@ -17,6 +17,24 @@ in registers through the 24 rounds, where each round's lanes went
 through memory as on targets without the kernel. Other targets are
 unchanged.
 
+## 2026-11-17: perf: AES-GCM on arm64 reduces GHASH as Go does
+
+- Kind: perf
+- Commit: this push
+- Found by: the AES-GCM timing row (bench/perf/aesgcm open1 1.063 of Go on linux/arm64 host 1, task #271); a profile put all of it in the eight block kernel, and a stub without its reduction ran 0.92 of Go
+- Go reference: Go 1.25 crypto/internal/fips140/aes/gcm gcm_arm64.s (gcmAesInit's H<<1 mod poly, the reduce macro)
+- Test: golden cpu_prims (the arm64 kernel with the x^-1 table against the portable body over 128 to 640 bytes, 11, 13 and 15 round keys, apart and in place); crypto module tests; xo bench --ab on linux/arm64 host 1 (ab-host.sh, 3 rounds): open1 wall 0.917 (0.916 to 0.927), better, max RSS the same
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+The eight block kernel (cpu.aes_gcm8, compiler/ssa a64aesgcm8.xo) reads
+its powers of H times x^-1, a second table new_gcm builds on arm64, and
+reduces each 128 bytes with Go's two products by the polynomial's
+constant: 14 instructions where the shifting reduction took 27. On the
+Mac, 400,000 opens of a 16 KiB record took 0.68 s where they took 0.73
+(Go 0.69), seals 0.71 where 0.75 (Go 0.71). amd64 and the four block
+kernel keep their table.
+
 ## 2026-11-17: perf: AES-CBC decryption on arm64 runs four blocks at once
 
 - Kind: perf
@@ -36,6 +54,7 @@ decryption does not chain through the cipher. On the Mac a 64 KiB
 message decrypted 200 times took 5.7 ms where it took 11.7 (Go 14.0);
 TLS 1.2 CBC records (bench/perf/aead cbc_small) 0.245 of Go's time.
 Other targets keep a block at a time.
+
 
 ## 2026-11-17: perf: ChaCha20-Poly1305 seals and opens allocate less
 
