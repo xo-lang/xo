@@ -2414,12 +2414,15 @@ fn cells_of(f: Family, values: List[Str]) -> List[Atomic[Int]]? {
   }
 }
 
-/// Adds n >= 0 to a counter's cells: a whole n below 2^53 to cell 1 (an
+/// Adds n >= 0 to a counter's cells: a whole n below 2^63 to cell 1 (an
 /// integer, unused by a counter otherwise) with one atomic add, else to
 /// cell 0's float with a compare and swap loop (client_golang's valInt
-/// and valBits); the value is their sum.
+/// and valBits, whose integer path takes any whole n below 2^64); the
+/// value is their sum. The limit was 2^53, so a whole 9e+17 went to the
+/// float and the fractions added after it rounded differently from Go
+/// (metricsfuzz seed 3, task #261).
 fn counter_cells_add(cells: List[Atomic[Int]], n: Float) {
-  if n < 9007199254740992.0 && n == Float(Int(n)) {
+  if n < 9223372036854775808.0 && n == Float(Int(n)) {
     let _n = cells[1].add(Int(n))
     return
   }

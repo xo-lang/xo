@@ -725,3 +725,14 @@ test "values print as client_golang's text format: Go's shortest 'g', any zero 0
   expect(t.contains("v{k=\"e\"} 123456\n")) == true
   expect(t.contains("v{k=\"f\"} 1.2e-05\n")) == true
 }
+
+test "a whole counter add up to 2^63 is exact, as client_golang's valInt (metricsfuzz seed 3, task #261)" {
+  let r = registry()
+  let c = r.counter("m", "", [])
+  c.add(9.0e17)
+  c.add(30.56306661486793)
+  c.add(584.0)
+  c.add(64.60991267343569)
+  c.add(888.0)
+  expect(r.text().contains("m 9.000000000000017e+17\n")) == true
+}

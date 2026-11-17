@@ -7221,17 +7221,17 @@ func Metrics_cells_of(tk *Task, v_f Metrics_Family, v_values List[string]) Optio
 }
 
 func Metrics_counter_cells_add(tk *Task, v_cells List[*Atomic[int64]], v_n float64) {
-	if (Cmp(v_n, float64(9007199254740992.0)) < 0) && (v_n == float64(FloatToInt[int64](v_n, "std/metrics.xo:2422:43"))) {
-		var v__n int64 = Atomic_add(tk, List_At(v_cells, int64(1), "std/metrics.xo:2423:14"), FloatToInt[int64](v_n, "std/metrics.xo:2423:27"))
+	if (Cmp(v_n, float64(9223372036854775808.0)) < 0) && (v_n == float64(FloatToInt[int64](v_n, "std/metrics.xo:2425:46"))) {
+		var v__n int64 = Atomic_add(tk, List_At(v_cells, int64(1), "std/metrics.xo:2426:14"), FloatToInt[int64](v_n, "std/metrics.xo:2426:27"))
 		_ = v__n
 		return
 	}
-	Metrics_add_float(tk, List_At(v_cells, int64(0), "std/metrics.xo:2426:13"), v_n)
+	Metrics_add_float(tk, List_At(v_cells, int64(0), "std/metrics.xo:2429:13"), v_n)
 	return
 }
 
 func Metrics_counter_value(tk *Task, v_cells List[*Atomic[int64]]) float64 {
-	return (Metrics_load(tk, List_At(v_cells, int64(0), "std/metrics.xo:2431:8")) + float64(List_At(v_cells, int64(1), "std/metrics.xo:2431:26").M_get(tk)))
+	return (Metrics_load(tk, List_At(v_cells, int64(0), "std/metrics.xo:2434:8")) + float64(List_At(v_cells, int64(1), "std/metrics.xo:2434:26").M_get(tk)))
 }
 
 func Metrics_hit_add(tk *Task, v_f Metrics_Family, v_values List[string], v_counter bool, v_d float64) bool {
@@ -7252,9 +7252,9 @@ func Metrics_hit_add(tk *Task, v_f Metrics_Family, v_values List[string], v_coun
 				_ = v_i
 				{
 					if v_counter {
-						Metrics_counter_cells_add(tk, List_Own(List_At(v_st.F_list, v_i, "std/metrics.xo:2449:29").F_cells), v_d)
+						Metrics_counter_cells_add(tk, List_Own(List_At(v_st.F_list, v_i, "std/metrics.xo:2452:29").F_cells), v_d)
 					} else {
-						Metrics_add_float(tk, List_At(List_At(v_st.F_list, v_i, "std/metrics.xo:2451:21").F_cells, int64(0), "std/metrics.xo:2451:21"), v_d)
+						Metrics_add_float(tk, List_At(List_At(v_st.F_list, v_i, "std/metrics.xo:2454:21").F_cells, int64(0), "std/metrics.xo:2454:21"), v_d)
 					}
 					return Ok[bool, Never](true)
 				}
@@ -7262,7 +7262,7 @@ func Metrics_hit_add(tk *Task, v_f Metrics_Family, v_values List[string], v_coun
 			if !x_m829.Some {
 				return Ok[bool, Never](false)
 			}
-			panic(Unreachable("std/metrics.xo:2446:5"))
+			panic(Unreachable("std/metrics.xo:2449:5"))
 		}
 	}
 	return Mutex_with_read[Metrics_Store, bool, Never](tk, v_f.F_series, x_a831).V
@@ -7311,12 +7311,12 @@ func Metrics_bucket_of(tk *Task, v_bounds List[float64], v_v float64) int64 {
 
 func Metrics_histogram_cell_add(tk *Task, v_cells List[*Atomic[int64]], v_i int64, v_nb int64, v_v float64) {
 	if v_i < v_nb {
-		var v__n int64 = Atomic_add(tk, List_At(v_cells, AddS(int64(3), v_i, "std/metrics.xo:2495:20"), "std/metrics.xo:2495:14"), int64(1))
+		var v__n int64 = Atomic_add(tk, List_At(v_cells, AddS(int64(3), v_i, "std/metrics.xo:2498:20"), "std/metrics.xo:2498:14"), int64(1))
 		_ = v__n
 	}
-	var v__c int64 = Atomic_add(tk, List_At(v_cells, int64(1), "std/metrics.xo:2497:12"), int64(1))
+	var v__c int64 = Atomic_add(tk, List_At(v_cells, int64(1), "std/metrics.xo:2500:12"), int64(1))
 	_ = v__c
-	Metrics_add_float(tk, List_At(v_cells, int64(2), "std/metrics.xo:2498:13"), v_v)
+	Metrics_add_float(tk, List_At(v_cells, int64(2), "std/metrics.xo:2501:13"), v_v)
 	return
 }
 
@@ -7363,7 +7363,7 @@ x_M839:
 			x_v837 = ""
 			break x_M839
 		}
-		panic(Unreachable("std/metrics.xo:2530:12"))
+		panic(Unreachable("std/metrics.xo:2533:12"))
 	}
 	var v_ts string = x_v837
 	_ = v_ts
@@ -7478,7 +7478,7 @@ func Metrics_head(tk *Task, v_name string, v_consts List[Tuple2[string, string]]
 		var v_l string = x_el863.F1
 		_ = v_l
 		{
-			x_pv864 := (v_l + "=\"" + Metrics_escape_label(tk, List_At(v_values, v_i, "std/metrics.xo:2562:39")) + "\"")
+			x_pv864 := (v_l + "=\"" + Metrics_escape_label(tk, List_At(v_values, v_i, "std/metrics.xo:2565:39")) + "\"")
 			if List_CanPush(v_parts) {
 				v_parts = List_PushFast(v_parts, x_pv864)
 			} else {
@@ -7546,7 +7546,7 @@ func Metrics_expose_parts(tk *Task, v_f Metrics_Family, v_now_ms int64) List[Tup
 			_ = v_x
 			{
 				if List_len[string](tk, v_x.F_values) != List_len[string](tk, v_f.F_labels) {
-					Fault(tk, ("metrics: " + v_f.F_name + " has " + IntStr(List_len[string](tk, v_f.F_labels)) + " labels, a sample has " + IntStr(List_len[string](tk, v_x.F_values)) + " values"), "std/metrics.xo:2595:9")
+					Fault(tk, ("metrics: " + v_f.F_name + " has " + IntStr(List_len[string](tk, v_f.F_labels)) + " labels, a sample has " + IntStr(List_len[string](tk, v_x.F_values)) + " values"), "std/metrics.xo:2598:9")
 				}
 			}
 		}
@@ -7603,7 +7603,7 @@ func Metrics_expose_parts(tk *Task, v_f Metrics_Family, v_now_ms int64) List[Tup
 			if x_t888.Some {
 				x_c889 = x_t888.V
 			} else {
-				x_c889 = Absurd[Metrics_Series](Fault(tk, ("metrics: series " + v_k + " not in its own map"), "std/metrics.xo:2613:25"))
+				x_c889 = Absurd[Metrics_Series](Fault(tk, ("metrics: series " + v_k + " not in its own map"), "std/metrics.xo:2616:25"))
 			}
 			var v_s Metrics_Series = x_c889
 			_ = v_s
@@ -7612,7 +7612,7 @@ func Metrics_expose_parts(tk *Task, v_f Metrics_Family, v_now_ms int64) List[Tup
 				if v_f.F_kind == int64(0) {
 					x_v890 = Metrics_counter_value(tk, List_Own(v_s.F_cells))
 				} else {
-					x_v890 = Metrics_load(tk, List_At(v_s.F_cells, int64(0), "std/metrics.xo:2615:69"))
+					x_v890 = Metrics_load(tk, List_At(v_s.F_cells, int64(0), "std/metrics.xo:2618:69"))
 				}
 				var v_v float64 = x_v890
 				_ = v_v
@@ -7636,7 +7636,7 @@ func Metrics_expose_parts(tk *Task, v_f Metrics_Family, v_now_ms int64) List[Tup
 						var v_q float64 = x_el895.F1.F0
 						_ = v_q
 						{
-							x_pv896 := (Metrics_head(tk, v_f.F_name, List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), ("quantile=\""+Metrics_num(tk, v_q)+"\"")) + " " + Metrics_num(tk, List_At(v_qs, v_i, "std/metrics.xo:2620:97")))
+							x_pv896 := (Metrics_head(tk, v_f.F_name, List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), ("quantile=\""+Metrics_num(tk, v_q)+"\"")) + " " + Metrics_num(tk, List_At(v_qs, v_i, "std/metrics.xo:2623:97")))
 							if List_CanPush(v_out) {
 								v_out = List_PushFast(v_out, x_pv896)
 							} else {
@@ -7645,14 +7645,14 @@ func Metrics_expose_parts(tk *Task, v_f Metrics_Family, v_now_ms int64) List[Tup
 							_ = Unit{}
 						}
 					}
-					x_pv897 := (Metrics_head(tk, (v_f.F_name+"_sum"), List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, Metrics_load(tk, List_At(v_s.F_cells, int64(2), "std/metrics.xo:2622:87"))))
+					x_pv897 := (Metrics_head(tk, (v_f.F_name+"_sum"), List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, Metrics_load(tk, List_At(v_s.F_cells, int64(2), "std/metrics.xo:2625:87"))))
 					if List_CanPush(v_out) {
 						v_out = List_PushFast(v_out, x_pv897)
 					} else {
 						v_out = List_PushSlow(v_out, x_pv897)
 					}
 					_ = Unit{}
-					x_pv898 := (Metrics_head(tk, (v_f.F_name+"_count"), List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + IntStr(List_At(v_s.F_cells, int64(1), "std/metrics.xo:2623:80").M_get(tk)))
+					x_pv898 := (Metrics_head(tk, (v_f.F_name+"_count"), List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + IntStr(List_At(v_s.F_cells, int64(1), "std/metrics.xo:2626:80").M_get(tk)))
 					if List_CanPush(v_out) {
 						v_out = List_PushFast(v_out, x_pv898)
 					} else {
@@ -7671,7 +7671,7 @@ func Metrics_expose_parts(tk *Task, v_f Metrics_Family, v_now_ms int64) List[Tup
 						var v_b float64 = x_el902.F1
 						_ = v_b
 						{
-							v_upto = AddS(v_upto, List_At(v_s.F_cells, AddS(int64(3), v_i_1, "std/metrics.xo:2627:25"), "std/metrics.xo:2627:17").M_get(tk), "std/metrics.xo:2627:9")
+							v_upto = AddS(v_upto, List_At(v_s.F_cells, AddS(int64(3), v_i_1, "std/metrics.xo:2630:25"), "std/metrics.xo:2630:17").M_get(tk), "std/metrics.xo:2630:9")
 							x_pv903 := (Metrics_head(tk, (v_f.F_name+"_bucket"), List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), ("le=\""+Metrics_num(tk, v_b)+"\"")) + " " + IntStr(v_upto))
 							if List_CanPush(v_out) {
 								v_out = List_PushFast(v_out, x_pv903)
@@ -7681,7 +7681,7 @@ func Metrics_expose_parts(tk *Task, v_f Metrics_Family, v_now_ms int64) List[Tup
 							_ = Unit{}
 						}
 					}
-					var v_n int64 = List_At(v_s.F_cells, int64(1), "std/metrics.xo:2630:15").M_get(tk)
+					var v_n int64 = List_At(v_s.F_cells, int64(1), "std/metrics.xo:2633:15").M_get(tk)
 					_ = v_n
 					x_pv904 := (Metrics_head(tk, (v_f.F_name+"_bucket"), List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), "le=\"+Inf\"") + " " + IntStr(v_n))
 					if List_CanPush(v_out) {
@@ -7690,7 +7690,7 @@ func Metrics_expose_parts(tk *Task, v_f Metrics_Family, v_now_ms int64) List[Tup
 						v_out = List_PushSlow(v_out, x_pv904)
 					}
 					_ = Unit{}
-					x_pv905 := (Metrics_head(tk, (v_f.F_name+"_sum"), List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, Metrics_load(tk, List_At(v_s.F_cells, int64(2), "std/metrics.xo:2632:87"))))
+					x_pv905 := (Metrics_head(tk, (v_f.F_name+"_sum"), List_Own(v_f.F_consts), List_Own(v_f.F_labels), List_Own(v_s.F_values), "") + " " + Metrics_num(tk, Metrics_load(tk, List_At(v_s.F_cells, int64(2), "std/metrics.xo:2635:87"))))
 					if List_CanPush(v_out) {
 						v_out = List_PushFast(v_out, x_pv905)
 					} else {

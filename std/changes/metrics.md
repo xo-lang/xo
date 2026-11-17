@@ -1,5 +1,17 @@
 # std/metrics changes
 
+## 2026-11-17: fix: a whole counter add up to 2^63 is exact
+
+- Kind: fix (behavior change)
+- Commit: this push
+- Found by: the metrics fuzz harness on the Mac (seed 3, registry 2877; task #261)
+- Go reference: prometheus/client_golang counter.Add (valInt for a whole value, valBits otherwise)
+- Test: std/metrics_test.xo "a whole counter add up to 2^63 is exact"
+- Timing: none
+- Shipped in: not yet released
+
+A whole add from 2^53 up went to the counter's float sum, so fractions added after a 9e+17 rounded differently from client_golang (9.000000000000015e+17 for Go's 9.000000000000017e+17). Whole adds below 2^63 now go to the integer cell, as Go's valInt; Go's integer path goes on to 2^64 (unsigned), which Xo's Int does not reach.
+
 ## 2026-11-17: fix: values print as client_golang's text format
 
 - Kind: fix (behavior change)
