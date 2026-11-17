@@ -1,0 +1,69 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): an ordering a
+// dominating branch decided (compiler/ssa domcmp.xo, task #291), and a
+// counted field read twice (cse). std/toml's ws loop tested `i < n` and
+// then its inlined byte read's `i >= s.len()`, with the text field and
+// its length read again each iteration.
+
+struct Cursor {
+  xs: List[Int]
+  i: Int
+}
+
+// The bounds test of a helper that returns -1 past the end.
+fn at(xs: List[Int], i: Int) -> Int {
+  if i >= xs.len() {
+    return -1
+  }
+  xs[i]
+}
+
+// The loop's own test decides the inlined `i >= xs.len()` (the field
+// c.xs and its length read once): no -1 is left.
+fn skip(c: Cursor, z: Int) -> Int {
+  // arm64: -"#-1\n"
+  let n = c.xs.len()
+  var i = c.i
+  while i < n {
+    let v = at(c.xs, i)
+    if v != z {
+      return v
+    }
+    i += 1
+  }
+  n
+}
+
+// Not taken: `i >= n` false is `i < n`, which decides the inner test.
+fn first_neg(xs: List[Int], i0: Int) -> Int {
+  // arm64: -"#-1\n"
+  let n = xs.len()
+  var i = i0
+  while true {
+    if i >= n {
+      return n
+    }
+    let v = at(xs, i)
+    if v < 0 {
+      return v
+    }
+    i += 1
+  }
+  n
+}
+
+// Floats: `a < b` not taken does not order them (NaN), the test stays.
+fn fl(a: Float, b: Float) -> Int {
+  // arm64: "#3\n"
+  if a < b {
+    return 1
+  }
+  if a >= b {
+    return 2
+  }
+  3
+}
+
+fn main(os: Os) {
+  let c = Cursor{xs: [0, 0, 3], i: 0}
+  os.stdio.println("${skip(c, 0)} ${first_neg([1, -2], 0)} ${fl(1.0, 2.0)}")
+}

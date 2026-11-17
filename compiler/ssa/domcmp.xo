@@ -1,0 +1,125 @@
+// Orderings a dominating branch already decided (task #291): the
+// simplest case of Go's prove pass. A loop's `i < n` test and the bounds
+// check of an inlined `raw.str_byte(s, i)` (`i >= s.len()`, the same n
+// once cse merged the length) compared the same two values each
+// iteration; std/toml's ws loop ran both.
+
+/// An ordering as `l < r` (strict) or `l <= r`: the fact a branch edge
+/// gives, or what a compare asks.
+struct Order {
+  l: Int
+  r: Int
+  strict: Bool
+}
+
+/// What compare x asks, as an Order; false for a value that is no
+/// ordering of two operands.
+fn order_of(f: Func, x: Value) -> (Order, Bool) {
+  if x.args.len() != 2 {
+    return (Order{l: -1, r: -1, strict: false}, false)
+  }
+  let a = f.arg(x.args, 0)
+  let b = f.arg(x.args, 1)
+  match x.op {
+    Lt => (Order{l: a, r: b, strict: true}, true)
+    Le => (Order{l: a, r: b, strict: false}, true)
+    Gt => (Order{l: b, r: a, strict: true}, true)
+    Ge => (Order{l: b, r: a, strict: false}, true)
+    _ => (Order{l: -1, r: -1, strict: false}, false)
+  }
+}
+
+/// The ordering that holds in block d because its one predecessor
+/// branches to it on an ordering (taken: the compare holds; not taken:
+/// its negation, never of Floats, which NaN leaves unordered); false
+/// when d gives none.
+fn entry_order(f: Func, m: Module, d: Int) -> (Order, Bool) {
+  let none = (Order{l: -1, r: -1, strict: false}, false)
+  let preds = f.blocks[d].preds
+  if preds.len() != 1 {
+    return none
+  }
+  let t = f.term(f.edges[preds[0]].from)
+  if t < 0 || f.values[t].op != Op.Branch || succ_n(f.values[t]) != 2 {
+    return none
+  }
+  let tv = f.values[t]
+  let yes = f.edges[succ(tv, 0)].to == d
+  let no = f.edges[succ(tv, 1)].to == d
+  if yes == no {
+    return none
+  }
+  let (o, ok) = order_of(f, f.values[f.arg(tv.args, 0)])
+  if !ok {
+    return none
+  }
+  if yes {
+    return (o, true)
+  }
+  let ty = ty_of(f.values[o.l].tb)
+  if ty < 0 || m.types[ty].kind == Kind.Float {
+    return none
+  }
+  // not (l < r) is r <= l; not (l <= r) is r < l
+  (Order{l: o.r, r: o.l, strict: !o.strict}, true)
+}
+
+/// What fact says of query: 1 true, 0 false, -1 unknown. The two compare
+/// the same values, so they order them the same way, signed or not.
+fn implied(fact: Order, query: Order) -> Int {
+  if fact.l == query.l && fact.r == query.r {
+    return if fact.strict || !query.strict { 1 } else { -1 }
+  }
+  if fact.l == query.r && fact.r == query.l {
+    // l < r refutes r < l and r <= l; l <= r refutes r < l
+    return if fact.strict || query.strict { 0 } else { -1 }
+  }
+  -1
+}
+
+/// How many dominators fold_dominated_compares looks through.
+const DOM_CMP_DEPTH = 32
+
+/// Folds each ordering of f that an ordering decided on the way into a
+/// block dominating it into a Bool constant; whether one changed
+/// (fold_branches then drops the branch on it).
+pub fn fold_dominated_compares(var f: Func, m: Module) -> Bool {
+  if f.blocks.len() < 2 {
+    return false
+  }
+  let idom = dominators(f)
+  var changed = false
+  for bl in 1..f.blocks.len() {
+    if idom[bl] < 0 {
+      continue
+    }
+    for v in f.blocks[bl].instrs {
+      let (q, ok) = order_of(f, f.values[v])
+      if !ok {
+        continue
+      }
+      var d = bl
+      var r = -1
+      for _ in 0..DOM_CMP_DEPTH {
+        let (o, has) = entry_order(f, m, d)
+        if has {
+          r = implied(o, q)
+          if r >= 0 {
+            break
+          }
+        }
+        if idom[d] < 0 || idom[d] == d {
+          break
+        }
+        d = idom[d]
+      }
+      if r >= 0 {
+        f.values[v].op = Op.Const
+        f.values[v].aux = f.pack(Aux.B(b: r == 1))
+        f.set_args(v, [])
+        changed = true
+      }
+    }
+  }
+  changed
+}

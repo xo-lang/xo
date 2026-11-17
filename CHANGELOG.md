@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Performance (native backends): an integer comparison a dominating branch already decided is folded, and a reference counted field read twice is read once, so a loop guarded by `i < n` drops an inlined helper's `i >= n` test (std/toml decode 6.4% fewer instructions on the Mac).
 
 - Perf (std/http, std/grpc): on the native backends a piece of a streamed HTTP/2 request body written by another task while the client waits for the response (one task sends on a gRPC stream while another receives) goes out at once; it waited up to 10 ms.
 - Feature (std/grpc): a client can spread its calls over several addresses, as grpc-go's built-in balancers: `with_addrs`, `with_dns`, `with_resolver`, and `with_balancer(Balancer.PickFirst | Balancer.RoundRobin)`, also read from a service config's `loadBalancingConfig` (decision 0707).

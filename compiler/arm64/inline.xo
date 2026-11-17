@@ -868,6 +868,13 @@ fn inline_body(m: ssa.Module, st: InlineState, fi: Int, f0: ssa.Func) -> (ssa.Fu
     // a block left only its jump joins the next
     let _s = ssa.merge_straight(f, m, block_calls_inline(f))
   }
+  // an ordering a dominating branch decided (domcmp.xo): a loop's
+  // `i < n` and an inlined bounds check's `i >= n`
+  if pass_on(m, "dom_compares") && ssa.fold_dominated_compares(f, m) {
+    ch = true
+    let _f = ssa.fold_branches(f)
+    let _s = ssa.merge_straight(f, m, block_calls_inline(f))
+  }
   // one field of a list element set where it lies (takeplace.xo)
   if m.goarch == "arm64" && pass_on(m, "take_in_place") && take_in_place(f, m) {
     ch = true
