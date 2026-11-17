@@ -638,6 +638,32 @@ ir_manifest_for() {
   local sh="${XO_LLVM_IR_SHARED:-}/llvm-ir-$(uname -s | tr A-Z a-z)-$(uname -m)-$1-$mcode.txt"
   [ -n "${XO_LLVM_IR_SHARED:-}" ] && [ -s "$sh" ] && irm=$sh
 }
+# ir_share COMMIT MANIFEST: shares the base manifest a gate built (and its
+# deps file) into $XO_LLVM_IR_SHARED under irman's name, so a second gate
+# on the same base, on this host, reuses it (decision #87, task #275:
+# irman made 6 of 31 manifests on 2026-11-17, and compiler-change gates
+# built the base's whole manifest, 1,330 to 1,569 s to select). Deps
+# first, then the manifest, each by a rename (a reader never sees half a
+# file); a .gate file beside it marks it a gate's (the log says which
+# served a base). An existing one is kept; offload-prune removes entries
+# idle 6 hours.
+ir_share() {
+  [ -n "${XO_LLVM_IR_SHARED:-}" ] && [ -d "$XO_LLVM_IR_SHARED" ] && [ -w "$XO_LLVM_IR_SHARED" ] && [ -s "$2" ] || return 0
+  local sh="$XO_LLVM_IR_SHARED/llvm-ir-$(uname -s | tr A-Z a-z)-$(uname -m)-$1-$mcode.txt"
+  [ -s "$sh" ] && return 0
+  if [ -s "${2%.txt}.deps" ]; then
+    cp "${2%.txt}.deps" "${sh%.txt}.deps.tmp$$" && mv -f "${sh%.txt}.deps.tmp$$" "${sh%.txt}.deps" || { rm -f "${sh%.txt}.deps.tmp$$"; return 0; }
+  fi
+  : >"${sh%.txt}.gate"
+  cp "$2" "$sh.tmp$$" && mv -f "$sh.tmp$$" "$sh" || rm -f "$sh.tmp$$"
+  return 0
+}
+# ir_source MANIFEST: who made a manifest ir_manifest_for found, for the log
+ir_source() {
+  case $1 in
+  "${XO_LLVM_IR_SHARED:-/nonexistent}"/*) if [ -e "${1%.txt}.gate" ]; then echo " (shared by a gate)"; else echo " (shared by irman.sh)"; fi ;;
+  esac
+}
 # ir_head_manifest OUT JOBS [DEPS]: the IR manifest of this tree's goldens,
 # built by its bin/xo with JOBS at once, into OUT (and each golden's std
 # files into DEPS, for ir_scope); logs the time and the xo processes'
@@ -769,7 +795,7 @@ llvm_goldens() {
     fi
     if [ -s "$bfull" ]; then
       awk -v s=",$escope," 'index(s, "," $1 ",")' "$bfull" >"$bpart"
-      echo "llvm IR: the base manifest from $bfull ($(wc -l <"$bpart" | tr -d ' ') of the scope's goldens); no base build" >&2
+      echo "llvm IR: the base manifest$(ir_source "$bfull") from $bfull ($(wc -l <"$bpart" | tr -d ' ') of the scope's goldens); no base build" >&2
     fi
     if { [ -s "$bpart" ] || { git worktree add -q --detach "$pw2/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
       cp internal/llvm/golden_select_test.go "$pw2/tree/internal/llvm/" &&
@@ -818,7 +844,7 @@ llvm_goldens() {
       fi
     done
   fi
-  case $bm in "${XO_LLVM_IR_SHARED:-/nonexistent}"/*) ib="$ib (shared by irman.sh)" ;; esac
+  ib="$ib$(ir_source "$bm")"
   if [ ! -s "$bm" ]; then
     bm="$cache/$(git rev-parse "$base")-$mcode.txt"
     pw=$(mktemp -d "$gt/xo-gate-ir.XXXXXX")
@@ -830,6 +856,7 @@ llvm_goldens() {
       (cd "$pw/tree" && XO_CLI=$pw/tree/bin/xo XO_LLVM_IR_MANIFEST="$bm.tmp$$" XO_LLVM_IR_DEPS="${bm%.txt}.deps.tmp$$" nice -n "${XO_GATE_IR_NICE:-10}" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; then
       mv "${bm%.txt}.deps.tmp$$" "${bm%.txt}.deps" 2>/dev/null
       mv "$bm.tmp$$" "$bm"
+      ir_share "$(git rev-parse "$base")" "$bm"
     fi
     rm -f "$bm.tmp$$" "${bm%.txt}.deps.tmp$$"
     git worktree remove --force "$pw/tree" >/dev/null 2>&1

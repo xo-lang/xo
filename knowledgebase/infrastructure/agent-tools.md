@@ -261,6 +261,11 @@ yourself.
   std/http.xo made the scope "all" and took 1,354 s to select; 119 goldens
   without it). `XO_GATE_IR_INPUTS=0` turns it off; the continuous
   tier (ctier.sh, below) runs every golden.
+  A gate that builds its base's whole manifest (a compiler change, or no
+  manifest for the base) shares it into the host's `/work/in` under
+  irman's name with a `.gate` mark (gate.sh `ir_share`, decision #87 of
+  xw, 2026-11-17), so the next gate on that base and host reuses it; the
+  log names the source, "(shared by irman.sh)" or "(shared by a gate)".
 - Light push sets (owner, 2026-11-15, CLAUDE.md "Std Proven push"):
   `pushq.sh WT --needs` and the offload-gate planner ask only for
   - a std module outside xo's closure (`scripts/lead/xo-closure.txt`,

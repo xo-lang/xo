@@ -36,3 +36,17 @@ func TestGateLLVMTouchAll(t *testing.T) {
 		t.Fatalf("gate_llvm_touch_test.sh: %v\n%s", err, out)
 	}
 }
+
+// TestGateIRShare: scripts/gate.sh's ir_share shares the base manifest a
+// gate built for the next gate on the same base and host, and ir_source
+// names who made a shared one (decision #87, task #275).
+// scripts/lead/gate_ir_share_test.sh holds the cases.
+func TestGateIRShare(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash")
+	}
+	out, err := exec.Command("bash", filepath.Join(root, "scripts", "lead", "gate_ir_share_test.sh")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gate_ir_share_test.sh: %v\n%s", err, out)
+	}
+}
