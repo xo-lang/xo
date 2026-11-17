@@ -1,0 +1,17 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a std function whose
+// Str result is always a view of a borrowed parameter returns it without a
+// count, and the caller treats the call as a projection (decision 0465).
+// path.base returned p itself when p had no slash; returning a parameter
+// consumes it, so p was not borrowed: the caller counted p up for each call
+// and dropped the result after (task #101, 2026-11-17: bench/perf/path
+// bonly 98 ms before, 70 ms after on the Mac). It returns cut(p, 0, n) now.
+use std/path
+
+fn base_len(p: Str) -> Int {
+  // arm64: -"bl _?xo_h"
+  path.base(p).len()
+}
+
+fn main(os: Os) {
+  os.stdio.println("${base_len("a/b/c.txt")} ${base_len("abc")}")
+}

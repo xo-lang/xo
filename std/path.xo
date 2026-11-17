@@ -45,7 +45,10 @@ pub fn base(p: Str) -> Str {
     // no trailing slash (the common case): the bytes after the last one
     let i = last_slash(p)
     if i < 0 {
-      return p
+      // a view, not p: returning p consumes it, so p would not be
+      // borrowed and base would not return a view of it (decision 0465:
+      // an inc and a drop per call, 2026-11-17)
+      return cut(p, 0, n)
     }
     return cut(p, i + 1, n)
   }
@@ -66,9 +69,14 @@ pub fn base(p: Str) -> Str {
 pub fn ext(p: Str) -> Str {
   let b = p.bytes()
   var i = b.len() - 1
-  while i >= 0 && b[i] != 47 {
-    if b[i] == 46 {
+  // each byte read once (two reads were two bounds checked loads)
+  while i >= 0 {
+    let c = b[i]
+    if c == 46 {
       return cut(p, i, b.len())
+    }
+    if c == 47 {
+      return ""
     }
     i -= 1
   }

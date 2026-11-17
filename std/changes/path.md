@@ -1,5 +1,19 @@
 # std/path changes
 
+## 2026-11-17: perf: base returns a view without a count; ext reads each byte once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #101, the parts row of bench/perf/path over 1.05
+- Go reference: path.Base and path.Ext (go1.26.11)
+- Test: test/codegen/retview (a path.base call on a borrowed Str makes no RC call; it made two before), internal/stdtest/testdata/corpus/path and pathfuzz
+- Timing: bench/perf/path on linux/arm64 host 1 (twincheck -time 9, Xo / Go): parts 1.136 before, 1.075 after; clean 0.949, join 1.132 and match 1.021 unchanged within noise (bonly on the Mac: 98 ms before, 70 ms after).
+
+`path.base` of a path without a slash returned its argument itself, so
+the argument was not borrowed and every call counted it up and dropped
+the result (decision 0465); it returns a view of it now. `path.ext`
+reads each byte once. The results are the same.
+
 ## 2026-11-16: perf: base finds the last slash first
 
 - Kind: perf
