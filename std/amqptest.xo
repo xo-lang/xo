@@ -149,6 +149,9 @@ pub struct BrokerState {
   pub gen: Int = 0
   pub detaches: List[(Int, Str, amqp.WireError)] = []
   pub closes: List[(Int, amqp.WireError?)] = []
+  /// the link credit the broker grants a client's sender, granted again
+  /// each time half of it is spent
+  pub link_credit: Int = 100000
 }
 
 /// A broker. A handle: copies share it.
@@ -1851,13 +1854,13 @@ fn on_hub_attach(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, a: amqp.Atta
   }
   if client_sends {
     link.presettled = false
-    link.credit = 100000
+    link.credit = b.st.with_read(fn(x) { x.link_credit })
     c.links.push(link)
     out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Receiver, sender_settle_mode: a.sender_settle_mode,
       receiver_settle_mode: a.receiver_settle_mode, source: a.source, target: a.target, max_message_size: 0}))?
     let z = c.sess[si]
     return out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z.next_out),
-      outgoing_window: UInt32(2048), handle: Some(u32w(h)), delivery_count: Some(u32w(0)), link_credit: Some(u32w(100000)), available: None}))
+      outgoing_window: UInt32(2048), handle: Some(u32w(h)), delivery_count: Some(u32w(0)), link_credit: Some(u32w(link.credit)), available: None}))
   }
   c.links.push(link)
   out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Sender, sender_settle_mode: a.sender_settle_mode,
@@ -2006,14 +2009,14 @@ fn on_attach(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, a: amqp.Attach) 
     }
     None => {}
   }
-  if client_sends { link.credit = 100000 }
+  if client_sends { link.credit = b.st.with_read(fn(x) { x.link_credit }) }
   c.links.push(link)
   if client_sends {
     out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Receiver, sender_settle_mode: a.sender_settle_mode,
       receiver_settle_mode: a.receiver_settle_mode, source: a.source, target: a.target, max_message_size: 0}))?
     let z = c.sess[si]
     return out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z.next_out),
-      outgoing_window: UInt32(2048), handle: Some(u32w(h)), delivery_count: Some(u32w(0)), link_credit: Some(u32w(100000)), available: None}))
+      outgoing_window: UInt32(2048), handle: Some(u32w(h)), delivery_count: Some(u32w(0)), link_credit: Some(u32w(link.credit)), available: None}))
   }
   var src = a.source
   match fk {
@@ -2117,10 +2120,22 @@ fn on_transfer(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, t: amqp.Transf
   let settled = l.partial_settled
   let payload = l.partial
   let fmt = l.partial_format
+  // a client's sender gets its credit again once half is spent, as a
+  // real broker tops it up: granted once, a sender stopped for good at
+  // its 100,000th message (the amqp stress program, task #152)
+  var regrant = 0
   if done {
     l.partial_active = false
     l.partial = b""
     l.delivery_count += 1
+    if !l.sends {
+      l.credit -= 1
+      let full = b.st.with_read(fn(x) { x.link_credit })
+      if l.credit * 2 <= full {
+        l.credit = full
+        regrant = full
+      }
+    }
   }
   put_link(c, l)
   var flow = false
@@ -2130,6 +2145,11 @@ fn on_transfer(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, t: amqp.Transf
   }
   put_sess(c, si, z)
   if done { process_message(b, sc, c, li, id, settled, fmt, payload)? }
+  if regrant > 0 {
+    let z3 = c.sess[si]
+    out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z3.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z3.next_out),
+      outgoing_window: UInt32(2048), handle: Some(u32w(l.handle)), delivery_count: Some(u32w(l.delivery_count)), link_credit: Some(u32w(regrant)), available: None}))?
+  }
   if flow {
     let z2 = c.sess[si]
     out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z2.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z2.next_out), outgoing_window: UInt32(2048), handle: None, delivery_count: None, link_credit: None, available: None}))?

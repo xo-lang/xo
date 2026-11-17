@@ -131,6 +131,29 @@ test "send, receive and complete through the broker, with CBS" uses (net, clock)
   }
 }
 
+test "a sender gets more link credit as it spends it (amqp stress hang, task #152)" uses (net, clock) {
+  // the broker granted 100,000 once and never again: the amqp stress
+  // program's senders waited for credit forever past their 100,000th send
+  let b = new(os.clock)
+  b.st.with(fn(var x) { x.link_credit = 6 })
+  b.queue("q")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, "q").or_fault("sender")
+    s.spawn_background(fn() {
+      for i in 0..20 {
+        snd.send(msg("m${i}")).or_fault("send")
+      }
+    })
+    until(os.clock, fn() -> Bool { b.ready("q").len() == 20 })
+    s.cancel()
+  }
+}
+
 // The reader task can apply a send's disposition right after the write of
 // its last frame, before send's turn ends: the outcome must still reach
 // send (it was dropped, and send waited forever, 2026-11-06). The race

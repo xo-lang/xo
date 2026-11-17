@@ -1,5 +1,17 @@
 # std/amqptest changes
 
+## 2026-11-17: fix: a client's sender gets link credit again as it spends it
+
+- Kind: fix
+- Commit: this push
+- Found by: the amqp stress program (std/evidence/amqp/stress) stopped as idle on hosts 2 and 3 (task #152); on the Mac every task waited in send at its 100,000th message
+- Go reference: none (a broker's flow control, AMQP 1.0 section 2.6.7: the receiver issues credit)
+- Test: std/amqptest_test.xo "a sender gets more link credit as it spends it" (credit 6, 20 sends; fails before); the stress program past 100,000 sends a task
+- Timing: none (one flow frame per half of the credit)
+- Shipped in: not yet released
+
+The broker granted a client's sender 100,000 link credit at attach and never again, so a sender stopped for good at its 100,000th message. It now grants the credit again each time half is spent. `BrokerState.link_credit` (default 100,000) sets the grant.
+
 ## 2026-11-16: fix: a SQL filter cut short reads "unexpected end of the expression" (task #148)
 
 - Kind: fix (error text)
