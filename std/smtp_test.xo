@@ -1,0 +1,263 @@
+// std/smtp module tests (decision 0616 section 2: the race evidence runs
+// these under --race). After Go's net/smtp smtp_test.go: a scripted
+// server on the test network answers each command and records every line
+// the client sends, so each test checks the session as sent: EHLO, MAIL
+// FROM with BODY=8BITMIME and SMTPUTF8 when offered, RCPT TO for each
+// address, DATA dot stuffed with CRLF endings, QUIT; the HELO fallback;
+// AUTH PLAIN; a refusing reply as SmtpErr; CR or LF in a line; plain text
+// only to a loopback host; and many sends at once.
+use std/base64
+
+/// How the scripted server answers.
+struct Script {
+  greeting: Str = "220 fake ESMTP"
+  /// false: EHLO is refused (502), so the client falls back to HELO
+  ehlo: Bool = true
+  /// the extensions EHLO lists
+  exts: List[Str] = []
+  /// the reply to every RCPT TO
+  rcpt: Str = "250 ok"
+  /// the reply to AUTH
+  auth: Str = "235 ok"
+}
+
+/// The reply to one command line.
+fn answer(s: Script, line: Str) -> Str {
+  if line.starts_with("EHLO ") {
+    if !s.ehlo {
+      return "502 not implemented"
+    }
+    if s.exts.is_empty() {
+      return "250 fake"
+    }
+    var r = "250-fake"
+    for (i, e) in s.exts.indexed() {
+      let sep = if i == s.exts.len() - 1 { " " } else { "-" }
+      r = r + "\r\n250${sep}${e}"
+    }
+    return r
+  }
+  if line.starts_with("HELO ") { return "250 fake" }
+  if line.starts_with("AUTH ") { return s.auth }
+  if line.starts_with("MAIL FROM:") { return "250 ok" }
+  if line.starts_with("RCPT TO:") { return s.rcpt }
+  if line == "DATA" { return "354 go ahead" }
+  if line == "QUIT" { return "221 bye" }
+  "500 unknown command"
+}
+
+/// Serves one session from l by s and returns every line the client sent
+/// (the message's lines too, DATA's closing "." last of them).
+fn serve(l: Listener, s: Script) -> List[Str] uses net.listen {
+  let c = l.accept().or_fault("accept")
+  c.write("${s.greeting}\r\n".bytes()).or_fault("greeting")
+  var got: List[Str] = []
+  var buf = b""
+  var data = false
+  var open = true
+  while open {
+    match buf.find(b"\r\n") {
+      None => match c.read(4096) {
+        Ok(Some(b)) => buf = buf + b
+        _ => open = false
+      }
+      Some(i) => {
+        let line = buf[0..i].to_str_lossy()
+        buf = buf[i + 2..]
+        got.push(line)
+        var reply = ""
+        if data {
+          if line == "." {
+            data = false
+            reply = "250 queued"
+          }
+        } else {
+          reply = answer(s, line)
+          data = reply.starts_with("354")
+        }
+        if !reply.is_empty() {
+          c.write("${reply}\r\n".bytes()).ignore_err("the client closed")
+        }
+        if line == "QUIT" && !data {
+          open = false
+        }
+      }
+    }
+  }
+  c.close()
+  got
+}
+
+/// Runs one send against a server scripted by s; the send's result and
+/// the lines the server read.
+fn session(n: Net, s: Script, from: Str, to: List[Str], msg: Bytes, auth: Auth = Auth.None) -> (Result[(), SmtpErr], List[Str]) uses (net.dial, net.listen) {
+  let l = n.listen("127.0.0.1:0").or_fault("listen")
+  scope sc {
+    let srv = sc.spawn(fn() -> List[Str] { serve(l, s) })
+    let r = send(n, l.addr(), from, to, msg, auth: auth, security: Security.None)
+    let lines = srv.await
+    l.close()
+    (r, lines)
+  }
+}
+
+test "a message goes out as EHLO, MAIL, RCPT for each address, DATA and QUIT" {
+  let (r, lines) = session(os.net, Script{}, "a@x.test", ["b@y.test", "c@y.test"], b"Subject: hi\n\nbody\n")
+  r.or_fault("send")
+  expect(lines) == ["EHLO localhost", "MAIL FROM:<a@x.test>", "RCPT TO:<b@y.test>", "RCPT TO:<c@y.test>", "DATA", "Subject: hi", "", "body", ".", "QUIT"]
+}
+
+test "the hello name is the one given" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let lines = scope sc {
+    let srv = sc.spawn(fn() -> List[Str] { serve(l, Script{}) })
+    send(os.net, l.addr(), "a@x.test", ["b@y.test"], b"x\n", security: Security.None, hello: "mail.x.test").or_fault("send")
+    srv.await
+  }
+  l.close()
+  expect(lines[0]) == "EHLO mail.x.test"
+}
+
+test "DATA is dot stuffed and its lines end in CRLF" {
+  let (r, lines) = session(os.net, Script{}, "a@x.test", ["b@y.test"], b".hidden\n..two\nlast\r\nno newline")
+  r.or_fault("send")
+  expect(lines[4..]) == ["..hidden", "...two", "last", "no newline", ".", "QUIT"]
+}
+
+test "MAIL FROM asks for 8BITMIME and SMTPUTF8 when EHLO offers them" {
+  let (r, lines) = session(os.net, Script{exts: ["8BITMIME", "SMTPUTF8", "SIZE 1000"]}, "a@x.test", ["b@y.test"], b"x\n")
+  r.or_fault("send")
+  expect(lines[1]) == "MAIL FROM:<a@x.test> BODY=8BITMIME SMTPUTF8"
+}
+
+test "a refused EHLO falls back to HELO, which has no extensions" {
+  let (r, lines) = session(os.net, Script{ehlo: false, exts: ["8BITMIME"]}, "a@x.test", ["b@y.test"], b"x\n")
+  r.or_fault("send")
+  expect(lines[0..3]) == ["EHLO localhost", "HELO localhost", "MAIL FROM:<a@x.test>"]
+}
+
+test "AUTH PLAIN goes to a loopback server in plain text" {
+  let pw: Secret[Str] = Secret.new("pw")
+  let (r, lines) = session(os.net, Script{exts: ["AUTH PLAIN"]}, "a@x.test", ["b@y.test"], b"x\n", auth: Auth.Plain(user: "u", password: pw))
+  r.or_fault("send")
+  expect(lines[1]) == "AUTH PLAIN ${base64.encode(b"\x00u\x00pw")}"
+  expect(lines[2]) == "MAIL FROM:<a@x.test>"
+}
+
+test "AUTH needs the server to offer it" {
+  let pw: Secret[Str] = Secret.new("pw")
+  let (r, _) = session(os.net, Script{}, "a@x.test", ["b@y.test"], b"x\n", auth: Auth.Plain(user: "u", password: pw))
+  match r {
+    Ok(_) => fault("sent without AUTH")
+    Err(e) => expect(e.display()) == "smtp: server doesn't support AUTH"
+  }
+}
+
+test "a refused AUTH is the server's reply" {
+  let pw: Secret[Str] = Secret.new("pw")
+  let (r, _) = session(os.net, Script{exts: ["AUTH PLAIN"], auth: "535 5.7.8 bad credentials"}, "a@x.test", ["b@y.test"], b"x\n", auth: Auth.Plain(user: "u", password: pw))
+  match r {
+    Ok(_) => fault("sent after a refused AUTH")
+    Err(e) => {
+      expect(e.code) == 535
+      expect(e.msg) == "5.7.8 bad credentials"
+    }
+  }
+}
+
+test "a refused recipient is an SmtpErr with the reply's code and text" {
+  let (r, lines) = session(os.net, Script{rcpt: "550 5.1.1 no such user"}, "a@x.test", ["nobody@y.test"], b"x\n")
+  match r {
+    Ok(_) => fault("sent to a refused recipient")
+    Err(e) => {
+      expect(e.code) == 550
+      expect(e.msg) == "5.1.1 no such user"
+      expect(e.display()) == "550 \"5.1.1 no such user\""
+    }
+  }
+  expect(lines.contains("DATA")) == false
+}
+
+test "a multi-line refusal joins its lines" {
+  let (r, _) = session(os.net, Script{rcpt: "550-first\r\n550 second"}, "a@x.test", ["b@y.test"], b"x\n")
+  match r {
+    Ok(_) => fault("sent")
+    Err(e) => {
+      expect(e.code) == 550
+      expect(e.msg) == "first\nsecond"
+    }
+  }
+}
+
+test "a refusing greeting ends the send" {
+  let (r, lines) = session(os.net, Script{greeting: "554 go away"}, "a@x.test", ["b@y.test"], b"x\n")
+  match r {
+    Ok(_) => fault("sent")
+    Err(e) => expect(e.code) == 554
+  }
+  expect(lines) == []
+}
+
+test "a CR or LF in an address or the hello name is refused before dialing" {
+  let want = "smtp: A line must not contain CR or LF"
+  for (from, to, hello) in [("a@x\r\nRCPT TO:<z@z>", "b@y", "h"), ("a@x", "b@y\n", "h"), ("a@x", "b@y", "h\rx")] {
+    match send(os.net, "127.0.0.1:1", from, [to], b"x\n", security: Security.None, hello: hello) {
+      Ok(_) => fault("sent ${from.quote()}")
+      Err(e) => {
+        expect(e.code) == 0
+        expect(e.display()) == want
+      }
+    }
+  }
+}
+
+test "plain text goes only to a loopback host" {
+  for addr in ["192.0.2.1:25", "mail.example.com:25", "[2001:db8::1]:25"] {
+    match send(os.net, addr, "a@x.test", ["b@y.test"], b"x\n", security: Security.None) {
+      Ok(_) => fault("sent in plain text to ${addr}")
+      Err(e) => expect(e.display()) == "smtp: plain text only to a loopback host (Security.None); use StartTls or Tls"
+    }
+  }
+}
+
+test "StartTls needs the server to offer STARTTLS" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let r = scope sc {
+    let srv = sc.spawn(fn() -> List[Str] { serve(l, Script{}) })
+    let r = send(os.net, l.addr(), "a@x.test", ["b@y.test"], b"x\n")
+    srv.await
+    r
+  }
+  l.close()
+  match r {
+    Ok(_) => fault("sent without STARTTLS")
+    Err(e) => expect(e.display()) == "smtp: server doesn't support STARTTLS"
+  }
+}
+
+test "many sends at once each get their own session" {
+  let total = scope sc {
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..8 {
+      hs.push(sc.spawn(fn() -> Int ! Str {
+        var n = 0
+        for i in 0..10 {
+          let body = "task ${t} message ${i}"
+          let (r, lines) = session(os.net, Script{exts: ["8BITMIME"]}, "t${t}@x.test", ["r${i}@y.test"], "${body}\n".bytes())
+          r.map_err(fn(e) { "task ${t}/${i}: ${e}" })?
+          if lines[2] != "RCPT TO:<r${i}@y.test>" || lines[4] != body {
+            return Err("task ${t}/${i}: ${lines}")
+          }
+          n += 1
+        }
+        Ok(n)
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.or_fault("task")
+    }
+    total
+  }
+  expect(total) == 80
+}
