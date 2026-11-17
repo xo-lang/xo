@@ -11795,8 +11795,12 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   `GET prefix/_xo/live` is a websocket (std/websocket's same-host Origin
   rule) that sends the server's version as text at once and after each
   sync that changed it; a connection has one pending notice at most, so a
-  slow client is never queued behind. The page's root carries
-  `data-xo-live` with its path.
+  slow client is never queued behind. With `?push=1&q=QUERY` (decision
+  0689) each later notice is instead the new view as JSON, `{"ver", "html",
+  "seen", "build", "q"}`, the view rendered for the page's query QUERY:
+  rendered and encoded once per version and view (query and, with redact,
+  the principal's seen digest), the same text for every page showing it.
+  The page's root carries `data-xo-live` with its path.
 - The runtime sends the Msg of an `on` event for `click`, `submit` and
   `change` (a `field` placeholder filled from the form's field, or the
   element's own value; "" when absent), keeps its client id in
@@ -11804,7 +11808,9 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   under that id (so they survive going offline and reloads; each tab is
   its own client, and a new tab adopts the queue of a tab that closed,
   or was not seen for 10 minutes), syncs after each event, when the live websocket announces
-  a version past its own, every 2 s while the page is visible and the
+  a version past its own (a thin page asks for views with `push=1` and
+  shows a newer pushed view at once instead, syncing only while Msgs wait,
+  a sync is in flight or its query has changed), every 2 s while the page is visible and the
   websocket is down (every 30 s while it is up), when it becomes visible
   and when the browser comes back online; the websocket reconnects with
   backoff from 1 s to 30 s, and replaces the view when the server's changed (not while a

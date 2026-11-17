@@ -790,6 +790,44 @@ test "a resync notice makes a Host read the store it shares (a bus reconnect)" {
   expect(b.model().todos.len()) == 1
 }
 
+// the Push fields a test reads
+struct PushSeen { ver: Int, html: Str, q: Str } derive Json
+
+test "a thin live page is sent each new view over its socket, rendered once per version and view (decision 0689)" {
+  let h = host(todo_app().with_url_view(fn(m, qv) { text("${qv.get("tab") ?? "all"}:${m.todos.len()}") }))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, routes_for(h))
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let a = websocket.dial(os.net, "ws://${addr}/_xo/live?push=1&q=").or_fault("dial a")
+    let b = websocket.dial(os.net, "ws://${addr}/_xo/live?push=1&q=").or_fault("dial b")
+    let c = websocket.dial(os.net, "ws://${addr}/_xo/live?push=1&q=tab%3Ddone").or_fault("dial c")
+    // a page that does not ask still gets versions
+    let d = websocket.dial(os.net, "ws://${addr}/_xo/live").or_fault("dial d")
+    for w in [a, b, c, d] {
+      expect(w.read().or_fault("open").data.to_str_lossy()) == "0"
+    }
+    while h.live() < 4 {
+      os.clock.sleep(1ms)
+    }
+    h.apply(Msg.Add(id: "x", title: "x"))
+    let ta = a.read().or_fault("a").data.to_str_lossy()
+    let tb = b.read().or_fault("b").data.to_str_lossy()
+    let fa = json.decode_str[PushSeen](ta).or_fault("a frame")
+    let fb = json.decode_str[PushSeen](tb).or_fault("b frame")
+    let fc = json.decode_str[PushSeen](c.read().or_fault("c").data.to_str_lossy()).or_fault("c frame")
+    expect(d.read().or_fault("d").data.to_str_lossy()) == "1"
+    expect((fa.ver, fa.html, fa.q)) == (1, "all:1", "")
+    expect((fb.ver, fb.html)) == (1, "all:1")
+    expect((fc.ver, fc.html, fc.q)) == (1, "done:1", "tab=done")
+    // one frame for a and b's view, one for c's, each made once
+    expect(ta) == tb
+    let fs = h.slot("").frames.with_read(fn(m) { m.values().map(fn(f) { f.ver }) })
+    expect(fs) == [1, 1]
+  }
+}
+
 test "after a resync a live page is sent the version it must sync to, never -1" {
   let st = memory_store()
   let a = host_with(todo_app(), st, local_bus())

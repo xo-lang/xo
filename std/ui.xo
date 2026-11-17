@@ -1502,7 +1502,28 @@ struct Slot[M: Json, E: Json, fx: Effects] {
   // them (group commit)
   queue: Mutex[List[Waiting[M, E]]]
   writing: Atomic[Int]
+  // the live frames last sent, by the view they show (query and seen
+  // digest): each is rendered and encoded once per version, then written
+  // to every live page showing that view (decision 0689)
+  frames: Mutex[Map[Str, Frame]]
 }
+
+// A live frame of a scope at version ver.
+struct Frame {
+  ver: Int
+  text: Str
+}
+
+// What a live page is sent when its view changes (decision 0689): the
+// version, its view, the seen digest and the build, as a Sync without
+// msgs answers; q is the query the view was rendered for.
+struct Push {
+  ver: Int
+  html: Str
+  seen: Str
+  build: Str
+  q: Str
+} derive Json
 
 // A sync's change and where its answer goes.
 struct Waiting[M: Json, E: Json] {
@@ -1603,7 +1624,7 @@ fn (h: Host[M, E, fx, bx]) slot(key: Str) -> Slot[M, E, fx] {
         m.remove(old)
       }
     }
-    let sl = Slot{state: Mutex.new(ui_scope(app, st, key, mb)), latest: Atomic[Int].new(0), resync: Atomic[Int].new(0), used: Atomic[Int].new(t), queue: Mutex.new([]), writing: Atomic[Int].new(0)}
+    let sl = Slot{state: Mutex.new(ui_scope(app, st, key, mb)), latest: Atomic[Int].new(0), resync: Atomic[Int].new(0), used: Atomic[Int].new(t), queue: Mutex.new([]), writing: Atomic[Int].new(0), frames: Mutex.new({})}
     m.put(key, sl)
     sl
   })
@@ -1934,14 +1955,49 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   r.handle("GET ${live}", fn(req) {
     let p = who(req) ?? return http.text(401, "std/ui: sign in first")
     let key = hh.scope_for(req.query("page") ?? "", p) ?? return http.text(404, "std/ui: no such page")
-    websocket.upgrade(req, fn(conn) { serve_live(hh, conn, p, key) })
+    // a thin page asks for the view itself (push=1, with its query q),
+    // others for the version, then sync
+    let push: Str? = if req.query("push") == Some("1") { Some(req.query("q") ?? "") } else { None }
+    websocket.upgrade(req, fn(conn) { serve_live(hh, conn, p, key, push: push, build: build) })
+  })
+}
+
+// The live frame of scope key for principal p and query q: its view at
+// the version this instance holds, rendered and encoded once per version
+// and view, the same text for every page showing it (decision 0689).
+fn (h: Host[M, E]) frame(key: Str, p: Str, q: Str, build: Str) -> Str {
+  let sl = h.slot(key)
+  let latest = sl.latest.get()
+  let again = sl.resync.swap(0) > 0
+  let (m0, v) = sl.state.with(fn(var c) {
+    let _ok = c.fresh(latest, again: again).is_ok()
+    (c.model(), c.version())
+  })
+  let seen = h.digest(m0, p)
+  let vk = "${q}\n${seen}"
+  let app = h.app
+  // under the scope's lock: a version's frame is rendered once while its
+  // other pages wait for it
+  sl.frames.with(fn(var fs) -> Str {
+    if let Some(f) = fs.get(vk) {
+      if f.ver == v {
+        return f.text
+      }
+    }
+    let text = json.encode_str(Push{ver: v, html: render(app.show(h.shown(m0, p), q)), seen: seen, build: build, q: q})
+    if fs.len() >= 256 {
+      fs = {}
+    }
+    fs.put(vk, Frame{ver: v, text: text})
+    text
   })
 }
 
 // A live connection: the server's version now, then each new version; the
-// client syncs when it sees one past its own. Reads only to notice the
-// close.
-fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str, key: Str) {
+// client syncs when it sees one past its own. With push (the page's
+// query), each new version comes as its view (a Push), so the page need
+// not sync (decision 0689). Reads only to notice the close.
+fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str, key: Str, push: Str? = None, build: Str = "") {
   let (id, ch) = h.subscribe(p, scope: Some(key))
   defer h.unsubscribe(id)
   // the digest after subscribing: a change in between is seen again and
@@ -1960,13 +2016,15 @@ fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str, k
           last = d
           // after a resync (-1) the version is this instance's once it has
           // read the store (model() does), which the runtime syncs to
-          let at = if v < 0 {
+          let msg = if let Some(q) = push {
+            h.frame(key, p, q, build)
+          } else if v < 0 {
             let _read = h.model(scope: Some(key))
-            h.version_of(key)
+            "${h.version_of(key)}"
           } else {
-            v
+            "${v}"
           }
-          if conn.write_text("${at}") is Err(_) {
+          if conn.write_text(msg) is Err(_) {
             break
           }
         }
@@ -2180,9 +2238,22 @@ function boot(){
   ["click","submit","change"].forEach(function(n){on(root,n,function(ev){handler(ev,n);});});
   function connect(){
     if(!live||!window.WebSocket)return;
-    try{ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+live);}catch(e){return;}
+    // a thin page is sent each new view (decision 0689)
+    var lu=live+(wasmUrl?"":(live.indexOf("?")<0?"?":"&")+"push=1&q="+encodeURIComponent(location.search.slice(1)));
+    try{ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+lu);}catch(e){return;}
     ws.onopen=function(){wsUp=true;backoff=1000;sync();};// catch up on what changed while the socket was down
-    ws.onmessage=function(ev){var v=+ev.data;if(v>ver||queue.length)sync();};
+    ws.onmessage=function(ev){
+      var d=String(ev.data);
+      if(d.charAt(0)!=="{"){if(+d>ver||queue.length)sync();return;}
+      var f;try{f=JSON.parse(d);}catch(e){sync();return;}
+      // a page with Msgs to send, a sync in flight, a predicting client or
+      // another query syncs instead
+      if(queue.length||busy||mod||f.q!==location.search.slice(1)){if(f.ver>ver||queue.length)sync();return;}
+      if(f.ver<=ver)return;
+      ver=f.ver;dg=f.seen||"";show(f.html);
+      if(f.build&&build&&f.build!==build&&!stopped){stale=true;H().setAttribute("data-xo-stale","");}
+      if(stale&&!stopped&&!queue.length&&!editing())location.reload();
+    };
     ws.onclose=function(){wsUp=false;if(stopped)return;setTimeout(connect,backoff);backoff=Math.min(backoff*2,30000);};
   }
   on(window,"online",sync);

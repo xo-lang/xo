@@ -1,5 +1,22 @@
 # std/ui changes
 
+## 2026-11-16: perf: live pages get the new view over their socket (decision 0689)
+
+- Kind: perf
+- Commit: this push
+- Found by: owner track (1,000 live viewers on one room, step 4 measurement)
+- Go reference: none
+- Test: std/ui "a thin live page is sent each new view over its socket, rendered once per version and view" (two pages share one frame, another query gets its own, a page without push=1 still gets versions); every headless Chrome suite
+- Timing: the Mac, one room, 200 changes every 20 ms, viewers in processes of 100 on the same machine (~/xo-lead/notes/stdui/viewers): 1,000 viewers 39.4 s of server CPU, 150,130 sync requests and a write p99 of 18 ms before, 11.9 s, no requests and 5.5 ms after; 100 viewers 3.0 s before, 0.9 s after; every viewer current as the writer finished in both
+- Shipped in: not yet released
+
+A thin page's live websocket asks for views (`?push=1&q=` its query):
+each new version comes as the view itself, rendered and encoded once per
+version and view in the scope and written to every page showing it, so
+the page shows it without a sync request. A page with Msgs waiting, a
+sync in flight, a predicting client or another query still syncs. Pages
+of an older runtime, and predicting clients, keep getting versions.
+
 ## 2026-11-16: perf: group commit, the syncs to one scope that arrive during an append share the next one (decision 0686)
 
 - Kind: perf
