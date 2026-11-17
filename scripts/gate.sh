@@ -1645,19 +1645,13 @@ prove_vetcost() { prove_go vetcost ./cmd/xo -run '^TestVetCostStd$'; }
 # already has is a note (gatelib.sh gate_stdcov_blame; lead, 2026-11-16,
 # main red with 80 entries stopped every std push)
 prove_stdcov() {
-  local f0=$failed b n
+  local f0=$failed
   failed=0
-  XO_STDCOV_SWEEP=1 full stdcov ./internal/repotest -run '^TestStdAPICovered$'
+  XO_STDCOV_SWEEP=1 full stdcov ./internal/repotest -run '^TestStdAPICovered$' >"$logs/stdcov.step"
   if [ "$failed" = 1 ] && grep -q 'stdcoverage_test.go:' "$logs/stdcov.txt"; then
-    b=$(gate_stdcov_blame "$logs/stdcov.txt" "$base")
-    n=$(grep -c 'stdcoverage_test.go:' "$logs/stdcov.txt")
-    if [ -z "$b" ]; then
-      failed=0
-      echo "stdcov: ok for this change: the $n failures are main's own, none on a declaration it adds ($logs/stdcov.txt)"
-    else
-      echo "stdcov: FAIL: $(echo "$b" | wc -l | tr -d ' ') of the $n failures are this change's:"
-      echo "$b" | head -10 | cut -c1-200
-    fi
+    gate_stdcov_note "$logs/stdcov.step" "$logs/stdcov.txt" "$base" && failed=0
+  else
+    cat "$logs/stdcov.step"
   fi
   [ "$failed" = 0 ] && ran="$ran stdcov"
   [ "$f0" = 1 ] && failed=1

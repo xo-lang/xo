@@ -25,6 +25,12 @@ declaration whose `pub` line the change adds, a stale allow.txt line
 when it edits allow.txt, and any other failure of the test. Main's own
 entries are a note. Tests: gatesteps_test.sh "stdcov blame"; on the red
 main of 2026-11-16 it blamed 0 of 57 for a corpus-only change.
+Main's own entries print as "stdcov: main's only" (gatelib.sh
+gate_stdcov_note), never "stdcov: FAIL (LOG)": the offload host keeps
+the log of each FAIL ( line as a failed step's, and on 2026-11-16 the
+kept raw log of a passing gate (ev115sse, rc 0) read as a failure to
+azure-1 and the lead. A base that is not a commit is reported, not read
+as "allow.txt changed". Tests: gatesteps_test.sh "stdcov note".
 Lesson for any check pushq adds: a rule that runs over
 what the rebase brings in must tell a stale main from the push's own
 breakage, or one red commit on main stops everyone.
