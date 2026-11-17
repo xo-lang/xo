@@ -10956,7 +10956,7 @@ fn client(c: http.Client, base: Str) -> Client      // base: http(s)://host:port
 fn (c: Client) target() -> Str                      // grpc-go's ClientConn.Target: as given
 fn (c: Client) canonical_target() -> Str            // CanonicalTarget: dns:/// added to a name without a scheme
 // service config and retries (decision 0705)
-struct ServiceConfig { methods: List[MethodConfig], retry_throttling: RetryThrottling? }
+struct ServiceConfig { methods: List[MethodConfig], retry_throttling: RetryThrottling?, balancer: Balancer? }
 struct MethodConfig { names: List[MethodName], timeout: Duration?, retry: RetryPolicy?, max_request_bytes: Int?, max_response_bytes: Int? }
 struct MethodName { service: Str, method: Str }   // both empty: every method; method empty: the service's
 struct RetryPolicy { max_attempts: Int, initial_backoff: Duration, max_backoff: Duration, backoff_multiplier: Float, retryable_codes: List[Code] }
@@ -10964,6 +10964,11 @@ struct RetryThrottling { max_tokens: Float, token_ratio: Float }
 fn service_config_json(text: Str) -> ServiceConfig ! Str          // grpc-go's JSON and its validation
 fn (c: Client) with_service_config(cfg: ServiceConfig, clock: Clock, rand: Rand) -> Client   // WithDefaultServiceConfig
 fn (c: Client) with_disable_retry() -> Client
+enum Balancer { PickFirst, RoundRobin }                         // grpc-go's pick_first and round_robin (decision 0707)
+fn (c: Client) with_balancer(b: Balancer) -> Client            // PickFirst by default; a service config's balancer wins
+fn (c: Client) with_addrs(addrs: List[Str]) -> Client          // manual resolver: "host:port" or "unix:PATH" each
+fn (c: Client) with_dns(n: Net, clock: Clock) -> Client        // the target's host by n.lookup_host (port 443 by default)
+fn (c: Client) with_resolver(f: fn() -> List[Str] ! Status, clock: Clock) -> Client   // WithResolvers
 fn (c: Client) with_max_call_attempts(n: Int) -> Client           // the cap on max_attempts, 5 by default
 fn (c: Client) with_max_retry_buffer(n: Int) -> Client            // MaxRetryRPCBufferSize, 256 KiB
 fn (c: Client) method_config(method: Str) -> MethodConfig?       // GetMethodConfig
@@ -10995,6 +11000,19 @@ fn (c: Client) with_authority(a: Str) -> Client           // WithAuthority: ever
 fn (c: Client) with_call_authority(a: Str) -> Client      // CallAuthority: the calls' :authority, checked against the server's certificate
 fn (a: AuthInfo) validate_authority(authority: Str) -> () ! Str   // AuthorityValidator (TLSInfo's and insecure's ValidateAuthority)
 ```
+
+Balancing (decision 0707): a client given addresses (with_addrs, with_dns,
+with_resolver) gives each its own http.Client (`with_dial_addr`), shared by
+copies of the client; the target stays the `:authority` and TLS name.
+PickFirst sends every call to the first address that connects; RoundRobin
+turns per call over the addresses whose last connect did not fail (all of
+them when every one did). A call whose connect fails, before any of it went
+out, moves on to the next address; when every address failed the resolver
+runs again if it last ran 30 s ago or more, else the call fails Unavailable.
+A resolver runs on the first call; its error, or no address, fails the call.
+A service config's `loadBalancingConfig` picks its first policy std/grpc
+knows (none known is an error, as grpc-go) and `loadBalancingPolicy` is read
+without it.
 
 - Per-RPC credentials run before each call, the client's first and then the call's; their names are made lower case and
   the call's own metadata wins on a shared name. As grpc-go: credentials with `require_tls` over `http://` fail the call

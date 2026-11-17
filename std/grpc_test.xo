@@ -892,3 +892,56 @@ test "unix: targets call a server on a Unix socket, as grpc-go's" uses (net, clo
     expect(client(hc, "unix:${path}").canonical_target()) == "unix:${path}"
   }
 }
+
+// decision 0707: grpc-go's pick_first and round_robin over a manual resolver's addresses (one of them refusing
+// connections), the policy from a service config's loadBalancingConfig, and a resolver run on the first call only
+test "with_addrs spreads calls as grpc-go's pick_first and round_robin" uses (net, clock, rand) {
+  let dead = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let dead_addr = dead.addr()
+  dead.close()
+  var one = server(os.clock)
+  one.unary("/b.B/Who", fn(_c, _r) -> Bytes ! Status { Ok(b"one") })
+  var two = server(os.clock)
+  two.unary("/b.B/Who", fn(_c, _r) -> Bytes ! Status { Ok(b"two") })
+  let h1 = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), one.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let h2 = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), two.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { h1.serve().ignore_err("the test ends the server") })
+    s.spawn_background(fn() { h2.serve().ignore_err("the test ends the server") })
+    let hc = http.client(os.net, timeout: 10s)
+    let who = fn(c: Client) -> Str {
+      match c.unary("/b.B/Who", b"") {
+        Ok(b) => b.to_str_lossy()
+        Err(e) => if e.code == Code.Unavailable { "unavailable" } else { "err ${e.message}" }
+      }
+    }
+    let addrs = [dead_addr, h1.addr(), h2.addr()]
+    let pf = client(hc, "dns:///svc.test:50051").with_addrs(addrs)
+    expect([who(pf), who(pf), who(pf)]) == ["one", "one", "one"]
+    let rr = client(hc, "dns:///svc.test:50051").with_addrs(addrs).with_balancer(Balancer.RoundRobin)
+    expect([who(rr), who(rr), who(rr), who(rr)]) == ["one", "two", "one", "two"]
+    let cfg = service_config_json("{\"loadBalancingConfig\": [{\"weighted_round_robin\": {}}, {\"round_robin\": {}}]}").or_fault("config")
+    expect(cfg.balancer) == Some(Balancer.RoundRobin)
+    let sc = client(hc, "svc.test:50051").with_addrs([h1.addr(), h2.addr()]).with_service_config(cfg, os.clock, os.rand)
+    expect([who(sc), who(sc)]) == ["one", "two"]
+    expect(who(client(hc, "svc.test:50051").with_addrs([dead_addr]))) == "unavailable"
+    expect(who(client(hc, "svc.test:50051").with_addrs([]))) == "unavailable"
+    let runs = Mutex[Int].new(0)
+    let rs = client(hc, "svc.test:50051").with_resolver(fn() -> List[Str] ! Status {
+      runs.with(fn(var n: Int) { n += 1 })
+      Ok([h2.addr()])
+    }, os.clock)
+    expect([who(rs), who(rs)]) == ["two", "two"]
+    expect(runs.with(fn(var n: Int) -> Int { n })) == 1
+  }
+}
+
+test "a service config's balancer policy, as grpc-go's parser" {
+  expect(service_config_json("{\"loadBalancingPolicy\": \"ROUND_ROBIN\"}").map(fn(c) -> Balancer? { c.balancer })) == Ok(Some(Balancer.RoundRobin))
+  expect(service_config_json("{\"loadBalancingPolicy\": \"grpclb\"}").map(fn(c) -> Balancer? { c.balancer })) == Ok(None)
+  expect(service_config_json("{\"loadBalancingConfig\": [{\"pick_first\": {}}], \"loadBalancingPolicy\": \"round_robin\"}").map(fn(c) -> Balancer? { c.balancer })) == Ok(Some(Balancer.PickFirst))
+  expect(service_config_json("{\"loadBalancingConfig\": [{\"grpclb\": {}}]}")) == Err("service config: invalid loadBalancingConfig: no supported policies found")
+  expect(target_host_port("http://svc.test:50051")) == ("svc.test", "50051")
+  expect(target_host_port("http://svc.test")) == ("svc.test", "443")
+  expect(target_host_port("https://[::1]:8443/x")) == ("::1", "8443")
+}

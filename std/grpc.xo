@@ -750,6 +750,10 @@ pub struct Client {
   pub on_finish: List[fn(Str, Status?) -> ()] = []
   /// the target as given to client (Client.target)
   pub target: Str = ""
+  /// decision 0707: with_balancer's policy, and the addresses calls are spread over (with_addrs, with_dns,
+  /// with_resolver; none: the base URL's host is dialed as before). The state is shared by copies of the client.
+  pub balancer: Balancer = Balancer.PickFirst
+  pub lb: Mutex[LbState]? = None
   /// credentials every call carries (grpc-go's WithPerRPCCredentials)
   pub creds: List[PerRpcCreds] = []
   /// credentials of this client's calls (grpc-go's PerRPCCredsCallOption)
@@ -925,7 +929,27 @@ pub struct MethodConfig {
 pub struct ServiceConfig {
   pub methods: List[MethodConfig] = []
   pub retry_throttling: RetryThrottling? = None
+  /// loadBalancingConfig's first policy std/grpc knows, else loadBalancingPolicy's (decision 0707); None leaves
+  /// the client's (with_balancer, PickFirst by default)
+  pub balancer: Balancer? = None
 } derive Eq
+
+/// How a client with several addresses (with_addrs, with_dns, with_resolver) spreads its calls, as grpc-go's
+/// built-in balancers (decision 0707): PickFirst sends every call to the first address that connects and moves on
+/// when it fails; RoundRobin turns per call over the addresses whose last connect did not fail.
+pub enum Balancer {
+  PickFirst
+  RoundRobin
+} derive Eq, Debug
+
+/// grpc-go's registered name of a balancer policy ("pick_first", "round_robin"), None for one std/grpc lacks.
+fn balancer_named(n: Str) -> Balancer? {
+  match n.to_lower() {
+    "pick_first" => Some(Balancer.PickFirst)
+    "round_robin" => Some(Balancer.RoundRobin)
+    _ => None
+  }
+}
 
 const CODE_NAMES: List[Str] = ["OK", "CANCELLED", "UNKNOWN", "INVALID_ARGUMENT", "DEADLINE_EXCEEDED", "NOT_FOUND", "ALREADY_EXISTS", "PERMISSION_DENIED", "RESOURCE_EXHAUSTED", "FAILED_PRECONDITION", "ABORTED", "OUT_OF_RANGE", "UNIMPLEMENTED", "INTERNAL", "UNAVAILABLE", "DATA_LOSS", "UNAUTHENTICATED"]
 
@@ -1066,6 +1090,29 @@ pub fn service_config_json(text: Str) -> ServiceConfig ! Str {
     }
     out.retry_throttling = Some(RetryThrottling{max_tokens: mt, token_ratio: tr})
   }
+  // grpc-go's serviceconfig: loadBalancingConfig is a list of one-key objects, the first known policy chosen (none
+  // known is an error); loadBalancingPolicy, a name, is read only without it and an unknown name is ignored
+  if let Some(lbc) = root.get("loadBalancingConfig") {
+    let items = match lbc {
+      List(xs) => xs
+      _ => return Err("service config: invalid loadBalancingConfig: not a list")
+    }
+    for it in items {
+      let name = match it {
+        Object(m) => if m.len() == 1 { m[0].0 } else { return Err("service config: invalid loadBalancingConfig: an entry has ${m.len()} policies, want 1") }
+        _ => return Err("service config: invalid loadBalancingConfig: an entry is not an object")
+      }
+      if let Some(b) = balancer_named(name) {
+        out.balancer = Some(b)
+        break
+      }
+    }
+    if out.balancer is None {
+      return Err("service config: invalid loadBalancingConfig: no supported policies found")
+    }
+  } else if let Some(Str(n)) = root.get("loadBalancingPolicy") {
+    out.balancer = balancer_named(n)
+  }
   Ok(out)
 }
 
@@ -1173,6 +1220,87 @@ pub fn client(c: http.Client, base: Str) -> Client {
     h = h.with_dial_addr("unix:${path}")
   }
   Client{http: h, base: url, gzip: false, target: base}
+}
+
+/// A balancing client's shared state (decision 0707).
+pub struct LbState {
+  /// the addresses, "host:port" or "unix:PATH", and the http.Client dialing each (with_dial_addr)
+  addrs: List[Str] = []
+  conns: Map[Str, http.Client] = {}
+  /// the addresses whose last connect failed
+  down: Set[Str] = #{}
+  /// PickFirst's address and RoundRobin's next turn
+  cur: Int = 0
+  next: Int = 0
+  /// the resolver (with_dns, with_resolver; none for with_addrs) and the time since the client was made (its clock)
+  resolve: List[fn() -> List[Str] ! Status] = []
+  elapsed: List[fn() -> Duration] = []
+  /// when it last resolved (elapsed's value); None before the first call
+  at: Duration? = None
+}
+
+/// grpc-go's min resolution interval: a resolver runs again after every address failed, at most this often.
+const RESOLVE_EVERY: Duration = 30s
+
+/// The client spreading its calls with b (grpc-go's loadBalancingConfig through WithDefaultServiceConfig; a service
+/// config's balancer wins). Only a client with several addresses (with_addrs, with_dns, with_resolver) balances.
+pub fn (c: Client) with_balancer(b: Balancer) -> Client {
+  c with {balancer: b}
+}
+
+/// The client calling addrs, each "host:port" or "unix:PATH" (grpc-go's manual resolver): the target stays the
+/// :authority and the TLS server name. An empty list fails each call Unavailable.
+pub fn (c: Client) with_addrs(addrs: List[Str]) -> Client {
+  c with {lb: Some(Mutex[LbState].new(LbState{addrs: addrs, at: Some(0s)}))}
+}
+
+/// The client resolving its target's host with n.lookup_host (grpc-go's dns resolver; port 443 when the target
+/// has none) on its first call, and again after every address failed, at most every 30 s (clock's time).
+pub fn (c: Client) with_dns(n: Net, clock: Clock) -> Client uses (net.dial, clock) {
+  let (host, port) = target_host_port(c.base)
+  let look = pure1(fn(_u: Int) -> Result[List[Str], Status] {
+    match n.lookup_host(host) {
+      Ok(ips) => Ok(ips.map(fn(ip) -> Str { if ip.contains(":") { "[${ip}]:${port}" } else { "${ip}:${port}" } }))
+      Err(e) => Err(status_new(Code.Unavailable, "name resolver error: ${e}"))
+    }
+  })
+  c.with_lb_resolver(fn() -> List[Str] ! Status { look(0) }, clock)
+}
+
+/// The client asking f for its addresses (grpc-go's resolver.Builder and WithResolvers), when with_dns would
+/// resolve: on its first call, and after every address failed at most every 30 s. f's error fails the call.
+pub fn (c: Client) with_resolver[fx: Effects](f: fn() -> List[Str] ! Status uses fx, clock: Clock) -> Client uses (fx, clock) {
+  let g = pure1(fn(_u: Int) -> Result[List[Str], Status] { f() })
+  c.with_lb_resolver(fn() -> List[Str] ! Status { g(0) }, clock)
+}
+
+fn (c: Client) with_lb_resolver(f: fn() -> List[Str] ! Status, clock: Clock) -> Client uses clock {
+  let t0 = clock.now()
+  let el = pure1(fn(_u: Int) -> Duration { clock.since(t0) })
+  c with {lb: Some(Mutex[LbState].new(LbState{resolve: [f], elapsed: [fn() -> Duration { el(0) }]}))}
+}
+
+/// The host and port of a base URL (`http://host:port`, `https://[::1]:port`); port 443 when it has none, as
+/// grpc-go's dns resolver.
+fn target_host_port(base: Str) -> (Str, Str) {
+  var rest = base
+  if let Some(i) = rest.find("://") {
+    rest = rest[i + 3..]
+  }
+  if let Some(i) = rest.find("/") {
+    rest = rest[0..i]
+  }
+  if rest.starts_with("[") {
+    if let Some(j) = rest.find("]") {
+      let h = rest[1..j]
+      let after = rest[j + 1..]
+      return (h, if after.starts_with(":") { after[1..] } else { "443" })
+    }
+  }
+  match rest.rfind(":") {
+    Some(i) => (rest[0..i], rest[i + 1..])
+    None => (rest, "443")
+  }
 }
 
 /// grpc-go's ClientConn.Target: the target as given to `client`.
@@ -1310,18 +1438,168 @@ fn call_authority_of(c: Client) -> Str {
 
 /// The http.Client a call goes on: with a call authority over https, one whose new connections check it.
 fn conn_of(c: Client) -> http.Client {
+  conn_on(c, c.http, "")
+}
+
+/// conn_of over base, the http.Client of the balanced address addr ("" for the client's own).
+fn conn_on(c: Client, base: http.Client, addr: Str) -> http.Client {
   if c.call_authority == "" || !c.base.starts_with("https://") {
-    return c.http
+    return base
   }
   let a = c.call_authority
-  let base = c.http
+  let key = if addr == "" { a } else { "${a} ${addr}" }
   c.checked.with(fn(var m) -> http.Client {
-    match m.get(a) {
+    match m.get(key) {
       Some(h) => h
       None => {
         let h = base.with_verify_conn(fn(certs) -> () ! Str { validate_certs(certs, a) })
-        m[a] = h
+        m[key] = h
         h
+      }
+    }
+  })
+}
+
+/// Opens r for a call: on the client's connection, or with addresses (decision 0707) on the balancer's choice,
+/// moving on to the next address when one fails to connect (no byte of the call went out), and resolving again
+/// once (at most every 30 s) when every address failed.
+fn open_call(c: Client, r: http.Request) -> http.ClientStream ! Status uses net.dial {
+  let m = match c.lb {
+    Some(x) => x
+    None => return conn_of(c).open(r).map_err(fn(e) -> Status { open_err(c, e) })
+  }
+  let bal = match c.svc {
+    Some(cfg) => cfg.balancer ?? c.balancer
+    None => c.balancer
+  }
+  var tried: Set[Str] = #{}
+  var again = true
+  var last: Status? = None
+  while true {
+    for a in lb_order(m, bal, tried)? {
+      tried.add(a)
+      match lb_conn(c, m, a).open(r) {
+        Ok(st) => {
+          lb_up(m, bal, a)
+          return Ok(st)
+        }
+        Err(e) => {
+          if !(e is http.ClientErr.Connect(_)) {
+            return Err(open_err(c, e))
+          }
+          m.with(fn(var st: LbState) { st.down.add(a) })
+          last = Some(open_err(c, e))
+        }
+      }
+    }
+    if !again || !lb_reresolve(m) {
+      break
+    }
+    again = false
+  }
+  Err(last ?? status_new(Code.Unavailable, "name resolver error: produced zero addresses"))
+}
+
+/// The http.Client dialing a (made once, kept in the shared state), with conn_of's authority check.
+fn lb_conn(c: Client, m: Mutex[LbState], a: Str) -> http.Client {
+  let base = c.http
+  let h = m.with(fn(var st: LbState) -> http.Client {
+    match st.conns.get(a) {
+      Some(x) => x
+      None => {
+        let x = base.with_dial_addr(a)
+        st.conns[a] = x
+        x
+      }
+    }
+  })
+  conn_on(c, h, a)
+}
+
+/// The addresses a call tries, in turn, leaving out those it tried: PickFirst from its address on; RoundRobin from
+/// its next turn over the addresses whose last connect did not fail (all when every one failed), then those. The
+/// first call resolves.
+fn lb_order(m: Mutex[LbState], bal: Balancer, tried: Set[Str]) -> List[Str] ! Status {
+  m.with(fn(var st: LbState) -> List[Str] ! Status {
+    if st.at is None {
+      st = lb_resolved(st)?
+    }
+    let n = st.addrs.len()
+    var out: List[Str] = []
+    if n == 0 {
+      return Ok(out)
+    }
+    if bal == Balancer.PickFirst {
+      for k in 0..n {
+        out.push(st.addrs[(st.cur + k) % n])
+      }
+    } else {
+      let ready = st.addrs.filter(fn(a) -> Bool { !st.down.contains(a) })
+      let turn = if ready.is_empty() { st.addrs } else { ready }
+      let start = st.next % turn.len()
+      st.next = st.next + 1
+      for k in 0..turn.len() {
+        out.push(turn[(start + k) % turn.len()])
+      }
+      for a in st.addrs {
+        if !out.contains(a) {
+          out.push(a)
+        }
+      }
+    }
+    Ok(out.filter(fn(a) -> Bool { !tried.contains(a) }))
+  })
+}
+
+/// st after its resolver ran (none: as it is), the time noted; a resolver's error or no address fails the call.
+fn lb_resolved(st0: LbState) -> LbState ! Status {
+  var st = st0
+  st.at = Some(if st.elapsed.is_empty() { 0s } else { st.elapsed[0]() })
+  if st.resolve.is_empty() {
+    return Ok(st)
+  }
+  let got = st.resolve[0]()?
+  if got.is_empty() {
+    return Err(status_new(Code.Unavailable, "name resolver error: produced zero addresses"))
+  }
+  if got != st.addrs {
+    st.addrs = got
+    st.down = #{}
+    st.cur = 0
+  }
+  Ok(st)
+}
+
+/// Resolves again after every address failed, when the resolver last ran at least 30 s ago; whether it did.
+fn lb_reresolve(m: Mutex[LbState]) -> Bool {
+  m.with(fn(var st: LbState) -> Bool {
+    if st.resolve.is_empty() || st.elapsed.is_empty() {
+      return false
+    }
+    if let Some(t) = st.at {
+      if st.elapsed[0]() - t < RESOLVE_EVERY {
+        return false
+      }
+    }
+    match lb_resolved(st) {
+      Ok(x) => {
+        st = x
+        true
+      }
+      Err(_) => false
+    }
+  })
+}
+
+/// a connected: it is up again, and PickFirst's address.
+fn lb_up(m: Mutex[LbState], bal: Balancer, a: Str) {
+  m.with(fn(var st: LbState) {
+    st.down.remove(a)
+    if bal == Balancer.PickFirst {
+      for (i, x) in st.addrs.indexed() {
+        if x == a {
+          st.cur = i
+        }
       }
     }
   })
@@ -1499,9 +1777,9 @@ fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], 
   if auth != "" {
     r = r.with_host(auth)
   }
-  let st = match conn_of(c).open(r) {
+  let st = match open_call(c, r) {
     Ok(s) => s
-    Err(e) => return (Err(open_err(c, e)), false, None)
+    Err(e) => return (Err(e), false, None)
   }
   let head = st.head()
   if let Some(e) = head_status(head) {
@@ -1583,16 +1861,15 @@ fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str]
   if auth != "" {
     r = r.with_host(auth)
   }
-  let hc = conn_of(c)
   let head = Chan[(http.ClientStream?, Status?)].new(1)
   let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: c.max_recv, gzip: c.gzip, max_send: c.max_send}
   var result: R? = None
   var failure: Status? = None
   scope s {
     s.spawn(fn() {
-      match hc.open(r) {
+      match open_call(c, r) {
         Ok(st) => head.send((Some(st), None))
-        Err(e) => head.send((None, Some(open_err(c, e))))
+        Err(e) => head.send((None, Some(e)))
       }
     })
     match f(cc) {

@@ -1,5 +1,15 @@
 # std/grpc changes
 
+
+## 2026-11-17: feature: balancing over several addresses (with_addrs, with_dns, with_resolver, Balancer)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (map.txt grpc.behavior.name_resolution, grpc.WithResolvers, grpc.PickFirstBalancerName; decision 0707)
+- Go reference: google.golang.org/grpc v1.79.2 balancer/pickfirst, balancer/roundrobin, resolver/manual, internal/resolver/dns (minResolutionInterval 30 s), serviceconfig loadBalancingConfig
+- Test: std/grpc_test.xo "with_addrs spreads calls as grpc-go's pick_first and round_robin", "a service config's balancer policy, as grpc-go's parser"
+- Timing: none (a client without addresses takes the path it took before)
+- Shipped in: not yet released
 ## 2026-11-17: feature: unix: targets
 
 - Kind: feature

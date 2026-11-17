@@ -1,6 +1,6 @@
 # 0707: std/grpc name resolution and load balancing
 
-Status: Proposed (xo-4c, 2026-11-17; task #236)
+Status: Accepted (owner, 2026-11-17, xw decision #89: option 1; built by xo-4c, task #236)
 
 ## Context
 
@@ -30,7 +30,7 @@ Typed resolvers and two balancers, as grpc-go's built-in ones.
 - `Client.with_addrs(addrs: List[Str])`: a fixed address list (grpc-go's
   resolver/manual), each "host:port" or "unix:/path". The target stays
   the :authority and the TLS server name.
-- `Client.with_dns(n: Net)`: a `dns:` or bare target is resolved by
+- `Client.with_dns(n: Net, clock: Clock)` (the clock times the 30 s interval; added when built): a `dns:` or bare target is resolved by
   `n.lookup_host` (Net's effects are counted where with_dns is called,
   as decision 0703's interceptors), again after every address failed
   and at most every 30 s (grpc-go's min resolution interval).
@@ -41,7 +41,7 @@ Typed resolvers and two balancers, as grpc-go's built-in ones.
   round_robin turns per call over the addresses whose last connect did
   not fail (all of them when none is ready), as grpc-go's picker.
 - Plug-in resolvers (grpc-go's resolver.Builder, WithResolvers) are a
-  `fn() -> List[Str] ! Status` given to `Client.with_resolver(f)`, run
+  `fn() -> List[Str] ! Status` given to `Client.with_resolver(f, clock)`, run
   where with_dns would run.
 
 ## Consequences

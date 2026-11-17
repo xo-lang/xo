@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/grpc): a client can spread its calls over several addresses, as grpc-go's built-in balancers: `with_addrs`, `with_dns`, `with_resolver`, and `with_balancer(Balancer.PickFirst | Balancer.RoundRobin)`, also read from a service config's `loadBalancingConfig` (decision 0707).
 - Feature (std/http): `Client.with_dial_addr(addr)` dials one address (`host:port` or `unix:PATH`) for every request, as a Go Transport.DialContext that ignores the address; the URL keeps Host and the TLS name.
 - Feature (std/grpc): `unix:///path` and `unix:path` targets call a server on a Unix domain socket, as grpc-go's.
 - Fix (std/grpcreflect): a reflection request or response with a field numbered above 536870911 fails to decode, as protobuf-go's (it was skipped as an unknown field).
