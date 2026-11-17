@@ -21,7 +21,3 @@ func protoparsefuzzCorpus() string {
 	}
 	return string(out)
 }
-
-// registered here, as its name is longer than the generators table's
-// column
-func init() { generators["protoparsefuzz"] = protoparsefuzzCorpus }

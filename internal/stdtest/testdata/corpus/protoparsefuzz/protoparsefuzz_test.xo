@@ -225,3 +225,18 @@ test "std/protoparse accepts what protocompile accepts, with the same outline" {
     fault("${bad.len()} of ${n} accepted files differ, first: ${bad[0]}")
   }
 }
+
+test "std/protoparse rejects what protocompile rejects" {
+  var bad: List[Str] = []
+  var n = 0
+  for (src, ok, _) in CASES {
+    if ok { continue }
+    n += 1
+    if let Ok(f) = protoparse.parse(src) {
+      bad.push("accepted:\n${src}\noutline:\n${outline(f)}")
+    }
+  }
+  if !bad.is_empty() {
+    fault("${bad.len()} of ${n} rejected files differ, first: ${bad[0]}")
+  }
+}

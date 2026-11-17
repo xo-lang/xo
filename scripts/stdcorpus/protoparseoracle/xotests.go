@@ -73,11 +73,11 @@ test "std/protoparse accepts what protocompile accepts, with the same outline" {
 }
 `
 
-// rejectChecked turns on xoReject. Off until task #230: std/protoparse
-// accepts four kinds of file protoc rejects (allow_alias with no aliases,
+// rejectChecked turns on xoReject: on since task #230 (std/protoparse
+// accepted four kinds of file protoc rejects: allow_alias with no aliases,
 // overlapping reserved ranges, overlapping extension ranges, an option
-// with no value); the rejected rows stay in CASES.
-const rejectChecked = false
+// with no value).
+const rejectChecked = true
 
 // xoReject checks that every file protocompile rejects is rejected.
 const xoReject = `

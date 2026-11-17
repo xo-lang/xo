@@ -9,7 +9,7 @@
 // validation (parser.Parse, then parser.ResultFromAST(validate=true)): a
 // file it accepts must parse in std/protoparse to the same outline (its
 // messages, fields, enums, services and rpcs), and a file it rejects must be
-// rejected (rejectChecked, off until task #230). XO_PROTOPARSEFUZZ_WHY=1
+// rejected (rejectChecked). XO_PROTOPARSEFUZZ_WHY=1
 // prints protocompile's reason for each file it rejects.
 //
 // XO_PROTOPARSEFUZZ_SEED (default 0, the committed corpus) moves the seed

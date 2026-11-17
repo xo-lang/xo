@@ -111,6 +111,12 @@ var generators = map[string]func() string{
 	"cbor":         cborCorpus,
 	"protobuf":     protobufCorpus,
 	"protoparse":   protoparseCorpus,
+
+	// the protoparse fuzz corpus (task #152), here so gatelib.sh's
+	// gate_corpus_generators sees it; a line of its own keeps the
+	// column of the names above
+	"protoparsefuzz": protoparsefuzzCorpus,
+
 	"image":        imageCorpus,
 	"jpeg":         jpegCorpus,
 	"jpegenc":      jpegencCorpus,
