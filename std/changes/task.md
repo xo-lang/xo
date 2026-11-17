@@ -1,5 +1,20 @@
 # std/task changes
 
+## 2026-11-17: perf: Semaphore.with takes a free permit without the channel lock
+
+- Kind: perf
+- Commit: this push
+- Found by: perf row bench/perf/task sem (task #88: 2.51 of Go's buffered channel)
+- Go reference: none (Go's sync primitives use the same write then read handoff)
+- Test: goldens task_native and task_std on every backend; std/evidence/task/stress (a semaphore of 3 never lets a fourth in)
+
+A free permit is now taken with one compare and swap and given back with
+one atomic add; only a task that finds no free permit waits on the
+channel, and a release that sees a waiter moves a permit to it. Host 1
+`xo bench --ab` bench/perf/task sem: wall 97.7 to 13.6 ms (0.139, 95% CI
+0.139 to 0.142). A semaphore with a free permit is no longer a
+cancellation point on entry; a waiting one still is.
+
 ## 2026-11-17: fix: a caught fault with a location no longer leaks
 
 - Kind: fix

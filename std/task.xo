@@ -138,23 +138,65 @@ pub struct Group {}
 pub fn (g: Group) spawn[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
 pub fn (g: Group) spawn_background[E, fx: Effects](f: fn() -> () ! E uses fx) uses fx
 
+// A free permit is in free (taken with one compare and swap, no lock) or
+// in handoff (a buffered channel the size of the semaphore, where waiters
+// block). A waiter counts itself in waiters, then looks at free again; a
+// release adds to free, then looks at waiters and, if any, moves a permit
+// from free to handoff. Each side writes before it reads, so one of them
+// sees the other and no permit stays in free while a task waits. Permits
+// in free, in handoff and held always sum to the size, so a send to
+// handoff never waits.
 pub struct Semaphore {
-  permits: Chan[()]
+  handoff: Chan[()]
+  free: Atomic[Int]
+  waiters: Atomic[Int]
 }
 
 pub fn semaphore(permits: Int, at: rt.Loc) -> Semaphore {
   if permits <= 0 {
     rt.fault_at("a semaphore needs at least one permit, got ${permits}", at)
   }
-  Semaphore{permits: permit_chan(permits)}
+  Semaphore{handoff: Chan[()].new(permits), free: Atomic[Int].new(permits), waiters: Atomic[Int].new(0)}
 }
 
 pub fn (s: Semaphore) with[R, E, fx: Effects](f: fn() -> R ! E uses fx) -> R ! E uses fx {
-  match s.permits.recv() {
+  if !s.take() {
+    s.wait()
+  }
+  defer s.give()
+  f()?
+}
+
+/// Takes a permit from free if one is there.
+fn (s: Semaphore) take() -> Bool {
+  var n = s.free.get()
+  while n > 0 {
+    if s.free.compare_and_swap(n, n - 1) {
+      return true
+    }
+    n = s.free.get()
+  }
+  false
+}
+
+/// Waits for a permit (a cancellation point while it blocks; a canceled
+/// waiter holds none).
+fn (s: Semaphore) wait() {
+  s.waiters.add(1)
+  defer s.waiters.add(-1)
+  if s.take() {
+    return
+  }
+  match s.handoff.recv() {
     _ => {}
   }
-  defer s.permits.send(())
-  f()?
+}
+
+fn (s: Semaphore) give() {
+  s.free.add(1)
+  if s.waiters.get() > 0 && s.take() {
+    s.handoff.send(())
+  }
 }
 
 /// Single flight with a shared result (decision 0043): the first caller of
