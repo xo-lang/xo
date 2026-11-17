@@ -132,3 +132,16 @@ test "a NO_PROXY CIDR mask may have leading zeros, as net.ParseCIDR reads it" {
   expect(rules_of(Config{no_proxy: "10.0.0.0/008"}).use_proxy("11.0.0.1:80")) == true
   expect(rules_of(Config{no_proxy: "10.0.0.0/0033"}).use_proxy("10.0.0.1:80")) == true
 }
+
+test "proxy_for's one pass over the host agrees with use_proxy(canonical_addr(u))" {
+  let r = rules_of(Config{http_proxy: "proxy", https_proxy: "proxy", no_proxy: "internal.corp,.example.org,10.0.0.0/8,192.168.0.5:8080,2001:db8::/32,localhost,1.2.3.4,bücher.de,[::1]"})
+  let us = ["http://example.com/", "https://api.internal.corp/", "http://foo.example.org/", "http://10.1.2.3/", "http://192.168.0.5:8080/", "http://192.168.0.5/", "http://[::1]:80/", "https://[2001:db8::1]/", "http://[fe80::1%25eth0]/", "http://localhost:3000/", "http://LOCALHOST/", "http://1.2.3.4/", "http://1.2.3.4.5/", "http://Internal.Corp/", "http://bücher.de/", "http://xn--bcher-kva.de/", "http://[::ffff:10.0.0.1]/", "http://1.2.3/", "http://127.0.0.1/", "http://0/", "http://./"]
+  var bad: List[Str] = []
+  for s in us {
+    let u = url(s)
+    if r.use_proxy_url(u) != r.use_proxy(canonical_addr(u)) {
+      bad.push(s)
+    }
+  }
+  expect(bad) == []
+}

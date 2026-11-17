@@ -1,5 +1,16 @@
 # std/httpproxy changes
 
+## 2026-11-17: perf: a request's host and port are no longer joined and split again
+
+- Kind: perf
+- Commit: this push
+- Found by: task #103 (compiler/llrt perf levers from #88: httpproxy route, 1.665 of Go on host 1 at a2dcc9bc7)
+- Go reference: x/net/http/httpproxy proxyForURL, which joins canonicalAddr and splits it in useProxy
+- Test: std/httpproxy_test.xo "proxy_for's one pass over the host agrees with use_proxy(canonical_addr(u))"
+- Shipped in: not yet released
+
+proxy_for reads the request URL's host once (a byte above 0x7f, a bracket, a colon, or anything but digits and dots) and asks the NO_PROXY rules with the host and port it has, where it built `host:port` and split it again with up to four searches; a host with a bracket or a non-ASCII byte still takes the join and split, for SplitHostPort's errors and the IDNA form. bench/perf/httpproxy_rules route on the Mac: 1.149 of Go's wall (twincheck -time 9), from 455 ms to 380 ms a run.
+
 ## 2026-11-17: fix: a NO_PROXY CIDR mask may have leading zeros
 
 - Kind: fix

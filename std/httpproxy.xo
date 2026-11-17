@@ -223,10 +223,42 @@ pub fn (r: Rules) proxy_for(u: http.Url) -> http.Url? {
   if https { if r.https is None { return None } } else if r.http is None {
     return None
   }
-  if !r.use_proxy(canonical_addr(u)) {
+  if !r.use_proxy_url(u) {
     return None
   }
   if https { r.https } else { r.http }
+}
+
+/// use_proxy(canonical_addr(u)) without building `host:port` and
+/// splitting it again: one pass over the host finds what the pair would
+/// change. A host with a byte above 0x7f (its IDNA form) or a bracket
+/// (SplitHostPort's errors) takes that path; for the rest the split gives
+/// back the host and port joined (bench/perf/httpproxy_rules route).
+fn (r: Rules) use_proxy_url(u: http.Url) -> Bool {
+  var host = u.host
+  if host.starts_with("[") && host.ends_with("]") {
+    host = host[1..host.len() - 1]
+  }
+  let port = match u.port {
+    Some(p) => "${p}"
+    None => PORTS.get(u.scheme) ?? ""
+  }
+  var odd = false
+  var colon = false
+  var name = false
+  for c in host.bytes() {
+    if c >= 0x80 || c == 91 || c == 93 {
+      odd = true
+    } else if c == 58 {
+      colon = true
+    } else if c != 46 && (c < 48 || c > 57) {
+      name = true
+    }
+  }
+  if odd {
+    return r.use_proxy(netip.join_host_port(ascii_name(host), port))
+  }
+  r.use_host(host, port, colon || (!name && !host.is_empty()))
 }
 
 /// Whether a request to addr (`host:port`) goes through the proxy (Go's
@@ -239,11 +271,16 @@ pub fn (r: Rules) use_proxy(addr: Str) -> Bool {
     Ok(hp) => hp
     Err(_) => return false
   }
+  r.use_host(host, port, may_be_ip(host))
+}
+
+/// use_proxy after the split: maybe_ip is may_be_ip(host).
+fn (r: Rules) use_host(host: Str, port: Str, maybe_ip: Bool) -> Bool {
   if host == "localhost" {
     return false
   }
   var ip: netip.Addr? = None
-  let parsed = if may_be_ip(host) { netip.parse_addr(host).ok() } else { None }
+  let parsed = if maybe_ip { netip.parse_addr(host).ok() } else { None }
   if let Some(a) = parsed {
     if a.is_loopback() {
       return false
