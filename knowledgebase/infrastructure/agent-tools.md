@@ -1530,7 +1530,8 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   names what it did not rerun. A HEAD changed after the pre pass runs
   every check in the lane. The gate's base goes to both runs as
   `--base`, so the overlap still counts from the gate's commit; a
-  conflict in the pre pass is left to the lane. Before: a median lane
+  conflict in the pre pass that resolve-addadd cannot settle stops the
+  push there (exit 2), before the wait. Before: a median lane
   hold of 188 s (about 19 pushes an hour) and a median wait of 33 min
   (p90 49, max 57; xw jobs, 41 pushes, 3 hours to 08:45 2026-11-17).
   Tested by scripts/lead/pushq_prelane_test.sh (a bare origin and a
