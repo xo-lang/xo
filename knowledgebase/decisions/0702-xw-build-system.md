@@ -1,6 +1,6 @@
 # 0702: an xw build system in Xo replaces the bash orchestration, stage by stage
 
-Status: Proposed (xw-1, 2026-11-17; the owner asked for it, task #248).
+Status: Accepted (owner, 2026-11-17, xw answer 61: "as written"; drafted by xw-1, task #248).
 
 ## Context
 
