@@ -3,6 +3,8 @@
 // out of line fault stubs, the call site tables, and the text peepholes
 // of the function (load pairs, far slots, far branches).
 
+use github.com/xo-lang/xo/compiler/ssa
+
 /// A machine location: a register, or memory at [base, #off] (reg -1).
 struct MLoc {
   reg: Int
@@ -485,9 +487,9 @@ fn (var g: G) emit() {
     // the inline sites: callee, file, call line, parent
     var sites: List[Str] = []
     for s in g.f.inl_sites {
-      sites.push("${s.callee}|${s.file}|${s.call_line}|${s.parent}")
+      sites.push("${ssa.source_name(s.callee)}|${s.file}|${s.call_line}|${s.parent}")
     }
-    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t${g.dv_field(dvp, dv_labels)}")
+    g.dbgs.push("${g.f.file}\t${ssa.source_name(g.f.name)}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t${g.dv_field(dvp, dv_labels)}")
   }
   let sites = g.sites + g.stub_sites
   var ext = ""

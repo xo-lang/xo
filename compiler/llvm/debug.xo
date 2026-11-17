@@ -73,7 +73,7 @@ fn (var g: Gen) debug_func() {
     }
   }
   let file = g.dbg_file(g.f.file)
-  g.dbg_sp = g.dbg_node("distinct !DISubprogram(name: \"${ir_escape(g.f.name)}\", scope: !${file}, file: !${file}, line: ${line}, type: !${g.dbg_ty}, scopeLine: ${line}, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !${g.dbg_cu})")
+  g.dbg_sp = g.dbg_node("distinct !DISubprogram(name: \"${ir_escape(ssa.source_name(g.f.name))}\", scope: !${file}, file: !${file}, line: ${line}, type: !${g.dbg_ty}, scopeLine: ${line}, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !${g.dbg_cu})")
   g.debug_vars(file)
 }
 

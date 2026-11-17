@@ -167,6 +167,16 @@ fn once_callee(g: Func) -> Bool {
 }
 
 /// The name of the clone of closure function name.
+/// The name a debugger, a traceback and a profile show for function name:
+/// a devirt_once copy (`NAME#once`, `NAME#once.N`) is its closure's
+/// function, NAME (task #276: `xo debug` showed main.fn1.fn4#once).
+pub fn source_name(name: Str) -> Str {
+  match name.find("#once") {
+    Some(i) => name[0..i]
+    None => name
+  }
+}
+
 fn (b: Builder) once_name(name: Str) -> Str {
   var n = "${name}#once"
   var i = 0
