@@ -77,6 +77,9 @@ struct Request {
   /// 0404 stage C), its pieces as the server's BodyPart (data the raw
   /// bytes, never shown as text). Hidden from Xo code.
   src: List[fn(Int) -> http1.BodyPart uses sync] = []
+  /// the bytes written to src's body so far (http.pipe's), for HTTP/2's
+  /// poll_source: a piece written and not yet polled is on its way. Hidden.
+  src_written: List[fn() -> Int uses sync] = []
   /// with_expect_continue's wait in nanoseconds, 0 for none. Hidden.
   expect_ns: Int = 0
   /// with_host's Host (Go's Request.Host), "" for the URL's. Hidden.
@@ -249,6 +252,9 @@ struct BodyReader {
   /// a request that sends this body (with_body_reader); set when made and
   /// read without st, which a read waiting on the source holds
   close: List[fn() -> () uses sync] = []
+  /// the bytes written to the source so far (http.pipe's; none for other
+  /// sources), read without st as close is
+  written: List[fn() -> Int uses sync] = []
   /// the request has no body (HTTP/1.1 with neither Content-Length nor
   /// chunked, or Content-Length 0: net/http's ContentLength 0), so a
   /// reverse proxy sends it on with none (httputil's outreq.Body = nil),
@@ -4167,6 +4173,8 @@ struct PipeState {
   held_n: Int = 0
   /// the reader end closed (the client is done with the request)
   rclosed: Bool = false
+  /// the bytes written so far (BodyReader.written)
+  wrote: Int = 0
 }
 
 /// The bytes a pipe holds before its reader's first read (decision
@@ -4239,7 +4247,8 @@ fn pipe() -> (PipeWriter, BodyReader) {
       stop.close()
     }
   }
-  let b = conn_body(next, [], []) with {close: [close_reader]}
+  let written = fn() -> Int { st.with_read(fn(s) { s.wrote }) }
+  let b = conn_body(next, [], []) with {close: [close_reader], written: [written]}
   (PipeWriter{ch: ch, stop: stop, st: st}, b)
 }
 
@@ -4257,6 +4266,9 @@ fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr {
   // returns, so writing and then opening in one task does not wait
   // forever, up to PIPE_HOLD_MAX bytes (decision 0444)
   let held = w.st.with(fn(var s: PipeState) -> Bool {
+    // counted before it is handed over, so a poll after this write sees
+    // it on its way (poll_source's soon)
+    s.wrote += data.len()
     if s.started || s.held_n + data.len() > PIPE_HOLD_MAX {
       false
     } else {
@@ -4324,7 +4336,7 @@ fn (r: Request) with_body_reader(b: http.BodyReader) -> Request {
       Err(e) => http1.BodyPart{data: "", end: false, err: "${e}"}
     }
   }
-  r with {body: b"", src: [f]}
+  r with {body: b"", src: [f], src_written: rt.cast[http.BodyReader, BodyReader](b).written}
 }
 
 // ---------------------------------------------------------------------------
@@ -4426,33 +4438,44 @@ fn trailer_args(req: Request) -> TrailerArgs {
 struct PolledBody {
   items: List[http1.BodyPart] = []
   started: Bool = false
+  /// the bytes of the pieces queued so far
+  pushed: Int = 0
 }
 
 /// A source over f that never blocks, for HTTP/2's pump: the first call
 /// spawns (spawn) a task pulling f into a queue, each call takes the next
 /// queued piece or answers wait. The blocking f stays src[0] for HTTP/1.1.
-fn poll_source(f: fn(Int) -> http1.BodyPart uses sync, spawn: fn(fn() -> () uses sync) uses sync) -> fn(Int) -> http1.BodyPart uses sync {
+///
+/// written, when the body is a pipe's, gives the bytes written to it: a
+/// wait says soon while more were written than queued.
+fn poll_source(f: fn(Int) -> http1.BodyPart uses sync, spawn: fn(fn() -> () uses sync) uses sync, written: List[fn() -> Int uses sync] = []) -> fn(Int) -> http1.BodyPart uses sync {
   let q = Mutex[PolledBody].new(PolledBody{})
   fn(max: Int) -> http1.BodyPart {
     // one with: whether this call starts the feeder, and the next piece
-    let (first, piece) = q.with(fn(var s: PolledBody) -> (Bool, http1.BodyPart) {
+    let (first, piece, pushed) = q.with(fn(var s: PolledBody) -> (Bool, http1.BodyPart, Int) {
       let was = s.started
       s.started = true
       if s.items.is_empty() {
-        return (!was, http1.BodyPart{data: "", end: false, err: "", wait: true})
+        return (!was, http1.BodyPart{data: "", end: false, err: "", wait: true}, s.pushed)
       }
-      (!was, s.items.remove_at(0))
+      (!was, s.items.remove_at(0), s.pushed)
     })
     if first {
       spawn(fn() {
         while true {
           let p = f(32768)
-          q.with(fn(var s: PolledBody) { s.items.push(p) })
+          q.with(fn(var s: PolledBody) {
+            s.items.push(p)
+            s.pushed += p.data.len()
+          })
           if p.end || !p.err.is_empty() {
             break
           }
         }
       })
+    }
+    if piece.wait && !written.is_empty() && written[0]() > pushed {
+      return piece with {soon: true}
     }
     piece
   }
@@ -4500,7 +4523,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     duplex = [fn(f: fn() -> () uses sync) uses sync { g.spawn_background(f) }]
   }
   let ta = trailer_args(req)
-  let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0])] }
+  let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0], req.src_written)] }
   let tracer = tracer_of(req)
   let tr = tracer_rec(tracer)
   let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle, tr: tr)

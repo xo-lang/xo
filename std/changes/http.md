@@ -10,6 +10,16 @@
 - Timing: none (one branch per received PING)
 - Shipped in: not yet released
 
+
+## 2026-11-17: perf: a duplex request's next piece goes out without waiting for the 10 ms read tick
+
+- Kind: perf
+- Commit: this commit
+- Found by: task #286, the grpcreflect perf twin (a gRPC send then recv on one stream took 11.1 ms a round against grpc-go's 0.1 ms)
+- Go reference: net/http2 Transport writes a request body from its own goroutine (transport.go writeRequestBody), so a piece goes out when written
+- Test: std/grpc_test.xo "a bidi stream's send then recv rounds do not wait for the h2 read tick" (300 rounds within 1.5 s; 3.3 s before)
+- Timing: the Mac, one stream: 2,000 send then recv rounds 22.07 s before, 118 ms after; 500 against grpc-go's server 5.53 s before, 49 ms after (grpc-go's client: 44 ms); a stream that sends once and receives 10,000 messages 2.4 to 3.5 ms before, 2.2 to 2.8 ms after
+- Shipped in: not yet released
 ## 2026-11-17: feature: a Date set empty sends no Date
 
 - Kind: feature

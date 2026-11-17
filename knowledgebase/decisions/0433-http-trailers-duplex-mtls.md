@@ -196,6 +196,14 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
 - Full duplex, h1 server and client (9486e60a7, golden `http_duplex`),
   and the h2 client: a feeder task fills a queue the pump polls (the pump
   reads the socket with a 10 ms deadline while the queue is empty).
+  Since 2026-11-17 (task #286), while a piece written to the body's pipe
+  has not reached the queue (poll_source's soon: the pipe's bytes written
+  against the bytes queued), each entry to the pump first yields to the
+  feeder up to 64 times (SRC_YIELDS), so a write followed by a read in one
+  task (a gRPC send then recv) goes out at once instead of after the tick;
+  with nothing written the pump reads at once (a stream that only
+  receives: 10,000 messages took the same 2 to 3 ms). A piece written by
+  another task while the pump waits in its read still waits for the tick.
 - mTLS, TLS 1.3 native (0aa379fa2): all five ClientAuth modes match Go.
   TLS 1.2 client auth, server and client, native too (checked against
   crypto/tls at MaxVersion TLS 1.2). `with_cert` also works with the system roots (a copy of the roots record).

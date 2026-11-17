@@ -837,3 +837,40 @@ test "a handler chooses the response's compressor from the client's list, as grp
     expect(bad) == Ok("compressor not registered \"zstd\"")
   }
 }
+
+// A message the client sends on an open stream goes out at once (task #286): the native h2 client's pump read the
+// socket for 10 ms before it looked for the next request piece, so each send-then-recv round took 11 ms (grpc-go:
+// 0.1 ms). 300 rounds take about 3.3 s at the tick; the budget is 1.5 s.
+test "a bidi stream's send then recv rounds do not wait for the h2 read tick" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.stream("/e.E/Echo", fn(_call, recv, send) -> () ! Status {
+    while true {
+      match recv.next()? {
+        Some(m) => send.send(m)?
+        None => break
+      }
+    }
+    Ok(())
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
+    let t0 = os.clock.now()
+    let got = c.call("/e.E/Echo", {}, None, fn(cc) -> Int ! Status {
+      var n = 0
+      for i in 0..300 {
+        cc.send("m${i}".bytes())?
+        if cc.recv()? == Some("m${i}".bytes()) {
+          n += 1
+        }
+      }
+      cc.close_send()
+      Ok(n)
+    })
+    let took = os.clock.now() - t0
+    expect(got) == Ok(300)
+    expect(took < 1500ms) == true
+  }
+}
