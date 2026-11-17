@@ -8,6 +8,7 @@
 // port internal/gooseutil/resolve_test.go's TestResolveVersions.
 
 use std/embed
+use std/log
 use std/sql
 use std/testing
 
@@ -108,8 +109,152 @@ test "annotations (Test_extractAnnotation)" {
   expect(annotation("-- +goose +goose Up").is_ok()) == false
 }
 
-test "ENVSUB is refused: an embedded migration's text is fixed" {
-  expect(parse("1_t.sql", "-- +goose ENVSUB ON\n-- +goose Up\nSELECT 1;\n").is_ok()) == false
+// goose's TestEnvsub environment (internal/sqlparser/parser_test.go)
+fn envsub_env() -> Map[Str, Str] {
+  {"GOOSE_ENV_REGION": "us_east_", "GOOSE_ENV_SET_BUT_EMPTY_VALUE": "", "GOOSE_ENV_NAME": "foo"}
+}
+
+test "TestEnvsub test01: ENVSUB ON before Up substitutes both directions" {
+  let text = r"""
+-- +goose ENVSUB ON
+-- +goose Up
+CREATE TABLE ${GOOSE_ENV_REGION}post (
+		id int NOT NULL,
+		title text,
+		body text,
+		PRIMARY KEY(id)
+);                  -- 1st stmt
+
+-- comment
+SELECT 2;           -- 2nd stmt
+SELECT 3; SELECT 3; -- 3rd stmt
+SELECT 4;           -- 4th stmt
+
+-- +goose Down
+-- comment
+DROP TABLE ${GOOSE_ENV_REGION}post;    -- 1st stmt
+"""
+  let m = parse("1_t.sql", text, envsub_env()).ok() ?? fault("parse")
+  expect(m.up) == [
+    "CREATE TABLE us_east_post (\n\t\tid int NOT NULL,\n\t\ttitle text,\n\t\tbody text,\n\t\tPRIMARY KEY(id)\n);                  -- 1st stmt",
+    "SELECT 2;           -- 2nd stmt",
+    "SELECT 3; SELECT 3; -- 3rd stmt",
+    "SELECT 4;           -- 4th stmt",
+  ]
+  expect(m.down) == ["DROP TABLE us_east_post;    -- 1st stmt"]
+}
+
+test "TestEnvsub test02: ENVSUB OFF stops it, and it works inside StatementBegin" {
+  let text = r"""
+-- +goose Up
+
+-- +goose ENVSUB ON
+CREATE TABLE post (
+	id int NOT NULL,
+	title text,
+	$GOOSE_ENV_NAME text,
+	${GOOSE_ENV_NAME}title3 text,
+	${ANOTHER_VAR:-default}title4 text,
+	${GOOSE_ENV_SET_BUT_EMPTY_VALUE-default}title5 text,
+);
+-- +goose ENVSUB OFF
+
+CREATE TABLE post (
+	id int NOT NULL,
+	title text,
+	$GOOSE_ENV_NAME text,
+	${GOOSE_ENV_NAME}title3 text,
+	${ANOTHER_VAR:-default}title4 text,
+	${GOOSE_ENV_SET_BUT_EMPTY_VALUE-default}title5 text,
+);
+
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION test_func()
+RETURNS void AS $$
+-- +goose ENVSUB ON
+BEGIN
+	RAISE NOTICE '${GOOSE_ENV_NAME} \$GOOSE_ENV_NAME \$GOOSE_ENV_NAME';
+END;
+-- +goose ENVSUB OFF
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+"""
+  let m = parse("2_t.sql", text, envsub_env()).ok() ?? fault("parse")
+  expect(m.up) == [
+    "CREATE TABLE post (\n\tid int NOT NULL,\n\ttitle text,\n\tfoo text,\n\tfootitle3 text,\n\tdefaulttitle4 text,\n\ttitle5 text,\n);",
+    r"CREATE TABLE post (" + "\n\tid int NOT NULL,\n\ttitle text,\n\t" + r"$GOOSE_ENV_NAME text," + "\n\t" + r"${GOOSE_ENV_NAME}title3 text," + "\n\t" + r"${ANOTHER_VAR:-default}title4 text," + "\n\t" + r"${GOOSE_ENV_SET_BUT_EMPTY_VALUE-default}title5 text," + "\n);",
+    "CREATE OR REPLACE FUNCTION test_func()\nRETURNS void AS $$\nBEGIN\n\tRAISE NOTICE 'foo $GOOSE_ENV_NAME $GOOSE_ENV_NAME';\nEND;\n$$ LANGUAGE plpgsql;",
+  ]
+  expect(m.down) == []
+}
+
+test "TestEnvsub test03: no ENVSUB ON, no substitution" {
+  let text = r"""
+-- +goose Up
+CREATE TABLE post (
+	id int NOT NULL,
+	$NAME text,
+	${ANOTHER_VAR:-default}title4 text,
+);
+"""
+  let m = parse("3_t.sql", text, envsub_env()).ok() ?? fault("parse")
+  expect(m.up) == [r"CREATE TABLE post (" + "\n\tid int NOT NULL,\n\t" + r"$NAME text," + "\n\t" + r"${ANOTHER_VAR:-default}title4 text," + "\n);"]
+}
+
+test "TestEnvsubError: an unset required variable fails the parse" {
+  let text = r"""
+-- +goose ENVSUB ON
+-- +goose Up
+CREATE TABLE post (
+	id int NOT NULL,
+	title text,
+	${SOME_UNSET_VAR?required env var not set} text,
+	PRIMARY KEY(id)
+);
+"""
+  match parse("4_t.sql", text, envsub_env()) {
+    Err(MigrateErr.Parse(_, msg)) => expect(msg.contains(r"variable substitution failed: $SOME_UNSET_VAR: required env var not set:")) == true
+    _ => fault("want a parse error")
+  }
+}
+
+test "collect passes env to each file" {
+  let files = dir({"1_a.sql": "-- +goose ENVSUB ON\n-- +goose Up\nSELECT '" + r"${GOOSE_ENV_NAME}" + "';\n"})
+  let ms = collect(files, env: envsub_env()).ok() ?? fault("collect")
+  expect(ms[0].up) == ["SELECT 'foo';"]
+}
+
+test "interpolate's grammar" {
+  let env: Map[Str, Str] = {"A": "hello", "E": "", "Ünï": "u"}
+  for (in_, want) in [
+    (r"\\x", r"\\x"),
+    (r"\$A $$A", r"$A $A"),
+    (r"$(cmd) $A", "$(cmd) hello"),
+    (r"$A-$Ünï", "hello-u"),
+    (r"${B} ${B:-d} ${E:-d} ${E-d} ${B-d}", " d d  d"),
+    (r"${A:-${B}x}", "hello"),
+    (r"${B:-${A}x}", "hellox"),
+    (r"${A:1} ${A:1:3} ${A: -3} ${A: -3:2} ${A: 1:-1} ${A:9} ${A:-3}", "ello ell llo ll ell  hello"),
+    (r"${A?gone}", "hello"),
+    (r"${E?gone}", ""),
+    (r"${A:-${B?unused}}", "hello"),
+    ("cost $", "cost $"),
+  ] {
+    expect(envsub(in_, env)) == Ok(want)
+  }
+  for (in_, want) in [
+    (r"${B?}", r"$B: not set"),
+    (r"${B?need ${A}}", r"$B: need hello"),
+    (r"$1", "Expected identifier to start with a letter, got 1"),
+    (r"${A%x}", "Expected an operator, got %"),
+    (r"${A", "Expected an operator, got \u{FFFD}"),
+    (r"${A:x}", "Unable to parse offset: strconv.Atoi: parsing \"x\": invalid syntax"),
+    (r"${A:1:y}", "Unable to parse length: strconv.Atoi: parsing \"y\": invalid syntax"),
+    (r"${A:-x", "Expected brace expansion to end with }, got \u{FFFD}"),
+    (r"${B?x} ${A", "Expected an operator, got \u{FFFD}"),
+  ] {
+    expect(envsub(in_, env)) == Err(want)
+  }
 }
 
 fn dir(files: Map[Str, Str]) -> embed.Dir {
@@ -468,4 +613,387 @@ test "has_pending without allow_missing (TestPending disallow_out_of_order)" {
       Ok(vs) => fault("want Missing, got ${vs:?}")
     }
   }
+}
+
+test "no migrations is an error (TestProvider empty)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let empty = dir({})
+  // goose's mapFS under "migrations/" without fs.Sub: no top level file.
+  let nested = dir({"migrations/001_foo.sql": "-- +goose Up\n", "migrations/002_bar.sql": "-- +goose Up\n"})
+  for files in [empty, nested] {
+    match up(db, files, os.clock, dialect: Dialect.Memory) {
+      Err(NoMigrations) => {}
+      Err(e) => fault("want NoMigrations, got ${e}")
+      Ok(vs) => fault("want NoMigrations, got ${vs:?}")
+    }
+    match status(db, files, dialect: Dialect.Memory) {
+      Err(e) => expect(e.display()) == "migrate: no migrations found"
+      Ok(_) => fault("want NoMigrations")
+    }
+    match has_pending(db, files, dialect: Dialect.Memory) {
+      Err(NoMigrations) => {}
+      _ => fault("want NoMigrations")
+    }
+  }
+  expect((collect(nested) ?? e => fault("${e}")).len()) == 0
+  let sub = collect(nested.sub("migrations")) ?? e => fault("${e}")
+  expect(sub.map(fn(m) { (m.version, m.name) })) == [(1, "001_foo.sql"), (2, "002_bar.sql")]
+}
+
+test "up_results: one per migration applied, empty ones marked (assertResult)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({
+    "00001_a.sql": "-- +goose Up\nCREATE TABLE a ( x TEXT );\n",
+    "00002_empty.sql": "-- +goose Up\n",
+    "00003_c.sql": "-- +goose Up\nCREATE TABLE c ( x TEXT );\n",
+  })
+  let rs = up_results(db, files, os.clock, dialect: Dialect.Memory, to: 2) ?? e => fault("${e}")
+  expect(rs.map(fn(r) { (r.version, r.name, r.empty) })) == [(1, "00001_a.sql", false), (2, "00002_empty.sql", true)]
+  expect(rs.all(fn(r) { r.duration >= 0s })) == true
+  let more = up_results(db, files, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(more.map(fn(r) { r.version })) == [3]
+  expect(up_results(db, files, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == []
+}
+
+test "MigrationResult display is goose's log line (MigrationResult.String)" {
+  let r = MigrationResult{version: 5, name: "00005_posts_view.sql", duration: Duration.from_nanos(727_500), empty: false}
+  expect(r.display()) == "OK    up 00005_posts_view.sql (727.5µs)"
+  let e = MigrationResult{version: 6, name: "migrations/00006_posts_view-copy.sql", duration: Duration.from_nanos(378_334), empty: true}
+  expect(e.display()) == "EMPTY up 00006_posts_view-copy.sql (378.33µs)"
+  // truncateDuration: over 1s to 10ms, over 1ms to 10µs, over 1µs to 10ns.
+  let long = MigrationResult{version: 7, name: "00007_x.sql", duration: Duration.from_nanos(1_234_567_891), empty: false}
+  expect(long.display()) == "OK    up 00007_x.sql (1.23s)"
+  let mid = MigrationResult{version: 8, name: "00008_x.sql", duration: Duration.from_nanos(12_345_678), empty: false}
+  expect(mid.display()) == "OK    up 00008_x.sql (12.35ms)"
+  let tiny = MigrationResult{version: 9, name: "00009_x.sql", duration: Duration.from_nanos(999), empty: false}
+  expect(tiny.display()) == "OK    up 00009_x.sql (999ns)"
+}
+
+test "camel_case and snake_case (goose TestCamelSnake)" {
+  let cases = [
+    ("Add updated_at to users table", "AddUpdatedAtToUsersTable", "add_updated_at_to_users_table"),
+    ("$()&^%(_--crazy__--input$)", "CrazyInput", "crazy_input"),
+  ]
+  for (input, camel, snake) in cases {
+    expect(camel_case(input)) == camel
+    expect(snake_case(input)) == snake
+  }
+}
+
+test "create with sequential numbers from 00001 (goose TestSequential)" {
+  var names: List[Str] = []
+  for _ in 0..4 {
+    names.push(create(os.fs, "create_table", os.clock, sequential: true) ?? e => fault("${e}"))
+  }
+  expect(names) == ["00001_create_table.sql", "00002_create_table.sql", "00003_create_table.sql", "00004_create_table.sql"]
+  expect(os.fs.read_text("00001_create_table.sql") ?? e => fault("${e}")) == SQL_TEMPLATE
+}
+
+test "create stamps the clock's UTC time and fills the template" {
+  os.clock.set(Time.from_unix(1_794_960_000))
+  let f = create(os.fs, "Add users", os.clock, template: "-- {{.Version}} {{.CamelName}}\n") ?? e => fault("${e}")
+  expect(f) == "20261118000000_add_users.sql"
+  expect(os.fs.read_text(f) ?? e => fault("${e}")) == "-- 20261118000000 AddUsers\n"
+  // The same second again is the same file: an error, nothing overwritten.
+  match create(os.fs, "Add users", os.clock) {
+    Ok(_) => fault("created twice")
+    Err(e) => expect(e.display().contains("failed to create migration file")) == true
+  }
+}
+
+test "fix renames timestamped files to sequential versions (goose TestFix)" {
+  expect(fix(os.fs).is_err()) == true
+  os.clock.set(Time.from_unix(1_794_960_000))
+  for _ in 0..4 {
+    let _ = create(os.fs, "create_table", os.clock) ?? e => fault("${e}")
+    os.clock.advance(1s)
+  }
+  let renamed = fix(os.fs) ?? e => fault("${e}")
+  expect(renamed.map(fn(p) { p.1 })) == ["00001_create_table.sql", "00002_create_table.sql", "00003_create_table.sql", "00004_create_table.sql"]
+  expect(renamed[0].0) == "20261118000000_create_table.sql"
+  // Two more timestamped files continue the sequence.
+  for _ in 0..2 {
+    let _ = create(os.fs, "create_table", os.clock) ?? e => fault("${e}")
+    os.clock.advance(1s)
+  }
+  let more = fix(os.fs) ?? e => fault("${e}")
+  expect(more.map(fn(p) { p.1 })) == ["00005_create_table.sql", "00006_create_table.sql"]
+  let left = os.fs.read_dir(".") ?? e => fault("${e}")
+  expect(left.len()) == 6
+}
+
+test "is_timestamp: goose's 14 digit time after the epoch" {
+  expect(is_timestamp(20261118000000)) == true
+  expect(is_timestamp(20240229235959)) == true
+  expect(is_timestamp(20230229000000)) == false
+  expect(is_timestamp(19700101000000)) == false
+  expect(is_timestamp(1)) == false
+  expect(is_timestamp(20261324000000)) == false
+}
+
+test "collect skips excluded names and versions (goose provider_collect excludes)" {
+  let files = dir({
+    "00001_foo.sql": OWNERS,
+    "00002_bar.sql": SEED,
+    "00003_baz.sql": SEED,
+    "00110_qux.sql": SEED,
+  })
+  let by_name = collect(files, exclude_names: ["00002_bar.sql", "00110_qux.sql"]) ?? e => fault("${e}")
+  expect(by_name.map(fn(m) { m.version })) == [1, 3]
+  let by_version = collect(files, exclude_versions: [2, 110]) ?? e => fault("${e}")
+  expect(by_version.map(fn(m) { m.version })) == [1, 3]
+  // An excluded version is never a duplicate.
+  let dup = dir({"00001_a.sql": OWNERS, "001_b.sql": OWNERS, "00002_c.sql": SEED})
+  expect(collect(dup).is_err()) == true
+  let kept = collect(dup, exclude_versions: [1]) ?? e => fault("${e}")
+  expect(kept.map(fn(m) { m.name })) == ["00002_c.sql"]
+  match collect(files, exclude_versions: [0]) {
+    Err(MigrateErr.BadVersion(v)) => expect(v) == 0
+    _ => fault("version 0 excluded")
+  }
+}
+
+test "isolate_ddl runs every migration outside a transaction (goose WithIsolateDDL)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({"00001_owners.sql": OWNERS, "00002_seed.sql": SEED})
+  let ms = isolate_ddl(collect(files) ?? e => fault("${e}"))
+  expect(ms.map(fn(m) { m.tx })) == [false, false]
+  expect(up_list(db, ms, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == [1, 2]
+  expect(owners(db)) == 3
+  expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == 2
+}
+
+test "up_unversioned applies every time and keeps no version table (goose WithDisableVersioning)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  db.exec("CREATE TABLE owners ( owner_name TEXT NOT NULL )") ?? e => fault("${e}")
+  let files = dir({"00001_seed.sql": SEED})
+  let first = up_unversioned(db, files, os.clock) ?? e => fault("${e}")
+  expect(first.map(fn(r) { r.name })) == ["00001_seed.sql"]
+  expect(owners(db)) == 3
+  up_unversioned(db, files, os.clock) ?? e => fault("${e}")
+  expect(owners(db)) == 6
+  expect(db.query_one("SELECT count(*) AS n FROM xo_migrations").is_err()) == true
+}
+
+fn tx_step(q: Str) -> CodeStep[()] {
+  CodeStep.Tx(fn(t: sql.Tx[()]) -> () ! sql.SqlErr uses net.dial {
+    t.exec(q)?
+    Ok(())
+  })
+}
+
+fn conn_step(q: Str) -> CodeStep[()] {
+  CodeStep.NoTx(fn(c: sql.Conn[()]) -> () ! sql.SqlErr uses net.dial {
+    c.exec(q)?
+    Ok(())
+  })
+}
+
+fn users(db: sql.Db) -> Int uses net.dial {
+  ((db.query_one("SELECT count(*) AS n FROM users") ?? e => fault("${e}")).int("n")) ?? e => fault("${e}")
+}
+
+test "code migrations in a transaction, one by one (goose TestGoOnly with_tx)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let code = [
+    CodeMigration{version: 1, name: "1", up: tx_step("CREATE TABLE users (id INTEGER PRIMARY KEY)")},
+    CodeMigration{version: 2, name: "2", up: tx_step("INSERT INTO users (id) VALUES (1), (2), (3)")},
+  ]
+  let one = up_code_by_one(db, [], code, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect((one.version, one.empty)) == (1, false)
+  expect(users(db)) == 0
+  let two = up_code_by_one(db, [], code, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(two.version) == 2
+  expect(users(db)) == 3
+  match up_code_by_one(db, [], code, os.clock, dialect: Dialect.Memory) {
+    Err(MigrateErr.NoNext) => {}
+    _ => fault("a third migration")
+  }
+  expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == 2
+}
+
+test "code migrations on the connection (goose TestGoOnly with_db)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let code = [
+    CodeMigration{version: 1, name: "1", up: conn_step("CREATE TABLE users (id INTEGER PRIMARY KEY)")},
+    CodeMigration{version: 2, name: "2", up: conn_step("INSERT INTO users (id) VALUES (1), (2), (3)")},
+  ]
+  expect(code.map(fn(c) { c.migration().tx })) == [false, false]
+  let rs = up_code(db, [], code, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(rs.map(fn(r) { r.version })) == [1, 2]
+  expect(users(db)) == 3
+}
+
+test "SQL and code migrations apply together in version order" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let sqls = collect(dir({"00001_owners.sql": OWNERS, "00003_seed.sql": SEED})) ?? e => fault("${e}")
+  let code = [CodeMigration{version: 2, name: "00002_users.go", up: tx_step("CREATE TABLE users (id INTEGER PRIMARY KEY)")}]
+  let rs = up_code(db, sqls, code, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(rs.map(fn(r) { r.name })) == ["00001_owners.sql", "00002_users.go", "00003_seed.sql"]
+  expect(owners(db)) == 3
+  expect(users(db)) == 0
+  var all = sqls.clone()
+  all.push(code[0].migration())
+  let st = status_list(db, all, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(st.map(fn(s) { (s.version, s.applied_at.is_some()) })) == [(1, true), (2, true), (3, true)]
+  // One version may not be both.
+  let twice = [CodeMigration{version: 1, name: "1", up: tx_step("SELECT 1")}]
+  match up_code(db, sqls, twice, os.clock, dialect: Dialect.Memory) {
+    Err(MigrateErr.Duplicate(v, _, _)) => expect(v) == 1
+    _ => fault("a duplicate version ran")
+  }
+}
+
+test "a failed code step rolls back its transaction and stops" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let code = [
+    CodeMigration{version: 1, name: "1", up: tx_step("CREATE TABLE users (id INTEGER PRIMARY KEY)")},
+    CodeMigration{version: 2, name: "2", up: tx_step("INSERT INTO missing (id) VALUES (1)")},
+    CodeMigration{version: 3, name: "3", up: tx_step("INSERT INTO users (id) VALUES (1)")},
+  ]
+  match up_code(db, [], code, os.clock, dialect: Dialect.Memory) {
+    Err(MigrateErr.Failed(v, _, i, err)) => {
+      expect((v, i)) == (2, 0)
+      expect(err.display()) == "no such table: missing"
+    }
+    _ => fault("no failure")
+  }
+  expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == 1
+  expect(users(db)) == 0
+}
+
+// Layout.Goose: goose's goose_db_version (internal/dialects in pressly/goose
+// v3.27.3; its store tests' rows), on sql.memory.
+const GOOSE_TABLE = "CREATE TABLE goose_db_version (id INTEGER PRIMARY KEY, version_id BIGINT NOT NULL, is_applied BOOL NOT NULL, tstamp TIMESTAMP)"
+
+fn goose_rows(db: sql.Db) -> List[(Int, Bool)] uses net.dial {
+  let rows = db.query("SELECT version_id, is_applied FROM goose_db_version ORDER BY id") ?? e => fault("${e}")
+  rows.map(fn(r) { ((r.int("version_id") ?? e => fault("${e}")), (r.bool("is_applied") ?? e => fault("${e}"))) })
+}
+
+test "Layout.Goose continues a database goose migrated" {
+  let db = sql.memory() ?? e => fault("${e}")
+  // what goose left: its table, version 0 and version 1 applied
+  db.exec(GOOSE_TABLE) ?? e => fault("${e}")
+  db.exec("CREATE TABLE owners ( owner_name TEXT NOT NULL )") ?? e => fault("${e}")
+  for v in [0, 1] {
+    db.exec("INSERT INTO goose_db_version (version_id, is_applied, tstamp) VALUES ($1, $2, $3)", [sql.int(v), sql.bool(true), sql.time(Time.from_unix(1_700_000_000))]) ?? e => fault("${e}")
+  }
+  let files = dir({"00002_seed.sql": SEED, "00001_owners.sql": OWNERS})
+  let t = "goose_db_version"
+  expect(db_version(db, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")) == 1
+  expect(has_pending(db, files, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")) == true
+  os.clock.set(Time.from_unix(1_794_960_000))
+  expect(up(db, files, os.clock, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")) == [2]
+  expect(owners(db)) == 3
+  expect(goose_rows(db)) == [(0, true), (1, true), (2, true)]
+  let st = status(db, files, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")
+  expect(st.map(fn(s) { (s.version, s.applied_at.map(fn(a) { a.unix() })) })) == [(1, Some(1_700_000_000)), (2, Some(1_794_960_000))]
+  expect(db_version(db, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")) == 2
+}
+
+test "Layout.Goose makes goose's table with its version 0 row" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({"00002_seed.sql": SEED, "00001_owners.sql": OWNERS})
+  let t = "goose_db_version"
+  expect(db_version(db, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")) == 0
+  expect(goose_rows(db)) == [(0, true)]
+  expect(up(db, files, os.clock, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")) == [1, 2]
+  expect(goose_rows(db)) == [(0, true), (1, true), (2, true)]
+  expect(up(db, files, os.clock, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")) == []
+}
+
+test "Layout.Goose: a version's newest row decides (goose's down leaves is_applied false)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  db.exec(GOOSE_TABLE) ?? e => fault("${e}")
+  db.exec("CREATE TABLE owners ( owner_name TEXT NOT NULL )") ?? e => fault("${e}")
+  for (v, on) in [(0, true), (1, true), (2, true), (2, false)] {
+    db.exec("INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, $2)", [sql.int(v), sql.bool(on)]) ?? e => fault("${e}")
+  }
+  let files = dir({"00002_seed.sql": SEED, "00001_owners.sql": OWNERS})
+  let t = "goose_db_version"
+  let st = status(db, files, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")
+  // version 1's NULL tstamp reads as the epoch
+  expect(st.map(fn(s) { (s.version, s.applied_at.map(fn(a) { a.unix() })) })) == [(1, Some(0)), (2, None)]
+  expect(up(db, files, os.clock, table: t, dialect: Dialect.Memory, layout: Layout.Goose) ?? e => fault("${e}")) == [2]
+  expect(owners(db)) == 3
+}
+
+test "goose's tables for TiDB, Redshift, Aurora DSQL and Turso (internal/dialects CreateTable)" {
+  expect(goose_columns(Dialect.Tidb)) == "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE, version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamp NULL default now(), PRIMARY KEY(id)"
+  expect(goose_columns(Dialect.Redshift)) == "id integer NOT NULL identity(1, 1), version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamp NULL default sysdate, PRIMARY KEY(id)"
+  expect(goose_columns(Dialect.Dsql)) == "id integer PRIMARY KEY, version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamp NOT NULL DEFAULT now()"
+  expect(goose_columns(Dialect.Turso)) == goose_columns(Dialect.Sqlite)
+  expect(time_type(Dialect.Tidb)) == "DATETIME(6)"
+  expect(time_type(Dialect.Redshift)) == "TIMESTAMPTZ"
+}
+
+test "Aurora DSQL's goose rows take the highest id plus 1 (dsql InsertVersion)" {
+  let m = Migration{version: 7, name: "00007_x.sql", up: [], down: [], tx: true}
+  let at = Time.from_unix(5)
+  let (q, args) = record_stmt("goose_db_version", Dialect.Dsql, Layout.Goose, m, at)
+  expect(q) == "INSERT INTO goose_db_version (id, version_id, is_applied, tstamp) VALUES (COALESCE((SELECT MAX(id) FROM goose_db_version), 0) + 1, $1, $2, $3)"
+  expect(args) == [sql.int(7), sql.bool(true), sql.time(at)]
+  let (q0, _) = goose_insert("goose_db_version", Dialect.Dsql, [sql.int(0), sql.bool(true)])
+  expect(q0) == "INSERT INTO goose_db_version (id, version_id, is_applied) VALUES (COALESCE((SELECT MAX(id) FROM goose_db_version), 0) + 1, $1, $2)"
+  let (qr, _) = record_stmt("goose_db_version", Dialect.Redshift, Layout.Goose, m, at)
+  expect(qr) == "INSERT INTO goose_db_version (version_id, is_applied, tstamp) VALUES ($1, $2, $3)"
+}
+
+test "Redshift, Aurora DSQL and Turso migrate without a lock statement" {
+  for d in [Dialect.Redshift, Dialect.Dsql, Dialect.Turso] {
+    // sql.memory has no pg_advisory_lock or GET_LOCK: a lock statement fails the run
+    let db = sql.memory() ?? e => fault("${e}")
+    let files = dir({"00002_seed.sql": SEED, "00001_owners.sql": OWNERS})
+    expect(up(db, files, os.clock, dialect: d) ?? e => fault("${e}")) == [1, 2]
+    expect(db_version(db, dialect: d) ?? e => fault("${e}")) == 2
+  }
+}
+
+fn goose_records() -> List[log.Record] {
+  testing.logs().filter(fn(r) { r.fields.get("logger") == Some("goose") })
+}
+
+test "at Debug, up logs goose Provider's verbose records (WithVerbose, WithSlog)" {
+  log.configure(os.stdio, level: log.Level.Debug)
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({
+    "00001_a.sql": "-- +goose Up\nCREATE TABLE a (id INT);\nINSERT INTO a (id) VALUES (1);\n",
+    "00002_b.sql": "-- +goose NO TRANSACTION\n-- +goose Up\nINSERT INTO a (id) VALUES (2);\n",
+    "00003_c.sql": "-- +goose Up\n",
+  })
+  expect(up(db, files, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == [1, 2, 3]
+  expect(up(db, files, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == []
+  let recs = goose_records()
+  expect(recs.map(fn(r) { r.level })) == [log.Level.Debug, log.Level.Debug, log.Level.Debug, log.Level.Debug, log.Level.Debug, log.Level.Debug, log.Level.Debug, log.Level.Debug]
+  let show = fn(r: log.Record) -> Str {
+    r.msg + " " + r.fields.keys().filter(fn(k) { k != "duration_seconds" }).map(fn(k) { "${k}=${r.fields.get(k) ?? ""}" }).join(" ")
+  }
+  expect(recs.map(show)) == [
+    "executing statement logger=goose direction=up source=00001_a.sql statement=CREATE TABLE a (id INT); type=sql version=1",
+    "executing statement logger=goose direction=up source=00001_a.sql statement=INSERT INTO a (id) VALUES (1); type=sql version=1",
+    "migration completed logger=goose direction=up source=00001_a.sql state=applied type=sql version=1",
+    "executing statement logger=goose direction=up source=00002_b.sql statement=INSERT INTO a (id) VALUES (2); type=sql version=2",
+    "migration completed logger=goose direction=up source=00002_b.sql state=applied type=sql version=2",
+    "migration completed logger=goose direction=up source=00003_c.sql state=empty type=sql version=3",
+    "successfully migrated database logger=goose current_version=3",
+    "no migrations to run logger=goose current_version=3",
+  ]
+  expect(recs[2].fields.contains("duration_seconds")) == true
+}
+
+test "at the default Info level up logs no goose records" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({"00001_owners.sql": OWNERS})
+  expect(up(db, files, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == [1]
+  expect(goose_records().len()) == 0
+}
+
+test "up_code logs a code migration as type go" {
+  log.configure(os.stdio, level: log.Level.Debug)
+  let db = sql.memory() ?? e => fault("${e}")
+  let code = [CodeMigration{version: 1, name: "00001_a.go", up: tx_step("CREATE TABLE g (id INT)")}]
+  expect((up_code(db, [], code, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")).map(fn(r) { r.version })) == [1]
+  let done = goose_records().filter(fn(r) { r.msg == "migration completed" })
+  expect(done.map(fn(r) { (r.fields.get("type"), r.fields.get("state")) })) == [(Some("go"), Some("applied"))]
 }

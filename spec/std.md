@@ -11720,34 +11720,57 @@ std/sql.
 
 ```xo
 struct Migration { version: Int, name: Str, up: List[Str], down: List[Str], tx: Bool = true }
-enum Dialect { Postgres, Mysql, Sqlite, Memory }
+enum Dialect { Postgres, Mysql, Sqlite, Memory, Tidb, Redshift, Dsql, Turso }  // Tidb locks as Mysql; Redshift, Dsql (Aurora DSQL) and Turso take no lock; Layout.Goose makes goose's table for each
+enum Layout { Xo, Goose }   // the version table: Xo's (version, name, applied_at), or goose's goose_db_version (id, version_id, is_applied, tstamp) to continue a database goose migrated
 struct Status { version: Int, name: Str, applied_at: Time? }
+struct MigrationResult { version: Int, name: Str, duration: Duration, empty: Bool }  // displays as goose's log line
+// The functions that run migrations log goose Provider's verbose records (WithVerbose
+// with WithSlog) at Debug, each with "logger": "goose": "executing statement" (direction,
+// source, statement, type, version) before each Up statement, "migration completed"
+// (direction, duration_seconds, source, state "applied" or "empty", type "sql" or "go",
+// version), then "successfully migrated database" or "no migrations to run"
+// (current_version) when versioned. log.configure(out, level: log.Level.Debug) shows them,
+// as goose.SetVerbose(true).
 enum MigrateErr {
   Parse(name: Str, msg: Str)                       // not a goose migration (goose's texts)
   Duplicate(version: Int, first: Str, second: Str)
   Missing(versions: List[Int], newest: Int, to: Int) // pending below the newest applied
   NoNext                                           // up_by_one with nothing pending
+  NoMigrations                                     // no migration given (an empty or nested embed)
   NotFound(version: Int)                           // apply_version: no migration has it
   AlreadyApplied(version: Int)                     // apply_version: it is applied
   BadVersion(version: Int)                         // a version or target below 1
   Failed(version: Int, name: Str, statement: Int, err: sql.SqlErr)
   Db(err: sql.SqlErr)
   Table(name: Str)                                 // the version table's name is not an identifier
+  File(err: FsErr)                                 // create or fix could not read or write the directory, or create's file exists
 }
-fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock)
-fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock)
-fn up_by_one[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock)
-fn up_by_one_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock)
-fn apply_version[fx: Effects](db: sql.Db[fx], files: embed.Dir, version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> () ! MigrateErr uses (net.dial, fx, clock)
-fn apply_version_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> () ! MigrateErr uses (net.dial, fx, clock)
-fn db_version[fx: Effects](db: sql.Db[fx], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> Int ! MigrateErr uses (net.dial, fx)
-fn has_pending[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx)
-fn has_pending_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx)
+fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock, log)
+fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock, log)
+fn up_results[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log)
+fn up_results_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log)
+pub const SQL_TEMPLATE: Str  // goose's new .sql file: an Up and a Down with a placeholder query
+fn create(dir: Fs, name: Str, clock: Clock, sequential: Bool = false, template: Str = SQL_TEMPLATE) -> Str ! MigrateErr uses (fs, clock)  // goose create: writes VERSION_snake_name.sql, VERSION the UTC time (20060102150405) or with sequential the next 00001 style number; {{.Version}} and {{.CamelName}} filled
+fn fix(dir: Fs) -> List[(Str, Str)] ! MigrateErr uses fs  // goose fix: renames each timestamped file, oldest first, to the next sequential version; the (old, new) names
+fn up_by_one[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock, log)
+fn up_by_one_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock, log)
+fn apply_version[fx: Effects](db: sql.Db[fx], files: embed.Dir, version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> () ! MigrateErr uses (net.dial, fx, clock, log)
+fn apply_version_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> () ! MigrateErr uses (net.dial, fx, clock, log)
+fn db_version[fx: Effects](db: sql.Db[fx], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> Int ! MigrateErr uses (net.dial, fx)
+fn has_pending[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx)
+fn has_pending_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx)
 fn up_versions(versions: List[Int], applied: List[Int], to: Int = Int.max, allow_missing: Bool = false) -> List[Int] ! MigrateErr
-fn status[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx)
-fn status_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx)
-fn collect(files: embed.Dir) -> List[Migration] ! MigrateErr
-fn parse(name: Str, text: Str) -> Migration ! MigrateErr
+fn status[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> List[Status] ! MigrateErr uses (net.dial, fx)
+fn status_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> List[Status] ! MigrateErr uses (net.dial, fx)
+fn collect(files: embed.Dir, exclude_names: List[Str] = [], exclude_versions: List[Int] = [], env: Map[Str, Str] = {}) -> List[Migration] ! MigrateErr  // goose WithExcludeNames, WithExcludeVersions; an excluded version below 1 is BadVersion; env as parse
+fn isolate_ddl(migrations: List[Migration]) -> List[Migration]  // goose WithIsolateDDL: every migration runs outside a transaction
+fn up_unversioned[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log)  // goose WithDisableVersioning: applies every migration each call, no version table, no lock
+fn up_unversioned_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log)
+enum CodeStep[fx: Effects] { Tx(run: fn(sql.Tx[()]) -> () ! sql.SqlErr uses (net.dial, fx)), NoTx(run: fn(sql.Conn[()]) -> () ! sql.SqlErr uses (net.dial, fx)) }  // goose GoFunc: an Xo function as a migration step, in a transaction or on the connection
+struct CodeMigration[fx: Effects] { version: Int, name: Str, up: CodeStep[fx] }  // goose NewGoMigration; .migration() is its statement-less Migration, for status_list
+fn up_code[fx: Effects](db: sql.Db[fx], migrations: List[Migration], code: List[CodeMigration[fx]], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log)  // goose WithGoMigrations: SQL and code migrations in one version order; a version may not be both (Duplicate); a failed Tx step rolls back
+fn up_code_by_one[fx: Effects](db: sql.Db[fx], migrations: List[Migration], code: List[CodeMigration[fx]], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> MigrationResult ! MigrateErr uses (net.dial, fx, clock, log)
+fn parse(name: Str, text: Str, env: Map[Str, Str] = {}) -> Migration ! MigrateErr  // env: ENVSUB ON variables
 fn version_of(name: Str) -> Int?
 ```
 
@@ -11756,12 +11779,18 @@ fn version_of(name: Str) -> Int?
   0) holds `-- +goose Up`, optionally `-- +goose Down`, statements ending
   with `;` at the end of a line, `-- +goose StatementBegin` and
   `StatementEnd` around a statement that holds `;`, and `-- +goose NO
-  TRANSACTION`. `ENVSUB ON` is refused (an embedded file's text is fixed).
+  TRANSACTION`. Lines between `-- +goose ENVSUB ON` and `OFF` (StatementEnd
+  lines excepted) have `$VAR` and `${VAR}`, `${VAR:-x}`, `${VAR-x}`,
+  `${VAR:off[:len]}` and `${VAR?msg}` substituted from `env`, as goose
+  with mfridman/interpolate (`\$` and `$$` are `$`); pass `Env.vars()` for
+  goose's process environment. A failed substitution is `Parse`
+  ("variable substitution failed: ...").
   `collect` takes the top level `.sql` files with a version and skips the
   rest, as goose's collect does. `embed("migrations")` names its files
   `migrations/NNN_name.sql`, so pass `.sub("migrations")`: the embed
-  itself has no top level file, and `up` then applies nothing
-  (gotchas/migrate-embed-sub.md).
+  itself has no top level file, and `up`, `status` and `has_pending`
+  answer `NoMigrations`, as for an empty directory (goose's
+  ErrNoMigrations; gotchas/migrate-embed-sub.md).
 - `up` holds one connection for the whole run and takes the dialect's lock
   on it (`pg_advisory_lock` for Postgres, `GET_LOCK` for MySQL; none for
   SQLite and the in memory database), so a second process waits and then
@@ -11780,6 +11809,10 @@ fn version_of(name: Str) -> Int?
   takes the lock. `up_versions` is the pure rule they share (goose's
   UpVersions): the versions `up` would apply given the migrations' and
   the applied versions. Error texts are goose's.
+- `up_results` is `up` answering a `MigrationResult` per migration
+  applied (its duration by `clock`, `empty` for one with no statements);
+  its display is goose's log line (`OK    up 00001_init.sql (1.2ms)`).
+  Nothing logs by itself: the caller logs the results.
 - A failure stops at that migration (`Failed`, with the statement's index
   from 0): the migrations before it stay applied, and a transactional one
   leaves nothing of itself (goose's partial error). A pending version

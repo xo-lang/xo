@@ -84,3 +84,58 @@ test "up_by_one, apply_version, db_version and has_pending, on files and on list
   expect(owners(db)) == 4
   expect(migrate.has_pending(db, files, dialect: migrate.Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == false
 }
+
+test "up_results and up_results_list answer goose's log lines; MigrationResult display (MigrationResult.String)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({"00001_owners.sql": OWNERS, "00002_empty.sql": "-- +goose Up\n"})
+  let rs = migrate.up_results(db, files, os.clock, dialect: migrate.Dialect.Memory, to: 1) ?? e => fault("${e}")
+  expect(rs.map(fn(r) { (r.version, r.empty) })) == [(1, false)]
+  let more = migrate.up_results_list(db, migrate.collect(files) ?? e => fault("${e}"), os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")
+  expect(more.map(fn(r) { (r.version, r.empty) })) == [(2, true)]
+  let r = migrate.MigrationResult{version: 6, name: "migrations/00006_posts_view-copy.sql", duration: Duration.from_nanos(378_334), empty: true}
+  expect(r.display()) == "EMPTY up 00006_posts_view-copy.sql (378.33µs)"
+}
+
+test "create and fix (goose create, TestSequential, TestFix)" {
+  os.clock.set(Time.from_unix(1_794_960_000))
+  let f = migrate.create(os.fs, "Add users", os.clock) ?? e => fault("${e}")
+  expect(f) == "20261118000000_add_users.sql"
+  expect(os.fs.read_text(f) ?? e => fault("${e}")) == migrate.SQL_TEMPLATE
+  let renamed = migrate.fix(os.fs) ?? e => fault("${e}")
+  expect(renamed) == [("20261118000000_add_users.sql", "00001_add_users.sql")]
+  expect(migrate.create(os.fs, "next", os.clock, sequential: true) ?? e => fault("${e}")) == "00002_next.sql"
+}
+
+test "isolate_ddl and up_unversioned, up_unversioned_list (goose WithIsolateDDL, WithDisableVersioning)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let ms = migrate.isolate_ddl(migrate.collect(dir({"00001_owners.sql": OWNERS})) ?? e => fault("${e}"))
+  expect(ms.map(fn(m) { m.tx })) == [false]
+  expect(migrate.up_list(db, ms, os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == [1]
+  let seed = dir({"00001_seed.sql": SEED})
+  expect((migrate.up_unversioned(db, seed, os.clock) ?? e => fault("${e}")).len()) == 1
+  expect(owners(db)) == 3
+  migrate.up_unversioned_list(db, migrate.collect(seed) ?? e => fault("${e}"), os.clock) ?? e => fault("${e}")
+  expect(owners(db)) == 6
+}
+
+fn tx_step(q: Str) -> migrate.CodeStep[()] {
+  migrate.CodeStep.Tx(fn(t: sql.Tx[()]) -> () ! sql.SqlErr uses net.dial {
+    t.exec(q)?
+    Ok(())
+  })
+}
+
+test "code migrations: up_code_by_one, up_code and CodeMigration.migration (goose TestGoOnly)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let code = [
+    migrate.CodeMigration{version: 1, name: "1", up: tx_step("CREATE TABLE owners ( owner_name TEXT NOT NULL )")},
+    migrate.CodeMigration{version: 3, name: "3", up: tx_step("INSERT INTO owners (owner_name) VALUES ('code')")},
+  ]
+  expect(code[0].migration().version) == 1
+  let one = migrate.up_code_by_one(db, [], code, os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")
+  expect(one.version) == 1
+  let sqls = migrate.collect(dir({"00002_seed.sql": SEED})) ?? e => fault("${e}")
+  let rs = migrate.up_code(db, sqls, code, os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")
+  expect(rs.map(fn(r) { r.version })) == [2, 3]
+  expect(owners(db)) == 4
+}

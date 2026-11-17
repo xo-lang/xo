@@ -9,6 +9,8 @@ std/evidence/sqlite/stress/main.xo	// sqlite stress program (decision 0616 secti
 std/evidence/sqlite/stress/main.xo	// TASKS / 8 pools of std/sqlite (4 connections each) on one database
 std/evidence/sqlite/stress/main.xo	// file in WAL mode, so writers wait on SQLite's lock (busy timeout 10 s).
 std/native/sqlite.xo	// SQLite's own busy handler sleeps inside the C call, holding the
+std/migrate.xo	/// Turso (libSQL): SQLite's statements and no lock.
+std/migrate.xo	/// is_applied as goose's drivers store it: a boolean, or 0 and 1 (SQLite).
 compiler/arm64/calls.xo	/// GOT, as one in a shared library (libSystem, glibc) has no fixed
 compiler/xo/cffi.xo	/// The defines std/sqlite's amalgamation is compiled with for a Windows
 compiler/xo/cffi.xo	/// program linked with no C runtime (decision 0534 stage 2): SQLite's

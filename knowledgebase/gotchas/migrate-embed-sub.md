@@ -22,3 +22,9 @@ Pass the directory's contents: `migrate.up(db, MIGRATIONS.sub("migrations"),
 clock)` (spec/std.md 85). A test that migrates an empty database and
 checks the versions applied (xw's test/pg_test.sh expects
 "applied N: 1 ... N") catches it.
+
+## Since 2026-11-16
+
+`up`, `status` and `has_pending` answer `MigrateErr.NoMigrations`
+("migrate: no migrations found", goose's ErrNoMigrations) when `collect`
+finds no migration, so the mistake fails loudly instead of answering `[]`.

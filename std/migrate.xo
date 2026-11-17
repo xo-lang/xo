@@ -11,14 +11,19 @@
 // `NNN_name.sql` holds `-- +goose Up`, optionally `-- +goose Down`,
 // statements ending with `;` at the end of a line, `-- +goose
 // StatementBegin` / `StatementEnd` around a statement holding `;`
-// (a function body), and `-- +goose NO TRANSACTION`. `ENVSUB` is refused:
-// a migration's text is what the binary embeds. The out-of-order rule
+// (a function body), `-- +goose NO TRANSACTION`, and `-- +goose ENVSUB
+// ON` / `OFF` around lines whose `$VAR` and `${VAR...}` forms are
+// substituted from the `env` map given to `parse` and `collect` (goose's
+// use of mfridman/interpolate v0.0.2, Copyright (c) 2014 Buildkite, MIT
+// license; `Env.vars()` gives goose's behavior). The out-of-order rule
 // (a pending version below the newest applied one stops `up`) and the
 // partial error (the migrations before a failed one stay applied) are
 // goose's Provider's.
 
 use std/embed
 use std/fnv
+use std/log
+use std/path
 use std/sql
 
 /// One migration file.
@@ -35,6 +40,38 @@ pub struct Migration {
   pub tx: Bool = true
 }
 
+/// What a code migration runs (goose's GoFunc): Xo code given the
+/// migration's transaction or, for NoTx, its connection.
+pub enum CodeStep[fx: Effects] {
+  /// Runs inside the migration's transaction, which also records it
+  /// (goose's RunTx): a failure rolls both back.
+  Tx(run: fn(sql.Tx[()]) -> () ! sql.SqlErr uses (net.dial, fx))
+  /// Runs on the migration's connection outside a transaction (goose's
+  /// RunDB), as a NO TRANSACTION file does: the row is written after it.
+  NoTx(run: fn(sql.Conn[()]) -> () ! sql.SqlErr uses (net.dial, fx))
+}
+
+/// A migration written in Xo instead of SQL (goose's Go migration,
+/// NewGoMigration): `up_code` applies it in version order beside the SQL
+/// migrations, recorded in the same table. Its name is the version's text
+/// unless given (goose's Go migrations registered with a file name use it).
+pub struct CodeMigration[fx: Effects] {
+  pub version: Int
+  pub name: Str
+  pub up: CodeStep[fx]
+}
+
+/// The code migration as a Migration with no statements, for `status_list`
+/// and `has_pending_list`: give `up_list` only SQL migrations, since this
+/// one there would be recorded with nothing run.
+pub fn (c: CodeMigration) migration() -> Migration {
+  let tx = match c.up {
+    CodeStep.Tx(_) => true
+    CodeStep.NoTx(_) => false
+  }
+  Migration{version: c.version, name: c.name, up: [], down: [], tx: tx}
+}
+
 /// The database a migration runs on: it picks the lock and the version
 /// table's column types.
 pub enum Dialect {
@@ -46,6 +83,30 @@ pub enum Dialect {
   Sqlite
   /// sql.memory: no lock (it runs one statement at a time).
   Memory
+  /// TiDB over the mysql driver: GET_LOCK as MySQL.
+  Tidb
+  /// Amazon Redshift over the postgres driver: no lock (Redshift has no
+  /// advisory locks; goose has no locker for it either).
+  Redshift
+  /// Amazon Aurora DSQL over the postgres driver: no lock (no advisory
+  /// locks), and goose's table has no identity column, so a row's id is
+  /// the highest id plus 1.
+  Dsql
+  /// Turso (libSQL): SQLite's statements and no lock.
+  Turso
+}
+
+/// The version table's columns.
+pub enum Layout {
+  /// Xo's (version, name, applied_at): one row per applied version.
+  Xo
+  /// goose's goose_db_version (id, version_id, is_applied, tstamp), so a
+  /// database goose migrated is continued (pass `table:
+  /// "goose_db_version"`): the newest row (highest id) of a version says
+  /// whether it is applied, the table is made as goose makes it for the
+  /// dialect with its version 0 row, and each applied migration adds a
+  /// row (version, true, the clock's time).
+  Goose
 }
 
 /// A migration's state in `status`.
@@ -54,6 +115,42 @@ pub struct Status {
   pub name: Str
   /// When `up` applied it; None while pending.
   pub applied_at: Time?
+}
+
+/// What `up_results` did with one migration (goose's MigrationResult).
+pub struct MigrationResult {
+  pub version: Int
+  pub name: Str
+  /// From the start of the migration's transaction to its commit.
+  pub duration: Duration
+  /// The migration has no Up statements: only its row was written.
+  pub empty: Bool
+}
+
+/// goose's log line for the migration: `OK    up 00005_posts_view.sql
+/// (727.5µs)`, EMPTY for a migration with no statements, the duration
+/// rounded to 3 or 4 digits as goose's truncateDuration does.
+pub fn (r: MigrationResult) display() -> Str {
+  let state = if r.empty { "EMPTY" } else { "OK   " }
+  let base = match r.name.rfind("/") {
+    Some(i) => r.name[i + 1..]
+    None => r.name
+  }
+  "${state} up ${base} (${round_duration(r.duration)})"
+}
+
+/// goose's truncateDuration.
+fn round_duration(d: Duration) -> Duration {
+  if d > 1s {
+    return d.round(10ms)
+  }
+  if d > 1ms {
+    return d.round(Duration.from_nanos(10_000))
+  }
+  if d > Duration.from_nanos(1_000) {
+    return d.round(Duration.from_nanos(10))
+  }
+  d
 }
 
 pub enum MigrateErr {
@@ -65,7 +162,7 @@ pub enum MigrateErr {
   /// below `to`, refused unless `allow_missing` (goose's "missing
   /// (out-of-order) migration"). `to` is Int.max when `up` has no target.
   Missing(versions: List[Int], newest: Int, to: Int)
-  /// `up_one` found nothing pending (goose's ErrNoNextVersion).
+  /// `up_by_one` found nothing pending (goose's ErrNoNextVersion).
   NoNext
   /// `apply_version` was given a version no migration has
   /// (goose's ErrVersionNotFound).
@@ -75,6 +172,10 @@ pub enum MigrateErr {
   AlreadyApplied(version: Int)
   /// A target or migration version below 1 (goose's errInvalidVersion).
   BadVersion(version: Int)
+  /// No migrations were given: `files` has no top level `.sql` file with
+  /// a version (goose's ErrNoMigrations and ErrNoMigrationFiles). An
+  /// `embed("dir")` needs `.sub("dir")` (gotchas/migrate-embed-sub.md).
+  NoMigrations
   /// A statement of a migration failed. The migrations applied before it
   /// stay; in a transaction, nothing of this one does.
   Failed(version: Int, name: Str, statement: Int, err: sql.SqlErr)
@@ -83,6 +184,9 @@ pub enum MigrateErr {
   /// The version table's name is not letters, digits and `_` (not
   /// starting with a digit), optionally after a schema name and `.`.
   Table(name: Str)
+  /// `create` or `fix` could not read or write the migration directory,
+  /// or `create`'s file exists already.
+  File(err: FsErr)
 }
 
 pub fn (e: MigrateErr) display() -> Str {
@@ -96,12 +200,14 @@ pub fn (e: MigrateErr) display() -> Str {
       "migrate: detected ${vs.len()} missing (out-of-order) ${what} lower than database version (${newest})${target}: ${list}${vs.map(fn(v) { "${v}" }).join(",")}"
     }
     NoNext => "migrate: no next version found"
+    NoMigrations => "migrate: no migrations found"
     NotFound(v) => "migrate: version ${v}: version not found"
     AlreadyApplied(v) => "migrate: version ${v}: migration already applied"
     BadVersion(_) => "migrate: version must be greater than 0"
     Failed(v, name, i, err) => "migrate: partial migration error (version ${v}, ${name}, statement ${i + 1}): ${err.display()}"
     Db(err) => "migrate: ${err.display()}"
     Table(name) => "migrate: version table name ${name:?} is not an identifier"
+    File(err) => "migrate: failed to create migration file: ${err.display()}"
   }
 }
 
@@ -162,12 +268,14 @@ fn missing_semicolon(state: Int, up: Bool, rest: Str) -> Str {
 
 /// goose's ParseSQLMigration: the statements of one direction and whether
 /// the file runs in a transaction.
-fn parse_dir(text: Str, up: Bool) -> (List[Str], Bool) ! Str {
+fn parse_dir(text: Str, up: Bool, env: Map[Str, Str]) -> (List[Str], Bool) ! Str {
   var state = START
   var use_tx = true
+  var use_env = false
   var stmts: List[Str] = []
   var buf = ""
-  for line in text.lines() {
+  for raw in text.lines() {
+    var line = raw
     if state == START && line.trim() == "" {
       continue
     }
@@ -216,9 +324,8 @@ fn parse_dir(text: Str, up: Bool) -> (List[Str], Bool) ! Str {
         use_tx = false
         continue
       } else {
-        // ENVSUB ON and OFF: goose substitutes environment variables;
-        // an embedded migration's text is fixed
-        return Err("'-- +goose ${cmd}' is not supported by std/migrate (no environment substitution)")
+        use_env = cmd == "ENVSUB ON"
+        continue
       }
     }
     // leading comments and empty lines before a statement are dropped;
@@ -229,6 +336,12 @@ fn parse_dir(text: Str, up: Bool) -> (List[Str], Bool) ! Str {
       }
     }
     if state != END_UP && state != END_DOWN {
+      if use_env {
+        line = match envsub(line, env) {
+          Ok(l) => l
+          Err(msg) => return Err("variable substitution failed: ${msg}:\n${line}")
+        }
+      }
       buf = "${buf}${line}\n"
     }
     let in_up = state == UP || state == BEGIN_UP || state == END_UP
@@ -264,6 +377,204 @@ fn parse_dir(text: Str, up: Bool) -> (List[Str], Bool) ! Str {
   Ok((stmts, use_tx))
 }
 
+// ENVSUB: mfridman/interpolate v0.0.2's grammar. `\\` stays, `\$` and
+// `$$` are `$`, `$(` passes, `$VAR` and `${VAR}` are the value (empty when
+// unset), `${VAR:-x}` x when unset or empty, `${VAR-x}` x when unset,
+// `${VAR:off[:len]}` a substring (negative counts from the end),
+// `${VAR?msg}` an error when unset.
+struct Sub {
+  s: Str
+  rs: List[Rune]
+  off: List[Int]
+  pos: Int
+}
+
+fn sub_has(p: Sub, text: Str) -> Bool {
+  p.pos < p.rs.len() && p.s[p.off[p.pos]..].starts_with(text)
+}
+
+fn sub_is(p: Sub, r: Rune) -> Bool {
+  p.pos < p.rs.len() && p.rs[p.pos] == r
+}
+
+/// The rune at the position as text, U+FFFD at the end (Go's %c of eof).
+fn sub_shown(p: Sub) -> Str {
+  if p.pos >= p.rs.len() {
+    return "\u{FFFD}"
+  }
+  p.s[p.off[p.pos]..p.off[p.pos + 1]]
+}
+
+/// Text up to `}` (and `:` when `colon`) or the end.
+fn sub_until(var p: Sub, colon: Bool) -> Str {
+  let start = p.pos
+  while p.pos < p.rs.len() {
+    let c = p.rs[p.pos]
+    if c == '}' || (colon && c == ':') {
+      break
+    }
+    p.pos += 1
+  }
+  p.s[p.off[start]..p.off[p.pos]]
+}
+
+fn sub_ident(var p: Sub) -> Str ! Str {
+  if p.pos >= p.rs.len() || !p.rs[p.pos].is_letter() {
+    return Err("Expected identifier to start with a letter, got ${sub_shown(p)}")
+  }
+  let start = p.pos
+  while p.pos < p.rs.len() {
+    let c = p.rs[p.pos]
+    if !c.is_letter() && !c.is_number() && c != '_' {
+      break
+    }
+    p.pos += 1
+  }
+  Ok(p.s[p.off[start]..p.off[p.pos]])
+}
+
+/// An Expression up to the end, or up to `}` when `brace`. `live` is
+/// whether its value is used: a `${VAR?msg}` error counts only then, as
+/// interpolate expands a default or message only when it is needed.
+fn sub_expr(var p: Sub, env: Map[Str, Str], live: Bool, brace: Bool) -> Str ! Str {
+  var out = StrBuilder.new()
+  while p.pos < p.rs.len() {
+    let c = p.rs[p.pos]
+    if brace && c == '}' {
+      break
+    }
+    if sub_has(p, "\\\\") {
+      p.pos += 2
+      out.write("\\\\")
+      continue
+    }
+    if sub_has(p, "\\$") || sub_has(p, "$$") {
+      p.pos += 2
+      out.write("$")
+      continue
+    }
+    if sub_has(p, "$(") {
+      p.pos += 2
+      out.write("$(")
+      continue
+    }
+    if c == '$' && p.pos < p.rs.len() - 1 {
+      out.write(sub_expansion(p, env, live)?)
+      continue
+    }
+    let start = p.pos
+    p.pos += 1
+    while p.pos < p.rs.len() {
+      let d = p.rs[p.pos]
+      if d == '$' || d == '\\' || (brace && d == '}') {
+        break
+      }
+      p.pos += 1
+    }
+    out.write(p.s[p.off[start]..p.off[p.pos]])
+  }
+  Ok(out.freeze())
+}
+
+fn sub_expansion(var p: Sub, env: Map[Str, Str], live: Bool) -> Str ! Str {
+  p.pos += 1
+  if !sub_is(p, '{') {
+    let id = sub_ident(p)?
+    return Ok(env.get(id) ?? "")
+  }
+  p.pos += 1
+  let id = sub_ident(p)?
+  let val = env.get(id)
+  if sub_is(p, '}') {
+    p.pos += 1
+    return Ok(val ?? "")
+  }
+  let op = sub_shown(p)
+  if p.pos < p.rs.len() {
+    p.pos += 1
+  }
+  var out = ""
+  if op == ":" && sub_is(p, '-') {
+    p.pos += 1
+    let v = val ?? ""
+    let content = sub_expr(p, env, live && v == "", true)?
+    out = if v == "" { content } else { v }
+  } else if op == ":" {
+    let at = sub_until(p, true).trim()
+    let off = Int.parse(at) ?? return Err("Unable to parse offset: strconv.Atoi: parsing ${at:?}: invalid syntax")
+    var len: Int? = None
+    if !sub_is(p, '}') {
+      if p.pos < p.rs.len() {
+        p.pos += 1
+      }
+      let n = sub_until(p, false).trim()
+      len = Some(Int.parse(n) ?? return Err("Unable to parse length: strconv.Atoi: parsing ${n:?}: invalid syntax"))
+    }
+    out = substring(val ?? "", off, len)
+  } else if op == "-" {
+    let content = sub_expr(p, env, live && val.is_none(), true)?
+    out = val ?? content
+  } else if op == "?" {
+    let msg = sub_expr(p, env, live && val.is_none(), true)?
+    match val {
+      Some(v) => out = v
+      None => {
+        if live {
+          let m = if msg == "" { "not set" } else { msg }
+          return Err("$${id}: ${m}")
+        }
+      }
+    }
+  } else {
+    return Err("Expected an operator, got ${op}")
+  }
+  if !sub_is(p, '}') {
+    return Err("Expected brace expansion to end with }, got ${sub_shown(p)}")
+  }
+  p.pos += 1
+  Ok(out)
+}
+
+/// interpolate's SubstringExpansion, over bytes as Go's string slicing.
+fn substring(val: Str, offset: Int, length: Int?) -> Str {
+  let n = val.len()
+  var from = offset
+  if from < 0 {
+    from += n
+  }
+  from = from.max(0).min(n)
+  let b = val.bytes()
+  let ln = length ?? return b[from..].to_str_lossy()
+  var to = ln
+  if to >= 0 {
+    to += from
+  } else {
+    to += n
+    if to < from {
+      to = from
+    }
+  }
+  to = to.min(n)
+  b[from..to].to_str_lossy()
+}
+
+/// interpolate.Interpolate(env, line): the whole line is parsed before any
+/// value is used, so a syntax error anywhere wins over a `?` error.
+fn envsub(line: Str, env: Map[Str, Str]) -> Str ! Str {
+  var off: List[Int] = []
+  var at = 0
+  let rs = line.runes()
+  for r in rs {
+    off.push(at)
+    at += r.utf8_len()
+  }
+  off.push(at)
+  var check = Sub{s: line, rs: rs, off: off, pos: 0}
+  let _ = sub_expr(check, env, false, false)?
+  var p = Sub{s: line, rs: rs, off: off, pos: 0}
+  sub_expr(p, env, true, false)
+}
+
 /// goose's NumericComponent: the version of a file name `NNN_name.sql`, or
 /// None for a name without one (such files are skipped, as goose's
 /// non-strict collect does).
@@ -288,13 +599,14 @@ pub fn version_of(name: Str) -> Int? {
 
 /// Parses one migration file: its Up and Down statements and its
 /// transaction mode. `name` gives the version (`version_of`; 0 when it has
-/// none).
-pub fn parse(name: Str, text: Str) -> Migration ! MigrateErr {
-  let (up, tx) = match parse_dir(text, true) {
+/// none). Lines after `-- +goose ENVSUB ON` take their variables from
+/// `env`.
+pub fn parse(name: Str, text: Str, env: Map[Str, Str] = {}) -> Migration ! MigrateErr {
+  let (up, tx) = match parse_dir(text, true, env) {
     Ok(r) => r
     Err(msg) => return Err(MigrateErr.Parse(name: name, msg: msg))
   }
-  let (down, _) = match parse_dir(text, false) {
+  let (down, _) = match parse_dir(text, false, env) {
     Ok(r) => r
     Err(msg) => return Err(MigrateErr.Parse(name: name, msg: msg))
   }
@@ -302,30 +614,55 @@ pub fn parse(name: Str, text: Str) -> Migration ! MigrateErr {
 }
 
 /// The migrations of files: every `NNN_name.sql` at the top level (goose's
-/// `*.sql` glob), parsed and sorted by version. Other files are skipped.
-pub fn collect(files: embed.Dir) -> List[Migration] ! MigrateErr {
+/// `*.sql` glob), parsed and sorted by version. Other files are skipped,
+/// as are the names in `exclude_names` and the versions in
+/// `exclude_versions` (goose's WithExcludeNames and WithExcludeVersions,
+/// checked before duplicates). An excluded version below 1 is
+/// MigrateErr.BadVersion. `env` holds the variables of `ENVSUB ON` lines
+/// (`parse`).
+pub fn collect(files: embed.Dir, exclude_names: List[Str] = [], exclude_versions: List[Int] = [], env: Map[Str, Str] = {}) -> List[Migration] ! MigrateErr {
+  var skip_name: Map[Str, Bool] = {}
+  for n in exclude_names {
+    skip_name[n] = true
+  }
+  var skip_version: Map[Int, Bool] = {}
+  for v in exclude_versions {
+    if v < 1 {
+      return Err(MigrateErr.BadVersion(v))
+    }
+    skip_version[v] = true
+  }
   var by_version: Map[Int, Str] = {}
   var out: List[Migration] = []
   for path in files.paths() {
-    if path.contains("/") {
+    if path.contains("/") || skip_name.contains(path) {
       continue
     }
-    let v = match version_of(path) {
-      Some(v) => v
-      None => continue
+    let v = version_of(path) ?? continue
+    if skip_version.contains(v) {
+      continue
     }
     match by_version.get(v) {
       Some(first) => return Err(MigrateErr.Duplicate(version: v, first: first, second: path))
       None => {}
     }
     by_version[v] = path
-    let text = match files.read_text(path) {
-      Some(t) => t
-      None => return Err(MigrateErr.Parse(name: path, msg: "not valid UTF-8"))
-    }
-    out.push(parse(path, text)?)
+    let text = files.read_text(path) ?? return Err(MigrateErr.Parse(name: path, msg: "not valid UTF-8"))
+    out.push(parse(path, text, env)?)
   }
   Ok(out.sort_by(fn(m) { m.version }))
+}
+
+/// migrations with every one run outside a transaction, statement by
+/// statement, as a NO TRANSACTION file is (goose's WithIsolateDDL, for a
+/// database such as Aurora DSQL that cannot mix DDL and DML in one
+/// transaction). A failure part way leaves the statements before it.
+pub fn isolate_ddl(migrations: List[Migration]) -> List[Migration] {
+  var out: List[Migration] = []
+  for i in 0..migrations.len() {
+    out.push(Migration{version: migrations[i].version, name: migrations[i].name, up: migrations[i].up, down: migrations[i].down, tx: false})
+  }
+  out
 }
 
 // ---------------------------------------------------------------------------
@@ -366,21 +703,79 @@ fn check_table(table: Str) -> () ! MigrateErr {
 
 fn time_type(d: Dialect) -> Str {
   match d {
-    Mysql => "DATETIME(6)"
-    Postgres | Sqlite | Memory => "TIMESTAMPTZ"
+    Mysql | Tidb => "DATETIME(6)"
+    Postgres | Sqlite | Memory | Redshift | Dsql | Turso => "TIMESTAMPTZ"
   }
 }
 
-fn create_table[fx: Effects](c: sql.Conn[fx], table: Str, d: Dialect) -> () ! MigrateErr uses (net.dial, fx) {
-  let q = "CREATE TABLE IF NOT EXISTS ${table} (version BIGINT PRIMARY KEY, name TEXT NOT NULL, applied_at ${time_type(d)} NOT NULL)"
-  match c.exec(q) {
-    Ok(_) => Ok(())
-    Err(e) => Err(MigrateErr.Db(e))
+/// goose's CREATE TABLE of its version table for the dialect
+/// (internal/dialects in pressly/goose v3.27.3).
+fn goose_columns(d: Dialect) -> Str {
+  match d {
+    Postgres => "id integer PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY, version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamp NOT NULL DEFAULT now()"
+    Mysql => "id bigint(20) unsigned NOT NULL AUTO_INCREMENT, version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamp NULL default now(), PRIMARY KEY(id)"
+    Sqlite => "id INTEGER PRIMARY KEY AUTOINCREMENT, version_id INTEGER NOT NULL, is_applied INTEGER NOT NULL, tstamp TIMESTAMP DEFAULT (datetime('now'))"
+    Memory => "id INTEGER PRIMARY KEY, version_id BIGINT NOT NULL, is_applied BOOL NOT NULL, tstamp TIMESTAMP"
+    Tidb => "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE, version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamp NULL default now(), PRIMARY KEY(id)"
+    Redshift => "id integer NOT NULL identity(1, 1), version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamp NULL default sysdate, PRIMARY KEY(id)"
+    Dsql => "id integer PRIMARY KEY, version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamp NOT NULL DEFAULT now()"
+    Turso => goose_columns(Dialect.Sqlite)
   }
+}
+
+fn create_table[fx: Effects](c: sql.Conn[fx], table: Str, d: Dialect, layout: Layout) -> () ! MigrateErr uses (net.dial, fx) {
+  let q = match layout {
+    Xo => "CREATE TABLE IF NOT EXISTS ${table} (version BIGINT PRIMARY KEY, name TEXT NOT NULL, applied_at ${time_type(d)} NOT NULL)"
+    Goose => "CREATE TABLE IF NOT EXISTS ${table} (${goose_columns(d)})"
+  }
+  c.exec(q) ?? e => return Err(MigrateErr.Db(e))
+  if layout == Layout.Xo {
+    return Ok(())
+  }
+  // goose writes a version 0 row when it makes the table
+  let rows = c.query("SELECT version_id FROM ${table} LIMIT 1") ?? e => return Err(MigrateErr.Db(e))
+  if rows.len() == 0 {
+    let (q0, args0) = goose_insert(table, d, [sql.int(0), sql.bool(true)])
+    c.exec(q0, args0) ?? e => return Err(MigrateErr.Db(e))
+  }
+  Ok(())
+}
+
+/// is_applied as goose's drivers store it: a boolean, or 0 and 1 (SQLite).
+fn goose_applied(r: sql.Row) -> Bool ! sql.SqlErr {
+  match r.bool("is_applied") {
+    Ok(b) => Ok(b)
+    Err(_) => Ok(r.int("is_applied")? != 0)
+  }
+}
+
+/// The applied versions of a goose table: the newest row of each version
+/// decides, version 0 is goose's marker, and a NULL tstamp reads as the
+/// Unix epoch.
+fn applied_goose[fx: Effects](c: sql.Conn[fx], table: Str) -> Map[Int, Time] ! MigrateErr uses (net.dial, fx) {
+  let rows = c.query("SELECT version_id, is_applied, tstamp FROM ${table} ORDER BY id DESC") ?? e => return Err(MigrateErr.Db(e))
+  var seen: Map[Int, Bool] = {}
+  var out: Map[Int, Time] = {}
+  for r in rows {
+    let v = r.int("version_id") ?? e => return Err(MigrateErr.Db(e))
+    if v == 0 || seen.contains(v) {
+      continue
+    }
+    seen[v] = true
+    let on = goose_applied(r) ?? e => return Err(MigrateErr.Db(e))
+    if on {
+      let at = r.time_opt("tstamp") ?? e => return Err(MigrateErr.Db(e))
+      out[v] = at ?? Time.from_unix(0)
+    }
+  }
+  Ok(out)
 }
 
 /// The applied versions and their times.
-fn applied[fx: Effects](c: sql.Conn[fx], table: Str) -> Map[Int, Time] ! MigrateErr uses (net.dial, fx) {
+fn applied[fx: Effects](c: sql.Conn[fx], table: Str, layout: Layout) -> Map[Int, Time] ! MigrateErr uses (net.dial, fx) {
+  if layout == Layout.Goose {
+    return applied_goose(c, table)
+  }
   let rows = match c.query("SELECT version, applied_at FROM ${table}") {
     Ok(r) => r
     Err(e) => return Err(MigrateErr.Db(e))
@@ -403,8 +798,8 @@ fn applied[fx: Effects](c: sql.Conn[fx], table: Str) -> Map[Int, Time] ! Migrate
 fn lock[fx: Effects](c: sql.Conn[fx], table: Str, d: Dialect) -> () ! MigrateErr uses (net.dial, fx) {
   let r = match d {
     Postgres => c.query("SELECT pg_advisory_lock($1)", [sql.int(lock_key(table))])
-    Mysql => c.query("SELECT GET_LOCK(?, -1)", [sql.str("xo_migrate_${lock_key(table)}")])
-    Sqlite | Memory => return Ok(())
+    Mysql | Tidb => c.query("SELECT GET_LOCK(?, -1)", [sql.str("xo_migrate_${lock_key(table)}")])
+    Sqlite | Memory | Redshift | Dsql | Turso => return Ok(())
   }
   match r {
     Ok(_) => Ok(())
@@ -417,33 +812,63 @@ fn unlock[fx: Effects](c: sql.Conn[fx], table: Str, d: Dialect) uses (net.dial, 
   // connection's close brings
   match d {
     Postgres => c.query("SELECT pg_advisory_unlock($1)", [sql.int(lock_key(table))]).ignore_err("the session's end releases it")
-    Mysql => c.query("SELECT RELEASE_LOCK(?)", [sql.str("xo_migrate_${lock_key(table)}")]).ignore_err("the session's end releases it")
-    Sqlite | Memory => None
+    Mysql | Tidb => c.query("SELECT RELEASE_LOCK(?)", [sql.str("xo_migrate_${lock_key(table)}")]).ignore_err("the session's end releases it")
+    Sqlite | Memory | Redshift | Dsql | Turso => None
   }
 }
 
-fn record[fx: Effects](c: sql.Conn[fx], table: Str, m: Migration, at: Time) -> () ! sql.SqlErr uses (net.dial, fx) {
-  c.exec("INSERT INTO ${table} (version, name, applied_at) VALUES ($1, $2, $3)", [sql.int(m.version), sql.str(m.name), sql.time(at)])?
+/// The INSERT recording m and its arguments.
+/// A row of goose's table: (version_id, is_applied) and, given a third
+/// value, tstamp. Aurora DSQL's table has no identity column: goose sets
+/// id to the highest id plus 1.
+fn goose_insert(table: Str, d: Dialect, args: List[sql.SqlValue]) -> (Str, List[sql.SqlValue]) {
+  let cols = if args.len() == 3 { "version_id, is_applied, tstamp" } else { "version_id, is_applied" }
+  let marks = if args.len() == 3 { "$1, $2, $3" } else { "$1, $2" }
+  if d == Dialect.Dsql {
+    return ("INSERT INTO ${table} (id, ${cols}) VALUES (COALESCE((SELECT MAX(id) FROM ${table}), 0) + 1, ${marks})", args)
+  }
+  ("INSERT INTO ${table} (${cols}) VALUES (${marks})", args)
+}
+
+fn record_stmt(table: Str, d: Dialect, layout: Layout, m: Migration, at: Time) -> (Str, List[sql.SqlValue]) {
+  match layout {
+    Xo => ("INSERT INTO ${table} (version, name, applied_at) VALUES ($1, $2, $3)", [sql.int(m.version), sql.str(m.name), sql.time(at)])
+    Goose => goose_insert(table, d, [sql.int(m.version), sql.bool(true), sql.time(at)])
+  }
+}
+
+fn record[fx: Effects](c: sql.Conn[fx], table: Str, d: Dialect, layout: Layout, m: Migration, at: Time) -> () ! sql.SqlErr uses (net.dial, fx) {
+  let (q, args) = record_stmt(table, d, layout, m, at)
+  c.exec(q, args)?
   Ok(())
 }
 
-fn record_tx[fx: Effects](t: sql.Tx[fx], table: Str, m: Migration, at: Time) -> () ! sql.SqlErr uses (net.dial, fx) {
-  t.exec("INSERT INTO ${table} (version, name, applied_at) VALUES ($1, $2, $3)", [sql.int(m.version), sql.str(m.name), sql.time(at)])?
+fn record_tx[fx: Effects](t: sql.Tx[fx], table: Str, d: Dialect, layout: Layout, m: Migration, at: Time) -> () ! sql.SqlErr uses (net.dial, fx) {
+  let (q, args) = record_stmt(table, d, layout, m, at)
+  t.exec(q, args)?
   Ok(())
 }
 
 /// Runs m's Up statements and records it: in one transaction, or one by
 /// one for a NO TRANSACTION file.
-fn apply[fx: Effects](c: sql.Conn[fx], table: Str, m: Migration, at: Time) -> () ! MigrateErr uses (net.dial, fx) {
+fn apply[cx: Effects](c: sql.Conn[()], table: Str, d: Dialect, layout: Layout, m: Migration, step: CodeStep[cx]?, at: Time) -> () ! MigrateErr uses (net.dial, cx, log) {
   let failed = fn(i: Int, e: sql.SqlErr) -> MigrateErr { MigrateErr.Failed(version: m.version, name: m.name, statement: i, err: e) }
   if !m.tx {
     for i in 0..m.up.len() {
+      executing(m, step, i)
       match c.exec(m.up[i]) {
         Ok(_) => {}
         Err(e) => return Err(failed(i, e))
       }
     }
-    return match record(c, table, m, at) {
+    match step {
+      Some(CodeStep.NoTx(f)) => f(c) ?? e => return Err(failed(0, e))
+      _ => {}
+    }
+    if table.is_empty() {
+      return Ok(())
+    }
+    return match record(c, table, d, layout, m, at) {
       Ok(_) => Ok(())
       Err(e) => Err(failed(m.up.len(), e))
     }
@@ -453,6 +878,7 @@ fn apply[fx: Effects](c: sql.Conn[fx], table: Str, m: Migration, at: Time) -> ()
     Err(e) => return Err(MigrateErr.Db(e))
   }
   for i in 0..m.up.len() {
+    executing(m, step, i)
     match t.exec(m.up[i]) {
       Ok(_) => {}
       Err(e) => {
@@ -461,11 +887,23 @@ fn apply[fx: Effects](c: sql.Conn[fx], table: Str, m: Migration, at: Time) -> ()
       }
     }
   }
-  match record_tx(t, table, m, at) {
-    Ok(_) => {}
-    Err(e) => {
-      t.rollback().ignore_err("the migration already failed")
-      return Err(failed(m.up.len(), e))
+  match step {
+    Some(CodeStep.Tx(f)) => match f(t) {
+      Ok(_) => {}
+      Err(e) => {
+        t.rollback().ignore_err("the migration already failed")
+        return Err(failed(0, e))
+      }
+    }
+    _ => {}
+  }
+  if !table.is_empty() {
+    match record_tx(t, table, d, layout, m, at) {
+      Ok(_) => {}
+      Err(e) => {
+        t.rollback().ignore_err("the migration already failed")
+        return Err(failed(m.up.len(), e))
+      }
     }
   }
   match t.commit() {
@@ -507,8 +945,11 @@ pub fn up_versions(versions: List[Int], applied: List[Int], to: Int = Int.max, a
 }
 
 /// Checks migrations for a repeated version and table for its name, and
-/// sorts the migrations by version.
+/// sorts the migrations by version; none is MigrateErr.NoMigrations.
 fn prepare(migrations: List[Migration], table: Str) -> List[Migration] ! MigrateErr {
+  if migrations.len() == 0 {
+    return Err(MigrateErr.NoMigrations)
+  }
   var seen: Map[Int, Str] = {}
   for m in migrations {
     match seen.get(m.version) {
@@ -521,6 +962,27 @@ fn prepare(migrations: List[Migration], table: Str) -> List[Migration] ! Migrate
   Ok(migrations.sort_by(fn(m) { m.version }))
 }
 
+/// Applies m and times it.
+fn timed[cx: Effects](c: sql.Conn[()], table: Str, d: Dialect, layout: Layout, m: Migration, code: Map[Int, CodeStep[cx]], clock: Clock) -> MigrationResult ! MigrateErr uses (net.dial, cx, clock, log) {
+  let start = clock.now()
+  let step = code.get(m.version)
+  apply(c, table, d, layout, m, step, start)?
+  let r = MigrationResult{version: m.version, name: m.name, duration: clock.since(start), empty: m.up.len() == 0 && step.is_none()}
+  log.debug("migration completed", {"logger": "goose", "direction": "up", "duration_seconds": r.duration.seconds(), "source": path.base(m.name), "state": if r.empty { "empty" } else { "applied" }, "type": kind(step), "version": m.version})
+  Ok(r)
+}
+
+// goose's migration type: "go" for a code step, else "sql".
+fn kind[cx: Effects](step: CodeStep[cx]?) -> Str {
+  if step.is_some() { "go" } else { "sql" }
+}
+
+// goose Provider's verbose record (WithVerbose with WithSlog) before an
+// Up statement runs; `log.configure(level: log.Level.Debug)` shows it.
+fn executing[cx: Effects](m: Migration, step: CodeStep[cx]?, i: Int) uses log {
+  log.debug("executing statement", {"logger": "goose", "direction": "up", "source": path.base(m.name), "statement": m.up[i], "type": kind(step), "version": m.version})
+}
+
 // How up_locked picks what to apply.
 const ALL = 0
 const ONE = 1
@@ -529,43 +991,61 @@ const ONLY = 2
 /// Applies, under the lock: with ALL, every version up_versions answers;
 /// with ONE, the first of them (MigrateErr.NoNext when none); with ONLY,
 /// the migration of version `to` (MigrateErr.AlreadyApplied when applied).
-fn up_locked[fx: Effects](c: sql.Conn[fx], ms: List[Migration], table: Str, clock: Clock, d: Dialect, allow_missing: Bool, to: Int, how: Int) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
-  create_table(c, table, d)?
-  let done = applied(c, table)?
+fn up_locked[cx: Effects](c: sql.Conn[()], ms: List[Migration], code: Map[Int, CodeStep[cx]], table: Str, clock: Clock, d: Dialect, layout: Layout, allow_missing: Bool, to: Int, how: Int) -> List[MigrationResult] ! MigrateErr uses (net.dial, cx, clock, log) {
+  create_table(c, table, d, layout)?
+  let done = applied(c, table, layout)?
   if how == ONLY {
     if done.contains(to) {
       return Err(MigrateErr.AlreadyApplied(to))
     }
+    var out: List[MigrationResult] = []
     for m in ms {
       if m.version == to {
-        apply(c, table, m, clock.now())?
+        out.push(timed(c, table, d, layout, m, code, clock)?)
       }
     }
-    return Ok([to])
+    return Ok(out)
   }
   let vs = up_versions(ms.map(fn(m) { m.version }), done.keys(), to, allow_missing)?
   if how == ONE && vs.len() == 0 {
     return Err(MigrateErr.NoNext)
   }
+  var newest = 0
+  for v in done.keys() {
+    if v > newest {
+      newest = v
+    }
+  }
+  if vs.len() == 0 {
+    if !table.is_empty() {
+      log.debug("no migrations to run", {"logger": "goose", "current_version": newest})
+    }
+    return Ok([])
+  }
   var want: Map[Int, Bool] = {}
   for v in vs {
     want[v] = true
   }
-  var out: List[Int] = []
+  var out: List[MigrationResult] = []
   for m in ms {
     if !want.contains(m.version) {
       continue
     }
-    apply(c, table, m, clock.now())?
-    out.push(m.version)
+    out.push(timed(c, table, d, layout, m, code, clock)?)
+    if m.version > newest {
+      newest = m.version
+    }
     if how == ONE {
       break
     }
   }
+  if how == ALL && !table.is_empty() {
+    log.debug("successfully migrated database", {"logger": "goose", "current_version": newest})
+  }
   Ok(out)
 }
 
-fn run_up[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str, d: Dialect, allow_missing: Bool, to: Int, how: Int) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+fn run_up[fx: Effects, cx: Effects](db: sql.Db[fx], migrations: List[Migration], code: Map[Int, CodeStep[cx]], clock: Clock, table: Str, d: Dialect, layout: Layout, allow_missing: Bool, to: Int, how: Int) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, cx, clock, log) {
   if to < 1 {
     return Err(MigrateErr.BadVersion(to))
   }
@@ -579,7 +1059,7 @@ fn run_up[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock
   }
   defer c.close()
   lock(c, table, d)?
-  let r = up_locked(c, ms, table, clock, d, allow_missing, to, how)
+  let r = up_locked(c, ms, code, table, clock, d, layout, allow_missing, to, how)
   unlock(c, table, d)
   r
 }
@@ -593,53 +1073,116 @@ fn run_up[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock
 /// stay applied (MigrateErr.Failed). A pending version below the newest
 /// applied one is MigrateErr.Missing unless `allow_missing`, which applies
 /// it. A `to` below 1 is MigrateErr.BadVersion.
-pub fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
-  up_list(db, collect(files)?, clock, table, dialect, allow_missing, to)
+pub fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock, log) {
+  up_list(db, collect(files)?, clock, table, dialect, layout, allow_missing, to)
 }
 
 /// `up` over migrations already collected or parsed.
-pub fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
-  run_up(db, migrations, clock, table, dialect, allow_missing, to, ALL)
+pub fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock, log) {
+  Ok(run_up(db, migrations, {}, clock, table, dialect, layout, allow_missing, to, ALL)?.map(fn(r) { r.version }))
+}
+
+/// `up` answering what it did with each migration it applied, in order:
+/// its duration and whether it was empty (goose's Provider.Up results).
+/// Each result's display is goose's log line, for the caller to log.
+pub fn up_results[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log) {
+  up_results_list(db, collect(files)?, clock, table, dialect, layout, allow_missing, to)
+}
+
+/// `up_results` over migrations already collected or parsed.
+pub fn up_results_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log) {
+  run_up(db, migrations, {}, clock, table, dialect, layout, allow_missing, to, ALL)
+}
+
+/// Applies every migration of files in version order, each time it is
+/// called, with no version table and no lock (goose's
+/// WithDisableVersioning, for seed data that is loaded again into a fresh
+/// database): nothing records what ran, so `status`, `db_version` and
+/// `has_pending` know nothing of it. A failure stops at that migration.
+pub fn up_unversioned[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log) {
+  up_unversioned_list(db, collect(files)?, clock)
+}
+
+/// `up_unversioned` over migrations already collected or parsed.
+pub fn up_unversioned_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log) {
+  let ms = prepare(migrations, "xo_migrations")?
+  let c = db.conn() ?? e => return Err(MigrateErr.Db(e))
+  defer c.close()
+  let none: Map[Int, CodeStep[()]] = {}
+  var out: List[MigrationResult] = []
+  for m in ms {
+    out.push(timed(c, "", Dialect.Memory, Layout.Xo, m, none, clock)?)
+  }
+  Ok(out)
+}
+
+/// Applies the pending SQL `migrations` and `code` migrations together in
+/// version order, as `up_results_list` does (goose's Provider with
+/// WithGoMigrations): one version may not be both. A code migration's
+/// step runs where its statements would.
+pub fn up_code[fx: Effects](db: sql.Db[fx], migrations: List[Migration], code: List[CodeMigration[fx]], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false, to: Int = Int.max) -> List[MigrationResult] ! MigrateErr uses (net.dial, fx, clock, log) {
+  let (ms, steps) = with_code(migrations, code)
+  run_up(db, ms, steps, clock, table, dialect, layout, allow_missing, to, ALL)
+}
+
+/// `up_code` applying only the next pending migration (goose's UpByOne):
+/// MigrateErr.NoNext when none is pending.
+pub fn up_code_by_one[fx: Effects](db: sql.Db[fx], migrations: List[Migration], code: List[CodeMigration[fx]], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> MigrationResult ! MigrateErr uses (net.dial, fx, clock, log) {
+  let (ms, steps) = with_code(migrations, code)
+  let rs = run_up(db, ms, steps, clock, table, dialect, layout, allow_missing, Int.max, ONE)?
+  Ok(rs[0])
+}
+
+/// The SQL migrations with the code ones added as statement-less
+/// migrations, and each code migration's step by version.
+fn with_code[fx: Effects](migrations: List[Migration], code: List[CodeMigration[fx]]) -> (List[Migration], Map[Int, CodeStep[fx]]) uses fx {
+  var ms = migrations.clone()
+  var steps: Map[Int, CodeStep[fx]] = {}
+  for i in 0..code.len() {
+    ms.push(code[i].migration())
+    steps[code[i].version] = code[i].up
+  }
+  (ms, steps)
 }
 
 /// Applies the first pending migration of files as `up` would, and answers
 /// its version (goose's UpByOne); MigrateErr.NoNext when none is pending.
-pub fn up_by_one[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock) {
-  up_by_one_list(db, collect(files)?, clock, table, dialect, allow_missing)
+pub fn up_by_one[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock, log) {
+  up_by_one_list(db, collect(files)?, clock, table, dialect, layout, allow_missing)
 }
 
 /// `up_by_one` over migrations already collected or parsed.
-pub fn up_by_one_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock) {
-  let vs = run_up(db, migrations, clock, table, dialect, allow_missing, Int.max, ONE)?
-  Ok(vs[0])
+pub fn up_by_one_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock, log) {
+  let rs = run_up(db, migrations, {}, clock, table, dialect, layout, allow_missing, Int.max, ONE)?
+  Ok(rs[0].version)
 }
 
 /// Applies the migration of `version` alone, whatever else is pending
 /// (goose's ApplyVersion, up direction): MigrateErr.BadVersion below 1,
 /// MigrateErr.NotFound when no migration has it, MigrateErr.AlreadyApplied
 /// when it is applied.
-pub fn apply_version[fx: Effects](db: sql.Db[fx], files: embed.Dir, version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> () ! MigrateErr uses (net.dial, fx, clock) {
-  apply_version_list(db, collect(files)?, version, clock, table, dialect)
+pub fn apply_version[fx: Effects](db: sql.Db[fx], files: embed.Dir, version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> () ! MigrateErr uses (net.dial, fx, clock, log) {
+  apply_version_list(db, collect(files)?, version, clock, table, dialect, layout)
 }
 
 /// `apply_version` over migrations already collected or parsed.
-pub fn apply_version_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> () ! MigrateErr uses (net.dial, fx, clock) {
-  run_up(db, migrations, clock, table, dialect, false, version, ONLY)?
+pub fn apply_version_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> () ! MigrateErr uses (net.dial, fx, clock, log) {
+  run_up(db, migrations, {}, clock, table, dialect, layout, false, version, ONLY)?
   Ok(())
 }
 
 /// The newest applied version, whatever order the versions were applied
 /// in, or 0 when none is (goose's GetDBVersion). Takes no lock.
-pub fn db_version[fx: Effects](db: sql.Db[fx], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> Int ! MigrateErr uses (net.dial, fx) {
+pub fn db_version[fx: Effects](db: sql.Db[fx], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> Int ! MigrateErr uses (net.dial, fx) {
   check_table(table)?
   let c = match db.conn() {
     Ok(c) => c
     Err(e) => return Err(MigrateErr.Db(e))
   }
   defer c.close()
-  create_table(c, table, dialect)?
+  create_table(c, table, dialect, layout)?
   var newest = 0
-  for v in applied(c, table)?.keys() {
+  for v in applied(c, table, layout)?.keys() {
     if v > newest {
       newest = v
     }
@@ -651,20 +1194,20 @@ pub fn db_version[fx: Effects](db: sql.Db[fx], table: Str = "xo_migrations", dia
 /// (out-of-order) version is MigrateErr.Missing unless `allow_missing`, as
 /// for `up`. Takes no lock, so it neither waits for nor blocks a running
 /// `up`.
-pub fn has_pending[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx) {
-  has_pending_list(db, collect(files)?, table, dialect, allow_missing)
+pub fn has_pending[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx) {
+  has_pending_list(db, collect(files)?, table, dialect, layout, allow_missing)
 }
 
 /// `has_pending` over migrations already collected or parsed.
-pub fn has_pending_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx) {
+pub fn has_pending_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx) {
   let ms = prepare(migrations, table)?
   let c = match db.conn() {
     Ok(c) => c
     Err(e) => return Err(MigrateErr.Db(e))
   }
   defer c.close()
-  create_table(c, table, dialect)?
-  let done = applied(c, table)?
+  create_table(c, table, dialect, layout)?
+  let done = applied(c, table, layout)?
   let vs = up_versions(ms.map(fn(m) { m.version }), done.keys(), Int.max, allow_missing)?
   Ok(vs.len() > 0)
 }
@@ -672,19 +1215,201 @@ pub fn has_pending_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration]
 /// Each migration of files in version order with the time it was applied
 /// (None while pending). A database whose version table does not exist yet
 /// has every migration pending.
-pub fn status[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx) {
-  status_list(db, collect(files)?, table, dialect)
+pub fn status[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> List[Status] ! MigrateErr uses (net.dial, fx) {
+  status_list(db, collect(files)?, table, dialect, layout)
 }
 
 /// `status` over migrations already collected or parsed.
-pub fn status_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx) {
+pub fn status_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, layout: Layout = Layout.Xo) -> List[Status] ! MigrateErr uses (net.dial, fx) {
+  if migrations.len() == 0 {
+    return Err(MigrateErr.NoMigrations)
+  }
   check_table(table)?
   let c = match db.conn() {
     Ok(c) => c
     Err(e) => return Err(MigrateErr.Db(e))
   }
   defer c.close()
-  create_table(c, table, dialect)?
-  let done = applied(c, table)?
+  create_table(c, table, dialect, layout)?
+  let done = applied(c, table, layout)?
   Ok(migrations.sort_by(fn(m) { m.version }).map(fn(m) { Status{version: m.version, name: m.name, applied_at: done.get(m.version)} }))
+}
+
+// ---------------------------------------------------------------------------
+// Writing migration files (goose's create.go, fix.go and helpers.go)
+
+/// goose's sqlMigrationTemplate: the text `create` writes by default.
+pub const SQL_TEMPLATE: Str = "-- +goose Up\nSELECT 'up SQL query';\n\n-- +goose Down\nSELECT 'down SQL query';\n"
+
+// goose's camelSnakeStateMachine
+const CS_IDLE = 0
+const CS_FIRST = 1
+const CS_ALNUM = 2
+const CS_DELIM = 3
+
+fn cs_next(s: Int, r: Rune) -> Int {
+  let an = r.is_letter() || r.is_number()
+  if s == CS_IDLE {
+    if an { CS_FIRST } else { s }
+  } else if s == CS_FIRST {
+    if an { CS_ALNUM } else { CS_DELIM }
+  } else if s == CS_ALNUM {
+    if an { s } else { CS_DELIM }
+  } else {
+    if an { CS_FIRST } else { CS_IDLE }
+  }
+}
+
+/// goose's camelCase: each word's first letter upper case, the rest lower
+/// case, everything but letters and numbers dropped ("Add updated_at" is
+/// "AddUpdatedAt").
+fn camel_case(str: Str) -> Str {
+  var b = BytesBuilder.new()
+  var st = CS_IDLE
+  for r in str.runes() {
+    st = cs_next(st, r)
+    if st == CS_FIRST {
+      b.write_rune(r.to_upper())
+    } else if st == CS_ALNUM {
+      b.write_rune(r.to_lower())
+    }
+  }
+  b.freeze().to_str_lossy()
+}
+
+/// goose's snakeCase: the words lower case joined by `_`
+/// ("Add updated_at" is "add_updated_at").
+fn snake_case(str: Str) -> Str {
+  var b = BytesBuilder.new()
+  var st = CS_IDLE
+  for r in str.runes() {
+    st = cs_next(st, r)
+    if st == CS_FIRST || st == CS_ALNUM {
+      b.write_rune(r.to_lower())
+    } else if st == CS_DELIM {
+      b.write_byte(95)
+    }
+  }
+  let out = b.freeze().to_str_lossy()
+  if st == CS_IDLE && out.ends_with("_") { out[..out.len() - 1] } else { out }
+}
+
+fn days_in(year: Int, month: Int) -> Int {
+  if month == 2 {
+    if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 { 29 } else { 28 }
+  } else if month == 4 || month == 6 || month == 9 || month == 11 {
+    30
+  } else {
+    31
+  }
+}
+
+/// goose's timestamped test: the version read as `20060102150405` is a
+/// valid time after the Unix epoch. The other versions are sequential.
+fn is_timestamp(v: Int) -> Bool {
+  let t = "${v}"
+  if t.len() != 14 {
+    return false
+  }
+  let year = Int.parse(t[0..4]) ?? 0
+  let month = Int.parse(t[4..6]) ?? 0
+  let day = Int.parse(t[6..8]) ?? 0
+  let hour = Int.parse(t[8..10]) ?? 99
+  let min = Int.parse(t[10..12]) ?? 99
+  let sec = Int.parse(t[12..14]) ?? 99
+  if month < 1 || month > 12 || day < 1 || day > days_in(year, month) || hour > 23 || min > 59 || sec > 59 {
+    return false
+  }
+  year >= 1970 && v != 19700101000000
+}
+
+/// The `NNN_name.sql` files at the top of dir, by version.
+fn dir_versions(dir: Fs) -> List[(Int, Str)] ! MigrateErr uses fs.read {
+  let infos = dir.read_dir(".") ?? e => return Err(MigrateErr.File(err: e))
+  var by_version: Map[Int, Str] = {}
+  var out: List[(Int, Str)] = []
+  for i in 0..infos.len() {
+    if infos[i].is_dir {
+      continue
+    }
+    let name = infos[i].name
+    let v = version_of(name) ?? continue
+    match by_version.get(v) {
+      Some(first) => return Err(MigrateErr.Duplicate(version: v, first: first, second: name))
+      None => {}
+    }
+    by_version.put(v, name)
+    out.push((v, name))
+  }
+  Ok(out.sort_by(fn(p) { p.0 }))
+}
+
+/// The version a new file gets: 1 past the newest sequential version (a
+/// timestamp version is not counted), or 1.
+fn next_sequential(vs: List[(Int, Str)]) -> Int {
+  var last = 0
+  for (v, _) in vs {
+    if !is_timestamp(v) && v > last {
+      last = v
+    }
+  }
+  last + 1
+}
+
+fn seq_text(v: Int) -> Str {
+  let t = "${v}"
+  if t.len() >= 5 { t } else { "0".repeat(5 - t.len()) + t }
+}
+
+/// goose's Create and CreateWithTemplate: writes a new migration file
+/// `VERSION_snake_name.sql` in dir and answers its name. VERSION is the
+/// time from `clock` in UTC (`20060102150405`), or with `sequential` the
+/// next sequential version, five digits (`00001`; SetSequential and
+/// `goose create -s`). template's `{{.Version}}` and `{{.CamelName}}` are
+/// replaced by the version and `name` in camel case. A file of that name
+/// already there is `File(FsErr.Exists)`.
+pub fn create(dir: Fs, name: Str, clock: Clock, sequential: Bool = false, template: Str = SQL_TEMPLATE) -> Str ! MigrateErr uses (fs, clock) {
+  let version = if sequential {
+    seq_text(next_sequential(dir_versions(dir)?))
+  } else {
+    clock.now().format_rfc3339()[0..19].replace("-", "").replace(":", "").replace("T", "")
+  }
+  let file = "${version}_${snake_case(name)}.sql"
+  match dir.exists(file) {
+    Ok(true) => return Err(MigrateErr.File(err: FsErr.Exists(path: file)))
+    Ok(false) => {}
+    Err(e) => return Err(MigrateErr.File(err: e))
+  }
+  let text = template.replace("{{.Version}}", version).replace("{{.CamelName}}", camel_case(name))
+  match dir.write(file, text.bytes()) {
+    Ok(_) => Ok(file)
+    Err(e) => Err(MigrateErr.File(err: e))
+  }
+}
+
+/// goose's Fix: renames each timestamped file in dir, oldest first, to the
+/// next sequential version (`20261117000104_users.sql` after `00002_x.sql`
+/// is `00003_users.sql`), and answers each (old, new) name in order
+/// (goose logs them as `RENAMED old => new`). No migration file is
+/// `NoMigrations`.
+pub fn fix(dir: Fs) -> List[(Str, Str)] ! MigrateErr uses fs {
+  let vs = dir_versions(dir)?
+  if vs.is_empty() {
+    return Err(MigrateErr.NoMigrations)
+  }
+  var next = next_sequential(vs)
+  var out: List[(Str, Str)] = []
+  for (v, old) in vs {
+    if !is_timestamp(v) {
+      continue
+    }
+    let new = old.replace_n("${v}", seq_text(next), 1)
+    match dir.rename(old, new) {
+      Ok(_) => {}
+      Err(e) => return Err(MigrateErr.File(err: e))
+    }
+    out.push((old, new))
+    next += 1
+  }
+  Ok(out)
 }
