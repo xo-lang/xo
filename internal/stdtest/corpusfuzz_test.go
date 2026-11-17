@@ -18,6 +18,10 @@
 //   - protodesc: protodescoracle (google.golang.org/protobuf's descriptorpb),
 //     random FileDescriptorProtos round tripped byte for byte, and changed
 //     bytes decoded whenever protobuf-go accepts them with UTF-8 strings;
+//   - protoparse: protoparseoracle (bufbuild/protocompile's parser and its
+//     validation), random proto2 and proto3 files, half changed at the
+//     token level: the same outline when protocompile accepts, an error
+//     when it rejects;
 //   - protowkt: protowktoracle (protobuf-go's well known types), random
 //     Struct, Value, ListValue, Duration and Timestamp values;
 //   - prototext: prototextoracle (protobuf-go's encoding/prototext), random
@@ -68,6 +72,7 @@ func TestHtmltokFuzz(t *testing.T)      { corpusFuzz(t, "htmltok", "HTMLTOKFUZZ"
 func TestPublicsuffixFuzz(t *testing.T) { corpusFuzz(t, "publicsuffix", "PUBLICSUFFIXFUZZ") }
 func TestRandomFuzz(t *testing.T)       { corpusFuzz(t, "random", "RANDOMFUZZ") }
 func TestProtodescFuzz(t *testing.T)    { corpusFuzz(t, "protodesc", "PROTODESCFUZZ") }
+func TestProtoparseFuzz(t *testing.T)   { corpusFuzz(t, "protoparsefuzz", "PROTOPARSEFUZZ") }
 func TestProtowktFuzz(t *testing.T)     { corpusFuzz(t, "protowkt", "PROTOWKTFUZZ") }
 func TestPrototextFuzz(t *testing.T)    { corpusFuzz(t, "prototext", "PROTOTEXTFUZZ") }
 

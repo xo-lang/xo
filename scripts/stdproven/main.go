@@ -138,6 +138,7 @@ var harnesses = map[string][]harness{
 	"publicsuffix": {{"TestPublicsuffixFuzz", "XO_PUBLICSUFFIXFUZZ"}},
 	"random":       {{"TestRandomFuzz", "XO_RANDOMFUZZ"}},
 	"protodesc":    {{"TestProtodescFuzz", "XO_PROTODESCFUZZ"}},
+	"protoparse":   {{"TestProtoparseFuzz", "XO_PROTOPARSEFUZZ"}},
 	"protowkt":     {{"TestProtowktFuzz", "XO_PROTOWKTFUZZ"}},
 	"prototext":    {{"TestPrototextFuzz", "XO_PROTOTEXTFUZZ"}},
 	"backoff":      {{"TestBackoffFuzz", "XO_BACKOFFFUZZ"}},
