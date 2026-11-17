@@ -1,5 +1,21 @@
 # std/prototext changes
 
+## 2026-11-17: feature: the text format reader (Unmarshal)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #153 (prototext.Unmarshal was a map.txt gap)
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/prototext/decode.go and
+  internal/encoding/text (decode.go, decode_number.go, decode_string.go, decode_token.go), ported with attribution
+- Test: corpus prototext UNMARSHAL (703 rows: Go's own text of the seeded messages, that text changed at random,
+  and 206 written edges of the lexer and decoder; 404 of them errors), each the wire of Go's deterministic Marshal of
+  what Go's Unmarshal made, or Go's error; seeds 7 and 8 with 2,500 messages each also matched
+- Timing: none yet (task #153 measures marshal and unmarshal against Go on host 1)
+
+`unmarshal(r, name, text, o)` and `unmarshal_bytes` return the wire bytes of the message the text sets, as Go's
+deterministic proto.Marshal writes them, with Go's error texts, lines and columns. Not yet: extension fields
+(`[pkg.ext]` outside an Any), which std/protojson's registry does not hold; they are unknown fields.
+
 ## 2026-11-16: perf: marshal 0.93 and format 0.97 of Go's prototext
 
 - Kind: perf

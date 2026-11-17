@@ -546,7 +546,9 @@ func main() {
 	}
 	fmt.Fprintf(&o, "/// the schema: a FileDescriptorSet, files in dependency order, as hex\nconst SCHEMA: Str = \"%x\"\n\n", sb)
 	names := []string{"pjt.Scalars", "pjt.Wkt", "pjt.Inner", "pjed.EdMsg", "pjedi.ImpMsg", "pjt2.Req", "google.protobuf.Any"}
-	var rows, fmtRows []string
+	var rows, fmtRows, urows []string
+	// the reader's rows use their own random source, so the writer's rows stay as they were
+	ur := rand.New(rand.NewSource(9157 + fuzzSeed))
 	for i := 0; i < nMsgs; i++ {
 		name := names[g.r.Intn(len(names))]
 		d, err := files.FindDescriptorByName(protoreflect.FullName(name))
@@ -599,6 +601,16 @@ func main() {
 			}
 			rows = append(rows, fmt.Sprintf("  (\"%s\", %d, \"%x\", \"%s\"),\n", name, fl, wire, q(want)))
 		}
+		// Unmarshal of Go's own text (compact or multiline, now and then with unknown
+		// fields by number), and of that text changed at random for the error paths
+		txt, err := mopts(ur.Intn(8)).Marshal(m)
+		if err == nil {
+			t := []byte(undetrand(string(txt)))
+			urows = append(urows, unmarshalRow(name, md, ur.Intn(8), t))
+			for k, nm := 0, ur.Intn(3); k < nm; k++ {
+				urows = append(urows, unmarshalRow(name, md, ur.Intn(8), mutate(ur, t)))
+			}
+		}
 		if i%5 == 0 {
 			fmtRows = append(fmtRows, fmt.Sprintf("  (\"%s\", \"%x\", \"%s\"),\n", name, wire, q(undetrand(prototext.MarshalOptions{Multiline: true, Resolver: resolver}.Format(m)))))
 		}
@@ -611,9 +623,289 @@ func main() {
 	for _, r := range fmtRows {
 		o.WriteString(r)
 	}
+	o.WriteString("]\n\n/// (message full name, flags: 1 allow partial, 2 discard unknown, 4 recursion limit 3; text hex, the wire hex of Go's deterministic Marshal of what prototext.Unmarshal made, or ERR: and its error)\nconst UNMARSHAL: List[(Str, Int, Str, Str)] = [\n")
+	for _, c := range handCases {
+		d, err := files.FindDescriptorByName(protoreflect.FullName(c.name))
+		if err != nil {
+			panic(c.name)
+		}
+		o.WriteString(unmarshalRow(c.name, d.(protoreflect.MessageDescriptor), c.fl, []byte(c.text)))
+	}
+	for _, r := range urows {
+		o.WriteString(r)
+	}
 	o.WriteString("]\n")
 	o.WriteString(xoTests)
 	fmt.Print(o.String())
+}
+
+// uopts: 1 allow partial, 2 discard unknown, 4 recursion limit 3.
+func uopts(flags int) prototext.UnmarshalOptions {
+	o := prototext.UnmarshalOptions{Resolver: resolver, AllowPartial: flags&1 != 0, DiscardUnknown: flags&2 != 0}
+	if flags&4 != 0 {
+		o.RecursionLimit = 3
+	}
+	return o
+}
+
+// unmarshalRow: Go's Unmarshal of text, as the wire bytes of its
+// deterministic Marshal, or its error.
+func unmarshalRow(name string, md protoreflect.MessageDescriptor, fl int, text []byte) string {
+	m := dynamicpb.NewMessage(md)
+	var want string
+	if err := uopts(fl).Unmarshal(text, m); err != nil {
+		// an error quoting invalid UTF-8 from the text shows U+FFFD in Xo's Str
+		want = "ERR:" + strings.ToValidUTF8(strings.Replace(err.Error(), "proto:\u00a0", "proto: ", 1), "\uFFFD")
+	} else {
+		w, err := proto.MarshalOptions{Deterministic: true, AllowPartial: true}.Marshal(m)
+		if err != nil {
+			panic(err)
+		}
+		want = fmt.Sprintf("%x", w)
+	}
+	return fmt.Sprintf("  (\"%s\", %d, \"%x\", \"%s\"),\n", name, fl, text, q(want))
+}
+
+// mutate changes text in one to three places: a byte dropped, a token
+// character or a byte put in, a byte replaced, a span repeated.
+func mutate(r *rand.Rand, t []byte) []byte {
+	b := append([]byte(nil), t...)
+	pick := []byte("{}[]<>:,;\"'\\#-.0x9eEfF \n_aZ/%\x00\xff\xc3")
+	for k, n := 0, 1+r.Intn(3); k < n; k++ {
+		if len(b) == 0 {
+			b = append(b, pick[r.Intn(len(pick))])
+			continue
+		}
+		i := r.Intn(len(b))
+		switch r.Intn(4) {
+		case 0:
+			b = append(b[:i], b[i+1:]...)
+		case 1:
+			b = append(b[:i], append([]byte{pick[r.Intn(len(pick))]}, b[i:]...)...)
+		case 2:
+			b[i] = pick[r.Intn(len(pick))]
+		case 3:
+			j := i + r.Intn(len(b)-i)
+			b = append(b[:j], append(append([]byte(nil), b[i:j]...), b[j:]...)...)
+		}
+	}
+	return b
+}
+
+type handCase struct {
+	name string
+	fl   int
+	text string
+}
+
+// handCases are the lexer's and the decoder's edges, each written once.
+var handCases = []handCase{
+	{"pjt.Scalars", 0, ""},
+	{"pjt.Scalars", 0, "  # only a comment\n"},
+	{"pjt.Scalars", 0, "s_int32: 0x7fffffff s_int64: -0x8000000000000000 s_uint32: 037777777777 s_uint64: 18446744073709551615"},
+	{"pjt.Scalars", 0, "s_int32: 2147483648"},
+	{"pjt.Scalars", 0, "s_int32: -2147483649"},
+	{"pjt.Scalars", 0, "s_uint64: 18446744073709551616"},
+	{"pjt.Scalars", 0, "s_uint64: 0x10000000000000000"},
+	{"pjt.Scalars", 0, "s_uint64: 01777777777777777777777"},
+	{"pjt.Scalars", 0, "s_uint64: 02000000000000000000000"},
+	{"pjt.Scalars", 0, "s_uint32: -1"},
+	{"pjt.Scalars", 0, "s_int32: -  # a comment\n 5"},
+	{"pjt.Scalars", 0, "s_int32: 1.5"},
+	{"pjt.Scalars", 0, "s_int32: 1e3"},
+	{"pjt.Scalars", 0, "s_int32: 08"},
+	{"pjt.Scalars", 0, "s_int32: 0x"},
+	{"pjt.Scalars", 0, "s_int32: 12abc"},
+	{"pjt.Scalars", 0, "s_sint32: -5 s_sint64: -9223372036854775808 s_sfixed32: -1 s_sfixed64: -2 s_fixed32: 4294967295 s_fixed64: 0xffffffffffffffff"},
+	{"pjt.Scalars", 0, "s_double: 1.5 s_float: -2.25f"},
+	{"pjt.Scalars", 0, "s_double: inf s_float: -Infinity"},
+	{"pjt.Scalars", 0, "s_double: NaN s_float: nan"},
+	{"pjt.Scalars", 0, "s_double: 1e999 s_float: 1e39"},
+	{"pjt.Scalars", 0, "s_double: -1e999 s_float: 1e-50"},
+	{"pjt.Scalars", 0, "s_double: .5 s_float: 5."},
+	{"pjt.Scalars", 0, "s_double: 1e s_float: 1"},
+	{"pjt.Scalars", 0, "s_double: 0x10"},
+	{"pjt.Scalars", 0, "s_double: 017"},
+	{"pjt.Scalars", 0, "s_double: 10F"},
+	{"pjt.Scalars", 0, "s_double: -inf"},
+	{"pjt.Scalars", 0, "s_double: - inf"},
+	{"pjt.Scalars", 0, "s_double: infinityx"},
+	{"pjt.Scalars", 0, "s_bool: true r_bool: [t, True, f, false, False, 0, 1]"},
+	{"pjt.Scalars", 0, "s_bool: 2"},
+	{"pjt.Scalars", 0, "s_bool: TRUE"},
+	{"pjt.Scalars", 0, "s_bool: 0x1"},
+	{"pjt.Scalars", 0, "s_string: \"a\" 'b' \"c\""},
+	{"pjt.Scalars", 0, "s_string: \"\\a\\b\\f\\n\\r\\t\\v\\\\\\'\\\"\\?\""},
+	{"pjt.Scalars", 0, "s_string: \"\\101\\0\\x41\\x4 \\u00e9\\U0001F600\\ud83d\\ude00\""},
+	{"pjt.Scalars", 0, "s_string: \"\\400\""},
+	{"pjt.Scalars", 0, "s_string: \"\\xg\""},
+	{"pjt.Scalars", 0, "s_string: \"\\ud83d\""},
+	{"pjt.Scalars", 0, "s_string: \"\\ud83dx\\u0041\""},
+	{"pjt.Scalars", 0, "s_string: \"\\ude00\\ud83d\""},
+	{"pjt.Scalars", 0, "s_string: \"\\U00110000\""},
+	{"pjt.Scalars", 0, "s_string: \"\\uzzzz\""},
+	{"pjt.Scalars", 0, "s_string: \"\\q\""},
+	{"pjt.Scalars", 0, "s_string: \"a\nb\""},
+	{"pjt.Scalars", 0, "s_string: \"a\x00b\""},
+	{"pjt.Scalars", 0, "s_string: \"\xff\""},
+	{"pjt.Scalars", 0, "s_string: \"\\xff\""},
+	{"pjt.Scalars", 0, "s_bytes: \"\\xff\\000\""},
+	{"pjt.Scalars", 0, "s_string: \"unterminated"},
+	{"pjt.Scalars", 0, "s_string: \"\\"},
+	{"pjt.Scalars", 0, "s_string: \"\\u12"},
+	{"pjt.Scalars", 0, "s_string: 'it''s'"},
+	{"pjt.Scalars", 0, "s_string: \"é\" s_bytes: \"é\""},
+	{"pjt.Scalars", 0, "s_string: abc"},
+	{"pjt.Scalars", 0, "s_bytes: 5"},
+	{"pjt.Scalars", 0, "s_int32 5"},
+	{"pjt.Scalars", 0, "s_int32: 5 s_int32: 6"},
+	{"pjt.Scalars", 0, "s_int32: 0 s_string: \"\" s_bool: false"},
+	{"pjt.Scalars", 0, "s_int32: 5, s_int64: 6; s_uint32: 7"},
+	{"pjt.Scalars", 0, "s_int32: 5,, s_int64: 6"},
+	{"pjt.Scalars", 0, ", s_int32: 5"},
+	{"pjt.Scalars", 0, "s_int32: 5;"},
+	{"pjt.Scalars", 0, "s_int32: 5,"},
+	{"pjt.Scalars", 0, "r_int32: [1, 2, -3] r_int32: 4 r_int32: []"},
+	{"pjt.Scalars", 0, "r_int32: [1, 2,]"},
+	{"pjt.Scalars", 0, "r_int32: [1 2]"},
+	{"pjt.Scalars", 0, "r_int32: [1; 2]"},
+	{"pjt.Scalars", 0, "r_int32: [,1]"},
+	{"pjt.Scalars", 0, "r_int32: [1, 2"},
+	{"pjt.Scalars", 0, "r_int32: [1, 2}"},
+	{"pjt.Scalars", 0, "r_string: [\"a\", 'b' \"c\"] r_bytes: \"x\" r_double: [1, inf, -0]"},
+	{"pjt.Scalars", 0, "r_int32: [{}]"},
+	{"pjt.Scalars", 0, "color: GREEN colors: [BLUE, 1, RED, 7] colors: -1"},
+	{"pjt.Scalars", 0, "color: PURPLE"},
+	{"pjt.Scalars", 0, "color: -GREEN"},
+	{"pjt.Scalars", 0, "color: 2147483648"},
+	{"pjt.Scalars", 0, "color: \"GREEN\""},
+	{"pjt.Scalars", 0, "inner { id: 1 label: \"x\" next < id: 2 > }"},
+	{"pjt.Scalars", 0, "inner: { id: 1 }"},
+	{"pjt.Scalars", 0, "inner { id: 1 >"},
+	{"pjt.Scalars", 0, "inner < id: 1 }"},
+	{"pjt.Scalars", 0, "inner { id: 1"},
+	{"pjt.Scalars", 0, "inner { id: 1, }"},
+	{"pjt.Scalars", 0, "inner { id: 1; label: \"a\", }"},
+	{"pjt.Scalars", 0, "inner { , id: 1 }"},
+	{"pjt.Scalars", 0, "inner { id: 1 } inner { id: 2 }"},
+	{"pjt.Scalars", 0, "inner: 5"},
+	{"pjt.Scalars", 0, "inner []"},
+	{"pjt.Scalars", 0, "inners [{id: 1}, <id: 2>] inners {id: 3} inners: []"},
+	{"pjt.Scalars", 0, "inners [{id: 1} {id: 2}]"},
+	{"pjt.Scalars", 0, "inners [5]"},
+	{"pjt.Scalars", 0, "inners: 5"},
+	{"pjt.Scalars", 0, "m_str_i32 { key: \"b\" value: 2 } m_str_i32 { value: 1 key: \"a\" } m_str_i32 [{key: \"b\" value: 3}, {}]"},
+	{"pjt.Scalars", 0, "m_i32_str { key: 5 } m_i32_str { key: -1 value: \"n\" } m_i32_str { key: 3 value: \"t\" }"},
+	{"pjt.Scalars", 0, "m_bool_inner { key: true value { id: 1 } } m_bool_inner { key: false }"},
+	{"pjt.Scalars", 0, "m_u64_str { key: 18446744073709551615 value: \"a\" } m_u64_str { key: 1 value: \"b\" }"},
+	{"pjt.Scalars", 0, "m_i64_color { key: -5 } m_i64_color { key: 2 value: BLUE }"},
+	{"pjt.Scalars", 0, "m_str_bytes { key: \"ab\" value: \"\\xff\" } m_str_bytes { key: \"a\" value: \"z\" } m_str_bytes { key: \"\\u00e9\" }"},
+	{"pjt.Scalars", 0, "m_s32_double { key: -1 value: 1.5 } m_s32_double { key: 1 value: nan }"},
+	{"pjt.Scalars", 0, "m_str_i32 { key: \"a\" key: \"b\" }"},
+	{"pjt.Scalars", 0, "m_str_i32 { value: 1 value: 2 }"},
+	{"pjt.Scalars", 0, "m_str_i32 { other: 1 }"},
+	{"pjt.Scalars", 2, "m_str_i32 { other: 1 key: \"k\" 9: [1] }"},
+	{"pjt.Scalars", 0, "m_str_i32 { 1: \"k\" }"},
+	{"pjt.Scalars", 0, "m_str_i32 { key \"k\" }"},
+	{"pjt.Scalars", 0, "m_bool_inner { key: true value: { id: 1 } }"},
+	{"pjt.Scalars", 0, "m_bool_inner { key: true value 5 }"},
+	{"pjt.Scalars", 0, "m_str_i32: 5"},
+	{"pjt.Scalars", 0, "m_str_i32 [5]"},
+	{"pjt.Scalars", 0, "o_int: 5"},
+	{"pjt.Scalars", 0, "o_int: 0 opt_i32: 0"},
+	{"pjt.Scalars", 0, "o_int: 5 o_str: \"x\""},
+	{"pjt.Scalars", 0, "o_msg { id: 1 } o_msg { id: 2 }"},
+	{"pjt.Scalars", 0, "opt_i32: 1 opt_i32: 2"},
+	{"pjt.Scalars", 0, "o_str: \"x\" s_int32: 9 opt_i32: 3 inner {}"},
+	{"pjt.Scalars", 0, "nope: 1"},
+	{"pjt.Scalars", 2, "nope: 1 nope2 { a: [1, {b: 2}] } nope3: [{}, <>] s_int32: 4 nope4 [1, 2]"},
+	{"pjt.Scalars", 2, "nope: [1, 2"},
+	{"pjt.Scalars", 0, "5: 1"},
+	{"pjt.Scalars", 0, "9999: 1"},
+	{"pjt.Scalars", 2, "9999: 1 s_int32: 2"},
+	{"pjt.Scalars", 0, "0: 1"},
+	{"pjt.Scalars", 0, "536870912: 1"},
+	{"pjt.Scalars", 0, "2147483648: 1"},
+	{"pjt.Scalars", 0, "-1: 1"},
+	{"pjt.Scalars", 0, "0x5: 1"},
+	{"pjt.Scalars", 0, "1.5: 1"},
+	{"pjt.Scalars", 0, "{"},
+	{"pjt.Scalars", 0, "}"},
+	{"pjt.Scalars", 0, "s_int32: }"},
+	{"pjt.Scalars", 0, "s_int32:"},
+	{"pjt.Scalars", 0, "s_int32"},
+	{"pjt.Scalars", 0, "s_int32: 5 ]"},
+	{"pjt.Scalars", 0, "s_int32: @"},
+	{"pjt.Scalars", 0, "@"},
+	{"pjt.Scalars", 0, "\u00e9t\u00e9: 1"},
+	{"pjt.Scalars", 0, "abcdefghijklmnopqrstuvwxyzabcdefghijklmnop.x: 1"},
+	{"pjt.Scalars", 0, "s_int32: abcdefghijklmnopqrstuvwxyzabcdefghij$"},
+	{"pjt.Scalars", 0, "a/b: 1"},
+	{"pjt.Scalars", 0, "s_int32: 5\n  s_int64: x\n"},
+	{"pjt.Scalars", 0, "s_string: \"\u00e9\u00e9\" s_int32: x"},
+	{"pjt.Scalars", 0, "s_string: \"ok\"\n\t\"\u00e9\\q\""},
+	{"pjt.Scalars", 0, "s_int32: 5\xff"},
+	{"pjt.Scalars", 0, "s_int32:5s_int64:6"},
+	{"pjt.Scalars", 0, "s_int32:5 #c\ns_int64:-#c\n6"},
+	{"pjt.Scalars", 0, "[pjt.ext]: 1"},
+	{"pjt.Scalars", 2, "[pjt.ext]: 1 s_int32: 1"},
+	{"pjt.Scalars", 0, "[pjt.ext"},
+	{"pjt.Scalars", 0, "[pjt. ext]: 1"},
+	{"pjt.Scalars", 0, "[pjt..ext]: 1"},
+	{"pjt.Scalars", 0, "[pjt.ext!]: 1"},
+	{"pjt.Scalars", 0, "[a/b/pjt.ext]: 1"},
+	{"pjt.Scalars", 0, "[/pjt.ext]: 1"},
+	{"pjt.Scalars", 0, "[%zz]: 1"},
+	{"pjt.Scalars", 0, "[pjt@ext]: 1"},
+	{"pjt.Scalars", 4, "inner { next { next { id: 1 } } }"},
+	{"pjt.Scalars", 4, "inner { next { id: 1 } }"},
+	{"pjt.Scalars", 4, "m_bool_inner { key: true value { id: 1 } }"},
+	{"pjt.Scalars", 4, "m_bool_inner { key: true value { next {} } }"},
+	{"pjt.Inner", 0, "next { next { next { label: \"deep\" } } }"},
+	{"pjt.Wkt", 0, "any { [type.googleapis.com/pjt.Inner] { id: 7 label: \"x\" } }"},
+	{"pjt.Wkt", 0, "any { [ example.com / x / pjt.Inner ] < id: 7 > }"},
+	{"pjt.Wkt", 0, "any { type_url: \"type.googleapis.com/pjt.Inner\" value: \"\\010\\007\" }"},
+	{"pjt.Wkt", 0, "any { value: \"\\010\\007\" }"},
+	{"pjt.Wkt", 0, "any { type_url: \"a\" type_url: \"b\" }"},
+	{"pjt.Wkt", 0, "any { value: \"a\" value: \"b\" }"},
+	{"pjt.Wkt", 0, "any { type_url: 5 }"},
+	{"pjt.Wkt", 0, "any { type_url \"x\" }"},
+	{"pjt.Wkt", 0, "any { [type.googleapis.com/pjt.Inner] {} type_url: \"x\" }"},
+	{"pjt.Wkt", 0, "any { type_url: \"x\" [type.googleapis.com/pjt.Inner] {} }"},
+	{"pjt.Wkt", 0, "any { [type.googleapis.com/pjt.Inner] {} [type.googleapis.com/pjt.Inner] {} }"},
+	{"pjt.Wkt", 0, "any { [type.googleapis.com/pjt.Nope] {} }"},
+	{"pjt.Wkt", 0, "any { [type.googleapis.com/pjt.Inner] 5 }"},
+	{"pjt.Wkt", 0, "any { [type.googleapis.com/pjt.Inner]: { id: 1 } }"},
+	{"pjt.Wkt", 0, "any { other: 1 }"},
+	{"pjt.Wkt", 2, "any { other: 1 }"},
+	{"pjt.Wkt", 2, "any { other: \"x\" value: \"v\" }"},
+	{"pjt.Wkt", 0, "any { 1: \"x\" }"},
+	{"pjt.Wkt", 0, "any { [type.googleapis.com/pjt2.Req] { name: \"no id\" } }"},
+	{"pjt.Wkt", 0, "any { [type.googleapis.com/google.protobuf.Any] { [type.googleapis.com/pjt.Inner] { id: 3 } } }"},
+	{"pjt.Wkt", 0, "ts { seconds: 5 nanos: 6 } dur { seconds: -1 } empty {} w_string { value: \"s\" } tss [{seconds: 1}, {}]"},
+	{"pjt.Wkt", 0, "st { fields { key: \"a\" value { number_value: 1 } } fields { key: \"b\" value { list_value { values { bool_value: true } } } } }"},
+	{"google.protobuf.Any", 0, "[type.googleapis.com/pjt.Inner] { id: 1 }"},
+	{"google.protobuf.Any", 0, "type_url: \"u\" value: \"v\""},
+	{"google.protobuf.Any", 0, "type_url: \"u\" }"},
+	{"pjt2.Req", 0, "id: 1 leaf { a: 2 }"},
+	{"pjt2.Req", 0, "id: 1"},
+	{"pjt2.Req", 0, "leaf { a: 2 }"},
+	{"pjt2.Req", 0, "id: 1 leaf {}"},
+	{"pjt2.Req", 0, "id: 1 leaf { a: 1 } leaves { b: \"x\" }"},
+	{"pjt2.Req", 0, "id: 1 leaf { a: 1 } opt_leaf {}"},
+	{"pjt2.Req", 1, "name: \"partial\""},
+	{"pjt2.Req", 0, "id: 1 leaf { a: 1 } mood: ANGRY moods: [SAD, 7] pmoods: [CALM, 1, ANGRY] mood_map { key: 4 } mood_map { key: 1 value: SAD }"},
+	{"pjt2.Req", 0, "id: 1 leaf { a: 1 } Grp { g: 5 }"},
+	{"pjt2.Req", 0, "id: 1 leaf { a: 1 } grp { g: 5 }"},
+	{"pjt2.Req", 0, "id: 1 leaf { a: 1 } raw: \"\\xff\\xfe\""},
+	{"pjt2.Req", 0, "id: 1 leaf { a: 1 } leaf { a: 2 }"},
+	{"pjt2.Req", 0, "id: 0 id: 1"},
+	{"pjed.EdMsg", 0, "a: 0 b: 0 p: [1, 2] e: [3, 4] d { x: 1 } r: 0 s: \"\" i { x: 2 } imp: \"\" ds [{x: 1}, {}] pd: [1.5]"},
+	{"pjed.EdMsg", 0, "a: 5 imp: \"z\""},
+	{"pjed.EdMsg", 0, "a: 5"},
+	{"pjed.EdMsg", 0, "D { x: 1 }"},
+	{"pjedi.ImpMsg", 0, "n: 0 o: 0 r: [0, 1] t: \"\""},
+	{"pjedi.ImpMsg", 0, "n: 3 t: \"\\xff\""},
 }
 
 const xoTests = `
@@ -648,6 +940,38 @@ test "marshal: Go's prototext.Marshal of the message the wire bytes hold" {
     }
   }
   expect(bad[0..bad.len().min(4)]) == []
+}
+
+fn uopts(fl: Int) -> prototext.UnmarshalOpts {
+  prototext.UnmarshalOpts{allow_partial: (fl & 1) != 0, discard_unknown: (fl & 2) != 0, recursion_limit: if (fl & 4) != 0 { 3 } else { 0 }}
+}
+
+test "unmarshal: the wire of what Go's prototext.Unmarshal makes of the text" {
+  let r = protojson.registry_from_set(unhex(SCHEMA)).or_fault("schema")
+  var bad: List[Str] = []
+  for (name, fl, text, want) in UNMARSHAL {
+    let got = match prototext.unmarshal_bytes(r, name, unhex(text), uopts(fl)) {
+      Ok(w) => w.to_hex()
+      Err(e) => "ERR:" + e.display()
+    }
+    // unmarshal takes the text as a Str when it is UTF-8
+    match unhex(text).to_str() {
+      Some(st) => {
+        let got2 = match prototext.unmarshal(r, name, st, uopts(fl)) {
+          Ok(w) => w.to_hex()
+          Err(e) => "ERR:" + e.display()
+        }
+        if got2 != got {
+          bad.push("${name} ${fl} unmarshal of the Str: " + first_diff(got2, got))
+        }
+      }
+      None => {}
+    }
+    if got != want {
+      bad.push("${name} ${fl} ${unhex(text)[0..text.len().min(120) / 2].to_str_lossy().quote()}: " + first_diff(got, want))
+    }
+  }
+  expect(bad[0..bad.len().min(6)]) == []
 }
 
 test "format: Go's prototext.Format" {

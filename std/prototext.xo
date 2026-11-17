@@ -7,6 +7,10 @@
 // Go's encoder (internal/encoding/text) puts one or two spaces between
 // fields at random (internal/detrand) so that nobody compares its output
 // byte for byte; this one always writes one.
+//
+// The reader (unmarshal) is a port of encoding/prototext/decode.go and
+// internal/encoding/text's decoder from the same release. Copyright 2018
+// The Go Authors; BSD-style license (protobuf-go's LICENSE).
 
 use std/json
 use std/protobuf
@@ -1001,4 +1005,1672 @@ fn unknown_out(var e: Enc, f: pw.Fld) -> () ! TextErr {
     w_close(e)
   }
   Ok(())
+}
+
+// ---- Unmarshal: protobuf-go's encoding/prototext decode.go over its
+// internal/encoding/text decoder (decode.go, decode_number.go,
+// decode_string.go, decode_token.go), v1.36.12. The message is built as
+// wire bytes the way Go's deterministic proto.Marshal writes the message
+// Unmarshal fills.
+
+/// UnmarshalOptions: `allow_partial` lets a proto2 message miss required
+/// fields (AllowPartial), `discard_unknown` skips fields the message does
+/// not have and Any fields it does not know (DiscardUnknown), and
+/// `recursion_limit` caps message nesting (RecursionLimit; 0 is protowire's
+/// default of 10,000).
+pub struct UnmarshalOpts {
+  pub allow_partial: Bool = false
+  pub discard_unknown: Bool = false
+  pub recursion_limit: Int = 0
+}
+
+/// prototext.Unmarshal: the wire bytes of the message `name` (`pkg.Msg`) of
+/// `r` that `text` sets, as Go's deterministic proto.Marshal writes the
+/// message: fields in number order (oneof members after the rest), repeated
+/// scalars packed where the field is, map entries in key order with key and
+/// value. An Any takes `type_url` and `value` or the expanded
+/// `[host/pkg.Msg] {...}` form. Extension fields (`[pkg.ext]` outside an
+/// Any) are not supported: they are unknown fields.
+pub fn unmarshal(r: protojson.Registry, name: Str, text: Str, o: UnmarshalOpts = UnmarshalOpts{}) -> Bytes ! TextErr {
+  unmarshal_bytes(r, name, text.bytes(), o)
+}
+
+/// unmarshal of text as bytes (Go's Unmarshal takes []byte: invalid UTF-8
+/// is an error inside a string and a syntax error outside one).
+pub fn unmarshal_bytes(r: protojson.Registry, name: Str, text: Bytes, o: UnmarshalOpts = UnmarshalOpts{}) -> Bytes ! TextErr {
+  let info = r.msgs.get(name) ?? return Err(terr("unknown message ${name}"))
+  let lim = if o.recursion_limit == 0 { 10000 } else { o.recursion_limit }
+  var d = Dec{r: r, o: o, l: Lex{orig: text, at: 0, stack: [], last: tok0(), peeked: false, perr: None}}
+  var miss = Miss{ord: Int.max, text: ""}
+  let wire = d_msg(d, info, false, lim, miss)?
+  if !o.allow_partial && !miss.text.is_empty() {
+    return Err(terr("proto: required field ${miss.text} not set"))
+  }
+  Ok(wire)
+}
+
+// Token kinds (text.Kind; bof is the zero kind)
+const K_BOF = 0
+const K_EOF = 1
+const K_NAME = 2
+const K_SCALAR = 3
+const K_MOPEN = 4
+const K_MCLOSE = 5
+const K_LOPEN = 6
+const K_LCLOSE = 7
+const K_COMMA = 8
+const K_SEMI = 9
+
+// A Name token's kind (NameKind) and a Scalar's attrs
+const N_IDENT = 1
+const N_TYPE = 2
+const N_NUMBER = 3
+const S_NUMBER = 1
+const S_STRING = 2
+const S_LITERAL = 3
+
+// A number's kind (numDec is 0) and its sign bit (numAttrs)
+const NUM_HEX = 1
+const NUM_OCT = 2
+const NUM_FLOAT = 4
+const NUM_NEG = 128
+
+/// text.Token: the bytes orig[pos..end] (RawString), `attrs` the name kind
+/// or scalar attrs, `sep` whether a name had its colon, `nattrs` a
+/// number's kind and sign, `str` a string's value, a type name, or a
+/// number's text (its `f` suffix and the space after a minus dropped).
+struct Tok {
+  kind: Int
+  pos: Int
+  end: Int
+  attrs: Int
+  sep: Bool
+  nattrs: Int
+  str: Bytes
+}
+
+fn tok0() -> Tok { Tok{kind: K_BOF, pos: 0, end: 0, attrs: 0, sep: false, nattrs: 0, str: b""} }
+
+/// text.Decoder: `at` is where d.in starts, `stack` the open brackets,
+/// `last` lastToken, `peeked` lastCall == peekCall, `perr` lastErr.
+struct Lex {
+  orig: Bytes
+  at: Int
+  stack: List[Int]
+  last: Tok
+  peeked: Bool
+  perr: TextErr?
+}
+
+struct Dec {
+  r: protojson.Registry
+  o: UnmarshalOpts
+  l: Lex
+}
+
+/// The first missing required field below a message (its field's order).
+struct Miss {
+  ord: Int
+  text: Str
+}
+
+fn note_miss(var m: Miss, ord: Int, text: Str) {
+  if !text.is_empty() && ord < m.ord {
+    m.ord = ord
+    m.text = text
+  }
+}
+
+fn byte_at(b: Bytes, i: Int) -> Int { if i >= 0 && i < b.len() { Int(b[i]) } else { -1 } }
+
+fn eof_err() -> TextErr { terr("proto: unexpected EOF") }
+
+/// Decoder.Position: the line, and the column in runes, of offset idx.
+fn position(orig: Bytes, idx: Int) -> (Int, Int) {
+  var line = 1
+  var ls = 0
+  for i in 0..idx {
+    if orig[i] == 10 {
+      line += 1
+      ls = i + 1
+    }
+  }
+  let seg = orig[ls..idx]
+  var col = 1
+  var i = 0
+  while i < seg.len() {
+    let (_, n) = seg.decode_rune(i)
+    i += if n < 1 { 1 } else { n }
+    col += 1
+  }
+  (line, col)
+}
+
+fn syn_at(orig: Bytes, at: Int, msg: Str) -> TextErr {
+  let (ln, col) = position(orig, at)
+  terr("proto: syntax error (line ${ln}:${col}): ${msg}")
+}
+
+fn perr_at(orig: Bytes, at: Int, msg: Str) -> TextErr {
+  let (ln, col) = position(orig, at)
+  terr("proto: (line ${ln}:${col}): ${msg}")
+}
+
+fn rune_q(c: Int) -> Str {
+  match Rune.try(c) {
+    Some(r) => r.quote()
+    None => "'\\ufffd'"
+  }
+}
+
+/// consume: skips spaces, newlines, carriage returns, tabs and # comments.
+fn skip_ws(b: Bytes, at0: Int) -> Int {
+  var at = at0
+  let n = b.len()
+  while at < n {
+    let c = b[at]
+    if c == 0x20 || c == 0x0a || c == 0x0d || c == 0x09 {
+      at += 1
+    } else if c == 0x23 {
+      while at < n && b[at] != 0x0a {
+        at += 1
+      }
+      if at < n {
+        at += 1
+      }
+    } else {
+      return at
+    }
+  }
+  at
+}
+
+fn is_alnum(c: Int) -> Bool { (c >= 0x61 && c <= 0x7a) || (c >= 0x41 && c <= 0x5a) || (c >= 0x30 && c <= 0x39) }
+
+fn is_delim(c: Int) -> Bool { !(c == 0x2d || c == 0x2b || c == 0x2e || c == 0x5f || is_alnum(c)) }
+
+fn is_hex_c(c: Int) -> Bool { (c >= 0x30 && c <= 0x39) || (c >= 0x61 && c <= 0x66) || (c >= 0x41 && c <= 0x46) }
+
+fn hex_val(c: Int) -> Int {
+  if c <= 0x39 {
+    c - 0x30
+  } else if c >= 0x61 {
+    c - 0x61 + 10
+  } else {
+    c - 0x41 + 10
+  }
+}
+
+fn is_type_name_char(c: Int) -> Bool { c == 0x2d || c == 0x5f || is_alnum(c) }
+
+/// . ~ ! $ & ( ) * + , ; =
+fn is_url_extra(c: Int) -> Bool {
+  c == 0x2e || c == 0x7e || c == 0x21 || c == 0x24 || c == 0x26 || c == 0x28 || c == 0x29 || c == 0x2a || c == 0x2b || c == 0x2c || c == 0x3b || c == 0x3d
+}
+
+fn consume_tok(var l: Lex, kind: Int, size: Int, attrs: Int) -> Tok {
+  let t = Tok{kind: kind, pos: l.at, end: l.at + size, attrs: attrs, sep: false, nattrs: 0, str: b""}
+  l.at = skip_ws(l.orig, l.at + size)
+  t
+}
+
+/// The open bracket on top of the stack: (MessageOpen or ListOpen, its
+/// close character), or (bof, 0) at the top level.
+fn open_kind(l: Lex) -> (Int, Int) {
+  let n = l.stack.len()
+  if n == 0 {
+    return (K_BOF, 0)
+  }
+  let c = l.stack[n - 1]
+  if c == 0x7b {
+    (K_MOPEN, 0x7d)
+  } else if c == 0x3c {
+    (K_MOPEN, 0x3e)
+  } else {
+    (K_LOPEN, 0x5d)
+  }
+}
+
+fn other_close(c: Int) -> Int { if c == 0x7d { 0x3e } else if c == 0x3e { 0x7d } else { -2 } }
+
+fn push_open(var l: Lex, c: Int, kind: Int) -> Tok {
+  l.stack.push(c)
+  consume_tok(l, kind, 1, 0)
+}
+
+fn pop_close(var l: Lex, kind: Int) -> Tok {
+  let _ = l.stack.pop()
+  consume_tok(l, kind, 1, 0)
+}
+
+/// What may follow a value inside a message: its close, a separator, or
+/// the next field's name.
+fn in_message(var l: Lex, c: Int, close: Int, seps: Bool) -> Tok ! TextErr {
+  if c == -1 {
+    return Err(eof_err())
+  }
+  if c == close {
+    return Ok(pop_close(l, K_MCLOSE))
+  }
+  if c == other_close(close) {
+    return Err(syn_at(l.orig, l.at, "mismatched close character ${rune_q(c)}"))
+  }
+  if seps && c == 0x2c {
+    return Ok(consume_tok(l, K_COMMA, 1, 0))
+  }
+  if seps && c == 0x3b {
+    return Ok(consume_tok(l, K_SEMI, 1, 0))
+  }
+  parse_field_name(l)
+}
+
+/// Decoder.parseNext: the token after one of kind `last`.
+fn parse_next(var l: Lex, last: Int) -> Tok ! TextErr {
+  l.at = skip_ws(l.orig, l.at)
+  let c = byte_at(l.orig, l.at)
+  let eof = c == -1
+  if last == K_EOF {
+    return Ok(consume_tok(l, K_EOF, 0, 0))
+  }
+  if last == K_BOF {
+    if eof {
+      return Ok(consume_tok(l, K_EOF, 0, 0))
+    }
+    return parse_field_name(l)
+  }
+  if last == K_NAME {
+    if eof {
+      return Err(eof_err())
+    }
+    if c == 0x7b || c == 0x3c {
+      return Ok(push_open(l, c, K_MOPEN))
+    }
+    if c == 0x5b {
+      return Ok(push_open(l, c, K_LOPEN))
+    }
+    return parse_scalar(l)
+  }
+  if last == K_MOPEN {
+    let (_, close) = open_kind(l)
+    return in_message(l, c, close, false)
+  }
+  if last == K_LOPEN {
+    if eof {
+      return Err(eof_err())
+    }
+    if c == 0x5d {
+      return Ok(pop_close(l, K_LCLOSE))
+    }
+    if c == 0x7b || c == 0x3c {
+      return Ok(push_open(l, c, K_MOPEN))
+    }
+    return parse_scalar(l)
+  }
+  let (ok, close) = open_kind(l)
+  if last == K_COMMA || last == K_SEMI {
+    if ok == K_BOF {
+      if eof {
+        return Ok(consume_tok(l, K_EOF, 0, 0))
+      }
+      return parse_field_name(l)
+    }
+    if ok == K_MOPEN {
+      return in_message(l, c, close, false)
+    }
+    // in a list, after a comma: a message or a scalar
+    if eof {
+      return Err(eof_err())
+    }
+    if c == 0x7b || c == 0x3c {
+      return Ok(push_open(l, c, K_MOPEN))
+    }
+    return parse_scalar(l)
+  }
+  // after a Scalar, MessageClose or ListClose
+  if ok == K_BOF {
+    if eof {
+      return Ok(consume_tok(l, K_EOF, 0, 0))
+    }
+    if c == 0x2c {
+      return Ok(consume_tok(l, K_COMMA, 1, 0))
+    }
+    if c == 0x3b {
+      return Ok(consume_tok(l, K_SEMI, 1, 0))
+    }
+    return parse_field_name(l)
+  }
+  if ok == K_MOPEN {
+    return in_message(l, c, close, true)
+  }
+  if eof {
+    return Err(eof_err())
+  }
+  if c == 0x5d {
+    return Ok(pop_close(l, K_LCLOSE))
+  }
+  if c == 0x2c {
+    return Ok(consume_tok(l, K_COMMA, 1, 0))
+  }
+  Err(syn_at(l.orig, l.at, "unexpected character ${rune_q(c)}"))
+}
+
+/// Decoder.Read: the next token, a comma or semicolon skipped.
+fn rd(var l: Lex) -> Tok ! TextErr {
+  if l.peeked {
+    l.peeked = false
+    match l.perr {
+      Some(e) => return Err(e)
+      None => return Ok(l.last)
+    }
+  }
+  let lk = l.last.kind
+  var t = parse_next(l, lk)?
+  if t.kind == K_COMMA || t.kind == K_SEMI {
+    t = parse_next(l, t.kind)?
+  }
+  l.last = t
+  Ok(t)
+}
+
+/// Decoder.Peek: the token Read returns next (an error leaves the zero token as last).
+fn pk(var l: Lex) -> Tok ! TextErr {
+  if !l.peeked {
+    match rd(l) {
+      Ok(t) => {
+        l.last = t
+        l.perr = None
+      }
+      Err(e) => {
+        l.last = tok0()
+        l.perr = Some(e)
+      }
+    }
+    l.peeked = true
+  }
+  match l.perr {
+    Some(e) => Err(e)
+    None => Ok(l.last)
+  }
+}
+
+fn parse_field_name(var l: Lex) -> Tok ! TextErr {
+  var t = tok0()
+  if byte_at(l.orig, l.at) == 0x5b {
+    t = parse_type_name(l)?
+  } else {
+    let size = parse_ident(l.orig, l.at, false)
+    if size > 0 {
+      t = consume_tok(l, K_NAME, size, N_IDENT)
+    } else {
+      let num = parse_number(l.orig, l.at)
+      if num.size == 0 {
+        return Err(syn_at(l.orig, l.at, "invalid field name: ${err_id(l.orig, l.at)}"))
+      }
+      let s = num_str(l.orig, l.at, num)
+      let ss = s.to_str_lossy()
+      let ok = !num.neg && num.kind == 0 && ss.len() <= 10 && (Int.parse(ss) ?? Int.max) <= 2147483647
+      if !ok {
+        return Err(syn_at(l.orig, l.at, "invalid field number: ${ss}"))
+      }
+      t = consume_tok(l, K_NAME, num.size, N_NUMBER)
+      t.str = s
+    }
+  }
+  if byte_at(l.orig, l.at) == 0x3a {
+    l.at = skip_ws(l.orig, l.at + 1)
+    t.sep = true
+  }
+  Ok(t)
+}
+
+fn tn_err(l: Lex, s: Int, k: Int) -> TextErr {
+  let e = s + k.min(l.orig.len() - s)
+  syn_at(l.orig, l.at, "invalid type URL/extension field name: ${l.orig[l.at..e].to_str_lossy()}")
+}
+
+/// Decoder.parseTypeName: `[` URL or extension name `]`, spaces and
+/// comments allowed between its characters, %XX kept as it is.
+fn parse_type_name(var l: Lex) -> Tok ! TextErr {
+  let b = l.orig
+  let n = b.len()
+  var s = skip_ws(b, l.at + 1)
+  if s >= n {
+    return Err(eof_err())
+  }
+  var name = BytesBuilder.new()
+  var closed = false
+  while s < n && !closed {
+    let c = Int(b[s])
+    if c == 0x5d {
+      s += 1
+      closed = true
+    } else if c == 0x2f || is_type_name_char(c) || is_url_extra(c) {
+      name.write_byte(b[s])
+      s = skip_ws(b, s + 1)
+    } else if c == 0x25 {
+      if n - s < 3 || !is_hex_c(Int(b[s + 1])) || !is_hex_c(Int(b[s + 2])) {
+        return Err(tn_err(l, s, 3))
+      }
+      name.write(b[s..s + 3])
+      s = skip_ws(b, s + 3)
+    } else {
+      return Err(tn_err(l, s, 1))
+    }
+  }
+  if !closed {
+    return Err(eof_err())
+  }
+  let nm = name.freeze()
+  var tn = nm
+  var slash = -1
+  for i in 0..nm.len() {
+    if nm[i] == 0x2f {
+      slash = i
+    }
+  }
+  if slash >= 0 {
+    tn = nm[slash + 1..nm.len()]
+    if slash > 0 && nm[0] == 0x2f {
+      return Err(tn_err(l, s, 0))
+    }
+  }
+  // every dot separated part non-empty, no % or URL punctuation but dots
+  if tn.is_empty() || tn[0] == 0x2e || tn[tn.len() - 1] == 0x2e {
+    return Err(tn_err(l, s, 0))
+  }
+  for i in 0..tn.len() {
+    let c = Int(tn[i])
+    if c == 0x25 || (c != 0x2e && is_url_extra(c)) || (c == 0x2e && i + 1 < tn.len() && tn[i + 1] == 0x2e) {
+      return Err(tn_err(l, s, 0))
+    }
+  }
+  let t = Tok{kind: K_NAME, pos: l.at, end: s, attrs: N_TYPE, sep: false, nattrs: 0, str: nm}
+  l.at = skip_ws(b, s)
+  Ok(t)
+}
+
+/// parseIdent: the length of the identifier at `at` (a leading minus with
+/// allow_neg), 0 when there is none or a non-delimiter follows it.
+fn parse_ident(b: Bytes, at: Int, allow_neg: Bool) -> Int {
+  let n = b.len()
+  var s = at
+  if s >= n {
+    return 0
+  }
+  if allow_neg && b[s] == 0x2d {
+    s += 1
+    if s >= n {
+      return 0
+    }
+  }
+  let c = Int(b[s])
+  if !(c == 0x5f || (c >= 0x61 && c <= 0x7a) || (c >= 0x41 && c <= 0x5a)) {
+    return 0
+  }
+  s += 1
+  while s < n && (b[s] == 0x5f || is_alnum(Int(b[s]))) {
+    s += 1
+  }
+  if s < n && !is_delim(Int(b[s])) {
+    return 0
+  }
+  s - at
+}
+
+struct Num {
+  kind: Int
+  neg: Bool
+  size: Int
+  sep: Int
+}
+
+fn is_digit_c(c: Int) -> Bool { c >= 0x30 && c <= 0x39 }
+
+/// parseNumber: a decimal, hex, octal or float literal at `at` (size 0
+/// when there is none); spaces and comments may follow a minus (`sep`).
+fn parse_number(b: Bytes, at: Int) -> Num {
+  let none = Num{kind: 0, neg: false, size: 0, sep: 0}
+  let n = b.len()
+  var kind = 0
+  var size = 0
+  var neg = false
+  var s = at
+  if s >= n {
+    return none
+  }
+  var sep = 0
+  if b[s] == 0x2d {
+    neg = true
+    s += 1
+    size += 1
+    let s2 = skip_ws(b, s)
+    sep = s2 - s
+    s = s2
+    size += sep
+    if s >= n {
+      return none
+    }
+  }
+  let c0 = Int(b[s])
+  if c0 == 0x30 {
+    if s + 1 < n {
+      let c1 = Int(b[s + 1])
+      if c1 == 0x78 || c1 == 0x58 {
+        kind = NUM_HEX
+        var k = 2
+        s += 2
+        while s < n && is_hex_c(Int(b[s])) {
+          s += 1
+          k += 1
+        }
+        if k == 2 {
+          return none
+        }
+        size += k
+      } else if c1 >= 0x30 && c1 <= 0x37 {
+        kind = NUM_OCT
+        var k = 2
+        s += 2
+        while s < n && b[s] >= 0x30 && b[s] <= 0x37 {
+          s += 1
+          k += 1
+        }
+        size += k
+      }
+      if kind != 0 {
+        if s < n && !is_delim(Int(b[s])) {
+          return none
+        }
+        return Num{kind: kind, neg: neg, size: size, sep: sep}
+      }
+    }
+    s += 1
+    size += 1
+  } else if c0 >= 0x31 && c0 <= 0x39 {
+    var k = 1
+    s += 1
+    while s < n && is_digit_c(Int(b[s])) {
+      s += 1
+      k += 1
+    }
+    size += k
+  } else if c0 == 0x2e {
+    kind = NUM_FLOAT
+  } else {
+    return none
+  }
+  if s < n && b[s] == 0x2e {
+    var k = 1
+    s += 1
+    if s >= n && kind == NUM_FLOAT {
+      return none
+    }
+    while s < n && is_digit_c(Int(b[s])) {
+      s += 1
+      k += 1
+    }
+    size += k
+    kind = NUM_FLOAT
+  }
+  if n - s >= 2 && (b[s] == 0x65 || b[s] == 0x45) {
+    kind = NUM_FLOAT
+    s += 1
+    var k = 1
+    if b[s] == 0x2b || b[s] == 0x2d {
+      s += 1
+      k += 1
+      if s >= n {
+        return none
+      }
+    }
+    while s < n && is_digit_c(Int(b[s])) {
+      s += 1
+      k += 1
+    }
+    size += k
+  }
+  if s < n && (b[s] == 0x66 || b[s] == 0x46) {
+    kind = NUM_FLOAT
+    s += 1
+    size += 1
+  }
+  if s < n && !is_delim(Int(b[s])) {
+    return none
+  }
+  Num{kind: kind, neg: neg, size: size, sep: sep}
+}
+
+/// number.string: the literal without a float's f suffix or the spaces
+/// after its minus.
+fn num_str(b: Bytes, at: Int, num: Num) -> Bytes {
+  var end = at + num.size
+  if num.kind == NUM_FLOAT && (b[end - 1] == 0x66 || b[end - 1] == 0x46) {
+    end -= 1
+  }
+  if num.neg && num.sep > 0 {
+    var o = BytesBuilder.new()
+    o.write_byte(0x2d)
+    o.write(b[at + num.sep + 1..end])
+    return o.freeze()
+  }
+  b[at..end]
+}
+
+/// errId: the text at `at` up to a delimiter (one rune at least), at most
+/// 32 bytes and an ellipsis.
+fn err_id(b: Bytes, at: Int) -> Str {
+  let seq = b[at..b.len()]
+  var i = 0
+  while i < seq.len() {
+    if i > 32 {
+      return seq[0..i].to_str_lossy() + "\u{2026}"
+    }
+    let (r, size) = seq.decode_rune(i)
+    let ri = Int(r)
+    if ri > 0x80 || (ri != 0x2f && is_delim(ri)) {
+      if i == 0 {
+        i = size
+      }
+      return seq[0..i].to_str_lossy()
+    }
+    i += size
+  }
+  seq.to_str_lossy()
+}
+
+fn parse_scalar(var l: Lex) -> Tok ! TextErr {
+  let c = byte_at(l.orig, l.at)
+  if c == 0x22 || c == 0x27 {
+    return parse_string_value(l)
+  }
+  let size = parse_ident(l.orig, l.at, true)
+  if size > 0 {
+    return Ok(consume_tok(l, K_SCALAR, size, S_LITERAL))
+  }
+  let num = parse_number(l.orig, l.at)
+  if num.size > 0 {
+    let t = Tok{kind: K_SCALAR, pos: l.at, end: l.at + num.size, attrs: S_NUMBER, sep: false, nattrs: num.kind | (if num.neg { NUM_NEG } else { 0 }), str: num_str(l.orig, l.at, num)}
+    l.at = skip_ws(l.orig, l.at + num.size)
+    return Ok(t)
+  }
+  Err(syn_at(l.orig, l.at, "invalid scalar value: ${err_id(l.orig, l.at)}"))
+}
+
+/// parseStringValue: adjacent quoted strings joined.
+fn parse_string_value(var l: Lex) -> Tok ! TextErr {
+  let in0 = l.at
+  var out = BytesBuilder.new()
+  while true {
+    let c = byte_at(l.orig, l.at)
+    if c != 0x22 && c != 0x27 {
+      break
+    }
+    parse_string(l, out)?
+  }
+  Ok(Tok{kind: K_SCALAR, pos: in0, end: l.at, attrs: S_STRING, sep: false, nattrs: 0, str: out.freeze()})
+}
+
+/// The hex value of b[from..to], -1 when a byte is not a hex digit.
+fn hex_all(b: Bytes, from: Int, to: Int) -> Int {
+  var v = 0
+  for i in from..to {
+    let c = Int(b[i])
+    if !is_hex_c(c) {
+      return -1
+    }
+    v = v * 16 + hex_val(c)
+  }
+  v
+}
+
+/// parseString: one quoted string at l.at into out (errors are at its
+/// opening quote, as Go's are).
+fn parse_string(var l: Lex, var out: BytesBuilder) -> () ! TextErr {
+  let b = l.orig
+  let n = b.len()
+  let quote = Int(b[l.at])
+  var i = l.at + 1
+  while i < n {
+    let c = Int(b[i])
+    if c >= 0x20 && c < 0x7f && c != 0x5c && c != quote {
+      // a run of plain ASCII
+      var j = i + 1
+      while j < n {
+        let cj = Int(b[j])
+        if cj < 0x20 || cj >= 0x7f || cj == 0x5c || cj == quote {
+          break
+        }
+        j += 1
+      }
+      out.write(b[i..j])
+      i = j
+      continue
+    }
+    let (r, rn) = b.decode_rune(i)
+    let ri = Int(r)
+    if ri == 0xfffd && rn == 1 {
+      return Err(syn_at(b, l.at, "invalid UTF-8 detected"))
+    }
+    if ri == 0 || ri == 10 {
+      return Err(syn_at(b, l.at, "invalid character ${r.quote()} in string"))
+    }
+    if ri == quote {
+      l.at = skip_ws(b, i + 1)
+      return Ok(())
+    }
+    if ri != 0x5c {
+      out.write(b[i..i + rn])
+      i += rn
+      continue
+    }
+    if n - i < 2 {
+      return Err(eof_err())
+    }
+    let e = Int(b[i + 1])
+    if e == 0x22 || e == 0x27 || e == 0x5c || e == 0x3f {
+      out.write_byte(b[i + 1])
+      i += 2
+    } else if e == 0x61 {
+      out.write_byte(7)
+      i += 2
+    } else if e == 0x62 {
+      out.write_byte(8)
+      i += 2
+    } else if e == 0x6e {
+      out.write_byte(10)
+      i += 2
+    } else if e == 0x72 {
+      out.write_byte(13)
+      i += 2
+    } else if e == 0x74 {
+      out.write_byte(9)
+      i += 2
+    } else if e == 0x76 {
+      out.write_byte(11)
+      i += 2
+    } else if e == 0x66 {
+      out.write_byte(12)
+      i += 2
+    } else if e >= 0x30 && e <= 0x37 {
+      var k = 0
+      var v = 0
+      while k < 3 && i + 1 + k < n && b[i + 1 + k] >= 0x30 && b[i + 1 + k] <= 0x37 {
+        v = v * 8 + (Int(b[i + 1 + k]) - 0x30)
+        k += 1
+      }
+      if v > 255 {
+        return Err(syn_at(b, l.at, "invalid octal escape code ${b[i..i + 1 + k].quote()} in string"))
+      }
+      out.write_byte(UInt8.wrapping_from(v))
+      i += 1 + k
+    } else if e == 0x78 {
+      var k = 0
+      var v = 0
+      while k < 2 && i + 2 + k < n && is_hex_c(Int(b[i + 2 + k])) {
+        v = v * 16 + hex_val(Int(b[i + 2 + k]))
+        k += 1
+      }
+      if k == 0 {
+        return Err(syn_at(b, l.at, "invalid hex escape code ${b[i..i + 2].quote()} in string"))
+      }
+      out.write_byte(UInt8.wrapping_from(v))
+      i += 2 + k
+    } else if e == 0x75 || e == 0x55 {
+      let w = if e == 0x75 { 6 } else { 10 }
+      if n - i < w {
+        return Err(eof_err())
+      }
+      let v = hex_all(b, i + 2, i + w)
+      if v < 0 || v > 0x10ffff {
+        return Err(syn_at(b, l.at, "invalid Unicode escape code ${b[i..i + w].quote()} in string"))
+      }
+      i += w
+      var cp = v
+      if v >= 0xd800 && v <= 0xdfff {
+        if n - i < 6 {
+          return Err(eof_err())
+        }
+        let v2 = hex_all(b, i + 2, i + 6)
+        cp = if v <= 0xdbff && v2 >= 0xdc00 && v2 <= 0xdfff { 0x10000 + ((v - 0xd800) << 10) + (v2 - 0xdc00) } else { 0xfffd }
+        if b[i] != 0x5c || b[i + 1] != 0x75 || cp == 0xfffd {
+          return Err(syn_at(b, l.at, "invalid Unicode escape code ${b[i..i + 6].quote()} in string"))
+        }
+        i += 6
+      }
+      match Rune.try(cp) {
+        Some(rr) => out.write_rune(rr)
+        None => return Err(syn_at(b, l.at, "invalid Unicode escape code in string"))
+      }
+    } else {
+      return Err(syn_at(b, l.at, "invalid escape code ${b[i..i + 2].quote()} in string"))
+    }
+  }
+  Err(eof_err())
+}
+
+// ---- token values (Token.Bool, Int32, Uint64, Float64, ...)
+
+/// strconv.Parse{Int,Uint}(s, 0, 64)'s parts: (sign, the magnitude's 64
+/// bits, ok); a magnitude past 2^64 - 1 or a bad digit is not ok.
+fn parse_base0(s: Bytes) -> (Bool, Int, Bool) {
+  let n = s.len()
+  var i = 0
+  var neg = false
+  if n > 0 && (s[0] == 0x2d || s[0] == 0x2b) {
+    neg = s[0] == 0x2d
+    i = 1
+  }
+  var base = 10
+  if n - i >= 2 && s[i] == 0x30 && (s[i + 1] == 0x78 || s[i + 1] == 0x58) {
+    base = 16
+    i += 2
+  } else if n - i >= 2 && s[i] == 0x30 {
+    base = 8
+    i += 1
+  }
+  if i >= n {
+    return (neg, 0, false)
+  }
+  // leading zeros carry nothing
+  while i < n - 1 && s[i] == 0x30 {
+    i += 1
+  }
+  let digits = n - i
+  if base == 10 {
+    for j in i..n {
+      if !is_digit_c(Int(s[j])) {
+        return (neg, 0, false)
+      }
+    }
+    if digits > 20 || (digits == 20 && s[i..n].to_str_lossy() > "18446744073709551615") {
+      return (neg, 0, false)
+    }
+    var v = UInt64.wrapping_from(0)
+    let ten = UInt64.wrapping_from(10)
+    for j in i..n {
+      v = v * ten + UInt64.wrapping_from(Int(s[j]) - 0x30)
+    }
+    return (neg, v.to_bits(), true)
+  }
+  let bits = if base == 16 { 4 } else { 3 }
+  var v = 0
+  for j in i..n {
+    let c = Int(s[j])
+    let ok = if base == 16 { is_hex_c(c) } else { c >= 0x30 && c <= 0x37 }
+    if !ok {
+      return (neg, 0, false)
+    }
+    v = v.wrapping_shl(bits) | hex_val(c)
+  }
+  // 64 bits: 16 hex digits, or 22 octal digits the first of them a 1
+  let fits = if base == 16 { digits <= 16 } else { digits < 22 || (digits == 22 && s[i] == 0x31) }
+  (neg, v, fits)
+}
+
+fn tok_uint(t: Tok, bits: Int) -> Int? {
+  if t.attrs != S_NUMBER || (t.nattrs & (NUM_NEG | NUM_FLOAT)) != 0 {
+    return None
+  }
+  let (neg, v, ok) = parse_base0(t.str)
+  if !ok || neg || t.str[0] == 0x2b {
+    return None
+  }
+  if bits == 32 && (v < 0 || v > 4294967295) {
+    return None
+  }
+  Some(v)
+}
+
+fn tok_int(t: Tok, bits: Int) -> Int? {
+  if t.attrs != S_NUMBER || (t.nattrs & NUM_FLOAT) != 0 {
+    return None
+  }
+  let (neg, v, ok) = parse_base0(t.str)
+  if !ok {
+    return None
+  }
+  let x = if neg {
+    if v == Int.min { Int.min } else if v < 0 { return None } else { 0 - v }
+  } else {
+    if v < 0 { return None } else { v }
+  }
+  if bits == 32 && (x < -2147483648 || x > 2147483647) {
+    return None
+  }
+  Some(x)
+}
+
+fn tok_bool(d: Dec, t: Tok) -> Bool? {
+  if t.attrs == S_LITERAL {
+    let s = raw(d, t)
+    if s == "t" || s == "true" || s == "True" {
+      return Some(true)
+    }
+    if s == "f" || s == "false" || s == "False" {
+      return Some(false)
+    }
+    return None
+  }
+  if t.attrs == S_NUMBER {
+    let (neg, v, ok) = parse_base0(t.str)
+    if ok && !neg && t.str[0] != 0x2b {
+      if v == 0 {
+        return Some(false)
+      }
+      if v == 1 {
+        return Some(true)
+      }
+    }
+  }
+  None
+}
+
+/// Whether strconv.ParseFloat(s, 64) takes s (a number token's text):
+/// decimal only, a digit in the mantissa, an exponent with digits.
+fn float_ok(s: Str) -> Bool {
+  var mant = false
+  var in_exp = false
+  for c in s.bytes() {
+    if c == 0x78 || c == 0x58 {
+      return false
+    }
+    if c == 0x65 || c == 0x45 {
+      in_exp = true
+    } else if !in_exp && c >= 0x30 && c <= 0x39 {
+      mant = true
+    }
+  }
+  let last = s.bytes()[s.len() - 1]
+  mant && last != 0x65 && last != 0x45 && last != 0x2b && last != 0x2d
+}
+
+/// Token.Float64: (value, is NaN), None when the token is no float.
+fn tok_float(d: Dec, t: Tok) -> (Float, Bool)? {
+  if t.attrs == S_LITERAL {
+    let s = raw(d, t).to_lower()
+    if s == "nan" {
+      return Some((0.0, true))
+    }
+    if s == "inf" || s == "infinity" {
+      return Some((Float.inf, false))
+    }
+    if s == "-inf" || s == "-infinity" {
+      return Some((0.0 - Float.inf, false))
+    }
+    return None
+  }
+  if t.attrs != S_NUMBER {
+    return None
+  }
+  let s = t.str.to_str_lossy()
+  if !float_ok(s) {
+    return None
+  }
+  match Float.parse(s) {
+    Some(x) => Some((x, false))
+    // out of range: ParseFloat's ErrRange value, an infinity
+    None => Some((if s.starts_with("-") { 0.0 - Float.inf } else { Float.inf }, false))
+  }
+}
+
+fn raw(d: Dec, t: Tok) -> Str { d.l.orig[t.pos..t.end].to_str_lossy() }
+
+fn unexpected(d: Dec, t: Tok) -> TextErr { syn_at(d.l.orig, t.pos, "unexpected token: ${raw(d, t)}") }
+
+fn kind_name(k: Int) -> Str {
+  let names = ["", "double", "float", "int64", "uint64", "int32", "fixed64", "fixed32", "bool", "string", "group", "message", "bytes", "uint32", "enum", "sfixed32", "sfixed64", "sint32", "sint64"]
+  if k > 0 && k < names.len() { names[k] } else { "<unknown:${k}>" }
+}
+
+/// unmarshalScalar: the next token as a value of fd's kind.
+fn d_scalar(var d: Dec, fd: protodesc.FieldDesc, utf8: Bool) -> Sv ! TextErr {
+  let t = rd(d.l)?
+  if t.kind != K_SCALAR {
+    return Err(unexpected(d, t))
+  }
+  let k = fd.kind
+  if k == protodesc.TYPE_BOOL {
+    match tok_bool(d, t) {
+      Some(x) => return Ok(Sv{v: if x { 1 } else { 0 }, data: b""})
+      None => {}
+    }
+  } else if k == protodesc.TYPE_INT32 || k == protodesc.TYPE_SINT32 || k == protodesc.TYPE_SFIXED32 {
+    match tok_int(t, 32) {
+      Some(x) => return Ok(Sv{v: if k == protodesc.TYPE_SINT32 { zz32(x) } else if k == protodesc.TYPE_SFIXED32 { x & 0xFFFFFFFF } else { x }, data: b""})
+      None => {}
+    }
+  } else if k == protodesc.TYPE_INT64 || k == protodesc.TYPE_SINT64 || k == protodesc.TYPE_SFIXED64 {
+    match tok_int(t, 64) {
+      Some(x) => return Ok(Sv{v: if k == protodesc.TYPE_SINT64 { zz64(x) } else { x }, data: b""})
+      None => {}
+    }
+  } else if k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_FIXED32 {
+    match tok_uint(t, 32) {
+      Some(x) => return Ok(Sv{v: x, data: b""})
+      None => {}
+    }
+  } else if k == protodesc.TYPE_UINT64 || k == protodesc.TYPE_FIXED64 {
+    match tok_uint(t, 64) {
+      Some(x) => return Ok(Sv{v: x, data: b""})
+      None => {}
+    }
+  } else if k == protodesc.TYPE_FLOAT {
+    match tok_float(d, t) {
+      // Go's float32(math.NaN())
+      Some((x, nan)) => return Ok(Sv{v: if nan { 0x7FC00000 } else { Int(Float32(x).to_bits()) }, data: b""})
+      None => {}
+    }
+  } else if k == protodesc.TYPE_DOUBLE {
+    match tok_float(d, t) {
+      // Go's math.NaN()
+      Some((x, nan)) => return Ok(Sv{v: if nan { 0x7FF8000000000001 } else { x.to_bits() }, data: b""})
+      None => {}
+    }
+  } else if k == protodesc.TYPE_STRING || k == protodesc.TYPE_BYTES {
+    if t.attrs == S_STRING {
+      if k == protodesc.TYPE_STRING && utf8 && t.str.to_str().is_none() {
+        return Err(perr_at(d.l.orig, t.pos, "contains invalid UTF-8"))
+      }
+      return Ok(Sv{v: 0, data: t.str})
+    }
+  } else if k == protodesc.TYPE_ENUM {
+    if t.attrs == S_LITERAL && t.str.is_empty() && d.l.orig[t.pos] != 0x2d {
+      let lit = raw(d, t)
+      match enum_of(d.r, fd) {
+        Some(ed) => {
+          for ev in ed.value {
+            if ev.name == lit {
+              return Ok(Sv{v: ev.number, data: b""})
+            }
+          }
+        }
+        None => {}
+      }
+    }
+    match tok_int(t, 32) {
+      Some(x) => return Ok(Sv{v: x, data: b""})
+      None => {}
+    }
+  }
+  Err(perr_at(d.l.orig, t.pos, "invalid value for ${kind_name(k)} type: ${raw(d, t)}"))
+}
+
+/// A field's TextName: a group like field goes by its message's name.
+fn text_name_is(fd: protodesc.FieldDesc, name: Str) -> Bool {
+  if fd.kind == protodesc.TYPE_GROUP {
+    let tn = fd.type_name
+    let at = match tn.rfind(".") {
+      Some(i) => i + 1
+      None => 0
+    }
+    let short = tn[at..tn.len()]
+    if short.to_lower() == fd.name && short == name {
+      return true
+    }
+  }
+  fd.name == name
+}
+
+fn is_message_set(info: protojson.MsgInfo) -> Bool {
+  if info.d.options.is_empty() {
+    return false
+  }
+  for f in (pw.walk(info.d.options) ?? _e => []) {
+    if f.num == 1 && f.wire == 0 && f.v != 0 {
+      return true
+    }
+  }
+  false
+}
+
+/// The order Go's deterministic Marshal writes fields in
+/// (order.LegacyFieldOrder): by number, real oneof members after the rest
+/// by oneof index.
+fn order_of(fd: protodesc.FieldDesc) -> Int {
+  match fd.oneof_index {
+    Some(k) => if fd.proto3_optional { fd.number } else { (k + 1) * 1000000000000 + fd.number }
+    None => fd.number
+  }
+}
+
+fn first_required(info: protojson.MsgInfo, given: List[Int]) -> Str {
+  let fds = info.d.field
+  for j in 0..fds.len() {
+    if fds[j].label == protodesc.LABEL_REQUIRED && !given.contains(j) {
+      return "${info.full}.${fds[j].name}"
+    }
+  }
+  ""
+}
+
+fn rec_msg(num: Int, k: Int, body: Bytes) -> Bytes {
+  var o = BytesBuilder.new()
+  emit(o, num, k, Sv{v: 0, data: body}, true)
+  o.freeze()
+}
+
+/// unmarshalMessage: the wire bytes of message `info` (and Any's form);
+/// `miss` gets the first required field missing in it or below it.
+fn d_msg(var d: Dec, info: protojson.MsgInfo, delims: Bool, lim0: Int, var miss: Miss) -> Bytes ! TextErr {
+  let lim = lim0 - 1
+  if lim < 0 {
+    return Err(terr("proto: exceeded maximum recursion depth"))
+  }
+  if is_message_set(info) {
+    return Err(terr("proto: no support for proto1 MessageSets"))
+  }
+  if info.full == "google.protobuf.Any" {
+    return d_any(d, delims, lim)
+  }
+  if delims {
+    let t = rd(d.l)?
+    if t.kind != K_MOPEN {
+      return Err(unexpected(d, t))
+    }
+  }
+  let fds = info.d.field
+  var seen_nums: List[Int] = []
+  var seen_oneofs: List[Int] = []
+  var given: List[Int] = []
+  // (order, field index, record): a singular field's record, a repeated
+  // field's element (untagged when packed), a map field's place
+  var pieces: List[(Int, Int, Bytes)] = []
+  // (field index, key sort, entry) of map fields
+  var entries: List[(Int, Str, Bytes)] = []
+  var maps: List[Int] = []
+  var sub_miss = Miss{ord: Int.max, text: ""}
+  while true {
+    let t = rd(d.l)?
+    if t.kind == K_EOF {
+      if delims {
+        return Err(eof_err())
+      }
+      break
+    }
+    if t.kind != K_NAME {
+      if delims && t.kind == K_MCLOSE {
+        break
+      }
+      return Err(unexpected(d, t))
+    }
+    var j = -1
+    var name = ""
+    if t.attrs == N_IDENT {
+      name = raw(d, t)
+      for i in 0..fds.len() {
+        if text_name_is(fds[i], name) {
+          j = i
+          break
+        }
+      }
+    } else if t.attrs == N_NUMBER {
+      let num = Int.parse(t.str.to_str_lossy()) ?? 0
+      if num < 1 || num > 536870911 {
+        return Err(perr_at(d.l.orig, t.pos, "invalid field number: ${num}"))
+      }
+      for i in 0..fds.len() {
+        if fds[i].number == num {
+          j = i
+          break
+        }
+      }
+    }
+    if j < 0 {
+      if d.o.discard_unknown || (!name.is_empty() && info.d.reserved_name.contains(name)) {
+        skip_value(d)?
+        continue
+      }
+      return Err(perr_at(d.l.orig, t.pos, "unknown field: ${raw(d, t)}"))
+    }
+    if t.attrs == N_NUMBER {
+      return Err(perr_at(d.l.orig, t.pos, "cannot specify field by number: ${raw(d, t)}"))
+    }
+    let fd = fds[j]
+    let k = fd.kind
+    let is_m = is_msg(fd)
+    let ord = order_of(fd)
+    if fd.label == protodesc.LABEL_REPEATED {
+      let sub = if is_m { lookup(d.r, fd.type_name)? } else { info }
+      if k == protodesc.TYPE_MESSAGE && sub.is_map {
+        d_map(d, fd, sub, j, entries, lim, sub_miss, ord)?
+        if !maps.contains(j) {
+          maps.push(j)
+          pieces.push((ord, j, b""))
+        }
+        continue
+      }
+      if !is_m && !t.sep {
+        return Err(syn_at(d.l.orig, t.pos, "missing field separator :"))
+      }
+      d_list(d, info, fd, sub, j, ord, pieces, lim, sub_miss)?
+      continue
+    }
+    if !is_m && !t.sep {
+      return Err(syn_at(d.l.orig, t.pos, "missing field separator :"))
+    }
+    match fd.oneof_index {
+      Some(oi) => {
+        if seen_oneofs.contains(oi) {
+          let on = if oi < info.d.oneof_decl.len() { info.d.oneof_decl[oi].name } else { "" }
+          return Err(perr_at(d.l.orig, t.pos, "error parsing ${raw(d, t).quote()}, oneof ${info.full}.${on} is already set"))
+        }
+        seen_oneofs.push(oi)
+      }
+      None => {}
+    }
+    if seen_nums.contains(fd.number) {
+      return Err(perr_at(d.l.orig, t.pos, "non-repeated field ${raw(d, t).quote()} is repeated"))
+    }
+    if is_m {
+      let sub = lookup(d.r, fd.type_name)?
+      var m2 = Miss{ord: Int.max, text: ""}
+      let body = d_msg(d, sub, true, lim, m2)?
+      note_miss(sub_miss, ord, m2.text)
+      pieces.push((ord, j, rec_msg(fd.number, k, body)))
+    } else {
+      let sv = d_scalar(d, fd, wants_utf8(info, fd.number))?
+      let real_oneof = fd.oneof_index.is_some() && !fd.proto3_optional
+      let implicit = (info.proto3 || info.implicit_nums.contains(fd.number)) && !real_oneof && !fd.proto3_optional
+      let zero = if wire_of(k) == 2 { sv.data.is_empty() } else { sv.v == 0 }
+      if !(implicit && zero) {
+        var o = BytesBuilder.new()
+        emit(o, fd.number, k, sv, true)
+        pieces.push((ord, j, o.freeze()))
+      }
+    }
+    seen_nums.push(fd.number)
+    given.push(j)
+  }
+  let own = first_required(info, given)
+  note_miss(miss, 0, if own.is_empty() { sub_miss.text } else { own })
+  let sorted = pieces.sort_by(fn(p: (Int, Int, Bytes)) -> Int { p.0 })
+  var out = BytesBuilder.new()
+  var i = 0
+  while i < sorted.len() {
+    let j = sorted[i].1
+    var e = i + 1
+    while e < sorted.len() && sorted[e].1 == j {
+      e += 1
+    }
+    let fd = fds[j]
+    if maps.contains(j) {
+      map_wire(out, fd.number, j, entries)
+    } else if fd.label == protodesc.LABEL_REPEATED && !is_msg(fd) && is_packed(info, fd) {
+      var n = 0
+      for x in i..e {
+        n += sorted[x].2.len()
+      }
+      pw.wtag(out, fd.number, 2)
+      pw.wv(out, n)
+      for x in i..e {
+        out.write(sorted[x].2)
+      }
+    } else {
+      for x in i..e {
+        out.write(sorted[x].2)
+      }
+    }
+    i = e
+  }
+  Ok(out.freeze())
+}
+
+/// A map field's entries: the last of each key, in key order.
+fn map_wire(var out: BytesBuilder, num: Int, j: Int, entries: List[(Int, Str, Bytes)]) {
+  var last: Map[Str, Bytes] = {}
+  for en in entries {
+    if en.0 == j {
+      last.put(en.1, en.2)
+    }
+  }
+  for key in last.keys().sort_by(fn(k: Str) -> Str { k }) {
+    match last.get(key) {
+      Some(b) => {
+        pw.wtag(out, num, 2)
+        pw.wv(out, b.len())
+        out.write(b)
+      }
+      None => {}
+    }
+  }
+}
+
+/// unmarshalList: `[a, b]` or one value.
+fn d_list(var d: Dec, info: protojson.MsgInfo, fd: protodesc.FieldDesc, sub: protojson.MsgInfo, j: Int, ord: Int, var pieces: List[(Int, Int, Bytes)], lim: Int, var miss: Miss) -> () ! TextErr {
+  let t = pk(d.l)?
+  let k = fd.kind
+  if is_msg(fd) {
+    if t.kind == K_LOPEN {
+      let _ = rd(d.l)?
+      while true {
+        let t2 = pk(d.l)?
+        if t2.kind == K_LCLOSE {
+          let _ = rd(d.l)?
+          return Ok(())
+        }
+        if t2.kind != K_MOPEN {
+          return Err(unexpected(d, t2))
+        }
+        var m2 = Miss{ord: Int.max, text: ""}
+        let body = d_msg(d, sub, true, lim, m2)?
+        note_miss(miss, ord, m2.text)
+        pieces.push((ord, j, rec_msg(fd.number, k, body)))
+      }
+    }
+    if t.kind == K_MOPEN {
+      var m2 = Miss{ord: Int.max, text: ""}
+      let body = d_msg(d, sub, true, lim, m2)?
+      note_miss(miss, ord, m2.text)
+      pieces.push((ord, j, rec_msg(fd.number, k, body)))
+      return Ok(())
+    }
+    return Err(unexpected(d, t))
+  }
+  let packed = is_packed(info, fd)
+  let u = wants_utf8(info, fd.number)
+  if t.kind == K_LOPEN {
+    let _ = rd(d.l)?
+    while true {
+      let t2 = pk(d.l)?
+      if t2.kind == K_LCLOSE {
+        let _ = rd(d.l)?
+        return Ok(())
+      }
+      if t2.kind != K_SCALAR {
+        return Err(unexpected(d, t2))
+      }
+      let sv = d_scalar(d, fd, u)?
+      var o = BytesBuilder.new()
+      emit(o, fd.number, k, sv, !packed)
+      pieces.push((ord, j, o.freeze()))
+    }
+  }
+  if t.kind == K_SCALAR {
+    let sv = d_scalar(d, fd, u)?
+    var o = BytesBuilder.new()
+    emit(o, fd.number, k, sv, !packed)
+    pieces.push((ord, j, o.freeze()))
+    return Ok(())
+  }
+  Err(unexpected(d, t))
+}
+
+/// unmarshalMap: `{key: K value: V}` or a list of them.
+fn d_map(var d: Dec, fd: protodesc.FieldDesc, entry: protojson.MsgInfo, j: Int, var entries: List[(Int, Str, Bytes)], lim0: Int, var miss: Miss, ord: Int) -> () ! TextErr {
+  let lim = lim0 - 1
+  if lim < 0 {
+    return Err(terr("proto: exceeded maximum recursion depth"))
+  }
+  let t = rd(d.l)?
+  if t.kind == K_MOPEN {
+    return d_entry(d, entry, j, entries, lim, miss, ord)
+  }
+  if t.kind != K_LOPEN {
+    return Err(unexpected(d, t))
+  }
+  while true {
+    let t2 = rd(d.l)?
+    if t2.kind == K_LCLOSE {
+      return Ok(())
+    }
+    if t2.kind != K_MOPEN {
+      return Err(unexpected(d, t2))
+    }
+    d_entry(d, entry, j, entries, lim, miss, ord)?
+  }
+  Ok(())
+}
+
+/// unmarshalMapEntry: a missing key or value is its zero value (an enum's
+/// first value, an empty message).
+fn d_entry(var d: Dec, entry: protojson.MsgInfo, j: Int, var entries: List[(Int, Str, Bytes)], lim: Int, var miss: Miss, ord: Int) -> () ! TextErr {
+  let (kfd, vfd) = entry_fields(entry)
+  var ksv = Sv{v: 0, data: b""}
+  var vsv = Sv{v: 0, data: b""}
+  var have_k = false
+  var have_v = false
+  while true {
+    let t = rd(d.l)?
+    if t.kind == K_MCLOSE {
+      break
+    }
+    if t.kind != K_NAME {
+      return Err(unexpected(d, t))
+    }
+    if t.attrs != N_IDENT {
+      if !d.o.discard_unknown {
+        return Err(perr_at(d.l.orig, t.pos, "unknown map entry field ${raw(d, t).quote()}"))
+      }
+      skip_value(d)?
+      continue
+    }
+    let name = raw(d, t)
+    if name == "key" {
+      if !t.sep {
+        return Err(syn_at(d.l.orig, t.pos, "missing field separator :"))
+      }
+      if have_k {
+        return Err(perr_at(d.l.orig, t.pos, "map entry \"key\" cannot be repeated"))
+      }
+      ksv = d_scalar(d, kfd, wants_utf8(entry, 1))?
+      have_k = true
+    } else if name == "value" {
+      if !is_msg(vfd) && !t.sep {
+        return Err(syn_at(d.l.orig, t.pos, "missing field separator :"))
+      }
+      if have_v {
+        return Err(perr_at(d.l.orig, t.pos, "map entry \"value\" cannot be repeated"))
+      }
+      if is_msg(vfd) {
+        var m2 = Miss{ord: Int.max, text: ""}
+        vsv = Sv{v: 0, data: d_msg(d, lookup(d.r, vfd.type_name)?, true, lim, m2)?}
+        note_miss(miss, ord, m2.text)
+      } else {
+        vsv = d_scalar(d, vfd, wants_utf8(entry, 2))?
+      }
+      have_v = true
+    } else {
+      if !d.o.discard_unknown {
+        return Err(perr_at(d.l.orig, t.pos, "unknown map entry field ${name.quote()}"))
+      }
+      skip_value(d)?
+    }
+  }
+  if !have_v {
+    if is_msg(vfd) {
+      note_miss(miss, ord, first_required(lookup(d.r, vfd.type_name)?, []))
+    } else if vfd.kind == protodesc.TYPE_ENUM {
+      match enum_of(d.r, vfd) {
+        Some(ed) => if !ed.value.is_empty() {
+          vsv = Sv{v: ed.value[0].number, data: b""}
+        }
+        None => {}
+      }
+    }
+  }
+  var o = BytesBuilder.new()
+  emit(o, 1, kfd.kind, ksv, true)
+  emit(o, 2, vfd.kind, vsv, true)
+  let sk = if kfd.kind == protodesc.TYPE_STRING { ksv.data.to_hex() } else { key_sort(kfd, pw.Fld{num: 1, wire: wire_of(kfd.kind), v: ksv.v, data: ksv.data, raw: b""}) }
+  entries.push((j, sk, o.freeze()))
+  Ok(())
+}
+
+/// unmarshalAny: type_url and value, or the expanded [url] {...} form.
+fn d_any(var d: Dec, delims: Bool, lim: Int) -> Bytes ! TextErr {
+  var url = b""
+  var value = b""
+  var seen_url = false
+  var seen_value = false
+  var expanded = false
+  if delims {
+    let t = rd(d.l)?
+    if t.kind != K_MOPEN {
+      return Err(unexpected(d, t))
+    }
+  }
+  while true {
+    let t = rd(d.l)?
+    if t.kind != K_NAME {
+      if delims {
+        if t.kind == K_MCLOSE {
+          break
+        }
+      } else if t.kind == K_EOF {
+        break
+      }
+      return Err(unexpected(d, t))
+    }
+    if t.attrs == N_IDENT {
+      if !t.sep {
+        return Err(syn_at(d.l.orig, t.pos, "missing field separator :"))
+      }
+      let name = raw(d, t)
+      if name == "type_url" || name == "value" {
+        let full = "google.protobuf.Any.${name}"
+        if (name == "type_url" && seen_url) || (name == "value" && seen_value) {
+          return Err(perr_at(d.l.orig, t.pos, "duplicate ${full} field"))
+        }
+        if expanded {
+          return Err(perr_at(d.l.orig, t.pos, "conflict with [${url.to_str_lossy()}] field"))
+        }
+        let t2 = rd(d.l)?
+        if t2.kind != K_SCALAR || t2.attrs != S_STRING {
+          return Err(perr_at(d.l.orig, t2.pos, "invalid ${full} field value: ${raw(d, t2)}"))
+        }
+        if name == "type_url" {
+          url = t2.str
+          seen_url = true
+        } else {
+          value = t2.str
+          seen_value = true
+        }
+      } else if !d.o.discard_unknown {
+        return Err(perr_at(d.l.orig, t.pos, "invalid field name ${name.quote()} in google.protobuf.Any message"))
+      }
+    } else if t.attrs == N_TYPE {
+      if expanded {
+        return Err(perr_at(d.l.orig, t.pos, "cannot have more than one type"))
+      }
+      if seen_url {
+        return Err(perr_at(d.l.orig, t.pos, "conflict with type_url field"))
+      }
+      url = t.str
+      let us = url.to_str_lossy()
+      let mname = match us.rfind("/") {
+        Some(i) => us[i + 1..us.len()]
+        None => us
+      }
+      let mi = d.r.msgs.get(mname) ?? return Err(perr_at(d.l.orig, t.pos, "unable to resolve message [${us}]: not found"))
+      // Go never checks required fields inside an Any
+      var m2 = Miss{ord: Int.max, text: ""}
+      value = d_msg(d, mi, true, lim, m2)?
+      expanded = true
+    } else if !d.o.discard_unknown {
+      return Err(perr_at(d.l.orig, t.pos, "invalid field name ${raw(d, t).quote()} in google.protobuf.Any message"))
+    }
+  }
+  var out = BytesBuilder.new()
+  if !url.is_empty() {
+    pw.wtag(out, 1, 2)
+    pw.wv(out, url.len())
+    out.write(url)
+  }
+  if !value.is_empty() {
+    pw.wtag(out, 2, 2)
+    pw.wv(out, value.len())
+    out.write(value)
+  }
+  Ok(out.freeze())
+}
+
+/// skipValue: the value after a skipped field's name.
+fn skip_value(var d: Dec) -> () ! TextErr {
+  let t = rd(d.l)?
+  if t.kind == K_MOPEN {
+    return skip_msg(d)
+  }
+  if t.kind == K_LOPEN {
+    while true {
+      let t2 = rd(d.l)?
+      if t2.kind == K_LCLOSE {
+        return Ok(())
+      }
+      if t2.kind == K_MOPEN {
+        skip_msg(d)?
+      }
+    }
+  }
+  Ok(())
+}
+
+fn skip_msg(var d: Dec) -> () ! TextErr {
+  while true {
+    let t = rd(d.l)?
+    if t.kind == K_MCLOSE {
+      return Ok(())
+    }
+    if t.kind == K_NAME {
+      skip_value(d)?
+    }
+  }
+  Ok(())
+}
+
+// copied from std/protojson (private there)
+
+/// One scalar or message value ready to write: `v` holds varint and fixed bits, `data` a length delimited payload.
+struct Sv {
+  v: Int
+  data: Bytes
+}
+
+fn enum_of(r: protojson.Registry, fd: protodesc.FieldDesc) -> protodesc.EnumDesc? { r.enums.get(trim_dot(fd.type_name)) }
+
+fn zz32(n: Int) -> Int { ((n << 1) ^ (n >> 31)) & 0xFFFFFFFF }
+
+fn zz64(n: Int) -> Int { n.wrapping_shl(1) ^ (n >> 63) }
+
+fn w_fixed(var out: BytesBuilder, v: Int, n: Int) {
+  var i = 0
+  while i < n {
+    out.write_byte(UInt8.wrapping_from((v >> (8 * i)) & 255))
+    i += 1
+  }
+}
+
+/// Writes `sv` for a field of kind `k`, with its tag when `tagged`.
+fn emit(var out: BytesBuilder, num: Int, k: Int, sv: Sv, tagged: Bool) {
+  let w = wire_of(k)
+  if tagged {
+    pw.wtag(out, num, w)
+  }
+  if w == 0 {
+    pw.wv(out, sv.v)
+  } else if w == 1 {
+    w_fixed(out, sv.v, 8)
+  } else if w == 5 {
+    w_fixed(out, sv.v, 4)
+  } else if w == 3 {
+    out.write(sv.data)
+    pw.wtag(out, num, 4)
+  } else {
+    pw.wv(out, sv.data.len())
+    out.write(sv.data)
+  }
+}
+
+fn is_packed(info: protojson.MsgInfo, fd: protodesc.FieldDesc) -> Bool {
+  if !is_numeric_kind(fd.kind) {
+    return false
+  }
+  var packed = info.proto3
+  if !fd.options.is_empty() {
+    for f in (pw.walk(fd.options) ?? _e => []) {
+      if f.num == 2 && f.wire == 0 {
+        packed = f.v != 0
+      }
+    }
+  }
+  packed
 }

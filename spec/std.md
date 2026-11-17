@@ -10683,7 +10683,7 @@ fn read_group(b: Bytes, at: Int, num: Int) -> (Bytes, Int) ! ProtoErr   // the b
 - The well known types are std/protowkt (73), the JSON mapping std/protojson (74), `.proto` parsing std/protoparse.
   `merge_from` merges as parsing `marshal(src)` onto `dst` does: a populated scalar replaces (a proto3 zero is not
   populated), a nested message merges, a list appends, a map entry replaces, unknown fields append.
-  Not yet: proto2 extensions, the text format (prototext).
+  Not yet: proto2 extensions. The text format is std/prototext (section 74.1).
 
 ## 66. std/sqlite
 
@@ -11184,6 +11184,9 @@ struct Opts { multiline: Bool = false, indent: Str = "", emit_ascii: Bool = fals
               emit_unknown: Bool = false }
 fn marshal(r: protojson.Registry, name: Str, wire: Bytes, o: Opts = Opts{}) -> Str ! TextErr
 fn format(r: protojson.Registry, name: Str, wire: Bytes) -> Str
+struct UnmarshalOpts { allow_partial: Bool = false, discard_unknown: Bool = false, recursion_limit: Int = 0 }
+fn unmarshal(r: protojson.Registry, name: Str, text: Str, o: UnmarshalOpts = UnmarshalOpts{}) -> Bytes ! TextErr
+fn unmarshal_bytes(r: protojson.Registry, name: Str, text: Bytes, o: UnmarshalOpts = UnmarshalOpts{}) -> Bytes ! TextErr
 ```
 
 `marshal` writes the populated fields in declaration order as `name:value` (`name:{...}` for a message), one `name:`
@@ -11199,7 +11202,20 @@ and a final newline. Go puts one or two spaces at random (detrand) so nobody com
 writes one. A missing proto2 `required` field is an error unless `allow_partial`; a proto3 or editions string that is
 not UTF-8 is an error (`format` writes it). `format` is Go's Format: multiline, unknown fields, partial, and
 `"<invalid>"` for wire bytes the registry's message cannot hold. Checked against protobuf-go's `prototext`
-(testdata/corpus/prototext). The reader (`prototext.Unmarshal`) is not ported yet.
+(testdata/corpus/prototext).
+
+`unmarshal` is Go's `prototext.Unmarshal`: it reads the text of message `name` and returns the wire bytes Go's
+deterministic `proto.Marshal` writes for the message Unmarshal fills (fields by number with oneof members after
+the rest, repeated scalars packed where the field is, map entries in key order with key and value, a proto3 or
+implicit zero scalar left out). It takes what Go's reader takes: `name: value` (the colon optional before a message),
+`{...}` or `<...>`, lists `[a, b]` and repeated names, `,` or `;` between fields, `#` comments, decimal, `0x` hex and
+`0` octal integers, floats with an `f` suffix and `inf`, `-inf`, `nan` (any case), `t`, `True`, `0` and `1` as bools,
+enums by name or number, adjacent strings joined, C and Unicode escapes (surrogate pairs joined), a group by its
+message's name, an `Any` as `type_url`/`value` or `[host/pkg.Msg] {...}`. Errors are Go's texts with the same line and
+column (`proto: syntax error (line 1:9): ...`, `proto: (line 1:5): unknown field: x`, `proto: unexpected EOF`, `proto:
+required field pkg.Msg.f not set` unless `allow_partial`). `discard_unknown` skips unknown fields' values;
+`recursion_limit` (default 10,000) caps message nesting. Extension fields (`[pkg.ext]` outside an `Any`) are unknown
+fields, as std/protojson has no extensions. `unmarshal_bytes` reads text that need not be UTF-8 (Go's `[]byte`).
 
 ## 75. std/image
 
