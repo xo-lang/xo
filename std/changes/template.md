@@ -1,5 +1,23 @@
 # std/template changes
 
+## 2026-11-16: fix: add can redefine a template of the set, as Go's Parse does (native)
+
+- Kind: fix
+- Commit: this push
+- Found by: std/template_test.xo (task #90, the module tests)
+- Go reference: text/template template.go (AddParseTree, associate) and parse.go (Parse, Tree.add), go1.26 (Copyright 2011 The Go Authors, BSD-style license)
+- Test: std/template_test.xo "the named set: block, define, a later add replacing a block, render_named" (it failed before)
+- Shipped in: not yet released
+
+`add` parsed its source against every tree already in the set, so a
+template that redefined one (a `{{block}}` overridden by a later `add`, the
+pattern Go's docs give for blocks) failed with `multiple definition of
+template`. Each source now parses into a tree set of its own, as Go's Parse
+does, and its trees join the set: a definition replaces the template of
+that name unless it is empty and that one is not. Two non empty
+definitions in one source are still the error. The Go backend used Go's
+text/template and already did this.
+
 ## 2026-11-16: fix: slice of a string cut inside a character gives U+FFFD per byte on the Go backend too
 
 - Kind: fix

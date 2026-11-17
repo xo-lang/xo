@@ -3417,7 +3417,11 @@ fn parse_set(t: template.Template) -> List[Tree] ! template.TemplateErr {
     for (k, _) in t.funcs {
       fnames.push(k)
     }
-    var p = Parser{lex: Lexer{input: src.bytes(), left: t.left.bytes(), right: t.right.bytes()}, name: name, parse_name: name, text: src.bytes(), trees: trees, funcs: fnames}
+    // Go's Parse: each source parses into a tree set of its own (two non
+    // empty definitions in one source are an error), then each tree joins
+    // the set (associate): it replaces a template of that name, unless it
+    // is empty and that template is not.
+    var p = Parser{lex: Lexer{input: src.bytes(), left: t.left.bytes(), right: t.right.bytes()}, name: name, parse_name: name, text: src.bytes(), trees: [], funcs: fnames}
     let root = p.parse()
     if !p.err.is_empty() {
       return Err(template.TemplateErr{msg: p.err})
@@ -3426,7 +3430,19 @@ fn parse_set(t: template.Template) -> List[Tree] ! template.TemplateErr {
     if !p.err.is_empty() {
       return Err(template.TemplateErr{msg: p.err})
     }
-    trees = p.trees
+    for nt in p.trees {
+      var at = -1
+      for (i, x) in trees.indexed() {
+        if x.name == nt.name {
+          at = i
+        }
+      }
+      if at < 0 {
+        trees.push(nt)
+      } else if !is_empty_tree(nt.root) || is_empty_tree(trees[at].root) {
+        trees[at] = nt
+      }
+    }
   }
   Ok(trees)
 }

@@ -1,0 +1,164 @@
+// std/template module tests (decision 0616 section 2: the race evidence
+// runs these under --race). Expected outputs and error texts are Go's
+// text/template and html/template on the same data (go1.25): actions and
+// pipelines, range/if/with and break, trim markers, functions given to
+// parse, missingkey, the named set (define, block, add, render_named),
+// custom delimiters, html contexts and trusted content, and many tasks
+// rendering one set at once.
+use std/json
+
+const DATA: Str = "{\"name\":\"ann\",\"items\":[\"a\",\"b\",\"c\"],\"empty\":[],\"n\":3,\"t\":true,\"m\":{\"k\":\"v\"},\"html\":\"<b>&'\\\"\",\"q\":\"a b&c\",\"bad\":\"javascript:alert(1)\",\"good\":\"https://x.test/p?a=1\"}"
+
+fn data() -> json.Value {
+  json.decode_str(DATA).or_fault("data")
+}
+
+fn upper(args: List[json.Value]) -> json.Value ! Str {
+  match args[0] {
+    json.Value.Str(s) => Ok(json.Value.Str(s.to_upper()))
+    _ => Err("upper wants a string")
+  }
+}
+
+fn fail(args: List[json.Value]) -> json.Value ! Str {
+  match args[0] {
+    json.Value.Str(s) => Err("no ${s}")
+    _ => Err("fail wants a string")
+  }
+}
+
+fn funcs() -> Map[Str, TemplateFn] {
+  {"upper": upper, "fail": fail}
+}
+
+// text renders src over DATA, or "err " and the error text.
+fn text(src: Str, missing_error: Bool = false) -> Str {
+  match parse("t", src, funcs: funcs()) {
+    Err(e) => "err ${e.display()}"
+    Ok(t) => match t.missing_key(missing_error).render(data()) {
+      Ok(s) => s
+      Err(e) => "err ${e.display()}"
+    }
+  }
+}
+
+fn htm(src: Str) -> Str {
+  match parse_html("t", src) {
+    Err(e) => "err ${e.display()}"
+    Ok(t) => match t.render(data()) {
+      Ok(s) => s
+      Err(e) => "err ${e.display()}"
+    }
+  }
+}
+
+test "actions, pipelines and the control structures give Go's output" {
+  let cases = [
+    ("{{.name}} has {{len .items}}:{{range $i, $e := .items}} {{$i}}={{$e}}{{end}}", "ann has 3: 0=a 1=b 2=c"),
+    ("{{range .empty}}x{{else}}none{{end}}", "none"),
+    ("{{if not .t}}a{{else if eq .n 3}}three{{else}}c{{end}}", "three"),
+    ("{{with .m}}{{.k}}{{end}}{{with .nothere}}x{{else}}-{{end}}", "v-"),
+    ("{{.name | printf \"%q\"}} {{.name | upper}}", "\"ann\" ANN"),
+    ("{{range .items}}{{if eq . \"b\"}}{{break}}{{end}}{{.}}{{end}}", "a"),
+    ("{{- \" a \" -}} | {{ \"b\" }}", " a | b"),
+  ]
+  for (src, want) in cases {
+    expect(text(src)) == want
+  }
+}
+
+test "a function's error and the parse errors are Go's text" {
+  expect(text("{{fail .name}}")) == "err template: t:1:2: executing \"t\" at <fail .name>: error calling fail: no ann"
+  expect(text("{{nope}}")) == "err template: t:1: function \"nope\" not defined"
+  expect(text("{{.name")) == "err template: t:1: unclosed action"
+}
+
+test "a missing key is <no value>, or an error with missing_key(true)" {
+  expect(text("{{.nothere}}")) == "<no value>"
+  expect(text("{{.m.nothere}}")) == "<no value>"
+  expect(text("{{.nothere}}", missing_error: true)) == "err template: t:1:2: executing \"t\" at <.nothere>: map has no entry for key \"nothere\""
+  expect(text("{{.m.nothere}}", missing_error: true)) == "err template: t:1:4: executing \"t\" at <.m.nothere>: map has no entry for key \"nothere\""
+}
+
+test "the named set: block, define, a later add replacing a block, render_named" {
+  let t = parse("page", "[{{block \"body\" .}}default {{.name}}{{end}}]{{define \"foot\"}}foot {{.}}{{end}}").or_fault("parse")
+  expect(t.render(data()).or_fault("render")) == "[default ann]"
+  let t2 = t.add("body", "custom {{.name}}").or_fault("add")
+  expect(t2.render_named("page", data()).or_fault("page")) == "[custom ann]"
+  expect(t2.render_named("foot", json.Value.Str("x")).or_fault("foot")) == "foot x"
+  // an empty later definition keeps the one there; a source with two is an error
+  let t3 = t2.add("x", "{{define \"body\"}}{{end}}").or_fault("add empty")
+  expect(t3.render(data()).or_fault("t3")) == "[custom ann]"
+  match t.add("y", "{{define \"z\"}}1{{end}}{{define \"z\"}}2{{end}}") {
+    Ok(_) => fault("two definitions in one source parsed")
+    Err(e) => expect(e.display()) == "template: y:1: template: multiple definition of template \"z\""
+  }
+  // the set it was added to is unchanged
+  expect(t.render(data()).or_fault("render again")) == "[default ann]"
+  match t2.render_named("nope", data()) {
+    Ok(s) => fault("rendered ${s.quote()}")
+    Err(e) => expect(e.display().contains("no template \"nope\" associated with template")) == true
+  }
+}
+
+test "custom delimiters leave the default ones as text" {
+  let d = parse("d", "[[.name]] {{.name}}", left: "[[", right: "]]").or_fault("parse")
+  expect(d.render(data()).or_fault("render")) == "ann {{.name}}"
+}
+
+test "parse_html escapes each action for its context" {
+  let cases = [
+    ("<p>{{.html}}</p>", "<p>&lt;b&gt;&amp;&#39;&#34;</p>"),
+    ("<a title=\"{{.html}}\">x</a>", "<a title=\"&lt;b&gt;&amp;&#39;&#34;\">x</a>"),
+    ("<a href=\"/s?q={{.q}}\">x</a>", "<a href=\"/s?q=a%20b%26c\">x</a>"),
+    ("<a href=\"{{.bad}}\">x</a>", "<a href=\"#ZgotmplZ\">x</a>"),
+    ("<a href=\"{{.good}}\">x</a>", "<a href=\"https://x.test/p?a=1\">x</a>"),
+    ("<script>var s = {{.name}}; var n = {{.n}};</script>", "<script>var s = \"ann\"; var n =  3 ;</script>"),
+    ("<p style=\"color: {{.q}}\">x</p>", "<p style=\"color: a b&amp;c\">x</p>"),
+    ("<p>{{.html | html}}</p>", "<p>&lt;b&gt;&amp;&#39;&#34;</p>"),
+  ]
+  for (src, want) in cases {
+    expect(htm(src)) == want
+  }
+}
+
+test "branches that end in different contexts are a render error" {
+  let got = htm("<a {{if .t}}href=\"{{end}}\">x</a>")
+  expect(got.starts_with("err html/template:t:1:8: {{if}} branches end in different contexts")) == true
+}
+
+test "trusted html passes through in its context and is escaped in another" {
+  let t = parse_html("t", "<p>{{.}}</p><a title=\"{{.}}\">x</a>").or_fault("parse")
+  expect(t.render(html("<b>hi</b>")).or_fault("render")) == "<p><b>hi</b></p><a title=\"hi\">x</a>"
+  expect(t.render(json.Value.Str("<b>hi</b>")).or_fault("plain")) == "<p>&lt;b&gt;hi&lt;/b&gt;</p><a title=\"&lt;b&gt;hi&lt;/b&gt;\">x</a>"
+  let u = parse_html("u", "<a href=\"{{.}}\">x</a>").or_fault("parse url")
+  expect(u.render(url("javascript:go()")).or_fault("trusted url")) == "<a href=\"javascript:go%28%29\">x</a>"
+}
+
+test "many tasks render one set at once" {
+  let t = parse("page", "[{{block \"body\" .}}{{.name | upper}}{{range .items}},{{.}}{{end}}{{end}}]", funcs: funcs()).or_fault("parse")
+  let h = parse_html("h", "<a href=\"/s?q={{.q}}\" title=\"{{.html}}\">{{.name}}</a>").or_fault("parse html")
+  let d = data()
+  let n = scope sc {
+    var hs: List[Task[Int, Str]] = []
+    for k in 0..8 {
+      hs.push(sc.spawn(fn() -> Int ! Str {
+        var c = 0
+        for i in 0..200 {
+          let a = t.render(d).map_err(fn(e) { "task ${k}: ${e.display()}" })?
+          if a != "[ANN,a,b,c]" { return Err("task ${k} round ${i}: ${a}") }
+          let b = h.render(d).map_err(fn(e) { "task ${k}: ${e.display()}" })?
+          if b != "<a href=\"/s?q=a%20b%26c\" title=\"&lt;b&gt;&amp;&#39;&#34;\">ann</a>" { return Err("task ${k} round ${i}: ${b}") }
+          c += 1
+        }
+        Ok(c)
+      }))
+    }
+    var total = 0
+    for x in hs {
+      total += x.await.or_fault("task")
+    }
+    total
+  }
+  expect(n) == 1600
+}
