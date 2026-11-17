@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+toml: line 2: unknown field extra (column 1, key extra)
+toml: line 5: unknown field server.port (column 1, key server.port)
+toml: line 6: missing table gone (column 2, key gone)
+1| title = "t"
+2| extra = 1
+ | ~~~~~ unknown field
+3| [server]
+4| host = "h"
+5| port = 8
+--- stderr

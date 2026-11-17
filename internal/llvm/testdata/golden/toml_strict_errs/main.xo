@@ -1,0 +1,26 @@
+// toml.decode(strict: true) (go-toml's DisallowUnknownFields, task #222):
+// each StrictErr's display, line, column and key, and go-toml's context
+// text for the first.
+use std/toml
+
+struct Server {
+  host: Str
+} derive Json
+
+struct Config {
+  title: Str
+  server: Server
+} derive Json
+
+fn main(os: Os) {
+  match toml.decode[Config]("title = \"t\"\nextra = 1\n[server]\nhost = \"h\"\nport = 8\n[gone]\n", strict: true) {
+    Ok(_) => os.stdio.println("ok")
+    Err(toml.DecodeErr.Strict(errs)) => {
+      for e in errs {
+        os.stdio.println("${e.display()} (column ${e.column}, key ${e.key.join(".")})")
+      }
+      os.stdio.println(errs[0].context)
+    }
+    Err(e) => os.stdio.println("other ${e}")
+  }
+}
