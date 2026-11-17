@@ -100,6 +100,20 @@ struct Prepared {}
 /// gorilla's NewPreparedMessage.
 fn prepare(m: Message) -> Prepared
 
+/// The messages c reads as one stream of bytes, each message's data
+/// followed by term (gorilla's JoinMessages): `read` gives the next bytes.
+/// One task reads it at a time; c's own reads take whole messages from
+/// the same stream.
+struct Joined {}
+
+/// gorilla's JoinMessages.
+fn join(c: WsConn, term: Str = "") -> Joined
+
+/// The next 1 to max bytes of the stream, reading the next message when
+/// the last is used up (an empty message with an empty term gives
+/// nothing, so the read goes on). A close or failure is read()'s error.
+fn (j: Joined) read(max: Int = 32768) -> Bytes ! WsErr
+
 /// gorilla's IsWebSocketUpgrade: whether req asks for a WebSocket
 /// (`Connection: upgrade` and `Upgrade: websocket`), without upgrading.
 fn is_upgrade(req: http.Request) -> Bool

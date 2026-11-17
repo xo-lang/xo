@@ -1,0 +1,31 @@
+use std/http
+use std/websocket
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("GET /j", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      for m in ["a", "bc", "", "def"] {
+        c.write_text(m).or_fault("w")
+      }
+      c.close(code: 1001, reason: "bye").or_fault("close")
+    })
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = websocket.dial(os.net, "ws://${addr}/j").or_fault("dial")
+    let j = websocket.join(c, term: ",")
+    while true {
+      match j.read(max: 2) {
+        Ok(b) => os.stdio.println("[${b.to_str_lossy()}]")
+        Err(e) => {
+          os.stdio.println("${e}")
+          break
+        }
+      }
+    }
+  }
+}

@@ -893,6 +893,43 @@ func Websocket_prepare(_ *Task, m Websocket_Message) Websocket_Prepared {
 	return Websocket_Prepared{m: m}
 }
 
+// Websocket_Joined is gorilla's joinReader (JoinMessages).
+type Websocket_Joined struct{ j *wsJoined }
+
+type wsJoined struct {
+	mu   sync.Mutex
+	c    Websocket_WsConn
+	term Bytes
+	buf  Bytes
+}
+
+// XoDebug implements Debug.
+func (Websocket_Joined) XoDebug(b *strings.Builder) { b.WriteString("<websocket joined>") }
+
+// Websocket_join is gorilla's JoinMessages.
+func Websocket_join(_ *Task, c Websocket_WsConn, term string) Websocket_Joined {
+	return Websocket_Joined{j: &wsJoined{c: c, term: Bytes(term)}}
+}
+
+// M_read gives the next 1 to max bytes of the messages, each followed by
+// term.
+func (w Websocket_Joined) M_read(tk *Task, limit int64) Result[Bytes, Websocket_WsErr] {
+	j := w.j
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for len(j.buf) == 0 {
+		r := j.c.M_read(tk)
+		if !r.Ok {
+			return Err[Bytes](r.E)
+		}
+		j.buf = r.V.F_data + j.term
+	}
+	n := int(max(1, min(limit, int64(len(j.buf)))))
+	out := j.buf[:n]
+	j.buf = j.buf[n:]
+	return Ok[Bytes, Websocket_WsErr](out)
+}
+
 // M_write_prepared is gorilla's WritePreparedMessage.
 func (w Websocket_WsConn) M_write_prepared(tk *Task, p Websocket_Prepared) Result[Unit, Websocket_WsErr] {
 	return w.M_write(tk, p.m)

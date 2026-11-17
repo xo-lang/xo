@@ -168,3 +168,70 @@ test "is_upgrade checks Connection and Upgrade, as gorilla's IsWebSocketUpgrade"
   expect(is_upgrade(http.new_request("GET", "/", {"Connection": "keep-alive", "Upgrade": "websocket"}))) == false
   expect(is_upgrade(http.new_request("GET", "/", {"Connection": "upgrade"}))) == false
 }
+
+// gorilla's TestJoinMessages: the messages read through join in chunks
+// of 1 to 7 bytes, with and without a term, are the messages joined.
+test "join reads messages as one stream, as gorilla's JoinMessages" {
+  let msgs = ["a", "bc", "def", "ghij", "klmno", "0", "12", "345", "6789"]
+  var r = http.router()
+  r.handle("GET /j", fn(req) {
+    upgrade(req, fn(c) {
+      for _round in 0..14 {
+        for m in msgs {
+          c.write(Message{kind: Kind.Binary, data: m.bytes()}).or_fault("write")
+        }
+      }
+      c.read().ignore_err("the client closes")
+    })
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = dial(os.net, "ws://${addr}/j").or_fault("dial")
+    for chunk in 1..8 {
+      for term in ["", ","] {
+        let j = join(c, term: term)
+        let want = msgs.join(term) + term
+        var got = b""
+        while got.len() < want.len() {
+          let b = j.read(max: chunk).or_fault("read")
+          expect(b.len() <= chunk) == true
+          got = got + b
+        }
+        expect(got.to_str_lossy()) == want
+      }
+    }
+    c.close().or_fault("close")
+  }
+}
+
+test "join gives an empty message's term and returns the close as read() does" {
+  var r = http.router()
+  r.handle("GET /c", fn(req) {
+    upgrade(req, fn(c) {
+      c.write(Message{kind: Kind.Binary, data: b""}).or_fault("empty")
+      c.write_text("last").or_fault("write")
+      c.close(code: 1001, reason: "bye").or_fault("close")
+    })
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = dial(os.net, "ws://${addr}/c").or_fault("dial")
+    let j = join(c, term: "\n")
+    // an empty message is its term alone
+    expect(j.read().or_fault("empty").to_str_lossy()) == "\n"
+    expect(j.read().or_fault("read").to_str_lossy()) == "last\n"
+    match j.read() {
+      Err(WsErr.Closed(code, reason)) => {
+        expect(code) == 1001
+        expect(reason) == "bye"
+      }
+      _ => fault("want Closed")
+    }
+  }
+}

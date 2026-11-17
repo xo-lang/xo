@@ -1,5 +1,19 @@
 # std/websocket changes
 
+## 2026-11-17: feature: join (gorilla's JoinMessages)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #222 (std Proven; scripts/stdaudit/map.txt websocket gap row JoinMessages)
+- Go reference: gorilla/websocket v1.5.3 join.go (joinReader), join_test.go (TestJoinMessages)
+- Test: std/websocket_test.xo (gorilla's TestJoinMessages: nine messages read in chunks of 1 to 7 bytes, with and without a term; an empty message's term; the close as read's error), arm64 and LLVM; golden internal/gen websocket_join on the Go backend
+- Timing: none (a new call; read and write unchanged)
+- Shipped in: not yet released
+
+`websocket.join(c, term)` reads c's messages as one stream of bytes, each
+message's data followed by term; `Joined.read(max)` gives the next 1 to
+max bytes and reads the next message when one is used up.
+
 ## 2026-11-16: feature: writer, prepared messages, on_close, addresses and is_upgrade
 
 - Kind: feature

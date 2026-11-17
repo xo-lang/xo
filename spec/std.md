@@ -8613,6 +8613,8 @@ fn (c: WsConn) write_prepared(p: Prepared) -> () ! WsErr   // gorilla's WritePre
 fn (w: MsgWriter) write(data: Bytes) -> () ! WsErr
 fn (w: MsgWriter) close() -> () ! WsErr          // the final frame; later writes are Protocol("write closed")
 pub fn prepare(m: Message) -> Prepared           // gorilla's NewPreparedMessage (no compression: write's frames)
+pub fn join(c: WsConn, term: Str = "") -> Joined  // gorilla's JoinMessages: c's messages as one stream, each followed by term
+fn (j: Joined) read(max: Int = 32768) -> Bytes ! WsErr   // the next 1 to max bytes; an empty message with an empty term gives nothing; a close is read()'s error
 pub fn is_upgrade(req: http.Request) -> Bool     // gorilla's IsWebSocketUpgrade
 pub fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
 pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! WsErr uses net.dial

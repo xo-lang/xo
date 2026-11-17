@@ -626,6 +626,33 @@ fn (c: WsConn) write_prepared(p: Prepared) -> () ! websocket.WsErr { c.write(p.m
 
 fn prepare(m: websocket.Message) -> Prepared { Prepared{m: m} }
 
+/// gorilla's joinReader: the unread rest of the current message and its
+/// term.
+struct Joined {
+  c: WsConn
+  term: Bytes
+  st: Mutex[Bytes]
+}
+
+fn join(c: WsConn, term: Str = "") -> Joined { Joined{c: c, term: term.bytes(), st: Mutex[Bytes].new(b"")} }
+
+fn (j: Joined) read(max: Int = 32768) -> Bytes ! websocket.WsErr {
+  // the outcome as the closure's value, as WsConn.read's
+  let outcome = j.st.with(fn(var buf: Bytes) -> Result[Bytes, websocket.WsErr] {
+    while buf.len() == 0 {
+      match j.c.read() {
+        Ok(m) => buf = m.data + j.term
+        Err(e) => return Err(e)
+      }
+    }
+    let n = if max < 1 { 1 } else if max < buf.len() { max } else { buf.len() }
+    let out = buf[0..n]
+    buf = buf[n..]
+    Ok(out)
+  })
+  outcome?
+}
+
 fn is_upgrade(req: http.Request) -> Bool {
   has_token(req.header_values("Connection"), "upgrade") && has_token(req.header_values("Upgrade"), "websocket")
 }
