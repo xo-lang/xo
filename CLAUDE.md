@@ -103,6 +103,35 @@ in another worktree. Only an empty queue stops you; then ask the lead.
   watch is still running, say "restart after <job>" instead (a new
   session gets no notification from the old one's jobs).
 
+## How we work (owner rules, 2026-10-09 to 2026-11-16)
+
+- No forks and no helper subagents, for the lead or any worker (owner,
+  2026-11-15: "a helper agent is another agent"). The lead assigns work
+  to a worker session; each worker does its own work in its session.
+  Agents talk by SendMessage, never by typing into another session.
+- Ports and gap lists: port every piece first with Go's unit tests, push
+  in batches (one gate per 3 to 5 pieces), then one combined evidence
+  pass (interop, fuzz, perf `--ab`, stress) at the end, never a full
+  evidence cycle per piece (owner, 2026-11-15).
+- Stability and test-gap fixes need no go-ahead: do them and report
+  (owner, 2026-11-11). Ask only for publishes, releases, tags, and
+  design choices.
+- Test on arm64 (the Mac, linux/arm64 hosts). An x86 or Windows-only
+  bug gets one targeted job on that arch with a cross-built xo, never a
+  full tier there (owner, 2026-10-14).
+- Xo stays on 0.x minors; only the owner declares 1.0.
+- Every claim to the owner or the lead names its source (commit,
+  decision file, log line) or says unverified. Hashes, run IDs, figures
+  and ratios are copied from command output run in an earlier step,
+  never typed from memory. Numbers for the website come only from a
+  committed results file, in its own wording.
+- Before reporting that an xo tool missed something, rerun it and count
+  its whole output (`| wc -l`), not a `head` slice.
+- Comparisons with Go are like for like: both tools with their default
+  caches; cache-off rows are a labeled diagnostic, never the headline.
+- Commands written for the owner (OWNER-*.md kits, notes) are one line
+  each, with no `\` continuations (`grep -c '\\$' FILE` gives 0).
+
 ## Agents (as of 2026-11-10)
 
 | Session | Area |
