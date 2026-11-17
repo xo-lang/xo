@@ -1396,7 +1396,11 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       }
       fs.push(JField{name: fname, key: check.text(f.json_key), ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df, strq: f.json_string})
     }
-    let vals = b.dec_fields(d, i, "", fs, !b.is_std_mod(om), b.c.objs[obj].flags.json_fold())
+    // a missing key takes the field's default in every module (std.md
+    // derive Json), a std module's own structs too: under `xo test
+    // --std-module` the module under test is std and not merged, and its
+    // test file's records read every defaulted field as required
+    let vals = b.dec_fields(d, i, "", fs, true, b.c.objs[obj].flags.json_fold())
     // the struct in SSA field order
     var sargs: List[Int] = []
     for _ in b.m.types[t].fields {

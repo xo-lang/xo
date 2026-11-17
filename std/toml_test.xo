@@ -1,0 +1,190 @@
+// std/toml module tests (decision 0616 section 2: the race evidence runs
+// these under --race). After the TOML 1.0 spec's examples and
+// pelletier/go-toml/v2's marshaler_test.go and unmarshaler_test.go: keys
+// (bare, quoted, dotted), strings (basic, literal, multi-line), numbers,
+// dates, arrays, tables and arrays of tables, the errors a bad document
+// gives, encode's layout and options, and many tasks decoding at once.
+use std/json
+
+struct Server {
+  host: Str
+  port: Int
+  tags: List[Str]
+} derive Json
+
+struct Config {
+  title: Str
+  debug: Bool = false
+  ratio: Float
+  server: Server
+  owners: List[Owner]
+} derive Json
+
+struct Owner {
+  name: Str
+  admin: Bool = false
+} derive Json
+
+const DOC: Str = """
+# a comment
+title = "demo"
+ratio = 0.5
+
+[server]
+host = 'localhost'
+port = 8080
+tags = ["a", "b"]
+
+[[owners]]
+name = "ann"
+admin = true
+
+[[owners]]
+name = "bo"
+"""
+
+test "a document decodes into a record" {
+  let c: Config = decode(DOC).or_fault("decode")
+  expect(c.title) == "demo"
+  expect(c.debug) == false
+  expect(c.ratio) == 0.5
+  expect(c.server.host) == "localhost"
+  expect(c.server.port) == 8080
+  expect(c.server.tags) == ["a", "b"]
+  expect(c.owners.len()) == 2
+  expect(c.owners[0].name) == "ann"
+  expect(c.owners[0].admin) == true
+  expect(c.owners[1].name) == "bo"
+  expect(c.owners[1].admin) == false
+}
+
+test "keys: bare, quoted and dotted name the same tables" {
+  let j = to_json("a.b = 1\n\"a\".'c' = 2\n[x . y]\nz = 3\n").or_fault("to_json")
+  expect(j) == "{\"a\":{\"b\":1,\"c\":2},\"x\":{\"y\":{\"z\":3}}}"
+}
+
+test "strings: escapes, literal strings and multi-line strings" {
+  let j = to_json("a = \"tab\\there \\u00e9\"\nb = 'C:\\path'\nc = \"\"\"\none \\\n  two\"\"\"\nd = '''\nraw\\n'''\n").or_fault("to_json")
+  expect(j) == "{\"a\":\"tab\\there é\",\"b\":\"C:\\\\path\",\"c\":\"one two\",\"d\":\"raw\\\\n\"}"
+}
+
+test "numbers: underscores, hex, octal, binary, signs and special floats" {
+  let j = to_json("a = 1_000\nb = 0xff\nc = 0o17\nd = 0b101\ne = -7\nf = +3\ng = 6.02e23\nh = -0.25\n").or_fault("to_json")
+  expect(j) == "{\"a\":1000,\"b\":255,\"c\":15,\"d\":5,\"e\":-7,\"f\":3,\"g\":6.02e23,\"h\":-0.25}"
+}
+
+test "dates and times are their RFC 3339 text" {
+  let j = to_json("a = 1979-05-27T07:32:00Z\nb = 1979-05-27\nc = 07:32:00\n").or_fault("to_json")
+  expect(j.contains("\"a\":\"1979-05-27T07:32:00Z\"")) == true
+  expect(j.contains("\"b\":\"1979-05-27\"")) == true
+  expect(j.contains("\"c\":\"07:32:00\"")) == true
+}
+
+test "inline tables and nested arrays" {
+  let j = to_json("p = { x = 1, y = { z = [1, [2, 3]] } }\n").or_fault("to_json")
+  expect(j) == "{\"p\":{\"x\":1,\"y\":{\"z\":[1,[2,3]]}}}"
+}
+
+test "keys keep document order" {
+  let j = to_json("z = 1\na = 2\nm = 3\n").or_fault("to_json")
+  expect(j) == "{\"z\":1,\"a\":2,\"m\":3}"
+}
+
+test "a bad document is a TomlErr with its line" {
+  for (doc, line) in [("a = ", 1), ("a = 1\nb = = 2\n", 2), ("a = 1\na = 2\n", 2), ("[t]\nx = 1\n[t]\n", 3), ("a = \"open\n", 1), ("a = 1\n\n\nb = [1,\n", 5)] {
+    match to_json(doc) {
+      Ok(j) => fault("${doc.quote()}: decoded as ${j}")
+      Err(e) => {
+        expect(e.line) == line
+        expect(e.display().starts_with("toml: line ${line}: ")) == true
+      }
+    }
+  }
+}
+
+test "decode tells a syntax error from a value that does not fit" {
+  match decode[Server]("host = \n") {
+    Err(DecodeErr.Syntax(e)) => expect(e.line) == 1
+    Ok(_) => fault("want Syntax, decoded")
+    Err(e) => fault("want Syntax, got ${e}")
+  }
+  match decode[Server]("host = 1\nport = 2\ntags = []\n") {
+    Err(DecodeErr.Value(_)) => {}
+    Ok(_) => fault("want Value, decoded")
+    Err(e) => fault("want Value, got ${e}")
+  }
+}
+
+test "encode lays out plain keys, then tables, then arrays of tables" {
+  let c = Config{title: "demo", ratio: 0.5, server: Server{host: "h", port: 1, tags: ["x"]}, owners: [Owner{name: "ann", admin: true}]}
+  let text = encode(c).or_fault("encode")
+  expect(text) == "title = 'demo'\ndebug = false\nratio = 0.5\n\n[server]\nhost = 'h'\nport = 1\ntags = ['x']\n\n[[owners]]\nname = 'ann'\nadmin = true\n"
+  let back: Config = decode(text).or_fault("decode")
+  expect(back.server.tags) == ["x"]
+  expect(back.owners[0].admin) == true
+}
+
+test "encode writes a basic string when a literal one cannot hold it" {
+  let text = encode(Owner{name: "it's\n", admin: false}).or_fault("encode")
+  expect(text) == "name = \"it's\\n\"\nadmin = false\n"
+  let back: Owner = decode(text).or_fault("decode")
+  expect(back.name) == "it's\n"
+}
+
+test "encode_with: inline tables, multi-line arrays and indented tables" {
+  let c = Config{title: "t", ratio: 1.5, server: Server{host: "h", port: 2, tags: ["a", "b"]}, owners: []}
+  let inline = encode_with(c, EncodeOptions{tables_inline: true}).or_fault("inline")
+  expect(inline.contains("server = {host = 'h', port = 2, tags = ['a', 'b']}")) == true
+  let multi = encode_with(c, EncodeOptions{arrays_multiline: true}).or_fault("multi")
+  expect(multi.contains("tags = [\n  'a',\n  'b'\n]")) == true
+  let ind = encode_with(c, EncodeOptions{indent_tables: true}).or_fault("indent")
+  expect(ind.contains("[server]\n  host = 'h'")) == true
+  for t in [inline, multi, ind] {
+    let back: Config = decode(t).or_fault("decode ${t}")
+    expect(back.server.tags) == ["a", "b"]
+  }
+}
+
+test "encode refuses a value that is not a table" {
+  match encode(3) {
+    Ok(t) => fault("encoded ${t}")
+    Err(e) => expect(e.line) == 0
+  }
+}
+
+test "many tasks decode, convert and encode at once" {
+  let docs = [DOC, "a.b = 1\n", "p = { x = [1, 2] }\n", "[[t]]\nx = 1\n[[t]]\nx = 2\n"]
+  let bad = scope sc {
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..8 {
+      hs.push(sc.spawn(fn() -> Int ! Str {
+        var n = 0
+        for i in 0..200 {
+          let d = docs[(t + i) % docs.len()]
+          let j = to_json(d).map_err(fn(e) { "task ${t}: ${e}" })?
+          let v: json.Value = json.decode_str(j).map_err(fn(e) { "task ${t}: ${e}" })?
+          let again = encode(v).map_err(fn(e) { "task ${t}: ${e}" })?
+          let j2 = to_json(again).map_err(fn(e) { "task ${t}: ${e}" })?
+          if j2 != j { return Err("task ${t}: ${j} became ${j2}") }
+          n += 1
+        }
+        Ok(n)
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.or_fault("task")
+    }
+    total
+  }
+  expect(bad) == 1600
+}
+
+test "a missing key takes the field's default, in json and in toml" {
+  // a std module's own records read their defaults as a program's do:
+  // before, the module under test read every defaulted field as required
+  let j: Owner = json.decode_str("{\"name\":\"x\"}").or_fault("json")
+  expect(j.admin) == false
+  let t: Owner = decode("name = \"x\"\n").or_fault("toml")
+  expect(t.admin) == false
+}
