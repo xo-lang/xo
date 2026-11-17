@@ -8,6 +8,7 @@
 // only; open compares the tag with ct.bytes_equal before it decrypts.
 use native/llrt/cpu
 use native/llrt/ct
+use native/llrt/obj
 use native/llrt/raw
 use native/rt
 
@@ -79,14 +80,9 @@ fn quarter(var x: List[Int], a: Int, b: Int, c: Int, d: Int) {
   x[b] = (x[b] ^ x[c]).rotate_right32(25)
 }
 
-/// 64 zero bytes.
-fn zeros64() -> Bytes {
-  var z = rt.rs_with_cap(64)
-  for _ in 0..8 {
-    z = rt.rs_push_word(z, 0, 8)
-  }
-  z.bytes()
-}
+/// 64 zero bytes (a literal: block made a new 64 byte string of them a
+/// call, two allocations a seal with the key's own, 2026-11-17).
+fn zeros64() -> Bytes { b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" }
 
 /// The bytes of src xor ChaCha20's key stream from block counter ctr0
 /// (RFC 8439 2.4), onto s0: the state in 16 local words and the 20
@@ -320,11 +316,37 @@ fn absorb(p: Poly, m: Bytes, off: Int, end: Int, hibit: Int) -> Poly {
   if end <= off {
     return p
   }
-  let sb = rt.rs_with_cap(48)
-  let ps = poly_put(sb, p)
-  cpu.poly_blocks(ps, raw.bytes_addr(m).wrapping_add(off), end - off, shr(hibit, 24))
+  let q = absorb_at(p, raw.bytes_addr(m).wrapping_add(off), end - off, hibit)
   raw.alive(m)
-  poly_get(sb, p)
+  q
+}
+
+/// absorb of the n bytes at address a (a multiple of 16), the state in
+/// the thread's scratch (no system call before it is read back), where a
+/// 48 byte string a call was allocated: four a 64 byte seal (2026-11-17).
+fn absorb_at(p: Poly, a: Int, n: Int, hibit: Int) -> Poly {
+  let ps = obj.scratch()
+  rt.mem_store(ps, 0, p.h0, 8)
+  rt.mem_store(ps, 8, p.h1, 8)
+  rt.mem_store(ps, 16, p.h2, 8)
+  rt.mem_store(ps, 24, p.r0, 8)
+  rt.mem_store(ps, 32, p.r1, 8)
+  rt.mem_store(ps, 40, 0, 8)
+  cpu.poly_blocks(ps, a, n, shr(hibit, 24))
+  Poly{h0: rt.mem_load(ps, 0, 8), h1: rt.mem_load(ps, 8, 8), h2: rt.mem_load(ps, 16, 8), r0: p.r0, r1: p.r1}
+}
+
+/// The byte offset in the thread's scratch of a 16 byte block absorb_at
+/// hashes (past its state's 48).
+const PAD = 64
+
+/// absorb of one 16 byte block of the words lo and hi (little endian),
+/// written in the scratch at PAD.
+fn absorb_words(p: Poly, lo: Int, hi: Int, hibit: Int) -> Poly {
+  let b = obj.scratch().wrapping_add(PAD)
+  rt.mem_store(b, 0, lo, 8)
+  rt.mem_store(b, 8, hi, 8)
+  absorb_at(p, b, 16, hibit)
 }
 
 /// p's accumulator and r written into sb's room as cpu.poly_blocks'
@@ -356,14 +378,19 @@ fn absorb_tail(p: Poly, m: Bytes, off: Int, pad1: Bool) -> Poly {
   let full = off + (m.len() - off) / 16 * 16
   var q = absorb(p, m, off, full, shl(1, 24))
   if full < m.len() {
-    var t = rt.rs_append_bytes(rt.rs_with_cap(16), m, full, m.len(), 0)
+    // the rest padded in the scratch at PAD, where a 16 byte string was
+    // built a byte at a time
+    let b = obj.scratch().wrapping_add(PAD)
+    rt.mem_store(b, 0, 0, 8)
+    rt.mem_store(b, 8, 0, 8)
+    let r = m.len() - full
+    for k in 0..r {
+      rt.mem_store(b, k, Int(m[full + k]), 1)
+    }
     if pad1 {
-      t = rt.rs_push_byte(t, 1)
+      rt.mem_store(b, r, 1, 1)
     }
-    while t.len() < 16 {
-      t = rt.rs_push_byte(t, 0)
-    }
-    q = absorb(q, t.bytes(), 0, 16, if pad1 { 0 } else { shl(1, 24) })
+    q = absorb_at(q, b, 16, if pad1 { 0 } else { shl(1, 24) })
   }
   q
 }
@@ -650,8 +677,7 @@ fn seal64(key: Bytes, nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes {
   let c = xor_stream(rt.rs_with_cap(pt.len() + 16), key, 1, nonce, pt, ps, 1)
   let done = rt.mem_load(ps, 40, 8)
   let p1 = absorb_tail(poly_get(sb, p0), c.bytes(), done, false)
-  let lens = rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), aad.len(), 8), pt.len(), 8).bytes()
-  let t = poly_finish(absorb(p1, lens, 0, 16, shl(1, 24)), otk)
+  let t = poly_finish(absorb_words(p1, aad.len(), pt.len(), shl(1, 24)), otk)
   rt.rs_append_bytes(c, t, 0, 16, 0).bytes()
 }
 
@@ -674,8 +700,7 @@ fn open64(key: Bytes, nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? {
   let out = xor_stream(rt.rs_with_cap(n), key, 1, nonce, body, ps, 2)
   let done = rt.mem_load(ps, 40, 8)
   let p1 = absorb_tail(poly_get(sb, p0), body, done, false)
-  let lens = rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), aad.len(), 8), n, 8).bytes()
-  if !ct.bytes_equal(poly_finish(absorb(p1, lens, 0, 16, shl(1, 24)), otk), want) {
+  if !ct.bytes_equal(poly_finish(absorb_words(p1, aad.len(), n, shl(1, 24)), otk), want) {
     return None
   }
   out.bytes()

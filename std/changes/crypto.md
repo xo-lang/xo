@@ -1,5 +1,20 @@
 # std/crypto changes
 
+## 2026-11-17: perf: ChaCha20-Poly1305 seals and opens allocate less
+
+- Kind: perf
+- Commit: this push
+- Found by: the AEAD timing row (bench/perf/aead chacha_small 1.149 of Go on linux/arm64 host 1, task #271): a 64 byte seal allocated 12 times; its two scalar blocks' code was already 96 ALU instructions of 116 a double round, and one NEON pass of four blocks in their place was slower (1.06 s where 1.02)
+- Go reference: golang.org/x/crypto v0.58.0 chacha20poly1305 sealGeneric and openGeneric
+- Test: crypto module tests (std/native's ChaCha20-Poly1305 and XChaCha20-Poly1305 vectors); corpora aead (Go's vectors) and xcrypto; seal and open of every length 0 to 260 equal to the old code's bytes; xo bench --ab on linux/arm64 host 1 (ab-host.sh, 3 rounds): chacha_small wall 0.840 (0.836 to 0.851), better, max RSS the same
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+Poly1305's state for each absorb, the padded last block and the lengths
+block live in the thread's scratch instead of new strings, and the zeros
+the one time key's block is xored with are a literal. 2,000,000 seals and
+opens of 64 bytes took 0.87 s on the Mac where they took 0.99.
+
 ## 2026-11-17: perf: keyed BLAKE2b digests skip two block copies
 
 - Kind: perf
