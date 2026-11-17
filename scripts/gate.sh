@@ -41,6 +41,10 @@
 #            LLVM, 300 head and response cases, 41 smuggling rows) with a
 #            warm xo; run it in every tier (lead, 2026-10-26: 0.33.0's
 #            exit criterion 6 is that these run in the full tier)
+#   devllvm  internal/devgoldens TestDevGoldensLLVM: every golden program
+#            built by xo dev with the LLVM backend and run (#154: no tier
+#            ran it, so latch's missing __udivti3, fixed 5f8dd6f98, went
+#            unseen); the 8-hourly tier runs it
 #   corpora-all
 #            every testdata corpus of internal/stdtest on every backend
 #            (TestStdCorpora, no /go/ suffix: go, arm64 and LLVM; the http,
@@ -1087,7 +1091,7 @@ for step in "$@"; do
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
   repo) ;; # ran first, above
-  short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|corpuscheck|alloff|fp|warm|chkcache|warmseq|stdwasm)
+  short|arm64|llvm|irmanifest|corpora|cmd|gen|fuzz|corpora-all|corpuscheck|alloff|fp|warm|chkcache|warmseq|stdwasm|devllvm)
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
@@ -1355,6 +1359,13 @@ run_step_body() {
     # their default counts, non -short: they skip under -short. 20 s alone,
     # 42 s while corpora-all ran (both measured 2026-10-26).
     full fuzz ./internal/stdtest -run '^(TestHttpHeadFuzz|TestHttpResponseFuzz|TestHttpSmuggle|TestHttpUrlFuzz)$' ;;
+  devllvm)
+    # the LLVM dev goldens (#154); TestDevGoldensLLVM skips without clang,
+    # which every linux host has
+    # XO_GATE_DEVLLVM_RUN=REGEXP: only those programs (a rerun of failures)
+    dr='^TestDevGoldensLLVM$'
+    [ -n "${XO_GATE_DEVLLVM_RUN:-}" ] && dr="$dr/$XO_GATE_DEVLLVM_RUN"
+    full devllvm ./internal/devgoldens -run "$dr" ;;
   corpora-all)
     # every corpus of internal/stdtest on every backend, non -short (under
     # -short the corpora run the host backend alone). 10 min 32 s measured
