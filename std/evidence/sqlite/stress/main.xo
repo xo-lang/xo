@@ -36,13 +36,20 @@ fn want_row(k: Int, v: Int) -> List[sql.SqlValue] {
 }
 
 /// One client pass: the statements run, or the first mismatch.
-fn client_pass(db: sql.Db, t: Int, i: Int) -> Int ! Str uses (fs, net.dial) {
+fn client_pass(db: sql.Db, clock: Clock, t: Int, i: Int) -> Int ! Str uses (fs, net.dial, clock) {
   let k = t * 1000000 + i
   let name = match name_of(k) {
     Some(s) => sql.str(s)
     None => sql.SqlValue.Null
   }
-  let ins = db.exec("INSERT INTO t (id, v, name, score, data) VALUES ($1, $2, $3, $4, $5)", [sql.int(k), sql.int(i), name, sql.float(score_of(k)), sql.bytes(data_of(k))]).map_err(fn(e) { "INSERT ${k}: ${e.debug()}" })?
+  // the INSERT's wait goes into its error: a BUSY after about the busy
+  // timeout (10 s) is a writer starved of the lock, near 0 ms a BUSY that
+  // skipped the retry (#152, hosts 3 and 4, 2026-11-17)
+  let t0 = clock.now()
+  let ins = match db.exec("INSERT INTO t (id, v, name, score, data) VALUES ($1, $2, $3, $4, $5)", [sql.int(k), sql.int(i), name, sql.float(score_of(k)), sql.bytes(data_of(k))]) {
+    Ok(r) => r
+    Err(e) => return Err("INSERT ${k} after ${clock.since(t0).millis()} ms: ${e.debug()}")
+  }
   if (ins.rows_affected, ins.last_insert_id) != (1, k) {
     return Err("INSERT ${k}: got ${ins.rows_affected} ${ins.last_insert_id}")
   }
@@ -138,7 +145,7 @@ fn main(os: Os) ! {
         var i = 0
         // MINUTES 0: 50 passes each
         while if minutes == 0 { i < 50 } else { clock.now() < end } {
-          n += client_pass(db, t, i)?
+          n += client_pass(db, clock, t, i)?
           i += 1
         }
         n
