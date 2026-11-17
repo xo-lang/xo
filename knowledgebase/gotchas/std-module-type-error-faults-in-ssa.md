@@ -1,6 +1,6 @@
 # A type error in std/native faults the compiler instead of being reported
 
-Status: Observed (2026-11-17, xo-lang-2, task #222; xo at 4a898f31e)
+Status: Observed (2026-11-17, xo-lang-2, task #222; xo at 4a898f31e); fixed in 500279963
 
 ## Symptom
 
@@ -20,16 +20,16 @@ list them.
 
 ## Cause
 
-The std module had ordinary type errors (`List.extend` does not exist,
-`??` on a Result, a binding after `is`). The test build went on to SSA
-lowering anyway, and a function whose check failed had no parameter
-bindings, so `param_bindings` indexed an empty list. When the
-fault was gone the same command listed the errors (XO0601, XO0406,
-XO0165).
+One of the errors was a parse error in a lazily checked body (the `is`
+binding, XO0165). In `body_of`, a lazy body that did not parse was
+skipped only after `param_bindings` ran, and with a `var` parameter
+param_bindings indexed the missing bindings and faulted, before the
+check errors were printed (Lang 1's diagnosis, 2026-11-17). The other
+errors (`List.extend`, `??` on a Result) printed once the fault was gone.
 
 ## Fix
 
-When `xo test --std-module` or a std build faults in ssa, look for a
-type error first: remove or stub the newest std/native code until the
-errors print, or read `xo vet --std-module=M`'s count. Reported to
-Lang 1: the build should stop at check errors and print them.
+Fixed in 500279963 (Lang 1): the unparsed lazy body is skipped before
+param_bindings; test cmd/xo TestDepLazySyntaxErrorVarParam. With an older
+xo, when `xo test --std-module` or a std build faults in ssa, look for a
+parse or type error in the newest std/native code first.
