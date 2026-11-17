@@ -1900,7 +1900,14 @@ enum DraftAct {
 fn draft_update(m: Model, d: Draft, a: DraftAct) -> (Draft, List[Msg]) {
   match a {
     DraftAct.Type(s) => (Draft{text: s, posts: d.posts}, [])
-    DraftAct.Post => (Draft{text: "", posts: d.posts + 1}, [Msg.Add(id: "p${m.todos.len()}", title: d.text)])
+    // the id comes from the draft, not from m: m is the model the page
+    // showed, the same for every act of one sync and for two principals
+    // posting at once, so "p${m.todos.len()}" gave two posts one id
+    DraftAct.Post => if d.text == "" {
+      (d, [])
+    } else {
+      (Draft{text: "", posts: d.posts + 1}, [Msg.Add(id: "p-${d.text}", title: d.text)])
+    }
   }
 }
 
@@ -1974,4 +1981,131 @@ test "a principal's act emits shared Msgs as that principal, through allow (deci
   let u3 = s3.user ?? return Err("no user state")
   expect(u3.acked) == 3
   expect(json.decode_str[Draft](u3.state).ok()) == Some(Draft{text: "", posts: 1})
+}
+
+/// A device of a principal in the user-state property test: its queue of
+/// acts not yet acknowledged, the next seq, and the state it was last
+/// given (decision 0672 plan step 3).
+struct UDev {
+  who: Str
+  client: Str
+  next: Int
+  queue: List[Envelope[Str]]
+  ver: Int
+  state: Str
+  sent: Int
+  posts: Int
+}
+
+fn (var d: UDev) take(down: UserDown) {
+  d.queue = d.queue.filter(fn(e) { e.seq > down.acked })
+  if down.ver > d.ver {
+    d.ver = down.ver
+    d.state = down.state
+  }
+}
+
+/// Two devices of ann and one of bob act on their own drafts over a
+/// network that drops requests and replies, delays replies and replays
+/// old requests; then it heals. Each act is applied once, ann's devices
+/// end on the same state, each principal's posts reach the shared model
+/// once, and no reply to bob shows ann's draft or the reverse.
+fn simulate_user(seed: Int, ticks: Int, drop: Int) -> Bool ! Str {
+  let h = host(draft_app(), auth: Some(auth_hdr))
+  let r = routes_for(h)
+  let r0 = seed % 2147483646
+  var g = Rng{s: (if r0 < 0 { -r0 } else { r0 }) + 1}
+  var ds = [
+    UDev{who: "ann", client: "phone", next: 1, queue: [], ver: 0, state: "", sent: 0, posts: 0},
+    UDev{who: "ann", client: "laptop", next: 1, queue: [], ver: 0, state: "", sent: 0, posts: 0},
+    UDev{who: "bob", client: "bob1", next: 1, queue: [], ver: 0, state: "", sent: 0, posts: 0},
+  ]
+  var old: List[(Int, Up[Msg])] = []
+  var late: List[(Int, Int, UserDown)] = []
+  var leaked = false
+  var t = 0
+  while t < ticks + 200 {
+    let heal = t >= ticks
+    if heal && ds.all(fn(d) { d.queue.is_empty() }) && late.is_empty() {
+      break
+    }
+    for i in 0..ds.len() {
+      if !heal && g.int(1000) < 300 {
+        let act = if g.int(4) == 0 { DraftAct.Post } else { DraftAct.Type(s: "${ds[i].who}-${ds[i].client}-${t}") }
+        if act == DraftAct.Post {
+          ds[i].posts = ds[i].posts + 1
+        }
+        ds[i].queue.push(uact(ds[i].next, act))
+        ds[i].next = ds[i].next + 1
+        ds[i].sent = ds[i].sent + 1
+      }
+      if heal || g.int(3) == 0 {
+        var up = Up[Msg]{client: ds[i].client, ver: 0, msgs: [], user: Some(UserUp{ver: ds[i].ver, msgs: ds[i].queue})}
+        // a replayed old request from this device, arriving late
+        if !heal && !old.is_empty() && g.int(1000) < 100 {
+          let k = g.int(old.len())
+          if old[k].0 == i {
+            up = old[k].1
+          }
+        }
+        old.push((i, up))
+        if heal || g.int(1000) >= drop {
+          let s = sync_as(r, ds[i].who, up)?
+          let other = if ds[i].who == "ann" { "draft: bob-" } else { "draft: ann-" }
+          if s.html.contains(other) {
+            leaked = true
+          }
+          let down = s.user ?? return Err("no user state")
+          if !heal && g.int(1000) < drop {
+            // the reply is lost
+          } else if !heal && g.int(4) == 0 {
+            late.push((t + 1 + g.int(10), i, down))
+          } else {
+            ds[i].take(down)
+          }
+        }
+      }
+    }
+    let due = late.filter(fn(l) { l.0 <= t || heal })
+    late = late.filter(fn(l) { l.0 > t && !heal })
+    for l in due {
+      ds[l.1].take(l.2)
+    }
+    if old.len() > 40 {
+      var kept: List[(Int, Up[Msg])] = []
+      for k in old.len() - 40..old.len() {
+        kept.push(old[k])
+      }
+      old = kept
+    }
+    t = t + 1
+  }
+  // a last sync each, then every device of a principal holds one state
+  for i in 0..ds.len() {
+    let s = sync_as(r, ds[i].who, Up[Msg]{client: ds[i].client, ver: 0, msgs: [], user: Some(UserUp{ver: 0, msgs: []})})?
+    ds[i].take(s.user ?? return Err("no user state"))
+  }
+  let ann = json.decode_str[Draft](ds[0].state).ok() ?? return Err("ann's state does not decode")
+  let bob = json.decode_str[Draft](ds[2].state).ok() ?? return Err("bob's state does not decode")
+  if leaked { return Err("a reply showed another principal's draft") }
+  if !ds.all(fn(d) { d.queue.is_empty() }) { return Err("acts still queued after healing") }
+  if ds[0].state != ds[1].state { return Err("ann's devices differ: ${ds[0].state} vs ${ds[1].state}") }
+  // a Post of an empty draft (another device posted it first) is a no-op
+  if ann.posts > ds[0].posts + ds[1].posts { return Err("ann posted ${ds[0].posts + ds[1].posts}, her state counts ${ann.posts}") }
+  if bob.posts > ds[2].posts { return Err("bob posted ${ds[2].posts}, his state counts ${bob.posts}") }
+  for td in h.model().todos.values() {
+    if !td.title.starts_with("ann-") && !td.title.starts_with("bob-") { return Err("a todo with no author: ${td.title}") }
+  }
+  if h.model().todos.len() != ann.posts + bob.posts { return Err("${h.model().todos.len()} todos for ${ann.posts + bob.posts} posts") }
+  true
+}
+
+test "a principal's devices converge on one state and no one else sees it, over a lossy network (decision 0672)" {
+  for seed in 1..=10 {
+    expect(simulate_user(seed * 7919, 150, 250)?) == true
+  }
+}
+
+test "user state convergence holds for any seed" for seed: Int {
+  expect(simulate_user(seed, 60, 400)?) == true
 }

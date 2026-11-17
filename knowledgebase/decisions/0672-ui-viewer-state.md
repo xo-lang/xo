@@ -221,7 +221,15 @@ when its state is older.
    users, server memory, wasm size, time for a filter to show.
 3. Property test: two devices of one user and one of another, random
    acts with drops and reorders, converge; no user's state reaches
-   another's view.
+   another's view. Done 2026-11-17: std/ui "a principal's devices
+   converge on one state and no one else sees it, over a lossy network"
+   (ten seeds of 150 ticks) and its seed property: requests and replies
+   dropped, replies late, old requests replayed, then a heal; ann's two
+   devices end on one state, every post reaches the shared model once,
+   no reply to one principal shows the other's draft. Turning the
+   server's exactly-once check into at-least-once fails it. It found
+   that the user update's `m` is the model the page showed, the same
+   for every act of one sync (gotchas/ui-user-step-sees-shown-model.md).
 4. Chrome checks: filters survive reload, back and a shared link; a cart
    added offline on one device shows on the other after reconnect; a
    second user never sees it.
