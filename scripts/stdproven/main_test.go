@@ -141,7 +141,7 @@ func TestNotRun(t *testing.T) {
 
 func TestRaceRunsStdModuleTests(t *testing.T) {
 	root := t.TempDir()
-	for _, f := range []string{"std/htmlent.xo", "std/htmlent_test.xo", "std/json.xo", "std/jsonrpc.xo", "std/native/json_test.xo",
+	for _, f := range []string{"std/htmlent.xo", "std/htmlent_test.xo", "std/cbor_test.xo", "std/native/cbor_test.xo", "std/json.xo", "std/jsonrpc.xo", "std/native/json_test.xo",
 		"internal/stdtest/testdata/corpus/json/a.xo", "internal/stdtest/testdata/corpus/jsonfuzz/a.xo", "internal/stdtest/testdata/corpus/jsonrpc/a.xo"} {
 		p := filepath.Join(root, f)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -158,8 +158,13 @@ func TestRaceRunsStdModuleTests(t *testing.T) {
 		}
 		return out
 	}
-	if got, want := targets("htmlent"), []string{"--std-module=htmlent"}; !reflect.DeepEqual(got, want) {
+	if got, want := targets("htmlent"), []string{"--std-module=std/htmlent"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("htmlent: %q, want %q", got, want)
+	}
+	// both std/native/cbor and std/cbor: a bare cbor is ambiguous to xo
+	// test (#152: cbor's race failed in 5 s on host 4)
+	if got, want := targets("cbor"), []string{"--std-module=native/cbor", "--std-module=std/cbor"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("cbor: %q, want %q", got, want)
 	}
 	c := filepath.Join("internal", "stdtest", "testdata", "corpus")
 	if got, want := targets("json"), []string{"--std-module=native/json", filepath.Join(c, "json"), filepath.Join(c, "jsonfuzz")}; !reflect.DeepEqual(got, want) {

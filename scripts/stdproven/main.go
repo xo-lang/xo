@@ -872,7 +872,9 @@ func raceRuns(root, module string) []raceRun {
 		runs = append(runs, raceRun{"module tests (std/native/" + module + "_test.xo)", "--std-module=native/" + module})
 	}
 	if _, err := os.Stat(filepath.Join(root, "std", module+"_test.xo")); err == nil {
-		runs = append(runs, raceRun{"module tests (std/" + module + "_test.xo)", "--std-module=" + module})
+		// std/MODULE, not a bare MODULE: with std/native/MODULE_test.xo too,
+		// a bare name is ambiguous to xo test (#152: cbor)
+		runs = append(runs, raceRun{"module tests (std/" + module + "_test.xo)", "--std-module=std/" + module})
 	}
 	dirs, _ := filepath.Glob(filepath.Join(root, "internal", "stdtest", "testdata", "corpus", module+"*"))
 	for _, d := range dirs {
