@@ -118,3 +118,28 @@ func TestDepLazySyntaxError(t *testing.T) {
 		}
 	}
 }
+
+// TestDepLazySyntaxErrorVarParam: as TestDepLazySyntaxError for a body
+// with a `var` parameter. The lowering bound the parameters before it
+// skipped the body that did not parse, and a var parameter's binding
+// indexed the checker's empty list: a fault at ssa/build.xo
+// param_bindings instead of the error (xo-lang-2's std/native/toml.xo,
+// 2026-11-17; gotchas/std-module-type-error-faults-in-ssa.md).
+func TestDepLazySyntaxErrorVarParam(t *testing.T) {
+	ws := t.TempDir()
+	modtest.WriteFiles(t, ws, map[string]string{
+		"xo.work":          "xo preview\nuse ./app\nuse ./lib\n",
+		"app/xo.mod":       "module example.com/app\nedition preview\n",
+		"app/main/main.xo": "use example.com/lib/num\n\nfn main(os: Os) {\n  var xs: List[Int] = []\n  os.stdio.println(\"${num.bad(xs)}\")\n}\n",
+		"lib/xo.mod":       "module example.com/lib\nedition preview\n",
+		"lib/num/n.xo":     "pub fn good() -> Int {\n  1\n}\n\npub fn bad(var xs: List[Int]) -> Int {\n  xs.push(1)\n  let x = (1 +\n  x\n}\n",
+	})
+	setenv(t, "XO_WORK", filepath.Join(ws, "xo.work"))
+	setenv(t, "XO_DEP_LAZY", "1")
+	main := filepath.Join(ws, "app", "main")
+	r := xo(t, "build", "-o", filepath.Join(ws, "bin"), main).want(1)
+	out := r.out + r.err
+	if strings.Contains(out, "fault") || !strings.Contains(out, "n.xo:8:") || !strings.Contains(out, "XO0161") {
+		t.Errorf("want the syntax error at n.xo:8 (XO0161), no fault:\n%s", out)
+	}
+}

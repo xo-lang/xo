@@ -65,7 +65,9 @@ fn (var b: Builder) check_lazy(fo: Int) {
     }
   }
   let d = errs[0]
-  b.skip_body("the runtime does not check: ${d.file}:${d.line}:${d.col}: ${d.code} ${d.message}")
+  let msg = "the runtime does not check: ${d.file}:${d.line}:${d.col}: ${d.code} ${d.message}"
+  b.lazy_failed[fo] = msg
+  b.skip_body(msg)
 }
 
 /// Builds the body of fo into fi (body): as a wrapper around it when fo
@@ -125,8 +127,6 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
   b.s.res = b.apply(b.c.objs[fo].result)
   let err0 = b.apply(b.c.objs[fo].err)
   b.s.err_t = b.fail_err(err0)
-  b.param_bindings(fo)
-  let decl = b.c.objs[fo].fn_decl
   if b.c.lazy_bad.contains(fo) {
     // a lazily parsed body with syntax errors (check.force_body), which
     // check_lazy reported: not built, and its declaration left lazy
@@ -134,6 +134,16 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
     b.end(saved)
     return
   }
+  let failed = b.lazy_failed.get(fo) ?? ""
+  if !failed.is_empty() {
+    // a body whose lazy check reported errors: not built (the build
+    // stops at those errors; its parameters have no bindings)
+    b.skip_body(failed)
+    b.end(saved)
+    return
+  }
+  b.param_bindings(fo)
+  let decl = b.c.objs[fo].fn_decl
   if decl.is_empty() || decl[0].body == None {
     b.unsupported("a function without a body (`${b.c.display_name(fo)}`)")
     b.end(saved)

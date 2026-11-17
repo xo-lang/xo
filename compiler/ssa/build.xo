@@ -360,6 +360,10 @@ pub struct Builder {
   /// garbage collector"), once each
   pub lazy_diags: List[check.Diag] = []
   lazy_seen: Map[Str, Bool] = {}
+  // functions whose lazy check failed, with the skip message: body_of
+  // builds none of them (their parameters have no bindings; a std/native
+  // type error faulted in param_bindings, gotchas/std-module-type-error-faults-in-ssa.md)
+  lazy_failed: Map[Int, Str] = {}
   /// The modules of which a closure's body was built with no front end
   /// cache entry: ModEntry.fe_complete is false for them
   pub nofe_mods: Map[Int, Bool] = {}
