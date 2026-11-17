@@ -1432,6 +1432,8 @@ Last verified: 2026-11-15
   that measures time or memory sets `OFF_EXCLUSIVE=1` so it runs alone
   (ab-host.sh does), every job stops after `OFF_MAX_MIN` (default 180),
   and each agent keeps at most 2 jobs queued there (chain the rest).
+  `offload.sh --status` shows the host lanes and their jobs without
+  queueing anything (#172; `OFFLOAD_ENV=FILE` for one host).
   A change's arm64 tests gate on arm64 (the Mac or that host); the
   linux/amd64 host skips them and is an addition, not a substitute
   (lead, 2026-10-30; gotchas/amd64-gate-skips-arm64-tests.md).

@@ -62,6 +62,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   `OFF_MAX_MIN` minutes holding the lock (default 180, exit 124, with a
   message; tier.sh's job 300), so a hung run cannot hold the one slot
   while the queue grows (lead, 2026-10-30: 9 jobs queued behind one run).
+  `offload.sh --status` answers locally (#172, 2026-11-16): it prints the
+  host lanes and their jobs from `heavy.sh --status`, queues nothing and
+  needs no host file; `OFFLOAD_ENV=FILE` narrows it to that host
+  (scripts/lead/offload_status_test.sh).
   Before each arm64 job, offload.sh runs scripts/lead/offload-prune.sh
   (2026-11-13, owner go on Lang 2's cache cap design; it replaced the age
   prune of 2026-10-30 to 2026-11-07). It deletes the least recently used
