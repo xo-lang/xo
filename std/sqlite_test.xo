@@ -1,0 +1,177 @@
+// std/sqlite module tests (decision 0616 section 2: the race evidence
+// runs these under --race). Expected values follow mattn/go-sqlite3 and
+// SQLite's own behavior: the DSN keys config reads (and the ones it
+// refuses), the storage classes read back, the constraint SQLSTATEs,
+// NoTable and Syntax, a rolled back transaction, a sub Fs rooting the
+// file and refusing a path that leaves it, a read only Fs, and many tasks
+// writing one WAL database at once.
+use std/sql
+
+fn err_text[T](r: Result[T, sql.SqlErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => e.debug()
+  }
+}
+
+fn tmp_dir(e: Env, f: Fs) -> Str uses (fs, env) {
+  create_temp_dir(f, e.get("TMPDIR") ?? "/tmp", "xosqlite").or_fault("temp dir")
+}
+
+fn vals(rows: List[sql.Row]) -> List[List[sql.SqlValue]] {
+  rows.map(fn(r) { r.values() })
+}
+
+test "config reads the path, the URI keys and the driver's keys" {
+  let c = config("file:app.db?mode=rwc&cache=shared&_busy_timeout=250&_fk=1&_journal=wal&_txlock=immediate&_sync=normal&_loc=auto").or_fault("config")
+  expect(c.path) == "app.db"
+  expect(c.uri) == true
+  expect(c.keys) == ["mode=rwc", "cache=shared"]
+  expect(c.busy_ms) == 250
+  expect(c.pragmas) == ["PRAGMA foreign_keys = ON", "PRAGMA journal_mode = WAL", "PRAGMA synchronous = NORMAL"]
+  expect(c.begin) == "BEGIN IMMEDIATE"
+  let m = config(":memory:").or_fault("memory")
+  expect((m.path, m.uri, m.busy_ms, m.begin)) == (":memory:", false, 5000, "BEGIN")
+  let p = config("/var/db/x.db?_vacuum=incremental&_secure_delete=fast&_cache_size=-2000&_txlock=exclusive").or_fault("path")
+  expect(p.path) == "/var/db/x.db"
+  expect(p.pragmas) == ["PRAGMA auto_vacuum = 2", "PRAGMA secure_delete = FAST", "PRAGMA cache_size = -2000"]
+  expect(p.begin) == "BEGIN EXCLUSIVE"
+  let mm = config("file:?mode=memory").or_fault("uri memory")
+  expect((mm.path, mm.keys)) == ("", ["mode=memory"])
+}
+
+test "config refuses an unknown key, a bad value and a DSN with no database" {
+  expect(err_text(config("x.db?_bogus=1"))) == "Param(msg: \"sqlite: unknown key \\\"_bogus\\\"\")"
+  expect(err_text(config("x.db?_busy_timeout=soon"))) == "Param(msg: \"sqlite: _busy_timeout: \\\"soon\\\" is not a number of milliseconds\")"
+  expect(err_text(config("x.db?_timeout=-1"))) == "Param(msg: \"sqlite: _timeout: \\\"-1\\\" is negative\")"
+  expect(err_text(config("x.db?_fk=maybe"))) == "Param(msg: \"sqlite: _fk: \\\"maybe\\\" is not a boolean\")"
+  expect(err_text(config("x.db?_journal=fast"))) == "Param(msg: \"sqlite: _journal: \\\"fast\\\" is not a journal mode\")"
+  expect(err_text(config("x.db?_txlock=now"))) == "Param(msg: \"sqlite: _txlock: \\\"now\\\" is not deferred, immediate or exclusive\")"
+  expect(err_text(config("x.db?_loc="))) == "Param(msg: \"sqlite: _loc: empty zone\")"
+  expect(err_text(config(""))) == "Param(msg: \"sqlite: the DSN names no database (use :memory: for one in memory)\")"
+  expect(err_text(config("file:"))) == "Param(msg: \"sqlite: the DSN names no database (use :memory: for one in memory)\")"
+}
+
+test "version is SQLite's x.y.z" {
+  let v = version()
+  expect(v.split(".").len()) == 3
+  expect(v.starts_with("3.")) == true
+}
+
+test "the storage classes, placeholders and the errors in memory" {
+  let db = sql.open_driver(os.net, driver(os.fs), ":memory:", max_open: 1).or_fault("open")
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, score REAL, data BLOB, ok INTEGER CHECK (ok IN (0, 1)))").or_fault("create")
+  let r = db.exec("INSERT INTO t (id, name, score, data, ok) VALUES ($1, ?2, ?, ?, ?)", [sql.int(7), sql.str("ñé-字"), sql.float(2.5), sql.bytes(b"\x00\xff"), sql.bool(true)]).or_fault("insert")
+  expect((r.rows_affected, r.last_insert_id)) == (1, 7)
+  db.exec("INSERT INTO t (id, name) VALUES (8, 'b')").or_fault("insert 8")
+  let rows = db.query("SELECT id, name, score, data, ok FROM t ORDER BY id").or_fault("select")
+  expect(vals(rows)) == [
+    [sql.SqlValue.Integer(n: 7), sql.SqlValue.Text(s: "ñé-字"), sql.SqlValue.Real(f: 2.5), sql.SqlValue.Blob(b: b"\x00\xff"), sql.SqlValue.Integer(n: 1)],
+    [sql.SqlValue.Integer(n: 8), sql.SqlValue.Text(s: "b"), sql.SqlValue.Null, sql.SqlValue.Null, sql.SqlValue.Null],
+  ]
+  expect(rows[0].columns()) == ["id", "name", "score", "data", "ok"]
+  expect(rows[1].float_opt("score").or_fault("score")) == None
+  match db.exec("INSERT INTO t (id, name) VALUES (9, 'b')") {
+    Err(sql.SqlErr.Constraint(_, code, _)) => expect(code) == "23505"
+    other => fault("unique: ${other.debug()}")
+  }
+  match db.exec("INSERT INTO t (id, name) VALUES (7, 'c')") {
+    Err(sql.SqlErr.Constraint(_, code, _)) => expect(code) == "23505"
+    other => fault("primary key: ${other.debug()}")
+  }
+  match db.exec("INSERT INTO t (id) VALUES (10)") {
+    Err(sql.SqlErr.Constraint(_, code, _)) => expect(code) == "23502"
+    other => fault("not null: ${other.debug()}")
+  }
+  match db.exec("INSERT INTO t (id, name, ok) VALUES (11, 'd', 5)") {
+    Err(sql.SqlErr.Constraint(_, code, _)) => expect(code) == "23514"
+    other => fault("check: ${other.debug()}")
+  }
+  match db.query("SELECT * FROM nope") {
+    Err(sql.SqlErr.NoTable(_)) => {}
+    other => fault("no table: ${other.debug()}")
+  }
+  match db.query("SELEC 1") {
+    Err(sql.SqlErr.Syntax(_)) => {}
+    other => fault("syntax: ${other.debug()}")
+  }
+  match db.query_one("SELECT id FROM t WHERE id = 99") {
+    Err(sql.SqlErr.NoRows) => {}
+    other => fault("no rows: ${other.debug()}")
+  }
+  db.close().or_fault("close")
+}
+
+test "foreign keys with _fk, and a rolled back transaction leaves nothing" {
+  let db = sql.open_driver(os.net, driver(os.fs), ":memory:?_fk=1", max_open: 1).or_fault("open")
+  db.exec("CREATE TABLE p (id INTEGER PRIMARY KEY)").or_fault("p")
+  db.exec("CREATE TABLE c (id INTEGER PRIMARY KEY, p INTEGER REFERENCES p(id))").or_fault("c")
+  match db.exec("INSERT INTO c (id, p) VALUES (1, 42)") {
+    Err(sql.SqlErr.Constraint(_, code, _)) => expect(code) == "23503"
+    other => fault("foreign key: ${other.debug()}")
+  }
+  let tx = db.begin().or_fault("begin")
+  tx.exec("INSERT INTO p (id) VALUES (1)").or_fault("tx insert")
+  expect(vals(tx.query("SELECT id FROM p").or_fault("tx select"))) == [[sql.SqlValue.Integer(n: 1)]]
+  tx.rollback().or_fault("rollback")
+  expect(vals(db.query("SELECT id FROM p").or_fault("after"))) == []
+  let tx2 = db.begin().or_fault("begin 2")
+  tx2.exec("INSERT INTO p (id) VALUES (2)").or_fault("tx2 insert")
+  tx2.commit().or_fault("commit")
+  expect(vals(db.query("SELECT id FROM p").or_fault("after commit"))) == [[sql.SqlValue.Integer(n: 2)]]
+  db.close().or_fault("close")
+}
+
+test "a sub Fs roots the file, refuses a path that leaves it, and a read only Fs reads only" uses (fs, env, net) {
+  let dir = tmp_dir(os.env, os.fs)
+  let root = os.fs.sub(dir)
+  let db = sql.open_driver(os.net, driver(root), "t.db", max_open: 1).or_fault("open")
+  db.exec("CREATE TABLE t (v INTEGER)").or_fault("create")
+  db.exec("INSERT INTO t (v) VALUES (5)").or_fault("insert")
+  db.close().or_fault("close")
+  expect(os.fs.exists("${dir}/t.db").or_fault("exists")) == true
+  match sql.open_driver(os.net, driver(root), "../t.db", max_open: 1) {
+    Err(sql.SqlErr.Conn(msg)) => expect(msg) == "sqlite: \"../t.db\" leaves the Fs's directory"
+    Err(e) => fault("dotdot: ${e.debug()}")
+    Ok(_) => fault("dotdot opened")
+  }
+  let ro = sql.open_driver(os.net, driver(root.read_only()), "t.db", max_open: 1).or_fault("open ro")
+  expect(vals(ro.query("SELECT v FROM t").or_fault("ro select"))) == [[sql.SqlValue.Integer(n: 5)]]
+  match ro.exec("INSERT INTO t (v) VALUES (6)") {
+    Err(_) => {}
+    Ok(_) => fault("a read only Fs wrote")
+  }
+  ro.close().or_fault("close ro")
+  os.fs.remove_all(dir).or_fault("remove")
+}
+
+test "many tasks write one WAL database at once" uses (fs, env, net) {
+  let dir = tmp_dir(os.env, os.fs)
+  let db = sql.open_driver(os.net, driver(os.fs.sub(dir)), "file:w.db?_journal=wal&_busy_timeout=10000", max_open: 4).or_fault("open")
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER NOT NULL)").or_fault("create")
+  let n = scope sc {
+    var hs: List[Task[Int, Str]] = []
+    for k in 0..8 {
+      hs.push(sc.spawn(fn() -> Int ! Str {
+        var c = 0
+        for i in 0..50 {
+          let id = k * 1000 + i
+          db.exec("INSERT INTO t (id, v) VALUES ($1, $2)", [sql.int(id), sql.int(i)]).map_err(fn(e) { "task ${k} insert ${id}: ${e.debug()}" })?
+          let row = db.query_one("SELECT v FROM t WHERE id = $1", [sql.int(id)]).map_err(fn(e) { "task ${k} select ${id}: ${e.debug()}" })?
+          if row.values() != [sql.SqlValue.Integer(n: i)] { return Err("task ${k} row ${id}: ${row.values().debug()}") }
+          c += 1
+        }
+        Ok(c)
+      }))
+    }
+    var total = 0
+    for x in hs {
+      total += x.await.or_fault("task")
+    }
+    total
+  }
+  expect(n) == 400
+  expect(db.query_one("SELECT count(*) FROM t").or_fault("count").values()) == [sql.SqlValue.Integer(n: 400)]
+  db.close().or_fault("close")
+  os.fs.remove_all(dir).or_fault("remove")
+}
