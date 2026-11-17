@@ -64,3 +64,20 @@ runs fill macOS's 16,384 (16,328 sockets in TIME_WAIT). On Linux (28,232
 ports, and the hosts' `--ab` runs) it did not happen. On the Mac, leave
 35 s (2 MSL plus margin) between runs of it, or measure it on the
 linux/arm64 host.
+
+## stdproven fuzz of a network module on the Mac
+
+Observed 2026-11-17 (azure-1). `stdproven fuzz tls` (TestTlsFuzz,
+which dials a fresh test server connection per case) ran on the Mac as
+a heavy.sh bulk job and held about 15,200 loopback sockets in TIME_WAIT.
+Every other agent's ssh to the offload hosts and xw at 127.0.0.1:7480
+then failed with `can't assign requested address`, and a TestMysqlFuzz
+run started beside it failed at its first case (`dial tcp
+127.0.0.1:N: connect: can't assign requested address`, main.xo:81). The
+harness's own dial retry (internal/stdtest tlsfuzz, EADDRNOTAVAIL) keeps
+the fuzz going but does nothing for the rest of the Mac. Fix: run the
+fuzz of any module whose harness opens a connection per case (tls, sql,
+http, httpproxy, grpc, amqp, jsonrpc, sse, websocket) on an offload
+host (`stdproven-offload.sh WT NAME -- fuzz ...`, SP_SHARD_MIN shards),
+never on the Mac. In-process harnesses with no sockets (protobuf,
+regexp, toml) may still run on the Mac.
