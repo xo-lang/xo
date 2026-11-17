@@ -80,25 +80,34 @@ pub fn strip(s: Str) -> Str {
 
 /// strip of an s that holds an ESC.
 fn strip_esc(s: Str) -> Str {
+  // the text between escapes goes over in runs (a view and one copy
+  // each), into a builder of the input's size, as Go's make([]byte, 0,
+  // len(s)); a byte loop finds the next escape, since the runs in painted
+  // text are short and Bytes.find's setup cost more than the scan (#88)
   let b = s.bytes()
-  var out = BytesBuilder.new()
+  let n = b.len()
+  var out = BytesBuilder.with_capacity(n)
   var i = 0
-  while i < b.len() {
-    let c = b[i]
-    if c != 27 {
-      out.write_byte(c)
-      i += 1
-      continue
+  while i < n {
+    var k = i
+    while k < n && b[k] != 27 {
+      k += 1
     }
-    if i + 1 < b.len() && b[i + 1] == 91 {
-      var j = i + 2
-      while j < b.len() && !(b[j] >= 64 && b[j] <= 126) {
+    if k > i {
+      out.write(b[i..k])
+    }
+    if k >= n {
+      break
+    }
+    if k + 1 < n && b[k + 1] == 91 {
+      var j = k + 2
+      while j < n && !(b[j] >= 64 && b[j] <= 126) {
         j += 1
       }
       i = j + 1
-      continue
+    } else {
+      i = k + 2
     }
-    i += 2
   }
   out.freeze().to_str() ?? s
 }

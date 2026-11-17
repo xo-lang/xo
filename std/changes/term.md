@@ -1,5 +1,18 @@
 # std/term changes
 
+## 2026-11-17: perf: strip copies the text between escapes in runs
+
+- Kind: perf
+- Commit: this push
+- Found by: #88, the bench/perf/term strip row (1.123 of Go on host 1)
+- Go reference: the twin's strip (a builder of len(s), as Go programs write it)
+- Test: goldens test_term (new cases: escapes at either end, an unterminated CSI, multibyte runs, an escape that cuts a UTF-8 sequence); bench/perf/term strip output matches its Go twin
+- Shipped in: not yet released
+
+strip wrote each byte with write_byte into a growing builder; it now
+reserves the input's size and writes each run between escapes with one
+copy. Mac, 20M painted lines: 1.41 to 1.08 s (Go 1.45 s). Host 1 `xo bench --ab` bench/perf/term strip: 0.837 of before (wall 15.02 to 12.57 ms).
+
 ## 2026-11-17: perf: strip's plain path saves no registers (#103)
 
 - Kind: perf

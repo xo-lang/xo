@@ -60,4 +60,14 @@ test "strip removes the escapes" {
   let p = term.Painter{on: true}
   expect(term.strip(p.red("a") + p.underline("b") + "c")) == "abc"
   expect(term.strip("\u{1b}]0;title\u{1b}x")) == "0;title"
+  // the runs between escapes, at either end, with multibyte text
+  expect(term.strip("")) == ""
+  expect(term.strip("plain")) == "plain"
+  expect(term.strip("ab\u{1b}")) == "ab"
+  expect(term.strip("\u{1b}")) == ""
+  expect(term.strip("ab\u{1b}[12")) == "ab"
+  expect(term.strip("\u{1b}[1m\u{1b}[0m")) == ""
+  expect(term.strip("\u{1b}[1mé\u{1b}[0m日本\u{1b}[2mz")) == "é日本z"
+  // an escape that cuts a UTF-8 sequence leaves the string as it was
+  expect(term.strip("x\u{1b}é")) == "x\u{1b}é"
 }
