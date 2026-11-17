@@ -1,5 +1,19 @@
 # std/compress changes
 
+## 2026-11-16: perf: Huffman bit counts and the match chain walk without checks
+
+- Kind: perf
+- Commit: this push
+- Found by: task #101, a profile of bench/perf/archive zip_writer (bit_counts at 7.4%)
+- Go reference: compress/flate huffman_code.go bitCounts (copy(leafCounts[level][:level], leafCounts[level-1]))
+- Test: internal/stdtest/testdata/corpus/compress (deflate at every level writes Go's bytes); zip_writer output byte for byte the same
+- Timing: bench/perf/archive zip_writer, 7.79G to 7.11G instructions retired on the Mac (-8.8%): 7.46G from the bit counts, 7.11G from the chain walk
+
+The row copy in the bit count builder uses wrapping index math (row
+offsets stay under 374), so the loop has no overflow checks. The match
+finder reads the hash chain (hash_prev, its index masked into range)
+through one raw pointer, as it reads the window.
+
 ## 2026-11-16: perf: deflate compares matches a word at a time
 
 - Kind: perf

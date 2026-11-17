@@ -581,10 +581,14 @@ fn bit_counts(freqs: List[Int], max_bits0: Int) -> List[Int] {
       ws[34 + level] = list[c]
     } else {
       ws[17 + level] = ws[51 + level]
+      // Go's copy(leafCounts[level][:level], leafCounts[level-1]): row
+      // offsets under 374, so no overflow checks in the loop
+      let dst = level.wrapping_mul(17).wrapping_add(85)
+      let src = dst.wrapping_sub(17)
       var k = 0
       while k < level {
-        ws[85 + level * 17 + k] = ws[85 + (level - 1) * 17 + k]
-        k += 1
+        ws[dst.wrapping_add(k)] = ws[src.wrapping_add(k)]
+        k = k.wrapping_add(1)
       }
       ws[68 + ws[level] - 1] = 2
     }
@@ -1187,6 +1191,10 @@ fn (d: Deflater) find_match(pos: Int, prev_head: Int, prev_length: Int, lookahea
   // the window (Go indexes the same bytes), and the loop made a checked
   // load of each
   let wp = raw.bytes_addr(d.data).wrapping_add(d.base)
+  // hash_prev's elements (WINDOW_SIZE of them, packed; a word each on
+  // wasm): the index is masked into range, so the load needs no check
+  let hp = rt.obj_addr(d.hash_prev).wrapping_add(rt.layout(2))
+  let es = if target.arch == TargetArch.Wasm32 { 8 } else { 4 }
   var w_end = rt.mem_load(wp, pos + length, 1)
   let min_index = pos - WINDOW_SIZE
   var ok = false
@@ -1208,7 +1216,7 @@ fn (d: Deflater) find_match(pos: Int, prev_head: Int, prev_length: Int, lookahea
     if i == min_index {
       break
     }
-    i = Int(d.hash_prev[i & WINDOW_MASK]) - d.hash_offset
+    i = rt.mem_load(hp, (i & WINDOW_MASK).wrapping_mul(es), 4) - d.hash_offset
     if i < min_index || i < 0 {
       break
     }
