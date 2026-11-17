@@ -4,6 +4,7 @@
 // (Content-Type application/x-protobuf). Declaration file.
 use std/backoff
 use std/http
+use std/log
 use std/metrics
 use std/trace
 
@@ -36,6 +37,16 @@ fn encode_traces_json(res: Resource, spans: List[trace.Span]) -> Bytes
 /// a Summary with its count and sum (no quantile values); a label becomes a string attribute of the point.
 fn encode_metrics(res: Resource, reg: metrics.Registry, start_ms: Int, now_ms: Int) -> Bytes
 
+/// The body of an ExportLogsServiceRequest for `records` (one ResourceLogs), as OpenTelemetry Go's otelslog bridge
+/// and otlploghttp write log/slog records: a record of the main module goes in the ScopeLogs of the Resource's
+/// scope and version, another module's in one named by its path and version (`module` split at `@`), the groups
+/// in order of first appearance. A record's severity is Go's slog level plus 9 (DEBUG 5, INFO 9, WARN 13, ERROR
+/// 17) with its text, its body the message, its time and observed time the time it was written, and its
+/// attributes its values in order: strings, Ints, Floats and Bools as themselves, a UInt past Int's range as a
+/// double, a Duration as Int nanoseconds, a Time as Int Unix nanoseconds, a group as a key-value list (a group
+/// with an empty key inlined). A record with no `values` has its `fields` as string attributes.
+fn encode_logs(res: Resource, records: List[log.Record]) -> Bytes
+
 /// Why an export failed: the transport (no response), a status the collector will not take (400 and the like: a
 /// retry would send the same bytes), or retries that ran out with the last answer.
 /// A body over the exporter's size limits fails before it is sent (`RequestTooLarge`) or when it comes back
@@ -49,11 +60,17 @@ open enum ExportErr {
   RequestTooLarge(limit: Int)
   ResponseTooLarge(limit: Int)
   Partial(rejected: Int, msg: Str, kind: Str)
+  /// An OTLP/gRPC export the collector answered with a status that is not OK: not retryable, or the last
+  /// answer when the retries ran out (`tries` the calls made): the status's code number (`grpc.code_from`
+  /// gives the `grpc.Code`) and message.
+  Grpc(code: Int, message: Str, tries: Int)
 }
 
 /// `export: MSG`, `export rejected: STATUS BODY`, `export gave up after N tries: STATUS`, `request body too large:
 /// exceeded N bytes`, `response body too large: exceeded N bytes`, and `OTLP partial success: MSG (N KIND
-/// rejected)` (MSG `empty message` when the collector gave none), the last three as OpenTelemetry Go writes them.
+/// rejected)` (MSG `empty message` when the collector gave none), the last three as OpenTelemetry Go writes them;
+/// a gRPC status is grpc-go's `rpc error: code = CODE desc = MSG`, after `export gave up after N tries: ` when
+/// it was retried.
 fn (e: ExportErr) display() -> Str
 
 /// How an Exporter writes its trace requests: protobuf (`application/x-protobuf`, the default) or OTLP's JSON
@@ -61,6 +78,12 @@ fn (e: ExportErr) display() -> Str
 enum Encoding {
   Protobuf
   Json
+}
+
+/// The transport an Exporter sends with: OTLP/HTTP (the default, `exporter`) or OTLP/gRPC (`grpc_exporter`).
+enum Protocol {
+  Http
+  Grpc
 }
 
 /// Whether an Exporter gzips its request bodies (`Content-Encoding: gzip`); off by default, as in Go.
@@ -89,10 +112,21 @@ struct Exporter {
   max_request: Int = 67108864
   /// The largest response body read, in bytes (4 MiB by default).
   max_response: Int = 4194304
+  protocol: Protocol = Protocol.Http
 }
 
 /// An exporter to the collector at `endpoint` (`http://host:4318`, no path), for the spans and metrics of `res`.
 fn exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock[clock], rand: Rand[rand]) -> Exporter
+/// An OTLP/gRPC exporter to the collector at `endpoint` (`http://host:4317` for plain HTTP/2, or `https://`),
+/// as OpenTelemetry Go's otlptracegrpc and otlpmetricgrpc: unary calls to
+/// `/opentelemetry.proto.collector.trace.v1.TraceService/Export` and `.../metrics.v1.MetricsService/Export`
+/// carrying the same protobuf messages, the headers sent as metadata (lower cased), `Compression.Gzip` as
+/// `grpc-encoding: gzip`, and the response's partial success read as `ExportErr.Partial`. Canceled,
+/// DeadlineExceeded, Aborted, OutOfRange, Unavailable (a connection that fails is Unavailable) and DataLoss
+/// are retried on the schedule of `backoff`, ResourceExhausted only when the status carries a
+/// google.rpc.RetryInfo, waiting at least the RetryInfo's delay; any other status is `ExportErr.Grpc`. The
+/// encoding is always protobuf.
+fn grpc_exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock[clock], rand: Rand[rand]) -> Exporter
 /// The exporter sending these headers on every request (an API key, `Authorization`).
 fn (e: Exporter) with_headers(h: Map[Str, Str]) -> Exporter
 /// The exporter retrying on schedule b (5 tries by default).
@@ -111,3 +145,7 @@ fn (e: Exporter) with_max_response_size(n: Int) -> Exporter
 fn (e: Exporter) send_traces(spans: List[trace.Span]) -> () ! ExportErr uses net.dial, clock, rand
 /// Exports the registry's metrics (one request), every point cumulative since `start_ms`, stamped now.
 fn (e: Exporter) send_metrics(reg: metrics.Registry, start_ms: Int) -> () ! ExportErr uses net.dial, clock, rand
+/// Exports `records` (one request, `encode_logs`; an empty list sends nothing): OTLP/HTTP posts protobuf to
+/// `/v1/logs` (Go's otlploghttp has no JSON), gRPC calls LogsService/Export; a partial success is
+/// `PartialSuccess` naming the rejected logs.
+fn (e: Exporter) send_logs(records: List[log.Record]) -> () ! ExportErr uses net.dial, clock, rand

@@ -10830,8 +10830,8 @@ fn (c: ClientCall) recv() -> Bytes? ! Status
 
 ## 69. std/otlp
 
-OTLP export of std/trace spans and std/metrics registries (decision 0539): the opentelemetry-proto 1.x messages
-`ExportTraceServiceRequest` and `ExportMetricsServiceRequest` written straight onto std/protobuf's builder (no message
+OTLP export of std/trace spans, std/metrics registries and std/log records (decision 0539): the opentelemetry-proto 1.x messages
+`ExportTraceServiceRequest`, `ExportMetricsServiceRequest` and `ExportLogsServiceRequest` written straight onto std/protobuf's builder (no message
 tree), the body of OTLP/HTTP's `POST /v1/traces` and `/v1/metrics` with `Content-Type: application/x-protobuf`. The bytes
 are checked against protobuf-go marshaling the same messages (testdata/corpus/otlp).
 
@@ -10840,12 +10840,15 @@ struct Resource { service: Str, attributes: List[(Str, Str)] = [], scope: Str = 
 fn encode_traces(res: Resource, spans: List[trace.Span]) -> Bytes
 fn encode_traces_json(res: Resource, spans: List[trace.Span]) -> Bytes
 fn encode_metrics(res: Resource, reg: metrics.Registry, start_ms: Int, now_ms: Int) -> Bytes
-open enum ExportErr { Transport(msg: Str), Rejected(status: Int, body: Str), GaveUp(status: Int, tries: Int), RequestTooLarge(limit: Int), ResponseTooLarge(limit: Int), Partial(rejected: Int, msg: Str, kind: Str) }
+fn encode_logs(res: Resource, records: List[log.Record]) -> Bytes
+open enum ExportErr { Transport(msg: Str), Rejected(status: Int, body: Str), GaveUp(status: Int, tries: Int), RequestTooLarge(limit: Int), ResponseTooLarge(limit: Int), Partial(rejected: Int, msg: Str, kind: Str), Grpc(status: grpc.Status, tries: Int) }
+enum Protocol { Http, Grpc }
 enum Encoding { Protobuf, Json }
 enum Compression { Off, Gzip }
 fn (e: ExportErr) display() -> Str
-struct Exporter { client: http.Client, endpoint: Str, resource: Resource, headers: Map[Str, Str] = {}, backoff: backoff.Backoff = backoff.Backoff{max_tries: 5}, clock: Clock, rand: Rand, encoding: Encoding = Encoding.Protobuf, compression: Compression = Compression.Off, max_request: Int = 67108864, max_response: Int = 4194304 }
+struct Exporter { client: http.Client, endpoint: Str, resource: Resource, headers: Map[Str, Str] = {}, backoff: backoff.Backoff = backoff.Backoff{max_tries: 5}, clock: Clock, rand: Rand, encoding: Encoding = Encoding.Protobuf, compression: Compression = Compression.Off, max_request: Int = 67108864, max_response: Int = 4194304, protocol: Protocol = Protocol.Http }
 fn exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock, rand: Rand) -> Exporter
+fn grpc_exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock, rand: Rand) -> Exporter
 fn (e: Exporter) with_headers(h: Map[Str, Str]) -> Exporter
 fn (e: Exporter) with_backoff(b: backoff.Backoff) -> Exporter
 fn (e: Exporter) with_encoding(enc: Encoding) -> Exporter
@@ -10854,9 +10857,10 @@ fn (e: Exporter) with_max_request_size(n: Int) -> Exporter      // 0 or less: no
 fn (e: Exporter) with_max_response_size(n: Int) -> Exporter     // 0 or less: keeps the limit, as Go
 fn (e: Exporter) send_traces(spans: List[trace.Span]) -> () ! ExportErr uses net.dial, clock, rand
 fn (e: Exporter) send_metrics(reg: metrics.Registry, start_ms: Int) -> () ! ExportErr uses net.dial, clock, rand
+fn (e: Exporter) send_logs(records: List[log.Record]) -> () ! ExportErr uses net.dial, clock, rand
 ```
 
-`Exporter` posts `{endpoint}/v1/traces` and `/v1/metrics` as `application/x-protobuf` over OTLP/HTTP. 429, 502, 503 and 504 (and a
+`Exporter` posts `{endpoint}/v1/traces`, `/v1/metrics` and `/v1/logs` as `application/x-protobuf` over OTLP/HTTP. 429, 502, 503 and 504 (and a
 transport failure) are retried on the schedule of `backoff`, waiting at least the `Retry-After` the collector asks for (seconds or an HTTP date);
 any other non 2xx status is `Rejected` and not retried, as the OTLP specification says; retries that run out are `GaveUp`.
 `send_traces` of an empty list sends nothing. Traces go as protobuf or, with `Encoding.Json`, as OTLP's JSON mapping
@@ -10866,6 +10870,13 @@ protobuf. `Compression.Gzip` gzips the body (`Content-Encoding: gzip`). A body o
 protobuf or JSON is read as the collector's response: a partial success (rejected items or a message) is `Partial`, never
 retried, displayed as Go writes it (`OTLP partial success: MSG (N spans rejected)`).
 
+`grpc_exporter` sends the same protobuf requests over OTLP/gRPC (std/grpc, h2c or TLS by the endpoint's scheme): unary calls to
+`/opentelemetry.proto.collector.trace.v1.TraceService/Export`, `.../metrics.v1.MetricsService/Export` and `.../logs.v1.LogsService/Export`, the headers as lower case
+metadata, `Compression.Gzip` as grpc's gzip. As otlptracegrpc, Canceled, DeadlineExceeded, Aborted, OutOfRange, Unavailable and
+DataLoss are retried on `backoff`, ResourceExhausted only when the status carries a `google.rpc.RetryInfo` (waiting at least its delay);
+any other status, or the last retried one, is `Grpc(status, tries)`, displayed as grpc-go's `rpc error: code = C desc = M` (after
+`export gave up after N tries: ` when it was retried). The encoding is always protobuf.
+
 `encode_traces`: one ResourceSpans and one ScopeSpans. A span's trace id is its request id when that is 32 hex digits,
 else the first 16 bytes of the SHA-256 of the id; the `request` span of an id is a server span (the id's root), its other
 spans are internal spans whose parent is that root; span ids are the first 8 bytes of a SHA-256 of the span's request id,
@@ -10874,6 +10885,15 @@ name and start, so a retried export names the same spans. A `request` span's sta
 
 `encode_metrics`: a counter is a monotonic cumulative Sum, a gauge a Gauge, a histogram a cumulative Histogram (bucket
 counts per bucket, with the explicit bounds), a summary a Summary with its count and sum; labels are string attributes.
+
+`encode_logs`: one ResourceLogs, a ScopeLogs per module in order of first appearance (the main module's records, `module`
+empty, under the Resource's scope and version; another module's under its path and the version after `@`), each record as
+OpenTelemetry Go's otelslog bridge and otlploghttp write a log/slog record (checked byte for byte against them): the time
+as both time and observed time, severity number DEBUG 5, INFO 9, WARN 13, ERROR 17 with the level's name as text, the
+message as a string body, and `values` as attributes in order (strings, Ints, Floats and Bools as themselves, a UInt past
+Int's range as a double, a Duration as its nanoseconds, a Time as its Unix nanoseconds, `Any` as its text, a Group as a
+key-value list, a Group with an empty key inlined). A record with no `values` has its `fields` as string attributes.
+`send_logs` of an empty list sends nothing; a partial success reads `(N logs rejected)`.
 
 ## 70. std/protoparse
 

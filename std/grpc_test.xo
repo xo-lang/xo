@@ -159,3 +159,26 @@ test "a frame's length is checked before its flag, as grpc-go (TestGrpcFuzz, tas
   // a payload cut short is Truncated whatever the flag
   expect(unframe(b"\x40\x00\x00\x00\x02a", 0)) == Err(FrameErr.Truncated)
 }
+test "a status's details reach the client as grpc-status-details-bin" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/s.S/Fail", fn(call, _req) -> Bytes ! Status {
+    let d = if call.metadata.get("x-empty") == Some("1") { b"" } else { b"\x08\x08\x12\x04slow\x1a\x00\xff" }
+    Err(Status{code: Code.ResourceExhausted, message: "slow", details: d})
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() {
+      hs.serve().ignore_err("the test ends the server")
+    })
+    let c = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    match c.unary("/s.S/Fail", b"x") {
+      Err(st) => expect((st.code, st.message, st.details)) == (Code.ResourceExhausted, "slow", b"\x08\x08\x12\x04slow\x1a\x00\xff")
+      Ok(_) => fault("the call succeeded")
+    }
+    match c.unary("/s.S/Fail", b"x", {"x-empty": "1"}) {
+      Err(st) => expect(st.details) == b""
+      Ok(_) => fault("the call succeeded")
+    }
+  }
+}

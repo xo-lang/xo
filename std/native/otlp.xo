@@ -3,8 +3,10 @@
 use std/backoff
 use std/compress
 use std/crypto
+use std/grpc
 use std/http
 use std/json
+use std/log
 use std/metrics
 use std/otlp
 use std/protobuf
@@ -631,11 +633,19 @@ fn exporterr_display(e: otlp.ExportErr) -> Str {
     RequestTooLarge(limit) => "request body too large: exceeded ${limit} bytes"
     ResponseTooLarge(limit) => "response body too large: exceeded ${limit} bytes"
     Partial(rejected, msg, kind) => "OTLP partial success: ${if msg.is_empty() { "empty message" } else { msg }} (${rejected} ${kind} rejected)"
+    Grpc(code, message, tries) => {
+      let status = "rpc error: code = ${grpc.code_from(code).map(fn(c) { "${c}" }) ?? "Code(${code})"} desc = ${message}"
+      if tries > 1 { "export gave up after ${tries} tries: ${status}" } else { status }
+    }
   }
 }
 
 fn exporter(client: http.Client, endpoint: Str, res: otlp.Resource, clock: Clock[clock], rand: Rand[rand]) -> otlp.Exporter {
   otlp.Exporter{client: client, endpoint: endpoint.trim_suffix("/"), resource: res, headers: {}, backoff: backoff.Backoff{initial: 500ms, multiplier: 1.5, randomization: 0.5, max_interval: 60s, max_elapsed: 15m, max_tries: 5}, clock: clock, rand: rand}
+}
+
+fn grpc_exporter(client: http.Client, endpoint: Str, res: otlp.Resource, clock: Clock[clock], rand: Rand[rand]) -> otlp.Exporter {
+  exporter(client, endpoint, res, clock, rand) with {protocol: otlp.Protocol.Grpc}
 }
 
 fn exporter_with_headers(e: otlp.Exporter, h: Map[Str, Str]) -> otlp.Exporter { e with {headers: h} }
@@ -712,7 +722,7 @@ fn partial_success(resp: http.Response, rejected_key: Str, kind: Str) -> () ! ot
       Err(err) => return Err(otlp.ExportErr.Transport(msg: "${err}"))
     }
     let p = v.get("partialSuccess") ?? v.get("partial_success") ?? json.Value.Null
-    let n = json_count(p.get(rejected_key) ?? p.get(rejected_key.replace("Spans", "_spans").replace("DataPoints", "_data_points")))
+    let n = json_count(p.get(rejected_key) ?? p.get(rejected_key.replace("Spans", "_spans").replace("DataPoints", "_data_points").replace("LogRecords", "_log_records")))
     match n {
       Ok(x) => rejected = x
       Err(m) => return Err(otlp.ExportErr.Transport(msg: m))
@@ -784,9 +794,112 @@ fn post(e: otlp.Exporter, path: Str, content_type: Str, raw: Bytes, rejected_key
   Ok(())
 }
 
+// google.rpc.Status (the grpc-status-details-bin payload), its Any details and google.rpc.RetryInfo.
+struct DurationMsg {
+  seconds proto "1": Int = 0
+  nanos proto "2": Int = 0
+} derive Proto
+
+struct RetryInfoMsg { retry_delay proto "1": DurationMsg? = None } derive Proto
+
+struct AnyMsg {
+  type_url proto "1": Str = ""
+  value proto "2": Bytes = b""
+} derive Proto
+
+struct RpcStatusMsg {
+  code proto "1": Int = 0
+  message proto "2": Str = ""
+  details proto "3": List[AnyMsg] = []
+} derive Proto
+
+/// The delay a status's google.rpc.RetryInfo detail asks for, None when it has none (otlptracegrpc's
+/// throttleDelay); a RetryInfo with no delay is 0s.
+fn throttle_delay(s: grpc.Status) -> Duration? {
+  if s.details.is_empty() {
+    return None
+  }
+  let st = match protobuf.unmarshal[RpcStatusMsg](s.details) {
+    Ok(m) => m
+    Err(_) => return None
+  }
+  for a in st.details {
+    if a.type_url.ends_with("/google.rpc.RetryInfo") {
+      let ri = match protobuf.unmarshal[RetryInfoMsg](a.value) {
+        Ok(m) => m
+        Err(_) => continue
+      }
+      let d = ri.retry_delay ?? DurationMsg{}
+      return Some(Duration.from_secs_int(d.seconds) + Duration.from_nanos(d.nanos))
+    }
+  }
+  None
+}
+
+/// Whether a status is retried and the delay it asks for at least (otlptracegrpc's retryableGRPCStatus).
+fn grpc_retryable(s: grpc.Status) -> (Bool, Duration) {
+  match s.code {
+    grpc.Code.Canceled | grpc.Code.DeadlineExceeded | grpc.Code.Aborted | grpc.Code.OutOfRange | grpc.Code.Unavailable | grpc.Code.DataLoss => (true, throttle_delay(s) ?? 0s)
+    grpc.Code.ResourceExhausted => match throttle_delay(s) {
+      Some(d) => (true, d)
+      None => (false, 0s)
+    }
+    _ => (false, 0s)
+  }
+}
+
+/// The partial success of a gRPC Export response message.
+fn grpc_partial(msg: Bytes, kind: Str) -> () ! otlp.ExportErr {
+  match protobuf.unmarshal[ExportResponseMsg](msg) {
+    Ok(m) => {
+      if let Some(p) = m.partial_success {
+        if p.rejected != 0 || !p.error_message.is_empty() {
+          return Err(otlp.ExportErr.Partial(rejected: p.rejected, msg: p.error_message, kind: kind))
+        }
+      }
+      Ok(())
+    }
+    Err(err) => Err(otlp.ExportErr.Transport(msg: "${err}"))
+  }
+}
+
+fn grpc_call(e: otlp.Exporter, method: Str, raw: Bytes, kind: Str) -> () ! otlp.ExportErr uses net.dial, clock, rand {
+  if e.max_request > 0 && raw.len() > e.max_request {
+    return Err(otlp.ExportErr.RequestTooLarge(limit: e.max_request))
+  }
+  var c = grpc.client(e.client, e.endpoint)
+  if e.compression == otlp.Compression.Gzip {
+    c = c.with_gzip()
+  }
+  var tries = 0
+  while true {
+    tries += 1
+    match c.unary(method, raw, e.headers) {
+      Ok(msg) => {
+        if e.max_response > 0 && msg.len() > e.max_response {
+          return Err(otlp.ExportErr.ResponseTooLarge(limit: e.max_response))
+        }
+        return grpc_partial(msg, kind)
+      }
+      Err(st) => {
+        let (retry, asked) = grpc_retryable(st)
+        if !retry || (e.backoff.max_tries != 0 && tries >= e.backoff.max_tries) {
+          return Err(otlp.ExportErr.Grpc(code: st.code.number(), message: st.message, tries: tries))
+        }
+        let wait = e.backoff.delay(tries - 1, e.rand)
+        e.clock.sleep(if asked > wait { asked } else { wait })
+      }
+    }
+  }
+  Ok(())
+}
+
 fn exporter_send_traces(e: otlp.Exporter, spans: List[trace.Span]) -> () ! otlp.ExportErr uses net.dial, clock, rand {
   if spans.is_empty() {
     return Ok(())
+  }
+  if e.protocol == otlp.Protocol.Grpc {
+    return grpc_call(e, "/opentelemetry.proto.collector.trace.v1.TraceService/Export", encode_traces(e.resource, spans), "spans")
   }
   if e.encoding == otlp.Encoding.Json {
     return post(e, "/v1/traces", "application/json", encode_traces_json(e.resource, spans), "rejectedSpans", "spans")
@@ -795,5 +908,171 @@ fn exporter_send_traces(e: otlp.Exporter, spans: List[trace.Span]) -> () ! otlp.
 }
 
 fn exporter_send_metrics(e: otlp.Exporter, reg: metrics.Registry, start_ms: Int) -> () ! otlp.ExportErr uses net.dial, clock, rand {
+  if e.protocol == otlp.Protocol.Grpc {
+    return grpc_call(e, "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export", encode_metrics(e.resource, reg, start_ms, e.clock.now().unix_millis()), "metric data points")
+  }
   post(e, "/v1/metrics", "application/x-protobuf", encode_metrics(e.resource, reg, start_ms, e.clock.now().unix_millis()), "rejectedDataPoints", "metric data points")
+}
+
+// Logs (logs.proto, collector/logs/v1), as OpenTelemetry Go's otelslog bridge
+// and otlploghttp write a log/slog record (task #184).
+
+enum LogAnyKind {
+  S as "1"(v: Str)
+  B as "2"(v: Bool)
+  I as "3"(v: Int)
+  D as "4"(v: Float)
+  Kv as "6"(v: LogKvListMsg)
+} derive Proto
+
+struct LogAnyValueMsg { value proto "oneof": LogAnyKind? = None } derive Proto
+
+struct LogKeyValueMsg {
+  key proto "1": Str = ""
+  value proto "2": LogAnyValueMsg? = None
+} derive Proto
+
+struct LogKvListMsg { values proto "1": List[LogKeyValueMsg] = [] } derive Proto
+
+struct LogRecordMsg {
+  time_unix_nano proto "1,fixed": UInt64 = UInt64.from_bits(0)
+  severity_number proto "2": Int = 0
+  severity_text proto "3": Str = ""
+  body proto "5": LogAnyValueMsg? = None
+  attributes proto "6": List[LogKeyValueMsg] = []
+  observed_time_unix_nano proto "11,fixed": UInt64 = UInt64.from_bits(0)
+} derive Proto
+
+struct ScopeLogsMsg {
+  scope proto "1": ScopeMsg? = None
+  log_records proto "2": List[LogRecordMsg] = []
+  schema_url proto "3": Str = ""
+} derive Proto
+
+struct ResourceLogsMsg {
+  resource proto "1": ResourceMsg? = None
+  scope_logs proto "2": List[ScopeLogsMsg] = []
+} derive Proto
+
+struct LogsRequestMsg { resource_logs proto "1": List[ResourceLogsMsg] = [] } derive Proto
+
+/// A log value as otelslog converts a log/slog value: a UInt past Int's
+/// range becomes a double, a duration its nanoseconds, a time its Unix
+/// nanoseconds, a group a key-value list.
+fn log_any(v: log.Value) -> LogAnyValueMsg {
+  let k = match v {
+    log.Value.Str(s) => LogAnyKind.S(s)
+    log.Value.Int(n) => LogAnyKind.I(n)
+    log.Value.UInt(n) => {
+      let b = n.to_bits()
+      if b >= 0 { LogAnyKind.I(b) } else { LogAnyKind.D(Float(n)) }
+    }
+    log.Value.Float(f) => LogAnyKind.D(f)
+    log.Value.Bool(x) => LogAnyKind.B(x)
+    log.Value.Time(t) => LogAnyKind.I(t.unix_nanos())
+    log.Value.Dur(d) => LogAnyKind.I(d.nanos())
+    log.Value.Any(text) => LogAnyKind.S(text)
+    log.Value.Group(fields) => LogAnyKind.Kv(LogKvListMsg{values: log_kvs(fields)})
+  }
+  LogAnyValueMsg{value: Some(k)}
+}
+
+/// The attributes of fields in their order; a group with an empty key is
+/// inlined, as otelslog does.
+fn log_kvs(fields: Map[Str, log.Value]) -> List[LogKeyValueMsg] {
+  var out: List[LogKeyValueMsg] = []
+  for (k, v) in fields {
+    match v {
+      log.Value.Group(g) if k.is_empty() => {
+        for kv in log_kvs(g) {
+          out.push(kv)
+        }
+      }
+      _ => out.push(LogKeyValueMsg{key: k, value: Some(log_any(v))})
+    }
+  }
+  out
+}
+
+fn log_severity(l: log.Level) -> (Int, Str) {
+  match l {
+    log.Level.Debug => (5, "DEBUG")
+    log.Level.Info => (9, "INFO")
+    log.Level.Warn => (13, "WARN")
+    log.Level.Error => (17, "ERROR")
+  }
+}
+
+fn log_record_msg(r: log.Record) -> LogRecordMsg {
+  var attrs: List[LogKeyValueMsg] = []
+  if r.values.is_empty() {
+    for (k, v) in r.fields {
+      attrs.push(LogKeyValueMsg{key: k, value: Some(LogAnyValueMsg{value: Some(LogAnyKind.S(v))})})
+    }
+  } else {
+    attrs = log_kvs(r.values)
+  }
+  let (sev, text) = log_severity(r.level)
+  let ts = UInt64.wrapping_from(r.time.unix_nanos())
+  LogRecordMsg{time_unix_nano: ts, severity_number: sev, severity_text: text,
+    body: Some(LogAnyValueMsg{value: Some(LogAnyKind.S(r.msg))}), attributes: attrs, observed_time_unix_nano: ts}
+}
+
+fn logs_msg(res: otlp.Resource, records: List[log.Record]) -> LogsRequestMsg {
+  var rattrs = [kv_str_msg("service.name", res.service)]
+  for (k, v) in res.attributes {
+    rattrs.push(kv_str_msg(k, v))
+  }
+  // ScopeLogs groups in order of first appearance: the main module's
+  // records under the Resource's scope, another module's under its path
+  // and version.
+  var groups: List[ScopeLogsMsg] = []
+  for r in records {
+    var n = res.scope
+    var v = res.version
+    if !r.module.is_empty() {
+      match r.module.find("@") {
+        Some(i) => {
+          n = r.module[0..i]
+          v = r.module[i + 1..r.module.len()]
+        }
+        None => {
+          n = r.module
+          v = ""
+        }
+      }
+    }
+    var at = -1
+    for (i, g) in groups.indexed() {
+      if at < 0 {
+        let (gn, gv) = match g.scope {
+          Some(sc) => (sc.name, sc.version)
+          None => ("", "")
+        }
+        if gn == n && gv == v {
+          at = i
+        }
+      }
+    }
+    if at < 0 {
+      groups.push(ScopeLogsMsg{scope: if n.is_empty() && v.is_empty() { None } else { Some(ScopeMsg{name: n, version: v}) }})
+      at = groups.len() - 1
+    }
+    groups[at].log_records.push(log_record_msg(r))
+  }
+  LogsRequestMsg{resource_logs: [ResourceLogsMsg{resource: Some(ResourceMsg{attributes: rattrs}), scope_logs: groups}]}
+}
+
+fn encode_logs(res: otlp.Resource, records: List[log.Record]) -> Bytes {
+  protobuf.marshal(logs_msg(res, records))
+}
+
+fn exporter_send_logs(e: otlp.Exporter, records: List[log.Record]) -> () ! otlp.ExportErr uses net.dial, clock, rand {
+  if records.is_empty() {
+    return Ok(())
+  }
+  if e.protocol == otlp.Protocol.Grpc {
+    return grpc_call(e, "/opentelemetry.proto.collector.logs.v1.LogsService/Export", encode_logs(e.resource, records), "logs")
+  }
+  post(e, "/v1/logs", "application/x-protobuf", encode_logs(e.resource, records), "rejectedLogRecords", "logs")
 }

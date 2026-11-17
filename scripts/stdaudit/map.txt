@@ -3131,10 +3131,10 @@ otlptracehttp.WithCompression = std/otlp.Exporter.with_compression
 otlptracehttp.WithMaxRequestSize = std/otlp.Exporter.with_max_request_size
 otlptracehttp.WithMaxResponseSize = std/otlp.Exporter.with_max_response_size
 # otlp behavior checklist (decision 0655)
-otlptracehttp.behavior.grpc_transport = gap: no OTLP/gRPC exporter (otlptracegrpc, otlpmetricgrpc)
+otlptracehttp.behavior.grpc_transport = std/otlp.grpc_exporter (otlptracegrpc and otlpmetricgrpc: Export calls, metadata, gzip, their retryable codes and RetryInfo)
 otlptracehttp.behavior.partial_success = std/otlp.ExportErr.Partial
 otlptracehttp.behavior.retry_after_date = std/otlp.Exporter
-otlptracehttp.behavior.logs = gap: no log export (otlploghttp)
+otlptracehttp.behavior.logs = std/otlp.Exporter.send_logs (otlploghttp and otlploggrpc; std/otlp.encode_logs maps std/log records as the otelslog bridge)
 # bcrypt: golang.org/x/crypto/bcrypt v0.58.0 (outside.txt; decision 0655)
 bcrypt.GenerateFromPassword = std/bcrypt.hash
 bcrypt.CompareHashAndPassword = std/bcrypt.compare

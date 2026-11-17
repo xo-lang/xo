@@ -1,5 +1,27 @@
 # std/otlp changes
 
+## 2026-11-17: feature: log export (task #184)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #184 (stdcov feature gaps: otlp had no log signal)
+- Go reference: go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp and otlploggrpc v0.23.0, go.opentelemetry.io/contrib/bridges/otelslog (the slog to OpenTelemetry mapping)
+- Test: std/native/otlp_test.xo (two oracle bodies from slog through otelslog and otlploghttp: every value kind, levels, a module's scope, nested and inlined groups; send_logs over OTLP/gRPC retried and with a partial success)
+- Shipped in: not yet released
+
+`encode_logs` writes an ExportLogsServiceRequest for std/log records and `Exporter.send_logs` sends it over OTLP/HTTP (`/v1/logs`) or OTLP/gRPC (LogsService/Export), with the exporter's retries, compression, size limits and partial success.
+
+## 2026-11-17: feature: OTLP/gRPC export (task #184)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #184 (stdcov gap otlptracehttp.behavior.grpc_transport)
+- Go reference: go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.47.0 and otlpmetric/otlpmetricgrpc (client.go, internal/retry: retryable codes, throttle delay from RetryInfo)
+- Test: std/native/otlp_test.xo (a std/grpc collector: ok, gzip, partial success, Unavailable retried, ResourceExhausted with and without RetryInfo, InvalidArgument, a missing key, a closed port, the request limit; the retry table per code)
+- Shipped in: not yet released
+
+`grpc_exporter` sends traces and metrics as unary Export calls over OTLP/gRPC with the exporter's headers as metadata and gzip when compressing. Retried codes and the RetryInfo delay follow otlptracegrpc; a final status is `ExportErr.Grpc(code, message, tries)` (the code number; `grpc.code_from` gives the `grpc.Code`), displayed as grpc-go's text.
+
 ## 2026-11-17: test: differential fuzz against protobuf-go and otlptracehttp's JSON (task #115)
 
 - Kind: test

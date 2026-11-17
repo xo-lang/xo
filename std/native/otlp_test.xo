@@ -1,7 +1,10 @@
 // Vectors by hand from opentelemetry-proto (trace.proto, common.proto, resource.proto); the generated corpus
 // (internal/stdtest/testdata/corpus/otlp) compares against protobuf-go.
+use std/backoff
 use std/compress
+use std/grpc
 use std/http
+use std/log
 use std/metrics
 use std/otlp
 use std/protobuf
@@ -143,6 +146,32 @@ test "OpenTelemetry Go oracle: attribute-types" {
   let got = otlp.encode_traces(otlp.Resource{service: "oracle", scope: "oracle"}, spans)
   expect(got.to_hex()) == "0aa9020a1a0a180a0c736572766963652e6e616d6512080a066f7261636c65128a020a080a066f7261636c6512fd010a10101112131415161718191a1b1c1d1e011208a0000000000000012a05617474727330013900002a36fe9c97174188132a36fe9c97174a080a017312030a01764a0d0a07732e656d70747912020a004a0c0a06692e7a65726f120218004a140a05692e6e6567120b18d6ffffffffffffffff014a130a05692e6d6178120a18ffffffffffffffff7f4a140a05692e6d696e120b18808080808080808080014a0e0a0166120921000000000000f83f4a130a06662e7a65726f12092100000000000000004a120a05662e6e656712092100000000000002c04a0c0a06622e74727565120210014a0d0a07622e66616c7365120210007a00850101010000"
   expect(otlp.encode_traces_json(otlp.Resource{service: "oracle", scope: "oracle"}, spans).to_str() ?? "") == "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"oracle\"}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"oracle\"},\"spans\":[{\"traceId\":\"101112131415161718191A1B1C1D1E01\",\"spanId\":\"A000000000000001\",\"flags\":257,\"name\":\"attrs\",\"kind\":1,\"startTimeUnixNano\":\"1700000000000000000\",\"endTimeUnixNano\":\"1700000000000005000\",\"attributes\":[{\"key\":\"s\",\"value\":{\"stringValue\":\"v\"}},{\"key\":\"s.empty\",\"value\":{\"stringValue\":\"\"}},{\"key\":\"i.zero\",\"value\":{\"intValue\":\"0\"}},{\"key\":\"i.neg\",\"value\":{\"intValue\":\"-42\"}},{\"key\":\"i.max\",\"value\":{\"intValue\":\"9223372036854775807\"}},{\"key\":\"i.min\",\"value\":{\"intValue\":\"-9223372036854775808\"}},{\"key\":\"f\",\"value\":{\"doubleValue\":1.5}},{\"key\":\"f.zero\",\"value\":{\"doubleValue\":0}},{\"key\":\"f.neg\",\"value\":{\"doubleValue\":-2.25}},{\"key\":\"b.true\",\"value\":{\"boolValue\":true}},{\"key\":\"b.false\",\"value\":{\"boolValue\":false}}],\"status\":{}}]}]}]}"
+}
+
+fn log_res() -> otlp.Resource { otlp.Resource{service: "svc", attributes: [("zone", "a")], scope: "app", version: "1.2"} }
+
+fn log_rec(level: log.Level, msg: Str, module: Str, values: Map[Str, log.Value]) -> log.Record {
+  log.Record{level: level, msg: msg, fields: {}, module: module, time: Time.from_unix_nanos(1700000000123456789), values: values}
+}
+
+test "OpenTelemetry Go oracle: log value kinds (slog through otelslog to otlploghttp)" {
+  let values: Map[Str, log.Value] = {"method": log.Value.Str("GET"), "status": log.Value.Int(200), "ok": log.Value.Bool(true), "ratio": log.Value.Float(0.5), "took": log.Value.Dur(Duration.from_millis(1500)), "small": log.Value.UInt(UInt64.wrapping_from(7)), "big": log.Value.UInt(UInt64.wrapping_from(-1)), "at": log.Value.Time(Time.from_unix(1700000000)), "req": log.Value.Group({"id": log.Value.Str("r1"), "n": log.Value.Int(2)})}
+  let got = otlp.encode_logs(log_res(), [log_rec(log.Level.Info, "served", "", values)])
+  expect(got.to_hex()) == "0afb010a240a150a0c736572766963652e6e616d6512050a037376630a0b0a047a6f6e6512030a016112d2010a0a0a036170701203312e3212c3010915cd853dfe9c971710091a04494e464f2a080a06736572766564320f0a066d6574686f6412050a03474554320d0a06737461747573120318c80132080a026f6b1202100132120a05726174696f120921000000000000e03f320e0a04746f6f6b12061880dea0cb05320b0a05736d616c6c1202180732100a03626967120921000000000000f04332100a026174120a188080a8b1e39fe7cb17321e0a03726571121732150a0a0a02696412040a0272310a070a016e120218025915cd853dfe9c9717"
+}
+
+test "OpenTelemetry Go oracle: log levels, a module's own scope, nested groups" {
+  let recs = [
+    log_rec(log.Level.Debug, "a", "", {}),
+    log_rec(log.Level.Warn, "b", "example.com/dep@v1.0.0", {"k": log.Value.Str("v")}),
+    log_rec(log.Level.Error, "c", "", {"g": log.Value.Group({"h": log.Value.Group({"x": log.Value.Bool(false)})})}),
+  ]
+  expect(otlp.encode_logs(log_res(), recs).to_hex()) == "0adb010a240a150a0c736572766963652e6e616d6512050a037376630a0b0a047a6f6e6512030a0161126b0a0a0a036170701203312e3212200915cd853dfe9c971710051a0544454255472a030a01615915cd853dfe9c9717123b0915cd853dfe9c971710111a054552524f522a030a016332190a0167121432120a100a0168120b32090a070a0178120210005915cd853dfe9c971712460a190a0f6578616d706c652e636f6d2f646570120676312e302e3012290915cd853dfe9c9717100d1a045741524e2a030a016232080a016b12030a01765915cd853dfe9c9717"
+}
+
+test "a log record with only string fields has them as string attributes" {
+  let r = log.Record{level: log.Level.Info, msg: "m", fields: {"k": "v"}, module: "", time: Time.from_unix_nanos(1700000000123456789)}
+  expect(otlp.encode_logs(log_res(), [r]).to_hex().contains("32080a016b12030a0176")) == true
 }
 
 test "OpenTelemetry Go oracle: events" {
@@ -309,5 +338,116 @@ test "metrics: a gauge sample's created time is ignored (a gauge has no start)" 
   match family_msg(fs[0], 0, 5000).data {
     Some(MetricData.Gauge(m)) => expect(m.data_points[0].start_time_unix_nano) == UInt64.wrapping_from(0)
     _ => fault("gauge collector is not a gauge")
+  }
+}
+
+fn retry_info(nanos: Int) -> Bytes {
+  let ri = protobuf.marshal(RetryInfoMsg{retry_delay: Some(DurationMsg{seconds: 0, nanos: nanos})})
+  protobuf.marshal(RpcStatusMsg{code: 8, message: "slow down", details: [AnyMsg{type_url: "type.googleapis.com/google.rpc.ErrorInfo", value: b"\x0a\x01x"}, AnyMsg{type_url: "type.googleapis.com/google.rpc.RetryInfo", value: ri}]})
+}
+
+test "gRPC statuses retried as otlptracegrpc retries them" {
+  let st = fn(c: grpc.Code, d: Bytes) -> grpc.Status { grpc.Status{code: c, message: "m", details: d} }
+  for c in [grpc.Code.Canceled, grpc.Code.DeadlineExceeded, grpc.Code.Aborted, grpc.Code.OutOfRange, grpc.Code.Unavailable, grpc.Code.DataLoss] {
+    expect(grpc_retryable(st(c, b""))) == (true, 0s)
+  }
+  for c in [grpc.Code.Unknown, grpc.Code.InvalidArgument, grpc.Code.NotFound, grpc.Code.PermissionDenied, grpc.Code.Unauthenticated, grpc.Code.Internal, grpc.Code.Unimplemented, grpc.Code.ResourceExhausted] {
+    expect(grpc_retryable(st(c, b""))) == (false, 0s)
+  }
+  expect(grpc_retryable(st(grpc.Code.ResourceExhausted, retry_info(1500000)))) == (true, 1500us)
+  expect(grpc_retryable(st(grpc.Code.Unavailable, retry_info(2000000)))) == (true, 2ms)
+  // a RetryInfo with no delay is 0s; details that do not decode carry none
+  let empty = protobuf.marshal(RpcStatusMsg{details: [AnyMsg{type_url: "type.googleapis.com/google.rpc.RetryInfo", value: b""}]})
+  expect(grpc_retryable(st(grpc.Code.ResourceExhausted, empty))) == (true, 0s)
+  expect(grpc_retryable(st(grpc.Code.ResourceExhausted, b"\xff\xff"))) == (false, 0s)
+  expect(otlp.ExportErr.Grpc(code: grpc.Code.NotFound.number(), message: "m", tries: 1).display()) == "rpc error: code = NotFound desc = m"
+  expect(otlp.ExportErr.Grpc(code: grpc.Code.Unavailable.number(), message: "m", tries: 3).display()) == "export gave up after 3 tries: rpc error: code = Unavailable desc = m"
+}
+
+fn grpc_collector(clock: Clock[clock], want: Bytes, calls: Atomic[Int]) -> grpc.Server {
+  var srv = grpc.server(clock)
+  let export = fn(call: grpc.Call, req: Bytes) -> Bytes ! grpc.Status {
+    let n = calls.add(1)
+    let mode = call.metadata.get("x-mode") ?? ""
+    if call.metadata.get("x-key") != Some("k1") {
+      return Err(grpc.Status{code: grpc.Code.Unauthenticated, message: "no key"})
+    }
+    if call.method.ends_with("TraceService/Export") && req != want {
+      return Err(grpc.Status{code: grpc.Code.InvalidArgument, message: "request differs"})
+    }
+    if mode == "partial" {
+      return Ok(protobuf.marshal(ExportResponseMsg{partial_success: Some(PartialMsg{rejected: 2, error_message: "two spans dropped"})}))
+    }
+    if mode == "flaky" && n < 3 {
+      return Err(grpc.Status{code: grpc.Code.Unavailable, message: "try later"})
+    }
+    if mode == "throttle" && n < 2 {
+      return Err(grpc.Status{code: grpc.Code.ResourceExhausted, message: "slow down", details: retry_info(1000000)})
+    }
+    if mode == "exhausted" {
+      return Err(grpc.Status{code: grpc.Code.ResourceExhausted, message: "quota"})
+    }
+    if mode == "invalid" {
+      return Err(grpc.Status{code: grpc.Code.InvalidArgument, message: "bad spans"})
+    }
+    if mode == "down" {
+      return Err(grpc.Status{code: grpc.Code.Unavailable, message: "down"})
+    }
+    Ok(b"")
+  }
+  srv.unary("/opentelemetry.proto.collector.trace.v1.TraceService/Export", export)
+  srv.unary("/opentelemetry.proto.collector.metrics.v1.MetricsService/Export", export)
+  srv.unary("/opentelemetry.proto.collector.logs.v1.LogsService/Export", export)
+  srv
+}
+
+test "OTLP/gRPC: traces, metrics and logs exported, statuses retried or returned, partial success" uses (net, clock, rand) {
+  let res = otlp.Resource{service: "svc"}
+  let spans = [trace.Span{id: "0102030405060708090a0b0c0d0e0f10", name: "request", start_ms: 1700000000000, micros: 5, status: 200}]
+  let want = otlp.encode_traces(res, spans)
+  let calls = Atomic[Int].new(0)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, grpc_collector(os.clock, want, calls).router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() {
+      hs.serve().ignore_err("the test ends the server")
+    })
+    let quick = backoff.Backoff{initial: 1ms, multiplier: 1.0, randomization: 0.0, max_interval: 1ms, max_elapsed: 0s, max_tries: 3}
+    let base = otlp.grpc_exporter(http.client(os.net, timeout: 10s), "http://${hs.addr()}", res, os.clock, os.rand).with_backoff(quick)
+    let with = fn(mode: Str) -> otlp.Exporter { base.with_headers({"X-Key": "k1", "x-mode": mode}) }
+    let run = fn(e: otlp.Exporter) -> (Str, Int) {
+      calls.set(0)
+      (partial_text(e.send_traces(spans)), calls.get())
+    }
+    expect(run(with("ok"))) == ("ok", 1)
+    expect(run(with("ok").with_compression(otlp.Compression.Gzip))) == ("ok", 1)
+    expect(run(with("partial"))) == ("OTLP partial success: two spans dropped (2 spans rejected)", 1)
+    expect(run(with("flaky"))) == ("ok", 3)
+    expect(run(with("throttle"))) == ("ok", 2)
+    expect(run(with("exhausted"))) == ("rpc error: code = ResourceExhausted desc = quota", 1)
+    expect(run(with("invalid"))) == ("rpc error: code = InvalidArgument desc = bad spans", 1)
+    expect(run(with("down"))) == ("export gave up after 3 tries: rpc error: code = Unavailable desc = down", 3)
+    expect(run(base)) == ("rpc error: code = Unauthenticated desc = no key", 1)
+    match with("ok").with_max_request_size(want.len() - 1).send_traces(spans) {
+      Err(otlp.ExportErr.RequestTooLarge(limit)) => expect(limit) == want.len() - 1
+      other => fault("limit: ${other.debug()}")
+    }
+    var reg = metrics.registry()
+    reg.counter("jobs_total", "jobs").inc()
+    calls.set(0)
+    expect(partial_text(with("flaky").send_metrics(reg, 1700000000000))) == "ok"
+    expect(calls.get()) == 3
+    expect(partial_text(with("partial").send_metrics(reg, 1700000000000))) == "OTLP partial success: two spans dropped (2 metric data points rejected)"
+    let recs = [log.Record{level: log.Level.Warn, msg: "slow", fields: {"ms": "900"}, module: ""}]
+    calls.set(0)
+    expect(partial_text(with("flaky").send_logs(recs))) == "ok"
+    expect(calls.get()) == 3
+    expect(partial_text(with("partial").send_logs(recs))) == "OTLP partial success: two spans dropped (2 logs rejected)"
+  }
+  // no collector: the connection error is Unavailable, retried
+  let gone = otlp.grpc_exporter(http.client(os.net, timeout: 5s), "http://127.0.0.1:1", res, os.clock, os.rand).with_backoff(backoff.Backoff{initial: 1ms, multiplier: 1.0, randomization: 0.0, max_interval: 1ms, max_elapsed: 0s, max_tries: 2})
+  match gone.send_traces(spans) {
+    Err(otlp.ExportErr.Grpc(code, _, tries)) => expect((grpc.code_from(code), tries)) == (Some(grpc.Code.Unavailable), 2)
+    other => fault("no collector: ${other.debug()}")
   }
 }

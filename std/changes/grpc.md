@@ -1,5 +1,16 @@
 # std/grpc changes
 
+## 2026-11-17: fix: a status's details reach the client (grpc-status-details-bin)
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #184 (otlp's gRPC exporter could not read a RetryInfo)
+- Go reference: google.golang.org/grpc v1.79.2 internal/transport (grpc-status-details-bin in the trailers, base64 without padding)
+- Test: std/grpc_test.xo "a status's details reach the client as grpc-status-details-bin" (details came back empty before)
+- Shipped in: not yet released
+
+A handler's `Status.details` were dropped: the server never wrote the `grpc-status-details-bin` trailer and the client always read `details` as empty. The server now writes it when details are set (trailers only responses too) and the client decodes it from the trailers or headers.
+
 ## 2026-11-16: fix: the client reads a response as grpc-go does (task #115)
 
 - Kind: fix (behavior change)
@@ -24,7 +35,6 @@
 Departures, modeled by the fuzz: a grpc-status past the 17 codes is Unknown (grpc-go keeps the number; `Code` has no
 case for it); a stream that ends inside a message's 5 byte header is Internal "unexpected EOF" (grpc-go's
 Stream.ReadMessageHeader drops the bytes read before the end and takes the trailers' status).
-
 ## 2026-11-15: feature: `FrameErr` is an open enum (decision 0649)
 
 - Kind: feature

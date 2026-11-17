@@ -1,20 +1,21 @@
 // std/otlp's Exporter (decision 0539) against an in process collector: the request path, Content-Type and headers, a
 // 503 with Retry-After then a 200 (retried, the same body), a 400 (not retried), a 429 that never recovers (gives up after
-// max_tries), and a transport failure.
+// max_tries), a transport failure, and log records sent to /v1/logs.
 use std/http
 use std/otlp
 use std/trace
 use std/metrics
 use std/backoff
+use std/log
 
 fn main(os: Os) uses net, stdio, rand, clock {
   let hits = Atomic[Int].new(0)
   let mode = Atomic[Int].new(0)
-  let log = Mutex[List[Str]].new([])
+  let seen = Mutex[List[Str]].new([])
   var r = http.router()
   r.handle("POST /v1/traces", fn(req: http.Request) -> http.Response {
     let n = hits.add(1)
-    log.with(fn(var l: List[Str]) { l.push("traces ${req.header("Content-Type") ?? "-"} key=${req.header("X-Key") ?? "-"} body=${req.body.len()}") })
+    seen.with(fn(var l: List[Str]) { l.push("traces ${req.header("Content-Type") ?? "-"} key=${req.header("X-Key") ?? "-"} body=${req.body.len()}") })
     let m = mode.get()
     if m == 0 && n == 0 {
       return http.Response{status: 503, headers: {"Retry-After": "0"}, body: b""}
@@ -27,8 +28,12 @@ fn main(os: Os) uses net, stdio, rand, clock {
     }
     http.text(200, "")
   })
+  r.handle("POST /v1/logs", fn(req: http.Request) -> http.Response {
+    seen.with(fn(var l: List[Str]) { l.push("logs ${req.header("Content-Type") ?? "-"} body=${req.body.len()}") })
+    http.text(200, "")
+  })
   r.handle("POST /v1/metrics", fn(req: http.Request) -> http.Response {
-    log.with(fn(var l: List[Str]) { l.push("metrics body=${req.body.len()}") })
+    seen.with(fn(var l: List[Str]) { l.push("metrics body=${req.body.len()}") })
     http.text(200, "")
   })
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -63,7 +68,11 @@ fn main(os: Os) uses net, stdio, rand, clock {
     let reg = metrics.registry()
     reg.counter("c", "h").inc()
     show("metrics", ex.send_metrics(reg, 1700000000000))
-    log.with_read(fn(l: List[Str]) -> () {
+    let recs = [log.Record{level: log.Level.Warn, msg: "slow", fields: {"ms": "900"}, module: "", time: Time.from_unix(1700000000)}]
+    os.stdio.println("encoded logs=${otlp.encode_logs(res, recs).len()}")
+    show("logs", ex.send_logs(recs))
+    show("no logs", ex.send_logs([]))
+    seen.with_read(fn(l: List[Str]) -> () {
       for x in l {
         os.stdio.println(x)
       }

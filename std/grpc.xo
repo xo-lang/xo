@@ -600,6 +600,9 @@ fn finish(w: http.BodyWriter, st: Status) {
   if st.message != "" {
     w.set_trailer("grpc-message", encode_message(st.message))
   }
+  if !st.details.is_empty() {
+    w.set_trailer("grpc-status-details-bin", bin_encode(st.details))
+  }
 }
 
 /// The next message of the stream whose buffered state is `st`, reading more with `more` (None at its end).
@@ -858,7 +861,10 @@ fn final_status(st: http.ClientStream) -> Status {
     None => return status_new(Code.Unknown, msg)
   }
   match parse_int32(gs) {
-    Ok(n) => Status{code: code_from(n) ?? Code.Unknown, message: msg, details: b""}
+    Ok(n) => {
+      let raw = tr.get("Grpc-Status-Details-Bin") ?? (head.headers.get("Grpc-Status-Details-Bin") ?? "")
+      Status{code: code_from(n) ?? Code.Unknown, message: msg, details: if raw == "" { b"" } else { bin_decode(raw) ?? b"" }}
+    }
     Err(e) => malformed_status(gs, e)
   }
 }

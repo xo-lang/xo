@@ -7,12 +7,16 @@ gave up: export gave up after 3 tries: 429
 tries=3
 empty: ok
 metrics: ok
+encoded logs=91
+logs: ok
+no logs: ok
 traces application/x-protobuf key=k body=140
 traces application/x-protobuf key=k body=140
 traces application/x-protobuf key=k body=140
 traces application/x-protobuf key=k body=140
 traces application/x-protobuf key=k body=140
 metrics body=85
+logs application/x-protobuf body=91
 dead
 done
 --- stderr
