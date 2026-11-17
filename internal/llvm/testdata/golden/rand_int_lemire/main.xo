@@ -1,0 +1,65 @@
+// os.rand.int over spans below 2^32 takes Lemire's multiply from the
+// worker's buffer (decision 0696). Every draw is in range, every value of
+// a small span comes up, and the counts stay near uniform (each check is
+// over 6 standard deviations wide, so a pass is not luck).
+
+/// Draws n values of os.rand.int(lo, lo + span) and returns the count of
+/// each offset, faulting on a draw out of range.
+fn counts(r: Rand, lo: Int, span: Int, n: Int) -> List[Int] uses rand {
+  var c = List[Int].with_capacity(span)
+  for _ in 0..span {
+    c.push(0)
+  }
+  for _ in 0..n {
+    let v = r.int(lo, lo + span)
+    if v < lo || v >= lo + span {
+      fault("draw ${v} outside ${lo}..${lo + span}")
+    }
+    c[v - lo] += 1
+  }
+  c
+}
+
+fn near(c: List[Int], want: Int, tol: Int) -> Bool {
+  for x in c {
+    if x < want - tol || x > want + tol {
+      return false
+    }
+  }
+  true
+}
+
+fn main(os: Os) {
+  // span 7, 70,000 draws: 10,000 each, sd 93
+  os.stdio.println("span 7 near uniform: ${near(counts(os.rand, -3, 7, 70000), 10000, 600)}")
+  // span 1000: every value comes up (about 200 each)
+  let k = counts(os.rand, 5, 1000, 200000)
+  var zero = 0
+  for x in k {
+    if x == 0 {
+      zero += 1
+    }
+  }
+  os.stdio.println("span 1000 values missing: ${zero}, near uniform: ${near(k, 200, 100)}")
+  // span 1: always lo
+  os.stdio.println("span 1: ${counts(os.rand, 42, 1, 1000)[0]}")
+  // spans at 2^32 - 1 (the last Lemire span) and 2^32 (the remainder):
+  // the top half comes up about half the time (sd 158)
+  for span in [4294967295, 4294967296] {
+    var top = 0
+    for _ in 0..100000 {
+      let v = os.rand.int(-7, -7 + span)
+      if v < -7 || v >= -7 + span {
+        fault("draw ${v} outside the span ${span}")
+      }
+      if v >= -7 + span / 2 {
+        top += 1
+      }
+    }
+    os.stdio.println("span ${span} top half near half: ${top > 49000 && top < 51000}")
+  }
+  // a task's draws too (its worker's buffer)
+  scope s {
+    s.spawn(fn() -> () { os.stdio.println("task span 3 near uniform: ${near(counts(os.rand, 0, 3, 30000), 10000, 600)}") })
+  }
+}

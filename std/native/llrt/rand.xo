@@ -402,6 +402,33 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
     }
   }
   let span = hi.wrapping_sub(lo)
+  if span > 0 && span <= 4294967295 {
+    // a span below 2^32 from the worker's buffer (decision 0696): Lemire's
+    // multiply, the word's low 32 bits times span, the high half the result
+    // and the low half below (2^32 - span) mod span rejected, as Go's
+    // uint32n; no division per draw (bench/perf/random perm, task #87).
+    // Only buffered words, which are never the test world's (next_u64), so
+    // a seeded test's draws keep the remainder below.
+    let w = rt.tlocal_get(TLS_W)
+    if w != 0 {
+      let st = rt.mem_load(w, layout.W_RAND, 8)
+      if st > 0 {
+        while true {
+          let i = rt.mem_load(st, ST_I, 8)
+          if i >= rt.mem_load(st, ST_N, 8) {
+            break
+          }
+          rt.mem_store(st, ST_I, i + 1, 8)
+          let x = (rt.mem_load(st, ST_BUF + 8 * (i & 31), 8) & 4294967295).wrapping_mul(span)
+          let low = x & 4294967295
+          if low < span && low < (4294967296 - span) % span {
+            continue
+          }
+          return lo.wrapping_add(x.shr_logical(32))
+        }
+      }
+    }
+  }
   let m = span.wrapping_sub(1)
   let pow2 = (span & m) == 0
   let flip = Int.min

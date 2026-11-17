@@ -15,6 +15,17 @@ invalid byte; `b.lines()` splits as Str.lines does (Go's bytes.Lines
 keeps each newline); `Bytes.join(parts, sep)` is bytes.Join; and
 `b.hex_dump()` is hex.Dump's `hexdump -C` layout.
 
+## 2026-11-17: perf: os.rand.int maps a span below 2^32 without a division
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (bench/perf/random perm 1.35 of Go on the Mac after decision 0669)
+- Go reference: math/rand/v2 Rand.uint32n (Lemire's multiply), go1.26
+- Test: internal/llvm/testdata/golden/rand_int_lemire (arm64, LLVM): spans 1 to 2^32 in range and near uniform; bench/perf/random perm on the Mac (twincheck -time 7) 25.8 to 15.8 ms, 1.352 to 0.813 of Go
+- Shipped in: not yet released
+
+The native OS Rand's `int(lo, hi)` with a span below 2^32 maps a word from the worker's ChaCha8 buffer by Lemire's multiply, as Go's uint32n, instead of a remainder (decision 0696). Seeded streams (a test binary's `os.rand`, `random.seeded`) and the Go backend keep the remainder and give the same values as before.
+
 ## 2026-11-16: feature: Atomic[Int].and and or
 
 - Kind: feature

@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+span 7 near uniform: true
+span 1000 values missing: 0, near uniform: true
+span 1: 1000
+span 4294967295 top half near half: true
+span 4294967296 top half near half: true
+task span 3 near uniform: true
+--- stderr
