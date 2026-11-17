@@ -38,6 +38,7 @@ Last verified: 2026-11-17.
 | rm -r only of a checked, non-protected path | xo-guard hook | `scripts/lead/pi/rules.ts` (checkRm) | `scripts/lead/pi/rules_test.ts` | |
 | Every build, test and repro runs through heavy.sh | xo-guard hook | `scripts/lead/pi/rules.ts` (checkHeavy), `scripts/lead/heavyd/heavy.sh` | `scripts/lead/pi/rules_test.ts`, `scripts/lead/test-heavy.sh` | |
 | The Mac gate class is for runs under about 2 minutes; long runs go to a host | xw alert | `workstream:work.xo` (wrong_class), `workstream:alerts.xo` (wrong_class_quiet) | `workstream:test/work_test.sh` | wrong-class |
+| Remove, don't tune: a gate step, lane or habit costing over its limit gets a task to remove or replace it with Xo or xw (owner 2026-11-17, xw decision 58) | xw alert | `workstream:cost.xo` (measure_sinks, top_sinks), `workstream:alerts.xo` (cost_alerts) | `workstream:test/work_test.sh`, `workstream:xw_test.xo` | cost |
 | A measurement's drain never holds waiting gates past 5 minutes | heavyd | `scripts/lead/heavyd/daemon.go` (phYield) | `scripts/lead/heavyd/scenario_test.go` (TestScenario31DrainYieldsToWaitingGate) | |
 | Push only through pushq.sh, gated, squashed; holds respected | pushq | `scripts/lead/pushq.sh` | `scripts/lead/pushq_hold_test.sh` | push-refusals, push-refused-twice, push-held |
 | A failure on main is bisected to its commit and fixed forward by its owner | hourly.sh, ctier.sh | `scripts/lead/mainbisect.sh`, `scripts/lead/mainbisect-remote.sh` | `scripts/lead/mainbisect_test.sh` | main-check, tier, bisect |
