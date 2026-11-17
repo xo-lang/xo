@@ -1940,6 +1940,37 @@ fn is_nullvalue_field(fd: protodesc.FieldDesc) -> Bool {
   fd.kind == protodesc.TYPE_ENUM && trim_dot(fd.type_name) == "google.protobuf.NullValue"
 }
 
+/// An integer map key as decode.go's unmarshalMapKey reads it: strconv.ParseInt (signed) or ParseUint
+/// in base 10, so an optional sign (+ or -, signed kinds only), then one or more digits, leading
+/// zeros allowed; no exponent, fraction or space, which a quoted number value would allow. The
+/// result is the key's canonical decimal text (range checked by enc_scalar), None when Go refuses it.
+fn int_key_text(ks: Str, signed: Bool) -> Str? {
+  let b = ks.bytes()
+  let n = b.len()
+  var i = 0
+  var neg = false
+  if signed && n > 0 && (b[0] == 43 || b[0] == 45) {
+    neg = b[0] == 45
+    i = 1
+  }
+  if i >= n {
+    return None
+  }
+  for j in i..n {
+    if !is_digit(Int(b[j])) {
+      return None
+    }
+  }
+  while i < n - 1 && b[i] == 48 {
+    i += 1
+  }
+  let digits = ks[i..n]
+  if neg && digits != "0" {
+    return Some("-${digits}")
+  }
+  Some(digits)
+}
+
 fn key_sv(kfd: protodesc.FieldDesc, ks: Str) -> (Sv, Str) ! JsonErr {
   let k = kfd.kind
   if k == protodesc.TYPE_STRING {
@@ -1954,7 +1985,12 @@ fn key_sv(kfd: protodesc.FieldDesc, ks: Str) -> (Sv, Str) ! JsonErr {
     }
     return Err(bad(kfd))
   }
-  let sv = enc_scalar(Registry{msgs: {}, enums: {}}, kfd, Jv.Text(ks), Opts{})?
+  let signed = !(k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_FIXED32 || k == protodesc.TYPE_UINT64 || k == protodesc.TYPE_FIXED64)
+  let kt = match int_key_text(ks, signed) {
+    Some(t) => t
+    None => return Err(bad(kfd))
+  }
+  let sv = enc_scalar(Registry{msgs: {}, enums: {}}, kfd, Jv.Text(kt), Opts{})?
   let x = match sv {
     Some(x) => x
     None => return Err(bad(kfd))

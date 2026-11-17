@@ -2,6 +2,8 @@
 // encoding/protojson writes (internal/encoding/json/encode.go appendString),
 // runs written as they are.
 
+use std/protodesc
+
 test "jstr escapes quotes, backslashes and controls, keeps the rest" {
   expect(jstr("")) == "\"\""
   expect(jstr("plain")) == "\"plain\""
@@ -20,4 +22,34 @@ test "jstr_to appends to what the builder holds" {
   b.write(":")
   jstr_to(b, "v")
   expect(b.freeze()) == "{\"k\\t\":\"v\""
+}
+
+// An integer map key as protobuf-go's unmarshalMapKey reads it (strconv.ParseInt
+// or ParseUint, base 10). TestProtojsonFuzz seed 2 found "-20735673E0" accepted
+// as an int32 key, which Go refuses.
+
+fn key_v(kind: Int, ks: Str) -> Int? {
+  match key_sv(protodesc.FieldDesc{name: "key", number: 1, kind: kind}, ks) {
+    Ok((x, _)) => Some(x.v)
+    Err(_) => None
+  }
+}
+
+test "an integer map key takes a sign and leading zeros, never an exponent, fraction or space" {
+  let i32 = protodesc.TYPE_INT32
+  let u64 = protodesc.TYPE_UINT64
+  expect(key_v(i32, "-20735673E0")) == None
+  expect(key_v(i32, "1e2")) == None
+  expect(key_v(i32, "1.0")) == None
+  expect(key_v(i32, " 1")) == None
+  expect(key_v(i32, "")) == None
+  expect(key_v(i32, "+")) == None
+  expect(key_v(i32, "2147483648")) == None
+  expect(key_v(u64, "-1")) == None
+  expect(key_v(u64, "+1")) == None
+  expect(key_v(i32, "007")) == Some(7)
+  expect(key_v(i32, "+5")) == Some(5)
+  expect(key_v(i32, "-0")) == Some(0)
+  expect(key_v(i32, "-2147483648")) == Some(-2147483648)
+  expect(key_v(u64, "0018446744073709551615")) == Some(-1)
 }

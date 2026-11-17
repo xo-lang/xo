@@ -1,5 +1,21 @@
 # std/protojson changes
 
+## 2026-11-17: fix: an integer map key is read as Go reads it
+
+- Kind: fix
+- Commit: this push
+- Found by: `stdproven fuzz protojson` (TestProtojsonFuzz seed 2: an int32 map key "-20735673E0" was
+  accepted; Go refuses it)
+- Go reference: google.golang.org/protobuf encoding/protojson decode.go unmarshalMapKey (strconv.ParseInt
+  and ParseUint, base 10)
+- Test: std/protojson_test.xo "an integer map key takes a sign and leading zeros, never an exponent,
+  fraction or space" (failed before: the key read as -20735673)
+- Shipped in: not yet released
+
+An integer map key is an optional sign (+ or -, signed kinds only) and decimal digits, leading zeros
+allowed; one with an exponent, a fraction or a space is an error, as in Go. It was read as a quoted
+number value, which allows those, and "007" was refused.
+
 ## 2026-11-17: perf: field_to finds a field's occurrences by binary search
 
 - Kind: perf

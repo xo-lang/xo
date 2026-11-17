@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fix (std/sql, Postgres): a column name (or any backend message string) that is not valid UTF-8 keeps its valid bytes, with U+FFFD for each invalid one; it was read as an empty string.
+- Fix (std/protojson): an integer map key is read as Go's strconv.ParseInt and ParseUint read it: a sign and leading zeros are allowed, an exponent, fraction or space is an error (it was read as a quoted number).
 - Fix (std/sql, Postgres): a text value that is not valid UTF-8 keeps its valid bytes, with U+FFFD for each invalid one; it was read as an empty Text.
 - Fix (std/sql, Postgres): a backend message of an unknown type, or rows ended by ReadyForQuery with no CommandComplete, is a Conn error and breaks the connection; the message was skipped and the rows returned.
 - Fix (use c, --race): `xo test --race` no longer reports a data race in `xo_c_enter` when tasks call C (std/sqlite's race run failed on it); the adapter's C call marks are not instrumented under ThreadSanitizer.
