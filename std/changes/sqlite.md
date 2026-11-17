@@ -1,5 +1,22 @@
 # std/sqlite changes
 
+## 2026-11-17: fix: a statement's prepare waits out the busy timeout
+
+- Kind: fix
+- Commit: this push
+- Found by: task #195: the std/sql stress evidence (xw-1 #152, host 3) failed with
+  "INSERT 48000000: SQLITE_BUSY: database is locked" on a client's first statement
+- Go reference: github.com/mattn/go-sqlite3 v1.14.53, whose sqlite3_busy_timeout handler also
+  covers sqlite3_prepare_v2
+- Test: std/sqlite_test.xo "a prepare waits out the busy timeout as a step does" (failed before:
+  SQLITE_BUSY at once)
+- Shipped in: not yet released
+
+A new connection's first statement reads the schema while it is prepared, and gets SQLITE_BUSY
+while another connection holds a write lock. Only sqlite3_step was retried, so the statement failed
+at once whatever `_busy_timeout` said. The prepare is now retried as a step is: parked between tries
+(1 ms growing to 16 ms) until the busy timeout has passed.
+
 ## 2026-11-16: feature: mattn's other DSN keys, named extended result codes, and the audit
 
 - Kind: feature, fix

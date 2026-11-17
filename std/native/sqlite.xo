@@ -421,10 +421,27 @@ fn (c: SqliteConn) fail() -> sql.SqlErr {
 }
 
 /// The statement at the start of q[at..]; None when only space or
-/// comments are left. at moves past it.
+/// comments are left. at moves past it. A prepare reads the schema and
+/// can get SQLITE_BUSY (a new connection while another holds a write
+/// lock in rollback journal mode): it is retried as step retries, until
+/// the busy timeout has passed (mattn/go-sqlite3's busy handler covers
+/// sqlite3_prepare_v2 too).
 fn (c: SqliteConn) prepare_at(q: Str, var at: Int) -> c3.Sqlite3Stmt? ! sql.SqlErr uses fs {
   let rest = q[at..q.len()]
-  let st = c3.xo_sq_prepare(c.db, rest, UInt32(0))
+  var st = c3.xo_sq_prepare(c.db, rest, UInt32(0))
+  if st.is_none() && c.busy_ms > 0 && is_busy(c3.sqlite3_errcode(c.db)) {
+    let deadline = poll.now() + c.busy_ms * 1000000
+    var nap = 1
+    while st.is_none() && is_busy(c3.sqlite3_errcode(c.db)) && poll.now() < deadline {
+      if poll.sleep_until(poll.now() + nap * 1000000) == poll.CANCELED {
+        break
+      }
+      if nap < 16 {
+        nap *= 2
+      }
+      st = c3.xo_sq_prepare(c.db, rest, UInt32(0))
+    }
+  }
   let used = c3.xo_sq_prepared_len(c.db)
   match st {
     Some(s) => {

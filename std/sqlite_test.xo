@@ -175,3 +175,33 @@ test "many tasks write one WAL database at once" uses (fs, env, net) {
   db.close().or_fault("close")
   os.fs.remove_all(dir).or_fault("remove")
 }
+
+// Task #195: a new connection's first statement reads the schema in
+// sqlite3_prepare_v2, which gets SQLITE_BUSY while another connection
+// holds an exclusive lock; mattn/go-sqlite3's busy handler waits there
+// too. Before the fix only step retried, and the INSERT failed at once
+// with "database is locked".
+test "a prepare waits out the busy timeout as a step does" uses (fs, env, net, clock) {
+  let dir = tmp_dir(os.env, os.fs)
+  let a = sql.open_driver(os.net, driver(os.fs.sub(dir)), "file:b.db?_txlock=exclusive&_busy_timeout=10000", max_open: 1).or_fault("open a")
+  a.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)").or_fault("create")
+  // max_idle 0: open's ping connection closes, so the INSERT runs on a
+  // new connection whose schema is not loaded yet.
+  let b = sql.open_driver(os.net, driver(os.fs.sub(dir)), "file:b.db?_busy_timeout=10000", max_open: 1, max_idle: 0).or_fault("open b")
+  let tx = a.begin().or_fault("begin")
+  tx.exec("INSERT INTO t (id) VALUES (1)").or_fault("insert in tx")
+  let got = scope sc {
+    let h = sc.spawn(fn() -> Int ! Str {
+      b.exec("INSERT INTO t (id) VALUES (2)").map_err(fn(e) { e.debug() })?
+      Ok(1)
+    })
+    os.clock.sleep(100ms)
+    tx.commit().or_fault("commit")
+    err_text(h.await.map_err(fn(e) { sql.SqlErr.Driver(msg: e) }))
+  }
+  expect(got) == "ok"
+  expect(vals(b.query("SELECT id FROM t ORDER BY id").or_fault("select"))) == [[sql.SqlValue.Integer(n: 1)], [sql.SqlValue.Integer(n: 2)]]
+  b.close().or_fault("close b")
+  a.close().or_fault("close a")
+  os.fs.remove_all(dir).or_fault("remove")
+}
