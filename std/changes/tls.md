@@ -1,5 +1,24 @@
 # std/tls changes
 
+## 2026-11-16: fix: a server picks its suite by Go's AES-GCM preference and reads status_request, SCT, EMS and point formats as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (TestTlsFuzz, a differential of the native server against Go's crypto/tls server on seeded and mangled ClientHellos, task #90)
+- Go reference: crypto/tls cipher_suites.go isAESGCMPreferred and aesgcmCiphers; handshake_messages.go clientHelloMsg.unmarshal
+- Test: std/native/llrt tls13srv_test.xo (aes_preferred; a ClientHello's status_request, SCT, EMS and point formats), tls12srv_test.xo (RSA-key-exchange GCM)
+- Shipped in: not yet released
+
+A TLS 1.3 server picked AES-128-GCM where Go picks ChaCha20-Poly1305 when the client's first suite Go knows was a TLS
+1.2 one that is not AES-GCM (ECDHE-RSA AES-128-CBC-SHA256, say): it looked only at TLS 1.3 suites. A TLS 1.2 server
+counted the RSA-key-exchange AES-GCM suites (0x009c, 0x009d) as AES-GCM preferred; Go's aesgcmCiphers has only the
+ECDHE ones. Both servers now share Go's rule. A TLS 1.3 server also took a ClientHello whose status_request did not
+hold a type and two vectors, whose SCT or extended master secret request was not empty, or whose point formats were
+not a non-empty vector, and went on to a protocol_version alert where Go answers decode_error.
+
+One difference stays: a legacy_session_id over 32 bytes is decode_error (RFC 8446 4.1.2), where Go reads any length
+and echoes it. TestTlsFuzz accepts that answer and counts it.
+
 ## 2026-11-16: feature: tls.Dialer
 
 - Kind: feature

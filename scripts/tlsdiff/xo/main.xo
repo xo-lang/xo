@@ -1,0 +1,34 @@
+// The Xo side of the TLS server differential test (internal/stdtest
+// TestTlsFuzz): a std/tls server on loopback with the certificate and key
+// named on the command line and ALPN h2 and http/1.1, as the test's Go
+// crypto/tls server. It prints "addr IP:PORT", then handshakes each
+// connection the test makes (one ClientHello, then the test's end of
+// stream) and closes it; the test compares what each server wrote back.
+// It exits at the end of standard input.
+//
+//   main CERT.pem KEY.pem
+use std/tls
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  if args.len() < 2 {
+    return Err("usage: tlsdiff CERT.pem KEY.pem")
+  }
+  let cert = tls.load_cert(os.fs, args[0], args[1])?
+  let config = tls.ServerConfig{certificates: [cert], next_protos: ["h2", "http/1.1"]}
+  let ln = tls.listen(os.net, "127.0.0.1:0", config)?
+  os.stdio.println("addr ${ln.addr()}")
+  scope s {
+    s.spawn_background(fn() {
+      while let Ok(c) = ln.accept() {
+        s.spawn_background(fn() {
+          let _ = c.handshake().ignore_err("the test reads the outcome off the wire")
+          c.close()
+        })
+      }
+    })
+    for _ in os.stdio.lines()? {
+    }
+  }
+  ln.close()
+}

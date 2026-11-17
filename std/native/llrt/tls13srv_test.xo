@@ -180,3 +180,49 @@ test "ECH: the first flight names only the public name" {
   var plain = tls13.client(tls13.conf("x.test", [x509.parse(der).cert], 1800000000))
   expect(has_sub(tls13.take(plain), "x.test".bytes())) == true
 }
+
+test "the client's first suite Go knows, TLS 1.2 or 1.3, decides AES-GCM preference (Go's isAESGCMPreferred)" {
+  // c027 (ECDHE-RSA AES-128-CBC-SHA256) is known and not AES-GCM: ChaCha first
+  expect(aes_preferred([0xc027, 0x1301, 0x1302, 0x1303])) == false
+  expect(aes_preferred([0xc007, 0x1301])) == false
+  // RSA-key-exchange GCM is known to Go but not in its aesgcmCiphers
+  expect(aes_preferred([0x009c, 0x1301])) == false
+  expect(aes_preferred([0xc02f, 0x1303])) == true
+  expect(aes_preferred([0x0a0a, 0x1302, 0x1303])) == true
+  expect(aes_preferred([0x0a0a, 0x1303, 0x1301])) == false
+  expect(aes_preferred([0x0a0a])) == false
+}
+
+/// A ClientHello message (type and length first) offering TLS 1.3's
+/// first suite, with these extensions' bytes.
+fn hello_with(exts: Bytes) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write(b"\x03\x03")
+  for _ in 0..32 {
+    b.write_byte(7)
+  }
+  b.write(b"\x00\x00\x02\x13\x01\x01\x00")
+  b.write(tls13.vec16(exts))
+  let body = b.freeze()
+  var m = BytesBuilder.new()
+  m.write(b"\x01\x00")
+  m.write(tls13.u16(body.len()))
+  m.write(body)
+  m.freeze()
+}
+
+test "a ClientHello's status_request, SCT, EMS and point formats are read as Go reads them" {
+  // status_request: a type and two vectors, nothing after
+  expect(parse_hello(hello_with(b"\x00\x05\x00\x05\x01\x00\x00\x00\x00")).ok) == true
+  expect(parse_hello(hello_with(b"\x00\x05\x00\x05\x01\x01\x00\x00\x00")).ok) == false
+  expect(parse_hello(hello_with(b"\x00\x05\x00\x01\x01")).ok) == false
+  expect(parse_hello(hello_with(b"\x00\x05\x00\x06\x01\x00\x00\x00\x00\x00")).ok) == false
+  // SCT and extended master secret are empty
+  expect(parse_hello(hello_with(b"\x00\x12\x00\x00")).ok) == true
+  expect(parse_hello(hello_with(b"\x00\x12\x00\x01\x00")).ok) == false
+  expect(parse_hello(hello_with(b"\x00\x17\x00\x01\x00")).ok) == false
+  // point formats: a non-empty vector
+  expect(parse_hello(hello_with(b"\x00\x0b\x00\x02\x01\x00")).ok) == true
+  expect(parse_hello(hello_with(b"\x00\x0b\x00\x01\x00")).ok) == false
+  expect(parse_hello(hello_with(b"\x00\x0b\x00\x02\x02\x00")).ok) == false
+}

@@ -1,0 +1,9 @@
+// Tests of tls12srv.xo: `xo test --std-module=native/llrt/tls12srv`,
+// run by internal/stdtest.
+
+test "RSA-key-exchange AES-GCM suites are known to Go but not AES-GCM preferred (Go's aesgcmCiphers)" {
+  expect(aes_preferred([0x009c, 0xc02b])) == false
+  expect(aes_preferred([0x009d, 0x1301])) == false
+  expect(aes_preferred([0xc030, 0x009c])) == true
+  expect(aes_preferred([0xc027, 0xc02b])) == false
+}
