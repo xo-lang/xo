@@ -731,7 +731,9 @@ llvm_goldens() {
   local gi escope gdirs ntot pw2 bpart hpart
   gi="$logs/golden-inputs"
   escope=""
+  local t_gi=$(date +%s)
   if [ "${XO_GATE_IR_SCOPE:-1}" != 0 ] && [ "${XO_GATE_IR_INPUTS:-1}" != 0 ] && golden_inputs "$gi"; then
+    printf 'llvm\t(sel-inputs)\t%s\tselect\n' "$(($(date +%s) - t_gi))" >>"$logs/times.tsv"
     escope=$(echo "$files" | python3 scripts/golden-std-deps.py "$PWD" "inputs:$gi" 2>>"$logs/llvm-ir-head.txt") || escope=""
   fi
   gdirs=$(echo "$files" | sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | grep .)
@@ -747,11 +749,35 @@ llvm_goldens() {
     echo "llvm IR: scoped by xo build --list-inputs to $(echo "$escope" | tr ',' '\n' | grep -c .) goldens; base and HEAD IR built for them alone" >&2
     pw2=$(mktemp -d "$gt/xo-gate-ir.XXXXXX")
     bpart=$pw2/base.txt hpart=$pw2/head.txt
-    if git worktree add -q --detach "$pw2/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
+    # the base's manifest, when the cache or irman's shared copy has it
+    # (main's, made once a commit), filtered to the scope: no base tree,
+    # xo build or base IR build (#275: the selection took 10 to 27 minutes
+    # of agents' llvm gates, the base's xo and IR built each time)
+    local t_b=$(date +%s) bfull c
+    ir_manifest_for "$(git rev-parse "$base")"; bfull=$irm
+    # else an ancestor's within XO_LLVM_IR_BACK commits whose commits up to
+    # the base change no IR input, the same rule as the full path below
+    # (irman shares main's manifests for some commits, not each one)
+    if [ ! -s "$bfull" ]; then
+      for c in $(git rev-list --max-count="${XO_LLVM_IR_BACK:-30}" "$base"); do
+        ir_manifest_for "$c"
+        if [ -s "$irm" ]; then
+          ir_inputs_changed "$c" "$base" || bfull=$irm
+          break
+        fi
+      done
+    fi
+    if [ -s "$bfull" ]; then
+      awk -v s=",$escope," 'index(s, "," $1 ",")' "$bfull" >"$bpart"
+      echo "llvm IR: the base manifest from $bfull ($(wc -l <"$bpart" | tr -d ' ') of the scope's goldens); no base build" >&2
+    fi
+    if { [ -s "$bpart" ] || { git worktree add -q --detach "$pw2/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
       cp internal/llvm/golden_select_test.go "$pw2/tree/internal/llvm/" &&
       (cd "$pw2/tree" && go run ./scripts/xobuild) >>"$logs/llvm-ir-base.txt" 2>&1 &&
-      (cd "$pw2/tree" && XO_CLI=$pw2/tree/bin/xo XO_LLVM_IR_ONLY=$escope XO_LLVM_IR_MANIFEST="$bpart" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1 &&
+      (cd "$pw2/tree" && XO_CLI=$pw2/tree/bin/xo XO_LLVM_IR_ONLY=$escope XO_LLVM_IR_MANIFEST="$bpart" go test -count=1 -timeout 60m -parallel "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; }; } &&
+      printf 'llvm\t(sel-base)\t%s\tselect\n' "$(($(date +%s) - t_b))" >>"$logs/times.tsv" && t_b=$(date +%s) &&
       XO_LLVM_IR_ONLY=$escope ir_head_manifest "$hpart" "${XO_GATE_IR_PARALLEL:-$(ir_jobs)}" && [ -s "$bpart" ] && [ -s "$hpart" ]; then
+      printf 'llvm\t(sel-head)\t%s\tselect\n' "$(($(date +%s) - t_b))" >>"$logs/times.tsv"
       names=$( { comm -3 <(sort "$bpart") <(sort "$hpart") | awk '{print $1}'; echo "$gdirs"; } | sort -u | grep . )
       git worktree remove --force "$pw2/tree" >/dev/null 2>&1; rm -rf "${pw2:?}"
       if [ -z "$names" ]; then
