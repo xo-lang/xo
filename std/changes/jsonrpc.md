@@ -1,5 +1,22 @@
 # std/jsonrpc changes
 
+## 2026-11-17: fix: a cancelled call no longer cuts its request short, which deadlocked the connection
+
+- Kind: fix
+- Commit: this commit
+- Found by: xw-1 (stress evidence on linux/arm64 host 2, task #152; fixed under task #196)
+- Go reference: github.com/modelcontextprotocol/go-sdk v1.8.0 jsonrpc2 (a write checks its context only before it starts, so a message is never cut short)
+- Test: internal/stdtest/testdata/corpus/jsonrpc "Conn: a call cancelled while its request is half written still writes all of it" (fails before: the rest of the request never reached the peer); std/evidence/jsonrpc/stress fails 6 of 6 runs before (`frame: jsonrpc: no Content-Length header`, then XO-F001) and passes 6 of 6 after on arm64 and LLVM
+- Shipped in: not yet released
+
+A call whose task was cancelled while its write function was partway through a message (a transport writing a frame
+in pieces, each a cancellation point) unwound there, leaving half a frame on the transport: the peer's reader could
+not read another message, its read loop ended, and every call on both sides waited forever. While `serve` runs, a
+writer task in its group now writes every message, in order; a sender, cancelled or not, waits for its message's
+result, and a cancelled one stops waiting while the message still goes out whole. Before `serve`, the sender writes
+as before. Each message sent while serving now hands off to that task (bench/perf/jsonrpc times encode and decode
+only, so it does not measure Conn).
+
 ## 2026-11-16: fix: decode refuses an error code that is not an integer, and reads a null error message as ""
 
 - Kind: fix

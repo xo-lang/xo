@@ -697,6 +697,51 @@ test "Conn: a call whose task is cancelled tells the peer and is dropped" {
   expect(got) == ["{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"slow\"}", "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1}}", "0"]
 }
 
+test "Conn: a call cancelled while its request is half written still writes all of it" {
+  let out = Chan[Str].new()
+  let ba = Chan[Str].new(cap: 16)
+  let seen = Chan[()].new(cap: 1)
+  let resume = Chan[()].new(cap: 1)
+  let got = scope s {
+    // the transport writes a message in two pieces, as a stream may
+    let a = jsonrpc.conn(fn(t: Str) -> () ! IoErr uses sync {
+      out.send(t)
+      out.send("\n")
+      Ok(())
+    })
+    a.serve(s.group(), fn() -> Str? ! IoErr uses sync { Ok(ba.recv()) }, handle)
+    let col = s.spawn(fn() -> List[Str] ! Str {
+      var ps: List[Str] = []
+      while let Some(p) = out.recv() {
+        ps.push(p)
+        if ps.len() == 1 {
+          seen.send(())
+          // the second piece waits until the call was cancelled
+          let _r = resume.recv()
+        }
+      }
+      Ok(ps)
+    })
+    scope inner {
+      let _t = inner.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("slow") })
+      let _x = seen.recv()
+      // the call is cancelled after the first piece, before the second
+      inner.cancel()
+    }
+    resume.send(())
+    let n = a.notify("notify_after")
+    out.close()
+    ba.close()
+    var pieces = match col.await {
+      Ok(ps) => ps
+      Err(e) => [e]
+    }
+    pieces.push("${n.is_ok()}")
+    pieces
+  }
+  expect(got) == ["{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"slow\"}", "\n", "{\"jsonrpc\":\"2.0\",\"method\":\"notify_after\"}", "\n", "true"]
+}
+
 test "Methods: dispatch on the method, unknown calls Method not found, unknown notifications ignored" {
   let h = jsonrpc.methods().on("echo", fn(p: json.Value?) -> json.Value ! jsonrpc.RpcError { Ok(p ?? json.Value.Null) }).handler()
   expect(jsonrpc.answer("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"echo\",\"params\":[1]}", h)) == Some("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[1]}")

@@ -525,6 +525,14 @@ pub struct Conn[fx: Effects] {
   st: Mutex[ConnState]
   /// serializes writes, so messages never interleave
   wl: Mutex[Int]
+  /// wakes the writer task when a message is queued
+  wake: Chan[()]
+}
+
+/// A message waiting for the writer task, and where its result goes.
+struct Out {
+  text: Str
+  done: Chan[Result[(), IoErr]]
 }
 
 struct ConnState {
@@ -533,12 +541,15 @@ struct ConnState {
   /// the peer's calls being handled, by id: closing one cancels it
   running: Map[Str, Chan[()]] = {}
   closed: Bool = false
+  /// serve's writer task runs: messages queue for it
+  writer: Bool = false
+  queue: List[Out] = []
 }
 
 /// A connection writing each message's text (already encoded, one
 /// message a call) with write; frame it there (line_frame, header_frame).
 pub fn conn[fx: Effects](write: fn(Str) -> () ! IoErr uses fx, cancel: Cancel? = None) -> Conn[fx] {
-  Conn{write: write, cancel: cancel, st: Mutex[ConnState].new(ConnState{}), wl: Mutex[Int].new(0)}
+  Conn{write: write, cancel: cancel, st: Mutex[ConnState].new(ConnState{}), wl: Mutex[Int].new(0), wake: Chan[()].new(cap: 1)}
 }
 
 fn key(id: Id) -> Str {
@@ -557,8 +568,70 @@ fn id_of(v: json.Value?) -> Id? {
   }
 }
 
+// While serve runs, a message is written by its writer task, so a
+// sender cancelled partway through cannot cut a message short: the
+// sender stops waiting, the writer finishes the message (a torn frame
+// left the peer's reader unable to read another, and every later call
+// waited forever, task #196). Before serve, the sender writes it.
 fn (c: Conn[fx]) send(text: Str) -> () ! IoErr uses fx {
+  let done = Chan[Result[(), IoErr]].new(cap: 1)
+  let queued = c.st.with(fn(var s: ConnState) -> Bool {
+    if !s.writer {
+      return false
+    }
+    s.queue.push(Out{text: text, done: done})
+    true
+  })
+  if !queued {
+    return c.write_now(text)
+  }
+  let _w = c.wake.try_send(())
+  done.recv() ?? Err(IoErr.Closed)
+}
+
+fn (c: Conn[fx]) write_now(text: Str) -> () ! IoErr uses fx {
   c.wl.with(fn(var _n: Int) -> () ! IoErr uses (fx, sync) { (c.write)(text) })
+}
+
+// The writer task: writes the queued messages in order, each left in the
+// queue until its result is sent, so when the task ends (its group's
+// scope ends) every message not written yet, the one being written
+// included, is answered Closed. try_send: a done holds one result and a
+// message answered twice keeps the first.
+fn (c: Conn[fx]) write_loop() uses fx {
+  defer {
+    let left = c.st.with(fn(var s: ConnState) -> List[Out] {
+      s.writer = false
+      let q = s.queue
+      s.queue = []
+      q
+    })
+    for o in left {
+      let _d = o.done.try_send(Err(IoErr.Closed))
+    }
+  }
+  while true {
+    let next = c.st.with(fn(var s: ConnState) -> Out? {
+      if s.queue.len() == 0 {
+        return None
+      }
+      Some(s.queue[0])
+    })
+    match next {
+      None => {
+        if c.wake.recv().is_none() {
+          return
+        }
+      }
+      Some(o) => {
+        let r = c.write_now(o.text)
+        let _d = o.done.try_send(r)
+        c.st.with(fn(var s: ConnState) {
+          let _o = s.queue.remove_at(0)
+        })
+      }
+    }
+  }
 }
 
 /// Calls method on the peer and waits for its answer: the result, or the
@@ -643,6 +716,16 @@ pub fn (c: Conn[fx]) close() {
 /// and is not passed to handle. At the end of read, or when it fails, the
 /// connection closes.
 pub fn (c: Conn[fx]) serve(g: task.Group, read: fn() -> Str? ! IoErr uses fx, handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx {
+  let start = c.st.with(fn(var s: ConnState) -> Bool {
+    if s.writer {
+      return false
+    }
+    s.writer = true
+    true
+  })
+  if start {
+    g.spawn_background(fn() uses (fx, sync) { c.write_loop() })
+  }
   g.spawn_background(fn() uses (fx, sync) { c.read_loop(g, read, handle) })
 }
 

@@ -185,6 +185,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-instantiation-cycle.md](go-instantiation-cycle.md): a generic method returning its type with other arguments is a Go instantiation cycle.
 - [go-enotempty-is-errexist.md](go-enotempty-is-errexist.md): `errors.Is(ENOTEMPTY, fs.ErrExist)` is true; test errnos first.
 - [virtual-clock-wake-before-block.md](virtual-clock-wake-before-block.md): the test clock must count a woken task as running before it runs.
+- [cancelled-writer-tears-frame.md](cancelled-writer-tears-frame.md): Observed 2026-11-17: a task cancelled between the pieces of one framed write left half a frame (jsonrpc stress: no Content-Length header, then XO-F001); a writer task owns the stream
 - [canceled-sleep-unwinds.md](canceled-sleep-unwinds.md): `clock.sleep` unwinds a canceled task, so polling `is_canceled` around it never sees cancellation.
 - [spawn-background-never-result.md](spawn-background-never-result.md): `spawn_background` with an infinite loop closure failed inference (XO0402); fixed 2026-10-09, the closure's result is `Never`.
 - [go-constant-float-division.md](go-constant-float-division.md): `0.0 / 0.0` is a Go compile time error; float division goes through rt.

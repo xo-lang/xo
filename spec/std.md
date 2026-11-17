@@ -11496,7 +11496,9 @@ Content-Length one reads header lines up to an empty line (names without case, o
 many bytes. `Conn` is both sides at once: `call` writes a request with the next id (1, 2, ...) and waits for its
 answer; `serve` starts the read loop in the group, in the background, which hands each answer to the call waiting
 for its id, runs each incoming request in a task of its own and writes back a call's answer, answers a batch as
-`answer` does and invalid text with its error; writes never interleave. When `read` ends or fails, or `close` is
+`answer` does and invalid text with its error; writes never interleave. While `serve` runs, every message is written
+by a writer task of its own in the group, in order, so a message is written whole even when the task sending it is
+cancelled (the sender stops waiting; the message goes out); before `serve`, the sender writes it. When `read` ends or fails, or `close` is
 called, waiting and later calls return `Closed`. With a `Cancel`, a call whose task is cancelled while it waits is dropped and the
 peer is sent the cancel notification naming its id, and the peer's cancel notification cancels the task handling the
 call it names (answered with `Cancel.reply`, if any; it is not passed to the handler). `Methods` dispatches on the
