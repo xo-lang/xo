@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/httpproxy): a NO_PROXY CIDR block whose mask has leading zeros (`10.0.0.0/08`) now matches, as in Go.
 - Feature (derive Proto, std/protoparse, xo proto gen): the field option `group` (`item proto "2,group": Item`) writes a message field as a proto2 group, an editions `DELIMITED` message: START_GROUP and END_GROUP tags, no length, byte identical to protobuf-go; it applies to a message field alone, in an Option or in a List (`XO0422` on a oneof or a map). `xo proto gen` now generates proto2 groups and DELIMITED message fields (field or file level) instead of refusing them; a group in a oneof is still an error. `protobuf.read_group` is protowire's ConsumeGroup.
 - Fix (std/jsonrpc): a call cancelled while its request was half written left a torn frame on the transport, after which the peer's reader stopped and every call on the connection waited forever (an XO-F001 deadlock under stress); while `serve` runs, a writer task now writes every message whole (task #196).
 - Fix (std/sqlite): a statement's prepare waits out `_busy_timeout` on SQLITE_BUSY as its step does; a new connection's first statement failed at once with "database is locked" while another held a write lock (task #195).

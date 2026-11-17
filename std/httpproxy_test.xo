@@ -124,3 +124,11 @@ test "a request's port and the scheme's default port pick NO_PROXY port entries"
   expect(shown(r.proxy_for(url("http://10.0.0.1:8080/")))) == "<nil>"
   expect(shown(r.proxy_for(url("http://10.0.0.1/")))) == "http://proxy"
 }
+
+test "a NO_PROXY CIDR mask may have leading zeros, as net.ParseCIDR reads it" {
+  let r = rules_of(Config{http_proxy: "proxy", no_proxy: "0.0.0.0/00, 10.0.0.0/008"})
+  expect(r.use_proxy("10.1.2.3:443")) == false
+  expect(r.use_proxy("8.8.8.8:80")) == false
+  expect(rules_of(Config{no_proxy: "10.0.0.0/008"}).use_proxy("11.0.0.1:80")) == true
+  expect(rules_of(Config{no_proxy: "10.0.0.0/0033"}).use_proxy("10.0.0.1:80")) == true
+}

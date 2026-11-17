@@ -1,5 +1,27 @@
 # std/httpproxy changes
 
+## 2026-11-17: fix: a NO_PROXY CIDR mask may have leading zeros
+
+- Kind: fix
+- Commit: this push
+- Found by: task #115, TestHttpproxyFuzz seed 4 (NO_PROXY "0.0.0.0/00" bypassed the proxy in Go, not in Xo)
+- Go reference: x/net/http/httpproxy config.init, whose net.ParseCIDR reads the mask with dtoi (leading zeros allowed)
+- Test: std/httpproxy_test.xo "a NO_PROXY CIDR mask may have leading zeros, as net.ParseCIDR reads it" (fails before)
+- Shipped in: not yet released
+
+NO_PROXY entries such as "10.0.0.0/08" were not read as CIDR blocks, since netip.parse_prefix refuses a mask with leading zeros; they now match as in Go.
+
+## 2026-11-17: test: a differential fuzz against x/net/http/httpproxy
+
+- Kind: test
+- Commit: this push
+- Found by: task #115 (fuzz evidence for Proven)
+- Go reference: golang.org/x/net v0.62.0 http/httpproxy Config.ProxyFunc
+- Test: TestHttpproxyFuzz (internal/stdtest/httpproxyfuzz_test.go, oracle scripts/stdcorpus/httpproxyoracle, Xo side scripts/httpproxydiff/xo): seeds 2 to 5, 20,000 generated settings and request URLs each (15,265 to 15,361 compared after the documented departures), equal on arm64 and llvm
+- Shipped in: not yet released
+
+Generated HTTP_PROXY, HTTPS_PROXY, NO_PROXY and CGI settings with mutated names, ports, IPv6 literals, CIDR blocks and IDNA hosts; the cases Go answers by its documented departures (an error, a scheme other than http and https, the http:// retry) are skipped. It found the leading zero mask above.
+
 ## 2026-11-16: perf: a request sent direct no longer copies the proxy URL
 
 - Kind: perf

@@ -69,6 +69,7 @@ var harnesses = map[string][]harness{
 	"compress":     {{"TestCompressFuzz", "XO_COMPRESSFUZZ"}, {"TestLzwFuzz", "XO_LZWFUZZ"}},
 	"crypto":       {{"TestRsaFuzz", "XO_RSAFUZZ"}},
 	"hpke":         {{"TestHpkeFuzz", "XO_HPKEFUZZ"}},
+	"httpproxy":    {{"TestHttpproxyFuzz", "XO_HTTPPROXYFUZZ"}},
 	"mail":         {{"TestMailFuzz", "XO_MAILFUZZ"}},
 	"mime":         {{"TestMimeFuzz", "XO_MIMEFUZZ"}},
 	"protojson":    {{"TestProtojsonFuzz", "XO_PROTOJSONFUZZ"}},

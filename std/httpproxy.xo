@@ -13,7 +13,10 @@
 // cannot speak, so such a value is ignored as Go ignores one that does not
 // parse); under CGI (REQUEST_METHOD set) an http request's HTTP_PROXY is
 // ignored, the request connecting directly, where Go's ProxyFunc returns
-// an error (both refuse the httpoxy value, golang.org/s/cgihttpproxy).
+// an error (both refuse the httpoxy value, golang.org/s/cgihttpproxy); a
+// setting with "://" that does not parse as a URL with a scheme and host
+// ("://x", "http://pro xy") is ignored, where Go retries it as "http://"
+// plus the setting and gets a proxy with no host or the wrong one.
 
 use std/http
 use std/idna
@@ -103,6 +106,19 @@ pub struct Rules {
   pub domains: List[Matcher]
 }
 
+/// Go's net.ParseCIDR reads the mask with dtoi, which takes leading zeros
+/// ("10.0.0.0/08"); netip.parse_prefix does not, so they are dropped first.
+fn cidr_bits(p: Str) -> Str {
+  let i = p.rfind("/") ?? return p
+  let bits = p[i + 1..]
+  if bits.len() < 2 || !bits.starts_with("0") || bits.find_where(fn(c) { c < '0' || c > '9' }) != None {
+    return p
+  }
+  // all digits: drop the zeros before the first other digit, keeping one
+  let j = bits.find_where(fn(c) { c != '0' }) ?? bits.len() - 1
+  p[..i + 1] + bits[j..]
+}
+
 /// Go's config.init.
 pub fn rules_of(c: Config) -> Rules {
   var r = Rules{cfg: c, http: parse_proxy(c.http_proxy), https: parse_proxy(c.https_proxy), ips: [], domains: []}
@@ -117,7 +133,7 @@ pub fn rules_of(c: Config) -> Rules {
       return r
     }
     if p.contains("/") {
-      if let Ok(pre) = netip.parse_prefix(p) {
+      if let Ok(pre) = netip.parse_prefix(cidr_bits(p)) {
         r.ips.push(Matcher.Cidr(p: pre.masked()))
         continue
       }

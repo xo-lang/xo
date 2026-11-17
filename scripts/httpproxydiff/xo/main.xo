@@ -1,0 +1,50 @@
+// The Xo side of TestHttpproxyFuzz (internal/stdtest/httpproxyfuzz_test.go,
+// task #115): each stdin line is a case of scripts/stdcorpus/httpproxyoracle
+// ("c " and tab separated hex fields: HTTP_PROXY, HTTPS_PROXY, NO_PROXY,
+// CGI, the request URL); prints "== i" and std/httpproxy's answer in the
+// oracle's form.
+use std/http
+use std/httpproxy
+
+fn unhex(s: Str) -> Str { (Bytes.from_hex(s) ?? b"").to_str() ?? "" }
+
+fn hx(s: Str) -> Str { s.bytes().to_hex() }
+
+fn answer(f: List[Str]) -> Str {
+  let c = httpproxy.Config{http_proxy: unhex(f[0]), https_proxy: unhex(f[1]), no_proxy: unhex(f[2]), cgi: f[3] == "1"}
+  let u = match http.parse_url(unhex(f[4])) {
+    Ok(u) => u
+    Err(_) => return "badurl"
+  }
+  match c.proxy_func()(u) {
+    None => "nil"
+    Some(p) => {
+      var host = p.host
+      if host.starts_with("[") && host.ends_with("]") {
+        host = host[1..host.len() - 1]
+      }
+      let port = match p.port {
+        Some(n) => "${n}"
+        None => ""
+      }
+      let pw = match p.password {
+        Some(s) => "1" + hx(s)
+        None => "0"
+      }
+      "p ${hx(p.scheme)}|${hx(host.to_lower())}|${port}|${hx(p.user)}|${pw}"
+    }
+  }
+}
+
+fn main(os: Os) ! {
+  var i = 0
+  for line in os.stdio.lines()? {
+    if !line.starts_with("c ") {
+      os.stdio.eprintln("line ${i}: not a case")
+      continue
+    }
+    os.stdio.println("== ${i}")
+    i += 1
+    os.stdio.println(answer(line.trim_prefix("c ").split("\t")))
+  }
+}
