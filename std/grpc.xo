@@ -1162,11 +1162,16 @@ fn min_timeout(a: Duration?, b: Duration?) -> Duration? {
 
 /// A client of `base`: an `http://host:port` URL (plain HTTP/2 with prior knowledge), an `https://host:port` one, or a
 /// grpc-go target name (grpc.NewClient's): `dns:///host:port` (an authority, `dns://server/host:port`, is the DNS
-/// server grpc-go asks; std/http's resolver is used), `passthrough:///host:port`, or `host:port` with no scheme,
-/// which grpc-go reads as `dns:///host:port`. A target name is called over plain HTTP/2; TLS takes an https URL.
+/// server grpc-go asks; std/http's resolver is used), `passthrough:///host:port`, `unix:///abs/path` or `unix:path`
+/// (a Unix domain socket, the authority localhost), or `host:port` with no scheme, which grpc-go reads as
+/// `dns:///host:port`. A target name is called over plain HTTP/2; TLS takes an https URL.
 pub fn client(c: http.Client, base: Str) -> Client {
   let url = target_url(base)
-  let h = if url.starts_with("http://") { c.with_protocols(#{http.Protocol.UnencryptedHttp2}) } else { c }
+  var h = if url.starts_with("http://") { c.with_protocols(#{http.Protocol.UnencryptedHttp2}) } else { c }
+  if let Some(path) = unix_path(base) {
+    // grpc-go's unix resolver: the socket is dialed and the authority is localhost
+    h = h.with_dial_addr("unix:${path}")
+  }
   Client{http: h, base: url, gzip: false, target: base}
 }
 
@@ -1180,6 +1185,22 @@ pub fn (c: Client) target() -> Str {
 pub fn (c: Client) canonical_target() -> Str {
   let t = c.target()
   if has_scheme(t) { t } else { "dns:///${t}" }
+}
+
+/// The socket path of a `unix:` target (grpc-go's unix resolver): `unix:///abs/path` or `unix:path`; None for
+/// another target or `unix://authority/...`, which grpc-go refuses.
+fn unix_path(t: Str) -> Str? {
+  if !t.starts_with("unix:") {
+    return None
+  }
+  let rest = t[5..]
+  if rest.starts_with("///") {
+    return Some(rest[2..])
+  }
+  if rest.starts_with("//") || rest.is_empty() {
+    return None
+  }
+  Some(rest)
 }
 
 /// Whether t starts with a target or URL scheme (`dns:`, `passthrough:`, `unix:`, `http:`, ...): letters, digits,
@@ -1217,6 +1238,9 @@ fn has_scheme(t: Str) -> Bool {
 fn target_url(t: Str) -> Str {
   if t.starts_with("http://") || t.starts_with("https://") {
     return t
+  }
+  if unix_path(t) is Some(_) {
+    return "http://localhost"
   }
   for scheme in ["dns:", "passthrough:"] {
     if t.starts_with(scheme) {

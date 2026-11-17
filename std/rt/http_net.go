@@ -767,6 +767,23 @@ func clientTransport(c Http_Client) any {
 		t.HTTP2 = h2ConfigOf(c.h2.V)
 	}
 	t.MaxIdleConnsPerHost = int(c.maxIdle)
+	if c.dialAddr != "" {
+		network, addr := "tcp", c.dialAddr
+		if p, ok := strings.CutPrefix(c.dialAddr, "unix:"); ok {
+			network, addr = "unix", p
+		}
+		var d net.Dialer
+		o, only := c.net.(*onlyNet)
+		t.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			// an attenuated Net must admit the address, as the native client checks
+			if only && !o.admitsAddr(c.dialAddr) {
+				return nil, proxyErr("denied by Net.only: dial " + c.dialAddr)
+			}
+			return d.DialContext(ctx, network, addr)
+		}
+		t.Proxy = nil
+		return t
+	}
 	if c.proxy.Some {
 		f := c.proxy.V
 		o, only := c.net.(*onlyNet)

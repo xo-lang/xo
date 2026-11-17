@@ -1,5 +1,15 @@
 # std/grpc changes
 
+## 2026-11-17: feature: unix: targets
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (map.txt grpc.behavior.unix_targets)
+- Go reference: google.golang.org/grpc v1.79.2 internal/resolver/unix (unix:///path, unix:path, the authority localhost)
+- Test: std/grpc_test.xo "unix: targets call a server on a Unix socket", arm64 and LLVM
+- Timing: none
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: server keepalive enforcement (ServerKeepalive min_time, permit_without_stream)
 
 - Kind: feature

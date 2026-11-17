@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-17: feature: Client.with_dial_addr
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (std/grpc's unix: targets, grpc.behavior.unix_targets)
+- Go reference: net/http Transport.DialContext (a dialer that ignores the address asked for)
+- Test: std/native/http_test.xo "with_dial_addr dials one address for every request, a Unix socket included" (the URL's host kept, an attenuated Net refusing), arm64 and LLVM; golden http_cross_origin
+- Timing: none (a client without it dials as before)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: HTTP/2 PING rate enforcement (H2Config min_ping_interval, ping_without_stream)
 
 - Kind: feature

@@ -2578,7 +2578,7 @@ grpc.behavior.response_head = std/grpc's head sets Date empty, which std/http se
 grpc.behavior.reflection = std/grpcreflect (grpc.reflection.v1 and v1alpha; TestGrpcReflectInterop)
 grpc.behavior.keepalive = std/grpc.ServerKeepalive and ClientKeepalive: client and server pings over std/http's HTTP/2 PING settings (test "client keepalive closes a connection whose server stopped answering") and the enforcement policy (ServerKeepalive min_time, permit_without_stream; test "keepalive_server closes a connection that pings too often, as grpc-go's enforcement policy"; native servers only)
 grpc.behavior.interceptors = std/grpc.Server.intercept, intercept_unary, Client.with_unary_interceptor (decision 0703): chained in registration order, the first outermost; client stream interceptors see the options only
-grpc.behavior.unix_targets = gap: no unix: targets (a Client takes an http base URL)
+grpc.behavior.unix_targets = std/grpc.client (unix:///path and unix:path over http.Client.with_dial_addr, authority localhost; test "unix: targets call a server on a Unix socket")
 grpc.behavior.mtls = std/grpc.Call (TestGrpcInterop's tls cases: mutual TLS with per-RPC credentials against grpc-go, both directions)
 grpc.behavior.name_resolution = partial: target names dns:///, passthrough:/// and host:port through std/http's resolver (test "target names"); no resolver plug-ins, unix: targets or balancing (pick_first, round_robin)
 # protobuf: google.golang.org/protobuf v1.36.12 (outside.txt; decision 0655): proto, protowire, protojson and the well-known types

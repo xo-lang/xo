@@ -874,3 +874,21 @@ test "a bidi stream's send then recv rounds do not wait for the h2 read tick" us
     expect(took < 1500ms) == true
   }
 }
+
+// grpc-go's unix resolver (internal/resolver/unix): unix:///abs/path and unix:path dial the socket, authority localhost
+test "unix: targets call a server on a Unix socket, as grpc-go's" uses (net, clock) {
+  let path = "/tmp/xo-grpc-unix-${os.clock.now().unix_nanos()}.sock"
+  var srv = server(os.clock)
+  srv.unary("/u.U/Echo", fn(call, req) -> Bytes ! Status { Ok("${call.authority} ".bytes() + req) })
+  let l = os.net.listen("unix:${path}").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let hc = http.client(os.net, timeout: 10s)
+    for t in ["unix://${path}", "unix:${path}"] {
+      expect(client(hc, t).unary("/u.U/Echo", b"x")) == Ok(b"localhost x")
+    }
+    expect(unix_path("unix://host/p")) == None
+    expect(client(hc, "unix:${path}").canonical_target()) == "unix:${path}"
+  }
+}

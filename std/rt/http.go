@@ -1625,6 +1625,8 @@ type Http_Client struct {
 	// with_proxy and with_proxy_for (decision 0617 B): the chooser asked
 	// for each request's proxy
 	proxy Option[func(*Task, Http_Url) Result[Option[Http_Url], Never]]
+	// with_dial_addr: the address every connection dials, "" for the URL's
+	dialAddr string
 	// with_jar (decision 0617 B): the store net/http's Client.Jar asks,
 	// at the clock's time
 	jar   Http_CookieStore
@@ -1665,6 +1667,14 @@ func (c Http_Client) M_with_redirects(_ *Task, max int64) Http_Client {
 // transport's MaxIdleConnsPerHost.
 func (c Http_Client) M_with_max_idle_per_host(_ *Task, n int64) Http_Client {
 	c.maxIdle = n
+	c.tr = clientTransport(c)
+	return c
+}
+
+// M_with_dial_addr is `c.with_dial_addr(addr)`: the transport dials addr
+// (host:port, or unix:PATH) for every request.
+func (c Http_Client) M_with_dial_addr(_ *Task, addr string) Http_Client {
+	c.dialAddr = addr
 	c.tr = clientTransport(c)
 	return c
 }

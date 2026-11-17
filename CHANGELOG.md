@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/http): `Client.with_dial_addr(addr)` dials one address (`host:port` or `unix:PATH`) for every request, as a Go Transport.DialContext that ignores the address; the URL keeps Host and the TLS name.
+- Feature (std/grpc): `unix:///path` and `unix:path` targets call a server on a Unix domain socket, as grpc-go's.
 - Fix (std/grpcreflect): a reflection request or response with a field numbered above 536870911 fails to decode, as protobuf-go's (it was skipped as an unknown field).
 - Fix (std/protodesc, std/protojson, std/prototext, std/protowkt, std/grpchealth): a message with a field numbered above 536870911 (protowire.MaxValidNumber) fails to decode (BadTag), as protobuf-go's proto.Unmarshal; it was read.
 - Fix (std/protodesc): `build` returns an error for a name the file declares twice (two extensions of one name, an enum value and a message), as protoc and protobuf-go's protodesc.NewFile ("descriptor \"p.x\" already declared"); it returned the descriptor.

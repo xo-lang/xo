@@ -4751,7 +4751,7 @@ fn jar_keep(put: List[fn(Str, List[Str])], raw: Str, headers: List[Str]) {
 }
 
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart uses sync] = [], duplex: List[fn(fn() -> () uses sync) uses sync] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = [], jar_get: List[fn(Str) -> Str] = [], jar_put: List[fn(Str, List[Str])] = [], max_idle: Int = 0, tr: List[fn(Int, Str) uses sync] = []) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart uses sync] = [], duplex: List[fn(fn() -> () uses sync) uses sync] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0, proxy: List[fn(Str) -> Str] = [], jar_get: List[fn(Str) -> Str] = [], jar_put: List[fn(Str, List[Str])] = [], max_idle: Int = 0, tr: List[fn(Int, Str) uses sync] = [], dial_addr: Str = "") -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4904,7 +4904,14 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var conn_addr = addr
     var conn_name = name
     var hop_h2c = h2c
-    if !proxy.is_empty() {
+    if !dial_addr.is_empty() {
+      // with_dial_addr (Go's Transport.DialContext to one address): the connection dials it, no proxy is asked,
+      // and an attenuated Net must admit it as it admits a dial
+      if !lists.is_empty() && !netpolicy.admits_addr(lists, dial_addr) {
+        return cfail(2, op + " " + q + ": denied by Net.only: dial " + dial_addr)
+      }
+      conn_addr = dial_addr
+    } else if !proxy.is_empty() {
       let chosen = proxy[0](cut)
       if !chosen.is_empty() {
         let sep = scan.find(chosen, "\u{1}", 0)

@@ -196,6 +196,8 @@ struct Client {
   /// values; empty for none
   jar_get: List[fn(Str) -> Str] = []
   jar_put: List[fn(Str, List[Str])] = []
+  /// with_dial_addr: the address every connection dials, "" for the URL's
+  dial_addr: Str = ""
 }
 
 /// http.Response with its streamed body's function, hidden from Xo code:
@@ -3966,6 +3968,8 @@ fn (c: Client) with_redirects(max: Int) -> Client { c with {redirects: if max < 
 
 fn (c: Client) with_max_idle_per_host(n: Int) -> Client { c with {max_idle: n} }
 
+fn (c: Client) with_dial_addr(addr: Str) -> Client { c with {dial_addr: addr} }
+
 /// The request sent with Host (HTTP/1.1) and :authority (HTTP/2) host in place of the URL's (Go's Request.Host); the
 /// connection and the TLS name stay the URL's. "" is the URL's host.
 fn (r: Request) with_host(host: Str) -> Request { r with {host_over: host} }
@@ -4526,7 +4530,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0], req.src_written)] }
   let tracer = tracer_of(req)
   let tr = tracer_rec(tracer)
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle, tr: tr)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle, tr: tr, dial_addr: c.dial_addr)
   // the trace's events up to the head (decision 0677); the rest at the
   // body's end or close
   trace_deliver(tracer)
@@ -5182,7 +5186,7 @@ fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.di
   // a wasi:http component sends a whole body (decision 0447)
   let ta = trailer_args(if wasiworld.component() { src_whole(req)? } else { req })
   let tracer = tracer_of(req)
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle, tr: tracer_rec(tracer))
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns, proxy: c.proxy, jar_get: c.jar_get, jar_put: c.jar_put, max_idle: c.max_idle, tr: tracer_rec(tracer), dial_addr: c.dial_addr)
   // the trace's events, the body read and the connection pooled (decision 0677)
   trace_deliver(tracer)
   // done with the request: its body's reader closes (net/http closes

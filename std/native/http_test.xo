@@ -1951,3 +1951,25 @@ test "a Date set empty sends no Date, as net/http's Header[\"Date\"] = nil" uses
     }
   }
 }
+
+// Go's Transport.DialContext to one address: the request goes over a Unix socket with the URL's host in Host, and an
+// attenuated Net refuses an address it does not admit
+test "with_dial_addr dials one address for every request, a Unix socket included" uses (net, clock) {
+  let path = "/tmp/xo-dialaddr-${os.clock.now().unix_nanos()}.sock"
+  var r = http.router()
+  r.handle("GET /who", fn(req) { http.text(200, "host ${req.url.host}") })
+  let l = os.net.listen("unix:${path}").or_fault("listen")
+  let hs = http.server(l, r)
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = http.client(os.net, timeout: 10s).with_dial_addr("unix:${path}")
+    let got = c.get("http://api.example/who").or_fault("get")
+    expect((got.status, got.body.to_str_lossy())) == (200, "host api.example")
+    // an attenuated Net that does not admit the socket
+    let only = http.client(os.net.only(["api.example"]), timeout: 10s).with_dial_addr("unix:${path}")
+    match only.get("http://api.example/who") {
+      Ok(_) => fault("the attenuated client dialed the socket")
+      Err(e) => expect("${e}".contains("denied by Net.only")) == true
+    }
+  }
+}

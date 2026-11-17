@@ -2274,6 +2274,7 @@ fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses n
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
 fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
 fn (c: Client) with_max_idle_per_host(n: Int) -> Client     // Go's MaxIdleConnsPerHost
+fn (c: Client) with_dial_addr(addr: Str) -> Client          // Go's Transport.DialContext to one address: host:port or unix:PATH; the URL keeps Host, :authority and the TLS name; no proxy; Net.only must admit addr
 fn (c: Client) with_proxy(url: Url) -> Client              // decision 0617 B
 fn (c: Client) with_proxy_for(f: fn(Url) -> Url?) -> Client  // None: direct
 fn (c: Client) with_jar(store: CookieStore, clock: Clock) -> Client uses clock   // and store's fx
@@ -10951,7 +10952,7 @@ fn (s: Send) set_compressor(name: Str) -> () ! Status   // grpc-go's SetSendComp
 fn (s: Send) set_header(name: Str, value: Str) -> () ! Status   // grpc-go SetHeader (decision 0699): Internal "transport: SendHeader called multiple times" once the head went out
 fn (s: Send) send_header(md: Map[Str, Str] = {}) -> () ! Status   // grpc-go SendHeader: md added, the head sent now
 // the client
-fn client(c: http.Client, base: Str) -> Client      // base: http(s)://host:port, or a target name: dns:///host:port, passthrough:///host:port, host:port
+fn client(c: http.Client, base: Str) -> Client      // base: http(s)://host:port, or a target name: dns:///host:port, passthrough:///host:port, unix:///path or unix:path, host:port
 fn (c: Client) target() -> Str                      // grpc-go's ClientConn.Target: as given
 fn (c: Client) canonical_target() -> Str            // CanonicalTarget: dns:/// added to a name without a scheme
 // service config and retries (decision 0705)
