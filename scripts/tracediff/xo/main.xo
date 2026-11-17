@@ -2,11 +2,13 @@
 // TestTraceFuzz): a script on standard input drives std/trace with a
 // scripted clock and random source, and prints what it observes, as the
 // test's Go model of std/trace's documented behaviour prints it.
-//   ring CAP                  a new ring (and recorder over it), no draws left
+//   ring CAP                  a new ring (and recorder over it), the random stream emptied
 //   rec ID NAME MS US         Ring.record(id, name, at MS, US long)
 //   spans MINUS N             Ring.spans(MINUS microseconds, N)
 //   clock NS                  the clock reads NS from now on
-//   rand HEX                  the next rand.bytes draws, in turn (any length)
+//   rand HEX                  bytes appended to the random stream (any length): rand.int
+//                             takes the next 4 (big endian), rand.bytes(n) the next n,
+//                             zero once the stream runs out
 //   start A NAME P T S KIND   span A started (P "-": a new trace, else parent T S)
 //   attr A K TYPE V           set_attributes [K: V] on span A
 //   event A NAME              add_event on span A
@@ -29,25 +31,28 @@ fn (c: ScriptClock) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { O
 fn (c: ScriptClock) since(t: Time) -> Duration uses clock { c.now() - t }
 
 struct ScriptRand {
-  draws: Mutex[List[Bytes]]
+  stream: Mutex[Bytes]
 }
 
-fn (r: ScriptRand) int(lo: Int, hi: Int) -> Int uses rand { lo }
+/// The next n bytes of the stream, zero past its end.
+fn (r: ScriptRand) take(n: Int) -> Bytes {
+  let b = r.stream.with(fn(var s: Bytes) -> Bytes {
+    let m = if s.len() < n { s.len() } else { n }
+    let x = s[0..m]
+    s = s[m..]
+    x
+  })
+  if b.len() >= n { b } else { b + Bytes.zeroed(n - b.len()) }
+}
+
+fn (r: ScriptRand) int(lo: Int, hi: Int) -> Int uses rand {
+  let b = r.take(4)
+  let w = (Int(b[0]) << 24) | (Int(b[1]) << 16) | (Int(b[2]) << 8) | Int(b[3])
+  lo + w % (hi - lo)
+}
 fn (r: ScriptRand) float() -> Float uses rand { 0.0 }
 fn (r: ScriptRand) bool() -> Bool uses rand { false }
-fn (r: ScriptRand) bytes(n: Int) -> Bytes uses rand {
-  let d = r.draws.with(fn(var l: List[Bytes]) -> Bytes? {
-    if l.is_empty() {
-      return None
-    }
-    let x = l[0]
-    l = l[1..]
-    Some(x)
-  })
-  let b = d ?? b""
-  // a draw is cut or zero-padded to n bytes
-  if b.len() >= n { b[0..n] } else { b + Bytes.zeroed(n - b.len()) }
-}
+fn (r: ScriptRand) bytes(n: Int) -> Bytes uses rand { r.take(n) }
 fn (r: ScriptRand) shuffle[T](xs: List[T]) -> List[T] uses rand { xs }
 
 fn show(s: trace.Span) -> Str {
@@ -85,7 +90,7 @@ fn show(s: trace.Span) -> Str {
 
 fn main(os: Os) ! {
   let clock = ScriptClock{ns: Mutex[Int].new(0)}
-  let rnd = ScriptRand{draws: Mutex[List[Bytes]].new([])}
+  let rnd = ScriptRand{stream: Mutex[Bytes].new(b"")}
   var ring = trace.ring()
   var rec = trace.recorder(ring, clock, rnd)
   var active: Map[Str, trace.Active] = {}
@@ -100,7 +105,7 @@ fn main(os: Os) ! {
         ring = trace.ring(cap: Int.parse(w[1]) ?? 0)
         rec = trace.recorder(ring, clock, rnd)
         active = {}
-        rnd.draws.with(fn(var l: List[Bytes]) { l = [] })
+        rnd.stream.with(fn(var s: Bytes) { s = b"" })
       }
       "rec" => ring.record(text(w[1]), text(w[2]), Time.from_unix_millis(Int.parse(w[3]) ?? 0), Duration.from_nanos((Int.parse(w[4]) ?? 0) * 1000))
       "spans" => {
@@ -109,7 +114,7 @@ fn main(os: Os) ! {
         }
       }
       "clock" => clock.ns.with(fn(var n: Int) { n = Int.parse(w[1]) ?? 0 })
-      "rand" => rnd.draws.with(fn(var l: List[Bytes]) { l.push(Bytes.from_hex(w[1].trim_prefix("x")).or_fault("hex")) })
+      "rand" => rnd.stream.with(fn(var s: Bytes) { s = s + Bytes.from_hex(w[1].trim_prefix("x")).or_fault("hex") })
       "start" => {
         let parent = if w[3] == "-" { None } else { Some((text(w[4]), text(w[5]))) }
         let kind = match w[6] {

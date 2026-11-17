@@ -6,15 +6,17 @@ package stdtest
 // rules: a Ring keeps the last cap spans (cap at least 1) and Ring.spans
 // gives them newest first, at most n (all for n <= 0) at least min long;
 // a Recorder's span takes its trace and span ids from the random source
-// (16 and 8 bytes from one draw for a new trace, 8 for a child; an id
-// that is all zero is drawn again and is never all zero), its times from
+// (the trace id's 16 bytes then the span id's 8 for a new trace, 8 for a
+// child, as 32 bit words from Rand.int since 8c08ac8cc; an id that is all
+// zero is drawn once more, and all zero again gives 0...01), its times from
 // the clock (end never before start); set_attributes replaces a key in
 // place (last value wins); set_status follows OpenTelemetry Go (Unset
 // changes nothing, Ok is final and drops the message, Error keeps its
 // message until an Ok); end records the span once. Every span's JSON must
 // decode in Go to the same span (the optional fields present exactly when
 // set) and back in Xo to an equal one. The scripts use a scripted clock
-// and random source (scripts/tracediff/xo), with draws all zero, zero at
+// and random source (scripts/tracediff/xo; a byte stream the rand lines
+// append to), with draws all zero, zero at
 // the ends, short and long, clocks that go back, negative and zero
 // durations, caps from -1 to 7, ends twice and changes after an end.
 //
@@ -106,7 +108,7 @@ type trfModel struct {
 	cap    int
 	buf    []trfSpan
 	clock  int64
-	draws  [][]byte
+	stream []byte
 	active map[string]*trfActive
 	out    strings.Builder
 }
@@ -136,33 +138,24 @@ func (m *trfModel) spans(minNS int64, n int) []trfSpan {
 }
 
 func (m *trfModel) draw(n int) []byte {
-	var b []byte
-	if len(m.draws) > 0 {
-		b = m.draws[0]
-		m.draws = m.draws[1:]
-	}
 	out := make([]byte, n)
-	copy(out, b)
+	k := copy(out, m.stream)
+	m.stream = m.stream[k:]
 	return out
 }
 
-// hexID: b as an id; all zero is drawn again, and a second draw with a
-// zero first and last byte gives 0...01 (never all zero).
-func (m *trfModel) hexID(b []byte) string {
-	zero := true
-	for _, c := range b {
-		if c != 0 {
-			zero = false
+// id: n bytes of the stream as hex; all zero is drawn once more, and all
+// zero again gives 0...01 (never all zero), as std/trace's rand_hex.
+func (m *trfModel) id(n int) string {
+	for try := 0; try < 2; try++ {
+		b := m.draw(n)
+		for _, c := range b {
+			if c != 0 {
+				return hex.EncodeToString(b)
+			}
 		}
 	}
-	if zero {
-		n := len(b)
-		b = m.draw(n)
-		if b[0] == 0 && b[n-1] == 0 {
-			return strings.Repeat("0", 2*n-1) + "1"
-		}
-	}
-	return hex.EncodeToString(b)
+	return strings.Repeat("0", 2*n-1) + "1"
 }
 
 func trfText(h string) string {
@@ -189,7 +182,7 @@ func (m *trfModel) step(line string) {
 		}
 		m.buf = nil
 		m.active = map[string]*trfActive{}
-		m.draws = nil
+		m.stream = nil
 	case "rec":
 		us := trfAtoi(w[4])
 		m.push(trfSpan{ID: trfText(w[1]), Name: trfText(w[2]), StartMS: trfAtoi(w[3]), Micros: us, Kind: -1, Code: -1})
@@ -201,18 +194,17 @@ func (m *trfModel) step(line string) {
 		m.clock = trfAtoi(w[1])
 	case "rand":
 		b, _ := hex.DecodeString(strings.TrimPrefix(w[1], "x"))
-		m.draws = append(m.draws, b)
+		m.stream = append(m.stream, b...)
 	case "start":
 		ns := m.clock
 		var tid, sid, pid string
 		if w[3] == "-" {
-			b := m.draw(24)
-			tid = m.hexID(b[:16])
-			sid = m.hexID(b[16:])
+			tid = m.id(16)
+			sid = m.id(8)
 			pid = "root"
 		} else {
 			tid, pid = trfText(w[4]), trfText(w[5])
-			sid = m.hexID(m.draw(8))
+			sid = m.id(8)
 		}
 		k := int(trfAtoi(w[6]))
 		if k > 5 {
