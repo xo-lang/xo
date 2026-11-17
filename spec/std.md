@@ -11095,7 +11095,12 @@ has its message among the messages of the scope the block is in (the file's or t
   `option allow_alias = true` and one with it whose values do not, overlapping `reserved` ranges in a message or
   enum, overlapping `extensions` ranges or one overlapping a `reserved` range (the error at the later range in
   start order), and an option name followed by another name (`[import json_name = "x"]`: `compact option must
-  have a value`). `gen` maps
+  have a value`). A file with no `syntax` statement is proto2, as protoc reads it, and a syntax other than
+  proto2 or proto3 is an error. Option names and values follow protoc's grammar (an identifier or a
+  parenthesized full name, joined by `.`; a value is a constant or an aggregate), a map key is an integer,
+  bool or string type, a field number has no sign, a group's name starts with a capital letter, and digits
+  run into letters (`31reserved`) are no number; syntax errors read as protocompile's (`syntax error:
+  unexpected '='`, `unexpected identifier, expecting '='`). `gen` maps
   `required` to a plain field and proto2 `optional` to an Option, and in an editions file a singular field to an
   Option unless its `features.field_presence` (the field's, else the file's; EXPLICIT by default) is IMPLICIT or
   LEGACY_REQUIRED; a repeated number, Bool or enum is written `proto "N,unpacked"` in a proto2 file unless

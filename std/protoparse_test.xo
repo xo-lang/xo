@@ -1,7 +1,10 @@
 // Hand written cases for the .proto parser and the derive Proto generator (decision 0530); the
 // grammar is the protobuf language specification's proto3 subset.
+/// src parsed; one with no syntax or edition statement as proto3 (a file
+/// with none is proto2, as protoc reads it), so the cases stay short.
 fn must(src: Str) -> File {
-  parse(src).or_fault("parse")
+  let s = if src.contains("syntax") || src.contains("edition") { src } else { "syntax = \"proto3\"; " + src }
+  parse(s).or_fault("parse")
 }
 
 test "lexer: comments, numbers, strings and positions" {
@@ -66,18 +69,18 @@ test "services: the four streaming shapes" {
 }
 
 test "parse errors: position and message" {
-  match parse("message A {\n  int32 x = ;\n}") {
+  match parse("syntax = \"proto3\"; message A {\n  int32 x = ;\n}") {
     Ok(_) => fault("want error")
     Err(e) => {
       expect(e.line) == 2
       expect(e.col) == 13
     }
   }
-  expect(parse("message A { required int32 x = 1; }").is_err()) == true
+  expect(parse("syntax = \"proto3\"; message A { required int32 x = 1; }").is_err()) == true
   expect(parse("message A { int32 x = 1;").is_err()) == true
   // extend blocks (custom options) are skipped; required and group are proto2 only
-  expect(parse("extend A { int32 x = 1; }").is_err()) == false
-  expect(parse("message M { optional group G = 1 { optional int32 x = 1; } }").is_err()) == true
+  expect(parse("syntax = \"proto3\"; extend A { int32 x = 1; }").is_err()) == false
+  expect(parse("syntax = \"proto3\"; message M { optional group G = 1 { optional int32 x = 1; } }").is_err()) == true
   expect(parse("syntax = proto3;").is_err()) == true
 }
 
@@ -335,7 +338,7 @@ test "overlapping extension ranges are errors, and against reserved ranges" {
 
 test "an option name followed by another name has no value" {
   expect(parse_err("syntax = \"proto3\";\nmessage M {\n  int32 f = 4 [import json_name = \"j16\"];\n}")) == "3:23: compact option must have a value"
-  expect(parse_err("syntax = \"proto3\";\noption java_package go_package = \"x\";")) == "2:21: expected `=`, found `go_package`"
+  expect(parse_err("syntax = \"proto3\";\noption java_package go_package = \"x\";")) == "2:21: syntax error: unexpected identifier, expecting '='"
   expect(parse_err("syntax = \"proto3\";\nmessage M {\n  int32 f = 4 [(my.opt).sub = 1, json_name = \"j\"];\n}")) == "ok"
 }
 
@@ -344,4 +347,39 @@ test "an option name followed by another name has no value" {
 test "an empty statement in an extend block is an error" {
   expect(parse_err("syntax = \"proto2\";\nmessage E5 { extensions 1000 to 2000; }\nextend E5 {\n  optional int32 x26 = 1001;\n  ;\n}")) == "5:3: syntax error: unexpected ';'"
   expect(parse_err("syntax = \"proto2\";\nmessage E5 { extensions 1000 to 2000; ; }\nextend E5 {\n  optional int32 x26 = 1001;\n}")) == "ok"
+}
+
+// task #257 (xw-1's protoparse fuzz, seed 2 at 5000 files): what
+// protocompile rejects, with its texts, and a file with no syntax
+// statement read as protoc reads it, proto2
+test "a file with no syntax statement is proto2" {
+  let f = parse("message M { optional int32 a = 1; }").or_fault("parse")
+  expect(f.syntax) == "proto2"
+  expect(parse_err("message M { int32 a = 1; }")) == "1:13: proto2 field needs `required`, `optional` or `repeated`, found `int32`"
+  expect(parse_err("syntax = \"proto4\";")) == "1:10: syntax value must be \"proto2\" or \"proto3\""
+}
+
+test "option names and values follow protoc's grammar" {
+  let h = "syntax = \"proto3\";\n"
+  expect(parse_err(h + "option  = \"x\";")) == "2:9: syntax error: unexpected '='"
+  expect(parse_err(h + "option . go_package = \"x\";")) == "2:8: syntax error: unexpected '.'"
+  expect(parse_err(h + "option 1 java_multiple_files = true;")) == "2:8: syntax error: unexpected int literal"
+  expect(parse_err(h + "option go_package 'q' = \"x\";")) == "2:19: syntax error: unexpected string literal, expecting '='"
+  expect(parse_err(h + "option go_package = [;")) == "2:21: syntax error: unexpected '['"
+  expect(parse_err(h + "message M {\n  int32 f = 1 [ = true];\n}")) == "3:17: syntax error: unexpected '='"
+  expect(parse_err(h + "message M {\n  int32 f = 1 [ [deprecated = true];\n}")) == "3:17: syntax error: unexpected '['"
+  expect(parse_err(h + "message M {\n  int32 f = 1 [deprecated = true, , json_name = \"j\"];\n}")) == "3:35: syntax error: unexpected ','"
+  expect(parse_err(h + "message M {\n  int32 f = 1 [deprecated = ]];\n}")) == "3:29: syntax error: unexpected ']'"
+  expect(parse_err(h + "message M {\n  int32 f = 1 [deprecated = .];\n}")) == "3:29: syntax error: unexpected '.'"
+  expect(parse_err(h + "message M {\n  int32 f = 1 [default ( = 75];\n}")) == "3:24: compact option must have a value"
+  expect(parse_err(h + "message M {\n  int32 f = 1 [(my.opt).sub = 1, (.pkg.ext) = 2];\n}")) == "ok"
+}
+
+test "map keys, field numbers, group names and numbers" {
+  let h = "syntax = \"proto3\";\n"
+  expect(parse_err(h + "message M {\n  map<enum, uint32> f = 1;\n}")) == "3:7: syntax error: unexpected \"enum\""
+  expect(parse_err(h + "message M {\n  map<uint64service , M> f = 1;\n}")) == "3:7: syntax error: unexpected identifier"
+  expect(parse_err(h + "message M {\n  fixed32 f = -1;\n}")) == "3:15: syntax error: unexpected '-', expecting int literal"
+  expect(parse_err("syntax = \"proto2\";\nmessage M {\n  optional group package = 1 {\n    optional int32 x = 1;\n  }\n}")) == "3:18: group package should have a name that starts with a capital letter"
+  expect(parse_err("syntax = \"proto2\";\nmessage M {\n  optional int32 f = 1 [default = -31reserved];\n}")) == "3:36: invalid syntax in float value: 31reserved"
 }

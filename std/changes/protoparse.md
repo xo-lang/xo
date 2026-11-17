@@ -1,5 +1,23 @@
 # std/protoparse changes
 
+## 2026-11-17: fix: protoc's grammar for options, map keys, field numbers, groups and syntax; no syntax statement is proto2
+
+- Kind: fix
+- Commit: this push
+- Found by: task #257 (xw-1's protoparse fuzz against protocompile v0.14.1, seed 2 at 5000 files: 55 files protocompile rejects that parse accepted, and 14 with no syntax statement read as proto3)
+- Go reference: protocompile v0.14.1 parser/proto.y (optionName, constant, mapKeyType, the field number, group names), parser/lexer.go (numbers), parser/validate.go (syntax values); protoc reads a file with no syntax as proto2
+- Test: std/protoparse_test.xo "a file with no syntax statement is proto2", "option names and values follow protoc's grammar", "map keys, field numbers, group names and numbers" (each case accepted before or read as proto3); all 55 rejected fuzz files give protocompile's line, column and text
+- Shipped in: not yet released
+
+Breaking: a .proto file with no `syntax` statement was read as proto3 and
+is now proto2, as protoc reads it (its unlabeled fields are an error;
+add `syntax = "proto3";`). `parse` also rejects, with protocompile's
+text and position, an option name that is empty or not identifiers and
+parenthesized names joined by dots, an option value that is not a
+constant, a map key type other than an integer, bool or string, a
+negative field number, a group name in lower case, a number with letters
+run into it, and a syntax other than proto2 or proto3.
+
 ## 2026-11-17: fix: an empty statement in an extend block is an error
 
 - Kind: fix

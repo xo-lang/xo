@@ -159,6 +159,11 @@ pub fn lex(src: Str) -> Lexed ! ParseErr {
       }
       let t = src[s..i]
       let isf = fl || ((t.contains("e") || t.contains("E")) && !t.starts_with("0x") && !t.starts_with("0X"))
+      // digits run into letters (`31reserved`): protocompile's lexer
+      // rejects the number
+      if Int.parse_base(t, 0) is None && Float.parse(t) is None {
+        return Err(ParseErr{line: line, col: col, msg: "invalid syntax in ${if isf { "float" } else { "int" }} value: ${t}"})
+      }
       let pcs = pc_at(b, pc, ls, s)
       out.push(Token{kind: if isf { Kind.Float } else { Kind.Int }, text: t, line: line, col: col, pcol: pcs, pend: pc_at(b, pc, ls, i)})
     } else if c == 34 || c == 39 {
@@ -411,13 +416,19 @@ pub struct File {
 /// label (`required`, `optional` or `repeated`); a `group` becomes a nested message and a field of
 /// that type named in lower case. A proto3 file rejects `required` and `group`.
 pub fn parse(src: Str) -> File ! ParseErr {
-  var p = P{ts: tokens(src)?, at: 0, proto2: false}
-  var f = File{syntax: "proto3", package: "", imports: [], messages: [], enums: [], services: []}
+  // a file with no syntax statement is proto2, as protoc reads it
+  var p = P{ts: tokens(src)?, at: 0, proto2: true}
+  var f = File{syntax: "proto2", package: "", imports: [], messages: [], enums: [], services: []}
   while p.at < p.ts.len() {
     if p_is(p, "syntax") {
       p.at += 1
       p_expect(p, "=")?
+      let sat = p.at
       f.syntax = p_str(p)?
+      if !(f.syntax is "proto2" | "proto3") {
+        p.at = sat
+        return Err(p_err(p, "syntax value must be \"proto2\" or \"proto3\""))
+      }
       p.proto2 = f.syntax == "proto2"
       p_expect(p, ";")?
     } else if p_is(p, "edition") {
@@ -431,6 +442,7 @@ pub fn parse(src: Str) -> File ! ParseErr {
       f.syntax = "editions"
       f.edition = ed
       p.editions = true
+      p.proto2 = false
       p_expect(p, ";")?
     } else if p_is(p, "package") {
       p.at += 1
@@ -697,22 +709,76 @@ fn p_option_stmt(var p: P) -> (Str, Bytes) ! ParseErr {
 /// unquoted, a negative number with its sign) or an aggregate `{ key: value ... }`, kept as `{`, then
 /// each key and value separated by U+1F and the pairs by U+1E, then `}` (`aggregate_pairs` reads
 /// it); an aggregate holding another one is `{}`.
-fn p_option(var p: P, compact: Bool = false) -> (Str, Bytes) ! ParseErr {
-  var name = ""
-  var prev = ""
-  while p.at < p.ts.len() && !p_is(p, "=") {
-    let t = p.ts[p.at]
-    // a name part right after another (`import json_name = 1`) is not one
-    // name: protoc's grammar wants `=` there
-    if t.kind == Kind.Ident && (prev == "ident" || prev == ")") {
-      if compact { return Err(p_err(p, "compact option must have a value")) }
-      return Err(p_err(p, "expected `=`, found `${t.text}`"))
-    }
-    prev = if t.kind == Kind.Ident { "ident" } else { t.text }
-    name = name + t.text
-    p.at += 1
+/// protocompile's keywords: its errors quote one (`unexpected "enum"`)
+/// where another identifier is `identifier`.
+const KEYWORDS = ["syntax", "edition", "import", "weak", "public", "package", "option", "true", "false", "inf", "nan", "repeated", "optional", "required", "double", "float", "int32", "int64", "uint32", "uint64", "sint32", "sint64", "fixed32", "fixed64", "sfixed32", "sfixed64", "bool", "string", "bytes", "group", "oneof", "map", "extensions", "to", "max", "reserved", "enum", "message", "extend", "service", "rpc", "stream", "returns"]
+
+/// The types a map's key may have (protoc's mapKeyType).
+const MAP_KEYS = ["int32", "int64", "uint32", "uint64", "sint32", "sint64", "fixed32", "fixed64", "sfixed32", "sfixed64", "bool", "string"]
+
+/// The token at p as protocompile's syntax errors name it.
+fn tok_desc(p: P) -> Str {
+  if p.at >= p.ts.len() {
+    return "EOF"
   }
-  p_expect(p, "=")?
+  let t = p.ts[p.at]
+  match t.kind {
+    Kind.Int => "int literal"
+    Kind.Float => "float literal"
+    Kind.Str => "string literal"
+    Kind.Sym => "'${t.text}'"
+    Kind.Ident => if KEYWORDS.contains(t.text) { "\"${t.text}\"" } else { "identifier" }
+  }
+}
+
+/// protocompile's syntax error at p: `syntax error: unexpected X`, and
+/// `, expecting Y` when one token would do.
+fn p_unexpected(p: P, expecting: Str = "") -> ParseErr {
+  p_err(p, "syntax error: unexpected ${tok_desc(p)}" + (if expecting.is_empty() { "" } else { ", expecting ${expecting}" }))
+}
+
+fn p_ident_tok(p: P) -> Bool { p.at < p.ts.len() && p.ts[p.at].kind == Kind.Ident }
+
+fn p_option(var p: P, compact: Bool = false) -> (Str, Bytes) ! ParseErr {
+  // protoc's optionName: parts joined by `.`, each an identifier or a
+  // parenthesized full name (`(my.ext)`, `(.pkg.ext)`)
+  var name = ""
+  while true {
+    if p_is(p, "(") {
+      name = name + "("
+      p.at += 1
+      if p_is(p, ".") {
+        name = name + "."
+        p.at += 1
+      }
+      if !p_ident_tok(p) { return Err(p_unexpected(p)) }
+      name = name + p.ts[p.at].text
+      p.at += 1
+      while p_is(p, ".") && p.at + 1 < p.ts.len() && p.ts[p.at + 1].kind == Kind.Ident {
+        name = name + "." + p.ts[p.at + 1].text
+        p.at += 2
+      }
+      if !p_is(p, ")") { return Err(p_unexpected(p, "')'")) }
+      name = name + ")"
+      p.at += 1
+    } else if p_ident_tok(p) {
+      name = name + p.ts[p.at].text
+      p.at += 1
+    } else {
+      return Err(p_unexpected(p))
+    }
+    if p_is(p, ".") {
+      name = name + "."
+      p.at += 1
+      continue
+    }
+    break
+  }
+  if !p_is(p, "=") {
+    if compact { return Err(p_err(p, "compact option must have a value")) }
+    return Err(p_unexpected(p, "'='"))
+  }
+  p.at += 1
   if p_is(p, "{") {
     var pairs: List[Bytes] = []
     p_aggregate(p, "", pairs)?
@@ -813,6 +879,10 @@ fn p_constant(var p: P) -> Bytes ! ParseErr {
     p.at += 1
   }
   if p.at >= p.ts.len() { return Err(p_err(p, "expected an option value")) }
+  // a constant: a number, or an identifier (true, an enum value, inf)
+  if !(p.ts[p.at].kind is Kind.Int | Kind.Float | Kind.Ident) {
+    return Err(p_unexpected(p))
+  }
   v = v + p.ts[p.at].text
   p.at += 1
   Ok(v.bytes())
@@ -1022,7 +1092,13 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
     if !p.proto2 { return Err(p_err(p, "`group` is proto2 only")) }
     p.at += 1
     let gname = p_ident(p)?
+    let g0 = if gname.len() > 0 { Int(gname.bytes()[0]) } else { 0 }
+    if !(g0 >= 65 && g0 <= 90) {
+      p.at -= 1
+      return Err(p_err(p, "group ${gname} should have a name that starts with a capital letter"))
+    }
     p_expect(p, "=")?
+    if p_is(p, "-") { return Err(p_unexpected(p, "int literal")) }
     let gn = p_int(p)?
     let (opts, dv, jn) = field_opts(p_opts(p)?)
     m.nested.push(p_message_body(p, gname)?)
@@ -1033,6 +1109,9 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
   var typ = ""
   if p_is(p, "map") && p.at + 1 < p.ts.len() && p.ts[p.at + 1].text == "<" {
     p.at += 2
+    if !(p_ident_tok(p) && MAP_KEYS.contains(p.ts[p.at].text)) {
+      return Err(p_unexpected(p))
+    }
     key = p_ident(p)?
     p_expect(p, ",")?
     typ = p_type(p)?
@@ -1042,6 +1121,8 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
   }
   let name = p_ident(p)?
   p_expect(p, "=")?
+  // a field number has no sign (protoc's grammar)
+  if p_is(p, "-") { return Err(p_unexpected(p, "int literal")) }
   let n = p_int(p)?
   let (opts, dv, jn) = field_opts(p_opts(p)?)
   p_expect(p, ";")?
