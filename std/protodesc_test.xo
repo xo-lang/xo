@@ -49,6 +49,20 @@ test "a truncated descriptor is an error, never a panic" {
   }
 }
 
+test "a singular string field's last value must be UTF-8, not an earlier one (protobuf-go keeps the last)" {
+  // name: 0xff then "a"; package: "p" then 0xfe; a message whose name is 0xcc then "M"
+  let ok = decode(b"\x0a\x01\xff\x0a\x01a\x22\x06\x0a\x01\xcc\x0a\x01M").or_fault("decode")
+  expect((ok.name, ok.message_type[0].name)) == ("a", "M")
+  expect(decode(b"\x12\x01p\x12\x01\xfe").is_err()) == true
+  expect(decode(b"\x22\x06\x0a\x01M\x0a\x01\xcc").is_err()) == true
+}
+
+test "the fuzz input of seed 2 that protobuf-go accepts decodes (task #217)" {
+  let h = "0a0f667a2f785f795f35332e70726f746f1210666f6f5f62be61723c62617a2ec3a92e622a200a02696412100a084249475f44415441100d1a0208011a021001220408031006327f0a0848545450cc756c6512280a086269675f64617461120c2e6e616d652ee697a5e69cac1a096e616d652ec3a93737220388020112320a015a12172e6e616d652e6269675f646174612e4854545052756c651a142e6269675f646174612e6269675f646174612e6112150a027632120ac3a92e6e616d652ec3a91a032e7632620865646974696f6e7370e907"
+  let d = decode(Bytes.from_hex(h).or_fault("hex")).or_fault("decode")
+  expect(d.name) == "big_data"
+}
+
 // protodesc.build against protoc (#109): every file of PROTOC_FILES, parsed by std/protoparse and built
 // with the files its group built before it, encodes to protoc's bytes.
 

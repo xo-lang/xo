@@ -1,5 +1,19 @@
 # std/protodesc changes
 
+## 2026-11-17: fix: only a singular string field's last value has to be UTF-8
+
+- Kind: fix
+- Commit: this push
+- Found by: task #217 (fuzz evidence for Proven): the protodesc corpus fuzz, seed 2, gave a descriptor protobuf-go
+  accepts and `decode` rejected
+- Go reference: protobuf-go's descriptorpb decoding (a repeated singular field keeps its last value)
+- Test: std/protodesc_test.xo ("a singular string field's last value must be UTF-8, not an earlier one", "the fuzz
+  input of seed 2 that protobuf-go accepts decodes", both fail before)
+- Shipped in: not yet released
+
+`decode` failed with `Utf8` when an earlier occurrence of a singular string field (a name, a package, a type name)
+held bytes that are not UTF-8, though a later occurrence replaced it; it now checks only the value kept.
+
 ## 2026-11-16: fix: string literals whose escapes are not UTF-8 keep their bytes (breaking)
 
 - Kind: fix

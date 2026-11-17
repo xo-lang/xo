@@ -210,14 +210,26 @@ pub fn encode(f: FileDesc) -> Bytes {
   o.freeze()
 }
 
+/// A singular string field's text and `bad` with the field's bit set when its bytes are not UTF-8,
+/// cleared when they are: protobuf-go keeps a repeated singular field's last value, so only the last
+/// one has to be text (decode fails with `Utf8` when a bit is still set at the end).
+fn last_text(f: pw.Fld, bad: Int) -> (Str, Int) {
+  let bit = 1 << f.num
+  match f.data.to_str() {
+    Some(s) => (s, if bad & bit != 0 { bad - bit } else { bad })
+    None => ("", bad | bit)
+  }
+}
+
 /// The FileDescriptorProto of `data`; the wire reader's errors, and `Utf8` for a name that is not text.
 pub fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr {
   var d = FileDesc{name: "", package: "", dependency: [], public_dependency: [], weak_dependency: [], message_type: [], enum_type: [], service: [], extension: [], options: b"", source_code_info: b"", syntax: "", edition: 0}
+  var bad = 0
   for f in pw.walk(data)? {
     if f.num == 1 && pw.is_s(f) {
-      d.name = pw.text(f)?
+      (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
-      d.package = pw.text(f)?
+      (d.package, bad) = last_text(f, bad)
     } else if f.num == 3 && pw.is_s(f) {
       d.dependency.push(pw.text(f)?)
     } else if f.num == 4 && pw.is_s(f) {
@@ -242,11 +254,12 @@ pub fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr {
     } else if f.num == 11 && pw.is_v(f) {
       d.weak_dependency.push(f.v)
     } else if f.num == 12 && pw.is_s(f) {
-      d.syntax = pw.text(f)?
+      (d.syntax, bad) = last_text(f, bad)
     } else if f.num == 14 && pw.is_v(f) {
       d.edition = f.v
     }
   }
+  if bad != 0 { return Err(protobuf.ProtoErr.Utf8) }
   Ok(d)
 }
 
@@ -402,24 +415,27 @@ fn dec_ext_range(b: Bytes) -> ExtensionRange ! protobuf.ProtoErr {
 
 fn dec_oneof(b: Bytes) -> OneofDesc ! protobuf.ProtoErr {
   var d = OneofDesc{name: "", options: b""}
+  var bad = 0
   for f in pw.walk(b)? {
     if f.num == 1 && pw.is_s(f) {
-      d.name = pw.text(f)?
+      (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
       d.options = f.data
       d.options_set = true
     }
   }
+  if bad != 0 { return Err(protobuf.ProtoErr.Utf8) }
   Ok(d)
 }
 
 fn dec_field(b: Bytes) -> FieldDesc ! protobuf.ProtoErr {
   var d = FieldDesc{name: "", extendee: "", number: 0, label: 0, kind: 0, type_name: "", default_value: "", options: b"", oneof_index: None, json_name: "", proto3_optional: false, unknown: b""}
+  var bad = 0
   for f in pw.walk(b)? {
     if f.num == 1 && pw.is_s(f) {
-      d.name = pw.text(f)?
+      (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
-      d.extendee = pw.text(f)?
+      (d.extendee, bad) = last_text(f, bad)
     } else if f.num == 3 && pw.is_v(f) {
       d.number = f.v
     } else if f.num == 4 && pw.is_v(f) {
@@ -427,16 +443,16 @@ fn dec_field(b: Bytes) -> FieldDesc ! protobuf.ProtoErr {
     } else if f.num == 5 && pw.is_v(f) {
       d.kind = f.v
     } else if f.num == 6 && pw.is_s(f) {
-      d.type_name = pw.text(f)?
+      (d.type_name, bad) = last_text(f, bad)
     } else if f.num == 7 && pw.is_s(f) {
-      d.default_value = pw.text(f)?
+      (d.default_value, bad) = last_text(f, bad)
     } else if f.num == 8 && pw.is_s(f) {
       d.options = f.data
       d.options_set = true
     } else if f.num == 9 && pw.is_v(f) {
       d.oneof_index = Some(f.v)
     } else if f.num == 10 && pw.is_s(f) {
-      d.json_name = pw.text(f)?
+      (d.json_name, bad) = last_text(f, bad)
       d.json_name_set = true
     } else if f.num == 17 && pw.is_v(f) {
       d.proto3_optional = f.v != 0
@@ -445,14 +461,16 @@ fn dec_field(b: Bytes) -> FieldDesc ! protobuf.ProtoErr {
       d.unknown = pw.cat(d.unknown, f.raw)
     }
   }
+  if bad != 0 { return Err(protobuf.ProtoErr.Utf8) }
   Ok(d)
 }
 
 fn dec_value(b: Bytes) -> EnumValueDesc ! protobuf.ProtoErr {
   var d = EnumValueDesc{name: "", number: 0, options: b""}
+  var bad = 0
   for f in pw.walk(b)? {
     if f.num == 1 && pw.is_s(f) {
-      d.name = pw.text(f)?
+      (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_v(f) {
       d.number = f.v
     } else if f.num == 3 && pw.is_s(f) {
@@ -460,14 +478,16 @@ fn dec_value(b: Bytes) -> EnumValueDesc ! protobuf.ProtoErr {
       d.options_set = true
     }
   }
+  if bad != 0 { return Err(protobuf.ProtoErr.Utf8) }
   Ok(d)
 }
 
 fn dec_enum(b: Bytes) -> EnumDesc ! protobuf.ProtoErr {
   var d = EnumDesc{name: "", value: [], options: b"", reserved_range: [], reserved_name: []}
+  var bad = 0
   for f in pw.walk(b)? {
     if f.num == 1 && pw.is_s(f) {
-      d.name = pw.text(f)?
+      (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
       d.value.push(dec_value(f.data)?)
     } else if f.num == 3 && pw.is_s(f) {
@@ -479,14 +499,16 @@ fn dec_enum(b: Bytes) -> EnumDesc ! protobuf.ProtoErr {
       d.reserved_name.push(pw.text(f)?)
     }
   }
+  if bad != 0 { return Err(protobuf.ProtoErr.Utf8) }
   Ok(d)
 }
 
 fn dec_message(b: Bytes) -> MessageDesc ! protobuf.ProtoErr {
   var d = MessageDesc{name: "", field: [], extension: [], nested_type: [], enum_type: [], extension_range: [], oneof_decl: [], options: b"", reserved_range: [], reserved_name: []}
+  var bad = 0
   for f in pw.walk(b)? {
     if f.num == 1 && pw.is_s(f) {
-      d.name = pw.text(f)?
+      (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
       d.field.push(dec_field(f.data)?)
     } else if f.num == 3 && pw.is_s(f) {
@@ -508,18 +530,20 @@ fn dec_message(b: Bytes) -> MessageDesc ! protobuf.ProtoErr {
       d.reserved_name.push(pw.text(f)?)
     }
   }
+  if bad != 0 { return Err(protobuf.ProtoErr.Utf8) }
   Ok(d)
 }
 
 fn dec_method(b: Bytes) -> MethodDesc ! protobuf.ProtoErr {
   var d = MethodDesc{name: "", input_type: "", output_type: "", options: b"", client_streaming: false, server_streaming: false, streaming_set: 0}
+  var bad = 0
   for f in pw.walk(b)? {
     if f.num == 1 && pw.is_s(f) {
-      d.name = pw.text(f)?
+      (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
-      d.input_type = pw.text(f)?
+      (d.input_type, bad) = last_text(f, bad)
     } else if f.num == 3 && pw.is_s(f) {
-      d.output_type = pw.text(f)?
+      (d.output_type, bad) = last_text(f, bad)
     } else if f.num == 4 && pw.is_s(f) {
       d.options = f.data
       d.options_set = true
@@ -531,14 +555,16 @@ fn dec_method(b: Bytes) -> MethodDesc ! protobuf.ProtoErr {
       d.streaming_set = d.streaming_set | 2
     }
   }
+  if bad != 0 { return Err(protobuf.ProtoErr.Utf8) }
   Ok(d)
 }
 
 fn dec_service(b: Bytes) -> ServiceDesc ! protobuf.ProtoErr {
   var d = ServiceDesc{name: "", method: [], options: b""}
+  var bad = 0
   for f in pw.walk(b)? {
     if f.num == 1 && pw.is_s(f) {
-      d.name = pw.text(f)?
+      (d.name, bad) = last_text(f, bad)
     } else if f.num == 2 && pw.is_s(f) {
       d.method.push(dec_method(f.data)?)
     } else if f.num == 3 && pw.is_s(f) {
@@ -546,6 +572,7 @@ fn dec_service(b: Bytes) -> ServiceDesc ! protobuf.ProtoErr {
       d.options_set = true
     }
   }
+  if bad != 0 { return Err(protobuf.ProtoErr.Utf8) }
   Ok(d)
 }
 
