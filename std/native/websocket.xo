@@ -5,6 +5,7 @@
 // connection from std/http's server (a 101 response whose stream is a
 // fn(rthttp.HConn) -> (): http.xo respond); the client side is a Conn.
 use std/base64
+use std/compress
 use std/crypto
 use std/http
 use std/task
@@ -88,6 +89,11 @@ struct WsConn {
   /// the connection's local and remote "host:port"
   local: Str = ""
   remote: Str = ""
+  /// permessage-deflate was agreed (RFC 7692; no context takeover either
+  /// way, the only mode gorilla offers)
+  deflate: Bool = false
+  /// set_write_compression and set_compression_level
+  comp: Mutex[CompState] = Mutex[CompState].new(CompState{on: true, level: compress.Level.BestSpeed})
 }
 
 /// A message being written in pieces (gorilla's messageWriter).
@@ -101,7 +107,56 @@ struct MsgState {
   op: Int
   buf: Bytes
   closed: Bool
+  /// compressed: the message is kept whole and deflated at close
+  z: Bool = false
+  level: compress.Level = compress.Level.BestSpeed
 }
+
+/// A connection's write compression (gorilla's enableWriteCompression,
+/// on by default, and compressionLevel, BestSpeed by default).
+struct CompState {
+  on: Bool
+  level: compress.Level
+}
+
+/// RFC 7692 7.2.2: the sync flush's end, then an empty final stored block
+/// so that inflate sees the stream end (gorilla's decompressNoContextTakeover).
+const INFLATE_TAIL = b"\x00\x00\xff\xff\x01\x00\x00\xff\xff"
+
+/// One message's data deflated with no context takeover: a sync flush
+/// with its trailing 00 00 ff ff dropped (RFC 7692 7.2.1, gorilla's
+/// compressNoContextTakeover and truncWriter).
+fn deflate_message(data: Bytes, level: compress.Level) -> Bytes {
+  var z = compress.compressor(compress.Format.Deflate, level: level)
+  let a = z.write(data)
+  let out = a + z.flush()
+  let _done = z.finish()
+  out[0..out.len() - 4]
+}
+
+/// gorilla's parseExtensions: each extension of the header values as its
+/// name and then its parameters' names.
+fn extensions(vs: List[Str]) -> List[List[Str]] {
+  var out: List[List[Str]] = []
+  for v in vs {
+    for e in v.split(",") {
+      var parts: List[Str] = []
+      for p in e.split(";") {
+        let t = p.trim()
+        match t.find("=") {
+          Some(i) => parts.push(t[0..i].trim())
+          None => parts.push(t)
+        }
+      }
+      if parts[0] != "" {
+        out.push(parts)
+      }
+    }
+  }
+  out
+}
+
+const PMD_RESPONSE = "permessage-deflate; server_no_context_takeover; client_no_context_takeover"
 
 /// A message framed for any connection (gorilla's PreparedMessage).
 struct Prepared {
@@ -199,9 +254,32 @@ fn unmask(src: Bytes, at: Int, n: Int, key: Bytes, pos: Int) -> Bytes {
 /// Writes one final frame (masked from a client), built in one buffer.
 fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr { c.write_frame_fin(op, data, true) }
 
+/// Whether this side's next data message is compressed, and its level.
+fn (c: WsConn) compressing() -> (Bool, compress.Level) {
+  if !c.deflate {
+    return (false, compress.Level.BestSpeed)
+  }
+  c.comp.with(fn(var s: CompState) -> (Bool, compress.Level) { (s.on, s.level) })
+}
+
+/// A compressed message's frames: up to WRITE_FRAME bytes each, RSV1 on
+/// the first.
+fn (c: WsConn) write_deflated(op: Int, z: Bytes) -> () ! websocket.WsErr {
+  var b = z
+  var o = op
+  var first = true
+  while b.len() > WRITE_FRAME {
+    c.write_frame_fin(o, b[0..WRITE_FRAME], false, rsv1: first)?
+    o = OP_CONT
+    first = false
+    b = b[WRITE_FRAME..]
+  }
+  c.write_frame_fin(o, b, true, rsv1: first)
+}
+
 /// One frame: fin false for a message's frames before its last
 /// (MsgWriter).
-fn (c: WsConn) write_frame_fin(op: Int, data: Bytes, fin: Bool) -> () ! websocket.WsErr {
+fn (c: WsConn) write_frame_fin(op: Int, data: Bytes, fin: Bool, rsv1: Bool = false) -> () ! websocket.WsErr {
   // the outcome as the closure's value: an Err from with's closure would
   // undo close_sent (spec 5.4)
   let outcome = c.wr.with(fn(var w: WriteState) -> Result[(), websocket.WsErr] {
@@ -216,7 +294,7 @@ fn (c: WsConn) write_frame_fin(op: Int, data: Bytes, fin: Bool) -> () ! websocke
     let kl = if c.server { 0 } else { 4 }
     let frame = raw.bytes_buf(hl + kl + n)
     let a = raw.bytes_addr(frame)
-    rt.mem_store(a, 0, (if fin { 128 } else { 0 }) | op, 1)
+    rt.mem_store(a, 0, (if fin { 128 } else { 0 }) | (if rsv1 { 64 } else { 0 }) | op, 1)
     let mb = if c.server { 0 } else { 128 }
     if n <= 125 {
       rt.mem_store(a, 1, mb | n, 1)
@@ -353,6 +431,8 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
   var read_final = true
   var length = 0
   var pend = b""
+  // the message's first frame had RSV1 (permessage-deflate)
+  var deflated = false
   while true {
     let p = c.read_n(st, 2)?
     let b0 = Int(p[0])
@@ -363,7 +443,15 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
     var n = b1 & 127
     var errs: List[Str] = []
     if (b0 & 64) != 0 {
-      errs.push("RSV1 set")
+      // RFC 7692 6: RSV1 marks a compressed message on its first frame
+      // only, once agreed
+      if c.deflate && (op == OP_TEXT || op == OP_BINARY) {
+        deflated = true
+      } else {
+        errs.push("RSV1 set")
+      }
+    } else if op == OP_TEXT || op == OP_BINARY {
+      deflated = false
     }
     if (b0 & 32) != 0 {
       errs.push("RSV2 set")
@@ -433,7 +521,7 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
       }
     }
     var payload = b""
-    if op == OP_TEXT || (op == OP_CONT && kind == OP_TEXT) {
+    if !deflated && (op == OP_TEXT || (op == OP_CONT && kind == OP_TEXT)) {
       // a text payload is validated in the pieces that arrive (Autobahn
       // 6.4.3, 6.4.4): a bad sequence fails the connection before the
       // rest of the frame is read
@@ -505,7 +593,7 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
     if op == OP_TEXT || op == OP_BINARY {
       kind = op
     }
-    if kind == OP_TEXT {
+    if kind == OP_TEXT && !deflated {
       // validate each fragment as it arrives (gorilla's utf8 reader):
       // a bad sequence fails the connection before the rest of the
       // message is read; an incomplete one at the end waits for the
@@ -518,6 +606,23 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
       pend = chunk[cut..]
     }
     data.write(payload)
+    if read_final && deflated {
+      let lim = if c.max > 0 { c.max } else { 9223372036854775807 }
+      let all = match compress.inflate(data.freeze() + INFLATE_TAIL, max_size: lim) {
+        Ok(d) => d
+        Err(e) => {
+          if e.msg.contains("exceeds max_size") {
+            c.write_control(OP_CLOSE, close_message(1009, "")).ignore_err("the error is the limit's")
+            return Err(websocket.WsErr.TooBig(limit: c.max))
+          }
+          return Err(c.protocol_error(1007, e.msg))
+        }
+      }
+      if kind == OP_TEXT && all.to_str() is None {
+        return Err(c.protocol_error(1007, "invalid UTF-8 in text frame"))
+      }
+      return websocket.Message{kind: if kind == OP_TEXT { websocket.Kind.Text } else { websocket.Kind.Binary }, data: all}
+    }
     if read_final {
       let all = data.freeze()
       if pend.len() != 0 {
@@ -555,10 +660,23 @@ fn (c: WsConn) read() -> websocket.Message ! websocket.WsErr {
 }
 
 fn (c: WsConn) write(m: websocket.Message) -> () ! websocket.WsErr {
-  c.write_frame(if m.kind is websocket.Kind.Text { OP_TEXT } else { OP_BINARY }, m.data)
+  let op = if m.kind is websocket.Kind.Text { OP_TEXT } else { OP_BINARY }
+  let (z, level) = c.compressing()
+  if z {
+    return c.write_deflated(op, deflate_message(m.data, level))
+  }
+  c.write_frame(op, m.data)
 }
 
-fn (c: WsConn) write_text(s: Str) -> () ! websocket.WsErr { c.write_frame(OP_TEXT, s.bytes()) }
+fn (c: WsConn) write_text(s: Str) -> () ! websocket.WsErr { c.write(websocket.Message{kind: websocket.Kind.Text, data: s.bytes()}) }
+
+fn (c: WsConn) set_write_compression(on: Bool) {
+  c.comp.with(fn(var s: CompState) { s.on = on })
+}
+
+fn (c: WsConn) set_compression_level(level: compress.Level) {
+  c.comp.with(fn(var s: CompState) { s.level = level })
+}
 
 fn (c: WsConn) ping(data: Bytes = b"") -> () ! websocket.WsErr { c.write_control(OP_PING, data) }
 
@@ -619,7 +737,8 @@ fn (c: WsConn) remote_addr() -> Str { c.remote }
 
 fn (c: WsConn) writer(kind: websocket.Kind) -> MsgWriter {
   let op = if kind is websocket.Kind.Text { OP_TEXT } else { OP_BINARY }
-  MsgWriter{c: c, st: Mutex[MsgState].new(MsgState{op: op, buf: b"", closed: false})}
+  let (z, level) = c.compressing()
+  MsgWriter{c: c, st: Mutex[MsgState].new(MsgState{op: op, buf: b"", closed: false, z: z, level: level})}
 }
 
 fn (c: WsConn) write_prepared(p: Prepared) -> () ! websocket.WsErr { c.write(p.m) }
@@ -662,6 +781,11 @@ fn (w: MsgWriter) write(data: Bytes) -> () ! websocket.WsErr {
     if s.closed {
       return Err(protocol_err("write closed"))
     }
+    if s.z {
+      // deflated whole at close
+      s.buf = s.buf + data
+      return Ok(())
+    }
     var b = s.buf + data
     // a full frame goes out once more follows (gorilla flushes a full
     // buffer on the next write)
@@ -684,6 +808,9 @@ fn (w: MsgWriter) close() -> () ! websocket.WsErr {
       return Err(protocol_err("write closed"))
     }
     s.closed = true
+    if s.z {
+      return w.c.write_deflated(s.op, deflate_message(s.buf, s.level))
+    }
     w.c.write_frame_fin(s.op, s.buf, true)
   })
   outcome?
@@ -812,7 +939,7 @@ fn offered(vs: List[Str]) -> List[Str] {
   out
 }
 
-fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx {
+fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576, compress: Bool = false) -> http.Response uses fx {
   if !has_token(req.header_values("Connection"), "upgrade") || !has_token(req.header_values("Upgrade"), "websocket") {
     return refuse(400)
   }
@@ -839,11 +966,24 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
       }
     }
   }
+  // gorilla's Upgrader.EnableCompression: any permessage-deflate offer
+  // is answered with no context takeover both ways
+  var pmd = false
+  if compress {
+    for e in extensions(req.header_values("Sec-Websocket-Extensions")) {
+      if e[0] == "permessage-deflate" {
+        pmd = true
+      }
+    }
+  }
   let g = rt.launder1(f)
   let hand = fn(h: rthttp.HConn) {
     var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept_key(key)}\r\n"
     if !proto.is_empty() {
       head = head + "Sec-WebSocket-Protocol: ${proto}\r\n"
+    }
+    if pmd {
+      head = head + "Sec-WebSocket-Extensions: ${PMD_RESPONSE}\r\n"
     }
     head = head + "\r\n"
     if !hconn.send_at(h, raw.data(head), head.len()) {
@@ -891,7 +1031,7 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
     // what the server read past the request's head is the first input
     let rest = http1.take_rest(h)
     let (la, ra) = hconn.conn_addrs(h)
-    let wc = WsConn{local: la, remote: ra, wire: wire, link: None, rdl: rdl, wdl: wdl, server: true, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: rest, pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
+    let wc = WsConn{local: la, remote: ra, wire: wire, link: None, rdl: rdl, wdl: wdl, server: true, max: max_message, proto: proto, deflate: pmd, rd: Mutex[ReadState].new(ReadState{buf: rest, pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
     g(wc)
     // the connection is closed now: no hook runs again
     wc.drop_hooks()
@@ -951,7 +1091,7 @@ fn (l: Link) close() {
   }
 }
 
-fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! websocket.WsErr uses net.dial {
+fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"", compress: Bool = false) -> WsConn ! websocket.WsErr uses net.dial {
   let malformed = websocket.WsErr.Handshake(status: 0, msg: "websocket: malformed ws or wss URL")
   let secure = url.starts_with("wss://")
   if !url.starts_with("ws://") && !secure {
@@ -999,6 +1139,9 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
   if !protocols.is_empty() {
     req = req + "Sec-WebSocket-Protocol: ${protocols.join(", ")}\r\n"
   }
+  if compress {
+    req = req + "Sec-WebSocket-Extensions: ${PMD_RESPONSE}\r\n"
+  }
   for (k, v) in headers {
     req = req + "${k}: ${v}\r\n"
   }
@@ -1045,6 +1188,7 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
   var conn: List[Str] = []
   var acc = ""
   var proto = ""
+  var exts: List[Str] = []
   for l in lines[1..] {
     if let Some(i) = l.find(":") {
       let k = l[0..i].trim().to_lower()
@@ -1057,12 +1201,26 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
         acc = v
       } else if k == "sec-websocket-protocol" && proto.is_empty() {
         proto = v
+      } else if k == "sec-websocket-extensions" {
+        exts.push(v)
       }
     }
   }
   if status != 101 || !has_token(upg, "websocket") || !has_token(conn, "upgrade") || acc != accept_key(key) {
     c.close()
     return Err(websocket.WsErr.Handshake(status: status, msg: "websocket: bad handshake"))
+  }
+  // gorilla's Dialer: a permessage-deflate answer must keep no context
+  // either way (errInvalidCompression), whether or not it was offered
+  var pmd = false
+  for e in extensions(exts) {
+    if e[0] == "permessage-deflate" && !pmd {
+      if !e.contains("server_no_context_takeover") || !e.contains("client_no_context_takeover") {
+        c.close()
+        return Err(websocket.WsErr.Handshake(status: status, msg: "websocket: invalid compression negotiation"))
+      }
+      pmd = true
+    }
   }
   let link = c
   let wire = Wire{
@@ -1082,5 +1240,5 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
     close: fn(_x: Int) { link.close() },
   }
   let (la, ra) = link.addrs()
-  WsConn{local: la, remote: ra, wire: wire, link: Some(link), rdl: Atomic[Int].new(0), wdl: Atomic[Int].new(0), server: false, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: all[head_end + 4..], pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
+  WsConn{local: la, remote: ra, wire: wire, link: Some(link), rdl: Atomic[Int].new(0), wdl: Atomic[Int].new(0), server: false, max: max_message, proto: proto, deflate: pmd, rd: Mutex[ReadState].new(ReadState{buf: all[head_end + 4..], pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
 }

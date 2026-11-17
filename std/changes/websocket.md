@@ -14,6 +14,17 @@
 message's data followed by term; `Joined.read(max)` gives the next 1 to
 max bytes and reads the next message when one is used up.
 
+## 2026-11-17: feature: permessage-deflate (RFC 7692)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #235 (std Proven; scripts/stdaudit/map.txt websocket gap rows EnableWriteCompression, SetCompressionLevel, behavior.permessage_deflate)
+- Go reference: gorilla/websocket v1.5.3 compression.go (compressNoContextTakeover, truncWriter, decompressNoContextTakeover), conn.go EnableWriteCompression and SetCompressionLevel, server.go and client.go EnableCompression and parseExtensions (errInvalidCompression)
+- Test: std/websocket_test.xo (round trips of sizes, kinds, writer, prepared, levels and off; RSV1 on the wire and RFC 7692 7.2.3.1's "Hello" frame; RSV1 without agreement; TooBig after inflating; dial refusing context takeover), arm64 and LLVM; golden internal/gen websocket_deflate on the Go backend (a hand written server's compressed frame, the offer and the refused answer); interop with gorilla v1.5.3 EnableCompression both ways (arm64 and Go backends)
+- Behavior difference: max_message caps a compressed message's inflated size; gorilla's read limit counts wire bytes
+- Timing: none (opt in: compress is false by default and an uncompressed write or read is unchanged)
+- Shipped in: not yet released
+
 ## 2026-11-16: feature: writer, prepared messages, on_close, addresses and is_upgrade
 
 - Kind: feature

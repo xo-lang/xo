@@ -8,6 +8,8 @@ package rt
 
 import (
 	"bufio"
+	"bytes"
+	"compress/flate"
 	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
@@ -18,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +58,96 @@ type wsConn struct {
 	pingH, pongH func(*Task, Bytes) Result[Unit, Never]
 	// on_close's function (gorilla's SetCloseHandler), nil for none
 	closeH func(*Task, int64, string) Result[Unit, Never]
+
+	// deflate: permessage-deflate was agreed (RFC 7692; no context
+	// takeover either way, the only mode gorilla offers)
+	deflate bool
+	// set_write_compression and set_compression_level (gorilla's
+	// enableWriteCompression, on by default, and compressionLevel,
+	// BestSpeed by default)
+	cmu       sync.Mutex
+	compOff   bool
+	compLevel int
+}
+
+// wsInflateTail is RFC 7692 7.2.2's sync flush end, then an empty final
+// stored block so that inflate sees the stream end (gorilla's
+// decompressNoContextTakeover).
+const wsInflateTail = "\x00\x00\xff\xff\x01\x00\x00\xff\xff"
+
+// wsPMDResponse answers (and offers) permessage-deflate with no context
+// takeover either way.
+const wsPMDResponse = "permessage-deflate; server_no_context_takeover; client_no_context_takeover"
+
+// wsDeflateMessage is one message's data deflated with no context
+// takeover: a sync flush with its trailing 00 00 ff ff dropped (RFC 7692
+// 7.2.1, gorilla's compressNoContextTakeover and truncWriter).
+func wsDeflateMessage(data []byte, level int) []byte {
+	var b bytes.Buffer
+	w, err := flate.NewWriter(&b, level)
+	if err != nil {
+		panic(err)
+	}
+	w.Write(data)
+	w.Flush()
+	out := b.Bytes()
+	return out[:len(out)-4]
+}
+
+// wsExtensions is gorilla's parseExtensions: each extension of the
+// header values as its name and then its parameters' names.
+func wsExtensions(vs []string) [][]string {
+	var out [][]string
+	for _, v := range vs {
+		for _, e := range strings.Split(v, ",") {
+			var parts []string
+			for _, p := range strings.Split(e, ";") {
+				t := strings.TrimSpace(p)
+				if i := strings.IndexByte(t, '='); i >= 0 {
+					t = strings.TrimSpace(t[:i])
+				}
+				parts = append(parts, t)
+			}
+			if parts[0] != "" {
+				out = append(out, parts)
+			}
+		}
+	}
+	return out
+}
+
+// compressing is whether this side's next data message is compressed,
+// and its level.
+func (c *wsConn) compressing() (bool, int) {
+	if !c.deflate {
+		return false, flate.BestSpeed
+	}
+	c.cmu.Lock()
+	defer c.cmu.Unlock()
+	return !c.compOff, c.compLevel
+}
+
+// writeDeflated is a compressed message's frames: up to wsWriteFrame
+// bytes each, RSV1 on the first.
+func (c *wsConn) writeDeflated(tk *Task, op int, z []byte) *Websocket_WsErr {
+	first := true
+	for len(z) > wsWriteFrame {
+		if e := c.writeFrameRsv(tk, op, z[:wsWriteFrame], false, first); e != nil {
+			return e
+		}
+		op = wsContinuation
+		first = false
+		z = z[wsWriteFrame:]
+	}
+	return c.writeFrameRsv(tk, op, z, true, first)
+}
+
+// writeData writes a data message: compressed when this side compresses.
+func (c *wsConn) writeData(tk *Task, op int, data []byte) *Websocket_WsErr {
+	if z, level := c.compressing(); z {
+		return c.writeDeflated(tk, op, wsDeflateMessage(data, level))
+	}
+	return c.writeFrame(tk, op, data)
 }
 
 const (
@@ -157,6 +250,12 @@ func (c *wsConn) writeFrame(tk *Task, op int, data []byte) *Websocket_WsErr {
 // writeFrameFin is one frame; fin false for a message's frames before its
 // last (Websocket_MsgWriter).
 func (c *wsConn) writeFrameFin(tk *Task, op int, data []byte, fin bool) *Websocket_WsErr {
+	return c.writeFrameRsv(tk, op, data, fin, false)
+}
+
+// writeFrameRsv is one frame with RSV1 set when rsv1 (a compressed
+// message's first frame).
+func (c *wsConn) writeFrameRsv(tk *Task, op int, data []byte, fin, rsv1 bool) *Websocket_WsErr {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	if c.writeErr != nil {
@@ -171,6 +270,9 @@ func (c *wsConn) writeFrameFin(tk *Task, op int, data []byte, fin bool) *Websock
 	first := byte(op)
 	if fin {
 		first |= 0x80
+	}
+	if rsv1 {
+		first |= 0x40
 	}
 	hdr = append(hdr, first)
 	mb := byte(0)
@@ -265,6 +367,8 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 	checked := 0
 	readFinal := true
 	var length int64
+	// deflated: the message's first frame had RSV1 (permessage-deflate)
+	deflated := false
 	for {
 		p, err := c.readN(2)
 		if err != nil {
@@ -276,7 +380,15 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 		n := int64(p[1] & 0x7f)
 		var errs []string
 		if p[0]&0x40 != 0 {
-			errs = append(errs, "RSV1 set")
+			// RFC 7692 6: RSV1 marks a compressed message on its first
+			// frame only, once agreed
+			if c.deflate && (op == wsText || op == wsBinary) {
+				deflated = true
+			} else {
+				errs = append(errs, "RSV1 set")
+			}
+		} else if op == wsText || op == wsBinary {
+			deflated = false
 		}
 		if p[0]&0x20 != 0 {
 			errs = append(errs, "RSV2 set")
@@ -344,7 +456,7 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 			}
 		}
 		var payload []byte
-		if op == wsText || (op == wsContinuation && kind == wsText) {
+		if !deflated && (op == wsText || (op == wsContinuation && kind == wsText)) {
 			// a text payload is validated in the pieces that arrive
 			// (Autobahn 6.4.3, 6.4.4): a bad sequence fails the
 			// connection before the rest of the frame is read
@@ -435,7 +547,10 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 			kind = op
 		}
 		data = append(data, payload...)
-		if kind == wsText {
+		if readFinal && deflated {
+			return c.inflateMessage(tk, kind, data)
+		}
+		if kind == wsText && !deflated {
 			// each fragment is checked as it arrives (gorilla's utf8
 			// reader): a bad sequence fails the connection at its
 			// fragment, an incomplete one at the end waits for the next
@@ -452,6 +567,33 @@ func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 			return Websocket_Message{F_kind: Websocket_Kind{Tag: kind}, F_data: Bytes(data)}, nil
 		}
 	}
+}
+
+// inflateMessage is a compressed message's data inflated: over max is
+// close 1009 and TooBig (max caps the inflated size), a bad stream close
+// 1007, and a text message's UTF-8 is checked after inflating.
+func (c *wsConn) inflateMessage(tk *Task, kind int, data []byte) (Websocket_Message, *Websocket_WsErr) {
+	r := flate.NewReader(io.MultiReader(bytes.NewReader(data), strings.NewReader(wsInflateTail)))
+	var src io.Reader = r
+	if c.max > 0 {
+		src = io.LimitReader(r, c.max+1)
+	}
+	all, err := io.ReadAll(src)
+	if err != nil {
+		return Websocket_Message{}, c.protocolError(tk, 1007, err.Error())
+	}
+	if c.max > 0 && int64(len(all)) > c.max {
+		c.writeControl(tk, wsClose, wsCloseMessage(1009, ""))
+		e := wsTooBig(c.max)
+		return Websocket_Message{}, &e
+	}
+	if kind == wsText && !utf8.Valid(all) {
+		return Websocket_Message{}, c.protocolError(tk, 1007, "invalid UTF-8 in text frame")
+	}
+	if all == nil {
+		all = []byte{}
+	}
+	return Websocket_Message{F_kind: Websocket_Kind{Tag: kind}, F_data: Bytes(all)}, nil
 }
 
 // wsUTF8Prefix is how many bytes of b are whole characters; ok is false
@@ -501,7 +643,7 @@ func (w Websocket_WsConn) M_write(tk *Task, m Websocket_Message) Result[Unit, We
 	if m.F_kind.Tag == 1 {
 		op = wsText
 	}
-	if e := w.c.writeFrame(tk, op, []byte(m.F_data)); e != nil {
+	if e := w.c.writeData(tk, op, []byte(m.F_data)); e != nil {
 		return Err[Unit](*e)
 	}
 	return Ok[Unit, Websocket_WsErr](Unit{})
@@ -509,10 +651,25 @@ func (w Websocket_WsConn) M_write(tk *Task, m Websocket_Message) Result[Unit, We
 
 // M_write_text is `c.write_text(s)`.
 func (w Websocket_WsConn) M_write_text(tk *Task, s string) Result[Unit, Websocket_WsErr] {
-	if e := w.c.writeFrame(tk, wsText, []byte(s)); e != nil {
+	if e := w.c.writeData(tk, wsText, []byte(s)); e != nil {
 		return Err[Unit](*e)
 	}
 	return Ok[Unit, Websocket_WsErr](Unit{})
+}
+
+// M_set_write_compression is gorilla's EnableWriteCompression.
+func (w Websocket_WsConn) M_set_write_compression(tk *Task, on bool) {
+	w.c.cmu.Lock()
+	w.c.compOff = !on
+	w.c.cmu.Unlock()
+}
+
+// M_set_compression_level is gorilla's SetCompressionLevel.
+func (w Websocket_WsConn) M_set_compression_level(tk *Task, level Compress_Level) {
+	l := compressLevel(level)
+	w.c.cmu.Lock()
+	w.c.compLevel = l
+	w.c.cmu.Unlock()
 }
 
 // M_ping is `c.ping(data)`.
@@ -626,7 +783,7 @@ func wsRefuse(tk *Task, status int64) Http_Response {
 // Websocket_upgrade is `websocket.upgrade(req, f, ...)`: gorilla's
 // Upgrader checks, then a 101 response whose stream is the hand-off
 // (http_net.go hijacks the connection for it).
-func Websocket_upgrade(tk *Task, req Http_Request, f func(*Task, Websocket_WsConn) Result[Unit, Never], protocols List[string], origins List[string], maxMessage int64) Http_Response {
+func Websocket_upgrade(tk *Task, req Http_Request, f func(*Task, Websocket_WsConn) Result[Unit, Never], protocols List[string], origins List[string], maxMessage int64, compress bool) Http_Response {
 	hv := func(name string) []string { return req.M_header_values(tk, name).s }
 	if !wsTokens(hv("Connection"), "upgrade") || !wsTokens(hv("Upgrade"), "websocket") {
 		return wsRefuse(tk, 400)
@@ -656,6 +813,16 @@ func Websocket_upgrade(tk *Task, req Http_Request, f func(*Task, Websocket_WsCon
 			}
 		}
 	}
+	// gorilla's Upgrader.EnableCompression: any permessage-deflate offer
+	// is answered with no context takeover both ways
+	pmd := false
+	if compress {
+		for _, e := range wsExtensions(hv("Sec-Websocket-Extensions")) {
+			if e[0] == "permessage-deflate" {
+				pmd = true
+			}
+		}
+	}
 	return Http_Response{F_status: 101, XStream: func(tk *Task, bw Http_BodyWriter) Result[Unit, IoErr] {
 		if bw.w == nil || bw.w.rw == nil {
 			// Router.call: no connection to hand over
@@ -678,11 +845,14 @@ func Websocket_upgrade(tk *Task, req Http_Request, f func(*Task, Websocket_WsCon
 		if proto != "" {
 			b.WriteString("Sec-WebSocket-Protocol: " + proto + "\r\n")
 		}
+		if pmd {
+			b.WriteString("Sec-WebSocket-Extensions: " + wsPMDResponse + "\r\n")
+		}
 		b.WriteString("\r\n")
 		if err := memConnWrite(tk, conn, []byte(b.String())); err != nil {
 			return Ok[Unit, IoErr](Unit{})
 		}
-		c := &wsConn{server: true, conn: conn, br: brw.Reader, max: maxMessage, proto: proto}
+		c := &wsConn{server: true, conn: conn, br: brw.Reader, max: maxMessage, proto: proto, deflate: pmd, compLevel: flate.BestSpeed}
 		c.br = wsMemReader(c, c.br)
 		f(tk, Websocket_WsConn{c: c})
 		return Ok[Unit, IoErr](Unit{})
@@ -721,7 +891,7 @@ func wsOriginOK(req Http_Request, origin []string, allowed []string) bool {
 }
 
 // Websocket_dial is `websocket.dial(net, url, ...)`: gorilla's Dialer.
-func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string], protocols List[string], maxMessage int64, roots Bytes) Result[Websocket_WsConn, Websocket_WsErr] {
+func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string], protocols List[string], maxMessage int64, roots Bytes, compress bool) Result[Websocket_WsConn, Websocket_WsErr] {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" {
 		return Err[Websocket_WsConn](wsHandshakeErr(0, "websocket: malformed ws or wss URL"))
@@ -776,6 +946,9 @@ func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string],
 	if len(protocols.s) > 0 {
 		b.WriteString("Sec-WebSocket-Protocol: " + strings.Join(protocols.s, ", ") + "\r\n")
 	}
+	if compress {
+		b.WriteString("Sec-WebSocket-Extensions: " + wsPMDResponse + "\r\n")
+	}
 	for k, v := range Map_All(headers) {
 		b.WriteString(k + ": " + v + "\r\n")
 	}
@@ -800,7 +973,19 @@ func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string],
 		conn.Close()
 		return Err[Websocket_WsConn](wsHandshakeErr(int64(resp.StatusCode), "websocket: bad handshake"))
 	}
-	c := &wsConn{conn: conn, br: br, max: maxMessage, proto: resp.Header.Get("Sec-Websocket-Protocol")}
+	// gorilla's Dialer: a permessage-deflate answer must keep no context
+	// either way (errInvalidCompression), whether or not it was offered
+	pmd := false
+	for _, e := range wsExtensions(resp.Header.Values("Sec-Websocket-Extensions")) {
+		if e[0] == "permessage-deflate" && !pmd {
+			if !slices.Contains(e, "server_no_context_takeover") || !slices.Contains(e, "client_no_context_takeover") {
+				conn.Close()
+				return Err[Websocket_WsConn](wsHandshakeErr(int64(resp.StatusCode), "websocket: invalid compression negotiation"))
+			}
+			pmd = true
+		}
+	}
+	c := &wsConn{conn: conn, br: br, max: maxMessage, proto: resp.Header.Get("Sec-Websocket-Protocol"), deflate: pmd, compLevel: flate.BestSpeed}
 	c.br = wsMemReader(c, c.br)
 	return Ok[Websocket_WsConn, Websocket_WsErr](Websocket_WsConn{c: c})
 }
@@ -831,6 +1016,9 @@ type wsMsgWriter struct {
 	op     int
 	buf    []byte
 	closed bool
+	// z: compressed, the message kept whole and deflated at close
+	z     bool
+	level int
 }
 
 // XoDebug implements Debug.
@@ -842,7 +1030,8 @@ func (w Websocket_WsConn) M_writer(tk *Task, kind Websocket_Kind) Websocket_MsgW
 	if kind.Tag == 1 {
 		op = wsText
 	}
-	return Websocket_MsgWriter{m: &wsMsgWriter{c: w.c, op: op}}
+	z, level := w.c.compressing()
+	return Websocket_MsgWriter{m: &wsMsgWriter{c: w.c, op: op, z: z, level: level}}
 }
 
 var errWsWriteClosed = wsProtocolErr("write closed")
@@ -856,7 +1045,7 @@ func (w Websocket_MsgWriter) M_write(tk *Task, data Bytes) Result[Unit, Websocke
 		return Err[Unit](errWsWriteClosed)
 	}
 	m.buf = append(m.buf, data...)
-	for len(m.buf) > wsWriteFrame {
+	for !m.z && len(m.buf) > wsWriteFrame {
 		if e := m.c.writeFrameFin(tk, m.op, m.buf[:wsWriteFrame], false); e != nil {
 			return Err[Unit](*e)
 		}
@@ -875,14 +1064,20 @@ func (w Websocket_MsgWriter) M_close(tk *Task) Result[Unit, Websocket_WsErr] {
 		return Err[Unit](errWsWriteClosed)
 	}
 	m.closed = true
+	if m.z {
+		if e := m.c.writeDeflated(tk, m.op, wsDeflateMessage(m.buf, m.level)); e != nil {
+			return Err[Unit](*e)
+		}
+		return Ok[Unit, Websocket_WsErr](Unit{})
+	}
 	if e := m.c.writeFrameFin(tk, m.op, m.buf, true); e != nil {
 		return Err[Unit](*e)
 	}
 	return Ok[Unit, Websocket_WsErr](Unit{})
 }
 
-// Websocket_Prepared is gorilla's PreparedMessage (no compression: the
-// frames of WsConn.write).
+// Websocket_Prepared is gorilla's PreparedMessage: written as
+// WsConn.write writes it, compressed when the connection compresses.
 type Websocket_Prepared struct{ m Websocket_Message }
 
 // XoDebug implements Debug.

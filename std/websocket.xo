@@ -2,6 +2,7 @@
 // encoding rules are listed at the top of std/prelude.xo. WebSockets
 // (RFC 6455) with gorilla/websocket's behavior: a handler upgrades its
 // request, a client dials, and either side reads and writes messages.
+use std/compress
 use std/http
 
 /// A whole message: its kind and data (a text message's data is valid
@@ -81,6 +82,13 @@ fn (c: WsConn) remote_addr() -> Str
 /// is not checked as UTF-8 (write_text's Str is). Other writes do not
 /// wait for the writer: use one writer or whole messages at a time.
 fn (c: WsConn) writer(kind: Kind) -> MsgWriter
+/// gorilla's EnableWriteCompression: whether this side compresses the
+/// messages it writes from now on (on by default; nothing changes when
+/// permessage-deflate was not agreed: upgrade's and dial's compress).
+fn (c: WsConn) set_write_compression(on: Bool)
+/// gorilla's SetCompressionLevel: the level of the messages this side
+/// compresses from now on (BestSpeed by default, as gorilla's).
+fn (c: WsConn) set_compression_level(level: compress.Level)
 /// gorilla's WritePreparedMessage: the prepared message as one frame.
 fn (c: WsConn) write_prepared(p: Prepared) -> () ! WsErr
 
@@ -93,8 +101,8 @@ fn (w: MsgWriter) write(data: Bytes) -> () ! WsErr
 fn (w: MsgWriter) close() -> () ! WsErr
 
 /// A message framed once for many connections (gorilla's
-/// PreparedMessage; std/websocket has no compression, so its frames are
-/// those of WsConn.write).
+/// PreparedMessage): written as WsConn.write writes it, compressed when
+/// the connection compresses.
 struct Prepared {}
 
 /// gorilla's NewPreparedMessage.
@@ -124,12 +132,17 @@ fn is_upgrade(req: http.Request) -> Bool
 /// 13`, a key of 16 bytes, and an `Origin` whose host is the request's
 /// (or one of origins; `["*"]` allows any); else 400, 405, or 403 with
 /// the status text. The first of protocols the client offers is the
-/// subprotocol.
-fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
+/// subprotocol. compress (gorilla's EnableCompression) answers a client's
+/// permessage-deflate offer (RFC 7692) with no context takeover either
+/// way: each message is deflated alone.
+fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576, compress: Bool = false) -> http.Response uses fx
 
 /// A client connection to url (`ws://host[:port]/path?query`, or
 /// `wss://` over TLS through std/tls, verified against roots, a PEM
 /// bundle, when given, else the system's), as gorilla's Dialer: the
 /// handshake with headers and the protocols offered, the 101 and its
-/// Sec-WebSocket-Accept checked.
-fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! WsErr uses net.dial
+/// Sec-WebSocket-Accept checked. compress (gorilla's EnableCompression)
+/// offers permessage-deflate with no context takeover; an answer with
+/// context takeover is Handshake(101, "websocket: invalid compression
+/// negotiation").
+fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"", compress: Bool = false) -> WsConn ! WsErr uses net.dial

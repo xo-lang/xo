@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+compress true: text Hello
+compress true: binary 40000 same true
+compress true: writer 3000
+compress true: prepared prepared
+compress true: off plain
+compress false: text Hello
+compress false: binary 40000 same true
+compress false: writer 3000
+compress false: prepared prepared
+compress false: off plain
+raw: read Hello
+raw: offered true
+raw: websocket: invalid compression negotiation
+raw: offered true
+small: websocket: close 1009 (message too big)
+--- stderr

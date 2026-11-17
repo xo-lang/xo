@@ -1,3 +1,6 @@
+use std/base64
+use std/compress
+use std/crypto
 use std/http
 
 fn echo(c: WsConn) {
@@ -38,9 +41,9 @@ test "a websocket client on FakeNet reaches http.server's upgrade route" {
 
 // A raw client: the handshake by hand (the RFC's sample key), then the
 // server's frames as bytes.
-fn raw_open(n: Net, addr: Str, path: Str) -> (Conn, Bytes) uses net.dial {
+fn raw_open(n: Net, addr: Str, path: Str, extra: Str = "") -> (Conn, Bytes) uses net.dial {
   let c = n.dial(addr).or_fault("raw dial")
-  c.write("GET ${path} HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n".bytes()).or_fault("raw write")
+  c.write("GET ${path} HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${extra}\r\n".bytes()).or_fault("raw write")
   var got = b""
   while got.find("\r\n\r\n".bytes()) is None {
     got = got + (c.read(4096).or_fault("raw read") ?? b"")
@@ -232,6 +235,157 @@ test "join gives an empty message's term and returns the close as read() does" {
         expect(reason) == "bye"
       }
       _ => fault("want Closed")
+    }
+  }
+}
+
+// permessage-deflate (RFC 7692, gorilla's EnableCompression): messages of
+// each size and kind, whole, through a writer and prepared, both ways
+test "compressed messages round trip, as gorilla's EnableCompression" {
+  var r = http.router()
+  r.handle("GET /z", fn(req) { upgrade(req, echo, compress: true) })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = dial(os.net, "ws://${addr}/z", compress: true).or_fault("dial")
+    for n in [0, 1, 125, 4096, 5000, 100000] {
+      let text = "xo websocket ".repeat(n / 13 + 1)[0..n]
+      c.write_text(text).or_fault("text")
+      let m = c.read().or_fault("read text")
+      expect(m.kind is Kind.Text) == true
+      expect(m.data.to_str_lossy()) == text
+      var bin = BytesBuilder.new()
+      for i in 0..n {
+        bin.write_byte(UInt8((i * 7919) % 256))
+      }
+      let b = bin.freeze()
+      c.write(Message{kind: Kind.Binary, data: b}).or_fault("binary")
+      expect(c.read().or_fault("read binary").data) == b
+    }
+    let w = c.writer(Kind.Text)
+    w.write("a".repeat(6000).bytes()).or_fault("w1")
+    w.write("b".repeat(6000).bytes()).or_fault("w2")
+    w.close().or_fault("wclose")
+    expect(c.read().or_fault("read writer").data.to_str_lossy()) == "a".repeat(6000) + "b".repeat(6000)
+    c.set_compression_level(compress.Level.BestCompression)
+    c.write_prepared(prepare(Message{kind: Kind.Text, data: "prepared".repeat(50).bytes()})).or_fault("prepared")
+    expect(c.read().or_fault("read prepared").data.to_str_lossy()) == "prepared".repeat(50)
+    c.set_write_compression(false)
+    c.write_text("plain").or_fault("plain")
+    expect(c.read().or_fault("read plain").data.to_str_lossy()) == "plain"
+    c.close().or_fault("close")
+  }
+}
+
+test "a compressed frame has RSV1 and inflates; the RFC 7692 Hello frame reads" {
+  var r = http.router()
+  let got = Chan[Str].new(1)
+  r.handle("GET /z", fn(req) {
+    upgrade(req, fn(c) {
+      c.write_text("Hello Hello Hello Hello").or_fault("write")
+      match c.read() {
+        Ok(m) => got.send(m.data.to_str_lossy())
+        Err(e) => got.send("${e}")
+      }
+    }, compress: true)
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let ext = "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
+    // the first frame may come in the read that ends the 101's head: keep
+    // what raw_open read past it
+    let (c, held) = raw_open(os.net, addr, "/z", extra: ext)
+    let b = raw_fill(c, held, 2)
+    // final, RSV1, text
+    expect(Int(b[0])) == 0xC1
+    let n = Int(b[1])
+    let body = raw_fill(c, b[2..], n)
+    let tail = b"\x00\x00\xff\xff\x01\x00\x00\xff\xff"
+    expect(compress.inflate(body[0..n] + tail).or_fault("inflate").to_str_lossy()) == "Hello Hello Hello Hello"
+    // RFC 7692 7.2.3.1: "Hello" compressed, masked with a zero key
+    c.write(b"\xc1\x87\x00\x00\x00\x00\xf2\x48\xcd\xc9\xc9\x07\x00").or_fault("raw write")
+    expect(got.recv() ?? "") == "Hello"
+    c.close()
+  }
+}
+
+test "without the extension agreed, RSV1 is a protocol error" {
+  var r = http.router()
+  let got = Chan[Str].new(1)
+  r.handle("GET /z", fn(req) {
+    upgrade(req, fn(c) {
+      match c.read() {
+        Ok(m) => got.send(m.data.to_str_lossy())
+        Err(e) => got.send("${e}")
+      }
+    }, compress: true)
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    // no offer: the server compresses nothing and refuses RSV1
+    let c = raw_open(os.net, addr, "/z").0
+    c.write(b"\xc1\x87\x00\x00\x00\x00\xf2\x48\xcd\xc9\xc9\x07\x00").or_fault("raw write")
+    expect(got.recv() ?? "") == "websocket: RSV1 set"
+    c.close()
+  }
+}
+
+test "a compressed message past max_message is TooBig, the limit on its inflated size" {
+  var r = http.router()
+  let got = Chan[Str].new(1)
+  r.handle("GET /z", fn(req) {
+    upgrade(req, fn(c) {
+      match c.read() {
+        Ok(m) => got.send("len ${m.data.len()}")
+        Err(e) => got.send("${e}")
+      }
+    }, max_message: 1000, compress: true)
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    let c = dial(os.net, "ws://${addr}/z", compress: true).or_fault("dial")
+    // 5000 bytes deflate to far fewer than 1000
+    c.write_text("a".repeat(5000)).or_fault("write")
+    expect(got.recv() ?? "") == "websocket: read limit exceeded"
+    c.close().ignore_err("the server closed")
+  }
+}
+
+// gorilla's Dialer: an answer that keeps context is refused
+test "dial refuses permessage-deflate with context takeover" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  scope s {
+    s.spawn_background(fn() {
+      let sc = l.accept().or_fault("accept")
+      var got = b""
+      while got.find("\r\n\r\n".bytes()) is None {
+        got = got + (sc.read(4096).or_fault("read") ?? b"")
+      }
+      var key = ""
+      for line in got.to_str_lossy().split("\r\n") {
+        if line.to_lower().starts_with("sec-websocket-key:") {
+          key = line[18..].trim()
+        }
+      }
+      let acc = base64.encode(crypto.digest(crypto.Hash.Sha1, (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").bytes()))
+      sc.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acc}\r\nSec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover\r\n\r\n".bytes()).or_fault("write")
+      sc.read(10).ignore_err("the client closes")
+    })
+    match dial(os.net, "ws://${addr}/", compress: true) {
+      Err(e) => expect("${e}") == "websocket: invalid compression negotiation"
+      Ok(_) => fault("want an error")
     }
   }
 }

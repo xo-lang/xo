@@ -2808,8 +2808,8 @@ websocket.Conn.NextWriter = websocket.WsConn.writer
 websocket.PreparedMessage = websocket.Prepared
 websocket.NewPreparedMessage = websocket.prepare
 websocket.Conn.WritePreparedMessage = websocket.WsConn.write_prepared
-websocket.Conn.EnableWriteCompression = gap: no permessage-deflate
-websocket.Conn.SetCompressionLevel = gap: no permessage-deflate
+websocket.Conn.EnableWriteCompression = websocket.WsConn.set_write_compression
+websocket.Conn.SetCompressionLevel = websocket.WsConn.set_compression_level
 websocket.Conn.SetCloseHandler = websocket.WsConn.on_close
 websocket.Conn.CloseHandler = not planned: on_close replaces the handler; the default reply is the absence of one
 websocket.FormatCloseMessage = std/websocket.WsConn.close (code, reason)
@@ -2832,7 +2832,7 @@ websocket.CloseTryAgainLater = not planned: close codes are Int (RFC 6455 7.4; W
 websocket.CloseUnsupportedData = not planned: close codes are Int (RFC 6455 7.4; WsConn.close(code, reason), WsErr.Closed(code, reason))
 # websocket behavior checklist (decision 0655)
 websocket.behavior.autobahn = gap: no Autobahn testsuite run (decision 0313 stage 3)
-websocket.behavior.permessage_deflate = gap: no permessage-deflate (RFC 7692)
+websocket.behavior.permessage_deflate = std/websocket.upgrade (compress), std/websocket.dial (compress): RFC 7692 with no context takeover, gorilla's only mode
 websocket.behavior.fragments = websocket.WsConn.writer
 # jwt: github.com/golang-jwt/jwt/v5 v5.3.1 (outside.txt; decision 0655)
 jwt.New = std/jwt.sign

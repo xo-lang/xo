@@ -8609,7 +8609,7 @@ enum WsErr {
 fn (e: WsErr) display() -> Str      // gorilla's texts: `websocket: close 1001 (going away): bye`
 struct WsConn {}
 fn (c: WsConn) read() -> Message ! WsErr       // a whole message; pings answered (or on_ping), pongs to on_pong
-fn (c: WsConn) write(m: Message) -> () ! WsErr // one frame
+fn (c: WsConn) write(m: Message) -> () ! WsErr // one frame (compressed: frames of up to 4096 bytes)
 fn (c: WsConn) write_text(s: Str) -> () ! WsErr
 fn (c: WsConn) ping(data: Bytes = b"") -> () ! WsErr
 fn (c: WsConn) close(code: Int = 1000, reason: Str = "") -> () ! WsErr   // the close frame, then the connection
@@ -8625,14 +8625,16 @@ fn (c: WsConn) local_addr() -> Str               // gorilla's LocalAddr, "host:p
 fn (c: WsConn) remote_addr() -> Str              // gorilla's RemoteAddr
 fn (c: WsConn) writer(kind: Kind) -> MsgWriter   // gorilla's NextWriter: frames of up to 4096 bytes
 fn (c: WsConn) write_prepared(p: Prepared) -> () ! WsErr   // gorilla's WritePreparedMessage
+fn (c: WsConn) set_write_compression(on: Bool)  // gorilla's EnableWriteCompression: on by default once agreed
+fn (c: WsConn) set_compression_level(level: compress.Level)   // gorilla's SetCompressionLevel: BestSpeed by default
 fn (w: MsgWriter) write(data: Bytes) -> () ! WsErr
 fn (w: MsgWriter) close() -> () ! WsErr          // the final frame; later writes are Protocol("write closed")
-pub fn prepare(m: Message) -> Prepared           // gorilla's NewPreparedMessage (no compression: write's frames)
+pub fn prepare(m: Message) -> Prepared           // gorilla's NewPreparedMessage: written as write writes it
 pub fn join(c: WsConn, term: Str = "") -> Joined  // gorilla's JoinMessages: c's messages as one stream, each followed by term
 fn (j: Joined) read(max: Int = 32768) -> Bytes ! WsErr   // the next 1 to max bytes; an empty message with an empty term gives nothing; a close is read()'s error
 pub fn is_upgrade(req: http.Request) -> Bool     // gorilla's IsWebSocketUpgrade
-pub fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
-pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! WsErr uses net.dial
+pub fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576, compress: Bool = false) -> http.Response uses fx
+pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"", compress: Bool = false) -> WsConn ! WsErr uses net.dial
 ```
 
 - `upgrade` is called in a handler and its response returned. It checks
@@ -8690,6 +8692,21 @@ pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str
   the protocols, and `headers`, and fails with `Handshake(status,
   "websocket: bad handshake")` unless the answer is a 101 with the
   upgrade tokens and the right `Sec-WebSocket-Accept`.
+- permessage-deflate (RFC 7692) as gorilla's `EnableCompression`, the
+  only mode gorilla has: no context takeover either way, so each message
+  is deflated alone. `upgrade(..., compress: true)` answers any
+  `permessage-deflate` offer with `server_no_context_takeover;
+  client_no_context_takeover`; `dial(..., compress: true)` offers the
+  same, and any `permessage-deflate` answer without both parameters is
+  `Handshake(101, "websocket: invalid compression negotiation")`. Once
+  agreed, this side's data messages (`write`, `write_text`, a writer's,
+  a prepared one) are deflated and sent with RSV1 on the first frame
+  until `set_write_compression(false)`; a writer keeps its message whole
+  and deflates it at `close`. A compressed message read is inflated
+  whole: `max_message` caps the inflated size (gorilla's read limit
+  counts wire bytes), over it is close 1009 and `TooBig`, a bad stream
+  close 1007, and a text message's UTF-8 is checked after inflating.
+  RSV1 without the agreement stays `Protocol("RSV1 set")`.
 - Deadlines (decision 0430) are gorilla's. A read or write past its
   deadline fails with `Net(Timeout)`, and so does one whose deadline has
   already passed, at once. The error sticks for that direction: after a

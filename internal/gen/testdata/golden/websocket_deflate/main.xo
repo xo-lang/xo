@@ -1,0 +1,101 @@
+// permessage-deflate (RFC 7692) on the Go backend: a compressing server
+// echoes each message, clients with and without compress round trip
+// text, binary, a writer's message and a prepared one, levels and
+// compression off; a message small on the wire but over max_message once
+// inflated is TooBig.
+use std/base64
+use std/compress
+use std/crypto
+use std/http
+use std/websocket
+
+fn echo(c: websocket.WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => c.write(m).or_fault("echo")
+      Err(_e) => return
+    }
+  }
+}
+
+/// A hand written server: it reads the handshake, says whether the
+/// client offered permessage-deflate, answers with ext and then sends
+/// RFC 7692 7.2.3.1's compressed "Hello" frame (RSV1 set).
+fn raw_server(l: Listener, ext: Str) -> Str ! NetErr {
+  let c = l.accept()?
+  var head = ""
+  while !head.contains("\r\n\r\n") {
+    match c.read(max: 4096)? {
+      Some(b) => head = head + b.to_str_lossy()
+      None => return Ok("eof")
+    }
+  }
+  var key = ""
+  for line in head.split("\r\n") {
+    if line.to_lower().starts_with("sec-websocket-key:") {
+      key = line[18..].trim()
+    }
+  }
+  let accept = base64.encode(crypto.digest(crypto.Hash.Sha1, (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").bytes()))
+  c.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\nSec-WebSocket-Extensions: ${ext}\r\n\r\n".bytes())?
+  c.write(b"\xc1\x07\xf2\x48\xcd\xc9\xc9\x07\x00")?
+  Ok("offered ${head.contains("Sec-WebSocket-Extensions: permessage-deflate")}")
+}
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("GET /e", fn(req) { websocket.upgrade(req, echo, compress: true) })
+  r.handle("GET /small", fn(req) { websocket.upgrade(req, echo, compress: true, max_message: 1000) })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() { srv.serve().or_fault("serve") })
+    for z in [true, false] {
+      let c = websocket.dial(os.net, "ws://${addr}/e", compress: z).or_fault("dial")
+      c.write_text("Hello").or_fault("text")
+      let m = c.read().or_fault("read text")
+      os.stdio.println("compress ${z}: text ${m.data.to_str_lossy()}")
+      let big = "abcdefgh".repeat(5000).bytes()
+      c.write(websocket.Message{kind: websocket.Kind.Binary, data: big}).or_fault("binary")
+      let b = c.read().or_fault("read binary")
+      os.stdio.println("compress ${z}: binary ${b.data.len()} same ${b.data == big}")
+      var w = c.writer(websocket.Kind.Text)
+      for i in 0..3000 {
+        w.write("${i % 10}".bytes()).or_fault("piece")
+      }
+      w.close().or_fault("writer close")
+      let p = c.read().or_fault("read writer")
+      os.stdio.println("compress ${z}: writer ${p.data.len()}")
+      c.set_compression_level(compress.Level.BestCompression)
+      c.write_prepared(websocket.prepare(websocket.Message{kind: websocket.Kind.Text, data: "prepared".bytes()})).or_fault("prepared")
+      os.stdio.println("compress ${z}: prepared ${c.read().or_fault("read prepared").data.to_str_lossy()}")
+      c.set_write_compression(false)
+      c.write_text("plain").or_fault("plain")
+      os.stdio.println("compress ${z}: off ${c.read().or_fault("read plain").data.to_str_lossy()}")
+      c.close(code: 1000, reason: "").or_fault("close")
+    }
+    for ext in ["permessage-deflate; server_no_context_takeover; client_no_context_takeover", "permessage-deflate; server_no_context_takeover"] {
+      let rl = os.net.listen("127.0.0.1:0").or_fault("raw listen")
+      let raddr = rl.addr()
+      let t = s.spawn(fn() -> Str {
+        match raw_server(rl, ext) {
+          Ok(v) => v
+          Err(e) => "${e}"
+        }
+      })
+      match websocket.dial(os.net, "ws://${raddr}/", compress: true) {
+        Ok(rc) => os.stdio.println("raw: read ${rc.read().or_fault("raw read").data.to_str_lossy()}")
+        Err(e) => os.stdio.println("raw: ${e}")
+      }
+      os.stdio.println("raw: ${t.await}")
+      rl.close()
+    }
+    let c = websocket.dial(os.net, "ws://${addr}/small", compress: true).or_fault("dial small")
+    c.write(websocket.Message{kind: websocket.Kind.Binary, data: "a".repeat(100000).bytes()}).or_fault("zeros")
+    match c.read() {
+      Ok(m) => os.stdio.println("small: echoed ${m.data.len()}")
+      Err(e) => os.stdio.println("small: ${e}")
+    }
+  }
+}
