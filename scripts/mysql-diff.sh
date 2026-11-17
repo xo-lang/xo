@@ -14,6 +14,8 @@
 # tls=true verified against that CA with interpolateParams=true (the
 # text protocol), then with arguments prepared (the binary protocol),
 # then prepared with parseTime=true and clientFoundRows=true, then
+# compress=true (the compressed protocol) prepared, and interpolated with
+# parseTime=true and timeTruncate=1s, then
 # parseTime=true with loc=America/New_York prepared and interpolated (the
 # Xo side passes the zone as sql.open's loc), multi.txt with
 # multiStatements=true, then multi.txt over tls=false with RSA full
@@ -96,7 +98,7 @@ for img in "${IMAGES[@]}"; do
 	# the auth cache is flushed before each side, so every first
 	# connection takes caching_sha2's full path (clear over TLS, RSA over
 	# plain TCP)
-	for pass in "cases.txt tls=true&interpolateParams=true" "cases.txt tls=true" "cases.txt tls=true&parseTime=true&clientFoundRows=true" "cases.txt tls=true&parseTime=true&loc=America%2FNew_York" "cases.txt tls=true&parseTime=true&interpolateParams=true&loc=America%2FNew_York" "multi.txt tls=true&multiStatements=true" "${rsa_passes[@]}"; do
+	for pass in "cases.txt tls=true&interpolateParams=true" "cases.txt tls=true" "cases.txt tls=true&parseTime=true&clientFoundRows=true" "cases.txt tls=true&parseTime=true&loc=America%2FNew_York" "cases.txt tls=true&parseTime=true&interpolateParams=true&loc=America%2FNew_York" "multi.txt tls=true&multiStatements=true" "cases.txt tls=true&compress=true" "cases.txt tls=true&compress=true&interpolateParams=true&parseTime=true&timeTruncate=1s" "${rsa_passes[@]}"; do
 		set -- $pass
 		user=${3:-app}
 		dsn="$user:pencil@tcp(127.0.0.1:$port)/app?$2"
@@ -138,7 +140,7 @@ for img in "${IMAGES[@]}"; do
 	cat "$WORK/$name.want" "$WORK/$name.modes.want" > "$WORK/$name.all.want"
 	cat "$WORK/$name.got" "$WORK/$name.modes.got" > "$WORK/$name.all.got"
 	if diff -u "$WORK/$name.all.want" "$WORK/$name.all.got" > "$WORK/$name.diff" && [ "$hint" = ok ]; then
-		echo "mysql-diff $img: ok ($(grep -c '^== ' "$WORK/$name.want") statements in $(grep -c "^=== " "$WORK/$name.want") passes (tls=true interpolated, prepared, with parseTime and clientFoundRows, in loc=America/New_York, multiStatements; RSA full authentication over tls=false), $(wc -l < "$WORK/$name.modes.want" | tr -d ' ') tls outcomes, the self signed hint, the key retrieval refusal)"
+		echo "mysql-diff $img: ok ($(grep -c '^== ' "$WORK/$name.want") statements in $(grep -c "^=== " "$WORK/$name.want") passes (tls=true interpolated, prepared, with parseTime and clientFoundRows, in loc=America/New_York, multiStatements, compressed (with timeTruncate); RSA full authentication over tls=false), $(wc -l < "$WORK/$name.modes.want" | tr -d ' ') tls outcomes, the self signed hint, the key retrieval refusal)"
 	else
 		echo "mysql-diff $img: DIFFERS ($WORK/$name.diff; hint $hint)"
 		status=1

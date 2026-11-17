@@ -18,6 +18,7 @@
 // loc zones, RSA full authentication (caching_sha2_password and
 // sha256_password over plain TCP: open's server_pub_key, or the server's
 // key with allowPublicKeyRetrieval=true).
+use std/compress
 use std/sql
 use std/time
 use std/tls
@@ -70,6 +71,10 @@ pub struct Config {
   /// as go-sql-driver's I/O deadlines (zero: none).
   pub read_timeout: Duration
   pub write_timeout: Duration
+  /// compress: the compressed protocol (zlib) after authentication, when the server has it.
+  pub compress: Bool = false
+  /// timeTruncate: At arguments truncated to a multiple of it (Go's Time.Truncate) before they are sent (zero: none).
+  pub time_truncate: Duration = Duration.from_nanos(0)
   pub attrs: List[(Str, Str)]
   /// Other parameters: system variables set after connecting.
   pub vars: List[(Str, Str)]
@@ -252,6 +257,8 @@ pub fn config(dsn: Str) -> Config ! sql.SqlErr {
         "rejectReadOnly" => cfg.reject_read_only = bool_param(k, v)?
         "maxAllowedPacket" => cfg.max_allowed_packet = Int.parse(v) ?? return Err(param_err("maxAllowedPacket: invalid number ${v.quote()}"))
         "timeout" => cfg.dial_timeout = dur_param(k, v)?
+        "timeTruncate" => cfg.time_truncate = dur_param(k, v)?
+        "compress" => cfg.compress = bool_param(k, v)?
         "readTimeout" => cfg.read_timeout = dur_param(k, v)?
         "writeTimeout" => cfg.write_timeout = dur_param(k, v)?
         "connectionAttributes" => {
@@ -342,6 +349,11 @@ pub struct MyConn {
   cfg: Config
   /// The server's status flags of the last OK or EOF.
   status: Atomic[Int]
+  /// The compressed protocol is on (after authentication, with compress=true): packets travel in compressed
+  /// packets, zseq their own sequence id, zraw the bytes read and not yet inflated.
+  zip: Atomic[Bool] = Atomic.new(false)
+  zseq: Atomic[Int] = Atomic.new(0)
+  zraw: Mutex[Bytes] = Mutex.new(b"")
 }
 
 struct ConnExtra {
@@ -443,8 +455,9 @@ fn open_conn(d: MysqlDriver, net: Net, cfg: Config, total: Int) -> MyConn ! sql.
 }
 
 fn (p: MyConn) send(payload: Bytes) -> () ! sql.SqlErr uses net.dial {
-  let (data, next) = w.frame(p.seq.get(), payload)
+  let (data0, next) = w.frame(p.seq.get(), payload)
   p.seq.set(next)
+  let data = if p.zip.get() { p.zframes(data0) } else { data0 }
   if p.cfg.write_timeout.nanos() > 0 {
     deadline(p.x.raw, 2, p.cfg.write_timeout.nanos())
   }
@@ -473,7 +486,8 @@ fn (p: MyConn) recv() -> Bytes ! sql.SqlErr uses net.dial {
     })
     match got {
       Some((payload, first, seq)) => {
-        if first != p.seq.get() {
+        // in the compressed protocol the packets' own ids go unchecked, as MySQL's clients and go-sql-driver
+        if first != p.seq.get() && !p.zip.get() {
           p.broken.set(true)
           return Err(conn_err("packets out of order: sequence id ${first}, want ${p.seq.get()}"))
         }
@@ -486,7 +500,13 @@ fn (p: MyConn) recv() -> Bytes ! sql.SqlErr uses net.dial {
       deadline(p.x.raw, 1, p.cfg.read_timeout.nanos())
     }
     match p.c.read(w.read_size(p.buf.with(fn(b) { b }))) {
-      Ok(Some(more)) => p.buf.with(fn(var b) { b = b + more })
+      Ok(Some(more)) => {
+        if p.zip.get() {
+          p.inflate_in(more)?
+        } else {
+          p.buf.with(fn(var b) { b = b + more })
+        }
+      }
       Ok(None) => {
         p.broken.set(true)
         return Err(conn_err("unexpected EOF"))
@@ -501,6 +521,79 @@ fn (p: MyConn) recv() -> Bytes ! sql.SqlErr uses net.dial {
     }
   }
   Err(conn_err("unreachable"))
+}
+
+/// The minimum payload go-sql-driver compresses (minCompressLength); a smaller one goes stored.
+const MIN_COMPRESS: Int = 150
+
+/// data (whole packets) as compressed packets, go-sql-driver's compIO.writePackets: a 7 byte header (the
+/// compressed length, zseq, the uncompressed length or 0 for a stored payload), payloads of at most 2^24 - 5
+/// bytes, each zlib compressed (level 2) when it is 150 bytes or more and that makes it smaller.
+fn (p: MyConn) zframes(data: Bytes) -> Bytes {
+  var out = BytesBuilder.new()
+  var at = 0
+  while at < data.len() {
+    let n = (data.len() - at).min(16777211)
+    let part = data[at..at + n]
+    var body = part
+    var ulen = 0
+    if n >= MIN_COMPRESS {
+      let z = compress.zlib(part, level: compress.Level.Of(n: 2))
+      if z.len() + 7 < n {
+        body = z
+        ulen = n
+      }
+    }
+    out.write(w.le_bytes(body.len(), 3))
+    out.write_byte(UInt8.wrapping_from(p.zseq.get()))
+    out.write(w.le_bytes(ulen, 3))
+    out.write(body)
+    p.zseq.set((p.zseq.get() + 1) % 256)
+    at += n
+  }
+  out.freeze()
+}
+
+/// Adds bytes read in the compressed protocol: each whole compressed packet's payload, inflated when its
+/// uncompressed length is not 0, goes to buf (go-sql-driver's compIO.readCompressedPacket).
+fn (p: MyConn) inflate_in(more: Bytes) -> () ! sql.SqlErr {
+  // the whole compressed packets taken off zraw in one with (core 5.4): (payload, uncompressed length, sequence id)
+  let frames = p.zraw.with(fn(var b) -> List[(Bytes, Int, Int)] {
+    b = b + more
+    var out: List[(Bytes, Int, Int)] = []
+    var took = 0
+    while b.len() - took >= 7 {
+      let clen = Int(b[took]) | (Int(b[took + 1]) << 8) | (Int(b[took + 2]) << 16)
+      if b.len() - took - 7 < clen {
+        break
+      }
+      let ulen = Int(b[took + 4]) | (Int(b[took + 5]) << 8) | (Int(b[took + 6]) << 16)
+      out.push((b[took + 7..took + 7 + clen], ulen, Int(b[took + 3])))
+      took += 7 + clen
+    }
+    b = b[took..b.len()]
+    out
+  })
+  for (body, ulen, zs) in frames {
+    p.zseq.set((zs + 1) % 256)
+    if ulen == 0 {
+      p.buf.with(fn(var b) { b = b + body })
+    } else {
+      let plain = match compress.unzlib(body, max_size: ulen) {
+        Ok(x) => x
+        Err(e) => {
+          p.broken.set(true)
+          return Err(conn_err("invalid compressed packet: ${e}"))
+        }
+      }
+      if plain.len() != ulen {
+        p.broken.set(true)
+        return Err(conn_err("invalid compressed packet: uncompressed length in header is ${ulen}, actual ${plain.len()}"))
+      }
+      p.buf.with(fn(var b) { b = b + plain })
+    }
+  }
+  Ok(())
 }
 
 fn wire_err(p: MyConn, e: w.WireErr) -> sql.SqlErr {
@@ -519,6 +612,9 @@ fn client_caps(server: Int, cfg: Config) -> Int {
   }
   if cfg.multi_statements {
     c = c | w.CLIENT_MULTI_STATEMENTS
+  }
+  if cfg.compress {
+    c = c | w.CLIENT_COMPRESS
   }
   c & server
 }
@@ -623,6 +719,10 @@ fn handshake(p0: MyConn, roots: Bytes, raw: Conn, key: rsa.PublicKey?) -> MyConn
         return Err(conn_err("${plugin}: unexpected data from the server"))
       }
     }
+  }
+  // compression starts after authentication (go-sql-driver's connector), when both sides have it
+  if (caps & w.CLIENT_COMPRESS) != 0 {
+    p.zip.set(true)
   }
   if !cfg.vars.is_empty() {
     // the other parameters are system variables, set as one statement
@@ -947,6 +1047,49 @@ pub fn quote_bytes(b: Bytes, no_backslash: Bool) -> Str {
   o.freeze().to_str_lossy()
 }
 
+/// t truncated to a multiple of d since Go's zero time, January 1 of year 1 UTC (Go's Time.Truncate, which
+/// go-sql-driver's timeTruncate applies to a time argument); t itself when d is not positive.
+pub fn truncate_time(t: Time, d: Duration) -> Time {
+  let dn = d.nanos()
+  if dn <= 0 {
+    return t
+  }
+  let un = t.unix_nanos()
+  var s = un / 1000000000
+  var ns = un % 1000000000
+  if ns < 0 {
+    s -= 1
+    ns += 1000000000
+  }
+  // seconds since the zero time (62135596800 before the Unix epoch), then (s * 1e9 + ns) mod dn without overflow
+  let abs = s + 62135596800
+  let r = (mulmod(abs % dn, 1000000000 % dn, dn) + ns % dn) % dn
+  Time.from_unix_nanos(un - r)
+}
+
+/// a * b mod m for 0 <= a, b < m, by doubling (no product overflows).
+fn mulmod(a0: Int, b0: Int, m: Int) -> Int {
+  var a = a0
+  var b = b0
+  var r = 0
+  while b > 0 {
+    if b & 1 == 1 {
+      r = (r + a) % m
+    }
+    a = (a + a) % m
+    b = b >> 1
+  }
+  r
+}
+
+/// a with its At values truncated (timeTruncate); a itself when d is zero.
+pub fn truncated(a: sql.SqlValue, d: Duration) -> sql.SqlValue {
+  match a {
+    At(t) => if d.nanos() > 0 { sql.SqlValue.At(t: truncate_time(t, d)) } else { a }
+    _ => a
+  }
+}
+
 /// A value as SQL text.
 pub fn literal(v: sql.SqlValue, no_backslash: Bool, z: time.Zone = time.utc()) -> Str ! sql.SqlErr {
   match v {
@@ -1068,6 +1211,7 @@ fn run(p: MyConn, q: Str) -> List[Result1] ! sql.SqlErr uses net.dial {
     return Err(conn_err("the connection is broken"))
   }
   p.seq.set(0)
+  p.zseq.set(0)
   p.send(w.command(w.COM_QUERY, q.bytes()))?
   results(p, false)
 }
@@ -1232,6 +1376,7 @@ fn prepare_on(p: MyConn, q: Str) -> MyStmt ! sql.SqlErr uses net.dial {
     return Err(conn_err("the connection is broken"))
   }
   p.seq.set(0)
+  p.zseq.set(0)
   p.send(w.command(w.COM_STMT_PREPARE, q.bytes()))?
   let first = p.recv()?
   if first.len() > 0 && first[0] == 255 {
@@ -1265,9 +1410,10 @@ fn (s: MyStmt) run(args: List[sql.SqlValue]) -> List[Result1] ! sql.SqlErr uses 
   }
   var ps: List[w.BinParam] = []
   for a in args {
-    ps.push(bin_param(a, p.cfg.zone)?)
+    ps.push(bin_param(truncated(a, p.cfg.time_truncate), p.cfg.zone)?)
   }
   p.seq.set(0)
+  p.zseq.set(0)
   p.send(w.stmt_execute(s.id, ps))?
   results(p, true)
 }
@@ -1282,6 +1428,7 @@ fn (s: MyStmt) close() uses net.dial {
     return
   }
   s.p.seq.set(0)
+  s.p.zseq.set(0)
   s.p.send(w.stmt_close(s.id)).ignore_err("a failed send marks the connection broken, which the pool drops")
 }
 
@@ -1312,7 +1459,7 @@ fn text_of(p: MyConn, q: Str, args: List[sql.SqlValue]) -> Str ! sql.SqlErr {
   if args.is_empty() {
     return Ok(q)
   }
-  interpolate(q, args, no_backslash(p), p.cfg.zone)
+  interpolate(q, args.map(fn(a: sql.SqlValue) -> sql.SqlValue { truncated(a, p.cfg.time_truncate) }), no_backslash(p), p.cfg.zone)
 }
 
 fn col_name(p: MyConn, c: w.Column) -> Str {
@@ -1373,6 +1520,7 @@ fn (p: MyConn) ping() -> () ! sql.SqlErr uses net.dial {
     return Err(conn_err("the connection is broken"))
   }
   p.seq.set(0)
+  p.zseq.set(0)
   p.send(w.command(w.COM_PING, b""))?
   let r = p.recv()?
   if r.len() > 0 && r[0] == 255 {
@@ -1404,7 +1552,7 @@ fn (p: MyConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
         }
         var t: List[Str] = []
         for v in vals {
-          t.push(literal(v, no_backslash(p), p.cfg.zone)?)
+          t.push(literal(truncated(v, p.cfg.time_truncate), no_backslash(p), p.cfg.zone)?)
         }
         let one = "(${t.join(", ")})"
         if in_batch > 0 && batch.len() + one.len() + 2 > limit {
@@ -1429,6 +1577,7 @@ fn (p: MyConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
 
 fn (p: MyConn) close() uses net.dial {
   p.seq.set(0)
+  p.zseq.set(0)
   let (data, _) = w.frame(0, w.command(w.COM_QUIT, b""))
   let _ = p.c.write(data).is_ok()
   p.c.close()

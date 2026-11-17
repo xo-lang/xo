@@ -1,5 +1,30 @@
 # std/sql changes
 
+## 2026-11-17: feature: MySQL's compressed protocol (compress=true)
+
+- Kind: feature
+- Commit: this push
+- Found by: the MySQL driver row's symbol audit (decision 0655, task #260): go-sql-driver's EnableCompression
+- Go reference: go-sql-driver/mysql v1.10.1 (compress.go compIO, connector.go, packets.go)
+- Test: std/native/llrt/mysql_test.xo "a fake server: compress=true, ..." (a server speaking the compressed protocol after authentication; a long query sent zlib compressed, a short one and a ping stored; a long row read back); scripts/mysql-diff.sh's compress passes against MySQL 8.4
+- Timing: none
+
+With `compress=true` and a server that offers CLIENT_COMPRESS, packets travel in compressed packets after
+authentication: a 7 byte header with its own sequence id, a payload of 150 bytes or more zlib compressed when that
+makes it smaller, as go-sql-driver; the packets' own sequence ids go unchecked inside, as MySQL's clients.
+
+## 2026-11-17: feature: MySQL's timeTruncate DSN parameter
+
+- Kind: feature
+- Commit: this push
+- Found by: the MySQL driver row's symbol audit (decision 0655, task #260): go-sql-driver's TimeTruncate option
+- Go reference: go-sql-driver/mysql v1.10.1 (dsn.go timeTruncate, utils.go appendDateTime)
+- Test: std/native/llrt/mysql_test.xo "timeTruncate: ..." (Go 1.26's Time.Truncate results for 24 times and durations, a 7 minute one counting from year 1; the DSN parameter; the literal an interpolated statement sends)
+- Timing: none
+
+`timeTruncate=1s` (Go's duration syntax) truncates every `At` argument before it is sent, in the binary protocol,
+in interpolated text and in copy_from's INSERTs, as go-sql-driver truncates a time.Time argument.
+
 ## 2026-11-17: fix: a Postgres column name that is not UTF-8 keeps its bytes
 
 - Kind: fix

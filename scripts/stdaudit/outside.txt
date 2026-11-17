@@ -51,3 +51,4 @@ Go time layouts | timego | go go1.26.1 | time
 SQLite driver | sqlite | github.com/mattn/go-sqlite3 v1.14.53 | github.com/mattn/go-sqlite3
 .proto parser | protoparse | github.com/bufbuild/protocompile v0.14.1 | github.com/bufbuild/protocompile
 Migrations | migrate | github.com/pressly/goose/v3 v3.27.3 | github.com/pressly/goose/v3
+MySQL driver | sql | github.com/go-sql-driver/mysql v1.10.1 | github.com/go-sql-driver/mysql

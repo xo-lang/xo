@@ -1,6 +1,7 @@
 // std/sql's MySQL driver (decision 0648): DSNs, values, literals and
 // interpolation, error mapping, and conversations with fake servers on
 // FakeNet; the conformance run checks a real one.
+use std/compress
 use std/sql
 use std/time
 use native/llrt/mysqlauth as auth
@@ -692,4 +693,136 @@ test "a fake server: an idle connection the server closed is not reused" {
     expect(db.stats().idle) <= 1
     s.cancel()
   }
+}
+
+test "timeTruncate: time arguments truncated as Go's Time.Truncate, from year 1 (go-sql-driver's appendDateTime)" {
+  // (unix nanos, duration nanos, Go's t.Truncate(d) in unix nanos), from Go 1.26
+  let cases = [
+    (1794918896789123456, 1000, 1794918896789123000),
+    (1794918896789123456, 1000000, 1794918896789000000),
+    (1794918896789123456, 1000000000, 1794918896000000000),
+    (1794918896789123456, 420000000000, 1794918660000000000),
+    (1794918896789123456, 3600000000000, 1794916800000000000),
+    (1794918896789123456, 86400000000000, 1794873600000000000),
+    (1794918896789123456, 1500000000, 1794918895500000000),
+    (1794918896789123456, 0, 1794918896789123456),
+    (-1, 1000, -1000),
+    (-1, 1000000, -1000000),
+    (-1, 1000000000, -1000000000),
+    (-1, 420000000000, -60000000000),
+    (-1, 3600000000000, -3600000000000),
+    (-1, 86400000000000, -86400000000000),
+    (-1, 1500000000, -1500000000),
+    (-1, 0, -1),
+    (951782400000000001, 1000, 951782400000000000),
+    (951782400000000001, 1000000, 951782400000000000),
+    (951782400000000001, 1000000000, 951782400000000000),
+    (951782400000000001, 420000000000, 951782100000000000),
+    (951782400000000001, 3600000000000, 951782400000000000),
+    (951782400000000001, 86400000000000, 951782400000000000),
+    (951782400000000001, 1500000000, 951782400000000000),
+    (951782400000000001, 0, 951782400000000001),
+  ]
+  for (t, d, want) in cases {
+    expect((t, d, truncate_time(Time.from_unix_nanos(t), Duration.from_nanos(d)).unix_nanos())) == (t, d, want)
+  }
+  let cfg = config("u@tcp(h:1)/db?timeTruncate=1s").or_fault("dsn")
+  expect(cfg.time_truncate) == 1s
+  expect(config("u@tcp(h:1)/db").or_fault("dsn").time_truncate.nanos()) == 0
+  expect(config("u@tcp(h:1)/db?timeTruncate=x").is_err()) == true
+  let at = sql.SqlValue.At(t: Time.from_unix_nanos(1794918896789123456))
+  expect(literal(truncated(at, cfg.time_truncate), false).or_fault("lit")) == "'2026-11-17 12:34:56'"
+  expect(literal(truncated(at, Duration.from_nanos(0)), false).or_fault("lit")) == "'2026-11-17 12:34:56.789123'"
+}
+
+/// One compressed packet from c's bytes (have first): (its payload inflated, whether it was compressed, the rest).
+fn fk_zread(c: ServerConn, buf: Bytes) -> (Bytes, Bool, Bytes)? ! NetErr {
+  var have = buf
+  while true {
+    if have.len() >= 7 {
+      let clen = w.le(have, 0, 3)
+      let ulen = w.le(have, 4, 3)
+      if have.len() >= 7 + clen {
+        let body = have[7..7 + clen]
+        let plain = if ulen == 0 { body } else { compress.unzlib(body, max_size: ulen).ok() ?? b"" }
+        return Some((plain, ulen != 0, have[7 + clen..have.len()]))
+      }
+    }
+    match c.read(65536)? {
+      Some(more) => have = have + more
+      None => return None
+    }
+  }
+  None
+}
+
+/// A server speaking the compressed protocol after authentication: each command's answer packets go in one
+/// compressed packet (zlib when 150 bytes or more). seen records each command and whether it came compressed.
+fn fk_zserve(l: Listener, seen: Mutex[List[(Str, Bool)]]) -> () ! NetErr {
+  while let Ok(c) = l.accept() {
+    c.write(w.frame(0, fk_handshake(fk_caps(true) | w.CLIENT_COMPRESS, "caching_sha2_password")).0)?
+    let (resp, _, _) = fk_read(c, b"")? ?? (b"", 0, b"")
+    // the client asked for compression
+    let asked = (w.le(resp, 0, 4) & w.CLIENT_COMPRESS) != 0
+    seen.with(fn(var l) { l.push(("asked", asked)) })
+    let _ = fk_sha2_fast(resp, c, 2)?
+    var buf = b""
+    var zseq = 1
+    while true {
+      match fk_zread(c, buf)? {
+        Some((data, was, rest)) => {
+          buf = rest
+          let (cmd, _, _) = w.packet(data) ?? (b"", 0, 0)
+          if cmd.is_empty() || Int(cmd[0]) == w.COM_QUIT {
+            break
+          }
+          let q = cmd[1..cmd.len()].to_str_lossy()
+          seen.with(fn(var l) { l.push((q[0..q.len().min(12)], was)) })
+          var outs: List[Bytes] = []
+          if Int(cmd[0]) == w.COM_PING {
+            outs = [fk_ok(0, 0, 2)]
+          } else {
+            outs = [w.lenenc_int(1), fk_col("v", w.TYPE_VAR_STRING, 45, 0), w.lenenc_str(("y".repeat(300) + q[q.len() - 3..q.len()]).bytes()), b"\xfe\x00\x00\x02\x00\x00\x00"]
+          }
+          var plain = BytesBuilder.new()
+          var seq = 1
+          for out in outs {
+            plain.write(w.frame(seq, out).0)
+            seq += 1
+          }
+          let p = plain.freeze()
+          let z = compress.zlib(p)
+          let (body, ulen) = if p.len() >= 150 { (z, p.len()) } else { (p, 0) }
+          c.write(w.le_bytes(body.len(), 3) + w.le_bytes(zseq, 1) + w.le_bytes(ulen, 3) + body)?
+          zseq += 1
+        }
+        None => break
+      }
+    }
+    c.close()
+  }
+}
+
+test "a fake server: compress=true, the compressed protocol after authentication (go-sql-driver's compIO)" {
+  let l = os.net.listen("db.test:3306")?
+  let seen = Mutex[List[(Str, Bool)]].new([])
+  scope s {
+    s.spawn_background(fn() { fk_zserve(l, seen).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "mysql", "app:pw@tcp(db.test:3306)/app?tls=false&compress=true")?
+    let long = "SELECT '" + "x".repeat(200) + "' AS v -- abc"
+    let rows = db.query(long)?
+    expect(rows.len()) == 1
+    expect(rows[0].str("v")) == Ok("y".repeat(300) + "abc")
+    let rows2 = db.query("SELECT 1 xyz")?
+    expect(rows2[0].str("v")) == Ok("y".repeat(300) + "xyz")
+    expect(db.ping().is_ok()) == true
+    let got = seen.with_read(fn(l) { l })
+    // asked for; the long query zlib compressed, the short one and the ping stored
+    expect(got[0]) == ("asked", true)
+    expect(got.contains(("SELECT 'xxxx", true))) == true
+    expect(got.contains(("SELECT 1 xyz", false))) == true
+    s.cancel()
+  }
+  expect(config("u@tcp(h:1)/db?compress=true").or_fault("dsn").compress) == true
+  expect(config("u@tcp(h:1)/db?compress=maybe").is_err()) == true
 }

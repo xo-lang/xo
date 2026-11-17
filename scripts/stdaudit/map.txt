@@ -4090,6 +4090,58 @@ http2.WindowUpdateFrame = not planned: the frame layer is internal to std/http (
 http2.WriteScheduler = not planned: the write scheduler is internal (round robin, as net/http's default)
 http2.behavior.h2spec = bench/results/h2spec-2026-11-17.md: h2spec v2.6.0, h2c 140 and TLS 141 of 146, the same failures and replies as Go's net/http; the one Xo only failure (6.9.1 #3) fixed in d9e6a97b6
 # pgx, pgconn, pgtype, pgxpool: github.com/jackc/pgx/v5 v5.12.0 (outside.txt; decision 0655)
+# go-sql-driver/mysql v1.10.1 (std-coverage.md MySQL driver row, decision 0655; outside.txt)
+mysql.BeforeConnect = not planned: settings come from the DSN and open's arguments, dialing through its Net (decision 0278); no per connection hook
+mysql.Charset = std/sql.open (the DSN's charset and collation)
+mysql.Config = std/sql.open (the DSN is the configuration: go-sql-driver's syntax and parameters, spec/std.md 10.10)
+mysql.Config.Apply = not planned: options are DSN parameters and open's arguments
+mysql.Config.Clone = not planned: the DSN is a Str
+mysql.Config.FormatDSN = not planned: the program writes the DSN text it passes to open
+mysql.NewConfig = not planned: the DSN is the configuration (spec/std.md 10.10)
+mysql.Option = not planned: options are DSN parameters and open's arguments
+mysql.ParseDSN = std/sql.open (it parses and checks the DSN, a Param error for a bad one)
+mysql.TimeTruncate = std/sql.open (the DSN's timeTruncate: At arguments truncated as Go's Time.Truncate)
+mysql.EnableCompression = std/sql.open (the DSN's compress=true: the compressed protocol, zlib, after authentication)
+mysql.DialFunc = not planned: open dials through the Net it is given (decision 0278); a test world FakeNet stands in for a custom dialer
+mysql.DialContextFunc = not planned: open dials through the Net it is given (decision 0278); a test world FakeNet stands in for a custom dialer
+mysql.RegisterDial = not planned: open dials through the Net it is given (decision 0278); a test world FakeNet stands in for a custom dialer
+mysql.RegisterDialContext = not planned: open dials through the Net it is given (decision 0278); a test world FakeNet stands in for a custom dialer
+mysql.DeregisterDialContext = not planned: open dials through the Net it is given (decision 0278); a test world FakeNet stands in for a custom dialer
+mysql.RegisterLocalFile = not planned: LOAD DATA LOCAL INFILE is refused (spec/std.md 10.10; a server can ask a client for any file); copy_from sends INSERTs
+mysql.DeregisterLocalFile = not planned: LOAD DATA LOCAL INFILE is refused (spec/std.md 10.10); copy_from sends INSERTs
+mysql.RegisterReaderHandler = not planned: LOAD DATA LOCAL INFILE is refused (spec/std.md 10.10); copy_from sends INSERTs
+mysql.DeregisterReaderHandler = not planned: LOAD DATA LOCAL INFILE is refused (spec/std.md 10.10); copy_from sends INSERTs
+mysql.RegisterServerPubKey = std/sql.open (server_pub_key, named by the DSN's serverPubKey)
+mysql.DeregisterServerPubKey = std/sql.open (server_pub_key: a value per open, nothing global to remove)
+mysql.RegisterTLSConfig = std/sql.open (roots, with the DSN's tls=custom)
+mysql.DeregisterTLSConfig = std/sql.open (roots: a value per open, nothing global to remove)
+mysql.MySQLDriver = std/sql.open (the driver is built in: open(net, "mysql", dsn))
+mysql.MySQLDriver.Open = std/sql.open
+mysql.MySQLDriver.OpenConnector = std/sql.open
+mysql.NewConnector = std/sql.open
+mysql.MySQLError = std/sql.SqlErr (MySQL's number and go-sql-driver's text in the message; Constraint, Syntax, NoTable, Canceled and Server by number)
+mysql.MySQLError.Error = std/sql.SqlErr (go-sql-driver's text: Error 1062 (23000): ...)
+mysql.MySQLError.Is = std/sql.SqlErr (matched by kind)
+mysql.NullTime = not planned: deprecated by go-sql-driver for database/sql's NullTime; a nullable DATETIME reads as Option[At] (Row.time_opt)
+mysql.NullTime.Scan = not planned: deprecated by go-sql-driver for database/sql's NullTime; a nullable DATETIME reads as Option[At]
+mysql.NullTime.Value = not planned: deprecated by go-sql-driver for database/sql's NullTime; Option arguments write NULL
+mysql.Logger = not planned: the driver logs nothing; every failure is the call's SqlErr
+mysql.NopLogger = not planned: the driver logs nothing; every failure is the call's SqlErr
+mysql.NopLogger.Print = not planned: the driver logs nothing; every failure is the call's SqlErr
+mysql.SetLogger = not planned: the driver logs nothing; every failure is the call's SqlErr
+mysql.Result = std/sql.ExecResult (rows affected and last insert id; go-sql-driver's per statement lists are its multiStatements extension)
+mysql.ErrBusyBuffer = std/sql.SqlErr.Conn (an internal buffer state of go-sql-driver; Xo's driver has no shared buffer)
+mysql.ErrCleartextPassword = std/sql.SqlErr.Conn (allowCleartextPasswords=false, go-sql-driver's text)
+mysql.ErrInvalidConn = std/sql.SqlErr.Conn
+mysql.ErrMalformPkt = std/sql.SqlErr.Conn (malformed packet)
+mysql.ErrNativePassword = std/sql.SqlErr.Conn (allowNativePasswords=false)
+mysql.ErrNoTLS = std/sql.SqlErr.Conn (the server offers no TLS while tls requires it)
+mysql.ErrOldPassword = std/sql.SqlErr.Conn (allowOldPasswords is refused)
+mysql.ErrOldProtocol = std/sql.SqlErr.Conn (servers older than 4.1)
+mysql.ErrPktSync = std/sql.SqlErr.Conn (packets out of order)
+mysql.ErrPktSyncMul = std/sql.SqlErr.Conn (packets out of order)
+mysql.ErrPktTooLarge = std/sql.SqlErr.Param (a statement over maxAllowedPacket)
+mysql.ErrUnknownPlugin = std/sql.SqlErr.Conn (an authentication plugin the driver does not speak)
 pgconn.AfterConnectFunc = not planned: settings come from the connection string and open's arguments, dialing through its Net (decision 0278)
 pgconn.Batch = not planned: a batch is a List[std/sql.BatchQuery] given to Db.batch (decision 0648 item 15)
 pgconn.Batch.ExecParams = std/sql.BatchQuery

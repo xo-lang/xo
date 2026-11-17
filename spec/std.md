@@ -4291,7 +4291,10 @@ password runs to the last `@`, so it may hold `@` and `:`. Parameters:
   (`true`), `allowCleartextPasswords`, `allowPublicKeyRetrieval`,
   `multiStatements`, `interpolateParams`, `clientFoundRows`,
   `columnsWithAlias`, `rejectReadOnly`, `maxAllowedPacket` (64 MiB),
-  `connectionAttributes`. `timeout` (Go's duration syntax, `30s`) limits
+  `connectionAttributes`. `compress=true` speaks the compressed protocol after authentication when the server
+  offers it (CLIENT_COMPRESS: 7 byte compressed packet headers, a payload of 150 bytes or more zlib compressed when
+  that makes it smaller, as go-sql-driver). `timeTruncate` (Go's duration syntax) truncates every `At` argument to a multiple of it
+  before it is sent, as Go's `Time.Truncate` (counted from January 1 of year 1). `timeout` (Go's duration syntax, `30s`) limits
   the dial, and `readTimeout` and `writeTimeout` each packet's read and
   write, as go-sql-driver's I/O deadlines: one that passes is a `Conn`
   error `i/o timeout` and the connection is dropped. A call's own limit

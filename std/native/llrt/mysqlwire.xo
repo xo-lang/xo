@@ -22,6 +22,8 @@ fn bad(msg: Str) -> WireErr { WireErr{msg: msg} }
 pub const CLIENT_LONG_PASSWORD: Int = 1
 pub const CLIENT_FOUND_ROWS: Int = 2
 pub const CLIENT_LONG_FLAG: Int = 4
+/// The compressed protocol (zlib), after authentication.
+pub const CLIENT_COMPRESS: Int = 32
 pub const CLIENT_CONNECT_WITH_DB: Int = 8
 pub const CLIENT_LOCAL_FILES: Int = 128
 pub const CLIENT_PROTOCOL_41: Int = 512

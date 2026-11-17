@@ -17,6 +17,8 @@ the text of every entry is unchanged).
 - Fix (std/tls): a TLS 1.3 server answers a ClientHello whose early_data extension is not empty with decode_error, as Go does (it went on to protocol_version).
 - Feature (std/http): a response `Date` set to the empty string sends no `Date` (net/http's `Header["Date"] = nil`); std/grpc's server head uses it, so its header metadata has no `date`, as grpc-go's.
 - Fix (std/metrics): values print as client_golang's text format, Go's shortest 'g' (8e+08, 1e+06), -0 as 0; whole numbers printed in full and finite values past 1e300 as +Inf (task #261).
+- Feature (std/sql, MySQL): `compress=true`, the compressed protocol, as go-sql-driver.
+- Feature (std/sql, MySQL): the `timeTruncate` DSN parameter truncates time arguments as go-sql-driver does.
 - Feature (std/protojson, std/prototext): proto2 extensions, written and read as `[full.name]` as protobuf-go does (task #228).
 - Feature (xo test): `--since=REV` runs only the tests a change since the git revision REV reaches (`--watch`'s selection, once), and `--std-module` runs of modules whose tests use only the fakes are cached like any other passed run (decision 0701).
 - Feature (std/grpc): `Client.with_default_metadata`, `with_default_timeout` and `with_on_finish` (grpc-go's WithDefaultCallOptions and OnFinish), and `Call.peer`, the client's IP.
