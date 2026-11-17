@@ -1,5 +1,15 @@
 # std/grpcreflect changes
 
+
+## 2026-11-17: fix: a packed extension number cut short is an error
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #273, TestGrpcReflectFuzz seed 2 (decode_answer read a response whose packed extension_number ended in a varint cut short as no numbers; protobuf-go refuses it)
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protowire ConsumeVarint (errCodeTruncated, errCodeOverflow)
+- Test: std/grpcreflect_test.xo "repeated answers merge and every string is checked, as protobuf-go reads them" (the cut short response decoded Ok before)
+- Timing: none
+- Shipped in: not yet released
 ## 2026-11-17: fix: requests and responses read as protobuf-go reads them
 
 - Kind: fix

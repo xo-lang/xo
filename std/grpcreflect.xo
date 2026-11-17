@@ -394,7 +394,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
             (1, 2) => base = protowire.text(g).map_err(bad)?
             (2, 0) => nums.push(int32(g.v))
             (2, 2) => {
-              for x in packed(g.data) {
+              for x in packed(g.data).map_err(bad)? {
                 nums.push(int32(x))
               }
             }
@@ -448,23 +448,17 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
   Ok(out)
 }
 
-/// The varints of a packed field.
-fn packed(b: Bytes) -> List[Int] {
+/// The varints of a packed field, read as protobuf-go reads them: a varint cut short or longer than 10 bytes is an
+/// error.
+fn packed(b: Bytes) -> List[Int] ! protobuf.ProtoErr {
   var out: List[Int] = []
-  var v = 0
-  var shift = 0
-  for x in b {
-    let n = Int(x)
-    v = v | ((n & 127) << shift)
-    if n < 128 {
-      out.push(v)
-      v = 0
-      shift = 0
-    } else {
-      shift += 7
-    }
+  var at = 0
+  while at < b.len() {
+    let (x, next) = protobuf.read_varint(b, at)?
+    out.push(x.to_bits())
+    at = next
   }
-  out
+  Ok(out)
 }
 
 /// Asks one question on its own ServerReflectionInfo stream (grpc-go's reflection client sends each on one stream).

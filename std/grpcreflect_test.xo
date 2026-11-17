@@ -101,5 +101,9 @@ test "repeated answers merge and every string is checked, as protobuf-go reads t
   expect(decode_answer(b"\x3a\x02\x08\x05\x3a\x03\x12\x01m")) == Ok(Answer.Error(code: 5, message: "m"))
   // a host or an original request protobuf-go refuses
   expect(decode_answer(b"\x0a\x01\xff\x32\x00").is_err()) == true
+  // packed extension numbers: read in full, and a varint cut short is an error as protobuf-go's (fuzz seed 2, which
+  // read it as no numbers)
+  expect(decode_answer(b"\x2a\x0c\x0a\x06b.Resp\x12\x02\x96\x01")) == Ok(Answer.ExtensionNumbers(base_type: "b.Resp", numbers: [150]))
+  expect(decode_answer(b"\x0a\x01h\x2a\x0d\x0a\x06b.Resp\x12\x03\x89\x9d\x82").is_err()) == true
   expect(decode_answer(b"\x12\x03\x0a\x01\xff\x32\x00").is_err()) == true
 }
