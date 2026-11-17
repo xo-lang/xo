@@ -811,6 +811,24 @@ fn heap_word() -> Int {
 /// library's xo_init runs once (decision 0574).
 pub fn heap_started() -> Bool { rt.mem_load(rt.static_word(HEAP), H_SLOW, 8) != 0 }
 
+/// Whether the calling thread's heap record runs its drop worklist
+/// (rc_defer's DEFER_BUSY), read without making a record (pool.xo's
+/// SIGURG handler and Windows park call it). The drops the worklist calls
+/// (a closure environment's, a box's) are the program's code, which the
+/// native backends' unsafe ranges leave preemptible; a fiber preempted in
+/// one kept the flag set while it waited on its worker's pin list, so the
+/// worker's other fibers queued their drops behind it and their blocks
+/// stayed live until it ran again (task #213: bufio's stress grew 17 to
+/// 40 MB on arm64). LLVM builds hold F_NOPRE there (compiler/llvm
+/// apreempt.xo).
+pub fn defer_busy() -> Bool {
+  var h = rt.mem_load(rt.static_word(HEAP), 0, 8)
+  if h == 0 {
+    h = rt.tlocal_get(TLS_HEAP)
+  }
+  h != 0 && rt.mem_load(h & -2, DEFER_BUSY, 8) != 0
+}
+
 /// The single threaded heap record, 0 once other threads run.
 pub fn solo_heap() -> Int { rt.mem_load(rt.static_word(HEAP), 0, 8) }
 

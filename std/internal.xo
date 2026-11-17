@@ -113,6 +113,13 @@ fn list_swap_both(xs: List[Int], ys: List[Int], zs: List[Int])
 /// every op faults on the Go backend.
 fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int
 
+/// Whether a fiber holds what an asynchronous preemption must not
+/// interrupt (the SIGURG handler's test, pool.async_held) inside a drop its
+/// thread's drop worklist runs: 1 when held, 0 when not (task #213: a fiber
+/// preempted there kept the worklist busy for its worker's other fibers).
+/// 1 on the wasm and Go backends, which have no asynchronous preemption.
+fn preempt_held_in_drop() -> Int
+
 /// The heap region of decision 0633 (native backends, threads running):
 /// op 1 enters region mode on the calling thread (1 when it did, 0 when
 /// the region cannot run here), 2 leaves it, 3 releases the region (the

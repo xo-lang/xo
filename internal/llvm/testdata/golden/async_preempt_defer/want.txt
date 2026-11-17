@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+held inside the drop worklist: 1
+--- stderr

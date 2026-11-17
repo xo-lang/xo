@@ -19,6 +19,7 @@ var (
 	_ func(*Task, List[int64], int64, int64)                                                               = Internal_list_swap_at
 	_ func(*Task, List[int64], List[int64], List[int64])                                                   = Internal_list_swap_both
 	_ func(*Task, string, int64, int64, int64, int64) int64                                                = Internal_rt_probe
+	_ func(*Task) int64                                                                                    = Internal_preempt_held_in_drop
 	_ func(*Task, int64) int64                                                                             = Internal_heap_region
 	_ func(*Task) int64                                                                                    = Internal_rt_queued
 	_ func(*Task) int64                                                                                    = Internal_rt_allocs

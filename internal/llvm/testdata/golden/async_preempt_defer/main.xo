@@ -1,0 +1,20 @@
+// async_preempt_defer (decision 0318, task #213): a task running its
+// thread's drop worklist (obj.xo rc_defer, which calls each queued drop:
+// a closure environment's or a box's, the program's code) holds it
+// against asynchronous preemption, as it holds a runtime lock. Preempted
+// there, it kept the worklist busy while it waited pinned to its worker,
+// so the worker's other tasks queued their drops behind it and their
+// memory stayed live (std/bufio's stress grew 17 -> 40 MB on arm64).
+// internal.preempt_held_in_drop asks the SIGURG handler's own test
+// (pool.async_held) from a drop the worklist runs (outside one, LLVM
+// builds hold F_NOPRE in the probe itself, so only the inside answer is
+// the same on every backend).
+
+use std/internal
+
+fn main(os: Os) {
+  scope s {
+    let t = s.spawn(fn() -> Int { internal.preempt_held_in_drop() })
+    os.stdio.println("held inside the drop worklist: ${t.await}")
+  }
+}

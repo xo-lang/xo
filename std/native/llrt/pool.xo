@@ -28,6 +28,7 @@ use native/llrt/det
 use native/llrt/cpu
 use native/llrt/freebsd
 use native/llrt/layout
+use native/llrt/obj
 use native/llrt/linux
 use native/llrt/rtstats
 use native/llrt/sanhook
@@ -1844,9 +1845,35 @@ fn win_kick(w: Int, t: Int) {
 pub fn async_park() {
   let w = rt.tlocal_get(TLS_W)
   let f = rt.tlocal_get(TLS_FIB)
+  // the kick read the worker's words from another thread; the drop
+  // worklist's flag is this thread's own (obj.defer_busy): the
+  // interrupted code resumes at once
+  if obj.defer_busy() {
+    return
+  }
   stat(ST_PREEMPT)
   rt.mem_store(w, W_ASYNC, 1, 8)
   sched.fiber_yield(f)
+}
+
+/// Whether fiber f, running on worker w, holds what an asynchronous
+/// preemption must not interrupt (async_signal declines then): a runtime
+/// lock (W_LOCKS), a no-preemption count (F_NOPRE, which LLVM builds hold
+/// in the runtime functions they inline), or its thread's drop worklist
+/// (obj.defer_busy, task #213: the drops it calls are the program's code,
+/// outside the native backends' unsafe ranges, and a fiber preempted there
+/// kept the worklist busy while it waited pinned, so its worker's other
+/// fibers queued their drops behind it and their memory stayed live).
+pub fn async_held(w: Int, f: Int) -> Bool {
+  rt.mem_load(w, W_LOCKS, 8) != 0 || rt.mem_load(f, F_NOPRE, 8) != 0 || obj.defer_busy()
+}
+
+/// async_held for the calling fiber; false outside a worker's fiber (for
+/// the runtime's tests, std/native/internal.xo).
+pub fn async_held_here() -> Bool {
+  let w = rt.tlocal_get(TLS_W)
+  let f = rt.tlocal_get(TLS_FIB)
+  w != 0 && f != 0 && async_held(w, f)
 }
 
 /// Puts fiber f, preempted by SIGURG, on w's own list.
@@ -1947,7 +1974,7 @@ pub fn async_signal(uc: Int) {
     return
   }
   let f = rt.tlocal_get(TLS_FIB)
-  if f == 0 || rt.mem_load(w, W_LOCKS, 8) != 0 || rt.mem_load(f, F_NOPRE, 8) != 0 {
+  if f == 0 || async_held(w, f) {
     return
   }
   // the interrupted pc and sp (unwind.xo prof_regs' layouts). arm64:

@@ -69,6 +69,10 @@ func Internal_obj_word[T any](_ *Task, _ T) int64 {
 	panic("internal.obj_word: the native backends only")
 }
 
+// Internal_preempt_held_in_drop is `internal.preempt_held_in_drop`: the Go
+// backend has no asynchronous preemption to hold off.
+func Internal_preempt_held_in_drop(_ *Task) int64 { return 1 }
+
 // Internal_heap_region is `internal.heap_region`: the native heap's
 // region (decision 0633); the Go backend has none.
 func Internal_heap_region(_ *Task, _ int64) int64 { return 0 }

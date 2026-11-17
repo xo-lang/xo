@@ -217,6 +217,15 @@ fn rt_queued() -> Int uses realtime { obj.rt_queued() }
 
 fn rt_allocs() -> Int uses realtime { rtsec.allocs() }
 
+fn preempt_held_in_drop() -> Int {
+  // wasm has no asynchronous preemption to hold off (nor the worklist's
+  // queue growth): compile-time, as held
+  if target.arch == TargetArch.Wasm32 {
+    return 1
+  }
+  probe_held_in_drop()
+}
+
 fn heap_region(op: Int) -> Int {
   if target.arch == TargetArch.Wasm32 {
     return 0
@@ -260,6 +269,9 @@ fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
       r
     }
     "chunks" => heapos.chunks()
+    // whether a fiber holds what an asynchronous preemption must not
+    // interrupt inside a drop its thread's drop worklist runs
+    // (pool.async_held, task #213)
     "rand_kat" => {
       // word a of the native Rand's ChaCha8 generator seeded with Go's
       // chacha8rand test seed (decision 0669)
@@ -359,6 +371,18 @@ fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
 /// EPOLL_CTL_DEL of pd_close it outlives the close). 1 when it ran, 2
 /// off Linux (kqueue drops a closed descriptor's events), 0 when a
 /// system call failed.
+/// preempt_held_in_drop: runs a drop through the thread's drop worklist
+/// (obj.rc_defer_n), which records whether the fiber holds it against
+/// asynchronous preemption (cabi.xo probe_held_drop, pool.async_held).
+fn probe_held_in_drop() -> Int {
+  let o = obj.alloc_obj(16)
+  rt.mem_store(o, 8, -1, 8)
+  obj.rc_defer_n(o, rt.fn_addr("probe_held_drop"))
+  let r = rt.mem_load(o, 8, 8)
+  obj.free_obj(o)
+  r
+}
+
 fn probe_inherited() -> Int {
   if target.os != TargetOs.Linux {
     return 2

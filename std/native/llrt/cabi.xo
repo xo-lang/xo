@@ -388,6 +388,13 @@ fn obj_rl_unstack_n(l: Int, esize: Int, dup: Int) -> Int { obj.rl_unstack_n(l, e
 
 fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
 
+/// A drop for the runtime's tests (std/native/internal.xo held_in_drop):
+/// records in o's second word whether the fiber that runs the drop
+/// worklist holds it against asynchronous preemption (pool.async_held).
+fn probe_held_drop(o: Int, x: Int) {
+  rt.mem_store(o, 8, if pool.async_held_here() { 1 } else { 0 }, 8)
+}
+
 fn obj_dec_shared_race(p: Int) -> Int { obj.dec_shared_race(p) }
 
 /// A string, box, or closure environment object's block and its free at
