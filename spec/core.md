@@ -1,6 +1,6 @@
 # Xo Language Specification (Core)
 
-Status: draft 0.53 (2026-11-15; 0.52 tagged as toolchain v0.52.0, decision 0089)
+Status: draft 0.54 (2026-11-16; 0.53 tagged as toolchain v0.53.0, decision 0089)
 Edition: preview (the only edition before 1.0, decision 0155)
 Companion: `spec/std.md` (prelude methods and standard library surface)
 
@@ -9,6 +9,10 @@ web services. It keeps what makes Go productive (few keywords, one obvious way,
 fast builds, static binaries, a strong standard library, a compatibility
 promise) and is designed so that an AI agent can write, check, build, and debug
 programs for any OS with fast, structured, unambiguous feedback.
+
+## Changes in 0.54
+
+None yet.
 
 ## Changes in 0.53
 
