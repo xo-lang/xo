@@ -1,5 +1,17 @@
 # std/protojson changes
 
+## 2026-11-17: perf: field_to finds a field's occurrences by binary search
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (Performance Early to Proven), bench/perf/protojson
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protojson encode.go (fields in number order)
+- Test: corpus protojson (MARSHAL, MARSHAL2, UNMARSHAL_OPTS) on go, arm64 and LLVM; std/protojson module tests
+- Timing: host 1, xo bench --ab bench/perf/protojson, 3 rounds: wall 45.44 ms to 44.60 ms (B/A 0.981, 95% interval 0.977 to 0.981), RSS unchanged
+
+`field_to` sorts the wire's fields by number once and finds each field's
+occurrences by binary search, where it scanned the whole message per field.
+
 ## 2026-11-16: feature: EmitUnpopulated, AllowPartial and RecursionLimit options
 
 - Kind: feature

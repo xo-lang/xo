@@ -546,6 +546,21 @@ fn msg_to(var out: StrBuilder, r: Registry, info: MsgInfo, wire: Bytes, o: Opts,
     }
   }
   let fl = walk_(wire)?
+  // the wire's indices in field number order (wire order within a number),
+  // empty when the wire is in that order already, as a marshaler writes it
+  var ord: List[Int] = []
+  for i in 1..fl.len() {
+    if fl[i].num < fl[i - 1].num {
+      for x in 0..fl.len() {
+        ord.push(x)
+      }
+      ord.sort_in_place_with(fn(a: Int, b: Int) -> Ordering {
+        let c = fl[a].num.cmp(fl[b].num)
+        if c == Ordering.Equal { a.cmp(b) } else { c }
+      })
+      break
+    }
+  }
   // the descriptor's fields are read in place by index: `for fd in` copied
   // each FieldDesc, 17 retains, per field and per wire field (task #87)
   let fds = info.d.field
@@ -604,12 +619,28 @@ fn msg_to(var out: StrBuilder, r: Registry, info: MsgInfo, wire: Bytes, o: Opts,
       }
       None => {}
     }
-    if field_to(out, n > 0, r, info, fds[j], fl, o, real_oneof)? {
+    if field_to(out, n > 0, r, info, fds[j], fl, ord, o, real_oneof)? {
       n += 1
     }
   }
   out.write("}")
   Ok(())
+}
+
+/// The first position of fl in field number order (ord, or fl's own order
+/// when ord is empty) whose field number is num or more.
+fn first_at(fl: List[pw.Fld], ord: List[Int], num: Int) -> Int {
+  var lo = 0
+  var hi = fl.len()
+  while lo < hi {
+    let m = (lo + hi) / 2
+    if fl[if ord.is_empty() { m } else { ord[m] }].num < num {
+      lo = m + 1
+    } else {
+      hi = m
+    }
+  }
+  lo
 }
 
 fn is_numeric_kind(k: Int) -> Bool { k != 9 && k != 10 && k != 11 && k != 12 }
@@ -653,23 +684,15 @@ fn member_to(var out: StrBuilder, comma: Bool, fd: protodesc.FieldDesc, o: Opts)
 
 /// Writes the member of field fd when it has one (its name, a colon and its
 /// value, after a comma when `comma`); whether it wrote one.
-fn field_to(var out: StrBuilder, comma: Bool, r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.Fld], o: Opts, real_oneof: Bool) -> Bool ! JsonErr {
-  // the field's occurrences: counted by index first, so an unset field
-  // copies no wire field (task #87)
+fn field_to(var out: StrBuilder, comma: Bool, r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.Fld], ord: List[Int], o: Opts, real_oneof: Bool) -> Bool ! JsonErr {
+  // the field's occurrences, in wire order: a binary search of the wire in
+  // field number order, not a scan of the whole wire per field (task #87)
   let num = fd.number
-  var count = 0
-  for i in 0..fl.len() {
-    if fl[i].num == num {
-      count += 1
-    }
-  }
+  let lo = first_at(fl, ord, num)
+  let hi = first_at(fl, ord, num + 1)
   var occ: List[pw.Fld] = []
-  if count > 0 {
-    for i in 0..fl.len() {
-      if fl[i].num == num {
-        occ.push(fl[i])
-      }
-    }
+  for i in lo..hi {
+    occ.push(fl[if ord.is_empty() { i } else { ord[i] }])
   }
   let k = fd.kind
   if fd.label == protodesc.LABEL_REPEATED {
