@@ -147,14 +147,13 @@ fn w_string(var e: Enc, b: Bytes) {
 const HEX = "0123456789abcdef"
 
 fn hex_to(var out: StrBuilder, v: Int, width: Int) {
-  let d = HEX.bytes()
-  var bb = BytesBuilder.with_capacity(width)
+  // one digit a write, each a view of HEX (no builder per call)
   var i = width - 1
   while i >= 0 {
-    bb.write_byte(d[(v.shr_logical(4 * i)) & 15])
+    let x = (v.shr_logical(4 * i)) & 15
+    out.write(HEX[x..x + 1])
     i -= 1
   }
-  out.write(bb.freeze().to_str_lossy())
 }
 
 /// appendString: `"` and `\` escaped, \n \r \t, other controls, DEL and
@@ -169,6 +168,19 @@ fn quote_to(var out: StrBuilder, b: Bytes, ascii: Bool) {
     if c >= 0x20 && c != 0x22 && c != 0x5c && c < 0x7f {
       i += 1
       continue
+    }
+    // a rune past ASCII written as it is stays in the run (one write of
+    // the run, not one per rune)
+    var rr0 = 0
+    var n0 = 1
+    if c >= 0x80 {
+      let (rx, nx) = b.decode_rune(i)
+      rr0 = Int(rx)
+      n0 = nx
+      if !ascii && rr0 > 0x9f && !(rr0 == 0xfffd && n0 == 1) {
+        i += n0
+        continue
+      }
     }
     if run < i {
       out.write(b[run..i].to_str_lossy())
@@ -192,8 +204,8 @@ fn quote_to(var out: StrBuilder, b: Bytes, ascii: Bool) {
       run = i
       continue
     }
-    let (rr, n) = b.decode_rune(i)
-    let r = Int(rr)
+    let r = rr0
+    let n = n0
     if r == 0xfffd && n == 1 {
       // a byte of invalid UTF-8
       out.write("\\x")
@@ -476,9 +488,21 @@ fn msg_fields(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, wire: 
       }
     }
   }
+  // whether the wire's field numbers never go down (as Go and Xo write
+  // them): each field's occurrences are then one run, found by binary
+  // search instead of a scan of the whole wire per field
+  var sorted = true
+  for i in 1..fl.len() {
+    if fl[i].num < fl[i - 1].num {
+      sorted = false
+      break
+    }
+  }
   // the member of each oneof set last on the wire wins (no scan of the wire
   // for a message without a real oneof)
-  var win: Map[Int, Int] = {}
+  // (oneof index, winning number) pairs: two Lists, not a Map per message
+  var win_k: List[Int] = []
+  var win_v: List[Int] = []
   var oneofs = false
   for j in 0..fds.len() {
     if fds[j].oneof_index.is_some() && !fds[j].proto3_optional {
@@ -493,7 +517,15 @@ fn msg_fields(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, wire: 
     for j in 0..fds.len() {
       if fds[j].number == f.num && !fds[j].proto3_optional {
         match fds[j].oneof_index {
-          Some(k) => win.put(k, f.num)
+          Some(k) => {
+            let at = win_k.index_of(k) ?? -1
+            if at >= 0 {
+              win_v[at] = f.num
+            } else {
+              win_k.push(k)
+              win_v.push(f.num)
+            }
+          }
           None => {}
         }
       }
@@ -505,14 +537,15 @@ fn msg_fields(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, wire: 
       Some(k) => {
         if !fds[j].proto3_optional {
           real_oneof = true
-          if (win.get(k) ?? -1) != fds[j].number {
+          let at = win_k.index_of(k) ?? -1
+          if at < 0 || win_v[at] != fds[j].number {
             continue
           }
         }
       }
       None => {}
     }
-    field_out(e, r, info, fds[j], fl, real_oneof, depth)?
+    field_out(e, r, info, fds[j], fl, sorted, real_oneof, depth)?
   }
   if e.o.emit_unknown {
     unknowns_out(e, info, fl)?
@@ -525,22 +558,51 @@ fn wants_utf8(info: protojson.MsgInfo, num: Int) -> Bool {
   info.utf8 != info.utf8_flip.contains(num)
 }
 
-fn field_out(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.Fld], real_oneof: Bool, depth: Int) -> () ! TextErr {
-  // the field's occurrences, counted first so an unset field copies none
-  let num = fd.number
-  var count = 0
-  for i in 0..fl.len() {
-    if fl[i].num == num {
-      count += 1
+/// The first index of fl (sorted by number) whose number is at least num.
+fn lower_bound(fl: List[pw.Fld], num: Int) -> Int {
+  var lo = 0
+  var hi = fl.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if fl[mid].num < num {
+      lo = mid + 1
+    } else {
+      hi = mid
     }
   }
-  if count == 0 {
-    return Ok(())
-  }
-  var occ: List[pw.Fld] = List.with_capacity(count)
-  for i in 0..fl.len() {
-    if fl[i].num == num {
-      occ.push(fl[i])
+  lo
+}
+
+fn field_out(var e: Enc, r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.FieldDesc, fl: List[pw.Fld], sorted: Bool, real_oneof: Bool, depth: Int) -> () ! TextErr {
+  // the field's occurrences: one run of a sorted wire, else counted first
+  // so an unset field copies none
+  let num = fd.number
+  var occ: List[pw.Fld] = []
+  if sorted {
+    let from = lower_bound(fl, num)
+    var to = from
+    while to < fl.len() && fl[to].num == num {
+      to += 1
+    }
+    if to == from {
+      return Ok(())
+    }
+    occ = fl[from..to]
+  } else {
+    var count = 0
+    for i in 0..fl.len() {
+      if fl[i].num == num {
+        count += 1
+      }
+    }
+    if count == 0 {
+      return Ok(())
+    }
+    occ = List.with_capacity(count)
+    for i in 0..fl.len() {
+      if fl[i].num == num {
+        occ.push(fl[i])
+      }
     }
   }
   let k = fd.kind

@@ -1,5 +1,18 @@
 # std/prototext changes
 
+## 2026-11-16: perf: marshal 0.949 of the previous build (about 1.26 of Go)
+
+- Kind: perf
+- Commit: this push
+- Found by: task #153 (prototext to Proven, performance 1.33 of Go), XO_PROF=cpu of bench/perf/prototext marshal on host 1: field_out counting each field's occurrences over the whole wire (13% flat), an empty Map per message for the oneof winners
+- Go reference: none (same output)
+- Test: corpus prototext unchanged (660 rows, arm64, llvm and go)
+- Timing: bench/perf/prototext marshal with 6000 passes, linux/arm64 host 1, xo bench --ab 15 rounds, new/old wall 0.949 (0.944 to 0.955); max RSS 1.087 (1248 to 1356 KB)
+
+When the wire's field numbers never go down (as Go and Xo write them), a field's occurrences are one run found by
+binary search, not a scan of every field per field; the oneof winners are two Lists, not a Map per message; a run of
+runes written as they are is one write; hex escapes write digits without a builder.
+
 ## 2026-11-16: perf: marshal 1.56 to 1.33 of Go
 
 - Kind: perf
