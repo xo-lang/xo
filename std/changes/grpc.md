@@ -71,6 +71,20 @@
 - Timing: none (registration only; a call's path is unchanged)
 - Shipped in: not yet released
 
+## 2026-11-17: feature: per-RPC credentials, security levels and the peer's AuthInfo
+
+- Kind: feature
+- Commit: this push
+- Found by: std coverage map (credentials rows, grpc.behavior.mtls)
+- Go reference: grpc-go v1.79.2 credentials (SecurityLevel, CheckSecurityLevel, AuthInfo, TLSInfo, RequestInfo, PerRPCCredentials), grpc.WithPerRPCCredentials, grpc.PerRPCCredentials, http2_client.go getTrAuthData and getCallAuthData
+- Test: TestGrpcInterop's tls cases (mutual TLS with credentials that require it, Xo and grpc-go crossed both ways); golden grpc_creds; module tests "security levels" and "per-RPC credentials"
+- Timing: none
+
+`Client.with_per_rpc_creds` and `with_call_creds` add a `PerRpcCreds` function's metadata to each call, with
+grpc-go's audience, its Unauthenticated error for credentials that need TLS over cleartext, and its Internal
+mapping of control plane codes (gRFC A54). A handler's `Call.auth_info` is "tls" (with the TLS state and client
+certificates) or "insecure"; `check_security_level` gives grpc-go's texts.
+
 ## 2026-11-17: feature: response header metadata from a stream handler (SetHeader, SendHeader)
 
 - Kind: feature

@@ -1,0 +1,69 @@
+// gRPC credentials (std/grpc, grpc-go's credentials package): security levels and CheckSecurityLevel, the
+// AuthInfo a handler sees, and per-RPC credentials on the client and on one call, with grpc-go's errors for
+// credentials that need TLS over cleartext and for a control plane status (gRFC A54). The TLS case runs against
+// grpc-go in TestGrpcInterop.
+use std/grpc
+use std/http
+
+fn level_line(ai: grpc.AuthInfo?, l: grpc.SecurityLevel) -> Str {
+  match grpc.check_security_level(ai, l) {
+    Ok(_) => "${l.display()} (${l.number()}) ok"
+    Err(e) => "${l.display()} (${l.number()}) ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let levels = [grpc.SecurityLevel.InvalidSecurityLevel, grpc.SecurityLevel.NoSecurity, grpc.SecurityLevel.IntegrityOnly, grpc.SecurityLevel.PrivacyAndIntegrity]
+  for l in levels {
+    os.stdio.println("insecure needs ${level_line(Some(grpc.insecure_info()), l)}")
+  }
+  os.stdio.println("tls needs ${level_line(Some(grpc.tls_info(None)), grpc.SecurityLevel.PrivacyAndIntegrity)}")
+  os.stdio.println("none needs ${level_line(None, grpc.SecurityLevel.NoSecurity)}")
+  let old = grpc.AuthInfo{auth_type: "old", level: grpc.SecurityLevel.InvalidSecurityLevel}
+  os.stdio.println("old needs ${level_line(Some(old), grpc.SecurityLevel.PrivacyAndIntegrity)}")
+
+  var srv = grpc.server(os.clock)
+  srv.unary("/t.S/Who", fn(call, _req) -> Bytes ! grpc.Status {
+    Ok("${call.auth_info.auth_type} ${call.auth_info.level.display()} authorization=${call.metadata.get("authorization") ?? "-"} x-call=${call.metadata.get("x-call") ?? "-"}".bytes())
+  })
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+      scope s {
+        s.spawn_background(fn() {
+          hs.serve().ignore_err("the program ends the server")
+        })
+        let addr = hs.addr()
+        let base = grpc.client(http.client(os.net, timeout: 30s), "http://${addr}")
+        let seen = Mutex[List[Str]].new([])
+        let token = grpc.PerRpcCreds{metadata: fn(ri: grpc.RequestInfo) -> Map[Str, Str] ! grpc.Status uses sync {
+          seen.with(fn(var l) { l.push("${ri.method} ${ri.audience.replace(addr, "ADDR")} ${ri.auth_info.auth_type}") })
+          Ok({"Authorization": "Bearer t"})
+        }, require_tls: false}
+        let show = fn(label: Str, r: Result[Bytes, grpc.Status]) {
+          match r {
+            Ok(b) => os.stdio.println("${label}: ${b.to_str() ?? "?"}")
+            Err(e) => os.stdio.println("${label}: ${e.display()}")
+          }
+        }
+        let c = base.with_per_rpc_creds(token)
+        show("client creds", c.unary("/t.S/Who", b""))
+        let call = c.with_call_creds(grpc.PerRpcCreds{metadata: fn(_ri) -> Map[Str, Str] ! grpc.Status uses sync { Ok({"x-call": "1"}) }, require_tls: false})
+        show("call creds", call.unary("/t.S/Who", b""))
+        show("own metadata wins", c.unary("/t.S/Who", b"", {"authorization": "mine"}))
+        for line in seen.with_read(fn(l) { l }) {
+          os.stdio.println("creds saw: ${line}")
+        }
+        let tls_only = base.with_per_rpc_creds(grpc.PerRpcCreds{metadata: fn(_ri) -> Map[Str, Str] ! grpc.Status uses sync { Ok({}) }})
+        show("tls creds over cleartext", tls_only.unary("/t.S/Who", b""))
+        let fail = fn(code: grpc.Code) -> grpc.Client {
+          base.with_per_rpc_creds(grpc.PerRpcCreds{metadata: fn(_ri) -> Map[Str, Str] ! grpc.Status uses sync { Err(grpc.Status{code: code, message: "no token", details: b""}) }, require_tls: false})
+        }
+        show("creds fail Unauthenticated", fail(grpc.Code.Unauthenticated).unary("/t.S/Who", b""))
+        show("creds fail NotFound", fail(grpc.Code.NotFound).unary("/t.S/Who", b""))
+      }
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+  os.stdio.println("done")
+}

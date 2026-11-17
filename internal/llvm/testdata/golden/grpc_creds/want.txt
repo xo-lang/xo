@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+insecure needs invalid SecurityLevel: 0 (0) ok
+insecure needs NoSecurity (1) ok
+insecure needs IntegrityOnly (2) requires SecurityLevel IntegrityOnly; connection has NoSecurity
+insecure needs PrivacyAndIntegrity (3) requires SecurityLevel PrivacyAndIntegrity; connection has NoSecurity
+tls needs PrivacyAndIntegrity (3) ok
+none needs NoSecurity (1) AuthInfo is nil
+old needs PrivacyAndIntegrity (3) ok
+client creds: insecure NoSecurity authorization=Bearer t x-call=-
+call creds: insecure NoSecurity authorization=Bearer t x-call=1
+own metadata wins: insecure NoSecurity authorization=mine x-call=-
+creds saw: /t.S/Who https://ADDR/t.S insecure
+creds saw: /t.S/Who https://ADDR/t.S insecure
+creds saw: /t.S/Who https://ADDR/t.S insecure
+tls creds over cleartext: rpc error: code = Unauthenticated desc = transport: cannot send secure credentials on an insecure connection
+creds fail Unauthenticated: rpc error: code = Unauthenticated desc = no token
+creds fail NotFound: rpc error: code = Internal desc = transport: received per-RPC creds error with illegal status: rpc error: code = NotFound desc = no token
+done
+--- stderr

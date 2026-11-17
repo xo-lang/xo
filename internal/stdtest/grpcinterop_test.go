@@ -2,6 +2,14 @@ package stdtest
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,8 +80,8 @@ func grpcCross(t *testing.T, name, refServe, refClient string, all bool) {
 	}
 
 	// serve starts a server binary and returns its address; the cleanup stops it.
-	serve := func(t *testing.T, bin, mode string) string {
-		cmd := exec.Command(bin, mode)
+	serve := func(t *testing.T, bin string, args ...string) string {
+		cmd := exec.Command(bin, args...)
 		out, err := cmd.StdoutPipe()
 		if err != nil {
 			t.Fatal(err)
@@ -98,10 +106,10 @@ func grpcCross(t *testing.T, name, refServe, refClient string, all bool) {
 			return ""
 		}
 	}
-	run := func(t *testing.T, bin, mode, addr string) string {
-		out, err := exec.Command(bin, mode, addr).CombinedOutput()
+	run := func(t *testing.T, bin string, args ...string) string {
+		out, err := exec.Command(bin, args...).CombinedOutput()
 		if err != nil {
-			t.Fatalf("%s %s: %v\n%s", bin, mode, err, out)
+			t.Fatalf("%s %s: %v\n%s", bin, strings.Join(args, " "), err, out)
 		}
 		return string(out)
 	}
@@ -120,4 +128,71 @@ func grpcCross(t *testing.T, name, refServe, refClient string, all bool) {
 			}
 		})
 	}
+
+	// mutual TLS with per-RPC credentials that require it (map.txt grpc.behavior.mtls)
+	certs := filepath.Join(dir, "certs")
+	writeGrpcCerts(t, certs)
+	wantTLS := "who: auth tls PrivacyAndIntegrity TLS 1.3 client=grpc client chains=1 authorization=Bearer tls-token\n" +
+		"creds: /t.S/Who https://ADDR/t.S tls PrivacyAndIntegrity\n"
+	for _, c := range []struct{ name, client, server string }{
+		{"tls: xo client, grpc-go server", prog, ref},
+		{"tls: grpc-go client, xo server", ref, prog},
+		{"tls: xo client, xo server", prog, prog},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			addr := serve(t, c.server, "serve-tls", certs)
+			if got := run(t, c.client, "client-tls", addr, certs); got != wantTLS {
+				t.Errorf("got:\n%swant:\n%s", got, wantTLS)
+			}
+		})
+	}
+}
+
+// writeGrpcCerts writes a CA, a server pair for 127.0.0.1 and a client pair ("grpc client", clientAuth) into dir.
+func writeGrpcCerts(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	write := func(name, kind string, der []byte) {
+		if err := os.WriteFile(filepath.Join(dir, name), pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "grpc test CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("ca.pem", "CERTIFICATE", caDER)
+	leaf := func(name string, serial int64, cn string, eku x509.ExtKeyUsage, ips []net.IP) {
+		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: cn}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{eku}, IPAddresses: ips}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &k.PublicKey, caKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kd, err := x509.MarshalPKCS8PrivateKey(k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(name+".pem", "CERTIFICATE", der)
+		write(name+".key", "PRIVATE KEY", kd)
+	}
+	leaf("server", 2, "grpc server", x509.ExtKeyUsageServerAuth, []net.IP{net.ParseIP("127.0.0.1")})
+	leaf("client", 3, "grpc client", x509.ExtKeyUsageClientAuth, nil)
 }

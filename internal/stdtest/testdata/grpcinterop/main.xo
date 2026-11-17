@@ -2,6 +2,7 @@
 // interop handler, `client ADDR` makes the calls against a grpc-go server; the test (TestGrpcInterop) crosses them.
 use std/grpc
 use std/http
+use std/tls
 
 fn handlers(clock: Clock[clock]) -> grpc.Server {
   var srv = grpc.server(clock).with_max_send(1000)
@@ -153,10 +154,65 @@ fn show_md(md: Map[Str, Str]) -> Str {
   "[${parts.join(" ")}]"
 }
 
+// The mutual TLS case (map.txt grpc.behavior.mtls; grpcref's tlsinterop.go is the oracle): DIR holds ca.pem and the
+// server and client pairs the test wrote. /t.S/Who answers the connection's AuthInfo as the handler sees it.
+fn who(call: grpc.Call) -> Str {
+  let ai = call.auth_info
+  match ai.tls {
+    Some(st) => {
+      let cn = if st.peer_certificates.is_empty() { "none" } else { st.peer_certificates[0].subject.common_name }
+      "auth ${ai.auth_type} ${ai.level.display()} ${st.version} client=${cn} chains=${st.verified_chains.len()} authorization=${call.metadata.get("authorization") ?? ""}"
+    }
+    None => "auth ${ai.auth_type}"
+  }
+}
+
+fn tls_files(os: Os, dir: Str) -> (Bytes, http.TlsCert, http.TlsCert) {
+  let read = fn(name: Str) -> Bytes { os.fs.read("${dir}/${name}").or_fault("read ${name}") }
+  let ca = read("ca.pem")
+  (ca, http.tls_cert(read("server.pem"), read("server.key")).or_fault("server pair"), http.tls_cert(read("client.pem"), read("client.key")).or_fault("client pair"))
+}
+
+fn tls_serve(os: Os, dir: Str) {
+  let (ca, srv_cert, _) = tls_files(os, dir)
+  var srv = grpc.server(os.clock)
+  srv.unary("/t.S/Who", fn(call, _req) -> Bytes ! grpc.Status { Ok(who(call).bytes()) })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_client_auth(tls.ClientAuth.RequireAndVerify, roots: Some(tls.roots(ca).or_fault("roots"))).with_tls([srv_cert])
+  os.stdio.println(hs.addr())
+  hs.serve().ignore_err("the test kills the process")
+}
+
+fn tls_client(os: Os, addr: Str, dir: Str) {
+  let (ca, _, cli_cert) = tls_files(os, dir)
+  let seen = Mutex[List[Str]].new([])
+  let token = grpc.PerRpcCreds{metadata: fn(ri) -> Map[Str, Str] ! grpc.Status uses sync {
+    seen.with(fn(var l) { l.push("${ri.method} ${ri.audience} ${ri.auth_info.auth_type} ${ri.auth_info.level.display()}") })
+    Ok({"authorization": "Bearer tls-token"})
+  }}
+  let hc = http.client(os.net, timeout: 30s).with_roots(ca).or_fault("roots").with_cert(cli_cert)
+  let c = grpc.client(hc, "https://${addr}").with_per_rpc_creds(token)
+  match c.unary("/t.S/Who", b"x") {
+    Ok(b) => os.stdio.println("who: ${b.to_str() ?? "?"}")
+    Err(e) => os.stdio.println("who: err ${e.display()}")
+  }
+  for l in seen.with_read(fn(l) { l }) {
+    os.stdio.println("creds: ${l.replace(addr, "ADDR")}")
+  }
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   if args.len() == 0 {
     os.stdio.println("usage: serve | client ADDR")
+    return
+  }
+  if args[0] == "serve-tls" {
+    tls_serve(os, args[1])
+    return
+  }
+  if args[0] == "client-tls" {
+    tls_client(os, args[1], args[2])
     return
   }
   if args[0] == "serve" {

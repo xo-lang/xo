@@ -10905,7 +10905,7 @@ fn (c: Client) with_gzip() -> Client          // sends gzip compressed messages 
 fn bin_encode(data: Bytes) -> Str            // a `-bin` metadata value: unpadded standard base64
 fn bin_decode(value: Str) -> Bytes?          // padded or not; None when it is not base64
 // the server
-struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration?, client_stream: Bool, server_stream: Bool, peer: Str }   // peer: the client's IP
+struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration?, client_stream: Bool, server_stream: Bool, peer: Str, auth_info: AuthInfo }   // peer: the client's IP
 fn server(clock: Clock) -> Server
 fn (var s: Server) unary(method: Str, f: fn(Call, Bytes) -> Bytes ! Status)
 fn (var s: Server) stream(method: Str, f: fn(Call, Recv, Send) -> () ! Status, client_stream: Bool = true, server_stream: Bool = true)
@@ -10952,7 +10952,28 @@ fn (s: Server) with_max_recv(n: Int) -> Server
 fn (s: Server) with_max_send(n: Int) -> Server
 fn (c: Client) with_max_recv(n: Int) -> Client
 fn (c: Client) with_max_send(n: Int) -> Client
+// credentials (grpc-go's credentials package)
+enum SecurityLevel { InvalidSecurityLevel, NoSecurity, IntegrityOnly, PrivacyAndIntegrity }
+fn (l: SecurityLevel) number() -> Int
+fn (l: SecurityLevel) display() -> Str          // grpc-go's String
+struct AuthInfo { auth_type: Str, level: SecurityLevel, tls: http.TlsState? }   // "tls" (PrivacyAndIntegrity) or "insecure" (NoSecurity)
+fn insecure_info() -> AuthInfo
+fn tls_info(state: http.TlsState?) -> AuthInfo
+fn check_security_level(ai: AuthInfo?, level: SecurityLevel) -> () ! Str   // grpc-go's CheckSecurityLevel and its texts
+struct RequestInfo { method: Str, audience: Str, auth_info: AuthInfo }      // audience: https://host/package.Service, :443 left out
+struct PerRpcCreds { metadata: fn(RequestInfo) -> Map[Str, Str] ! Status uses sync, require_tls: Bool = true }
+fn (c: Client) with_per_rpc_creds(cr: PerRpcCreds) -> Client   // WithPerRPCCredentials: every call
+fn (c: Client) with_call_creds(cr: PerRpcCreds) -> Client      // the PerRPCCredentials call option: after the client's
 ```
+
+- Per-RPC credentials run before each call, the client's first and then the call's; their names are made lower case and
+  the call's own metadata wins on a shared name. As grpc-go: credentials with `require_tls` over `http://` fail the call
+  Unauthenticated "transport: cannot send secure credentials on an insecure connection"; a status the function returns
+  ends the call, a code the control plane may not send (InvalidArgument, NotFound, AlreadyExists, FailedPrecondition,
+  Aborted, OutOfRange, DataLoss; gRFC A54) becoming Internal "transport: received per-RPC creds error with illegal
+  status: ...". A handler's `Call.auth_info` is the connection's: "tls" with the TLS state (client certificates and
+  verified chains under `http.Server.with_client_auth`), or "insecure". TLS itself is std/http's (`with_roots`,
+  `with_cert`, `with_tls`, `with_client_auth`), so grpc-go's TransportCredentials constructors have no counterpart.
 
 - One call is one HTTP/2 stream: `application/grpc`, `te: trailers`, 5 byte frames, the status in the `grpc-status` and
   `grpc-message` trailers (percent encoded as grpc-go does, any byte), `grpc-timeout` as grpc-go encodes it (at most 8

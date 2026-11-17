@@ -563,3 +563,50 @@ test "target names: dns, passthrough and a bare host:port, as grpc-go's" uses (n
     }
   }
 }
+
+test "security levels as grpc-go's credentials.CheckSecurityLevel" {
+  expect(check_security_level(None, SecurityLevel.NoSecurity)) == Err("AuthInfo is nil")
+  expect(check_security_level(Some(insecure_info()), SecurityLevel.NoSecurity)) == Ok(())
+  expect(check_security_level(Some(insecure_info()), SecurityLevel.PrivacyAndIntegrity)) == Err("requires SecurityLevel PrivacyAndIntegrity; connection has NoSecurity")
+  expect(check_security_level(Some(tls_info(None)), SecurityLevel.PrivacyAndIntegrity)) == Ok(())
+  expect(check_security_level(Some(AuthInfo{auth_type: "x", level: SecurityLevel.InvalidSecurityLevel}), SecurityLevel.PrivacyAndIntegrity)) == Ok(())
+  expect(SecurityLevel.IntegrityOnly.display()) == "IntegrityOnly"
+  expect(SecurityLevel.InvalidSecurityLevel.display()) == "invalid SecurityLevel: 0"
+}
+
+test "per-RPC credentials, as grpc-go's getTrAuthData and getCallAuthData" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/s.S/Who", fn(call, _req) -> Bytes ! Status {
+    Ok("${call.metadata.get("authorization") ?? "-"} ${call.metadata.get("x-call") ?? "-"} ${call.metadata.get("x-k") ?? "-"} ${call.auth_info.auth_type} ${call.auth_info.level.display()}".bytes())
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() {
+      hs.serve().ignore_err("the test ends the server")
+    })
+    let base = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    let seen = Mutex[List[Str]].new([])
+    let tok = PerRpcCreds{metadata: fn(ri) -> Map[Str, Str] ! Status uses sync {
+      seen.with(fn(var l) { l.push("${ri.method} ${ri.audience} ${ri.auth_info.auth_type}") })
+      Ok({"Authorization": "Bearer t", "x-k": "creds"})
+    }, require_tls: false}
+    let c = base.with_per_rpc_creds(tok)
+    expect(c.unary("/s.S/Who", b"").map(fn(b) { b.to_str() ?? "?" })) == Ok("Bearer t - creds insecure NoSecurity")
+    // the call's own metadata wins on a shared name; call credentials come after the client's
+    let cc = c.with_call_creds(PerRpcCreds{metadata: fn(_ri) -> Map[Str, Str] ! Status uses sync { Ok({"x-call": "c", "authorization": "Bearer call"}) }, require_tls: false})
+    expect(cc.unary("/s.S/Who", b"", {"x-k": "md"}).map(fn(b) { b.to_str() ?? "?" })) == Ok("Bearer call c md insecure NoSecurity")
+    expect(seen.with_read(fn(l) { l })) == ["/s.S/Who https://${hs.addr()}/s.S insecure", "/s.S/Who https://${hs.addr()}/s.S insecure"]
+    // credentials that need TLS are refused over cleartext
+    let secure = base.with_per_rpc_creds(PerRpcCreds{metadata: fn(_ri) -> Map[Str, Str] ! Status uses sync { Ok({}) }})
+    expect(secure.unary("/s.S/Who", b"")) == Err(status_new(Code.Unauthenticated, "transport: cannot send secure credentials on an insecure connection"))
+    let r = secure.call("/s.S/Who", {}, None, fn(_cc) -> Int ! Status { Ok(1) })
+    expect(r) == Err(status_new(Code.Unauthenticated, "transport: cannot send secure credentials on an insecure connection"))
+    // a status from the credentials ends the call; a control plane code becomes Internal (gRFC A54)
+    let failing = fn(code: Code) -> Client {
+      base.with_per_rpc_creds(PerRpcCreds{metadata: fn(_ri) -> Map[Str, Str] ! Status uses sync { Err(status_new(code, "no token")) }, require_tls: false})
+    }
+    expect(failing(Code.Unauthenticated).unary("/s.S/Who", b"")) == Err(status_new(Code.Unauthenticated, "no token"))
+    expect(failing(Code.NotFound).unary("/s.S/Who", b"")) == Err(status_new(Code.Internal, "transport: received per-RPC creds error with illegal status: rpc error: code = NotFound desc = no token"))
+  }
+}

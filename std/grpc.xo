@@ -239,6 +239,88 @@ pub struct Call {
   pub server_stream: Bool = true
   /// the client's IP address (grpc-go's peer.Peer Addr, which also has the port; std/http's Request keeps none)
   pub peer: Str = ""
+  /// the connection's security (grpc-go's peer AuthInfo): "tls" with the TLS state, or "insecure"
+  pub auth_info: AuthInfo = insecure_info()
+}
+
+/// A connection's protection (grpc-go's credentials.SecurityLevel), ordered: a level below another is weaker.
+pub enum SecurityLevel {
+  /// no level known: check_security_level accepts it (grpc-go keeps it for old credentials)
+  InvalidSecurityLevel
+  NoSecurity
+  IntegrityOnly
+  PrivacyAndIntegrity
+}
+
+/// The level's number (0 to 3), its order.
+pub fn (l: SecurityLevel) number() -> Int {
+  match l {
+    InvalidSecurityLevel => 0
+    NoSecurity => 1
+    IntegrityOnly => 2
+    PrivacyAndIntegrity => 3
+  }
+}
+
+/// grpc-go's String: `NoSecurity`, `IntegrityOnly`, `PrivacyAndIntegrity`, `invalid SecurityLevel: 0`.
+pub fn (l: SecurityLevel) display() -> Str {
+  match l {
+    InvalidSecurityLevel => "invalid SecurityLevel: 0"
+    NoSecurity => "NoSecurity"
+    IntegrityOnly => "IntegrityOnly"
+    PrivacyAndIntegrity => "PrivacyAndIntegrity"
+  }
+}
+
+/// A connection's security as grpc-go's credentials.AuthInfo: `auth_type` "tls" (credentials.TLSInfo, its state
+/// in `tls`) or "insecure"; `level` is its CommonAuthInfo.SecurityLevel.
+pub struct AuthInfo {
+  pub auth_type: Str
+  pub level: SecurityLevel
+  /// the TLS connection's state; None over cleartext, and on the client (std/http keeps it)
+  pub tls: http.TlsState? = None
+}
+
+/// The AuthInfo of a cleartext connection (grpc-go's insecure credentials).
+pub fn insecure_info() -> AuthInfo {
+  AuthInfo{auth_type: "insecure", level: SecurityLevel.NoSecurity, tls: None}
+}
+
+/// The AuthInfo of a TLS connection (grpc-go's TLSInfo: PrivacyAndIntegrity).
+pub fn tls_info(state: http.TlsState?) -> AuthInfo {
+  AuthInfo{auth_type: "tls", level: SecurityLevel.PrivacyAndIntegrity, tls: state}
+}
+
+/// Whether ai meets level (grpc-go's credentials.CheckSecurityLevel): Err "AuthInfo is nil" for None, Ok for an
+/// InvalidSecurityLevel connection, else Err "requires SecurityLevel L; connection has M" when weaker.
+pub fn check_security_level(ai: AuthInfo?, level: SecurityLevel) -> () ! Str {
+  let a = match ai {
+    Some(a) => a
+    None => return Err("AuthInfo is nil")
+  }
+  if a.level == SecurityLevel.InvalidSecurityLevel || a.level.number() >= level.number() {
+    return Ok(())
+  }
+  Err("requires SecurityLevel ${level.display()}; connection has ${a.level.display()}")
+}
+
+/// What per-RPC credentials see of a call (grpc-go's credentials.RequestInfo and GetRequestMetadata's uri).
+pub struct RequestInfo {
+  /// the full method, `/package.Service/Method`
+  pub method: Str
+  /// `https://host/package.Service`, the port left out when it is 443 (grpc-go's audience)
+  pub audience: Str
+  /// the connection's security
+  pub auth_info: AuthInfo
+}
+
+/// Per-RPC credentials (grpc-go's credentials.PerRPCCredentials): `metadata` gives the metadata each call
+/// carries (GetRequestMetadata; names made lower case), and `require_tls` refuses a cleartext connection
+/// (RequireTransportSecurity). The function may read shared state (`sync`: a token in a Mutex that another
+/// task refreshes) but performs no other effect.
+pub struct PerRpcCreds {
+  pub metadata: fn(RequestInfo) -> Map[Str, Str] ! Status uses sync
+  pub require_tls: Bool = true
 }
 
 /// f with its effects counted at this call, as a function whose type has none: interceptors and handlers are stored
@@ -587,6 +669,10 @@ pub struct Client {
   pub on_finish: List[fn(Str, Status?) -> ()] = []
   /// the target as given to client (Client.target)
   pub target: Str = ""
+  /// credentials every call carries (grpc-go's WithPerRPCCredentials)
+  pub creds: List[PerRpcCreds] = []
+  /// credentials of this client's calls (grpc-go's PerRPCCredsCallOption)
+  pub call_creds: PerRpcCreds? = None
 }
 
 /// The client sending md with every call (grpc-go's WithDefaultCallOptions with metadata): a call's own metadata
@@ -791,6 +877,66 @@ pub fn (c: Client) with_max_send(n: Int) -> Client {
   c with {max_send: n}
 }
 
+/// Every call carries cr's metadata (grpc-go's WithPerRPCCredentials; several add up, later names win). With
+/// `require_tls` over `http://`, each call fails with Unauthenticated (grpc-go refuses the dial).
+pub fn (c: Client) with_per_rpc_creds(cr: PerRpcCreds) -> Client {
+  var l = c.creds
+  l.push(cr)
+  c with {creds: l}
+}
+
+/// The calls of the returned client carry cr's metadata (grpc-go's PerRPCCredsCallOption, the grpc.PerRPCCredentials
+/// call option), after the client's own credentials. With `require_tls` over `http://` a call is Unauthenticated.
+pub fn (c: Client) with_call_creds(cr: PerRpcCreds) -> Client {
+  c with {call_creds: Some(cr)}
+}
+
+/// A status a per-RPC credentials function returned, as grpc-go passes it on: the codes the control plane may not
+/// send (gRFC A54) become Internal.
+fn creds_status(e: Status) -> Status {
+  match e.code {
+    Code.InvalidArgument | Code.NotFound | Code.AlreadyExists | Code.FailedPrecondition | Code.Aborted | Code.OutOfRange | Code.DataLoss => status_new(Code.Internal, "transport: received per-RPC creds error with illegal status: ${e.display()}")
+    _ => e
+  }
+}
+
+/// The call's metadata with the credentials' added (grpc-go's getTrAuthData and getCallAuthData): the client's,
+/// then the call's, then md (md wins on a shared name).
+fn creds_metadata(c: Client, method: Str, md: Map[Str, Str]) -> Map[Str, Str] ! Status {
+  if c.creds.is_empty() && c.call_creds.is_none() {
+    return Ok(md)
+  }
+  let secure = c.base.starts_with("https://")
+  var host = c.base.trim_prefix("https://").trim_prefix("http://")
+  if let Some((h, _)) = host.cut("/") {
+    host = h
+  }
+  host = host.trim_suffix(":443")
+  let pos = method.rfind("/") ?? method.len()
+  let ri = RequestInfo{method: method, audience: "https://${host}${method[..pos]}", auth_info: if secure { tls_info(None) } else { insecure_info() }}
+  var out: Map[Str, Str] = {}
+  var all = c.creds
+  if let Some(cc) = c.call_creds {
+    all.push(cc)
+  }
+  for cr in all {
+    if cr.require_tls && !secure {
+      return Err(status_new(Code.Unauthenticated, "transport: cannot send secure credentials on an insecure connection"))
+    }
+    let data = match (cr.metadata)(ri) {
+      Ok(d) => d
+      Err(e) => return Err(creds_status(e))
+    }
+    for (k, v) in data {
+      out[k.to_lower()] = v
+    }
+  }
+  for (k, v) in md {
+    out[k] = v
+  }
+  Ok(out)
+}
+
 fn send_too_large(n: Int, max: Int) -> Status {
   status_new(Code.ResourceExhausted, "trying to send message larger than max (${n} vs. ${max})")
 }
@@ -811,7 +957,8 @@ pub fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, 
 }
 
 /// One unary call, after the interceptors.
-fn (c: Client) unary_call(method: Str, req: Bytes, metadata: Map[Str, Str], timeout: Duration?) -> Bytes ! Status uses net.dial {
+fn (c: Client) unary_call(method: Str, req: Bytes, metadata0: Map[Str, Str], timeout: Duration?) -> Bytes ! Status uses net.dial {
+  let metadata = creds_metadata(c, method, metadata0)?
   let body = frame_msg(req, c.gzip)
   if body.len() - 5 > c.max_send {
     return Err(send_too_large(body.len() - 5, c.max_send))
@@ -889,7 +1036,8 @@ pub fn (c: Client) call[R, fx: Effects](method: Str, metadata: Map[Str, Str], ti
 }
 
 /// One streaming call, after the interceptors.
-fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status uses fx) -> R ! Status uses (fx, net.dial) {
+fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status uses fx) -> R ! Status uses (fx, net.dial) {
+  let metadata = creds_metadata(c, method, metadata0)?
   let (pw, pr) = http.pipe()
   var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout, c.gzip)).with_body_reader(pr)
   if let Some(d) = timeout {
@@ -1194,7 +1342,7 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
       md[lk] = v
     }
   }
-  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip}
+  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip, auth_info: if req.tls() { tls_info(req.tls_state()) } else { insecure_info() }}
   let recv = Recv{body: body, st: Mutex[RecvState].new(RecvState{buf: b"", at: 0, done: false, gzip: (req.header("grpc-encoding") ?? "") == "gzip"}), max: max}
   // the head grpc-go's server writes: content-type, and grpc-encoding only when the responses are compressed
   var resp = http.stream(200, fn(w) -> () ! IoErr {
