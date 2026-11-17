@@ -4,12 +4,20 @@ use std/grpc
 use std/http
 
 fn handlers(clock: Clock[clock]) -> grpc.Server {
-  var srv = grpc.server(clock)
-  srv.unary("/t.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
+  var srv = grpc.server(clock).with_max_send(1000)
+  srv.stream("/t.S/Echo", fn(call, recv, send) -> () ! grpc.Status {
+    let req = recv.next()? ?? b""
     if call.metadata.get("x-fail") == Some("1") {
       return Err(grpc.Status{code: grpc.Code.NotFound, message: "no such user \u{e9}%", details: b""})
     }
-    Ok(req + (call.metadata.get("x-who") ?? "").bytes())
+    if call.metadata.get("x-md") == Some("1") {
+      send.set_trailer("x-t", "tv")
+    }
+    send.send(req + (call.metadata.get("x-who") ?? "").bytes())?
+  })
+  srv.stream("/t.S/Big", fn(_call, recv, send) -> () ! grpc.Status {
+    let _req = recv.next()?
+    send.send("b".repeat(2000).bytes())?
   })
   srv.stream("/t.S/Count", fn(_call, recv, send) -> () ! grpc.Status {
     let m = recv.next()? ?? b"0"
@@ -101,6 +109,32 @@ fn calls(os: Os, c: grpc.Client) {
     Ok(l) => os.stdio.println("bidi: ${l}")
     Err(e) => os.stdio.println("bidi: ${e.display()}")
   }
+  let md = c.call("/t.S/Echo", {"x-who": "bob", "x-md": "1"}, None, fn(cc) -> Str ! grpc.Status {
+    cc.send("hi ".bytes())?
+    cc.close_send()
+    let m = cc.recv()? ?? b"?"
+    let _end = cc.recv()?
+    Ok("ok ${m.to_str() ?? "?"} header ${show_md(cc.header()?)} trailer ${show_md(cc.trailer())}")
+  })
+  match md {
+    Ok(t) => os.stdio.println("md: ${t}")
+    Err(e) => os.stdio.println("md: err ${e.display()}")
+  }
+  os.stdio.println("recvlimit: ${show(c.with_max_recv(2).unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
+  os.stdio.println("sendlimit: ${show(c.with_max_send(2).unary("/t.S/Echo", "hi ".bytes()))}")
+  os.stdio.println("big: ${show(c.unary("/t.S/Big", b"x"))}")
+}
+
+fn show_md(md: Map[Str, Str]) -> Str {
+  var parts: List[Str] = []
+  for k in md.keys().sort() {
+    // an Xo server's head has a Date (std/http adds one; grpc-go's server sends none)
+    if k == "date" {
+      continue
+    }
+    parts.push("${k}=${md.get(k) ?? ""}")
+  }
+  "[${parts.join(" ")}]"
 }
 
 fn main(os: Os) {

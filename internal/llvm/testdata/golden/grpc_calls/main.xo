@@ -5,7 +5,7 @@ use std/grpc
 use std/http
 
 fn handlers(clock: Clock[clock], canceled: Chan[Int]) -> grpc.Server {
-  var srv = grpc.server(clock).with_max_recv(1048576)
+  var srv = grpc.server(clock).with_max_recv(1048576).with_max_send(1048576)
   srv.unary("/t.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
     if call.metadata.get("x-fail") == Some("1") {
       return Err(grpc.Status{code: grpc.Code.NotFound, message: "no such user \u{e9}%", details: b""})
@@ -69,6 +69,8 @@ fn calls(os: Os, c: grpc.Client, hc: http.Client, base: Str, canceled: Chan[Int]
   os.stdio.println("fail: ${show(c.unary("/t.S/Echo", b"x", {"x-fail": "1"}))}")
   os.stdio.println("missing: ${show(c.unary("/t.S/Missing", b"x"))}")
   os.stdio.println("gzip: ${show(c.with_gzip().unary("/t.S/Echo", "hi ".bytes(), {"x-who": "ann"}))}")
+  os.stdio.println("max recv: ${show(c.with_max_recv(4).unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
+  os.stdio.println("max send: ${show(c.with_max_send(2).unary("/t.S/Echo", "hi ".bytes()))}")
   os.stdio.println("bin: ${grpc.bin_encode(b"foo")} ${(grpc.bin_decode("Zm9v") ?? b"?").len()}")
   os.stdio.println("slow: ${show(c.unary("/t.S/Slow", b"x", {}, Some(300ms)))}")
   let _ = canceled.recv()
@@ -95,7 +97,9 @@ fn calls(os: Os, c: grpc.Client, hc: http.Client, base: Str, canceled: Chan[Int]
     }
     cc.close_send()
     let m = cc.recv()? ?? b"?"
-    Ok(m.to_str() ?? "?")
+    let ct = cc.header()?.get("content-type") ?? "none"
+    let end = cc.recv()?
+    Ok("${m.to_str() ?? "?"} header content-type=${ct} end ${end.is_none()} trailer ${cc.trailer().len()}")
   })
   match summed {
     Ok(t) => os.stdio.println("sum: ${t}")

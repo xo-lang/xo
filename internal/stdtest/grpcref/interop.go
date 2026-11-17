@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -56,7 +57,15 @@ func interopHandler(_ any, s grpc.ServerStream) error {
 		if first("x-fail") == "1" {
 			return status.Error(codes.NotFound, "no such user é%")
 		}
+		if first("x-md") == "1" {
+			s.SetTrailer(metadata.Pairs("x-t", "tv"))
+		}
 		return sendMsg(s, append(req, first("x-who")...))
+	case "/t.S/Big":
+		if _, err := recvMsg(s); err != nil {
+			return err
+		}
+		return sendMsg(s, []byte(strings.Repeat("b", 2000)))
 	case "/t.S/Count":
 		m, err := recvMsg(s)
 		if err != nil {
@@ -109,7 +118,7 @@ func interopServe() {
 		panic(err)
 	}
 	fmt.Println(l.Addr().String())
-	srv := grpc.NewServer(grpc.ForceServerCodecV2(bytesCodec{}), grpc.UnknownServiceHandler(interopHandler))
+	srv := grpc.NewServer(grpc.ForceServerCodecV2(bytesCodec{}), grpc.UnknownServiceHandler(interopHandler), grpc.MaxSendMsgSize(1000))
 	_ = srv.Serve(l)
 }
 
@@ -192,6 +201,29 @@ func interopClient(addr string) {
 		got = append(got, "extra")
 	}
 	fmt.Println("bidi: " + quoteList(got))
+	var hd, tr metadata.MD
+	res := unaryOpts("/t.S/Echo", "hi ", []grpc.CallOption{grpc.Header(&hd), grpc.Trailer(&tr)}, "x-who", "bob", "x-md", "1")
+	fmt.Println("md: " + res + " header " + showMD(hd) + " trailer " + showMD(tr))
+	fmt.Println("recvlimit: " + unaryOpts("/t.S/Echo", "hi ", []grpc.CallOption{grpc.MaxCallRecvMsgSize(2)}, "x-who", "bob"))
+	fmt.Println("sendlimit: " + unaryOpts("/t.S/Echo", "hi ", []grpc.CallOption{grpc.MaxCallSendMsgSize(2)}))
+	fmt.Println("big: " + unary("/t.S/Big", "x"))
+}
+
+// showMD prints metadata as name=value pairs sorted by name, a name's values joined by commas.
+func showMD(md metadata.MD) string {
+	var keys []string
+	for k := range md {
+		if k == "date" { // an Xo server's head has a Date (std/http adds one; grpc-go's server sends none)
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, k+"="+strings.Join(md[k], ","))
+	}
+	return "[" + strings.Join(parts, " ") + "]"
 }
 
 func interopMain() bool {

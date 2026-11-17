@@ -182,3 +182,48 @@ test "a status's details reach the client as grpc-status-details-bin" uses (net,
     }
   }
 }
+
+test "send and receive limits and response metadata, as grpc-go" uses (net, clock) {
+  var srv = server(os.clock).with_max_send(3)
+  srv.unary("/s.S/Five", fn(_call, _req) -> Bytes ! Status { Ok(b"12345") })
+  srv.stream("/s.S/Md", fn(_call, recv, send) -> () ! Status {
+    let m = recv.next()? ?? b""
+    send.set_trailer("x-t", "tv")
+    send.send(m)?
+    send.send(b"four")?
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() {
+      hs.serve().ignore_err("the test ends the server")
+    })
+    let c = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    // a unary response's limit text has grpc-go's "grpc: " prefix (server.go), a stream's has none (stream.go)
+    expect(c.unary("/s.S/Five", b"")) == Err(status_new(Code.ResourceExhausted, "grpc: trying to send message larger than max (5 vs. 3)"))
+    expect(c.with_max_send(1).unary("/s.S/Five", b"ab")) == Err(status_new(Code.ResourceExhausted, "trying to send message larger than max (2 vs. 1)"))
+    let got = c.call("/s.S/Md", {}, None, fn(cc) -> (Map[Str, Str], List[Str], Map[Str, Str]) ! Status {
+      cc.send(b"ab")?
+      cc.close_send()
+      let h = cc.header()?
+      var msgs: List[Str] = []
+      while true {
+        match cc.recv() {
+          Ok(Some(m)) => msgs.push(m.to_str() ?? "?")
+          Ok(None) => break
+          Err(e) => {
+            msgs.push(e.display())
+            break
+          }
+        }
+      }
+      Ok((h, msgs, cc.trailer()))
+    }).or_fault("call")
+    expect(got.0.get("content-type")) == Some("application/grpc")
+    expect(got.0.get("grpc-encoding")) == None
+    expect(got.1) == ["ab", "rpc error: code = ResourceExhausted desc = trying to send message larger than max (4 vs. 3)"]
+    expect(got.2.get("x-t")) == Some("tv")
+    expect(got.2.get("grpc-status")) == None
+    expect(c.with_max_recv(1).unary("/s.S/Five", b"")) == Err(status_new(Code.ResourceExhausted, "grpc: trying to send message larger than max (5 vs. 3)"))
+  }
+}

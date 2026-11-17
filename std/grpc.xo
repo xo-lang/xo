@@ -276,11 +276,22 @@ pub struct Send {
   pub w: http.BodyWriter
   /// the request came compressed with gzip: responses are too (grpc-go's rule)
   pub gzip: Bool = false
+  /// the server's send limit (Server.with_max_send)
+  pub max_send: Int = 2147483647
 }
 
 /// Sends one message (a frame is flushed at once).
 pub fn (s: Send) send(msg: Bytes) -> () ! Status {
-  match s.w.write(frame_msg(msg, s.gzip)) {
+  send_framed(s, frame_msg(msg, s.gzip), "")
+}
+
+/// Writes frame f; one above the send limit is ResourceExhausted with grpc-go's text, which a unary method's
+/// response prefixes with "grpc: " (server.go sendResponse) and a stream's does not (serverStream.SendMsg).
+fn send_framed(s: Send, f: Bytes, prefix: Str) -> () ! Status {
+  if f.len() - 5 > s.max_send {
+    return Err(status_new(Code.ResourceExhausted, "${prefix}trying to send message larger than max (${f.len() - 5} vs. ${s.max_send})"))
+  }
+  match s.w.write(f) {
     Ok(_) => ()
     Err(e) => return Err(status_new(Code.Unavailable, "${e}"))
   }
@@ -301,6 +312,8 @@ pub struct Server {
   pub max_recv: Int
   pub methods: List[Str]
   pub clock: Clock[clock]
+  /// the largest message a handler may send (grpc-go's MaxSendMsgSize; math.MaxInt32 by default)
+  pub max_send: Int = 2147483647
 }
 
 /// A server with grpc-go's 4 MiB receive limit. `clock` times the deadlines clients send: a handler still running at
@@ -311,7 +324,13 @@ pub fn server(clock: Clock[clock]) -> Server {
 
 /// The server with another receive limit in bytes.
 pub fn (s: Server) with_max_recv(n: Int) -> Server {
-  Server{routes: s.routes, max_recv: n, methods: s.methods, clock: s.clock}
+  s with {max_recv: n}
+}
+
+/// The server with a send limit in bytes: a larger message is `ResourceExhausted` from `Send.send` (grpc-go's
+/// MaxSendMsgSize, "grpc: trying to send message larger than max"). Set it before registering methods.
+pub fn (s: Server) with_max_send(n: Int) -> Server {
+  s with {max_send: n}
 }
 
 /// Registers a unary method (`/package.Service/Method`).
@@ -322,7 +341,7 @@ pub fn (var s: Server) unary[fx: Effects](method: Str, f: fn(Call, Bytes) -> Byt
       None => return Err(status_new(Code.Internal, "grpc: client sent no request message"))
     }
     let resp = f(call, req)?
-    send.send(resp)?
+    send_framed(send, frame_msg(resp, send.gzip), "grpc: ")?
   })
 }
 
@@ -330,10 +349,11 @@ pub fn (var s: Server) unary[fx: Effects](method: Str, f: fn(Call, Bytes) -> Byt
 /// `Send`; returning Ok ends the call with OK, an error with its status.
 pub fn (var s: Server) stream[fx: Effects](method: Str, f: fn(Call, Recv, Send) -> () ! Status uses fx) uses (fx, clock) {
   let max = s.max_recv
+  let max_send = s.max_send
   let clock = s.clock
   s.methods.push(method)
   s.routes.handle_stream("POST ${method}", fn(req, body) -> http.Response {
-    serve_call(f, clock, max, method, req, body)
+    serve_call(f, clock, max, max_send, method, req, body)
   })
 }
 
@@ -366,6 +386,10 @@ pub struct Client {
   pub base: Str
   /// requests are sent gzip compressed
   pub gzip: Bool = false
+  /// the largest response message (grpc-go's MaxCallRecvMsgSize, 4 MiB by default)
+  pub max_recv: Int = 4194304
+  /// the largest request message (grpc-go's MaxCallSendMsgSize, math.MaxInt32 by default)
+  pub max_send: Int = 2147483647
 }
 
 /// A client of `base` (`http://host:port`, plain HTTP/2 with prior knowledge, or `https://host:port`).
@@ -376,13 +400,33 @@ pub fn client(c: http.Client, base: Str) -> Client {
 
 /// The client sending its messages gzip compressed (`grpc-encoding: gzip`); responses are read compressed or not.
 pub fn (c: Client) with_gzip() -> Client {
-  Client{http: c.http, base: c.base, gzip: true}
+  c with {gzip: true}
+}
+
+/// The client with a receive limit in bytes: a larger response message is `ResourceExhausted` (grpc-go's
+/// MaxCallRecvMsgSize).
+pub fn (c: Client) with_max_recv(n: Int) -> Client {
+  c with {max_recv: n}
+}
+
+/// The client with a send limit in bytes: a larger request message is `ResourceExhausted` and is not sent
+/// (grpc-go's MaxCallSendMsgSize).
+pub fn (c: Client) with_max_send(n: Int) -> Client {
+  c with {max_send: n}
+}
+
+fn send_too_large(n: Int, max: Int) -> Status {
+  status_new(Code.ResourceExhausted, "trying to send message larger than max (${n} vs. ${max})")
 }
 
 /// One unary call: the request message, the response message, or the call's status. `timeout` is sent as
 /// `grpc-timeout` and bounds the call (DeadlineExceeded).
 pub fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, timeout: Duration? = None) -> Bytes ! Status uses net.dial {
-  var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout, c.gzip), frame_msg(req, c.gzip))
+  let body = frame_msg(req, c.gzip)
+  if body.len() - 5 > c.max_send {
+    return Err(send_too_large(body.len() - 5, c.max_send))
+  }
+  var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout, c.gzip), body)
   if let Some(d) = timeout {
     r = r.with_timeout(d)
   }
@@ -407,20 +451,10 @@ pub fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, 
   if fin.code != Code.Ok {
     return Err(fin)
   }
-  match unframe(data, 0) {
-    Ok((compressed, msg, _)) => {
-      if compressed {
-        if enc != "gzip" {
-          return Err(status_new(Code.Internal, "grpc: compressed message received without a grpc-encoding"))
-        }
-        match compress.gunzip(msg, 4194305) {
-          Ok(plain) => return Ok(plain)
-          Err(_) => return Err(status_new(Code.Internal, "grpc: failed to decompress the received message"))
-        }
-      }
-      Ok(msg)
-    }
-    Err(_) => Err(status_new(Code.Internal, "grpc: no response message"))
+  match pull(RecvState{buf: data, at: 0, done: true, gzip: enc == "gzip"}, c.max_recv, fn() -> Bytes? ! Status { Ok(None) }) {
+    Ok((Some(msg), _)) => Ok(msg)
+    Ok((None, _)) => Err(status_new(Code.Internal, "grpc: no response message"))
+    Err(e) => Err(e)
   }
 }
 
@@ -432,6 +466,8 @@ pub struct ClientCall {
   pub max: Int
   /// messages are sent gzip compressed (Client.with_gzip)
   pub gzip: Bool = false
+  /// the client's send limit (Client.with_max_send)
+  pub max_send: Int = 2147483647
 }
 
 pub struct CallState {
@@ -439,6 +475,9 @@ pub struct CallState {
   pub failed: Status? = None
   pub recv: RecvState = RecvState{}
   pub final: Status? = None
+  /// the response's header and trailer metadata (ClientCall.header, ClientCall.trailer)
+  pub header: Map[Str, Str] = {}
+  pub trailer: Map[Str, Str] = {}
 }
 
 /// Runs `f` on a streaming call: `f` sends with `send`, ends the request with `close_send` and reads with `recv`.
@@ -450,7 +489,7 @@ pub fn (c: Client) call[R, fx: Effects](method: Str, metadata: Map[Str, Str], ti
     r = r.with_timeout(d)
   }
   let head = Chan[(http.ClientStream?, Status?)].new(1)
-  let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: 4194304, gzip: c.gzip}
+  let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: c.max_recv, gzip: c.gzip, max_send: c.max_send}
   var result: R? = None
   var failure: Status? = None
   scope s {
@@ -492,7 +531,11 @@ pub fn (c: Client) call[R, fx: Effects](method: Str, metadata: Map[Str, Str], ti
 
 /// Sends one message.
 pub fn (c: ClientCall) send(msg: Bytes) -> () ! Status {
-  match c.w.write(frame_msg(msg, c.gzip)) {
+  let f = frame_msg(msg, c.gzip)
+  if f.len() - 5 > c.max_send {
+    return Err(send_too_large(f.len() - 5, c.max_send))
+  }
+  match c.w.write(f) {
     Ok(_) => Ok(())
     Err(e) => Err(status_new(Code.Unavailable, "${e}"))
   }
@@ -504,6 +547,75 @@ pub fn (c: ClientCall) close_send() {
 }
 
 /// The next response message; None at the end of an OK call, the status as an error otherwise.
+/// Waits for the response's head when it has not come yet: the stream, or the call's failure.
+fn await_head(c: ClientCall, var s: CallState) -> () ! Status uses sync {
+  if s.stream.is_some() {
+    return Ok(())
+  }
+  match c.head.recv() {
+    Some((Some(st), _)) => {
+      // a response that is not gRPC ends the call at its head (grpc-go's operateHeaders, task #115)
+      if let Some(e) = head_status(st.head()) {
+        st.close()
+        s.failed = Some(e)
+        return Err(e)
+      }
+      s.stream = Some(st)
+      s.header = metadata_of(st.head().headers)
+      s.recv = s.recv with {gzip: (st.head().headers.get("Grpc-Encoding") ?? "") == "gzip"}
+      if st.head().headers.get("Grpc-Status").is_some() {
+        // trailers only: what it carries is the trailer metadata (grpc-go)
+        s.trailer = s.header
+        s.header = {}
+      }
+      Ok(())
+    }
+    Some((None, Some(e))) => {
+      s.failed = Some(e)
+      Err(e)
+    }
+    _ => Err(status_new(Code.Internal, "grpc: no response"))
+  }
+}
+
+/// The metadata of a response's head or trailers as grpc-go's client gives it: lower case names, without the
+/// reserved ones (`grpc-status`, `grpc-message`, `grpc-encoding`, `grpc-timeout`, `te`; `content-type` kept).
+/// `-bin` values stay base64 (`bin_decode`).
+fn metadata_of(h: Map[Str, Str]) -> Map[Str, Str] {
+  var md: Map[Str, Str] = {}
+  for (k, v) in h {
+    let lk = k.to_lower()
+    if lk.starts_with(":") || lk == "grpc-message-type" || lk == "grpc-encoding" || lk == "grpc-message" || lk == "grpc-status" || lk == "grpc-timeout" || lk == "te" {
+      continue
+    }
+    md[lk] = v
+  }
+  md
+}
+
+/// The response's header metadata, waiting for the head: grpc-go's `grpc.Header` call option and
+/// `ClientStream.Header`. Empty for a trailers only response (its metadata is the trailer's).
+pub fn (c: ClientCall) header() -> Map[Str, Str] ! Status {
+  let out = c.st.with(fn(var s) -> Result[Map[Str, Str], Status] uses sync {
+    if s.stream.is_none() {
+      if let Some(e) = s.failed {
+        return Err(e)
+      }
+    }
+    if let Err(e) = await_head(c, s) {
+      return Err(e)
+    }
+    Ok(s.header)
+  })
+  out
+}
+
+/// The response's trailer metadata (grpc-go's `grpc.Trailer` call option and `ClientStream.Trailer`): complete once
+/// `recv` returned None or the call's status; empty before.
+pub fn (c: ClientCall) trailer() -> Map[Str, Str] {
+  c.st.with_read(fn(s) { s.trailer })
+}
+
 pub fn (c: ClientCall) recv() -> Bytes? ! Status uses net.dial {
   let out = c.st.with(fn(var s) -> Result[Bytes?, Status] uses (net.dial, sync) {
     if let Some(e) = s.failed {
@@ -512,24 +624,8 @@ pub fn (c: ClientCall) recv() -> Bytes? ! Status uses net.dial {
     if let Some(fin) = s.final {
       return if fin.code == Code.Ok { Ok(None) } else { Err(fin) }
     }
-    if s.stream.is_none() {
-      match c.head.recv() {
-        Some((Some(st), _)) => {
-          // a response that is not gRPC ends the call at its head (grpc-go's operateHeaders, task #115)
-          if let Some(e) = head_status(st.head()) {
-            st.close()
-            s.failed = Some(e)
-            return Err(e)
-          }
-          s.stream = Some(st)
-          s.recv = s.recv with {gzip: (st.head().headers.get("Grpc-Encoding") ?? "") == "gzip"}
-        }
-        Some((None, Some(e))) => {
-          s.failed = Some(e)
-          return Err(e)
-        }
-        _ => return Err(status_new(Code.Internal, "grpc: no response"))
-      }
+    if let Err(e) = await_head(c, s) {
+      return Err(e)
     }
     let stream = s.stream ?? fault("stream")
     let res = pull(s.recv, c.max, fn() -> Bytes? ! Status uses net.dial {
@@ -543,6 +639,9 @@ pub fn (c: ClientCall) recv() -> Bytes? ! Status uses net.dial {
         s.recv = ns
         if msg.is_none() {
           let fin = final_status(stream)
+          if !stream.trailers().is_empty() {
+            s.trailer = metadata_of(stream.trailers())
+          }
           stream.close()
           s.final = Some(fin)
           return if fin.code == Code.Ok { Ok(None) } else { Err(fin) }
@@ -665,7 +764,7 @@ fn trailers_only(st: Status) -> http.Response {
   }).with_header("content-type", "application/grpc")
 }
 
-fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock: Clock, max: Int, method: Str, req: http.Request, body: http.BodyReader) -> http.Response uses (fx, clock) {
+fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock: Clock, max: Int, max_send: Int, method: Str, req: http.Request, body: http.BodyReader) -> http.Response uses (fx, clock) {
   let ct = req.header("content-type") ?? ""
   if !ct.starts_with("application/grpc") {
     return http.empty(415)
@@ -689,8 +788,9 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
   }
   let call = Call{method: method, metadata: md, timeout: timeout}
   let recv = Recv{body: body, st: Mutex[RecvState].new(RecvState{buf: b"", at: 0, done: false, gzip: (req.header("grpc-encoding") ?? "") == "gzip"}), max: max}
-  http.stream(200, fn(w) -> () ! IoErr {
-    let send = Send{w: w, gzip: gz}
+  // the head grpc-go's server writes: content-type, and grpc-encoding only when the responses are compressed
+  var resp = http.stream(200, fn(w) -> () ! IoErr {
+    let send = Send{w: w, gzip: gz, max_send: max_send}
     let st = match timeout {
       Some(d) => match task.with_timeout(clock, d, fn() -> () ! Status { f(call, recv, send) }) {
         Ok(_) => Status{code: Code.Ok, message: "", details: b""}
@@ -703,7 +803,11 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
       }
     }
     finish(w, st)
-  }).with_header("content-type", "application/grpc").with_header("grpc-accept-encoding", "gzip,identity").with_header("grpc-encoding", if gz { "gzip" } else { "identity" }).with_full_duplex()
+  }).with_header("content-type", "application/grpc").with_full_duplex()
+  if gz {
+    resp = resp.with_header("grpc-encoding", "gzip")
+  }
+  resp
 }
 
 fn from_client_err(e: http.ClientErr) -> Status {

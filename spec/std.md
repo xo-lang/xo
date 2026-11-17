@@ -10841,6 +10841,13 @@ fn (c: Client) call[R](method: Str, metadata: Map[Str, Str], timeout: Duration?,
 fn (c: ClientCall) send(msg: Bytes) -> () ! Status
 fn (c: ClientCall) close_send()
 fn (c: ClientCall) recv() -> Bytes? ! Status
+fn (c: ClientCall) header() -> Map[Str, Str] ! Status   // the response's header metadata (waits for the head)
+fn (c: ClientCall) trailer() -> Map[Str, Str]           // the trailer metadata, complete once recv ended
+// limits (grpc-go's defaults: receive 4 MiB, send math.MaxInt32)
+fn (s: Server) with_max_recv(n: Int) -> Server
+fn (s: Server) with_max_send(n: Int) -> Server
+fn (c: Client) with_max_recv(n: Int) -> Client
+fn (c: Client) with_max_send(n: Int) -> Client
 ```
 
 - One call is one HTTP/2 stream: `application/grpc`, `te: trailers`, 5 byte frames, the status in the `grpc-status` and
@@ -10856,8 +10863,16 @@ fn (c: ClientCall) recv() -> Bytes? ! Status
 - A message above `max_recv` (4 MiB, `with_max_recv`) is `ResourceExhausted`; a bad frame, a stream cut inside a
   message, or a missing status is `Internal`; a connection that cannot be made is `Unavailable`; a non gRPC response
   maps its HTTP status to a code as grpc-go does.
-- Not yet: compression (`grpc-encoding`), binary metadata (`-bin`), response headers and trailers other than the
-  status, `grpc-status-details-bin`, the typed stubs of `xo proto gen`, a TLS example.
+- Response metadata, as grpc-go's client gives it: lower case names without the reserved ones (`grpc-status`,
+  `grpc-message`, `grpc-encoding`, `grpc-timeout`, `te`; `content-type` kept), `-bin` values left in base64
+  (`bin_decode`). A trailers only response has an empty header; its metadata is the trailer's. A server sends
+  `content-type` in the head, and `grpc-encoding` only when it compresses (grpc-go's head); std/http also adds a
+  `Date`, which grpc-go's server does not.
+- A message above a send limit is `ResourceExhausted` and is not sent: "trying to send message larger than max (N
+  vs. M)", with grpc-go's "grpc: " prefix for a unary method's response. A response above the client's receive
+  limit is `ResourceExhausted` "grpc: received message larger than max (N vs. M)".
+- Not yet: response headers from a handler (grpc-go's SetHeader and SendHeader; the head is written before the
+  handler runs), interceptors, keepalive, the typed stubs of `xo proto gen`, a TLS example.
 
 ## 69. std/otlp
 

@@ -1,5 +1,22 @@
 # std/grpc changes
 
+## 2026-11-17: feature: response metadata and message size limits on the client and server
+
+- Kind: feature (behavior change)
+- Commit: this commit
+- Found by: task #89 (std features line; scripts/stdaudit/map.txt grpc gaps), decision 0546 item 4
+- Go reference: google.golang.org/grpc v1.79.2 (grpc.Header, grpc.Trailer, MaxCallRecvMsgSize, MaxCallSendMsgSize,
+  MaxSendMsgSize; rpc_util.go, stream.go, server.go texts; internal/transport isReservedHeader)
+- Test: std/grpc_test.xo "send and receive limits and response metadata, as grpc-go"; TestGrpcInterop lines md,
+  recvlimit, sendlimit and big, the same both ways against grpc-go
+- Shipped in: not yet released
+
+`ClientCall.header()` and `trailer()` give the response's metadata as grpc-go's client does. `Client.with_max_recv`
+and `with_max_send` and `Server.with_max_send` set the limits, with grpc-go's ResourceExhausted texts. Changes: a
+unary call's response is held to the 4 MiB receive limit (it was unbounded) and is read by the stream reader, so a
+cut or bad frame reports the stream's error text; a server's head is `content-type` alone, plus `grpc-encoding: gzip`
+when compressing (it also sent `grpc-accept-encoding` and `grpc-encoding: identity`).
+
 ## 2026-11-17: fix: a status's details reach the client (grpc-status-details-bin)
 
 - Kind: fix
