@@ -90,6 +90,7 @@ internal/arm64 TestSwitch65535Arms ^compiler/arm64/jumptab\.xo$|^compiler/ssa/[a
 internal/arm64 TestChainKeysSharedCache @cache
 internal/arm64 TestBigTextFast ^std/native/big\.xo$
 internal/arm64 TestEscCheckFast ^std/native/llrt/scan\.xo$|^std/term\.xo$
+internal/arm64 TestOnceGetFast ^std/task\.xo$
 internal/arm64 TestBackendCacheEditIdentity @cache @arm64be
 internal/arm64 TestBackendCacheModuleFacts @cache
 internal/arm64 TestBackendCacheCalleeSummary @cache

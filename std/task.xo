@@ -210,16 +210,24 @@ pub struct Once[T, E] {
 pub fn once[T, E]() -> Once[T, E] { Once{st: Mutex[Option[Result[T, Isolated[E]]]].new(None)} }
 
 pub fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx {
-  let r = o.st.with(fn(var st) -> Result[T, Isolated[E]] {
-    match st {
-      Some(done) => done
-      None => {
-        let fresh = isolate(f)
-        st = Some(fresh)
-        fresh
+  // a done Once is read under the read lock, which neither writes the
+  // value back nor waits on other readers (task #103: 20,000,000 gets
+  // 0.44 to 0.13 s on the Mac); the first callers take the write lock,
+  // where one runs f and the rest wait for its result
+  let seen = o.st.with_read(fn(st) -> Option[Result[T, Isolated[E]]] { st })
+  let r = match seen {
+    Some(done) => done
+    None => o.st.with(fn(var st) -> Result[T, Isolated[E]] {
+      match st {
+        Some(done) => done
+        None => {
+          let fresh = isolate(f)
+          st = Some(fresh)
+          fresh
+        }
       }
-    }
-  })
+    })
+  }
   let out: Result[T, E] = match r {
     Ok(v) => Ok(v)
     Err(Isolated.Failed(e)) => Err(e)

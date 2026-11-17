@@ -44,6 +44,24 @@ for the raise, and fault.set copies it again into the context, so the first
 copy was never freed. The location now goes into the per-thread message
 buffer after the message, and only a location that does not fit there is
 copied to the heap.
+## 2026-11-17: perf: a done Once is read under the read lock (#103)
+
+- Kind: perf
+- Commit: this push
+- Found by: #103 lever 7 (bench/perf/task once 2.62 times Go's sync.Once; the profile: write lock and value write back on every get)
+- Go reference: sync.Once (Do's atomic done check)
+- Test: internal/arm64 TestOnceGetFast (instruction count of 10,000,000 gets); bench/perf/task once
+- Shipped in: not yet released
+
+Once.get reads a done result with Mutex.with_read, which copies it out
+and writes nothing back; only the first callers take the write lock,
+where one runs f and the rest wait. 10,000,000 gets on the Mac: 6.71G to
+2.97G instructions (20,000,000: 0.44 to 0.13 s of user time).
+Host 1 (linux/arm64, `xo bench --ab`, 3 rounds, 2026-11-17): bench/perf/task
+once 37.81 to 16.87 ms (B/A 0.446, 95% interval 0.443 to 0.449).
+Xo Lang 2 had measured an earlier Once change about 11% slower on host 2
+(a pass/fail host); the host 1 --ab, the timing host (decision 0340), is
+the authority.
 
 ## 2026-11-11: refactor: std/task's Xo parts are one file on every backend (decisions 0588, 0597's amendment)
 

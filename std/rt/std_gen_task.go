@@ -492,10 +492,10 @@ func Task_once[tp_T any, tp_E any](tk *Task) Task_Once[tp_T, tp_E] {
 func Task_permit_chan(tk *Task, v_n int64) *Chan[Unit] {
 	var v_ch *Chan[Unit] = Chan_new[Unit](tk, v_n)
 	_ = v_ch
-	x_it56 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-	for x_i58 := x_it56.Lo; x_i58 < x_it56.Hi; x_i58++ {
-		x_el59 := x_i58
-		_ = x_el59
+	x_it60 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+	for x_i62 := x_it60.Lo; x_i62 < x_it60.Hi; x_i62++ {
+		x_el63 := x_i62
+		_ = x_el63
 		{
 			Chan_send[Unit](tk, v_ch, Unit{})
 		}
