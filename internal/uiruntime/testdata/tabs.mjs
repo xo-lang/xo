@@ -53,6 +53,7 @@ function tab() {
   const root = {
     innerHTML: "",
     getAttribute: (k) => (k === "data-xo-sync" ? server.sync : k === "data-xo-build" ? server.build || null : k === "data-xo-live" ? server.live : k === "data-xo-seen" ? server.seen : null),
+    hasAttribute: (k) => root.getAttribute(k) !== null,
     addEventListener: (n, f) => { handlers[n] = f; },
     contains: () => true,
   };
