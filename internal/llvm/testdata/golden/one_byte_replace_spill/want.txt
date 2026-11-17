@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+7f8148020500
+abcd
+abcd
+7f81480205-00
+7f814825 
+140
+a;b;;c no match
+--- stderr

@@ -1,5 +1,18 @@
 # std/term changes
 
+## 2026-11-17: perf: strip's plain path saves no registers (#103)
+
+- Kind: perf
+- Commit: this push
+- Found by: #103 lever 5 (callgrind: strip's prologue saved the registers its escape loop uses before the ESC check)
+- Go reference: strings.Contains(s, "\x1b") (IndexByte)
+- Test: internal/arm64 TestEscCheckFast (instruction count of 10,000,000 checks); bench/perf/strcontains strip
+- Shipped in: not yet released
+
+strip checks for ESC and returns, and only a string holding one goes to
+strip_esc, so the common plain call does not set up the escape loop's
+frame. 10,000,000 checks: 1,190M to under 900M instructions.
+
 ## 2026-11-16: perf: strip checks for ESC with one byte search (#103)
 
 - Kind: perf

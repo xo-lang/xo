@@ -15,6 +15,18 @@ swap loop in std/native/llrt/atomic.xo, the wasm runtime a load and a
 store at a scheduling point, the Go backend Go's atomic.Int64 And and Or.
 Go's Int32, Uint32 and Uint64 forms map to Atomic[Int] as their other
 methods do.
+## 2026-11-17: perf: a one byte Str.contains and find skip the substring search (#103)
+
+- Kind: perf
+- Commit: this push
+- Found by: #103 lever 5 (callgrind on bench/perf/strcontains byte)
+- Go reference: strings.Index (IndexByte for a one byte needle)
+- Test: internal/arm64 TestEscCheckFast (instruction count of 10,000,000 one byte contains)
+- Shipped in: not yet released
+
+A one byte needle goes to the byte search at once, before the general
+search saves its registers: 10,000,000 calls, 931M to under 850M
+instructions.
 
 ## 2026-11-16: fix: Float32.from_bits and to_bits keep a signaling NaN
 

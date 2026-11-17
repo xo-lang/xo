@@ -269,6 +269,16 @@ pub fn eq_bytes(b: Bytes, bi: Int, p: Bytes) -> Bool {
 /// bytes.Index of sub in b from `from`: find's search over Bytes (a Str's
 /// bytes are valid UTF-8, which the search never asks about).
 pub fn find_bytes(b: Bytes, sub: Bytes, from: Int) -> Int {
+  // one byte (Str.contains of a byte, term.strip's ESC check): find_byte
+  // at once, before find_bytes_n's prologue saves its registers (#103)
+  if sub.len() == 1 && from >= 0 && from <= b.len() {
+    return find_byte(b, from, b.len(), Int(sub[0]))
+  }
+  find_bytes_n(b, sub, from)
+}
+
+/// find_bytes for any sub.
+fn find_bytes_n(b: Bytes, sub: Bytes, from: Int) -> Int {
   let n = b.len()
   let m = sub.len()
   let f = if from < 0 { 0 } else { from }

@@ -1458,7 +1458,14 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
   for _ in 0..imax(inst.us.len(), 10) {
     use_reg.push(-1)
   }
-  var ngp = 0
+  // a template that names x16 or x17 itself (a scan or copy loop's
+  // pointer and count) reloads its spilled uses past them: a use
+  // reloaded into x16 was overwritten by the template's own `add x16,
+  // ...` before it read the use again (2026-11-17: strings.replace_build's
+  // inlined one byte scan read its start as an address once hoist_consts
+  // spilled it, and replace returned its input)
+  let own = t.contains("x16") || t.contains("x17") || t.contains("w16") || t.contains("w17")
+  var ngp = if own { 2 } else { 0 }
   var nfp = 0
   var i = 0
   while i < tn {
@@ -1515,7 +1522,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       taken.push(l.reg)
     }
   }
-  if inst.has(IF_EARLY) {
+  if inst.has(IF_EARLY) || own {
     for r in use_reg {
       if r >= 0 {
         taken.push(r)
@@ -1535,9 +1542,9 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       nsp += 1
     }
   }
-  // (not a template that names x16 or x17 itself)
-  let own = t.contains("x16") || t.contains("x17") || t.contains("w16") || t.contains("w17")
-  var dgp = if inst.has(IF_EARLY) || (!own && ngp > 0 && ngp + nsp <= 2) { ngp } else { 0 }
+  // (not a template that names x16 or x17 itself: its definitions too
+  // take registers past them, none of its uses')
+  var dgp = if inst.has(IF_EARLY) || own || (ngp > 0 && ngp + nsp <= 2) { ngp } else { 0 }
   var dfp = if inst.has(IF_EARLY) { nfp } else { 0 }
   var def_reg: List[Int] = []
   var stores: List[Str] = []

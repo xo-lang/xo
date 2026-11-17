@@ -1,0 +1,15 @@
+// A one byte replace (regression, 2026-11-17): the scan
+// template names x16 and x17 itself, so a spilled start reloaded into
+// x16 was overwritten before it was read and replace returned its input
+fn rep(s: Str) -> Str { s.replace(" ", "") }
+
+fn main(os: Os) {
+  let t = "7f81480205 00"
+  os.stdio.println(rep(t))
+  os.stdio.println(rep("ab cd"))
+  os.stdio.println(rep("a b c d"))
+  os.stdio.println(t.replace(" ", "-"))
+  os.stdio.println(t.replace("0", ""))
+  os.stdio.println("${"x".repeat(70).replace("x", "yz").len()}")
+  os.stdio.println("${"a,b,,c".replace(",", ";")} ${"no match".replace("#", "!")}")
+}

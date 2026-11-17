@@ -71,9 +71,15 @@ pub fn (p: Painter) gray(s: Str) -> Str { sgr(p, "90", s) }
 
 /// s without ANSI escape sequences (to measure or log painted text).
 pub fn strip(s: Str) -> Str {
+  // the check alone, before strip_esc's prologue saves its registers
   if !s.contains_rune('\u{1b}') {
     return s
   }
+  strip_esc(s)
+}
+
+/// strip of an s that holds an ESC.
+fn strip_esc(s: Str) -> Str {
   let b = s.bytes()
   var out = BytesBuilder.new()
   var i = 0
