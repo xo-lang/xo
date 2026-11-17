@@ -71,11 +71,24 @@ const SK_DECL = 96
 const SK_SIZE = 104
 
 /// The table of streamed responses (in the services record, ctx.xo
-/// SV_STREAMS): a lock word, the array of functions (malloc'd; an Any's
-/// object each, counted, or 0 once taken), the count.
+/// SV_STREAMS): a lock word, the array of slots (malloc'd, ST_SLOT bytes
+/// each: an Any's object, counted, or 0 once taken; then the slot's
+/// generation in the high 32 bits and, while free, the next free slot's
+/// number in the low 32), the slots used, the first free slot's number
+/// (0: none). A taken slot is used again, so the table holds as many slots
+/// as streams wait at once (it grew by one per streamed response for the
+/// life of the server, 2026-11-17, task #199); a stream's number carries
+/// its slot's generation, so a taken number never finds the next stream
+/// in its slot.
 const ST_MU = 0
 const ST_FS = 8
 const ST_N = 16
+const ST_FREE = 24
+const ST_SLOT = 16
+const ST_GEN = 0x100000000
+const ST_LOW = 0xffffffff
+/// the generations kept to 31 bits: a stream's number stays positive
+const ST_GENS = 0x7fffffff00000000
 
 /// 30 s in ns (net/http's Shutdown in std/rt).
 const WAIT_NS = 30000000000
@@ -1041,14 +1054,55 @@ pub fn stream_put(f: rt.Any) -> Int {
   rc.inc(a)
   let t = table()
   pool.lock_k(t + ST_MU, pool.ST_LOCK_HTTP)
+  let id = tab_put(t, a)
+  pool.unlock(t + ST_MU)
+  id
+}
+
+/// Keeps a (not 0) in table t, its lock held: its number, the slot's
+/// generation above the slot's number (1 up).
+fn tab_put(t: Int, a: Int) -> Int {
+  let i = ld(t, ST_FREE)
+  if i != 0 {
+    let s = ld(t, ST_FS) + ST_SLOT * (i - 1)
+    let w = ld(s, 8)
+    let gen = w - (w & ST_LOW)
+    st(t, ST_FREE, w & ST_LOW)
+    st(s, 8, gen)
+    st(s, 0, a)
+    return gen + i
+  }
   let n = ld(t, ST_N)
   if n == 0 || (n >= 4 && (n & (n - 1)) == 0) {
-    st(t, ST_FS, raw.c_resize(ld(t, ST_FS), 8 * (if n == 0 { 4 } else { 2 * n })))
+    st(t, ST_FS, raw.c_resize(ld(t, ST_FS), ST_SLOT * (if n == 0 { 4 } else { 2 * n })))
   }
-  st(ld(t, ST_FS), 8 * n, a)
+  let s = ld(t, ST_FS) + ST_SLOT * n
+  st(s, 0, a)
+  st(s, 8, 0)
   st(t, ST_N, n + 1)
-  pool.unlock(t + ST_MU)
   n + 1
+}
+
+/// What table t keeps as stream id (0: none, taken, or a slot's earlier
+/// stream), its lock held; take frees the slot for the next stream.
+fn tab_get(t: Int, id: Int, take: Bool) -> Int {
+  let i = id & ST_LOW
+  if i < 1 || i > ld(t, ST_N) {
+    return 0
+  }
+  let s = ld(t, ST_FS) + ST_SLOT * (i - 1)
+  let w = ld(s, 8)
+  let gen = w - (w & ST_LOW)
+  if gen != id - i {
+    return 0
+  }
+  let f = ld(s, 0)
+  if f != 0 && take {
+    st(s, 0, 0)
+    st(s, 8, (if gen == ST_GENS { 0 } else { gen + ST_GEN }) + ld(t, ST_FREE))
+    st(t, ST_FREE, i)
+  }
+  f
 }
 
 /// The function of stream id in a list of one (empty when it was taken);
@@ -1056,17 +1110,9 @@ pub fn stream_put(f: rt.Any) -> Int {
 pub fn stream_get(id: Int, take: Bool) -> List[rt.Any] {
   let t = table()
   pool.lock_k(t + ST_MU, pool.ST_LOCK_HTTP)
-  var f = 0
-  if id >= 1 && id <= ld(t, ST_N) {
-    let fs = ld(t, ST_FS)
-    f = ld(fs, 8 * (id - 1))
-    if f != 0 {
-      if take {
-        st(fs, 8 * (id - 1), 0)
-      } else {
-        rc.inc(f)
-      }
-    }
+  let f = tab_get(t, id, take)
+  if f != 0 && !take {
+    rc.inc(f)
   }
   pool.unlock(t + ST_MU)
   if f == 0 {
@@ -1086,9 +1132,10 @@ pub fn streams_free() {
   let n = ld(t, ST_N)
   st(t, ST_FS, 0)
   st(t, ST_N, 0)
+  st(t, ST_FREE, 0)
   pool.unlock(t + ST_MU)
   for i in 0..n {
-    let f = ld(fs, 8 * i)
+    let f = ld(fs, ST_SLOT * i)
     if f != 0 {
       tasks.h_release(f)
     }

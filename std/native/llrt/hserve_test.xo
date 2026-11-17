@@ -1,0 +1,90 @@
+// Tests of hserve.xo: `xo test --std-module=native/llrt/hserve`, run by
+// internal/stdtest. The table functions on a table of the test's own
+// (values stand in for the functions' objects; nothing is counted).
+
+use native/llrt/raw
+use native/rt
+
+fn new_tab() -> Int {
+  let t = raw.c_resize(0, 32)
+  st(t, ST_MU, 0)
+  st(t, ST_FS, 0)
+  st(t, ST_N, 0)
+  st(t, ST_FREE, 0)
+  t
+}
+
+fn free_tab(t: Int) {
+  if ld(t, ST_FS) != 0 {
+    rt.heap_release(ld(t, ST_FS))
+  }
+  rt.heap_release(t)
+}
+
+test "a taken stream's slot is used again (task #199)" {
+  // a server took each streamed response's slot and never used it again:
+  // the table grew by a slot per response for the life of the server
+  let t = new_tab()
+  for k in 0..1000 {
+    let id = tab_put(t, 8 * k + 8)
+    expect(tab_get(t, id, true)) == 8 * k + 8
+  }
+  expect(ld(t, ST_N)) == 1
+  free_tab(t)
+}
+
+test "a taken stream's number never finds a later stream in its slot" {
+  let t = new_tab()
+  let a = tab_put(t, 16)
+  expect(tab_get(t, a, true)) == 16
+  let b = tab_put(t, 24)
+  expect(a == b) == false
+  expect(a & ST_LOW) == b & ST_LOW
+  expect(b > 0) == true
+  expect(tab_get(t, a, true)) == 0
+  expect(tab_get(t, a, false)) == 0
+  // kept (not taken): still there, then taken
+  expect(tab_get(t, b, false)) == 24
+  expect(tab_get(t, b, true)) == 24
+  expect(tab_get(t, b, true)) == 0
+  expect(tab_get(t, 0, false)) == 0
+  expect(tab_get(t, 99, false)) == 0
+  free_tab(t)
+}
+
+test "streams waiting at once each keep their own slot, freed ones are used again" {
+  let t = new_tab()
+  var ids: List[Int] = []
+  for k in 0..50 {
+    ids.push(tab_put(t, 8 * k + 8))
+  }
+  for k in 0..50 {
+    if k % 2 == 0 {
+      expect(tab_get(t, ids[k], true)) == 8 * k + 8
+    }
+  }
+  for k in 0..25 {
+    let _id = tab_put(t, 1000 + k)
+  }
+  expect(ld(t, ST_N)) == 50
+  for k in 0..50 {
+    if k % 2 == 1 {
+      expect(tab_get(t, ids[k], false)) == 8 * k + 8
+    } else {
+      expect(tab_get(t, ids[k], false)) == 0
+    }
+  }
+  free_tab(t)
+}
+
+test "the generation wraps and the number stays positive" {
+  let t = new_tab()
+  let a = tab_put(t, 8)
+  // the slot's generation at its largest
+  st(ld(t, ST_FS), 8, ST_GENS)
+  expect(tab_get(t, ST_GENS + 1, true)) == 8
+  let b = tab_put(t, 16)
+  expect(b) == 1
+  expect(a) == 1
+  free_tab(t)
+}

@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-11-17: fix: a native server's memory no longer grows with each streamed response
+
+- Kind: fix
+- Commit: this push
+- Found by: task #199: the std/sse stress (decision 0616) grew its resident set; split into a server and a client process, a plain `http.stream` handler's server grew from 26 MB to 138 MB mapped in 60 s while the client stayed at 10 MB
+- Go reference: none (Xo's runtime table)
+- Test: std/native/llrt/hserve_test.xo (`xo test --std-module=native/llrt/hserve`): 1,000 streams one after another use one slot (1,000 before), a taken stream's number never finds a later stream
+- Timing: none
+
+The native runtime keeps the function of each streamed response
+(`http.stream`, and each idle connection's park) in a table until the
+response is sent. A taken slot was never used again, so the table grew
+by a slot per response, doubling its array, for the life of the
+server. A taken slot is now used by the next stream, and a stream's
+number carries its slot's generation, so a number already taken (a
+Response value sent twice) finds nothing rather than a later stream. A
+server answering 4.2 million streamed responses in 60 s now stays at
+6 to 7 MB mapped.
+
 ## 2026-11-17: fix: an HTTP/2 response's NO_ERROR reset follows its trailers
 
 - Kind: fix

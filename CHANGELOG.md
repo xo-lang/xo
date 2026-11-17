@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Perf (std/httpproxy): `proxy_for` reads the request URL's host and port directly instead of building an address and splitting it again; bench/perf/httpproxy_rules route on the Mac 0.43 s to 0.29 s (Go 0.31 s).
+- Fix (std/http, native): a server's memory grew with every streamed response (`http.stream`, std/sse, and each idle keep-alive connection's park): the runtime's table of stream functions never used a sent response's slot again (26 MB to 138 MB mapped in 60 s of streamed responses; 6 to 7 MB now; task #199).
 - Fix (std/httpproxy): a NO_PROXY CIDR block whose mask has leading zeros (`10.0.0.0/08`) now matches, as in Go.
 - Fix (std/http): an HTTP/2 server response that ended with trailers while the client was still sending its request body (a full duplex stream, a gRPC call past its deadline) sent RST_STREAM NO_ERROR before the trailers when its head and data had gone out earlier, so the client saw a stream error and no trailers (no grpc-status); the reset now follows the end of the stream (RFC 9113 8.1). Since v0.12.0.
 - Fix (native runtime): a server that was freed before it closed (an in-memory stream dropped unread) freed its task scope while its last task could still be ending, a use after free that `xo test --race` reported as a data race; the last task now frees such a scope.
