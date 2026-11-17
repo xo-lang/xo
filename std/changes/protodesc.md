@@ -1,5 +1,22 @@
 # std/protodesc changes
 
+## 2026-11-17: fix: a name declared twice is an error
+
+- Kind: fix
+- Commit: this push
+- Found by: task #285: xo-4c's grpcreflect stress files (two `extend` blocks declaring `x4` in package p4) built
+  without an error; protoc and protobuf-go's protodesc.NewFile reject them
+- Go reference: protobuf-go reflect/protodesc/desc_init.go makeBase ("descriptor %q already declared")
+- Test: std/protodesc_test.xo ("build: a name declared twice is an error, as protobuf-go's NewFile (desc_init.go
+  makeBase)", fails before: build returned Ok)
+- Shipped in: not yet released
+
+`build` and `build_with_source_info` return an error (line 0) for a full name the file declares twice: two
+extensions, a message and an enum value (enum values are in the enum's parent scope), two services, a field and a
+nested message. The names are checked in protobuf-go's order (enums and values, messages with their fields,
+oneofs, enums, nested messages and extensions, extensions, services and methods), so the first duplicate named is
+the one protobuf-go names.
+
 ## 2026-11-17: fix: only a singular string field's last value has to be UTF-8
 
 - Kind: fix

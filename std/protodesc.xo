@@ -655,6 +655,7 @@ pub fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDe
   let (fo, fset) = b_opts(f.options, FILE_OPTS)
   out.options = fo
   out.options_set = fset
+  b_unique(out)?
   // custom options: extensions of descriptor.proto's options messages, from this file and deps
   let cx = co_cx(out, deps)
   if cx.exts.is_empty() { return Ok(out) }
@@ -1129,6 +1130,53 @@ fn co_file(f: protoparse.File, out0: FileDesc, cx: CoCx) -> FileDesc {
   }
   out.service = svcs
   out
+}
+
+/// Every full name the file declares, once (protobuf-go's NewFile, desc_init.go makeBase: "descriptor
+/// %q already declared"), checked in its order: the enums with their values (which are in the enum's
+/// parent scope), the messages (each with its fields, oneofs, enums, nested messages and extensions),
+/// the extensions, the services with their methods.
+fn b_unique(f: FileDesc) -> () ! protoparse.ParseErr {
+  var seen: Set[Str] = #{}
+  let pre = if f.package.is_empty() { "" } else { f.package + "." }
+  u_enums(seen, pre, f.enum_type)?
+  u_messages(seen, pre, f.message_type)?
+  for x in f.extension { u_name(seen, pre + x.name)? }
+  for sv in f.service {
+    u_name(seen, pre + sv.name)?
+    for m in sv.method { u_name(seen, pre + sv.name + "." + m.name)? }
+  }
+  Ok(())
+}
+
+fn u_name(var seen: Set[Str], full: Str) -> () ! protoparse.ParseErr {
+  if seen.contains(full) {
+    return Err(protoparse.ParseErr{line: 0, col: 0, msg: "descriptor ${full.quote()} already declared"})
+  }
+  seen.add(full)
+  Ok(())
+}
+
+fn u_enums(var seen: Set[Str], pre: Str, es: List[EnumDesc]) -> () ! protoparse.ParseErr {
+  for e in es {
+    u_name(seen, pre + e.name)?
+    for v in e.value { u_name(seen, pre + v.name)? }
+  }
+  Ok(())
+}
+
+fn u_messages(var seen: Set[Str], pre: Str, ms: List[MessageDesc]) -> () ! protoparse.ParseErr {
+  for m in ms {
+    let full = pre + m.name
+    u_name(seen, full)?
+    let inner = full + "."
+    for x in m.field { u_name(seen, inner + x.name)? }
+    for o in m.oneof_decl { u_name(seen, inner + o.name)? }
+    u_enums(seen, inner, m.enum_type)?
+    u_messages(seen, inner, m.nested_type)?
+    for x in m.extension { u_name(seen, inner + x.name)? }
+  }
+  Ok(())
 }
 
 fn b_syms(var syms: Map[Str, Int], pre: Str, m: protoparse.Message) {

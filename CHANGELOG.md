@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/protodesc): `build` returns an error for a name the file declares twice (two extensions of one name, an enum value and a message), as protoc and protobuf-go's protodesc.NewFile ("descriptor \"p.x\" already declared"); it returned the descriptor.
 - Fix (xo check): a program reaching a std struct whose field default is a call (std/websocket's connection, through a std/ui host) no longer gets a false XO1201 "this call" at the std file when the build caches are on (task #279).
 - Fix (std/grpc): a server handler that ends before sending a message or a header answers trailers-only (the status in the head), as grpc-go's, so clients that retry (grpc-go's and std/grpc's) can retry it.
 - Feature (std/grpc, decision 0705): service config and retries: `service_config_json`, `Client.with_service_config(cfg, clock, rand)`, `with_disable_retry`, `with_max_call_attempts`, `with_max_retry_buffer` and `method_config`, with grpc-go's retry rules for unary calls.
