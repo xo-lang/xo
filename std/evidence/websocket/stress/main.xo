@@ -122,7 +122,12 @@ fn duplex(os: Os, url: Str, t: Int, end: Time, passes: Int) -> Int ! Str uses (n
   }
 }
 
-fn echo(c: websocket.WsConn) {
+/// The server's side of a connection: echoes each message. A read or write
+/// that fails other than by the client's close is printed (stderr), as the
+/// client then sees only the connection end (task #152: a duplex client's
+/// read failed with a reset, the server's cause unknown).
+fn echo(os: Os, c: websocket.WsConn) {
+  var n = 0
   while true {
     match c.read() {
       Ok(m) => {
@@ -130,11 +135,18 @@ fn echo(c: websocket.WsConn) {
           c.close(code: 1001, reason: "asked").ignore_err("the client is gone")
           return
         }
-        if c.write(m) is Err(_) {
+        if c.write(m) is Err(e) {
+          os.stdio.eprintln("server: write after ${n} messages (${m.data.len()} bytes): ${e.display()}")
           return
         }
+        n += 1
       }
-      Err(_) => return
+      Err(e) => {
+        if !(e is Closed(..)) {
+          os.stdio.eprintln("server: read after ${n} messages: ${e.display()}")
+        }
+        return
+      }
     }
   }
 }
@@ -160,7 +172,7 @@ fn main(os: Os) ! {
   let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
   let samples = Mutex.new((0, 0, 0)) // (rss at the mark, last rss, peak)
   var r = http.router()
-  r.handle("GET /echo", fn(req) { websocket.upgrade(req, echo, max_message: 1048576) })
+  r.handle("GET /echo", fn(req) { websocket.upgrade(req, fn(c) { echo(os, c) }, max_message: 1048576) })
   let srv = http.server(os.net.listen("127.0.0.1:0")?, r)
   let url = "ws://${srv.addr()}/echo"
   let echoed = scope s {
