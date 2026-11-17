@@ -1,13 +1,17 @@
 // `xo dev edges` with the resolved edge cache (decision 0381). The edges
 // of a program (compiler/cli/servers edges.xo edges_of) split in two: the
 // program's own (sites in its files) and the std graph (sites in the std
-// tree's files), which is the same for every program checked by the same
-// xo over the same std with the same bindings, since the preload is the
-// std files on disk and each std body is checked once in its own scope.
-// The std graph is cached once, as <backend cache>/edges/<key>: the
+// tree's files). The default std part is the program's import closure's
+// (the std modules its own files import, with their imports and the
+// prelude; task #198: 12.7 s against 75.7 s for the whole graph on a
+// program importing nothing); --std prints the whole std graph, the same
+// for every program checked by the same xo over the same std with the
+// same bindings, since each std body is checked once in its own scope.
+// Either is cached as <backend cache>/edges/<key>: the
 // SHA-256 of the cache version, xo's identity (self_id), the program's
 // bindings ("go", "c", both or none: a `use go` program's check takes
-// another path and produces another std graph), --impls, and every std
+// another path and produces another std graph), --impls, the scope ("all"
+// or the closure's preload list), and every std
 // source's path and content hash (a worktree at the same commit shares
 // the entry). A hit checks the program alone (about 0.3 s against 16 s
 // with the std bodies) and prints its own edges with the cached graph; a
@@ -27,8 +31,9 @@ use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 
 /// The entry format's version, part of the key (2: the std graph holds the
-/// merged modules' bodies whichever program filled it).
-const EDGES_CACHE_VERSION = 2
+/// merged modules' bodies whichever program filled it; 3: the key names
+/// its scope, the whole std graph or a program's import closure).
+const EDGES_CACHE_VERSION = 3
 
 /// edges_cmd is `xo dev edges [--out=FILE] [--impls] [--own|--std]
 /// [--dir=DIR] DIR`: the edges of the program in DIR (this directory when
@@ -69,7 +74,7 @@ fn edges_cmd(os: Os, args: List[Str]) -> Int {
       saw_dir = true
     }
   }
-  let res = if part == "--own" { own_lines(os, dir, impls) } else { edges_lines(os, dir, impls) }
+  let res = if part == "--own" { own_lines(os, dir, impls) } else { edges_lines(os, dir, impls, part == "--std") }
   let (parts, rc) = match res {
     Ok(x) => x
     Err(e) => {
@@ -98,7 +103,7 @@ fn edges_cmd(os: Os, args: List[Str]) -> Int {
 /// own_lines is --own: the program-only check, which needs neither std's
 /// bodies nor the cache; its std part is left out.
 fn own_lines(os: Os, dir: Str, impls: Bool) -> (servers.Edges, Int) ! Str {
-  let fast = servers.edges_of(os, dir, impls, false)?
+  let fast = servers.edges_of(os, dir, impls, [])?
   Ok((servers.Edges{own: fast.own, bindings: fast.bindings}, 0))
 }
 
@@ -113,15 +118,19 @@ fn edges_cache_mode(os: Os) -> Str {
 /// The edge lines of the program in dir (unsorted, its own and the std
 /// graph apart) and the exit code (1 when a verify found a difference):
 /// the full check with no cache, else the program-only check with the
-/// cached std graph.
-fn edges_lines(os: Os, dir: Str, impls: Bool) -> (servers.Edges, Int) ! Str {
+/// cached std graph. whole (--std) is the whole std graph, every std
+/// module's bodies, which a coverage sweep reads once for all programs;
+/// otherwise the std part is the program's import closure's
+/// (servers.closure_preload, task #198), keyed by that closure.
+fn edges_lines(os: Os, dir: Str, impls: Bool, whole: Bool) -> (servers.Edges, Int) ! Str {
   let mode = edges_cache_mode(os)
   let goos = host_os(os)
   let ctx = Ctx{goos: goos, std: check.std_dir(os.env, os.fs), xo: check.executable(os.env, os.fs), cache: user_cache_dir(os, goos)}
   let bdir = if mode == "off" { "" } else { backend_cache_dir(os, ctx) }
   let stats = !(os.env.get("XO_CACHE_STATS") ?? "").is_empty()
   if bdir.is_empty() {
-    let e = servers.edges_of(os, dir, impls, true)?
+    let pre = if whole { servers.all_preload(os, dir) } else { servers.closure_preload(os, dir, servers.edges_of(os, dir, impls, [])?.mods) }
+    let e = servers.edges_of(os, dir, impls, pre)?
     if stats {
       os.stdio.eprintln("cache edges off")
     }
@@ -129,11 +138,13 @@ fn edges_lines(os: Os, dir: Str, impls: Bool) -> (servers.Edges, Int) ! Str {
   }
   // the program alone: its own edges and its bindings, the key's part
   // only the check knows
-  let fast = servers.edges_of(os, dir, impls, false)?
+  let fast = servers.edges_of(os, dir, impls, [])?
   // a program in the std tree itself has no own edges: the full check,
   // since its std part is what the program is
   let in_std = fast.own.is_empty() && !fast.std.is_empty()
-  let key = if in_std { "" } else { edges_key(os, ctx.std, fast.bindings, impls) }
+  let pre = if whole || in_std { servers.all_preload(os, dir) } else { servers.closure_preload(os, dir, fast.mods) }
+  let scope = if whole { "all" } else { pre.join(",") }
+  let key = if in_std { "" } else { edges_key(os, ctx.std, fast.bindings, impls, scope) }
   let path = if key.is_empty() { "" } else { "${bdir}/edges/${key}" }
   var entry: Option[Str] = None
   if !path.is_empty() {
@@ -153,7 +164,7 @@ fn edges_lines(os: Os, dir: Str, impls: Bool) -> (servers.Edges, Int) ! Str {
     }
   }
   // a miss, or verify: the full check
-  let full = servers.edges_of(os, dir, impls, true)?
+  let full = servers.edges_of(os, dir, impls, pre)?
   var rc = 0
   let fast_own = fast.own.sort().join("\n")
   let full_own = full.own.sort().join("\n")
@@ -217,9 +228,10 @@ fn line_diff(a: Str, b: Str) -> (Int, Int) {
 }
 
 /// The std graph's key: the cache version, xo's identity, the program's
-/// bindings, --impls, and every std source's path and content hash; ""
-/// when xo's identity or std cannot be read (no cache then).
-fn edges_key(os: Os, std: Str, bindings: Str, impls: Bool) -> Str {
+/// bindings, --impls, the scope ("all", or the closure's preload list),
+/// and every std source's path and content hash; "" when xo's identity or
+/// std cannot be read (no cache then).
+fn edges_key(os: Os, std: Str, bindings: Str, impls: Bool, scope: Str) -> Str {
   let id = self_id(os)
   if id.is_empty() || std.is_empty() {
     return ""
@@ -228,7 +240,7 @@ fn edges_key(os: Os, std: Str, bindings: Str, impls: Bool) -> Str {
   if tree.is_empty() {
     return ""
   }
-  crypto.sha256("xo edges v${EDGES_CACHE_VERSION}\n${id}\nbindings=${bindings}\nimpls=${impls}\n${tree}".bytes()).to_hex()
+  crypto.sha256("xo edges v${EDGES_CACHE_VERSION}\n${id}\nbindings=${bindings}\nimpls=${impls}\nscope=${scope}\n${tree}".bytes()).to_hex()
 }
 
 /// std's .xo files (not its tests) as "PATH SHA256" lines in path order:

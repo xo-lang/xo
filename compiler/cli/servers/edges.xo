@@ -28,9 +28,11 @@
 // writes nothing and exits 1 with the reason on standard error.
 //
 // The command itself is compiler/xo edgecache.xo (decision 0381): the
-// edges split into the program's own and the std graph (edges_of), and
-// the std graph, the same for every program, is cached there once per xo
-// identity, std sources and bindings.
+// edges split into the program's own and the std part (edges_of, given
+// the preload to check with bodies): by default the program's import
+// closure (closure_preload over Edges.mods, the std modules its own files
+// import), with --std the whole std graph (all_preload). Each is cached
+// there per xo identity, std sources, bindings and scope.
 
 use github.com/xo-lang/xo/compiler/check
 
@@ -51,14 +53,19 @@ pub struct Edges {
   pub own: List[Str] = []
   pub std: List[Str] = []
   pub bindings: Str = "none"
+  /// The std modules the check loaded, by name ("http" for std/http),
+  /// sorted: the roots of the program's import closure (closure_preload).
+  pub mods: List[Str] = []
 }
 
 /// edges_of: the edges of the program in dir, with the std implementation
-/// files preloaded and their bodies checked (preload: the full graph,
-/// about 16 s) or the program alone checked (its own edges, about 0.3 s;
-/// the std part then holds only the std bodies the check reached). impls
-/// adds the implementation edges (impl_lines). Neither list is sorted.
-pub fn edges_of(os: Os, dir: Str, impls: Bool, preload: Bool) -> Edges ! Str uses (env, fs, stdio) {
+/// files preload names preloaded and their bodies checked (all_preload:
+/// the full graph, about 16 s; closure_preload: the program's import
+/// closure) or, with an empty preload, the program alone checked (its own
+/// edges, about 0.3 s; the std part then holds only the std bodies the
+/// check reached). impls adds the implementation edges (impl_lines).
+/// Neither list is sorted.
+pub fn edges_of(os: Os, dir: Str, impls: Bool, preload: List[Str]) -> Edges ! Str uses (env, fs, stdio) {
   var s = session(os, dir, preload)?
   var e = Edges{}
   let (own, std) = s.edge_lines()
@@ -80,15 +87,36 @@ pub fn edges_of(os: Os, dir: Str, impls: Bool, preload: Bool) -> Edges ! Str use
     }
   }
   e.bindings = if go && c { "go,c" } else if go { "go" } else if c { "c" } else { "none" }
+  // The std modules the program's own files import: the roots of the
+  // preload closure (closure_preload follows the std files' own uses).
+  let cm = s.res[0].c
+  var seen: Map[Str, Bool] = {}
+  var names: List[Str] = []
+  for f in cm.files {
+    if cm.mods[f.module].std_tree {
+      continue
+    }
+    for (_, imp) in f.imports.entries() {
+      let im = cm.mods[imp.module]
+      if im.std_tree && im.path.starts_with("std/") {
+        let n = im.path.trim_prefix("std/")
+        if !seen.contains(n) {
+          seen[n] = true
+          names.push(n)
+        }
+      }
+    }
+  }
+  e.mods = names.sort()
   Ok(e)
 }
 
 /// The headless session of the program in dir, checked, with the std
 /// implementation files loaded and their bodies checked too (preload), or
 /// the program alone.
-fn session(os: Os, dir: Str, preload: Bool) -> Session ! Str uses (stdio, fs, env) {
+fn session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (stdio, fs, env) {
   let std = agent_std(os, dir)
-  let s = agent_session(os, dir, std, if preload { impl_modules(os, std) } else { [] }, false, [], false)?
+  let s = agent_session(os, dir, std, preload, false, [], false)?
   if !s.err.is_empty() {
     return Err(s.err)
   }
@@ -123,31 +151,114 @@ fn impl_modules(os: Os, std_dir: Str) -> List[Str] uses fs.read {
     if e.is_dir || !e.name.ends_with(".xo") || e.name.ends_with("_test.xo") {
       continue
     }
-    let name = e.name.trim_suffix(".xo")
-    // a module with a `use c` line (decision 0534's) needs its C binding,
-    // which only a build with a C compiler writes: a fresh checkout has
-    // none, and the preload failed (cmd/xo TestDevEdges on linux/arm64,
-    // 2026-11-06); the std store build skips it the same way (check
-    // load.xo std_uses_c)
-    match os.fs.read("${std_dir.trim_suffix("/")}/native/${name}.xo").ok() {
-      Some(b) => {
-        if !check.uses_c(b) {
-          out.push("native/${name}")
+    if let Some(p) = impl_module(os, std_dir, e.name.trim_suffix(".xo")) {
+      out.push(p)
+    }
+  }
+  out
+}
+
+/// The preload entry of std module name (impl_modules): `native/NAME` when
+/// std/native/NAME.xo exists, else `std/NAME` for a merged module whose
+/// std/NAME.xo exists; None for a module with a `use c` line or no file.
+fn impl_module(os: Os, std_dir: Str, name: Str) -> Option[Str] uses fs.read {
+  let root = std_dir.trim_suffix("/")
+  // a module with a `use c` line (decision 0534's) needs its C binding,
+  // which only a build with a C compiler writes: a fresh checkout has
+  // none, and the preload failed (cmd/xo TestDevEdges on linux/arm64,
+  // 2026-11-06); the std store build skips it the same way (check
+  // load.xo std_uses_c)
+  match os.fs.read("${root}/native/${name}.xo").ok() {
+    Some(b) => if check.uses_c(b) { None } else { Some("native/${name}") }
+    // a merged module (one source for every backend, its bodies in
+    // std/NAME.xo itself, std/sse.xo): preloaded too, or its bodies are
+    // checked only in a program that imports it, and the std graph the
+    // cache keeps for every program held them or not by which program
+    // filled the entry (2026-11-11: sse.source read as unreached in the
+    // resolved coverage sweep although the sse corpus calls subscribe,
+    // whose body calls it)
+    None => {
+      let fb = os.fs.read("${root}/${name}.xo").ok() ?? return None
+      if check.uses_c(fb) { None } else { Some("std/${name}") }
+    }
+  }
+}
+
+/// all_preload is the preload of the whole std graph (impl_modules): every
+/// std module's implementation file, whatever the program in dir imports.
+/// `xo dev edges --std` checks with it, since a coverage sweep reads that
+/// graph once for every program.
+pub fn all_preload(os: Os, dir: Str) -> List[Str] uses (env, fs) {
+  impl_modules(os, agent_std(os, dir))
+}
+
+/// closure_preload is the preload of the program's import closure: the
+/// implementation file (impl_module) of the prelude, of each std module in
+/// roots (Edges.mods of the program-only check) and of each std module
+/// those files' and their native files' `use std/` lines reach, following
+/// `use native/` lines through std/native's own files. A build compiles
+/// these bodies and no others (`xo build --list-inputs`); the whole std
+/// graph checks every std module's bodies, and a new large module
+/// (std/brotli, 16,585 edge lines) doubled `xo dev edges` on a program
+/// that never imports it (cmd/xo TestDevEdges 62 s to 120 s on
+/// linux/amd64 at 2002786fe, task #198). Sorted.
+pub fn closure_preload(os: Os, dir: Str, roots: List[Str]) -> List[Str] uses (env, fs) {
+  let std = agent_std(os, dir)
+  if std.is_empty() {
+    return []
+  }
+  let root = std.trim_suffix("/")
+  var seen: Set[Str] = #{}
+  var files: Set[Str] = #{}
+  var work: List[Str] = ["prelude"]
+  for r in roots {
+    work.push(r)
+  }
+  var out: List[Str] = []
+  while !work.is_empty() {
+    let name = work.pop() ?? break
+    if seen.contains(name) {
+      continue
+    }
+    seen.add(name)
+    if let Some(p) = impl_module(os, std, name) {
+      out.push(p)
+    }
+    var scan: List[Str] = ["${root}/${name}.xo", "${root}/native/${name}.xo"]
+    while !scan.is_empty() {
+      let f = scan.pop() ?? break
+      if files.contains(f) {
+        continue
+      }
+      files.add(f)
+      let src = os.fs.read(f).ok().and_then(fn(b) { b.to_str() }) ?? continue
+      for (m, native) in use_lines(src) {
+        if native {
+          scan.push("${root}/native/${m}.xo")
+        } else if !seen.contains(m) {
+          work.push(m)
         }
       }
-      // a merged module (one source for every backend, its bodies in
-      // std/NAME.xo itself, std/sse.xo): preloaded too, or its bodies are
-      // checked only in a program that imports it, and the std graph the
-      // cache keeps for every program held them or not by which program
-      // filled the entry (2026-11-11: sse.source read as unreached in the
-      // resolved coverage sweep although the sse corpus calls subscribe,
-      // whose body calls it)
-      None => {
-        let fb = os.fs.read("${std_dir.trim_suffix("/")}/${e.name}").ok() ?? continue
-        if !check.uses_c(fb) {
-          out.push("std/${name}")
-        }
-      }
+    }
+  }
+  out.sort()
+}
+
+/// The std imports of a source's `use` lines: (path, false) for
+/// `use std/PATH`, (path, true) for `use native/PATH`; other lines (a
+/// module path, `use go`, `use c`) are left out.
+fn use_lines(src: Str) -> List[(Str, Bool)] {
+  var out: List[(Str, Bool)] = []
+  for l in src.split("\n") {
+    if !l.starts_with("use ") {
+      continue
+    }
+    let rest = l.trim_prefix("use ").trim()
+    let path = rest.split(" ")[0]
+    if path.starts_with("std/") {
+      out.push((path.trim_prefix("std/"), false))
+    } else if path.starts_with("native/") {
+      out.push((path.trim_prefix("native/"), true))
     }
   }
   out

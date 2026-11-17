@@ -715,6 +715,12 @@ yourself.
   runtime check a program: 16 s for a small corpus against 0.3 s for
   `xo check`, so a sweep over 800 programs is hours; run it in a bulk
   slot, and sample when a full sweep is not needed.
+  Since 2026-11-17 (task #198) the default output's std part is the
+  program's import closure only (the std modules its own files import,
+  their imports, the prelude and their native impl files): 12.7 s against
+  75.7 s for the whole std graph on the strwhere golden (Mac), guarded by
+  TestDevEdges's 40 s budget. `--std` still prints the whole std graph,
+  which is what the coverage sweep reads with `--own`.
   A `use go` or `use c` program needs its binding before it checks: with
   the binding missing the check stops before names resolve, and the
   command now exits 1 with that reason. It wrote only the standard

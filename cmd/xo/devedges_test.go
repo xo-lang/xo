@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestDevEdges: `xo dev edges` writes one tab separated line per resolved
@@ -17,7 +18,9 @@ import (
 func TestDevEdges(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(repoRoot, "internal", "llvm", "testdata", "golden", "strwhere")
+	start := time.Now()
 	plain := devEdges(t, dir)
+	took := time.Since(start)
 	if len(plain) < 100 {
 		t.Fatalf("xo dev edges %s: %d lines, want the program's references", dir, len(plain))
 	}
@@ -45,6 +48,22 @@ func TestDevEdges(t *testing.T) {
 	if !hitImpl {
 		t.Errorf("xo dev edges %s: no site in std/native/prelude.xo, so the implementation file's bodies were not checked", dir)
 	}
+	// the std part is the program's import closure (task #198): strwhere
+	// imports no std module, so a std module outside the prelude's closure
+	// (std/brotli, 16,585 lines of the whole graph, which doubled this
+	// test at 2002786fe; std/xml, std/protoparse) has no edge, and the
+	// check stays in budget. std/http is in the closure: the prelude's Os
+	// imports it
+	for _, f := range plain {
+		for _, i := range []int{0, 3, 6} {
+			if strings.HasPrefix(f[i], "std/brotli.xo") || strings.HasPrefix(f[i], "std/native/brotli.xo") || strings.HasPrefix(f[i], "std/xml.xo") || strings.HasPrefix(f[i], "std/protoparse.xo") {
+				t.Fatalf("xo dev edges %s: an edge in %s, a std module the program does not import: %q", dir, f[i], strings.Join(f, "\t"))
+			}
+		}
+	}
+	if budget := devEdgesBudget; took > budget {
+		t.Errorf("xo dev edges %s took %v, over its %v budget (%d lines): the std part checks more than the program's import closure", dir, took.Round(time.Millisecond), budget, len(plain))
+	}
 	impls := devEdges(t, dir, "--impls")
 	extra := 0
 	// an interface method of the prelude, reached through the interface,
@@ -70,6 +89,13 @@ func TestDevEdges(t *testing.T) {
 		t.Errorf("xo dev edges --impls %s: no edge from a prelude interface method to an implementation", dir)
 	}
 }
+
+// devEdgesBudget is the time `xo dev edges` may take on the strwhere
+// golden, a program importing no std module: the prelude's import closure
+// checked with its bodies took 12.7 s on the Mac (2026-11-17), the whole
+// std graph 75.7 s, so the budget fails a return to the whole graph with
+// room for a loaded host.
+const devEdgesBudget = 40 * time.Second
 
 // TestDevEdgesMissingBinding: a program whose `use go` package has no
 // binding stops the check before names resolve, and `xo dev edges` must
@@ -278,6 +304,21 @@ func TestDevEdgesCache(t *testing.T) {
 		t.Fatalf("after a miss: %d entries under %s, want 1 (%v)", len(entries), filepath.Join(cache, "edges"), err)
 	}
 	hit := edges("", "", "cache edges hit (none)")
+	// --std is still the whole std graph, every std module's bodies, which a
+	// coverage sweep reads once for all programs (task #198 limits the
+	// default to the program's import closure only)
+	setenv(t, "XO_EDGES_CACHE", "off")
+	whole := devEdges(t, dir, "--std")
+	brotli := false
+	for _, f := range whole {
+		if f[0] == "std/native/brotli.xo" || f[0] == "std/brotli.xo" {
+			brotli = true
+			break
+		}
+	}
+	if !brotli {
+		t.Errorf("xo dev edges --std %s: no site in std/brotli, so the whole std graph lost a module the program does not import (%d lines)", dir, len(whole))
+	}
 	verify := edges("", "verify", "cache edges verify (none, ")
 	for _, c := range []struct{ what, got string }{{"miss", miss}, {"hit", hit}, {"verify", verify}} {
 		if c.got != off {
