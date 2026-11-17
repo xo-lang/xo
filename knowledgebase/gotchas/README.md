@@ -1478,3 +1478,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [test-sharing-by-capture-moves-under-devirt-once.md](test-sharing-by-capture-moves-under-devirt-once.md): a test that shares a value only through a closure capture loses the sharing once devirt_once moves the last use (task #268)
 - [protobuf-go-error-text-nbsp.md](protobuf-go-error-text-nbsp.md): Observed 2026-11-17: protobuf-go's "proto:" error texts use U+00A0 or a space by a hash of the binary (detrand); a want file comparing them broke when the oracle gained a file; normalize U+00A0
 - [std-struct-call-default-untyped.md](std-struct-call-default-untyped.md): a std implementation struct's call default reached the SSA builder untyped under `xo check` with the caches on (false XO1201, task #279)
+- [offload-amd64-put-lands-in-windows-home.md](offload-amd64-put-lands-in-windows-home.md): `--put` on the WSL2 amd64 host goes to /mnt/c/Users/xo, not the job's HOME /home/xo
