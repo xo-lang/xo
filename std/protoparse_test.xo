@@ -338,3 +338,10 @@ test "an option name followed by another name has no value" {
   expect(parse_err("syntax = \"proto3\";\noption java_package go_package = \"x\";")) == "2:21: expected `=`, found `go_package`"
   expect(parse_err("syntax = \"proto3\";\nmessage M {\n  int32 f = 4 [(my.opt).sub = 1, json_name = \"j\"];\n}")) == "ok"
 }
+
+// task #230 follow-up (xw-1's fuzz, seed 4): protoc allows no empty
+// statement in an extend block, though a message body takes one
+test "an empty statement in an extend block is an error" {
+  expect(parse_err("syntax = \"proto2\";\nmessage E5 { extensions 1000 to 2000; }\nextend E5 {\n  optional int32 x26 = 1001;\n  ;\n}")) == "5:3: syntax error: unexpected ';'"
+  expect(parse_err("syntax = \"proto2\";\nmessage E5 { extensions 1000 to 2000; ; }\nextend E5 {\n  optional int32 x26 = 1001;\n}")) == "ok"
+}

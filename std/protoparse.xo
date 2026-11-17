@@ -674,11 +674,12 @@ fn p_extend(var p: P) -> (Extend, List[Message]) ! ParseErr {
   var m = Message{name: name, fields: [], oneofs: [], nested: [], enums: []}
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated `extend` block")) }
+    // protoc's grammar has no empty statement in an extend block
+    // (protocompile: "syntax error: unexpected ';'"), unlike a message's
     if p_is(p, ";") {
-      p.at += 1
-    } else {
-      m = p_field(p, "", m)?
+      return Err(p_err(p, "syntax error: unexpected ';'"))
     }
+    m = p_field(p, "", m)?
   }
   p.at += 1
   Ok((Extend{extendee: name, fields: m.fields}, m.nested))

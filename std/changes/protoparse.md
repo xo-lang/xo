@@ -1,5 +1,17 @@
 # std/protoparse changes
 
+## 2026-11-17: fix: an empty statement in an extend block is an error
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1's protoparse fuzz against protocompile v0.14.1, seed 4 (task #230 follow-up)
+- Go reference: protocompile v0.14.1 parser/proto.y (extend bodies take fields and groups only: "syntax error: unexpected ';'")
+- Test: std/protoparse_test.xo "an empty statement in an extend block is an error" (accepted before)
+- Shipped in: not yet released
+
+`parse` took a lone `;` inside `extend E { ... }` as it does in a message
+body; protoc rejects it, and now so does `parse`.
+
 ## 2026-11-17: fix: four kinds of file protoc rejects are errors
 
 - Kind: fix
