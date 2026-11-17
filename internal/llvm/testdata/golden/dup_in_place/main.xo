@@ -1,0 +1,66 @@
+// The dup helper of a struct, tuple, or enum whose heap leaves are all
+// retained inline reads each object where the value came, x0 to x7 or
+// the caller's stack past them, with no frame (arm64 rc.xo dup_in_place,
+// task #103: `dup http.Url?` stored all 18 words first). Records of 20
+// words (Str, List, function value with and without captures, and Str?
+// fields, some past x7 so read from the stack) and a Rec? are copied into
+// lists, the originals dropped, and every copy read; XO_LEAKCHECK=1 (as
+// every golden runs) fails a missed or extra retain.
+
+struct Rec {
+  a: Str
+  n: Int
+  b: Str
+  xs: List[Int]
+  c: Str?
+  d: Str
+  f: fn(Int) -> Int
+  e: Str?
+  g: Str
+}
+
+fn mk(i: Int) -> Rec {
+  let s = "cap${i}"
+  let f = if i % 2 == 0 { fn(x: Int) -> Int { x + s.len() } } else { fn(x: Int) -> Int { x * 2 } }
+  Rec{
+    a: "a${i}",
+    n: i,
+    b: "bb${i}",
+    xs: [i, i + 1, i + 2],
+    c: if i % 3 == 0 { None } else { Some("c${i}") },
+    d: "ddd${i}",
+    f: f,
+    e: if i % 2 == 0 { Some("eeee${i}") } else { None },
+    g: "g${i * 7}",
+  }
+}
+
+fn sum(r: Rec) -> Int {
+  r.a.len() + r.n + r.b.len() + r.xs.len() + (r.c ?? "").len() + r.d.len() + r.f(r.n) + (r.e ?? "").len() + r.g.len()
+}
+
+fn main(os: Os) {
+  var all: List[Rec] = []
+  var opts: List[Rec?] = []
+  for i in 0..40 {
+    let r = mk(i)
+    all.push(r)
+    all.push(r)
+    let o: Rec? = if i % 5 == 0 { None } else { Some(r) }
+    opts.push(o)
+    opts.push(o)
+  }
+  var t = 0
+  for r in all {
+    t += sum(r)
+  }
+  var u = 0
+  for o in opts {
+    if let Some(r) = o {
+      u += sum(r)
+    }
+  }
+  os.stdio.println("${all.len()} ${t}")
+  os.stdio.println("${opts.len()} ${u}")
+  os.stdio.println("${all[3].a} ${all[3].c ?? "-"} ${all[7].e ?? "-"} ${all[8].e ?? "-"} ${all[9].f(5)} ${all[10].f(5)}")
+}

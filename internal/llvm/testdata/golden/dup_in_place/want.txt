@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+80 5910
+80 4794
+a1 c1 - eeee4 9 10
+--- stderr

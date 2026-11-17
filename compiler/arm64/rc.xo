@@ -342,6 +342,9 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
   if g.one_leaf_enum(b, kind, sym, t, all) {
     return
   }
+  if kind == "dup" && g.dup_in_place(b, sym, t, all) {
+    return
+  }
   var out = 0
   for l in all {
     out = imax(out, align16(8 * (g.leaf_words(l.t) - 8)))
@@ -430,6 +433,140 @@ fn (var g: G) one_leaf_enum(var b: List[Str], kind: Str, sym: Str, t: Int, all: 
   let ret = "${sym}_one_ret"
   b.push("\tcmp x0, #${vi}\n\tb.ne ${ret}\n\tmov x0, x${l.off}\n\tmov x1, x${l.off + 1}\n\tb ${g.rc_helper(kind, l.t)}\n${ret}:\n\tret\n")
   true
+}
+
+/// The variant of enum t that holds its one heap leaf, and that leaf, when
+/// the leaf is a Str or a List (an Option[Str]); -1 for any other type.
+fn (var g: G) one_str_leaf(t: Int) -> (Int, Leaf) {
+  let none = (-1, Leaf{off: 0, t: 0})
+  let x = g.m.types[t]
+  if x.kind != ssa.Kind.Enum {
+    return none
+  }
+  var vi = -1
+  var ls: List[Leaf] = []
+  for (k, v) in x.variants.indexed() {
+    let n = ls.len()
+    for (fi, f) in v.fields.indexed() {
+      let (off, _) = g.payload_words(t, k, fi)
+      g.heap_leaves(f.ty, off, ls)
+    }
+    if ls.len() > n {
+      vi = k
+    }
+  }
+  if ls.len() != 1 || vi < 0 || vi > 4095 || !(g.kind(ls[0].t) is ssa.Kind.Str | ssa.Kind.List) {
+    return none
+  }
+  (vi, ls[0])
+}
+
+/// Whether the dup of leaf l is done inline by dup_in_place.
+fn (var g: G) dup_inline(l: Leaf) -> Bool {
+  match g.kind(l.t) {
+    Str | List | Box | Handle | Func => true
+    Enum => {
+      let (vi, _) = g.one_str_leaf(l.t)
+      vi >= 0
+    }
+    _ => false
+  }
+}
+
+/// The register holding word off of a helper's value: x0 to x7, or past
+/// them the caller's stack argument at [sp, #8(off - 8)], loaded into dst
+/// (the helper has no frame).
+fn arg_word(var b: List[Str], off: Int, dst: Str) -> Str {
+  if off < 8 {
+    return "x${off}"
+  }
+  b.push(mem_at("ldr", dst, "sp", 8 * (off - 8)))
+  dst
+}
+
+/// Retains the Str or List (lk) at word off of the value, labels from lbl.
+fn (var g: G) dup_word(var b: List[Str], lk: ssa.Kind, off: Int, lbl: Str) {
+  let r = arg_word(b, off, "x9")
+  if g.inl_str() && lk == ssa.Kind.Str {
+    b.push("\ttbnz ${r}, #0, ${lbl}_inc\n")
+  }
+  b.push(g.inc_text(r, "x10", "w11", lbl, false))
+}
+
+/// The dup helper of an enum, struct, or tuple whose heap leaves are all
+/// retained inline (a Str, List, Box, Handle, function value, or an enum
+/// leaf whose one heap leaf is a Str or a List): each object is read
+/// where the value came, x0 to x7 or the caller's stack past them, with
+/// no frame and no word stored, where agg_rc stored every word first
+/// (`dup http.Url?`, 18 words, was 13% of bench/perf/httpproxy_rules
+/// route, 2026-11-17); false when a leaf needs a call.
+fn (var g: G) dup_in_place(var b: List[Str], sym: Str, t: Int, all: List[Leaf]) -> Bool {
+  for l in all {
+    if !g.dup_inline(l) {
+      return false
+    }
+  }
+  let x = g.m.types[t]
+  let done = "${sym}_ip_done"
+  if x.kind == ssa.Kind.Enum {
+    for (vi, v) in x.variants.indexed() {
+      var ls: List[Leaf] = []
+      for (fi, f) in v.fields.indexed() {
+        let (off, _) = g.payload_words(t, vi, fi)
+        g.heap_leaves(f.ty, off, ls)
+      }
+      if ls.is_empty() {
+        continue
+      }
+      if vi > 4095 {
+        return false
+      }
+    }
+    for (vi, v) in x.variants.indexed() {
+      var ls: List[Leaf] = []
+      for (fi, f) in v.fields.indexed() {
+        let (off, _) = g.payload_words(t, vi, fi)
+        g.heap_leaves(f.ty, off, ls)
+      }
+      if ls.is_empty() {
+        continue
+      }
+      let next = "${sym}_ip_v${vi}"
+      b.push("\tcmp x0, #${vi}\n\tb.ne ${next}\n")
+      for (li, l) in ls.indexed() {
+        g.dup_leaf_in_place(b, l, "${sym}_ip${vi}l${li}")
+      }
+      b.push("\tb ${done}\n${next}:\n")
+    }
+  } else {
+    for (li, l) in all.indexed() {
+      g.dup_leaf_in_place(b, l, "${sym}_ipl${li}")
+    }
+  }
+  b.push("${done}:\n\tret\n")
+  true
+}
+
+/// Retains leaf l of a dup_in_place helper's value.
+fn (var g: G) dup_leaf_in_place(var b: List[Str], l: Leaf, lbl: Str) {
+  let lk = g.kind(l.t)
+  match lk {
+    Str | List | Box | Handle => g.dup_word(b, lk, l.off, lbl)
+    Func => {
+      // the environment word; null: no captures
+      let r = arg_word(b, l.off + 1, "x9")
+      b.push("\tcbz ${r}, ${lbl}_done\n")
+      b.push(g.inc_text(r, "x10", "w11", lbl, false))
+      b.push("${lbl}_done:\n")
+    }
+    _ => {
+      let (vi, il) = g.one_str_leaf(l.t)
+      let tag = arg_word(b, l.off, "x12")
+      b.push("\tcmp ${tag}, #${vi}\n\tb.ne ${lbl}_done\n")
+      g.dup_word(b, g.kind(il.t), l.off + il.off, lbl)
+      b.push("${lbl}_done:\n")
+    }
+  }
 }
 
 /// The body of the dupp, dropp, or sharep helper of an enum, struct, or
