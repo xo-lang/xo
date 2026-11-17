@@ -5,8 +5,14 @@
 // deadline that has already passed fails at once, on both sides. A
 // keepalive: the client's on_pong moves its read deadline, so a message
 // that comes after several deadline windows still arrives, and the
-// server's on_ping counts the pings and answers each with pong. The Go
-// backend and the native one must agree.
+// server's on_ping counts the pings and answers each with pong. The
+// pings come every 20 ms with one 200 ms gap, as a ping sender a loaded
+// host stops for a while; the server writes the message right after its
+// 50th pong (no timer), so the client has seen exactly 50 pongs when it
+// reads it, two 600 ms windows in. Task #182: with 150 ms windows and a
+// hello on a timer a loaded host saw under 5 pongs (2026-11-16); that
+// version fails the 200 ms gap every time. The Go backend and the native
+// one must agree.
 use std/http
 use std/websocket
 
@@ -65,16 +71,13 @@ fn main(os: Os) {
     websocket.upgrade(req, fn(c) {
       let pings = Atomic[Int].new(0)
       c.on_ping(fn(data) {
-        pings.add(1)
+        let n = pings.add(1)
         c.pong(data).ignore_err("test")
-      })
-      scope ks {
-        ks.spawn(fn() {
-          clock.sleep(250ms)
+        if n == 50 {
           c.write_text("late hello").ignore_err("test")
-        })
-        while c.read() is Ok(_) {}
-      }
+        }
+      })
+      while c.read() is Ok(_) {}
       saw.send("server pings: ${pings.get()}")
     })
   })
@@ -132,18 +135,18 @@ fn main(os: Os) {
             let pongs = Atomic[Int].new(0)
             c.on_pong(fn(_data) {
               pongs.add(1)
-              c.set_read_deadline(clock, Some(clock.now() + 150ms))
+              c.set_read_deadline(clock, Some(clock.now() + 600ms))
             })
-            c.set_read_deadline(clock, Some(clock.now() + 150ms))
+            c.set_read_deadline(clock, Some(clock.now() + 600ms))
             scope ps {
               ps.spawn(fn() {
-                for _ in 0..10 {
-                  clock.sleep(40ms)
+                for i in 0..50 {
+                  clock.sleep(if i == 3 { 200ms } else { 20ms })
                   c.ping("k".bytes()).ignore_err("test")
                 }
               })
               match c.read() {
-                Ok(m) => os.stdio.println("keepalive read: ${m.data.to_str() ?? "?"}")
+                Ok(m) => os.stdio.println("keepalive read: ${m.data.to_str() ?? "?"} after ${pongs.get()} pongs")
                 Err(e) => os.stdio.println("keepalive read: ${e}")
               }
               match c.read() {
@@ -151,7 +154,7 @@ fn main(os: Os) {
                 Err(e) => os.stdio.println("keepalive read after the pings: ${e}")
               }
             }
-            os.stdio.println("pongs at least 5: ${pongs.get() >= 5}")
+            os.stdio.println("pongs: ${pongs.get()}")
             c.close().ignore_err("test")
             os.stdio.println(saw.recv() ?? "?")
           }
