@@ -828,6 +828,37 @@ test "a thin live page is sent each new view over its socket, rendered once per 
   }
 }
 
+test "a page shown a version already rendered takes the scope's locks shared (#162)" {
+  let h = host(todo_app().with_url_view(fn(m, qv) { text("${qv.get("tab") ?? "all"}:${m.todos.len()}") }))
+  h.apply(Msg.Add(id: "x", title: "x"))
+  let f1 = h.frame("", "", "", "")
+  let sl = h.slot("")
+  let holding = Atomic[Int].new(0)
+  let released = Atomic[Int].new(0)
+  let waited = Atomic[Int].new(0)
+  // a reader holds both locks for up to 2 s; as writers, the other pages
+  // waited for it (and for each other) one wake after another
+  let t = os.tasks.spawn(fn() -> Int ! Never {
+    sl.state.with_read(fn(_c) {
+      sl.frames.with_read(fn(_fs) {
+        let _h = holding.swap(1)
+        while waited.get() < 2000 && released.get() == 0 {
+          os.clock.sleep(1ms)
+          let _w = waited.add(1)
+        }
+      })
+    })
+    released.swap(2)
+  })
+  while holding.get() == 0 {
+    os.clock.sleep(1ms)
+  }
+  let f2 = h.frame("", "", "", "")
+  expect((released.swap(1), waited.get() < 1000)) == (0, true)
+  expect(f2) == f1
+  let _done = t.await
+}
+
 test "after a resync a live page is sent the version it must sync to, never -1" {
   let st = memory_store()
   let a = host_with(todo_app(), st, local_bus())

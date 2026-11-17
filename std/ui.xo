@@ -1969,15 +1969,36 @@ fn (h: Host[M, E]) frame(key: Str, p: Str, q: Str, build: Str) -> Str {
   let sl = h.slot(key)
   let latest = sl.latest.get()
   let again = sl.resync.swap(0) > 0
-  let (m0, v) = sl.state.with(fn(var c) {
+  // shared while the scope holds latest: a version wakes every page
+  // showing the scope at once, and as writers they took the lock one
+  // wake after another (#162)
+  let held: (M, Int)? = if again { None } else {
+    sl.state.with_read(fn(c) -> (M, Int)? {
+      if c.loaded && latest <= c.version() { Some((c.model(), c.version())) } else { None }
+    })
+  }
+  let (m0, v) = held ?? sl.state.with(fn(var c) {
     let _ok = c.fresh(latest, again: again).is_ok()
     (c.model(), c.version())
   })
   let seen = h.digest(m0, p)
   let vk = "${q}\n${seen}"
   let app = h.app
+  // a frame already rendered for this version, under a share
+  let ready: Str? = sl.frames.with_read(fn(fs) -> Str? {
+    if let Some(f) = fs.get(vk) {
+      if f.ver == v {
+        return Some(f.text)
+      }
+    }
+    None
+  })
+  if let Some(t) = ready {
+    return t
+  }
   // under the scope's lock: a version's frame is rendered once while its
   // other pages wait for it
+  // xo:allow XO0804 ready is only a hint: this with looks the frame up again
   sl.frames.with(fn(var fs) -> Str {
     if let Some(f) = fs.get(vk) {
       if f.ver == v {

@@ -1,5 +1,17 @@
 # std/ui changes
 
+## 2026-11-16: perf: pages shown a version already rendered take the scope's locks shared
+
+- Kind: perf
+- Commit: this push
+- Found by: task #162 (std/ui live push frames: 1,000 viewers of one room, the server's sys time)
+- Go reference: none
+- Test: std/ui "a page shown a version already rendered takes the scope's locks shared (#162)" (a reader holds both locks; the next frame no longer waits for it); "a thin live page is sent each new view over its socket, rendered once per version and view"
+- Timing: linux/arm64 host 4 (8 CPUs), one room, 1,000 push viewers, 200 changes every 20 ms, XO_RTSTATS=1, two rounds: server CPU user/sys 3.23/5.27 and 3.12/5.08 s before, 2.80/3.46 and 2.56/3.09 s after; mutex wakes 107k and 113k before, 2.4k and 1.0k after; frames unchanged (200k). linux/arm64 host 1 (20 CPUs), the same run, three rounds each: user/sys 3.47/6.51, 3.46/6.63 and 3.33/6.66 s before, 4.07/4.11, 4.09/4.14 and 3.83/4.01 s after (sys 0.62, total CPU 0.81)
+- Shipped in: not yet released
+
+Each new version wakes every page showing the scope at once, and each took the scope's state and frame locks as a writer to read a model and a frame that were already there, one wake after another. A page now reads them under a shared lock and takes the lock as a writer only to catch the scope up or render a frame not yet made.
+
 ## 2026-11-16: perf: live pages get the new view over their socket (decision 0689)
 
 - Kind: perf
