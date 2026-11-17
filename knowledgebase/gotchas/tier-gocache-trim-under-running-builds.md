@@ -38,3 +38,10 @@ TIER_GOCACHE_MIN_GB (default 60), only files idle over 2 hours, and only
 below the 2-hex shards (`-mindepth 2`). Any trim of a Go cache shared with
 running builds must wait out Go's hour plus the longest build (xo's prune:
 75 minutes; diskcheck: 2 hours) and must not touch the top level.
+
+Since 2026-11-16 (task #176) every Go cache trim in diskcheck.sh and
+tier.sh goes through `gocache_trim` (scripts/lead/gocache-trim.sh), which
+also refuses while any Go build, test or toolchain process runs
+(`ps -Ao command`), and never touches the top level. diskcheck's step 11
+had trimmed xo's gocache at 1 hour from the top level (its lock files
+included) until then. Test: scripts/lead/gocache_trim_test.sh.

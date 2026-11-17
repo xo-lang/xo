@@ -41,3 +41,14 @@ stopped run with the same name can delete a rerun's checkout
 (offload-gate-stopped-run-deletes-rerun.md). Stopping a chain script by
 its PID still orphans the offload-gate it started, which keeps its lease.
 Stop the task instead, so the trap runs.
+
+**Update (2026-11-16, task #164).** A stopped chain no longer keeps the
+lease. The heavyd lease client records its parent chain when it starts
+(up to pid 1 or the agent's claude process) and checks it every 10 s
+(HEAVYD_CHAIN_EVERY). When a process of the chain gets another parent,
+the chain above it was stopped: a waiting lease leaves the queue, a
+running one has its job's process group stopped and its slots freed, exit
+129, with an `ORPHAN lease NAME` line in heavyd.log and the lead's
+bottleneck.log. A run started under nohup (SIGHUP ignored) or with
+HEAVYD_DETACHED=1 is detached on purpose and not watched. Test:
+scripts/lead/heavyd/lanes_test.go TestLeaseOrphanedChain.

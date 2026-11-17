@@ -159,7 +159,7 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   0 turns it off; lead, 2026-10-31: one agent had five --ab runs
   queued). A job whose process tree uses no CPU and starts no process
   for OFF_IDLE_MIN minutes (default 15, 0 off) is stopped with exit 125
-  (lead, 2026-10-31: a bisect hung on stdin for 73 minutes). Only arm64 jobs count (each records its pid in
+  (lead, 2026-10-31: a bisect hung on stdin for 73 minutes). Every job's stdin is /dev/null on every host kind (ssh, WSL, Windows), so a job script needs no `exec </dev/null` of its own (#173, 2026-11-16; scripts/lead/offload_test.sh "a job reads an empty stdin"). Only arm64 jobs count (each records its pid in
   ~/xo-lead/locks/offq; since 2026-10-31 amd64 jobs no longer use up
   the cap). A job whose ssh connection drops (its Mac side stopped) ends
   on the host too, within about 15 s, and its ticket goes with it.
@@ -192,7 +192,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   (`~/xo-lead/heavyd-lanes.conf`, `NAME SLOTS CAP`; 2 per agent on
   arm64), still exit 5. The host's own queue stays as a safety net and
   for jobs sent while no daemon answers (offload.sh then queues there as
-  before); OFF_NO_LANE=1 skips the lane. The arm64 host runs 3 jobs at
+  before); OFF_NO_LANE=1 skips the lane. offload-gate.sh (task #166,
+  2026-11-16) makes OFF_LANE and OFFLOAD_ENV name one host before it
+  bundles: OFF_LANE alone runs the gate on its lanes' host file (lanes of
+  several hosts are refused), a lane of another host than OFFLOAD_ENV is
+  refused (exit 2), and OFF_NO_LANE is refused for a gate
+  (OFFGATE_NO_LANE_OK=1 for a deliberate one); `OFFGATE_PLAN=1` prints
+  the host it chose. The arm64 host runs 3 jobs at
   once since 2026-10-31 (owner: OFF_SLOTS=3 in offload.env, `arm64 3 2
   offload.env` in heavyd-lanes.conf; an exclusive run still takes the
   whole host). OFF_PRIORITY=1 puts a job ahead of every waiting job
@@ -254,6 +260,26 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   the host's cached xo of an ancestor commit; never the seed chain), then
   the steps above; logs in `/work/tierN.*.txt` (the checkout itself
   goes when the run ends).
+- The lock on `/work/priv` (task #174; 2026-11-02 a fetch outside it
+  died in index-pack while ab-host-remote.sh cleaned tmp packs): the
+  directory `/work/priv.lockdir` holding "PID BOOTID", broken by a waiter
+  when the holder is dead or from another boot. ab-host-remote.sh,
+  stdproven-remote.sh, offload-amd64.sh and offload-tier.sh take it. A
+  hand-written job writes `priv_lock` before its fetch, worktree add or
+  prune (freed on exit, or early with `priv_unlock`), and offload.sh puts
+  scripts/lead/privlock.sh before the body. offload.sh refuses (exit 2) a
+  body that changes /work/priv (git fetch, worktree, checkout, reset,
+  clean, gc, prune, pull, or rm) without the lock; `OFF_PRIV_OK=1` for a
+  deliberate one; `offload.sh --priv-check FILE|-` shows the body as it
+  would run, or the refusal, with no host. Test: scripts/lead/privlock_test.sh.
+  Last verified: 2026-11-16.
+- A bundle for a host names local branches (`git branch -f tmp-X
+  origin/main`, bundle tmp-X, delete it): `git clone X.bundle` copies only
+  branch and tag refs, so a bundle of `origin/main` clones with no commits
+  ("unable to read tree", 2026-11-07). `offload.sh --put` refuses (exit 2,
+  before connecting) a bundle with a head under refs/remotes/ (task #175;
+  OFF_BUNDLE_OK=1 for a deliberate one; `offload.sh --bundle-check FILE`
+  answers locally). Test: scripts/lead/bundlerefs_test.sh.
 
 ## The host's setup
 

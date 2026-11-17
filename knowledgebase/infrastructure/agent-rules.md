@@ -57,7 +57,13 @@ Last verified: 2026-11-16.
 | Commit messages carry no em-dash and no backticks in -m | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkCommitMessage) | `scripts/lead/ccguard/rules_test.ts` | |
 | On darwin no alarm or timeout wrapper (perl -e 'alarm N; exec @ARGV', timeout, gtimeout) around `xo run`: build, then time BIN (gotchas/alarm-xo-run-orphans-program.md) | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkAlarmRun) | `scripts/lead/ccguard/rules_test.ts` | |
 | A generated file is changed through its generator, never by hand | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkGeneratedWrite) | `scripts/lead/ccguard/rules_test.ts` | |
+| No commit, amend, rebase or checkout in a worktree with a running gate or queued push (memories No rebase under a gate, No commit under a gate, One worktree per queued push) | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkBusyTree, busyIn), `scripts/lead/ccguard/hook.ts` (realBusy) | `scripts/lead/ccguard/rules_test.ts` | |
+| A lease whose starting chain is stopped frees its slots (memory Chain kill orphans lease): the lease client watches its parent chain and stops its job, exit 129, logged ORPHAN; nohup or HEAVYD_DETACHED=1 opts out | heavyd lease client | `scripts/lead/heavyd/lanes.go` (chainOf, chainBroken) | `scripts/lead/heavyd/lanes_test.go` (TestLeaseOrphanedChain) | |
+| No delete list built from ls (aliased -F adds / and *; memory ls-classify): find DIR -maxdepth 1 -name PATTERN instead | ccguard hook | `scripts/lead/ccguard/rules.ts` (checkLsDelete) | `scripts/lead/ccguard/rules_test.ts` | |
 | A change runs the checks its kind of change needs (the path-to-check table) | pushq, gate.sh | `scripts/lead/gate-needs.txt`, `scripts/lead/gatelib.sh` (gate_table_steps) | `scripts/lead/gatesteps_test.sh` | push-refusals |
+| One --ab per agent at a time; --ab runs 3 rounds by default (memories One --ab at a time, 3 round --ab) | ab-host.sh (exit 2); xo bench default | `scripts/lead/ab-host.sh` (one per agent); `compiler/cli/bench` (rounds 3) | `scripts/lead/offload_gate_test.sh`; `compiler/cli/bench/bench_test.xo` | |
+| An exclusive host 1 job is at most 30 minutes; split longer ones (memory Host 1 chunks); no exclusive lease beside a soak (memory Soaks before exclusive) | offload.sh (exit 2); heavyd lease waits | `scripts/lead/offload.sh` (host 1 exclusive check); `scripts/lead/heavyd/lanes.go` ("a run with no lane is on this host") | `scripts/lead/offload_gate_test.sh`; `scripts/lead/heavyd/lanes_test.go` | |
+| An offload gate's OFF_MAX_MIN is never below its steps' budget (memory Offgate budget) | offload-gate.sh (exit 2) | `scripts/lead/offload-gate.sh` (OFF_MAX_MIN floor) | `scripts/lead/offload_gate_test.sh` | |
 | A released CHANGELOG section is never edited | pushq | `scripts/lead/gatelib.sh` (gate_changelog_frozen) | `scripts/lead/gatesteps_test.sh` | |
 | A Breaking std change has its CHANGELOG line | pushq | `scripts/lead/gatelib.sh` (gate_breaking_unlogged) | `scripts/lead/gatesteps_test.sh` | |
 | Code lands after its decision is accepted | pushq | `scripts/lead/gatelib.sh` (gate_adr_proposed) | `scripts/lead/gatesteps_test.sh` | |
@@ -71,9 +77,9 @@ Last verified: 2026-11-16.
 | An agent's offload runs stay within OFF_MAX_QUEUED (a batch past it is refused) | xw preflight (#157) | `workstream:preflight.xo` (check_caps), `scripts/lead/xwhook.sh` (xw_preflight) from offload.sh, offload-gate.sh, stdproven-offload.sh | `workstream:xw_test.xo`, `workstream:test/pg_test.sh`, `scripts/lead/xwhook_test.sh`, `scripts/lead/stdproven_offload_test.sh` | |
 | A run on hosts 3 or 4 or the Mac keeps the Mac under the gate threshold (load 48, 55% free; hosts 3 and 4 are containers on it) | xw preflight (#157) | `workstream:preflight.xo` (check_mac), `scripts/lead/xwhook.sh` (xw_preflight) from offload.sh, offload-gate.sh, stdproven-offload.sh | `workstream:xw_test.xo`, `workstream:test/pg_test.sh`, `scripts/lead/xwhook_test.sh`, `scripts/lead/stdproven_offload_test.sh` | |
 | The full tier runs the LLVM dev goldens (TestDevGoldensLLVM, every golden program built with the LLVM backend) on a whole host | ctier | `scripts/lead/ctier.sh` (CTIER_STEPS default: devllvm), `scripts/gate.sh` (devllvm), `scripts/lead/offload-gate.sh` (devllvm takes the host) | `scripts/lead/ctier_split_test.sh` | tier |
-| Every bug fix lands with a test that fails before it | CLAUDE.md | none | none | |
-| Long fuzz sweeps go sharded to a host, never the Mac gate class | CLAUDE.md | none | none | |
-| Never wait idle while a gate or push runs | CLAUDE.md | none | none | idle, idle-empty, waiting |
+| Every bug fix lands with a test that fails before it | CLAUDE.md | `workstream:work.xo` (checks: bug-no-test), `workstream:ingest.xo` (has_test_file) | `workstream:test/work_test.sh` | bug-no-test |
+| Long fuzz sweeps go sharded to a host, never the Mac gate class | CLAUDE.md | `scripts/lead/heavyd/heavy.sh` (exit 67) | `scripts/lead/heavy_fuzz_test.sh` | |
+| Never wait idle while a gate or push runs | CLAUDE.md | `workstream:work.xo` (checks: idle, idle-empty, waiting) | `workstream:test/work_test.sh` | idle, idle-empty, waiting |
 
 ## Schedules
 

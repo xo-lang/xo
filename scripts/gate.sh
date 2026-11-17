@@ -157,7 +157,9 @@
 # (default 3) at a time (opt in; see "XO_GATE_CONCURRENT" below).
 #
 # Logs go to $XO_GATE_LOGS (default $TMPDIR/xo-gate-WORKTREE_NAME), one
-# file per step. The first step that fails stops the gate (fail fast,
+# file per step; logs or a TMPDIR inside the worktree are refused (exit
+# 2), and the steps' scratch lives in $TMPDIR/xo-gate-run.*, deleted when
+# the gate ends, passed, failed or stopped (task #168). The first step that fails stops the gate (fail fast,
 # lead, 2026-11-15): the steps still running are stopped, those not
 # started are skipped, and a FAIL-FAST line names them;
 # XO_GATE_FAILFAST=0 runs every step as before. The exit status is 1 when
@@ -174,6 +176,14 @@ shift
 [ -d "$wt/compiler/xo" ] && [ -f "$wt/scripts/gate.sh" ] || { echo "gate.sh: $wt is not an xo checkout (no compiler/xo); give WORKTREE as the xo worktree you gate"; exit 2; }
 logs=${XO_GATE_LOGS:-${TMPDIR:-/tmp}/xo-gate-$(basename "$wt")}
 mkdir -p "$logs"
+# the logs and the scratch stay outside the worktree (task #168; memory
+# "Gate output outside worktree": 2026-10-21 a git add -A after a gate
+# committed its .gate-* files): a log or TMPDIR inside it is refused
+wtp=$(cd "$wt" && pwd -P)
+for o in "logs=$logs" "TMPDIR=${TMPDIR:-/tmp}"; do
+  op=$(cd "${o#*=}" 2>/dev/null && pwd -P) || continue
+  case $op/ in "$wtp"/*) echo "gate.sh: ${o%%=*} ($op) is inside the worktree $wtp: gate output goes outside it (set ${o%%=*} elsewhere)"; exit 2 ;; esac
+done
 # one gate per log directory (lead, 2026-11-10: a dry run of tier.sh
 # wrote into a running tier's xo-gate-lead-tierN): $logs/.gate.pid names
 # the gate using it; a live gate.sh there refuses this one (exit 2). The
@@ -187,7 +197,17 @@ if [ -f "$gp" ] && read -r op <"$gp" && [ -n "$op" ] && [ "$op" != $$ ] &&
   exit 2
 fi
 echo $$ >"$gp"
-trap 'rm -f "$gp"' EXIT
+# every step's scratch (the fixed point's ~3 GB, IR and base trees) is
+# made under $gt, deleted when the gate ends however it ends: a stopped
+# or fail-fast gate left them in TMPDIR (task #168; memories "Delete fp
+# outputs", "Trim scratch per gate"). XO_GATE_FP_KEEP=1 still moves a
+# failed fixed point's output into the logs first.
+gt=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-run.XXXXXX") || exit 1
+trap 'rm -f "$gp"; rm -rf "${gt:?}"' EXIT
+# a stopped gate stops its running steps first (their own $! only, as
+# ff_check), so none writes into $gt after it is deleted
+trap 'for kp in ${jobpids:-}; do gate_tree_kill "${kp#*:}" 2>/dev/null; done; exit 143' TERM
+trap 'for kp in ${jobpids:-}; do gate_tree_kill "${kp#*:}" 2>/dev/null; done; exit 130' INT
 rm -f "$logs/times.tsv" "$logs/golden-sel.txt"
 cd "$wt" || exit 1
 # gate_required_steps and gate_plan: the proving checks, as pushq.sh asks
@@ -714,7 +734,7 @@ llvm_goldens() {
   fi
   if [ -n "$escope" ] && [ "$escope" != all ] && [ "$(echo "$escope" | tr ',' '\n' | grep -c .)" -le "${XO_GATE_IR_SCOPE_MAX:-300}" ]; then
     echo "llvm IR: scoped by xo build --list-inputs to $(echo "$escope" | tr ',' '\n' | grep -c .) goldens; base and HEAD IR built for them alone" >&2
-    pw2=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-ir.XXXXXX")
+    pw2=$(mktemp -d "$gt/xo-gate-ir.XXXXXX")
     bpart=$pw2/base.txt hpart=$pw2/head.txt
     if git worktree add -q --detach "$pw2/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
       cp internal/llvm/golden_select_test.go "$pw2/tree/internal/llvm/" &&
@@ -764,7 +784,7 @@ llvm_goldens() {
   case $bm in "${XO_LLVM_IR_SHARED:-/nonexistent}"/*) ib="$ib (shared by irman.sh)" ;; esac
   if [ ! -s "$bm" ]; then
     bm="$cache/$(git rev-parse "$base")-$mcode.txt"
-    pw=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-ir.XXXXXX")
+    pw=$(mktemp -d "$gt/xo-gate-ir.XXXXXX")
     # the branch's manifest test in the base's tree: both sides hashed
     # by the same code (a base older than the test has none)
     if git worktree add -q --detach "$pw/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
@@ -1095,7 +1115,7 @@ for step in "$@"; do
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
-  selftest-fail|selftest-sleep|selftest-ok)
+  selftest-fail|selftest-sleep|selftest-ok|selftest-tmp)
     if [ "${XO_GATE_SELFTEST:-0}" = 1 ]; then steps="$steps $step"; else echo "gate.sh: $step is a test step (XO_GATE_SELFTEST=1)"; failed=1; fi ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
@@ -1159,7 +1179,7 @@ bin_select() {
   if [ "${XO_GATE_BIN_SELECT:-0}" != force ] && echo "$files" | grep -q -E '^(internal/(arm64|llvm)/[^/]+$|internal/xotool/|scripts/xobuild/|scripts/golden-bin-select\.py$|go\.(mod|sum)$)'; then
     echo "every golden (the change touches the golden tests, internal/xotool, scripts/xobuild or the selection)" >"$note"; echo all; return
   fi
-  T=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-bin.XXXXXX")
+  T=$(mktemp -d "$gt/xo-gate-bin.XXXXXX")
   if ! { git worktree add -q --detach "$T/tree" "$base" && (cd "$T/tree" && go run ./scripts/xobuild); } >"$logs/bin-select-base.txt" 2>&1 || [ ! -x "$T/tree/bin/xo" ]; then
     echo "every golden (the merge base's xo did not build: $logs/bin-select-base.txt)" >"$note"
     git worktree remove --force "$T/tree" >/dev/null 2>&1; rm -rf "${T:?}"; echo all; return
@@ -1252,6 +1272,10 @@ run_step_body() {
     selftest-sleep)
       echo '--- PASS: TestSelf/first (0.01s)' >"$logs/$1.txt"
       sleep 60; echo "selftest-sleep: ok" ;;
+    selftest-tmp)
+      # a step's scratch left behind: the gate's end deletes it
+      d=$(mktemp -d "$gt/xo-gate-selftest.XXXXXX") && echo x >"$d/out"
+      echo "selftest-tmp: ok ($d)" ;;
     *) echo "$1: ok" ;;
     esac ;;
   short)
@@ -1391,7 +1415,7 @@ run_step_body() {
     off=$(sed -n '/^pub fn passes()/,/^}/p' compiler/arm64/passes.xo | grep -o '"[a-z0-9_]*"' | tr -d '"' | sed 's/^/-/' | paste -sd, -)
     XO_PASSES=$off full alloff ./internal/arm64 -run '^TestGoldenRun$' ;;
   fp)
-    tmp=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-fp.XXXXXX")
+    tmp=$(mktemp -d "$gt/xo-gate-fp.XXXXXX")
     cp bin/xo "$tmp/seed"
     # bin/xo was just built from this tree, so it is s1 (one build less)
     if XO_BOOTSTRAP_SEED_IS_S1=1 scripts/bootstrap-xo.sh "$tmp/seed" "$tmp/out" >"$logs/fp.txt" 2>&1; then
@@ -1413,7 +1437,7 @@ run_step_body() {
     rm -rf "$tmp" ;;
   warm)
     base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
-    pw=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-warm.XXXXXX")
+    pw=$(mktemp -d "$gt/xo-gate-warm.XXXXXX")
     if git worktree add -q --detach "$pw/tree" "$base" >"$logs/warm-base.txt" 2>&1 &&
       (cd "$pw/tree" && go run ./scripts/xobuild) >>"$logs/warm-base.txt" 2>&1; then
       XO_TEST_WARM_XO=$pw/tree/bin/xo full warm-across ./internal/arm64 -run '^TestFrontCacheAcrossPrograms$'
@@ -1611,7 +1635,7 @@ prove_fieldgen() {
 prove_checkall() {
   local base T
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
-  T=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-checkall.XXXXXX")
+  T=$(mktemp -d "$gt/xo-gate-checkall.XXXXXX")
   if ! { git worktree add -q --detach "$T/tree" "$base" && (cd "$T/tree" && go run ./scripts/xobuild); } >"$logs/checkall-base.txt" 2>&1 || [ ! -x "$T/tree/bin/xo" ]; then
     failed=1; echo "checkall: FAIL (the merge base's xo did not build: $logs/checkall-base.txt)"
   elif scripts/checkall.sh "$T/tree/bin/xo" "$logs/checkall-base-errors.txt" >>"$logs/checkall.txt" 2>&1 &&

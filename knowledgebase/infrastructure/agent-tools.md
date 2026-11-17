@@ -323,7 +323,11 @@ yourself.
   tier, a sweep). A change to gate.sh's step runner runs
   `scripts/lead/gate_failfast_test.sh WORKTREE` through heavy.sh (about
   20 s; not in repotest, since its nested gate.sh rebuilds the
-  checkout's bin/xo). Gate exit codes: 1 a failure, 2 refused, 3 a
+  checkout's bin/xo); a change to its logs or scratch runs
+  `scripts/lead/gate_output_test.sh WORKTREE` the same way (about 25 s:
+  logs or a TMPDIR inside the worktree exit 2; the steps' scratch,
+  `$TMPDIR/xo-gate-run.*`, is deleted when the gate ends, stopped by
+  TERM too; task #168, 2026-11-16). Gate exit codes: 1 a failure, 2 refused, 3 a
   stalled xobuild (offload.md "Stalled builds and the seed"). While
   concurrent steps run, a heartbeat every `XO_GATE_HEARTBEAT_S` (600;
   0: off) prints `gate.sh: STEP running (N s ...); STEP.txt N lines;
@@ -1015,6 +1019,9 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   hit 2026-11-04 and 2026-11-08); those modes warn without it (lead,
   2026-11-08). A pass change (a compiler/ source the xo runs) needs no
   stage2: the seed compiles the new pass code into xo.
+  One --ab per agent (#171): a second ab-host.sh from the same Claude
+  session while its first is live or queued is refused, exit 2 (read
+  the first result, then queue the next; `AB_HOST_MULTI_OK=1` skips it).
   Rounds (owner, 2026-10-31: "Do 3 rounds"): ab-host.sh runs 3 rounds
   after 1 warmup (3 for `edit`), and xo bench gives a verdict from 3
   rounds (decision 0340's addendum). A 3-round verdict needs all three
@@ -1378,6 +1385,15 @@ XO_HEAVY_SLOT and `HEAVY_NAME_REUSE=1` append as before; tested by
 scripts/lead/heavy_name_test.sh). Tested by scripts/lead/offload_gate_test.sh.
 Last verified: 2026-11-15
 
+Stopping a chain frees its leases (#164): a heavyd lease client watches
+the processes that started it, up to the agent's claude process, every
+10 s. When one of them gets a new parent (its chain was stopped by PID,
+so the gate under it was orphaned), a waiting lease leaves the queue and
+a running one stops its job, exit 129, with `ORPHAN lease NAME` in
+heavyd.log and the lead's bottleneck.log. A run meant to outlive its
+caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
+2026-11-16
+
 ## Coordinating (scripts/lead/README.md)
 
 - Gates: `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`: no slot,
@@ -1397,7 +1413,9 @@ Last verified: 2026-11-15
 - Gates on an offload host (owner, 2026-11-07): `OFFGATE_AGENT=NAME ~/xo-lead/agents/offload-gate.sh WORKTREE
   [STEP...]` runs `scripts/gate.sh` on the pass/fail host for a committed worktree, with no hand made bundle or
   host script: it bundles HEAD and origin/main (only the commits the host lacks, so no detached HEAD or
-  missing prerequisite), takes a memory lease (OFF_MAX_MIN=15 by default; raise it for a long step), sets
+  missing prerequisite), takes a lease sized from the steps (OFF_MAX_MIN overrides it; one below the steps' formula is
+  refused, exit 2, since a cut lease reports no step: unset it or split the steps; OFFGATE_SHORT_LEASE_OK=1
+  for a run meant to be cut, #167), sets
   origin/main on the host, streams gate.sh's lines and each failed step's log, keeps the output in
   `~/xo-lead/notes/NAME/gate-*.log` on a failure, and ends with the PUSHQ_RAN value to give pushq.sh
   --gated; its exit status is the gate's. A step that needs the Mac (darwin output) still runs there.
@@ -1443,6 +1461,10 @@ Last verified: 2026-11-15
   and each agent keeps at most 2 jobs queued there (chain the rest).
   `offload.sh --status` shows the host lanes and their jobs without
   queueing anything (#172; `OFFLOAD_ENV=FILE` for one host).
+  An exclusive job on host 1 (lane arm64's host file) over 30 minutes
+  is refused, exit 2 (#170): split it into leases of `OFF_MAX_MIN=30` or
+  less so queued --ab runs interleave (ab-host.sh's own run, inside its
+  lease, passes; `OFF_LONG_EXCLUSIVE_OK=1` for an approved long run).
   A change's arm64 tests gate on arm64 (the Mac or that host); the
   linux/amd64 host skips them and is an addition, not a substitute
   (lead, 2026-10-30; gotchas/amd64-gate-skips-arm64-tests.md).
@@ -1811,6 +1833,11 @@ Last verified: 2026-11-15
   std and goldens against the older compiler (Xo lang 5 lost a 60 minute
   suite to that, 2026-10-21). Rebuild (`go run ./scripts/xobuild` in that
   tree) or, for a deliberate cross version run, `XO_CLI_STALE_OK=1`.
+  heavy.sh exit 67 means "not queued: a fuzz sweep in the gate class"
+  (#177, 2026-11-16): `stdproven fuzz` (directly or through sp-par.sh)
+  under `HEAVY_CLASS=gate` with no shard limit or `-minutes` of 2 or more;
+  shard it to a host or run it as `HEAVY_CLASS=bulk HEAVY_DARWIN=1`
+  (scripts/lead/heavy_fuzz_test.sh).
   heavy.sh exit 65 means "not queued: a stale xo" (2026-11-07: a stale
   control run waited for a gate slot, then failed in 0.26 s; owner,
   2026-11-08), decided in about a second by `go run ./scripts/xoclicheck
@@ -1916,7 +1943,14 @@ pushq.sh (run them directly); `git reset --hard` over uncommitted tracked
 changes (commit, or `--soft`); an em-dash in a commit message, or
 backticks in `git commit -m` (`git commit -F -` with a quoted heredoc);
 Edit or Write of a generated file (its header's generator, then
-regenerate; a hand-written test goes in a new file beside it). It allows
+regenerate; a hand-written test goes in a new file beside it); rm,
+rmdir, unlink or trash fed a list from `ls` (an aliased `ls -F` adds
+`/` and `*`; `find DIR -maxdepth 1 -name 'PATTERN' -print`, check it,
+then `-delete`, #178); git commit, amend, rebase, checkout, switch,
+reset, merge, pull or cherry-pick in a worktree where an offload-gate.sh
+or pushq.sh run (not `--wait` or `--needs`) or a heavyd gate lock's
+heavy.sh is live (a new worktree, or `--wait` under run_in_background;
+#163). It allows
 a call it cannot parse (fail open) and logs blocks and errors to
 `~/xo-lead/notes/ccguard.log`. It runs once `~/xo-lead/ccguard-on`
 exists and install.sh ran (it adds itself to the main checkout's

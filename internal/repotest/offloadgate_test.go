@@ -1,6 +1,7 @@
 package repotest
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -16,8 +17,19 @@ func TestOffloadGateLease(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("no bash")
 	}
-	out, err := exec.Command("bash", filepath.Join(root, "scripts", "lead", "offload_gate_test.sh")).CombinedOutput()
-	if err != nil {
-		t.Fatalf("offload_gate_test.sh: %v\n%s", err, out)
+	// pushq runs this test inside heavyd's merge lane, whose HEAVY_LANE
+	// skipped the lane and host 1 checks as for a job inside a lease (the
+	// lead tools batch's push, 2026-11-17); a caller's routing must not
+	// reach the cases
+	env := append(os.Environ(), "HEAVY_LANE=merge", "HEAVY_LANE_SLOT=1",
+		"HEAVY_LANE_ENV=offload-arm64b.env", "OFFLOAD_ENV=offload-arm64c.env",
+		"AB_HOST_AGENT=caller")
+	for _, e := range [][]string{os.Environ(), env} {
+		cmd := exec.Command("bash", filepath.Join(root, "scripts", "lead", "offload_gate_test.sh"))
+		cmd.Env = e
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("offload_gate_test.sh: %v\n%s", err, out)
+		}
 	}
 }
