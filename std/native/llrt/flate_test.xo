@@ -138,3 +138,40 @@ test "input after the end of a stream is neither read nor kept" {
   expect(s.f.data.len() < 1000) == true
   expect(s.push(b"", true).ok() ?? b"x") == b""
 }
+
+/// Text that deflates with matches and literals, seeded by k.
+fn reset_text(k: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..3000 {
+    b.write_str("${(i * 7919 + k) % 1000} ")
+  }
+  b.freeze()
+}
+
+test "a reset stream writes what a new stream writes" {
+  // ZipWriter resets one Stream per file (Go's flate Writer.Reset); a
+  // reset that kept window, hash or bit state wrote a different stream
+  for level in [0, 1, 5, 9] {
+    var s = new_stream(level)
+    s.write(reset_text(1))
+    s.close()
+    let first = s.take()
+    expect(first.len() > 0) == true
+    s.reset()
+    s.write(reset_text(2))
+    s.close()
+    let again = s.take()
+    var f = new_stream(level)
+    f.write(reset_text(2))
+    f.close()
+    expect(again) == f.take()
+    // a reset in the middle of a stream drops what was not closed
+    s.reset()
+    s.write(reset_text(3))
+    s.flush()
+    s.reset()
+    s.write(reset_text(2))
+    s.close()
+    expect(s.take()) == again
+  }
+}

@@ -1,5 +1,19 @@
 # std/archive changes
 
+## 2026-11-16: perf: zip_writer reuses one deflate stream and compares matches a word at a time
+
+- Kind: perf
+- Commit: this push
+- Found by: task #101, the zip_writer row of bench/perf/archive over 1.05 (1.154 on host 1)
+- Go reference: archive/zip Writer (compressors are reset per file, flate.Writer.Reset); compress/flate matchLen
+- Test: std/native/llrt/flate_test.xo ("a reset stream writes what a new stream writes"); internal/stdtest/testdata/corpus/archive (zip_writer writes Go's bytes)
+- Timing: bench/perf/archive zip_writer, 8.37G to 7.77G instructions retired on the Mac (-7%); host 1 --ab in std/evidence/archive/perf.md
+
+Each entry a `ZipWriter` started built a new deflate stream, allocating
+and zeroing its hash tables; it now resets the one stream in place, as
+Go's Writer resets its compressor. The match finder compares 8 bytes at
+a time without overflow checks. The written bytes are unchanged.
+
 ## 2026-11-16: fix: untar quotes a name that is not UTF-8 as Go does
 
 - Kind: fix

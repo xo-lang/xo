@@ -1,5 +1,17 @@
 # std/compress changes
 
+## 2026-11-16: perf: deflate compares matches a word at a time
+
+- Kind: perf
+- Commit: this push
+- Found by: task #101, a profile of bench/perf/archive zip_writer (match_len and find_match on top)
+- Go reference: compress/flate matchLen
+- Test: internal/stdtest/testdata/corpus/compress (deflate at every level writes Go's bytes)
+- Timing: bench/perf/archive zip_writer, 8.37G to 8.17G instructions retired on the Mac (-2.5%) from this part
+
+The deflate match finder compares 8 bytes at a time with wrapping
+arithmetic, so the loop carries no overflow checks. Output is unchanged.
+
 ## 2026-11-15: feature: preset dictionaries and gzip header fields
 
 - Kind: feature

@@ -1972,7 +1972,7 @@ fn (var w: ZipWriter) start(p: Str, mode: Int, is_dir: Bool, modified: Time, sto
   w.open = true
   w.sum = 0
   if !is_dir && !store {
-    w.s = flate.new_stream(5)
+    w.s.reset()
   }
   Ok(())
 }

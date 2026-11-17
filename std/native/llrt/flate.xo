@@ -1145,25 +1145,25 @@ fn (var d: Deflater) write_block(index: Int) {
 }
 
 /// matchLen: 8 bytes a step (Go's binary.LittleEndian.Uint64 compare),
-/// the first differing byte from the xor's trailing zeros. a and b are
-/// below pos and at it, and max is at most the lookahead, so every load
-/// is inside the window.
-fn (d: Deflater) match_len(a: Int, b: Int, max: Int) -> Int {
-  let p = raw.bytes_addr(d.data).wrapping_add(d.base)
+/// the first differing byte from the xor's trailing zeros. p is the
+/// window's address (find_match loads it once per chain and keeps d.data
+/// alive); a and b are below pos and at it, and max is at most the
+/// lookahead (MAX_MATCH at most), so every load is inside the window and
+/// no index can overflow: the arithmetic wraps, unchecked.
+fn match_len(p: Int, a: Int, b: Int, max: Int) -> Int {
   var i = 0
-  while i + 8 <= max {
-    let x = rt.mem_load(p, a + i, 8) ^ rt.mem_load(p, b + i, 8)
+  while i.wrapping_add(8) <= max {
+    let x = rt.mem_load(p, a.wrapping_add(i), 8) ^ rt.mem_load(p, b.wrapping_add(i), 8)
     if x != 0 {
-      return i + (x.trailing_zeros() >> 3)
+      return i.wrapping_add(x.trailing_zeros() >> 3)
     }
-    i += 8
+    i = i.wrapping_add(8)
   }
-  raw.alive(d.data)
   while i < max {
-    if d.win(a + i) != d.win(b + i) {
+    if rt.mem_load(p, a.wrapping_add(i), 1) != rt.mem_load(p, b.wrapping_add(i), 1) {
       return i
     }
-    i += 1
+    i = i.wrapping_add(1)
   }
   max
 }
@@ -1193,8 +1193,8 @@ fn (d: Deflater) find_match(pos: Int, prev_head: Int, prev_length: Int, lookahea
   var offset = 0
   var i = prev_head
   while tries > 0 {
-    if w_end == rt.mem_load(wp, i + length, 1) {
-      let n = d.match_len(i, pos, min_match_look)
+    if w_end == rt.mem_load(wp, i.wrapping_add(length), 1) {
+      let n = match_len(wp, i, pos, min_match_look)
       if n > length && (n > MIN_MATCH || pos - i <= 4096) {
         length = n
         offset = pos - i
@@ -1202,7 +1202,7 @@ fn (d: Deflater) find_match(pos: Int, prev_head: Int, prev_length: Int, lookahea
         if n >= nice {
           break
         }
-        w_end = rt.mem_load(wp, pos + n, 1)
+        w_end = rt.mem_load(wp, pos.wrapping_add(n), 1)
       }
     }
     if i == min_index {
@@ -2387,6 +2387,22 @@ fn (var d: Deflater) reset() {
   d.chain_head = -1
   d.hash_offset = 1
   d.blocks.w = BitWriter{out: [], bits: 0, nbits: 0}
+}
+
+/// s ready for a new stream at its level, as Go's Writer.Reset: levels 2
+/// to 9 keep the Deflater's tables (zeroed where they are, not allocated
+/// again), the others start over. archive's ZipWriter resets one Stream
+/// per file where it made a new one (Go's zip pools its Writers).
+pub fn (var s: Stream) reset() {
+  if s.level < 2 {
+    s = new_stream(s.level)
+    return
+  }
+  s.d.reset()
+  s.buf = b""
+  s.ws = 0
+  s.we = 0
+  s.sync = false
 }
 
 /// data compressed at the level of s (2 to 9) as a stream of its own,
