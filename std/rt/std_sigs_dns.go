@@ -10,8 +10,13 @@ var (
 	_ func(*Task, Net, string) Result[List[string], NetErr]                                 = Dns_lookup_txt
 	_ func(*Task, Net, string, string, string) Result[List[Dns_Srv], NetErr]                = Dns_lookup_srv
 	_ func(*Task, Net, string) Result[List[string], NetErr]                                 = Dns_lookup_addr
+	_ func(*Task, Net, string) Result[string, NetErr]                                       = Dns_lookup_cname
+	_ func(*Task, Net, string) Result[List[string], NetErr]                                 = Dns_lookup_ns
 	_ func(*Dns_Resolver, *Task, Net, string) Result[List[Dns_Mx], NetErr]                  = (*Dns_Resolver).M_lookup_mx
 	_ func(*Dns_Resolver, *Task, Net, string) Result[List[string], NetErr]                  = (*Dns_Resolver).M_lookup_txt
 	_ func(*Dns_Resolver, *Task, Net, string, string, string) Result[List[Dns_Srv], NetErr] = (*Dns_Resolver).M_lookup_srv
 	_ func(*Dns_Resolver, *Task, Net, string) Result[List[string], NetErr]                  = (*Dns_Resolver).M_lookup_addr
+	_ func(*Dns_Resolver, *Task, Net, string) Result[string, NetErr]                        = (*Dns_Resolver).M_lookup_cname
+	_ func(*Dns_Resolver, *Task, Net, string) Result[List[string], NetErr]                  = (*Dns_Resolver).M_lookup_ns
+	_ func(*Dns_Resolver, *Task, Net, string) Result[List[string], NetErr]                  = (*Dns_Resolver).M_lookup_host
 )

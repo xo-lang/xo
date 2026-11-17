@@ -5,9 +5,12 @@
 // an MX with an invalid host left out (Ok) and one with only invalid hosts
 // (Err), a truncated UDP answer retried over TCP, NXDOMAIN, SERVFAIL, an
 // address that does not parse, and Net.only's Denied (the package
-// functions too, which otherwise ask the system's servers). Errors are printed
+// functions too, which otherwise ask the system's servers), a CNAME chain's
+// canonical name, NS hosts, Resolver.lookup_host's A answer, and
+// netip.parse_mac. Errors are printed
 // without their " on SERVER" part (Go names resolv.conf's server there).
 use std/dns
+use std/netip
 use std/udp
 
 fn put16(var b: BytesBuilder, v: Int) {
@@ -65,6 +68,21 @@ fn srv(priority: Int, weight: Int, port: Int, target: Str) -> Bytes {
 
 fn ptr(host: Str) -> Bytes { rr(12, wire(host)) }
 
+/// An A record whose owner is name (not the question's).
+fn a_of(name: Str, ip: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write(wire(name))
+  put16(b, 1)
+  put16(b, 1)
+  put16(b, 0)
+  put16(b, 60)
+  put16(b, 4)
+  for x in ip {
+    b.write_byte(UInt8(x))
+  }
+  b.freeze()
+}
+
 /// The rcode and answers for a question; tcp is whether it came over TCP
 /// (rcode -1: truncated, retry over TCP).
 fn table(name: Str, ty: Int, tcp: Bool) -> (Int, List[Bytes]) {
@@ -78,6 +96,10 @@ fn table(name: Str, ty: Int, tcp: Bool) -> (Int, List[Bytes]) {
     ("1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.", 12) => (0, [ptr("six.example.")])
     ("big.test.", 16) => if tcp { (0, [txt(["one"]), txt(["two"]), txt(["three"])]) } else { (-1, []) }
     ("fail.test.", _) => (2, [])
+    ("www.cname.test.", 1) => (0, [rr(5, wire("real.cname.test.")), a_of("real.cname.test.", [192, 0, 2, 9])])
+    ("ns.test.", 2) => (0, [rr(2, wire("ns1.test.")), rr(2, wire("ns2.test."))])
+    ("host.test.", 1) => (0, [a_of("host.test.", [192, 0, 2, 10])])
+    ("host.test.", 28) => (0, [])
     _ => (3, [])
   }
 }
@@ -251,6 +273,22 @@ fn main(os: Os) {
       Ok(_) => os.stdio.println("only: looked up?")
       Err(e) => os.stdio.println("only: denied ${e is NetErr.Denied(_)}")
     }
+    match r.lookup_cname(os.net, "www.cname.test.") {
+      Ok(c) => os.stdio.println("cname: ${c}")
+      Err(e) => os.stdio.println("cname: ${shown(e)}")
+    }
+    match r.lookup_ns(os.net, "ns.test.") {
+      Ok(xs) => os.stdio.println("ns: ${xs.join(", ")}")
+      Err(e) => os.stdio.println("ns: ${shown(e)}")
+    }
+    match r.lookup_host(os.net, "host.test.") {
+      Ok(xs) => os.stdio.println("host: ${xs.join(", ")}")
+      Err(e) => os.stdio.println("host: ${shown(e)}")
+    }
+    match r.lookup_host(os.net, "192.0.2.77") {
+      Ok(xs) => os.stdio.println("host literal: ${xs.join(", ")}")
+      Err(e) => os.stdio.println("host literal: ${shown(e)}")
+    }
     // the package functions ask the system's servers, and an attenuated
     // Net refuses a name it does not admit before any query is sent
     let none = os.net.only(["example.com"])
@@ -259,10 +297,18 @@ fn main(os: Os) {
       denied(dns.lookup_txt(none, "txt.test.")),
       denied(dns.lookup_srv(none, "xmpp", "tcp", "srv.test.")),
       denied(dns.lookup_addr(none, "192.0.2.1")),
+      denied(dns.lookup_cname(none, "www.cname.test.")),
+      denied(dns.lookup_ns(none, "ns.test.")),
     ]
     os.stdio.println("package only: denied ${denied}")
     srv_udp.close()
     lis.close()
+  }
+  for m in ["00-00-5E-00-53-01", "0000.5e00.5301", "01:02:03"] {
+    match netip.parse_mac(m) {
+      Ok(h) => os.stdio.println("mac ${m}: ${h.display()}")
+      Err(e) => os.stdio.println("mac ${m}: ${e}")
+    }
   }
   os.stdio.println("done")
 }

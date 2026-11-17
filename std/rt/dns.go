@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// std/dns (decision 0417): Go's LookupMX, LookupTXT, LookupSRV and
+// std/dns (decision 0417): Go's LookupMX, LookupTXT, LookupSRV, LookupCNAME, LookupNS and
 // LookupAddr over a Net, with Net.only's check of the name and Ok with
 // the valid records when Go returns some together with its
 // errMalformedDNSRecordsDetail error.
@@ -152,4 +152,51 @@ func Dns_lookup_srv(tk *Task, n Net, service, proto, name string) Result[List[Dn
 // Dns_lookup_addr is `dns.lookup_addr(n, ip)`.
 func Dns_lookup_addr(tk *Task, n Net, ip string) Result[List[string], NetErr] {
 	return (&Dns_Resolver{}).M_lookup_addr(tk, n, ip)
+}
+
+func (r *Dns_Resolver) M_lookup_cname(tk *Task, n Net, host string) Result[string, NetErr] {
+	if e := dnsCheck(tk, n, host, host); e != nil {
+		return Err[string](*e)
+	}
+	cname, err := dnsResolver(r).LookupCNAME(context.Background(), host)
+	if err != nil {
+		return Err[string](dnsErr(err))
+	}
+	return Ok[string, NetErr](cname)
+}
+
+func (r *Dns_Resolver) M_lookup_ns(tk *Task, n Net, name string) Result[List[string], NetErr] {
+	if e := dnsCheck(tk, n, name, name); e != nil {
+		return Err[List[string]](*e)
+	}
+	nss, err := dnsResolver(r).LookupNS(context.Background(), name)
+	if err != nil && (!dnsPartial(err) || len(nss) == 0) {
+		return Err[List[string]](dnsErr(err))
+	}
+	out := make([]string, len(nss))
+	for i, s := range nss {
+		out[i] = s.Host
+	}
+	return Ok[List[string], NetErr](ListFromSlice(out))
+}
+
+// Dns_lookup_cname is `dns.lookup_cname(n, host)`.
+func Dns_lookup_cname(tk *Task, n Net, host string) Result[string, NetErr] {
+	return (&Dns_Resolver{}).M_lookup_cname(tk, n, host)
+}
+
+// Dns_lookup_ns is `dns.lookup_ns(n, name)`.
+func Dns_lookup_ns(tk *Task, n Net, name string) Result[List[string], NetErr] {
+	return (&Dns_Resolver{}).M_lookup_ns(tk, n, name)
+}
+
+func (r *Dns_Resolver) M_lookup_host(tk *Task, n Net, host string) Result[List[string], NetErr] {
+	if e := dnsCheck(tk, n, host, host); e != nil {
+		return Err[List[string]](*e)
+	}
+	addrs, err := dnsResolver(r).LookupHost(context.Background(), host)
+	if err != nil {
+		return Err[List[string]](dnsErr(err))
+	}
+	return Ok[List[string], NetErr](ListFromSlice(addrs))
 }

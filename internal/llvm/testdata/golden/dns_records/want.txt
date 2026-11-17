@@ -16,6 +16,13 @@ tcp: one, two, three
 nx: lookup nx.test.: no such host
 fail: lookup fail.test.: server misbehaving
 only: denied true
-package only: denied [true, true, true, true]
+cname: real.cname.test.
+ns: ns1.test., ns2.test.
+host: 192.0.2.10
+host literal: 192.0.2.77
+package only: denied [true, true, true, true, true, true]
+mac 00-00-5E-00-53-01: 00:00:5e:00:53:01
+mac 0000.5e00.5301: 00:00:5e:00:53:01
+mac 01:02:03: address 01:02:03: invalid MAC address
 done
 --- stderr

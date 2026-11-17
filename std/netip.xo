@@ -1035,3 +1035,95 @@ fn string6(a: Addr) -> Str {
 fn prefix_err(input: Str, msg: Str) -> ParseErr { ParseErr{what: "netip.ParsePrefix", input: input, msg: msg} }
 
 fn ap_err(msg: Str) -> ParseErr { ParseErr{msg: msg} }
+
+/// A hardware (MAC) address: 6 bytes (EUI-48), 8 (EUI-64) or 20
+/// (IP over InfiniBand link-layer), as Go's net.HardwareAddr.
+pub struct HardwareAddr {
+  pub bytes: Bytes
+} derive Ord
+
+/// Go's net.ParseMAC: an IEEE 802 MAC-48, EUI-48, EUI-64 or 20 byte
+/// InfiniBand address as `00:00:5e:00:53:01`, `00-00-5e-00-53-01` or
+/// `0000.5e00.5301` (either case). The error is Go's AddrError text:
+/// `address 01:23: invalid MAC address`.
+pub fn parse_mac(s: Str) -> HardwareAddr ! ParseErr {
+  let b = s.bytes()
+  let bad = ParseErr{what: "address", input: s, msg: "invalid MAC address"}
+  if b.len() < 14 {
+    return Err(bad)
+  }
+  var out = BytesBuilder.with_capacity(20)
+  if b[2] == UInt8(58) || b[2] == UInt8(45) {
+    if (b.len() + 1) % 3 != 0 {
+      return Err(bad)
+    }
+    let n = (b.len() + 1) / 3
+    if n != 6 && n != 8 && n != 20 {
+      return Err(bad)
+    }
+    let e = Int(b[2])
+    for i in 0..n {
+      let v = mac_xtoi2(b, i * 3, e)
+      if v < 0 {
+        return Err(bad)
+      }
+      out.write_byte(UInt8(v))
+    }
+  } else if b[4] == UInt8(46) {
+    if (b.len() + 1) % 5 != 0 {
+      return Err(bad)
+    }
+    let n = 2 * (b.len() + 1) / 5
+    if n != 6 && n != 8 && n != 20 {
+      return Err(bad)
+    }
+    var x = 0
+    for _ in 0..(n / 2) {
+      let v0 = mac_xtoi2(b[x..(x + 2)], 0, 0)
+      let v1 = mac_xtoi2(b, x + 2, 46)
+      if v0 < 0 || v1 < 0 {
+        return Err(bad)
+      }
+      out.write_byte(UInt8(v0))
+      out.write_byte(UInt8(v1))
+      x += 5
+    }
+  } else {
+    return Err(bad)
+  }
+  Ok(HardwareAddr{bytes: out.freeze()})
+}
+
+/// Go's xtoi2: the two hex digits of b at x as a byte, -1 when either is
+/// not a hex digit or the byte after them (when there is one) is not e.
+fn mac_xtoi2(b: Bytes, x: Int, e: Int) -> Int {
+  if b.len() - x > 2 && Int(b[x + 2]) != e {
+    return -1
+  }
+  let h = hexval(b[x])
+  let l = hexval(b[x + 1])
+  if h < 0 || l < 0 {
+    return -1
+  }
+  h * 16 + l
+}
+
+/// Go's HardwareAddr.String: the bytes as lower case hex pairs joined by
+/// colons, "" for no bytes.
+pub fn (a: HardwareAddr) display() -> Str {
+  let n = a.bytes.len()
+  if n == 0 {
+    return ""
+  }
+  var out = BytesBuilder.with_capacity(n * 3 - 1)
+  for i in 0..n {
+    if i > 0 {
+      out.write_byte(UInt8(58))
+    }
+    let v = Int(a.bytes[i])
+    out.write_byte(HEXD[v >> 4])
+    out.write_byte(HEXD[v & 15])
+  }
+  // hex digits and colons: valid UTF-8
+  rt.cast[Bytes, Str](out.freeze())
+}

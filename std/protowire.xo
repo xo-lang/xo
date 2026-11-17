@@ -123,13 +123,6 @@ pub fn wbp(var o: BytesBuilder, num: Int, v: Bool, seen: Bool) {
   }
 }
 
-pub fn wb(var o: BytesBuilder, num: Int, v: Bool) {
-  if v {
-    wtag(o, num, 0)
-    wv(o, 1)
-  }
-}
-
 /// A message-valued field (always written, even when empty).
 pub fn wm(var o: BytesBuilder, num: Int, m: Bytes) {
   wtag(o, num, 2)

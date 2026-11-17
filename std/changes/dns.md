@@ -1,5 +1,19 @@
 # std/dns changes
 
+## 2026-11-16: feature: std/dns, Go's LookupCNAME, LookupNS and Resolver.LookupHost
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #184 (feature gaps, ~/xo-lead/notes/stdcov/502a0170c.json)
+- Go reference: net (lookup.go LookupCNAME, LookupNS, Resolver.LookupHost; dnsclient_unix.go goLookupCNAME, goLookupHostOrder; hosts.go lookupStaticHost) of go1.26.1
+- Test: std/dns_test.xo (lookup_cname through an alias's A answer, a plain name, a CNAME only name, invalid and missing names, /etc/hosts first; lookup_ns valid, partly and wholly invalid, missing; Resolver.lookup_host: an IP literal, localhost from /etc/hosts, A and AAAA, an alias, a bad address length, missing names)
+- Shipped in: not yet released
+
+`dns.lookup_cname` and `lookup_ns` over a Net, and as Resolver
+methods, and `Resolver.lookup_host` for a host's addresses from one
+chosen server. The CNAME lookup follows Go: /etc/hosts, then the owner
+of the first address record of the A answer, else a CNAME query.
+
 ## 2026-11-16: fix: a name with a "." byte inside a label makes the answer malformed, as Go's dnsmessage says
 
 - Kind: fix

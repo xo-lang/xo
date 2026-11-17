@@ -7042,6 +7042,9 @@ fn (a: Addr) next() -> Addr?                  // also prev(); None past the fami
 fn (a: Addr) with_zone(zone: Str) -> Addr     // IPv6 only, as Go
 pub fn prefix_from(addr: Addr, bits: Int) -> Prefix?    // PrefixFrom: not masked; None out of range
 fn (p: Prefix) bits() -> Int                  // also is_single_ip(), overlaps(o)
+pub struct HardwareAddr { pub bytes: Bytes } derive Ord   // Go's net.HardwareAddr
+pub fn parse_mac(s: Str) -> HardwareAddr ! ParseErr       // Go's net.ParseMAC: 6, 8 or 20 bytes
+fn (a: HardwareAddr) display() -> Str         // 00:00:5e:00:53:01 (Go's HardwareAddr.String)
 ```
 
 - Parsing is Go's ParseAddr and ParsePrefix, errors included: IPv4
@@ -7054,6 +7057,10 @@ fn (p: Prefix) bits() -> Int                  // also is_single_ip(), overlaps(o
   allocation. A program that read `a.ip` reads `a.bytes()` (4 bytes for
   IPv4, 16 for IPv6, Go's `AsSlice`; `ip` was always 16) and builds an
   address from bytes with `netip.addr_from_bytes(b)`.
+- `parse_mac` takes Go's forms: pairs separated by ':' or '-', or groups
+  of four separated by '.', for an EUI-48, EUI-64 or 20 byte InfiniBand
+  address; anything else is `ParseErr` "address S: invalid MAC address".
+  `display` is lower case pairs with ':' ("" for no bytes).
 - A typical use, the client address behind trusted proxies:
   `trusted.any(fn(p) { p.contains(peer) })`.
 
@@ -9553,7 +9560,7 @@ pub fn update128a(sum: Bytes, data: Bytes) -> Bytes
 ## 46. std/dns
 
 DNS record lookups (decision 0417), Go's `net.LookupMX`, `LookupTXT`,
-`LookupSRV` and `LookupAddr`. Free functions over a Net, `uses
+`LookupSRV`, `LookupAddr`, `LookupCNAME` and `LookupNS`. Free functions over a Net, `uses
 net.dial` as `Net.lookup_host`: an attenuated Net (`only`) refuses a
 name it does not admit with `Denied` (for `lookup_srv` the name checked
 is `name`, for `lookup_addr` the address).
@@ -9566,7 +9573,10 @@ fn lookup_mx(n: Net, name: Str) -> List[Mx] ! NetErr uses net.dial
 fn lookup_txt(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial
 fn lookup_srv(n: Net, service: Str, proto: Str, name: Str) -> List[Srv] ! NetErr uses net.dial
 fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial
-// and the same four as methods of Resolver
+fn lookup_cname(n: Net, host: Str) -> Str ! NetErr uses net.dial
+fn lookup_ns(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial
+// and the same six as methods of Resolver, with
+fn (r: Resolver) lookup_host(n: Net, host: Str) -> List[Str] ! NetErr uses net.dial
 ```
 
 - The free functions are `Resolver{}`'s. A Resolver with `server`
@@ -9581,7 +9591,13 @@ fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial
   each priority's records by weight (RFC 2782); `lookup_txt` joins each
   record's character strings; `lookup_addr` asks for the PTR records of
   the address's in-addr.arpa or ip6.arpa name, after /etc/hosts (its
-  names lowercased and rooted).
+  names lowercased and rooted). `lookup_cname` is Go's: /etc/hosts
+  first, then the owner of the A (or AAAA) answer's first address record
+  (the canonical name after any CNAME chain), else a CNAME query's
+  target. `lookup_ns` gives the name servers, rooted.
+  `Resolver.lookup_host` is Go's `Resolver.LookupHost` against that
+  server: an IP literal comes back as itself, then /etc/hosts, then the A
+  and AAAA records, sorted as `Net.lookup_host` sorts (RFC 6724).
 - A record whose name is not a domain name (Go's isDomainName), or a TXT
   record that is not UTF-8, is left out: the call is `Ok` with the
   valid records when there is at least one, and `Err(Io)` ("DNS response

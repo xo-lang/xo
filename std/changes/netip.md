@@ -1,5 +1,17 @@
 # std/netip changes
 
+## 2026-11-16: feature: std/netip, Go's net.HardwareAddr and ParseMAC
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #184 (feature gaps, ~/xo-lead/notes/stdcov/502a0170c.json)
+- Go reference: net (mac.go ParseMAC, HardwareAddr.String; mac_test.go parseMACTests) of go1.26.1
+- Test: std/netip_test.xo "parse_mac and HardwareAddr.display follow Go's ParseMAC and String" (Go's table: EUI-48, EUI-64 and InfiniBand forms with ':', '-' and '.', and its bad inputs with the error text)
+- Shipped in: not yet released
+
+`netip.parse_mac` and `HardwareAddr` with `display`, Go's ParseMAC and
+HardwareAddr.String.
+
 ## 2026-11-16: perf: plain IPv6 addresses parse in one pass
 
 - Kind: perf

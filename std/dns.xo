@@ -1,6 +1,7 @@
 // std/dns (spec/std.md 46, decision 0417). Declaration file; encoding
 // rules are listed at the top of std/prelude.xo. Go's DNS record
-// lookups (net.LookupMX, LookupTXT, LookupSRV, LookupAddr) over a Net:
+// lookups (net.LookupMX, LookupTXT, LookupSRV, LookupAddr, LookupCNAME,
+// LookupNS) over a Net:
 // `uses net.dial`, as Net.lookup_host, and an attenuated Net refuses a
 // name it does not admit (`Denied`).
 
@@ -42,8 +43,24 @@ fn lookup_srv(n: Net, service: Str, proto: Str, name: Str) -> List[Srv] ! NetErr
 /// The names of the address ip (PTR records of its in-addr.arpa or
 /// ip6.arpa name), rooted; /etc/hosts first, as Go's LookupAddr.
 fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial
+/// The canonical name of host, rooted (Go's LookupCNAME): /etc/hosts
+/// first (the first name of the line naming host), then the owner of the
+/// first A, else AAAA, record, else the target of a CNAME record; the
+/// name itself when it has no alias. Err when none answers, or the name
+/// found is not a domain name.
+fn lookup_cname(n: Net, host: Str) -> Str ! NetErr uses net.dial
+/// The name servers of name (NS records), each host rooted (Go's
+/// LookupNS). Hosts that are not domain names are left out; Err when
+/// every one is.
+fn lookup_ns(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial
 
 fn (r: Resolver) lookup_mx(n: Net, name: Str) -> List[Mx] ! NetErr uses net.dial
 fn (r: Resolver) lookup_txt(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial
 fn (r: Resolver) lookup_srv(n: Net, service: Str, proto: Str, name: Str) -> List[Srv] ! NetErr uses net.dial
 fn (r: Resolver) lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial
+fn (r: Resolver) lookup_cname(n: Net, host: Str) -> Str ! NetErr uses net.dial
+fn (r: Resolver) lookup_ns(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial
+/// The addresses of host from this resolver's servers (Go's
+/// Resolver.LookupHost): an IP literal is itself, then /etc/hosts, then
+/// the A and AAAA records, sorted by RFC 6724 as Net.lookup_host sorts.
+fn (r: Resolver) lookup_host(n: Net, host: Str) -> List[Str] ! NetErr uses net.dial

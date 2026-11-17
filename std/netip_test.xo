@@ -3390,3 +3390,43 @@ test "the plain IPv6 fast path agrees with parse_ipv6 and declines the rest" {
   }
   expect(bad) == []
 }
+
+// Go's net mac_test.go (go1.26) parseMACTests, and String of each.
+test "parse_mac and HardwareAddr.display follow Go's ParseMAC and String" {
+  let ok = [
+    ("00:00:5e:00:53:01", b"\x00\x00\x5e\x00\x53\x01"),
+    ("00-00-5e-00-53-01", b"\x00\x00\x5e\x00\x53\x01"),
+    ("0000.5e00.5301", b"\x00\x00\x5e\x00\x53\x01"),
+    ("02:00:5e:10:00:00:00:01", b"\x02\x00\x5e\x10\x00\x00\x00\x01"),
+    ("00:00:00:00:fe:80:00:00:00:00:00:00:02:00:5e:10:00:00:00:01", b"\x00\x00\x00\x00\xfe\x80\x00\x00\x00\x00\x00\x00\x02\x00\x5e\x10\x00\x00\x00\x01"),
+    ("02-00-5e-10-00-00-00-01", b"\x02\x00\x5e\x10\x00\x00\x00\x01"),
+    ("00-00-00-00-fe-80-00-00-00-00-00-00-02-00-5e-10-00-00-00-01", b"\x00\x00\x00\x00\xfe\x80\x00\x00\x00\x00\x00\x00\x02\x00\x5e\x10\x00\x00\x00\x01"),
+    ("0200.5e10.0000.0001", b"\x02\x00\x5e\x10\x00\x00\x00\x01"),
+    ("0000.0000.fe80.0000.0000.0000.0200.5e10.0000.0001", b"\x00\x00\x00\x00\xfe\x80\x00\x00\x00\x00\x00\x00\x02\x00\x5e\x10\x00\x00\x00\x01"),
+    ("AB:cd:EF:01:23:45", b"\xab\xcd\xef\x01\x23\x45"),
+  ]
+  for (s, want) in ok {
+    let h = parse_mac(s).or_fault(s)
+    expect(h.bytes) == want
+    expect(parse_mac(h.display()).or_fault("round trip").bytes) == want
+  }
+  expect(parse_mac("00-00-5e-00-53-01").or_fault("dash").display()) == "00:00:5e:00:53:01"
+  expect(parse_mac("0000.5e00.5301").or_fault("dot").display()) == "00:00:5e:00:53:01"
+  expect(parse_mac("AB:cd:EF:01:23:45").or_fault("case").display()) == "ab:cd:ef:01:23:45"
+  expect(HardwareAddr{bytes: Bytes.zeroed(0)}.display()) == ""
+  let bad = [
+    "01.02.03.04.05.06", "01:02:03:04:05:06:", "x1:02:03:04:05:06", "01002:03:04:05:06",
+    "01:02003:04:05:06", "01:02:03004:05:06", "01:02:03:04005:06", "01:02:03:04:05006",
+    "01-02:03:04:05:06", "01:02-03-04-05-06", "0123:4567:89AF", "0123-4567-89AF",
+    "01:02:03:04:05", "0000.5e00.53", "01:02:03:04:05:06:07", "", "00:00:5e:00:53:0g",
+  ]
+  for s in bad {
+    match parse_mac(s) {
+      Ok(h) => fault("${s.quote()} parsed as ${h.display()}")
+      Err(e) => {
+        let want = if s.is_empty() { "invalid MAC address" } else { "address ${s}: invalid MAC address" }
+        expect(e.display()) == want
+      }
+    }
+  }
+}

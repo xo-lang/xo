@@ -691,6 +691,12 @@ fn file_text(path: Str) -> Bytes? {
 /// The names the hosts file gives address ip (std/dns lookup_addr).
 pub fn hosts_names(ip: Bytes) -> List[Str] { dns.hosts_names_in(file_text("/etc/hosts"), ip) }
 
+/// The addresses the hosts file gives name (std/dns Resolver.lookup_host).
+pub fn hosts_addrs(name: Str) -> List[dns.Addr] { dns.hosts_addrs_in(file_text("/etc/hosts"), name) }
+
+/// The canonical name the hosts file gives name (std/dns lookup_cname).
+pub fn hosts_canonical(name: Str) -> Str { dns.hosts_canonical_in(file_text("/etc/hosts"), name) }
+
 /// netconn.lookup_records in a command: the answer message of the first
 /// name of the search list with records of qtype, or b"" with the error
 /// recorded (err_now).

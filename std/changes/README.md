@@ -69,6 +69,7 @@ entries yet.
 - [htmltok.md](htmltok.md): std/htmltok (x/net/html Tokenizer)
 - [htmlparse.md](htmlparse.md): std/htmlparse (x/net/html tree builder and Render)
 - [protodesc.md](protodesc.md): std/protodesc (descriptor.proto as Xo values)
+- [protowire.md](protowire.md): std/protowire (the internal wire writers protodesc, protowkt and protojson share)
 - [protowkt.md](protowkt.md): std/protowkt (the well known types)
 - [protojson.md](protojson.md): std/protojson (canonical JSON mapping)
 - [prototext.md](prototext.md): std/prototext (the text format)

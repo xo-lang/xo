@@ -1086,6 +1086,11 @@ pub fn name_list(conf: Config, name: Str) -> List[Str] {
 
 pub const TYPE_A: Int = 1
 pub const TYPE_CNAME: Int = 5
+pub const TYPE_NS: Int = 2
+/// Added to a qtype for lookup_records: the answer keeps the whole
+/// response for an A or AAAA query too (std/dns lookup_cname reads the
+/// owner name of its first address record, as Go's goLookupCNAME).
+pub const RAW: Int = 65536
 pub const TYPE_AAAA: Int = 28
 pub const TYPE_PTR: Int = 12
 pub const TYPE_MX: Int = 15
@@ -1130,7 +1135,7 @@ pub fn query(id: Int, name: Str, qtype: Int, ad: Bool) -> Bytes {
   put16(b, 0)
   put16(b, 1)
   b.write(wire_name(name, false))
-  put16(b, qtype)
+  put16(b, qtype & 65535)
   put16(b, 1)
   // OPT: the root name, the type, the UDP size as the class, TTL 0, no
   // data
@@ -1262,8 +1267,10 @@ pub fn kind_text(kind: Int) -> Str {
 /// The meaning of response m to the query id, name (rooted), qtype:
 /// (kind, addresses) as checkResponse, checkHeader, skipToAnswer, and
 /// the answer loop of goLookupIPCNAMEOrder read it.
-pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
+pub fn answer(m: Bytes, id: Int, name: Str, qtype0: Int) -> (Int, List[Addr]) {
   var addrs: List[Addr] = []
+  let raw = qtype0 >= RAW
+  let qtype = qtype0 & 65535
   if m.len() < 12 {
     return (KIND_IGNORE, addrs)
   }
@@ -1386,7 +1393,7 @@ pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
   if !found {
     return (KIND_NODATA, addrs)
   }
-  if qtype != TYPE_A && qtype != TYPE_AAAA {
+  if raw || (qtype != TYPE_A && qtype != TYPE_AAAA) {
     // a record lookup (std/dns, decision 0417): the one entry carries a
     // copy of the whole response, which the record parsers below read
     // (m may be a view of a receive buffer the next read reuses)
@@ -2484,6 +2491,47 @@ pub fn random32() -> Int { new_id() * 65536 + new_id() }
 /// The host names /etc/hosts gives the address ip, rooted, in the file's
 /// order (Go's lookupStaticAddr for LookupAddr).
 pub fn hosts_names(ip: Bytes) -> List[Str] { hosts_names_in(hosts_text(), ip) }
+
+/// The addresses /etc/hosts gives name, in the file's order (std/dns
+/// Resolver.lookup_host, Go's lookupStaticHost).
+pub fn hosts_addrs(name: Str) -> List[Addr] { hosts_addrs_in(hosts_text(), name) }
+
+/// hosts_addrs in the hosts file text h0.
+pub fn hosts_addrs_in(h0: Bytes?, name: Str) -> List[Addr] {
+  let h = match h0 {
+    Some(h) => h
+    None => return []
+  }
+  var key = lower(name)
+  if key.ends_with(".") {
+    key = key[..(key.len() - 1)]
+  }
+  hosts_find(h, key.bytes())
+}
+
+/// The canonical name /etc/hosts gives name, "" for none (std/dns
+/// lookup_cname, Go's goLookupIPFiles).
+pub fn hosts_canonical(name: Str) -> Str { hosts_canonical_in(hosts_text(), name) }
+
+/// hosts_canonical in the hosts file text h0: the first name, lowered and
+/// rooted, of the first line with an address that names name (Go's
+/// readHosts keeps the canonical name of the first line naming a key).
+pub fn hosts_canonical_in(h0: Bytes?, name: Str) -> Str {
+  let key = rooted(lower(name))
+  let lines = if let Some(h) = h0 { text_lines(h) ?? [] } else { [] }
+  for line in lines {
+    let f = fields(cut_at(line, "#"))
+    if f.len() < 2 || parse_addr(f[0]).is_none() {
+      continue
+    }
+    for k in 1..f.len() {
+      if rooted(lower(f[k])) == key {
+        return rooted(lower(f[1]))
+      }
+    }
+  }
+  ""
+}
 
 /// hosts_names in the hosts file text h (a wasm command reads it through
 /// its filesystem, decision 0447 R2i).

@@ -7,7 +7,8 @@
 // MX by preference and SRV by priority, a TXT record's strings joined,
 // a truncated answer asked again over TCP, PTR names of IPv4 and IPv6
 // addresses, records whose names are not domain names left out, no such
-// host, and many lookups at once.
+// host, LookupCNAME (an alias's A answer, a CNAME only, /etc/hosts
+// first), LookupNS, and many lookups at once.
 use std/udp
 
 fn be16(n: Int) -> Bytes { Bytes.from_list([UInt8((n >> 8) & 255), UInt8(n & 255)]) }
@@ -55,8 +56,22 @@ fn table() -> Map[Str, List[Bytes]] {
     "12 4.3.0.10.in-addr.arpa.": [wire_name("host4.example.")],
     "12 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.": [wire_name("v6.example.")],
     "1 a.mail.example.": [Bytes.from_list([UInt8(127), UInt8(0), UInt8(0), UInt8(1)])],
+    "2 zone.example.": [wire_name("ns1.zone.example."), wire_name("ns2.zone.example.")],
+    "2 nsbad.example.": [wire_name("ns1.nsbad.example."), wire_name("no space.nsbad.example.")],
+    "2 nsallbad.example.": [wire_name("no space.")],
+    "5 only.example.": [wire_name("target.example.")],
+    "1 host.example.": [Bytes.from_list([UInt8(10), UInt8(0), UInt8(0), UInt8(7)])],
+    "28 host.example.": [Bytes.from_list([UInt8(32), UInt8(1), UInt8(13), UInt8(184), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(7)])],
+    "1 badlen.example.": [Bytes.from_list([UInt8(10), UInt8(0), UInt8(0)])],
+    "5 badc.example.": [wire_name("no space.example.")],
+    // whole answer records (owner, type, class, TTL, data): a recursive
+    // server's reply to A for an alias, the CNAME first (RFC 1034 4.3.1)
+    "raw 1 www.alias.example.": [rr("www.alias.example.", 5, wire_name("real.example.")), rr("real.example.", 1, Bytes.from_list([UInt8(10), UInt8(0), UInt8(0), UInt8(9)]))],
   }
 }
+
+/// One answer record of owner name, type and data.
+fn rr(owner: Str, ty: Int, rd: Bytes) -> Bytes { wire_name(owner) + be16(ty) + be16(1) + be32(60) + be16(rd.len()) + rd }
 
 /// The answer to query q (over TCP when tcp): TC set when it does not
 /// fit 512 bytes of UDP; None for a query that does not parse.
@@ -87,8 +102,13 @@ fn answer(t: Map[Str, List[Bytes]], q: Bytes, tcp: Bool) -> Bytes? {
     }
   }
   var body = BytesBuilder.new()
-  let rrs = t.get("${qtype} ${name}") ?? []
+  let whole = t.get("raw ${qtype} ${name}") ?? []
+  let rrs = if whole.is_empty() { t.get("${qtype} ${name}") ?? [] } else { whole }
   for rd in rrs {
+    if !whole.is_empty() {
+      body.write(rd)
+      continue
+    }
     // the owner is the question's name: a pointer to offset 12
     body.write(b"\xc0\x0c" + be16(qtype) + be16(1) + be32(60) + be16(rd.len()) + rd)
   }
@@ -274,6 +294,101 @@ test "a name the server does not know is no such host" uses (net, clock) {
       Ok(xs) => expect(xs) == []
       Err(e) => expect("${e}".contains("no such host")) == true
     }
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "lookup_cname: an A answer's owner, else a CNAME's target, as Go's LookupCNAME" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    // the A answer's records start with the alias's CNAME: the owner of
+    // the first A record is the canonical name
+    expect(r.lookup_cname(os.net, "www.alias.example.").or_fault("alias")) == "real.example."
+    // a name with an address and no alias is its own canonical name
+    expect(r.lookup_cname(os.net, "a.mail.example").or_fault("plain")) == "a.mail.example."
+    // no A or AAAA records: the CNAME query's target
+    expect(r.lookup_cname(os.net, "only.example.").or_fault("cname only")) == "target.example."
+    match r.lookup_cname(os.net, "badc.example.") {
+      Ok(c) => fault("got ${c}")
+      Err(e) => expect("${e}".contains("invalid names")) == true
+    }
+    match r.lookup_cname(os.net, "nothere.example.") {
+      Ok(c) => fault("got ${c}")
+      Err(e) => expect("${e}".contains("no such host")) == true
+    }
+    // /etc/hosts first: localhost is never asked of the server
+    let before = seen.with_read(fn(n) { n })
+    expect(r.lookup_cname(os.net, "LocalHost").or_fault("hosts").starts_with("localhost")) == true
+    expect(seen.with_read(fn(n) { n })) == before
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "lookup_ns gives the name servers, rooted; names that are not domain names are left out" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    expect(r.lookup_ns(os.net, "zone.example").or_fault("ns")) == ["ns1.zone.example.", "ns2.zone.example."]
+    expect(r.lookup_ns(os.net, "nsbad.example.").or_fault("ns bad")) == ["ns1.nsbad.example."]
+    match r.lookup_ns(os.net, "nsallbad.example.") {
+      Ok(xs) => fault("got ${xs.len()} records")
+      Err(e) => expect("${e}".contains("invalid names")) == true
+    }
+    match r.lookup_ns(os.net, "nothere.example.") {
+      Ok(xs) => fault("got ${xs.len()} records")
+      Err(e) => expect("${e}".contains("no such host")) == true
+    }
+    sock.close()
+    tl.close()
+    s.cancel()
+  }
+}
+
+test "Resolver.lookup_host: an IP as itself, /etc/hosts first, then A and AAAA, as Go's LookupHost" uses (net, clock) {
+  let sock = udp.listen(os.net, "127.0.0.1:0").or_fault("udp")
+  let tl = os.net.listen(sock.local_addr()).or_fault("tcp")
+  let t = table()
+  let seen = Mutex.new(0)
+  let r = Resolver{server: sock.local_addr()}
+  scope s {
+    s.spawn_background(fn() { serve_udp(sock, t, seen) })
+    let hs = r.lookup_host(os.net, "host.example").or_fault("host")
+    expect(hs.len()) == 2
+    expect(hs.contains("10.0.0.7")) == true
+    expect(hs.contains("2001:db8::7")) == true
+    // the A answer of an alias: its CNAME record is not an address
+    expect(r.lookup_host(os.net, "www.alias.example.").or_fault("alias")) == ["10.0.0.9"]
+    match r.lookup_host(os.net, "badlen.example.") {
+      Ok(xs) => fault("got ${xs.len()} addresses")
+      Err(e) => expect("${e}".contains("cannot unmarshal")) == true
+    }
+    match r.lookup_host(os.net, "nothere.example.") {
+      Ok(xs) => fault("got ${xs.len()} addresses")
+      Err(e) => expect("${e}".contains("no such host")) == true
+    }
+    match r.lookup_host(os.net, "") {
+      Ok(xs) => fault("got ${xs.len()} addresses")
+      Err(e) => expect("${e}".contains("no such host")) == true
+    }
+    // neither an IP nor localhost is asked of the server
+    let before = seen.with_read(fn(n) { n })
+    expect(r.lookup_host(os.net, "192.0.2.1").or_fault("ip")) == ["192.0.2.1"]
+    expect(r.lookup_host(os.net, "::1").or_fault("ip6")) == ["::1"]
+    expect(r.lookup_host(os.net, "LocalHost").or_fault("hosts").is_empty()) == false
+    expect(seen.with_read(fn(n) { n })) == before
     sock.close()
     tl.close()
     s.cancel()

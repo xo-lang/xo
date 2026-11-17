@@ -36,7 +36,7 @@ fn records(n: Net, r: dns.Resolver, subject: Str, name: Str, qtype: Int) -> (Byt
       return Err(err_now())
     }
   }
-  match ldns.answers(m, qtype) {
+  match ldns.answers(m, qtype & 65535) {
     Some(xs) => Ok((m, xs))
     None => Err(NetErr.Io(msg: "lookup ${name}: cannot unmarshal DNS message"))
   }
@@ -226,6 +226,104 @@ fn resolver_lookup_addr(r: dns.Resolver, n: Net, ip: Str) -> List[Str] ! NetErr 
   Ok(out)
 }
 
+fn resolver_lookup_ns(r: dns.Resolver, n: Net, name: Str) -> List[Str] ! NetErr uses net.dial {
+  let (m, xs) = records(n, r, name, name, ldns.TYPE_NS)?
+  var out: List[Str] = []
+  var bad = 0
+  for (d, l) in xs {
+    // an NS record's data is one name, as a PTR record's
+    match ldns.ptr_at(m, d, l) {
+      Some(h) if ldns.is_domain_name(h) => out.push(h)
+      Some(_) => bad += 1
+      None => return Err(NetErr.Io(msg: "lookup ${name}: cannot unmarshal DNS message"))
+    }
+  }
+  if out.is_empty() && bad > 0 {
+    return Err(malformed(name))
+  }
+  Ok(out)
+}
+
+/// Go's goLookupCNAME (goLookupIPCNAMEOrder for network "CNAME"): the
+/// hosts file, then the A, AAAA and CNAME answers in that order, the
+/// first giving a name winning. Go sends the three queries for each name
+/// of the search list before the next name; here each type walks the
+/// list in turn, which differs only when a later name of the list
+/// answers A and an earlier one only AAAA or CNAME.
+fn resolver_lookup_cname(r: dns.Resolver, n: Net, host: Str) -> Str ! NetErr uses net.dial {
+  let files = if target.arch == TargetArch.Wasm32 { netwasi.hosts_canonical(host) } else { ldns.hosts_canonical(host) }
+  if files != "" {
+    return Ok(files)
+  }
+  var last = NetErr.Io(msg: "lookup ${host}: no such host")
+  for qt in [ldns.TYPE_A, ldns.TYPE_AAAA, ldns.TYPE_CNAME] {
+    match records(n, r, host, host, qt + ldns.RAW) {
+      Ok((m, xs)) => {
+        var c = ""
+        if qt == ldns.TYPE_CNAME {
+          for (d, l) in xs {
+            if c == "" {
+              match ldns.ptr_at(m, d, l) {
+                Some(t) => c = t
+                None => return Err(NetErr.Io(msg: "lookup ${host}: cannot unmarshal DNS message"))
+              }
+            }
+          }
+        } else {
+          match ldns.first_owner(m, qt) {
+            Some(o) => c = o
+            None => return Err(NetErr.Io(msg: "lookup ${host}: cannot unmarshal DNS message"))
+          }
+        }
+        if c != "" {
+          if !ldns.is_domain_name(c) {
+            return Err(malformed(host))
+          }
+          return Ok(c)
+        }
+      }
+      Err(e) => last = e
+    }
+  }
+  Err(last)
+}
+
+/// Go's LookupHost on the resolver: an IP literal is itself, then the
+/// hosts file, then the A and AAAA answers, sorted by RFC 6724, as
+/// inet_ntop's text (a hosts file address loses its zone). As
+/// lookup_cname, each type walks the search list in turn.
+fn resolver_lookup_host(r: dns.Resolver, n: Net, host: Str) -> List[Str] ! NetErr uses net.dial {
+  if host.is_empty() {
+    return Err(NetErr.Io(msg: "lookup : no such host"))
+  }
+  if !ldns.parse_addr(host).is_none() {
+    return Ok([host])
+  }
+  let files = if target.arch == TargetArch.Wasm32 { netwasi.hosts_addrs(host) } else { ldns.hosts_addrs(host) }
+  if !files.is_empty() {
+    return Ok(files.map(fn(a) { ldns.ntop(a.ip) }))
+  }
+  var got: List[ldns.Addr] = []
+  var first: NetErr? = None
+  for qt in [ldns.TYPE_A, ldns.TYPE_AAAA] {
+    match records(n, r, host, host, qt + ldns.RAW) {
+      Ok((m, xs)) => {
+        for (d, l) in xs {
+          if l != 4 && l != 16 {
+            return Err(NetErr.Io(msg: "lookup ${host}: cannot unmarshal DNS message"))
+          }
+          got.push(ldns.Addr{ip: m[d..(d + l)]})
+        }
+      }
+      Err(e) => if first.is_none() { first = Some(e) }
+    }
+  }
+  if got.is_empty() {
+    return Err(first ?? NetErr.Io(msg: "lookup ${host}: no such host"))
+  }
+  Ok(ldns.sort(got).map(fn(a) { ldns.ntop(a.ip) }))
+}
+
 fn lookup_mx(n: Net, name: Str) -> List[dns.Mx] ! NetErr uses net.dial { resolver_lookup_mx(dns.Resolver{}, n, name) }
 
 fn lookup_txt(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial { resolver_lookup_txt(dns.Resolver{}, n, name) }
@@ -235,3 +333,7 @@ fn lookup_srv(n: Net, service: Str, proto: Str, name: Str) -> List[dns.Srv] ! Ne
 }
 
 fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial { resolver_lookup_addr(dns.Resolver{}, n, ip) }
+
+fn lookup_cname(n: Net, host: Str) -> Str ! NetErr uses net.dial { resolver_lookup_cname(dns.Resolver{}, n, host) }
+
+fn lookup_ns(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial { resolver_lookup_ns(dns.Resolver{}, n, name) }
