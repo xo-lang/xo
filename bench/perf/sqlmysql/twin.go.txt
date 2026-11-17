@@ -1,0 +1,57 @@
+package main
+
+// The twin of main.xo: go-sql-driver/mysql v1.10.1 through database/sql,
+// Rows.Scan of the same rows (built from scripts/mysqldiff/gomysql's module).
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+
+	_ "github.com/go-sql-driver/mysql"
+)
+
+func main() {
+	w := "scan"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	db, err := sql.Open("mysql", os.Getenv("MYSQL_DSN"))
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	sum := 0
+	if w == "setup" {
+		for _, q := range []string{
+			"DROP TABLE IF EXISTS items",
+			"CREATE TABLE items (id INT, name TEXT, score DOUBLE, active TINYINT, n INT)",
+			"INSERT INTO items WITH RECURSIVE s (i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM s WHERE i < 999) SELECT i, CONCAT('item-', i), i * 0.5, i % 3 = 0, i * 7 % 101 FROM s",
+		} {
+			if _, err := db.Exec(q); err != nil {
+				panic(err)
+			}
+		}
+	} else {
+		for k := 0; k < 300; k++ {
+			rs, err := db.Query("SELECT id, name, score, active, n FROM items ORDER BY id")
+			if err != nil {
+				panic(err)
+			}
+			for rs.Next() {
+				var id, active, n int64
+				var name string
+				var score float64
+				if err := rs.Scan(&id, &name, &score, &active, &n); err != nil {
+					panic(err)
+				}
+				sum += int(id) + len(name) + int(score) + int(active) + int(n)
+			}
+			rs.Close()
+			if rs.Err() != nil {
+				panic(rs.Err())
+			}
+		}
+	}
+	fmt.Println(w, sum)
+}

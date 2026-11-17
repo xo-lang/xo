@@ -1,0 +1,37 @@
+// std/sql's MySQL driver against go-sql-driver/mysql (twin.go.txt; decision
+// 0648 item 12): 1,000 rows of five columns (an id, a name, a score, a flag
+// and a count) read whole 300 times with query_as, summing the fields, over
+// the text protocol (no arguments). Needs MYSQL_DSN (go-sql-driver's DSN,
+// `user:pass@tcp(127.0.0.1:PORT)/db`); not a twincheck case (it needs a
+// server): run by hand, see bench/results/std-sql-mysql-2026-11-17.md.
+// Usage: `<program> setup|scan`. `setup` creates and fills the table.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/sql
+
+struct Item {
+  id: Int
+  name: Str
+  score: Float
+  active: Int
+  n: Int
+} derive SqlRow
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "scan"
+  let dsn = os.env.get("MYSQL_DSN") ?? fault("MYSQL_DSN not set")
+  let db = sql.open(os.net, "mysql", dsn)?
+  var sum = 0
+  if w == "setup" {
+    db.exec("DROP TABLE IF EXISTS items")?
+    db.exec("CREATE TABLE items (id INT, name TEXT, score DOUBLE, active TINYINT, n INT)")?
+    db.exec("INSERT INTO items WITH RECURSIVE s (i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM s WHERE i < 999) SELECT i, CONCAT('item-', i), i * 0.5, i % 3 = 0, i * 7 % 101 FROM s")?
+  } else {
+    for _ in 0..300 {
+      let rows = db.query_as[Item]("SELECT id, name, score, active, n FROM items ORDER BY id")?
+      for r in rows {
+        sum += r.id + r.name.len() + Int(r.score) + r.active + r.n
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
