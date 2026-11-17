@@ -296,6 +296,8 @@ pub struct Checker {
   /// (force_body), reported once; its declaration stays lazy, so no cache
   /// records an empty body for it.
   pub lazy_bad: Map[Int, List[Diag]] = {}
+  /// the struct types whose field defaults defaults_of checked (task #279)
+  pub defaults_checked: Map[Int, Bool] = {}
   /// The SSA builder's scans of each program module (tasks, budgets),
   /// made before unparse_bodies took the bodies they walk: by module
   /// (mod_cached_scan answers from them).

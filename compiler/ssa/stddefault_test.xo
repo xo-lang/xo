@@ -1,0 +1,48 @@
+// A std implementation struct's field default that is a call (task #279:
+// std/native/websocket.xo's `comp: Mutex[T] = Mutex[T].new(...)`). It is
+// typed only when a body that builds the struct is checked, and a front
+// end cache hit skips that check (a cached checker restores none), so a
+// body built fresh lowered the call with no call information and `xo
+// check` reported it XO1201 "this call". The native build now types every
+// std implementation struct's defaults before it lowers anything
+// (Builder.type_std_defaults): here no body builds D, as on a cache hit.
+
+use github.com/xo-lang/xo/compiler/check
+
+test "a std struct's call default lowers without its call information" {
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", b"struct Int {}\nstruct Str {}\nstruct Bool {}\nenum Never {}\nenum Option[T] {\n  None\n  Some(v: T)\n}\nenum Result[T, E] {\n  Ok(v: T)\n  Err(e: E)\n}\n")?
+  // the module's declarations, and its implementation (std/native,
+  // decision 0074), whose struct's default is a call
+  os.fs.write("std/fix.xo", b"struct D {}\n\npub fn make() -> D\npub fn other() -> Int\n")?
+  os.fs.create_dir_all("std/native")?
+  os.fs.write("std/native/fix.xo", b"struct D {\n  n: Int = start()\n}\n\nfn start() -> Int { 7 }\n\nfn make() -> D { D{} }\n\nfn other() -> Int { 3 }\n")?
+  os.fs.create_dir_all("app")?
+  os.fs.write("app/main.xo", b"use std/fix\n\nfn main() {\n  let _d = fix.make()\n}\n")?
+  var c = check.new_checker(os.fs, "std")
+  c.native = true
+  if let Err(e) = c.check_dirs(["app"]) {
+    expect(e) == ""
+  }
+  // as a checker the front end cache restored, or one whose body that
+  // builds D a cache hit skipped: no call information for the default
+  var found = false
+  for o in 0..c.objs.len() {
+    let m = c.objs[o].module
+    if check.text(c.objs[o].name) == "D" && m >= 0 && c.mods[m].native {
+      for f in c.objs[o].fields {
+        if !f.default.is_empty() {
+          found = true
+          c.call_infos.remove(c.expr_key_in(c.objs[o].decl_file, f.default[0]))
+        }
+      }
+    }
+  }
+  expect(found) == true
+  let b = build_program(c, ".", false)
+  var msgs: List[Str] = []
+  for d in nogc_diags(b) {
+    msgs.push("${d.file}:${d.line}: ${d.code} ${d.message}")
+  }
+  expect(msgs) == []
+}

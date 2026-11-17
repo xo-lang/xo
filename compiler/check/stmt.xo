@@ -495,6 +495,37 @@ pub fn (var c: Checker) check_lazy(fo: Int) -> List[Diag] uses fs.read {
   errs
 }
 
+/// Types struct o's field defaults once, for a lowering that reads them
+/// when no body checked them in this build: a std implementation type's
+/// default (std/native/websocket.xo's `comp: Mutex[T] = Mutex[T].new(...)`)
+/// is typed when a body that builds the struct is checked, and a front end
+/// cache hit on that body skips its check, so a body built fresh found the
+/// call without its call information and `xo check` reported it XO1201
+/// (task #279). True when it checked them now.
+pub fn (var c: Checker) defaults_of(o: Int) -> Bool uses fs.read {
+  if o < 0 || o >= c.objs.len() || c.defaults_checked.contains(o) {
+    return false
+  }
+  c.defaults_checked[o] = true
+  let f = c.objs[o].decl_file
+  if f < 0 || f >= c.files.len() {
+    return false
+  }
+  let saved_file = c.cur_file
+  let saved_mod = c.cur_mod
+  let saved_path = c.path
+  c.set_file(f)
+  for fl in c.objs[o].fields {
+    if !fl.default.is_empty() {
+      c.check_default(fl.default[0], fl.ty)
+    }
+  }
+  c.cur_file = saved_file
+  c.cur_mod = saved_mod
+  c.path = saved_path
+  true
+}
+
 fn (var c: Checker) check_default(e: Expr, t: Int) {
   let saved_scopes = c.scopes
   let saved = c.push_ctx(c.sink_ctx())

@@ -1587,6 +1587,14 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
     Some(y) => c.objs[o] = y
     None => fault("internal: the trees of ${text(c.objs[o].name)} are not where std's record says (${if f >= 0 && f < c.files.len() { c.files[f].path } else { "an interface's method" }})")
   }
+  // a struct joined here: its field defaults, which no pass has typed
+  // (the tree was not there), so the SSA builder finds a default that is
+  // a call with its call information (task #279: std/native/websocket.xo's
+  // `comp: Mutex[T] = Mutex[T].new(...)` was XO1201 "this call" under
+  // `xo check` with std's record)
+  if c.objs[o].kind == ObjKind.Type && c.objs[o].fields.any(fn(fl) { !fl.default.is_empty() }) {
+    let _d = c.defaults_of(o)
+  }
   // a body joined after check_module ran over its (then empty) file:
   // marked for the lazy check as check_module would have, so the SSA
   // builder's check_lazy checks it before lowering it

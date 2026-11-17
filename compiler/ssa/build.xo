@@ -494,14 +494,34 @@ pub fn build_program_guard(c: check.Checker, line_root: Str, tests: Bool, releas
 }
 
 /// build_program_guard through the front end cache fe (fecache.xo).
+/// Types the field defaults of every std implementation struct (std/native,
+/// decision 0074) before the lowering reads them (task #279): no body may
+/// have checked one in this build (a front end cache hit skips its body's
+/// check, a cached checker restores none), and a default that is a call
+/// (std/native/websocket.xo's `comp: Mutex[T] = Mutex[T].new(...)`) then
+/// had no call information: `xo check` reported it XO1201 "this call".
+fn (var b: Builder) type_std_defaults() uses fs.read {
+  for o in 0..b.c.objs.len() {
+    let m = b.c.objs[o].module
+    if b.c.objs[o].kind != check.ObjKind.Type || m < 0 || !b.c.mods[m].native {
+      continue
+    }
+    if b.c.objs[o].fields.any(fn(f) { !f.default.is_empty() }) {
+      let _d = b.c.defaults_of(o)
+    }
+  }
+}
+
 pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool, fe: FeCache) -> Builder uses fs.read {
   var b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, if fe.conc_fixed >= 0 { fe.conc_fixed == 1 } else { fe.start_conc })
+  b.type_std_defaults()
   b.build()
   if b.need_conc != b.conc && fe.conc_fixed < 0 {
     // built again with unwinding checks (a body needs concurrency), or
     // without them when fe.start_conc guessed wrong: the first build is
     // dropped, its stores and counts with it
     b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, b.need_conc)
+    b.type_std_defaults()
     b.build()
   }
   if wasm && b.m.funcs.any(fn(f: Func) -> Bool { f.name == "http.serve_component" }) {
@@ -511,6 +531,7 @@ pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: 
     let conc = b.conc
     b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, conc)
     b.wasi_comp = true
+    b.type_std_defaults()
     b.build()
   }
   b.m.goarch = goarch
@@ -527,6 +548,7 @@ pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: 
 /// caller checks the program again and builds it with conc = b.need_conc.
 pub fn build_program_handed(c: check.Checker, line_root: Str, goos: Str, goarch: Str, wasm: Bool, conc: Bool) -> Builder uses fs.read {
   var b = program_builder(c, line_root, false, false, false, goos, goarch, wasm, false, true, false, false, false, FeCache{}, conc)
+  b.type_std_defaults()
   b.build()
   b.m.goarch = goarch
   b.m.heap_guard = false
