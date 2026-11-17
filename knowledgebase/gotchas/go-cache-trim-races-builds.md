@@ -40,3 +40,20 @@ about 34 MB to 3 to 9 MB (hello world 2.9 MB, examples/notes-service
 their method sets into every package and objects have no DWARF
 (`go-generic-method-sets-per-package.md`,
 bench/results/binary-size-2026-10-09.md).
+
+## Again on host 2 (2026-11-17, task #274)
+
+Symptom: #265's proof run on host 2 had 102 `could not import ... (open
+/home/xo/.cache/go-build/..-d: no such file or directory)` errors, and most
+Go test packages failed to build. The gate's first line was offload-prune's
+"pruned least recently used cache files".
+
+Cause: offload-prune.sh pruned ~/.cache/go-build and xo's gocache with the
+pass's 60 minute floor. Go refreshes a cache file's mtime at most once an
+hour when a build uses it, and relatime moves atime at most daily. So a
+file another gate in the lane was using could read over 60 minutes old.
+
+Fix: the Go build caches keep a floor of OFF_PRUNE_GO_FLOOR_MIN (240)
+minutes in every pass and cap (offload-prune.sh gofloor;
+offload-prune_test.sh: a 90 minute go-build entry and gocache file are
+kept).
