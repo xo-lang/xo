@@ -1,12 +1,13 @@
 // What a server's handler sees of a request's host, TLS state, raw query
 // and escaped path (std.md 4.3), and the redirect and error page
-// builders, over a plain connection on 127.0.0.1:0.
+// builders, over a plain connection on 127.0.0.1:0. protocol() is empty:
+// :protocol comes only with HTTP/2 extended CONNECT (decision 0687).
 use std/http
 
 fn routes() -> http.Router {
   var r = http.router()
   r.handle("/see", fn(req) {
-    http.text(200, "host=${req.host().split(":").first() ?? ""} tls=${req.tls()} scheme=${req.url.scheme} path=${req.path} escaped=${req.escaped_path()} raw_query=${req.raw_query()} q=${req.query("q") ?? "-"}")
+    http.text(200, "host=${req.host().split(":").first() ?? ""} tls=${req.tls()} scheme=${req.url.scheme} path=${req.path} escaped=${req.escaped_path()} raw_query=${req.raw_query()} q=${req.query("q") ?? "-"} protocol=${req.protocol()}")
   })
   r.handle("/esc/{name}", fn(req) { http.text(200, "name=${req.param("name")} path=${req.path} escaped=${req.escaped_path()}") })
   r.handle("GET /go", fn(req) { http.redirect(req, "../see?q=1", 302) })
