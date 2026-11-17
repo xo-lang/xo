@@ -109,3 +109,13 @@ TYPED arr:daterange SELECT ARRAY['[2024-01-01,2024-02-01)'::daterange] AS a
 TYPED arr:numrange SELECT ARRAY['[1.5,2.25)'::numrange, '(,0]'] AS a
 TYPED arr:fields SELECT ARRAY[ROW(1, 'a b', NULL)::pair, ROW(2, '', 'x,y')::pair] AS a
 TYPED arr:fields SELECT ARRAY[ROW(1, 'a b'), ROW(2, NULL)] AS r
+DROP TABLE IF EXISTS sa; CREATE TABLE sa (name TEXT PRIMARY KEY, n INT4, f FLOAT8, b BOOL, at TIMESTAMPTZ, d BYTEA, d2 BYTEA, tags TEXT[], ns INT8[])
+STRUCTARGS 1 INSERT INTO sa (name, n, f, b, at, d, d2, tags, ns) VALUES (@name, @n, @f, @b, @at, @d, @d2, @tags, @ns)
+STRUCTARGS 2 INSERT INTO sa (name, n, f, b, at, d, d2, tags, ns) VALUES (@name, @n, @f, @b, @at, @d, @d2, @tags, @ns)
+SELECT name, n, f, b, at, d, d2, tags, ns, d2 IS NULL AS d2null, cardinality(tags) AS ntags FROM sa ORDER BY name
+STRUCTARGS 1 UPDATE sa SET n = @n + 1 WHERE name = @name
+STRICTSTRUCTARGS 1 INSERT INTO sa (name) VALUES (@name)
+STRICTSTRUCTARGS 2 INSERT INTO sa (name, n, f, b, at, d, d2, tags, ns) VALUES (@name, @n, @f, @b, @at, @d, @d2, @tags, @nope)
+STRUCTARGS 1 INSERT INTO sa (name, n) VALUES (@name || '-copy', @skip)
+STRUCTARGS 2 INSERT INTO sa (name) VALUES (@name)
+SELECT name, n, at FROM sa ORDER BY name

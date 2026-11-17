@@ -266,6 +266,11 @@ func main() {
 			batch(ctx, c, rest)
 			continue
 		}
+		if kind, rest, ok := strings.Cut(line, " "); ok && (kind == "STRUCTARGS" || kind == "STRICTSTRUCTARGS") {
+			fmt.Println("== " + line)
+			structArgs(ctx, os.Args[1], kind == "STRICTSTRUCTARGS", rest)
+			continue
+		}
 		if os.Getenv("PG_FRESH") != "" {
 			// a connection of its own for each statement (internal/stdtest
 			// TestPgFuzz: a hostile server closes connections at will)
@@ -299,6 +304,57 @@ func main() {
 			continue
 		}
 		printRows(r)
+	}
+}
+
+// saRow is a STRUCTARGS line's struct (decision 0682, task #124): the
+// Xo side's SaRow with derive SqlRow, field for field.
+type saRow struct {
+	Name string    `db:"name"`
+	N    *int32    `db:"n"`
+	F    float64   `db:"f"`
+	B    bool      `db:"b"`
+	At   time.Time `db:"at"`
+	D    []byte    `db:"d"`
+	D2   []byte    `db:"d2"`
+	Tags []string  `db:"tags"`
+	Ns   []int64   `db:"ns"`
+	Skip string    `db:"-"`
+}
+
+// saRows are the values a STRUCTARGS line names by its number.
+func saRows() []saRow {
+	seven := int32(7)
+	return []saRow{
+		{Name: "sa1", N: &seven, F: 1.5, B: true, At: time.Unix(1792458183, 0).UTC(), D: []byte{0, 0xff}, D2: []byte("x"), Tags: []string{"x", "y z"}, Ns: []int64{1, 3}, Skip: "s"},
+		{Name: "sa2", N: nil, F: -0.25, B: false, At: time.Unix(0, 0).UTC(), D: []byte{}, D2: nil, Tags: []string{}, Ns: []int64{}},
+	}
+}
+
+// structArgs runs `N QUERY` of a STRUCTARGS line through pgx's StructArgs
+// (StrictStructArgs): the rows affected, the server's error, or "error
+// rewrite" for a name the rewrite refuses.
+func structArgs(ctx context.Context, dsn string, strict bool, rest string) {
+	ns, q, _ := strings.Cut(rest, " ")
+	k, _ := strconv.Atoi(ns)
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		fmt.Println("error connect")
+		return
+	}
+	defer conn.Close(ctx)
+	var rw pgx.QueryRewriter = pgx.StructArgs(saRows()[k-1])
+	if strict {
+		rw = pgx.StrictStructArgs(saRows()[k-1])
+	}
+	tag, err := conn.Exec(ctx, q, rw)
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		fmt.Printf("error %s %s\n", pe.Code, pe.Message)
+	} else if err != nil {
+		fmt.Println("error rewrite")
+	} else {
+		fmt.Printf("affected %d\n", tag.RowsAffected())
 	}
 }
 

@@ -102,6 +102,10 @@ fn main(os: Os) ! {
       }
       continue
     }
+    if line.starts_with("STRUCTARGS ") || line.starts_with("STRICTSTRUCTARGS ") {
+      os.stdio.println(struct_args(db, line.starts_with("STRICT"), line[line.find(" ").or_fault("space") + 1..]))
+      continue
+    }
     if line.starts_with("BATCH ") {
       match db.batch(batch_items(line[6..])) {
         Ok(sets) => {
@@ -138,6 +142,44 @@ fn main(os: Os) ! {
         Err(e) => os.stdio.println(err_line(e))
       }
     }
+  }
+}
+
+/// A STRUCTARGS line's struct (decision 0682, task #124): the
+/// reference's saRow with pgx's db tags, field for field.
+struct SaRow {
+  name: Str
+  n: Int?
+  f: Float
+  b: Bool
+  at: Time
+  d: Bytes
+  d2: Bytes?
+  tags: List[Str]
+  ns: List[Int]
+  skip as "-": Str = ""
+} derive SqlRow
+
+fn sa_rows() -> List[SaRow] {
+  [
+    SaRow{name: "sa1", n: Some(7), f: 1.5, b: true, at: Time.from_unix(1792458183), d: b"\x00\xff", d2: Some(b"x"), tags: ["x", "y z"], ns: [1, 3], skip: "s"},
+    SaRow{name: "sa2", n: None, f: -0.25, b: false, at: Time.from_unix(0), d: b"", d2: None, tags: [], ns: []},
+  ]
+}
+
+/// `N QUERY` of a STRUCTARGS line: sql.named_args of row N through
+/// sql.named (strict for STRICTSTRUCTARGS), as the reference runs pgx's
+/// StructArgs; "error rewrite" for a name the rewrite refuses.
+fn struct_args(db: sql.Db, strict: Bool, rest: Str) -> Str uses net.dial {
+  let sp = rest.find(" ").or_fault("STRUCTARGS N QUERY")
+  let k = Int.parse(rest[0..sp]).or_fault("row number")
+  let (q, xs) = match sql.named(rest[sp + 1..], sql.named_args(sa_rows()[k - 1]), strict: strict) {
+    Ok(r) => r
+    Err(_) => return "error rewrite"
+  }
+  match db.exec(q, xs) {
+    Ok(x) => "affected ${x.rows_affected}"
+    Err(e) => err_line(e)
   }
 }
 

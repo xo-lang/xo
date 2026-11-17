@@ -8,7 +8,10 @@
 # stdlib's ColumnType* against Rows.column_types (decision 0609). A line
 # `BATCH q1 || q2 ;; args || N*q3` is one batch (decision 0648 item 15):
 # pgconn's ExecBatch against Db.batch, the first error or each query's
-# rows and count.
+# rows and count. A line `STRUCTARGS N QUERY` (`STRICTSTRUCTARGS`) runs
+# QUERY with the fields of struct value N as named arguments: pgx's
+# StructArgs (StrictStructArgs) against sql.named_args through sql.named
+# (decision 0682, task #124).
 #
 #   scripts/pg-diff.sh XO WORK [IMAGE...]
 #
