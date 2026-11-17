@@ -5331,8 +5331,12 @@ fn dechunk(b: Bytes) -> Bytes {
   out.freeze()
 }
 
-/// Whether handler (kind 0) or failure (1) i matches the request: the
-/// number of literal segments of its route and the route's parameters.
+/// Whether handler (kind 0) or failure (1) i matches the request: its
+/// precedence and the route's parameters. The precedence ranks as Go's
+/// ServeMux picks the most specific of the patterns a request matches
+/// (fakenetfuzz, task #233): more literal segments, then more segments
+/// before any rest (`/{a}/{rest...}` over `/{rest...}`), then an exact
+/// path over a subtree or rest, then a method over none.
 fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])? {
   let method = testworld.fake_text(kind, i, 0)
   if !method.is_empty() && method != req.method.to_upper() {
@@ -5359,7 +5363,12 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
   if !ok {
     return None
   }
-  Some((literals(route), bind_params(route, parts, uparts)))
+  var fixed = 0
+  for sg in route.segs {
+    if !sg.rest { fixed += 1 }
+  }
+  let sc = ((literals(route) * 256 + fixed) * 2 + if has_rest(route) { 0 } else { 1 }) * 2 + if method.is_empty() { 0 } else { 1 }
+  Some((sc, bind_params(route, parts, uparts)))
 }
 
 // ---------------------------------------------------------------------------

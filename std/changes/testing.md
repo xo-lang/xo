@@ -1,5 +1,17 @@
 # std/testing changes
 
+## 2026-11-17: fix: of the FakeNet patterns a request matches, ServeMux's most specific wins
+
+- Kind: fix (behavior change)
+- Commit: this push
+- Found by: the new FakeNet fuzz harness (fakenetfuzz, task #233), against net/http's ServeMux
+- Go reference: net/http ServeMux (Go 1.22): the most specific of the patterns that match
+- Test: cmd/xo TestFakeNetRestRoot "of the fake patterns a request matches, ServeMux's most specific wins" on Go, arm64 and LLVM (fails before); corpus fakenetfuzz; TestFakenetFuzz (XO_FAKENETFUZZ_SEED) for fresh seeds
+- Timing: none
+- Shipped in: not yet released
+
+FakeNet picked the matching pattern with the most literal segments and, on a tie, the first registered. It now ranks as ServeMux: more literal segments, then more segments before a rest (`/{a}/` over `/{rest...}`), then an exact path over a subtree (`/{$}` over `/`), then a method over none (`GET /` over `/{rest...}`). Natively and on the Go backend.
+
 ## 2026-11-15: behavior: FakeNet handlers may use shared state
 
 - Kind: behavior

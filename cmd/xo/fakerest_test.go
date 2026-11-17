@@ -38,6 +38,22 @@ test "a fake pattern takes Go 1.22's forms, as the Router does" {
   }
   expect(got.join("\n")) == "https://sub.example.test/ -> 200 sub\nhttps://sub.example.test -> 200 sub\nhttps://sub.example.test/x/y -> 200 sub\nhttps://ex.example.test/users/7 -> 200 user 7\nhttps://ex.example.test/users/7/ -> no fake handler for GET https://ex.example.test/users/7/\nhttps://d.example.test/ -> 200 dollar\nhttps://d.example.test/x -> no fake handler for GET https://d.example.test/x\nhttps://d.example.test/dir/ -> 200 dir\nhttps://d.example.test/dir/a -> 200 dir\nhttps://d.example.test/dir -> no fake handler for GET https://d.example.test/dir"
 }
+
+test "of the fake patterns a request matches, ServeMux's most specific wins (fakenetfuzz, task #233)" {
+  // registered least specific first: the order must not decide
+  os.net.handle("GET https://p.example.test/", fn(req: http.Request) -> http.Response { http.text(200, "subtree") })
+  os.net.handle("GET https://p.example.test/{\$}", fn(req: http.Request) -> http.Response { http.text(200, "root") })
+  os.net.handle("https://m.example.test/{rest...}", fn(req: http.Request) -> http.Response { http.text(200, "any method") })
+  os.net.handle("GET https://m.example.test/", fn(req: http.Request) -> http.Response { http.text(200, "get") })
+  expect(fetch(os.net, "https://p.example.test/")) == "200 root"
+  expect(fetch(os.net, "https://p.example.test/a")) == "200 subtree"
+  expect(fetch(os.net, "https://m.example.test/a/b")) == "200 get"
+  expect(fetch(os.net, "https://m.example.test/")) == "200 get"
+  os.net.handle("GET https://w.example.test/{rest...}", fn(req: http.Request) -> http.Response { http.text(200, "rest") })
+  os.net.handle("GET https://w.example.test/{a}/", fn(req: http.Request) -> http.Response { http.text(200, "a=${req.param("a")}") })
+  expect(fetch(os.net, "https://w.example.test/x/y")) == "200 a=x"
+  expect(fetch(os.net, "https://w.example.test/x")) == "200 rest"
+}
 `
 
 // TestFakeNetRestRoot: on every backend a FakeNet pattern and path split

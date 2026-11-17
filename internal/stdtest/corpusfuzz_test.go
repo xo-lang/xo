@@ -26,6 +26,8 @@
 //     and NumericComponent), random migration files, most changed at the
 //     line level: the same Up, Down and transaction mode, or an error,
 //     and the same version for a file name;
+//   - testing: fakenetoracle (net/http's ServeMux), random sets of FakeNet
+//     patterns and requests: the pattern ServeMux picks and its wildcards;
 //   - protowkt: protowktoracle (protobuf-go's well known types), random
 //     Struct, Value, ListValue, Duration and Timestamp values;
 //   - embed: embedoracle (Go's io/fs over std/evidence/embed's stress
@@ -82,6 +84,7 @@ func TestRandomFuzz(t *testing.T)       { corpusFuzz(t, "random", "RANDOMFUZZ") 
 func TestProtodescFuzz(t *testing.T)    { corpusFuzz(t, "protodesc", "PROTODESCFUZZ") }
 func TestProtoparseFuzz(t *testing.T)   { corpusFuzz(t, "protoparsefuzz", "PROTOPARSEFUZZ") }
 func TestMigrateFuzz(t *testing.T)      { corpusFuzz(t, "migratefuzz", "MIGRATEFUZZ") }
+func TestFakenetFuzz(t *testing.T)      { corpusFuzz(t, "fakenetfuzz", "FAKENETFUZZ") }
 func TestProtowktFuzz(t *testing.T)     { corpusFuzz(t, "protowkt", "PROTOWKTFUZZ") }
 func TestPrototextFuzz(t *testing.T)    { corpusFuzz(t, "prototext", "PROTOTEXTFUZZ") }
 func TestEmbedFuzz(t *testing.T)        { corpusFuzz(t, "embedfuzz", "EMBEDFUZZ") }

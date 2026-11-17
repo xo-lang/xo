@@ -1107,6 +1107,27 @@ func (f Testing_FakeNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {
 	return Ok[Conn, NetErr](Conn{c: client})
 }
 
+// fakeScore ranks a fake handler as std/native/http.xo's fake_match does:
+// more literal segments, then more segments before any rest, then an
+// exact path over a subtree or rest, then a method over none.
+func fakeScore(h *fakeHandler) int {
+	fixed := 0
+	for _, s := range h.r.segs {
+		if !s.rest {
+			fixed++
+		}
+	}
+	sc := (h.r.literals()*256 + fixed) * 2
+	if !h.r.hasRest() {
+		sc++
+	}
+	sc *= 2
+	if h.method != "" {
+		sc++
+	}
+	return sc
+}
+
 func matchFake(method, prefix string, r *route, req Http_Request, rawURL string) (Map[string, string], bool) {
 	if method != "" && method != strings.ToUpper(req.F_method) {
 		return Map[string, string]{}, false
@@ -1180,7 +1201,9 @@ func (f Testing_FakeNet) dispatchWith(tk *Task, c Http_Client, req Http_Request,
 	var params Map[string, string]
 	for _, h := range n.handlers {
 		if p, ok := matchFake(h.method, h.prefix, h.r, req, rawURL); ok {
-			if best == nil || h.r.literals() > best.r.literals() {
+			// Go's ServeMux picks the most specific pattern: the Router's
+			// score, then a method over none (fakenetfuzz, task #233)
+			if best == nil || fakeScore(h) > fakeScore(best) {
 				best, params = h, p
 			}
 		}

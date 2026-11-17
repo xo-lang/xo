@@ -86,6 +86,7 @@ var generators = map[string]func() string{
 	"lzw":          lzwCorpus,
 	"gif":          gifCorpus,
 	"mail":         mailCorpus,
+	"fakenetfuzz":  fakenetfuzzCorpus,
 	"metrics":      metricsCorpus,
 	"migratefuzz":  migratefuzzCorpus,
 	"mime":         mimeCorpus,
