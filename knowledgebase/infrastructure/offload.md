@@ -912,3 +912,18 @@ run directory).
   stdout line and the stderr (1,500 bytes of a crash). The VM sends stdout
   base64 encoded (the amd64 serial console changed 4-byte UTF-8), so the
   compare with want.txt is exact. 2026-11-10: 642 of 642 on both arches.
+
+## Reserving a host (#278, 2026-11-17)
+
+A file `~/xo-lead/reserve/ENV` (for example `reserve/offload.env`) whose
+first line is a holder's name takes that host out of the runs for everyone
+else:
+- offload.sh and offload-gate.sh refuse it (exit 2) unless the job sets
+  `OFF_RESERVED_BY=` that holder;
+- offload-gate.sh's reroutes skip it;
+- tier.sh neither splits onto host 1 nor falls back to it.
+
+`heavy.sh --status` prints a `reserved:` line for each. Remove the file to
+free the host. The lead creates and removes it (owner, 2026-11-17: host 1
+out of the runs during Lang 2's experiment).
+Last verified: 2026-11-17.
