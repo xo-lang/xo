@@ -1950,7 +1950,13 @@ then `-delete`, #178); git commit, amend, rebase, checkout, switch,
 reset, merge, pull or cherry-pick in a worktree where an offload-gate.sh
 or pushq.sh run (not `--wait` or `--needs`) or a heavyd gate lock's
 heavy.sh is live (a new worktree, or `--wait` under run_in_background;
-#163). It allows
+#163); a whole-file read (owner, 2026-11-17, #220: whole-file reads
+were 19% of tool output overnight): Read with no `limit` of a text file
+over 400 lines, `cat` of such a file as a command's last output, or
+`sed -n 'A,Bp' FILE` over 300 lines (Read with offset/limit of at most
+400 lines, `sed -n` of at most 300, `grep -n`, or `xo def` / `xo doc` /
+`xo symbols`). Images, PDFs and notebooks, output piped on to another
+command, and output redirected to a file are not counted. It allows
 a call it cannot parse (fail open) and logs blocks and errors to
 `~/xo-lead/notes/ccguard.log`. It runs once `~/xo-lead/ccguard-on`
 exists and install.sh ran (it adds itself to the main checkout's
