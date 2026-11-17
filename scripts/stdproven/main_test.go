@@ -14,15 +14,26 @@ import (
 	"time"
 )
 
+// TestMain runs every test from the repository root. Tests used to move
+// there themselves (one os.Chdir that never moved back), so a test's
+// paths depended on which tests ran before it: run alone,
+// TestStressProgramsSkipRSSUnderCheck found the stress programs; after
+// TestSourceHashStopsAtRuntime it found none (main red at a8b0c9cc4,
+// task #226).
+func TestMain(m *testing.M) {
+	if err := os.Chdir("../.."); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	os.Exit(m.Run())
+}
+
 // TestSourceHashStopsAtRuntime: decision 0616 section 3 (amended
 // 2026-11-14). A module that uses no other std module (deque; uuid used
 // none until its v3 and v5 used crypto, 2026-11-15) hashes its own file
 // alone (std/internal.xo too when it uses it), and no module's hash
 // reaches the runtime core or the prelude.
 func TestSourceHashStopsAtRuntime(t *testing.T) {
-	if err := os.Chdir("../.."); err != nil {
-		t.Fatal(err)
-	}
 	_, files, err := sourceHash("deque")
 	if err != nil {
 		t.Fatal(err)
@@ -68,12 +79,6 @@ func TestSourceHashStopsAtRuntime(t *testing.T) {
 // TestPreludeHash: the prelude's source hash covers the runtime it is the
 // entry of (the other modules' hashes stop there).
 func TestPreludeHash(t *testing.T) {
-	if _, err := os.Stat("std/prelude.xo"); err != nil {
-		// run alone: the package directory, not the root an earlier test moved to
-		if err := os.Chdir("../.."); err != nil {
-			t.Fatal(err)
-		}
-	}
 	_, files, err := sourceHash("prelude")
 	if err != nil {
 		t.Fatal(err)
@@ -366,11 +371,7 @@ func TestRunSteps(t *testing.T) {
 // exceptions with their reason.
 func TestHarnessesCoverEveryFuzz(t *testing.T) {
 	unregistered := map[string]string{}
-	// the root when an earlier test moved there, else the package directory
 	dir := "internal/stdtest"
-	if _, err := os.Stat(dir); err != nil {
-		dir = "../../internal/stdtest"
-	}
 	files, err := filepath.Glob(dir + "/*_test.go")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("internal/stdtest: %v (%d files)", err, len(files))
@@ -450,7 +451,7 @@ func rssHelper(t *testing.T, path string) string {
 // program, reading the flag stressCheck sets (lead, 2026-11-17, #152:
 // std/udp's --check=all run failed on memory alone, 0 mismatches).
 func TestStressProgramsSkipRSSUnderCheck(t *testing.T) {
-	progs, err := filepath.Glob(filepath.Join("..", "..", "std", "evidence", "*", "stress", "main.xo"))
+	progs, err := filepath.Glob(filepath.Join("std", "evidence", "*", "stress", "main.xo"))
 	if err != nil || len(progs) == 0 {
 		t.Fatalf("no stress programs: %v", err)
 	}
@@ -474,7 +475,7 @@ func TestStressCheckMemoryOnly(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Skip("rss_kib reads /proc; --check=all builds arm64")
 	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
