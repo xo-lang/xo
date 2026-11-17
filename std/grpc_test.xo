@@ -610,3 +610,108 @@ test "per-RPC credentials, as grpc-go's getTrAuthData and getCallAuthData" uses 
     expect(failing(Code.NotFound).unary("/s.S/Who", b"")) == Err(status_new(Code.Internal, "transport: received per-RPC creds error with illegal status: rpc error: code = NotFound desc = no token"))
   }
 }
+
+// grpc-go's service_config_test.go: parsing and validation (decision 0705)
+test "service config JSON parses as grpc-go's and rejects what it rejects" {
+  let cfg = service_config_json("{\"methodConfig\": [{\"name\": [{\"service\": \"s.S\", \"method\": \"M\"}, {\"service\": \"s.T\"}], \"timeout\": \"1.5s\", \"maxRequestMessageBytes\": 10, \"retryPolicy\": {\"maxAttempts\": 4, \"initialBackoff\": \"0.01s\", \"maxBackoff\": \"1s\", \"backoffMultiplier\": 2, \"retryableStatusCodes\": [\"UNAVAILABLE\", 4]}}, {\"name\": [{}], \"timeout\": \"0.000000001s\"}], \"retryThrottling\": {\"maxTokens\": 10, \"tokenRatio\": 0.5}, \"loadBalancingConfig\": [{\"round_robin\": {}}]}").or_fault("parse")
+  expect(cfg.methods.len()) == 2
+  expect(cfg.methods[0].names) == [MethodName{service: "s.S", method: "M"}, MethodName{service: "s.T"}]
+  expect(cfg.methods[0].timeout) == Some(1500ms)
+  expect(cfg.methods[0].max_request_bytes) == Some(10)
+  expect(cfg.methods[0].retry) == Some(RetryPolicy{max_attempts: 4, initial_backoff: 10ms, max_backoff: 1s, backoff_multiplier: 2.0, retryable_codes: [Code.Unavailable, Code.DeadlineExceeded]})
+  expect(cfg.methods[1].timeout) == Some(Duration.from_nanos(1))
+  expect(cfg.retry_throttling) == Some(RetryThrottling{max_tokens: 10.0, token_ratio: 0.5})
+  let bad_policy = "{\"methodConfig\": [{\"name\": [{\"service\": \"s.S\"}], \"retryPolicy\": {\"maxAttempts\": 1, \"initialBackoff\": \"1s\", \"maxBackoff\": \"1s\", \"backoffMultiplier\": 1, \"retryableStatusCodes\": [\"UNAVAILABLE\"]}}]}"
+  expect(service_config_json(bad_policy)) == Err("service config: invalid retry policy")
+  expect(service_config_json("{\"methodConfig\": [{\"name\": [{\"method\": \"M\"}]}]}").is_err()) == true
+  expect(service_config_json("{\"methodConfig\": [{\"name\": [{\"service\": \"a\"}, {\"service\": \"a\"}]}]}").is_err()) == true
+  expect(service_config_json("{\"methodConfig\": [{\"name\": [{}], \"timeout\": \"1m\"}]}").is_err()) == true
+  expect(service_config_json("{\"retryThrottling\": {\"maxTokens\": 2000, \"tokenRatio\": 1}}")) == Err("service config: invalid retry throttling config")
+  expect(service_config_json("not json").is_err()) == true
+}
+
+test "method_config takes the method's entry, then its service's, then the default, as grpc-go's" uses (net, clock, rand) {
+  let cfg = service_config_json("{\"methodConfig\": [{\"name\": [{}], \"timeout\": \"3s\"}, {\"name\": [{\"service\": \"s.S\"}], \"timeout\": \"2s\"}, {\"name\": [{\"service\": \"s.S\", \"method\": \"M\"}], \"timeout\": \"1s\"}]}").or_fault("parse")
+  let c = client(http.client(os.net), "h:1").with_service_config(cfg, os.clock, os.rand)
+  expect(c.method_config("/s.S/M").and_then(fn(m) -> Duration? { m.timeout })) == Some(1s)
+  expect(c.method_config("/s.S/N").and_then(fn(m) -> Duration? { m.timeout })) == Some(2s)
+  expect(c.method_config("/x.X/N").and_then(fn(m) -> Duration? { m.timeout })) == Some(3s)
+  expect(client(http.client(os.net), "h:1").method_config("/s.S/M")) == None
+}
+
+// grpc-go's retry_test.go: retried codes, attempts, a committed call, pushback, throttling, disabling
+test "retries follow the service config, as grpc-go's" uses (net, clock, rand) {
+  let calls = Mutex[Map[Str, Int]].new({})
+  let count = fn(k: Str) -> Int { calls.with(fn(var m: Map[Str, Int]) -> Int {
+    let n = (m.get(k) ?? 0) + 1
+    m[k] = n
+    n
+  }) }
+  var srv = server(os.clock)
+  // fails Unavailable before its third call
+  srv.unary("/r.R/Flaky", fn(call, req) -> Bytes ! Status {
+    let n = count("${call.metadata.get("x-key") ?? ""}")
+    if n < 3 { Err(status_new(Code.Unavailable, "try again ${n}")) } else { Ok(req) }
+  })
+  srv.unary("/r.R/Bad", fn(_c, _r) -> Bytes ! Status {
+    let _ = count("bad")
+    Err(status_new(Code.InvalidArgument, "no"))
+  })
+  // sends a response message, then fails: committed, never retried
+  srv.stream("/r.R/Half", fn(_c, recv, send) -> () ! Status {
+    let _ = recv.next()?
+    let _ = count("half")
+    send.send(b"part")?
+    Err(status_new(Code.Unavailable, "after a message"))
+  }, client_stream: false, server_stream: false)
+  srv.unary("/r.R/Push", fn(_c, _r) -> Bytes ! Status {
+    let _ = count("push")
+    Err(status_new(Code.Unavailable, "pushed back"))
+  })
+  srv.stream("/r.R/NoMore", fn(_c, recv, send) -> () ! Status {
+    let _ = recv.next()?
+    let _ = count("nomore")
+    send.set_trailer("grpc-retry-pushback-ms", "-1")
+    Err(status_new(Code.Unavailable, "do not retry"))
+  }, client_stream: false, server_stream: false)
+  srv.unary("/r.R/Slow", fn(_c, req) -> Bytes ! Status {
+    os.clock.sleep(2s)
+    Ok(req)
+  })
+  srv.unary("/r.R/Big", fn(_c, _r) -> Bytes ! Status { Ok("x".repeat(100).bytes()) })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let policy = "\"retryPolicy\": {\"maxAttempts\": 5, \"initialBackoff\": \"0.001s\", \"maxBackoff\": \"0.005s\", \"backoffMultiplier\": 2, \"retryableStatusCodes\": [\"UNAVAILABLE\"]}"
+  let cfg = service_config_json("{\"methodConfig\": [{\"name\": [{\"service\": \"r.R\"}], ${policy}}, {\"name\": [{\"service\": \"r.R\", \"method\": \"Slow\"}], \"timeout\": \"0.2s\"}, {\"name\": [{\"service\": \"r.R\", \"method\": \"Big\"}], \"maxResponseMessageBytes\": 10}]}").or_fault("parse")
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let base = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    let c = base.with_service_config(cfg, os.clock, os.rand)
+    // two Unavailable answers, then the third attempt succeeds
+    expect(c.unary("/r.R/Flaky", b"a", {"x-key": "a"})) == Ok(b"a")
+    expect(calls.with(fn(var m: Map[Str, Int]) -> Int? { m.get("a") })) == Some(3)
+    // capped at 2 attempts: the second failure is the result
+    expect(c.with_max_call_attempts(2).unary("/r.R/Flaky", b"b", {"x-key": "b"})) == Err(status_new(Code.Unavailable, "try again 2"))
+    // without retries, or without a config, one attempt
+    expect(c.with_disable_retry().unary("/r.R/Flaky", b"c", {"x-key": "c"})) == Err(status_new(Code.Unavailable, "try again 1"))
+    expect(base.unary("/r.R/Flaky", b"d", {"x-key": "d"})) == Err(status_new(Code.Unavailable, "try again 1"))
+    // a code the policy does not list
+    expect(c.unary("/r.R/Bad", b"")) == Err(status_new(Code.InvalidArgument, "no"))
+    expect(calls.with(fn(var m: Map[Str, Int]) -> Int? { m.get("bad") })) == Some(1)
+    // committed by the response head: one attempt
+    expect(c.unary("/r.R/Half", b"").is_err()) == true
+    expect(calls.with(fn(var m: Map[Str, Int]) -> Int? { m.get("half") })) == Some(1)
+    // every attempt fails: max_attempts calls
+    expect(c.unary("/r.R/Push", b"")) == Err(status_new(Code.Unavailable, "pushed back"))
+    expect(calls.with(fn(var m: Map[Str, Int]) -> Int? { m.get("push") })) == Some(5)
+    // a negative pushback stops the retries
+    expect(c.unary("/r.R/NoMore", b"")) == Err(status_new(Code.Unavailable, "do not retry"))
+    expect(calls.with(fn(var m: Map[Str, Int]) -> Int? { m.get("nomore") })) == Some(1)
+    // the method's timeout and response limit
+    expect(c.unary("/r.R/Slow", b"").map_err(fn(e) -> Code { e.code })) == Err(Code.DeadlineExceeded)
+    expect(c.unary("/r.R/Big", b"").map_err(fn(e) -> Code { e.code })) == Err(Code.ResourceExhausted)
+    // throttling: 2 tokens, half is 1; the first failure leaves 1, which stops the retries
+    let tc = service_config_json("{\"methodConfig\": [{\"name\": [{\"service\": \"r.R\"}], ${policy}}], \"retryThrottling\": {\"maxTokens\": 2, \"tokenRatio\": 0.1}}").or_fault("parse")
+    expect(base.with_service_config(tc, os.clock, os.rand).unary("/r.R/Flaky", b"e", {"x-key": "e"})) == Err(status_new(Code.Unavailable, "try again 1"))
+  }
+}

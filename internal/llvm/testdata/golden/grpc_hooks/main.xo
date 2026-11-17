@@ -39,6 +39,13 @@ fn show[T: Display](r: Result[T, grpc.Status]) -> Str {
 fn main(os: Os) {
   let named = grpc.client(http.client(os.net), "api.example:443")
   os.stdio.println("target ${named.target()} canonical ${named.canonical_target()}")
+  let cfg = grpc.service_config_json("{\"methodConfig\": [{\"name\": [{\"service\": \"g.G\"}], \"timeout\": \"2s\", \"retryPolicy\": {\"maxAttempts\": 3, \"initialBackoff\": \"0.1s\", \"maxBackoff\": \"1s\", \"backoffMultiplier\": 2, \"retryableStatusCodes\": [\"UNAVAILABLE\"]}}]}").or_fault("service config")
+  let rc = named.with_service_config(cfg, os.clock, os.rand).with_max_call_attempts(4).with_max_retry_buffer(1024).with_disable_retry()
+  let mct = match rc.method_config("/g.G/Hello").and_then(fn(m) -> Duration? { m.timeout }) {
+    Some(d) => "${d}"
+    None => "none"
+  }
+  os.stdio.println("method config timeout ${mct}")
   let log = Mutex[List[Str]].new([])
   let srv = handlers(os.clock, log)
   for si in srv.services() {

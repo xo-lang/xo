@@ -10940,6 +10940,18 @@ fn (s: Send) send_header(md: Map[Str, Str] = {}) -> () ! Status   // grpc-go Sen
 fn client(c: http.Client, base: Str) -> Client      // base: http(s)://host:port, or a target name: dns:///host:port, passthrough:///host:port, host:port
 fn (c: Client) target() -> Str                      // grpc-go's ClientConn.Target: as given
 fn (c: Client) canonical_target() -> Str            // CanonicalTarget: dns:/// added to a name without a scheme
+// service config and retries (decision 0705)
+struct ServiceConfig { methods: List[MethodConfig], retry_throttling: RetryThrottling? }
+struct MethodConfig { names: List[MethodName], timeout: Duration?, retry: RetryPolicy?, max_request_bytes: Int?, max_response_bytes: Int? }
+struct MethodName { service: Str, method: Str }   // both empty: every method; method empty: the service's
+struct RetryPolicy { max_attempts: Int, initial_backoff: Duration, max_backoff: Duration, backoff_multiplier: Float, retryable_codes: List[Code] }
+struct RetryThrottling { max_tokens: Float, token_ratio: Float }
+fn service_config_json(text: Str) -> ServiceConfig ! Str          // grpc-go's JSON and its validation
+fn (c: Client) with_service_config(cfg: ServiceConfig, clock: Clock, rand: Rand) -> Client   // WithDefaultServiceConfig
+fn (c: Client) with_disable_retry() -> Client
+fn (c: Client) with_max_call_attempts(n: Int) -> Client           // the cap on max_attempts, 5 by default
+fn (c: Client) with_max_retry_buffer(n: Int) -> Client            // MaxRetryRPCBufferSize, 256 KiB
+fn (c: Client) method_config(method: Str) -> MethodConfig?       // GetMethodConfig
 fn (c: Client) unary(method: Str, req: Bytes, metadata = {}, timeout: Duration? = None) -> Bytes ! Status
 fn (c: Client) call[R](method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status) -> R ! Status
 fn (c: ClientCall) send(msg: Bytes) -> () ! Status
@@ -10990,6 +11002,13 @@ fn (c: Client) with_call_creds(cr: PerRpcCreds) -> Client      // the PerRPCCred
   stream interceptor sees unary calls too (grpc-go runs one kind per method). Their effects are counted where they
   are registered, as `http.Router.wrap`'s. A client stream interceptor sees and changes the method's options before
   the call opens, or ends it with a status; it does not wrap the call's send and recv (grpc-go's does).
+- A service config (decision 0705) gives a method (its own entry, else its service's, else the default) a timeout,
+  used when shorter than the call's own, message limits, used when smaller than the client's, and a retry policy. A
+  unary call is retried as grpc-go retries: on a listed code, before a response head came (a trailers-only error
+  is not committed), while the attempts are below max_attempts and the client's cap, the request fits the retry
+  buffer, and throttling (when configured) has more than half its tokens; it waits a uniform random time below
+  initial_backoff x multiplier^n, capped at max_backoff, or the server's grpc-retry-pushback-ms (a negative or
+  malformed one ends the retries). A streaming call gets the timeout and limits but is not retried.
 - A stop waits for the running handlers (grpc-go's WaitForHandlers(true)): the calls are `http.Server` requests, which
   `serve` waits for when its scope ends (std 4.4); grpc-go's default Stop does not wait.
 - `unary` is `stream` with one message each way. A handler reads `Recv.next` until None (the client finished sending)

@@ -1,6 +1,7 @@
 exit 0
 --- stdout
 target api.example:443 canonical dns:///api.example:443
+method config timeout 2s
 service g.G Hello client_stream=false server_stream=false
 service g.G Feed client_stream=true server_stream=true
 ok hello world. from ann

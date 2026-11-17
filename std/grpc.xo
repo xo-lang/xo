@@ -8,6 +8,7 @@ use std/base64
 use std/compress
 use std/http
 use std/task
+use std/json
 
 /// The 17 canonical status codes (their numbers are the wire values of `grpc-status`).
 pub enum Code {
@@ -673,6 +674,16 @@ pub struct Client {
   pub creds: List[PerRpcCreds] = []
   /// credentials of this client's calls (grpc-go's PerRPCCredsCallOption)
   pub call_creds: PerRpcCreds? = None
+  /// with_service_config (decision 0705): the config, and the clock's sleep and the rand's draw captured with it
+  pub svc: ServiceConfig? = None
+  pub sleep: List[fn(Duration)] = []
+  pub draw: List[fn(Int) -> Int] = []
+  /// retry throttling's tokens (grpc-go's retryThrottler), shared by copies of the client
+  pub tokens: Mutex[Float] = Mutex[Float].new(0.0)
+  /// with_disable_retry, with_max_call_attempts (5 by default) and with_max_retry_buffer (256 KiB by default)
+  pub retry_off: Bool = false
+  pub max_attempts: Int = 5
+  pub retry_buffer: Int = 262144
 }
 
 /// The client sending md with every call (grpc-go's WithDefaultCallOptions with metadata): a call's own metadata
@@ -783,6 +794,277 @@ pub fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server {
   let t = if p.time < 1s { 1s } else { p.time }
   let out = h.with_h2_config(http.H2Config{send_ping_timeout: t, ping_timeout: p.timeout})
   if p.max_connection_idle > 0s { out.with_idle_timeout(p.max_connection_idle) } else { out }
+}
+
+/// A method name in a service config (grpc-go's name entry): `service` and `method` both, the service's every method
+/// with an empty method, or every method with both empty.
+pub struct MethodName {
+  pub service: Str = ""
+  pub method: Str = ""
+} derive Eq
+
+/// grpc-go's retryPolicy (decision 0705).
+pub struct RetryPolicy {
+  pub max_attempts: Int
+  pub initial_backoff: Duration
+  pub max_backoff: Duration
+  pub backoff_multiplier: Float
+  pub retryable_codes: List[Code]
+} derive Eq
+
+/// grpc-go's retryThrottling: a retry is allowed while the tokens are above half of max_tokens; a failed attempt
+/// takes one, a successful call adds token_ratio.
+pub struct RetryThrottling {
+  pub max_tokens: Float
+  pub token_ratio: Float
+} derive Eq
+
+/// grpc-go's MethodConfig: the timeout, retry policy and message limits of the methods named.
+pub struct MethodConfig {
+  pub names: List[MethodName] = []
+  pub timeout: Duration? = None
+  pub retry: RetryPolicy? = None
+  pub max_request_bytes: Int? = None
+  pub max_response_bytes: Int? = None
+} derive Eq
+
+/// grpc-go's ServiceConfig, the parts std/grpc uses (decision 0705).
+pub struct ServiceConfig {
+  pub methods: List[MethodConfig] = []
+  pub retry_throttling: RetryThrottling? = None
+} derive Eq
+
+const CODE_NAMES: List[Str] = ["OK", "CANCELLED", "UNKNOWN", "INVALID_ARGUMENT", "DEADLINE_EXCEEDED", "NOT_FOUND", "ALREADY_EXISTS", "PERMISSION_DENIED", "RESOURCE_EXHAUSTED", "FAILED_PRECONDITION", "ABORTED", "OUT_OF_RANGE", "UNIMPLEMENTED", "INTERNAL", "UNAVAILABLE", "DATA_LOSS", "UNAUTHENTICATED"]
+
+/// A protobuf JSON Duration ("1.5s", "0.000000001s").
+fn json_duration(v: json.Value) -> Duration ! Str {
+  let t = match v {
+    Str(x) => x
+    _ => return Err("a duration is a string")
+  }
+  if !t.ends_with("s") {
+    return Err("malformed duration ${go_quote(t)}")
+  }
+  let body = t[0..t.len() - 1]
+  let (whole, frac) = match body.find(".") {
+    Some(i) => (body[0..i], body[i + 1..])
+    None => (body, "")
+  }
+  let secs = match Int.parse(whole) {
+    Some(n) => n
+    None => return Err("malformed duration ${go_quote(t)}")
+  }
+  if frac.len() > 9 {
+    return Err("malformed duration ${go_quote(t)}")
+  }
+  let nanos = if frac.is_empty() { 0 } else { Int.parse(frac + "0".repeat(9 - frac.len())) ?? -1 }
+  if nanos < 0 || secs < 0 {
+    return Err("malformed duration ${go_quote(t)}")
+  }
+  Ok(Duration.from_nanos(secs * 1000000000 + nanos))
+}
+
+fn json_num(v: json.Value) -> Float? {
+  match v {
+    Int(n) => Some(Float(n))
+    Num(n) => Some(n)
+    _ => None
+  }
+}
+
+fn json_int(v: json.Value) -> Int? {
+  match v {
+    Int(n) => Some(n)
+    Num(n) => if n == Float(Int(n)) { Some(Int(n)) } else { None }
+    Str(x) => Int.parse(x)
+    _ => None
+  }
+}
+
+fn json_code(v: json.Value) -> Code ! Str {
+  match v {
+    Str(x) => {
+      for (i, n) in CODE_NAMES.indexed() {
+        if n == x.to_upper() {
+          return Ok(code_from(i) ?? Code.Unknown)
+        }
+      }
+      Err("unknown code ${go_quote(x)}")
+    }
+    Int(n) => code_from(n).or_err("unknown code ${n}")
+    _ => Err("a code is a name or a number")
+  }
+}
+
+/// grpc-go's service config JSON (WithDefaultServiceConfig): `methodConfig` (`name`, `timeout`, `retryPolicy`,
+/// `maxRequestMessageBytes`, `maxResponseMessageBytes`) and `retryThrottling`; other fields (load balancing, health
+/// checking, hedging) are read past. A retry policy needs maxAttempts above 1, both backoffs and the multiplier
+/// above 0 and a retryable code, as grpc-go's; a name with a method needs its service, and a name may appear once.
+pub fn service_config_json(text: Str) -> ServiceConfig ! Str {
+  let root = match json.parse_value(text) {
+    Ok(v) => v
+    Err(e) => return Err("service config: ${e}")
+  }
+  var out = ServiceConfig{}
+  var seen: Set[Str] = #{}
+  if let Some(List(mcs)) = root.get("methodConfig") {
+    for mc in mcs {
+      var m = MethodConfig{}
+      if let Some(List(names)) = mc.get("name") {
+        for n in names {
+          let svc = match n.get("service") {
+            Some(Str(x)) => x
+            _ => ""
+          }
+          let meth = match n.get("method") {
+            Some(Str(x)) => x
+            _ => ""
+          }
+          if svc.is_empty() && !meth.is_empty() {
+            return Err("service config: invalid method name {service: \"\", method: ${go_quote(meth)}}")
+          }
+          let key = "${svc}/${meth}"
+          if seen.contains(key) {
+            return Err("service config: duplicate method name ${go_quote(key)}")
+          }
+          seen.add(key)
+          m.names.push(MethodName{service: svc, method: meth})
+        }
+      }
+      if let Some(t) = mc.get("timeout") {
+        m.timeout = Some(json_duration(t).map_err(fn(e) -> Str { "service config: timeout: ${e}" })?)
+      }
+      if let Some(n) = mc.get("maxRequestMessageBytes") {
+        m.max_request_bytes = json_int(n)
+      }
+      if let Some(n) = mc.get("maxResponseMessageBytes") {
+        m.max_response_bytes = json_int(n)
+      }
+      if let Some(rp) = mc.get("retryPolicy") {
+        let att = rp.get("maxAttempts").and_then(json_int) ?? 0
+        let ib = match rp.get("initialBackoff") {
+          Some(v) => json_duration(v).map_err(fn(e) -> Str { "service config: retryPolicy: ${e}" })?
+          None => 0s
+        }
+        let mb = match rp.get("maxBackoff") {
+          Some(v) => json_duration(v).map_err(fn(e) -> Str { "service config: retryPolicy: ${e}" })?
+          None => 0s
+        }
+        let mult = rp.get("backoffMultiplier").and_then(json_num) ?? 0.0
+        var codes: List[Code] = []
+        if let Some(List(cs)) = rp.get("retryableStatusCodes") {
+          for c in cs {
+            codes.push(json_code(c).map_err(fn(e) -> Str { "service config: retryPolicy: ${e}" })?)
+          }
+        }
+        if att <= 1 || ib <= 0s || mb <= 0s || mult <= 0.0 || codes.is_empty() {
+          return Err("service config: invalid retry policy")
+        }
+        m.retry = Some(RetryPolicy{max_attempts: att, initial_backoff: ib, max_backoff: mb, backoff_multiplier: mult, retryable_codes: codes})
+      }
+      out.methods.push(m)
+    }
+  }
+  if let Some(rt) = root.get("retryThrottling") {
+    let mt = rt.get("maxTokens").and_then(json_num) ?? 0.0
+    let tr = rt.get("tokenRatio").and_then(json_num) ?? 0.0
+    if mt <= 0.0 || mt > 1000.0 || tr <= 0.0 {
+      return Err("service config: invalid retry throttling config")
+    }
+    out.retry_throttling = Some(RetryThrottling{max_tokens: mt, token_ratio: tr})
+  }
+  Ok(out)
+}
+
+/// The client with a service config (grpc-go's WithDefaultServiceConfig, decision 0705): per-method timeouts, message
+/// limits and retries. clock times the backoff and rand draws its jitter; their effects are counted here.
+pub fn (c: Client) with_service_config(cfg: ServiceConfig, clock: Clock, rand: Rand) -> Client uses (clock, rand) {
+  let sl = pure1(fn(d: Duration) { clock.sleep(d) })
+  let dr = pure1(fn(n: Int) -> Int { if n <= 0 { 0 } else { rand.int(0, n) } })
+  let toks = match cfg.retry_throttling {
+    Some(t) => t.max_tokens
+    None => 0.0
+  }
+  c with {svc: Some(cfg), sleep: [fn(d) { sl(d) }], draw: [fn(n) -> Int { dr(n) }], tokens: Mutex[Float].new(toks)}
+}
+
+/// The client without retries (grpc-go's WithDisableRetry); timeouts and limits of its service config still apply.
+pub fn (c: Client) with_disable_retry() -> Client {
+  c with {retry_off: true}
+}
+
+/// The most attempts a retry policy may ask (grpc-go's WithMaxCallAttempts; 5 by default, below 2 is 5).
+pub fn (c: Client) with_max_call_attempts(n: Int) -> Client {
+  c with {max_attempts: if n < 2 { 5 } else { n }}
+}
+
+/// The largest request a call keeps to send again (grpc-go's MaxRetryRPCBufferSize; 256 KiB): a larger one is
+/// not retried.
+pub fn (c: Client) with_max_retry_buffer(n: Int) -> Client {
+  c with {retry_buffer: n}
+}
+
+/// grpc-go's ClientConn.GetMethodConfig: the config of method (`/service/method`): its own entry, else its service's,
+/// else the default one (both names empty).
+pub fn (c: Client) method_config(method: Str) -> MethodConfig? {
+  let cfg = match c.svc {
+    Some(x) => x
+    None => return None
+  }
+  let full = if method.starts_with("/") { method[1..] } else { method }
+  let (svc, meth) = match full.find("/") {
+    Some(i) => (full[0..i], full[i + 1..])
+    None => (full, "")
+  }
+  for want in [MethodName{service: svc, method: meth}, MethodName{service: svc, method: ""}, MethodName{}] {
+    for m in cfg.methods {
+      if m.names.contains(want) {
+        return Some(m)
+      }
+    }
+  }
+  None
+}
+
+/// The wait before retry n since the last pushback (grpc-go's withRetry): a uniform draw below
+/// initial_backoff x multiplier^n, capped at max_backoff.
+fn (c: Client) backoff(p: RetryPolicy, n: Int) -> Duration {
+  var cur = Float(p.initial_backoff.nanos())
+  for _i in 0..n {
+    cur = cur * p.backoff_multiplier
+  }
+  let cap = Float(p.max_backoff.nanos())
+  let ns = if cur > cap { Int(cap) } else { Int(cur) }
+  Duration.from_nanos(if c.draw.is_empty() { 0 } else { c.draw[0](ns) })
+}
+
+/// A retry throttle step: a failed attempt takes a token and says whether retries may go on; None without
+/// throttling.
+fn (c: Client) throttle_fail(t: RetryThrottling?) -> Bool {
+  match t {
+    None => true
+    Some(rt) => c.tokens.with(fn(var k: Float) -> Bool {
+      k = if k - 1.0 < 0.0 { 0.0 } else { k - 1.0 }
+      k > rt.max_tokens / 2.0
+    })
+  }
+}
+
+fn (c: Client) throttle_ok(t: RetryThrottling?) {
+  if let Some(rt) = t {
+    c.tokens.with(fn(var k: Float) {
+      k = if k + rt.token_ratio > rt.max_tokens { rt.max_tokens } else { k + rt.token_ratio }
+    })
+  }
+}
+
+/// The shorter of a call's own timeout and its method's.
+fn min_timeout(a: Duration?, b: Duration?) -> Duration? {
+  match (a, b) {
+    (Some(x), Some(y)) => Some(if x < y { x } else { y })
+    (Some(x), None) => Some(x)
+    (None, y) => y
+  }
 }
 
 /// A client of `base`: an `http://host:port` URL (plain HTTP/2 with prior knowledge), an `https://host:port` one, or a
@@ -956,12 +1238,83 @@ pub fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, 
   out
 }
 
-/// One unary call, after the interceptors.
-fn (c: Client) unary_call(method: Str, req: Bytes, metadata0: Map[Str, Str], timeout: Duration?) -> Bytes ! Status uses net.dial {
-  let metadata = creds_metadata(c, method, metadata0)?
+/// One unary call, after the interceptors: its method config's timeout and limits, and its retries (decision 0705).
+fn (c: Client) unary_call(method: Str, req: Bytes, metadata: Map[Str, Str], timeout0: Duration?) -> Bytes ! Status uses net.dial {
+  let mc = c.method_config(method)
+  var cc = c
+  var timeout = timeout0
+  var policy: RetryPolicy? = None
+  if let Some(m) = mc {
+    timeout = min_timeout(timeout0, m.timeout)
+    if let Some(n) = m.max_request_bytes {
+      cc = cc with {max_send: if n < cc.max_send { n } else { cc.max_send }}
+    }
+    if let Some(n) = m.max_response_bytes {
+      cc = cc with {max_recv: if n < cc.max_recv { n } else { cc.max_recv }}
+    }
+    if !c.retry_off {
+      policy = m.retry
+    }
+  }
+  let thr = match c.svc {
+    Some(s) => s.retry_throttling
+    None => None
+  }
+  var attempt = 1
+  var since_pushback = 0
+  while true {
+    let (out, committed, pushback) = cc.unary_attempt(method, req, metadata, timeout)
+    let p = match (out, policy) {
+      (Ok(_), _) => {
+        c.throttle_ok(thr)
+        return out
+      }
+      (Err(_), None) => return out
+      (Err(st), Some(rp)) => {
+        if committed || !rp.retryable_codes.contains(st.code) || req.len() > c.retry_buffer {
+          return out
+        }
+        rp
+      }
+    }
+    let cap = if p.max_attempts < c.max_attempts { p.max_attempts } else { c.max_attempts }
+    if !c.throttle_fail(thr) || attempt >= cap {
+      return out
+    }
+    let wait = match pushback {
+      Some(v) => {
+        let ms = Int.parse(v) ?? -1
+        if ms < 0 {
+          return out
+        }
+        since_pushback = 0
+        Duration.from_millis(ms)
+      }
+      None => {
+        let d = c.backoff(p, since_pushback)
+        since_pushback += 1
+        d
+      }
+    }
+    if !c.sleep.is_empty() {
+      c.sleep[0](wait)
+    }
+    attempt += 1
+  }
+  Err(status_new(Code.Internal, "unreachable"))
+}
+
+/// One attempt of a unary call: its outcome, whether a response head came (the call is then committed, grpc-go's
+/// rule, and not retried), and the server's grpc-retry-pushback-ms.
+fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], timeout: Duration?) -> (Result[Bytes, Status], Bool, Str?) uses net.dial {
+  // per-RPC credentials on each attempt, as grpc-go asks them per attempt; a failure ends the call
+  let metadata = match creds_metadata(c, method, metadata0) {
+    Ok(m) => m
+    Err(e) => return (Err(e), true, None)
+  }
   let body = frame_msg(req, c.gzip)
   if body.len() - 5 > c.max_send {
-    return Err(send_too_large(body.len() - 5, c.max_send))
+    return (Err(send_too_large(body.len() - 5, c.max_send)), true, None)
   }
   var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout, c.gzip), body)
   if let Some(d) = timeout {
@@ -969,29 +1322,33 @@ fn (c: Client) unary_call(method: Str, req: Bytes, metadata0: Map[Str, Str], tim
   }
   let st = match c.http.open(r) {
     Ok(s) => s
-    Err(e) => return Err(from_client_err(e))
+    Err(e) => return (Err(from_client_err(e)), false, None)
   }
-  if let Some(e) = head_status(st.head()) {
+  let head = st.head()
+  if let Some(e) = head_status(head) {
     st.close()
-    return Err(e)
+    return (Err(e), false, head.headers.get("Grpc-Retry-Pushback-Ms"))
   }
+  // a trailers-only response (grpc-status in the head) leaves the call uncommitted, as grpc-go's
+  let committed = head.headers.get("Grpc-Status") is None
   let data = match st.read_all() {
     Ok(b) => b
     Err(e) => {
       st.close()
-      return Err(from_client_err(e))
+      return (Err(from_client_err(e)), committed, None)
     }
   }
   let fin = final_status(st)
-  let enc = st.head().headers.get("Grpc-Encoding") ?? ""
+  let pushback = st.trailers().get("Grpc-Retry-Pushback-Ms") ?? head.headers.get("Grpc-Retry-Pushback-Ms")
+  let enc = head.headers.get("Grpc-Encoding") ?? ""
   st.close()
   if fin.code != Code.Ok {
-    return Err(fin)
+    return (Err(fin), committed, pushback)
   }
   match pull(RecvState{buf: data, at: 0, done: true, gzip: enc == "gzip"}, c.max_recv, fn() -> Bytes? ! Status { Ok(None) }) {
-    Ok((Some(msg), _)) => Ok(msg)
-    Ok((None, _)) => Err(status_new(Code.Internal, "grpc: no response message"))
-    Err(e) => Err(e)
+    Ok((Some(msg), _)) => (Ok(msg), committed, None)
+    Ok((None, _)) => (Err(status_new(Code.Internal, "grpc: no response message")), committed, None)
+    Err(e) => (Err(e), committed, None)
   }
 }
 

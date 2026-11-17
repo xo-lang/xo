@@ -1,5 +1,16 @@
 # std/grpc changes
 
+## 2026-11-17: feature: service config and retries (decision 0705)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (std Proven; scripts/stdaudit/map.txt grpc service config and retry rows)
+- Go reference: google.golang.org/grpc v1.79.2 service_config.go (parsing and validation), stream.go withRetry and shouldRetry (codes, commit, pushback, backoff), clientconn.go GetMethodConfig and retryThrottler; retry_test.go and service_config_test.go
+- Test: std/grpc_test.xo "service config JSON parses as grpc-go's", "method_config takes the method's entry", "retries follow the service config" (retried until success, capped, disabled, a code not listed, committed, every attempt failing, a negative pushback, the method's timeout and response limit, throttling), arm64 and LLVM
+- Behavior difference: streaming calls are not retried (grpc-go retries a stream before its first response); hedging and load balancing config are read past
+- Timing: none (a call without a config takes the path it took)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: target names, Client.target and canonical_target
 
 - Kind: feature
