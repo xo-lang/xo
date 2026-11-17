@@ -1,0 +1,18 @@
+kind: race
+module: embed
+result: pass
+commit: d10c5bae7
+source: 5db1ac841a64a96945999b65a42306ad09ed4ca436cc238b35252db0a2741592
+date: 2026-11-17
+host: linux/arm64 host 3
+race runtime: xo's (lib/xo/race/linux-arm64 from scripts/race-runtime.sh bb1022a99dfcaa22, TracePart 128 KB)
+go: go1.26.11 (the task churn's Go twin)
+command: go run ./scripts/stdproven race -backend llvm -stress-minutes 10 -churn-rounds 50 -host "linux/arm64 host 3" embed
+measure: 1 runs under --race on llvm, 0 data races, 0 failures, 16m13s
+
+Race evidence (decision 0616): std/embed's tests, corpora and stress program under --race (ThreadSanitizer).
+
+std/embed has no module tests and no corpus (the test world's http.server serves requests, not the raw connections its tests would need: #120), so its race evidence is the stress program under --race on real loopback alone (lead, 2026-11-16).
+
+- stress program under --race, 64 tasks: embed stress: 98306113 operations by 64 tasks in 10 min, 0 mismatches, rss 80 MB at the mark, 80 MB at the end (0.0%), peak 82 MB, pass, 10m1s
+- task churn under --race, 10 million tasks: 267 B per finished task after 6 million (Go's race build: 250 B), 1.07 of Go's (at most 1.25); resident set at 6 million 2070 MB (Go's 1700 MB, shown), 5m53s, pass
