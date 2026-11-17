@@ -1,5 +1,20 @@
 # std/archive changes
 
+## 2026-11-17: perf: tar writes header digits in place and sizes its output once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88, the tar row of bench/perf/archive at 1.080 of Go
+- Go reference: archive/tar formatter.formatOctal, Writer (one buffer, zero padding written as a block)
+- Test: internal/stdtest/testdata/corpus/archive (tar writes Go's bytes); std/archive module tests
+- Timing: a 60,000 archive tar loop on the Mac, 4.24 to 2.07 s user (same checksum); host 1 xo bench --ab on bench/perf/archive tar: wall 14.72 to 7.73 ms (0.525, 95% 0.508 to 0.534), rss 1992 to 1672 KB
+
+Octal header fields were built as strings and copied; they are now
+written digit by digit into the header block. The checksum sums the two
+spans around the checksum field without a per byte branch, padding and
+the two end blocks are written as zeroed blocks, and `tar` sizes its
+builder from the entries before writing.
+
 ## 2026-11-16: perf: zip_writer reuses one deflate stream and compares matches a word at a time
 
 - Kind: perf

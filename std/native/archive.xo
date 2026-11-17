@@ -258,6 +258,18 @@ fn fmt_oct(var blk: List[Int], at: Int, n: Int, x0: Int) {
   if !fits_octal(n, x) {
     x = 0
   }
+  if n >= 2 && n < 22 {
+    // x fits n - 1 octal digits: written zero padded in place, then the
+    // NUL, as the padded string through fmt_str (no Str per field)
+    var k = at + n - 2
+    while k >= at {
+      blk[k] = 48 + (x & 7)
+      x = x >> 3
+      k -= 1
+    }
+    blk[at + n - 1] = 0
+    return
+  }
   var s = octal(x)
   let pad = n - s.len() - 1
   if pad > 0 {
@@ -274,14 +286,16 @@ fn set_ustar(var blk: List[Int]) {
     blk[257 + i] = magic[i]
     i += 1
   }
-  var sum = 0
+  // the checksum field counts as eight spaces
+  var sum = 8 * 32
   i = 0
+  while i < 148 {
+    sum += blk[i]
+    i += 1
+  }
+  i = 156
   while i < 512 {
-    if i >= 148 && i < 156 {
-      sum += 32
-    } else {
-      sum += blk[i]
-    }
+    sum += blk[i]
     i += 1
   }
   fmt_oct(blk, 148, 7, sum)
@@ -365,10 +379,8 @@ fn pax_record(k: Str, v: Str) -> Str {
 
 fn pad_block(var out: BytesBuilder, size: Int) {
   let pad = (512 - size % 512) % 512
-  var i = 0
-  while i < pad {
-    out.write_byte(UInt8(0))
-    i += 1
+  if pad > 0 {
+    out.write(Bytes.zeroed(pad))
   }
 }
 
@@ -472,7 +484,14 @@ fn tar_header(var out: BytesBuilder, p: Str, mode0: Int, size0: Int, is_dir: Boo
 }
 
 fn tar(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
-  var out = BytesBuilder.new()
+  // room for a header and the padded data of each entry and the end
+  // blocks, so the archive is not copied as it grows (a PAX header past
+  // that grows it)
+  var room = 1024
+  for e in entries {
+    room += 512 + (e.data.len() + 511) / 512 * 512
+  }
+  var out = BytesBuilder.with_capacity(room)
   for e in entries {
     let p = match archive_path(e.path) {
       Some(x) => x
@@ -485,7 +504,7 @@ fn tar(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
     }
   }
   // two zero blocks end the archive
-  out.write(bytes_of(zeros(1024)))
+  out.write(Bytes.zeroed(1024))
   out.freeze()
 }
 
