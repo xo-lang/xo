@@ -8,7 +8,7 @@
 use std/grpc
 use std/http
 
-fn handlers(clock: Clock) -> grpc.Server {
+fn handlers(clock: Clock[clock]) -> grpc.Server {
   var srv = grpc.server(clock)
   srv.unary("/b.S/Echo", fn(_call, req) -> Bytes ! grpc.Status { Ok(req) })
   srv.stream("/b.S/Count", fn(_call, recv, send) -> () ! grpc.Status {
