@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Breaking (std/protoparse, std/protodesc; owner decision #46, task #109): an option value and a field's `default_value` are `Bytes`, a string literal's bytes as its escapes give them (`"\377"` is byte 0xFF, as protoc keeps it; it read as U+FFFD), so a bytes default and a string or bytes option value with escapes that are not UTF-8 reach the descriptor as protoc writes them. `options` fields are `List[(Str, Bytes)]`, `aggregate_pairs` and `aggregate_items` take and give `Bytes`, and `Token` has `raw`. Code reading an option or default as text calls `.to_str_lossy()` on it (or compares with a `b"..."` literal).
 - Fix (std/protodesc): `decode` then `encode` writes back a `proto3_optional: false` that was on the wire (`FieldDesc.proto3_optional_set`), as protobuf-go does.
 - Fix (xo run): a SIGHUP or SIGTERM sent to `xo run` alone is sent on to the program, which no longer keeps running after `xo run` ends (SIGHUP left it running with PPID 1; SIGINT is sent on as SIGTERM when standard input is not a terminal, as before).
 - Feature (std/protodesc): `build_with_source_info` takes `extra_comments` and `extra_option_locations`, protocompile's SourceInfoExtraComments and SourceInfoExtraOptionLocations modes (comments on every location; locations inside option message literals).

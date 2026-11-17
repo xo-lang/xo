@@ -256,7 +256,7 @@ test "a type name's parts may be apart, and a float may start with a dot (protoc
   let f = parse("syntax = \"proto2\";\npackage a . b;\nextend . google. // x\n  protobuf .\n FieldOptions {\n  optional float r = 50001 [default = .5];\n}\n").or_fault("parse")
   expect(f.package) == "a.b"
   expect(f.extends[0].extendee) == ".google.protobuf.FieldOptions"
-  expect(f.extends[0].fields[0].default_value) == ".5"
+  expect(f.extends[0].fields[0].default_value) == b".5"
   let toks = tokens(".25 a.").or_fault("tokens")
   expect(toks.map(fn(t: Token) -> Str { t.text })) == [".25", "a."]
   expect(toks[0].kind == Kind.Float) == true
@@ -264,7 +264,7 @@ test "a type name's parts may be apart, and a float may start with a dot (protoc
 
 test "an aggregate keeps a bracketed extension key, a list's elements, and an angle bracketed message" {
   let f = parse("syntax = \"proto2\";\noption (o) = { foo: \"a\" [x.y.ext]: \"b\" n: [1, 2] m < k: 3 > l: [{ k: 4 }, { k: 5 }] };\n").or_fault("parse")
-  expect(aggregate_pairs(f.options[0].1)) == [("foo", "a"), ("[x.y.ext]", "b"), ("n", "1"), ("n", "2"), ("m.k", "3"), ("l.k", "4"), ("l.k", "5")]
+  expect(aggregate_pairs(f.options[0].1)) == [("foo", b"a"), ("[x.y.ext]", b"b"), ("n", b"1"), ("n", b"2"), ("m.k", b"3"), ("l.k", b"4"), ("l.k", b"5")]
 }
 
 test "string escapes read as protoc reads them" {
@@ -276,4 +276,17 @@ test "a group in an extend block: its message among the scope's messages, where 
   let f = parse("syntax = \"proto2\";\nmessage A { extensions 10 to 20; }\nextend A {\n  optional group G = 10 { optional int32 v = 1; }\n}\nmessage B {}\n").or_fault("parse")
   expect(f.messages.map(fn(m: Message) -> Str { m.name })) == ["A", "G", "B"]
   expect(f.extends[0].fields[0].group) == true
+}
+
+test "escapes giving invalid UTF-8 keep their bytes: a bytes default, string and aggregate option values" {
+  let f = parse("syntax = \"proto2\";\noption (o) = \"a\\377b\";\noption (g) = { s: \"\\xff\" \"\\xfe\" };\nmessage M {\n  optional bytes b = 1 [default = \"\\377\\0\\x80\", (f) = \"\\303\" \"\\251\"];\n}\n").or_fault("parse")
+  expect(f.options[0].1) == b"a\xffb"
+  expect(aggregate_pairs(f.options[1].1)) == [("s", b"\xff\xfe")]
+  let fl = f.messages[0].fields[0]
+  expect(fl.default_value) == b"\xff\x00\x80"
+  // adjacent literals join before they are read as UTF-8: two halves of é
+  expect(fl.options) == [("(f)", b"\xc3\xa9")]
+  let toks = tokens("\"\\377\"").or_fault("tokens")
+  expect(toks[0].raw) == b"\xff"
+  expect(toks[0].text) == "\u{fffd}"
 }

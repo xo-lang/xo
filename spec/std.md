@@ -10825,8 +10825,8 @@ fn lex(src: Str) -> Lexed ! ParseErr                           // tokens, commen
 fn parse(src: Str) -> File ! ParseErr
 fn gen(f: File) -> Str ! ParseErr
 fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr   // (import path, File) each; one source per file
-fn aggregate_pairs(v: Str) -> List[(Str, Str)]                 // an aggregate option value's (key, value) pairs
-fn aggregate_items(v: Str) -> List[(Str, Str)]                 // the pairs and a (`KEY{`, "") where each message starts
+fn aggregate_pairs(v: Bytes) -> List[(Str, Bytes)]             // an aggregate option value's (key, value) pairs
+fn aggregate_items(v: Bytes) -> List[(Str, Bytes)]             // the pairs and a (`KEY{`, b"") where each message starts
 // File { syntax, package, imports, messages: List[Message], enums: List[Enum], services: List[Service], options,
 //        public_imports: List[Str], weak_imports: List[Str], extends: List[Extend], edition }
 // Message { name, fields: List[Field], oneofs: List[Str], nested: List[Message], enums: List[Enum], options,
@@ -10834,8 +10834,9 @@ fn aggregate_items(v: Str) -> List[(Str, Str)]                 // the pairs and 
 // Field { name, num, typ, key, repeated, optional, required, oneof, group, default_value, json_name, options }
 // Enum { name, values: List[EnumValue], options, reserved, reserved_names }   EnumValue { name, num, options }
 // Service { name, rpcs, options }   Rpc { name, req, resp, client_stream, server_stream, options, body }
-// Extend { extendee, fields: List[Field] }   options: List[(Str, Str)], (name, value as written)
-// Token { kind, text, line, col, pcol, pend }   Lexed { tokens, comments: List[Comment], eof_line, eof_col }
+// Extend { extendee, fields: List[Field] }   options: List[(Str, Bytes)], (name, value as written)
+// Field.default_value: Bytes (a string literal's bytes)
+// Token { kind, text, raw: Bytes, line, col, pcol, pend }   Lexed { tokens, comments: List[Comment], eof_line, eof_col }
 // Comment { text, line, col, end_line, end_col, nl, tok, trailing }
 ```
 
@@ -10848,8 +10849,10 @@ line) is on a later line, and it is a line comment, one of several, or a block c
 token's line; the rest lead the next token. A oneof's options are kept in `Message.oneof_options`.
 
 The lexer reads protoc's string escapes (`\n \t \r \a \b \f \v \\ \' \" \?`, 1 to 3 octal digits, `\x` and 1 or 2 hex
-digits, `\u` and 4 or `\U` and 8 hex digits as UTF-8; a `Str` holds valid UTF-8 only, so escaped bytes that are not
-become U+FFFD) and a number starting with a dot (`.5`). A type name's parts may be apart (`foo . Bar`, `.google.` and
+digits, `\u` and 4 or `\U` and 8 hex digits as UTF-8). Option values and a field's `default_value` are `Bytes`, a string
+literal's bytes as its escapes give them (`"\377"` is the byte 0xFF, as protoc keeps it; adjacent literals are joined
+before anything reads them as text); a string token's `text` holds them as UTF-8 with U+FFFD for each byte that is not,
+and its `raw` the bytes and a number starting with a dot (`.5`). A type name's parts may be apart (`foo . Bar`, `.google.` and
 a comment or a line before `protobuf`), as protoc reads them; so may a package's. An aggregate option value keeps a
 bracketed key (an extension, `[pkg.ext]`, or an Any's type URL) whole, a list's elements (`n: [1, 2]`,
 `r: [{ ... }, { ... }]`) each under the key, and a `< ... >` message as a `{ ... }` one. A group in an `extend` block

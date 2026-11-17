@@ -146,6 +146,15 @@ test "build_with_source_info: a file's location, a field's parts and its comment
   expect(d.source_code_info.to_str_lossy().contains(" trail\n")) == true
 }
 
+test "build: escapes giving invalid UTF-8 keep their bytes in a bytes default and a string option, as protoc writes them" {
+  let f = protoparse.parse("syntax = \"proto2\";\noption go_package = \"a\\377b\";\nmessage M { optional bytes b = 1 [default = \"\\377\\0\\x80\"]; }\n").or_fault("parse")
+  let d = build(f, "a.proto").or_fault("build")
+  // protoc's CEscape of the default's bytes: octal for each byte outside printable ASCII
+  expect(d.message_type[0].field[0].default_value) == "\\377\\000\\200"
+  // FileOptions.go_package (field 11, length delimited): a, 0xFF, b
+  expect(d.options) == b"\x5a\x03a\xffb"
+}
+
 test "build: an unknown type is an error" {
   let f = protoparse.parse("syntax = \"proto3\";\nmessage A { B b = 1; }\n").or_fault("parse")
   expect(build(f, "a.proto").err().map(fn(e: protoparse.ParseErr) -> Str { e.msg })) == Some("unknown type `B`")

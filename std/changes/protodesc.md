@@ -1,5 +1,17 @@
 # std/protodesc changes
 
+## 2026-11-16: fix: string literals whose escapes are not UTF-8 keep their bytes (breaking)
+
+- Kind: fix
+- Commit: this push
+- Found by: owner decision #46 (task #109, protocompile's invalid_utf8_strings behavior)
+- Go reference: protoc's tokenizer (ParseStringAppend keeps bytes), protocompile
+- Test: std/protodesc_test.xo ("build: escapes giving invalid UTF-8 keep their bytes", fails before)
+- Shipped in: not yet released
+
+`build` writes a bytes default (`"\377"` as `\377`, protoc's CEscape) and a string or bytes option value,
+built in or custom, with the literal's bytes; they were read through U+FFFD.
+
 ## 2026-11-16: fix: a proto3_optional written false is written back
 
 - Kind: fix

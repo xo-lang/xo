@@ -8,14 +8,14 @@ test "aggregate_pairs reads the pairs of a message literal option" {
   let f = protoparse.parse("syntax = \"proto3\";\nmessage M {\n  int32 a = 1 [(my.opt) = { a: 1 b: \"x\" }];\n}\n") ?? e => fault(e.msg)
   let opts = f.messages[0].fields[0].options
   expect(opts.len()) == 1
-  expect(protoparse.aggregate_pairs(opts[0].1)) == [("a", "1"), ("b", "x")]
-  expect(protoparse.aggregate_pairs("7")) == []
-  expect(protoparse.aggregate_pairs("{}")) == []
+  expect(protoparse.aggregate_pairs(opts[0].1)) == [("a", b"1"), ("b", b"x")]
+  expect(protoparse.aggregate_pairs(b"7")) == []
+  expect(protoparse.aggregate_pairs(b"{}")) == []
 }
 
 test "aggregate_items keeps where each nested message starts" {
   let f = protoparse.parse("syntax = \"proto3\";\nmessage M {\n  int32 a = 1 [(my.opt) = { r { k: 1 } r { k: 2 } }];\n}\n") ?? e => fault(e.msg)
   let v = f.messages[0].fields[0].options[0].1
-  expect(protoparse.aggregate_items(v)) == [("r{", ""), ("r.k", "1"), ("r{", ""), ("r.k", "2")]
-  expect(protoparse.aggregate_pairs(v)) == [("r.k", "1"), ("r.k", "2")]
+  expect(protoparse.aggregate_items(v)) == [("r{", b""), ("r.k", b"1"), ("r{", b""), ("r.k", b"2")]
+  expect(protoparse.aggregate_pairs(v)) == [("r.k", b"1"), ("r.k", b"2")]
 }

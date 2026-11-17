@@ -700,15 +700,16 @@ fn co_le(var o: BytesBuilder, v: Int, n: Int) {
 }
 
 /// A scalar value as written for a field of kind, with its tag; None when it does not parse.
-fn co_scalar(num: Int, kind: Int, type_name: Str, v: Str, cx: CoCx) -> Bytes? {
+fn co_scalar(num: Int, kind: Int, type_name: Str, raw: Bytes, cx: CoCx) -> Bytes? {
   var o = BytesBuilder.new()
   if kind == TYPE_STRING || kind == TYPE_BYTES {
+    // a string literal's bytes as its escapes give them, not read as UTF-8 (`"\377"` is byte 0xFF)
     pw.wtag(o, num, 2)
-    let b = v.bytes()
-    pw.wv(o, b.len())
-    o.write(b)
+    pw.wv(o, raw.len())
+    o.write(raw)
     return Some(o.freeze())
   }
+  let v = raw.to_str_lossy()
   if kind == TYPE_DOUBLE || kind == TYPE_FLOAT {
     let f = Float.parse(v)?
     if kind == TYPE_DOUBLE {
@@ -764,9 +765,9 @@ struct CoField {
 
 /// A message field's value: its elements (one for a singular field, merged; each `{ ... }` of a repeated
 /// one apart) from entries (path under the field, value), a path ending in `{` starting an element.
-fn co_elements(entries: List[(List[Str], Str)], repeated: Bool) -> List[List[(List[Str], Str)]] {
-  var out: List[List[(List[Str], Str)]] = []
-  var cur: List[(List[Str], Str)] = []
+fn co_elements(entries: List[(List[Str], Bytes)], repeated: Bool) -> List[List[(List[Str], Bytes)]] {
+  var out: List[List[(List[Str], Bytes)]] = []
+  var cur: List[(List[Str], Bytes)] = []
   var have = false
   for (path, v) in entries {
     if path.len() == 1 && path[0] == "{" {
@@ -784,7 +785,7 @@ fn co_elements(entries: List[(List[Str], Str)], repeated: Bool) -> List[List[(Li
   out
 }
 
-fn co_write_message(var o: BytesBuilder, f: CoField, entries: List[(List[Str], Str)], cx: CoCx) {
+fn co_write_message(var o: BytesBuilder, f: CoField, entries: List[(List[Str], Bytes)], cx: CoCx) {
   for el in co_elements(entries, f.label == LABEL_REPEATED) {
     let body = co_message(f.type_name, el, cx)
     if f.kind == TYPE_GROUP {
@@ -801,7 +802,7 @@ fn co_write_message(var o: BytesBuilder, f: CoField, entries: List[(List[Str], S
 
 /// The fields of the message type_name that entries set ((path, value), path under that message), in
 /// field number order; an extension of it named `[name]` among them.
-fn co_message(type_name: Str, entries: List[(List[Str], Str)], cx: CoCx) -> Bytes {
+fn co_message(type_name: Str, entries: List[(List[Str], Bytes)], cx: CoCx) -> Bytes {
   var o = BytesBuilder.new()
   let md = match cx.msgs.get(type_name) {
     Some(m) => m
@@ -825,7 +826,7 @@ fn co_message(type_name: Str, entries: List[(List[Str], Str)], cx: CoCx) -> Byte
   // a map's entry message: protoc writes its key and value also when not set
   let map_entry = md.options == b"\x38\x01"
   for f in sorted {
-    var sub: List[(List[Str], Str)] = []
+    var sub: List[(List[Str], Bytes)] = []
     for (path, v) in entries {
       if path.is_empty() { continue }
       if path[0] == f.key {
@@ -836,9 +837,9 @@ fn co_message(type_name: Str, entries: List[(List[Str], Str)], cx: CoCx) -> Byte
     }
     if sub.is_empty() && map_entry {
       if f.kind == TYPE_MESSAGE {
-        sub.push((["{"], ""))
+        sub.push((["{"], b""))
       } else {
-        sub.push(([], co_zero(f, cx)))
+        sub.push(([], co_zero(f, cx).bytes()))
       }
     }
     if sub.is_empty() { continue }
@@ -868,8 +869,8 @@ fn co_zero(f: CoField, cx: CoCx) -> Str {
 
 /// The custom options among opts as the extensions of extendee (`.google.protobuf.FieldOptions`), in
 /// extension number order; each option of a repeated message extension is one element.
-fn co_opts(opts: List[(Str, Str)], extendee: Str, cx: CoCx) -> Bytes {
-  var items: List[(CoExt, Int, List[Str], Str)] = []
+fn co_opts(opts: List[(Str, Bytes)], extendee: Str, cx: CoCx) -> Bytes {
+  var items: List[(CoExt, Int, List[Str], Bytes)] = []
   for (oi, (k, v)) in opts.indexed() {
     if !k.starts_with("(") { continue }
     let close = match k.find(")") {
@@ -882,12 +883,12 @@ fn co_opts(opts: List[(Str, Str)], extendee: Str, cx: CoCx) -> Bytes {
     }
     let rest = k[close + 1..k.len()]
     let path: List[Str] = if rest.starts_with(".") { co_key_path(rest[1..rest.len()]) } else { [] }
-    if v.starts_with("{") {
+    if v.starts_with(b"{") {
       // the message the option sets starts here (an element of a repeated one)
       if path.is_empty() {
-        items.push((x, oi, ["{"], ""))
+        items.push((x, oi, ["{"], b""))
       } else {
-        items.push((x, oi, path[0..path.len() - 1] + [path[path.len() - 1] + "{"], ""))
+        items.push((x, oi, path[0..path.len() - 1] + [path[path.len() - 1] + "{"], b""))
       }
       for (ak, av) in protoparse.aggregate_items(v) { items.push((x, oi, path + co_key_path(ak), av)) }
     } else {
@@ -902,14 +903,14 @@ fn co_opts(opts: List[(Str, Str)], extendee: Str, cx: CoCx) -> Bytes {
   }
   for num in nums.sort() {
     var x0: CoExt? = None
-    var sub: List[(List[Str], Str)] = []
+    var sub: List[(List[Str], Bytes)] = []
     var last_stmt = -1
     for (x, oi, path, v) in items {
       if x.number != num { continue }
       x0 = Some(x)
       // a repeated message extension: each option statement is an element
       if (x.kind == TYPE_MESSAGE || x.kind == TYPE_GROUP) && oi != last_stmt && !(path.len() == 1 && path[0] == "{") {
-        sub.push((["{"], ""))
+        sub.push((["{"], b""))
       }
       last_stmt = oi
       sub.push((path, v))
@@ -1232,7 +1233,7 @@ fn b_message(syms: Map[Str, Int], scope: Str, m: protoparse.Message, proto3: Boo
   var mi = 0
   for f in m.fields {
     var fd = FieldDesc{name: f.name, number: f.num, label: b_label(f), json_name: if f.json_name.is_empty() { json_name_of(f.name) } else { f.json_name },
-      json_name_set: true, default_value: f.default_value}
+      json_name_set: true}
     if !f.key.is_empty() {
       let en = map_entry_name(f.name)
       let (vk, vt) = b_type(syms, full, f.typ)?
@@ -1305,8 +1306,9 @@ fn b_message(syms: Map[Str, Int], scope: Str, m: protoparse.Message, proto3: Boo
 /// A number default as protoc writes it: an integer in decimal (`0x10` is `16`), a float or double as
 /// protoc's SimpleDtoa (15 significant digits, 17 when 15 do not round trip; `.25` is `0.25`, `inf`,
 /// `nan`); other kinds as written.
-fn b_default(kind: Int, v: Str) -> Str {
-  if kind == TYPE_BYTES { return c_escape(v.bytes()) }
+fn b_default(kind: Int, raw: Bytes) -> Str {
+  if kind == TYPE_BYTES { return c_escape(raw) }
+  let v = raw.to_str_lossy()
   if v.is_empty() || kind == TYPE_STRING || kind == TYPE_ENUM || kind == TYPE_BOOL { return v }
   let neg = v.starts_with("-")
   let body = if neg { v[1..v.len()] } else { v }
@@ -1452,9 +1454,10 @@ const FEATURE_FIELDS: List[(Str, Int, Int, Str)] = [
 
 /// The options message of the known options in `opts`, fields in number order (protoc serializes the
 /// options message), and whether any was given.
-fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, Bool) {
+fn b_opts(opts: List[(Str, Bytes)], known: List[(Str, Int, Int, Str)]) -> (Bytes, Bool) {
   var parts: List[(Int, Bytes)] = []
-  for (k, v) in opts {
+  for (k, raw) in opts {
+    let v = raw.to_str_lossy()
     for (n, num, kind, enums) in known {
       if n != k { continue }
       var o = BytesBuilder.new()
@@ -1463,9 +1466,8 @@ fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, 
         pw.wv(o, if v == "true" { 1 } else { 0 })
       } else if kind == 1 {
         pw.wtag(o, num, 2)
-        let b = v.bytes()
-        pw.wv(o, b.len())
-        o.write(b)
+        pw.wv(o, raw.len())
+        o.write(raw)
       } else if kind == 2 {
         var ev = Int.parse(v) ?? 0
         for pair in enums.split(",") {
@@ -1477,7 +1479,7 @@ fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, 
       } else if kind == 5 {
         continue
       } else if kind == 4 {
-        let pairs = protoparse.aggregate_pairs(v)
+        let pairs = protoparse.aggregate_pairs(raw)
         if pairs.is_empty() { continue }
         let (body, _) = b_opts(pairs, aggregate_fields(enums))
         pw.wtag(o, num, 2)
@@ -1491,7 +1493,7 @@ fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, 
     }
   }
   // an edition's `features.NAME` options: one FeatureSet at the options message's features field
-  var feats: List[(Str, Str)] = []
+  var feats: List[(Str, Bytes)] = []
   for (k, v) in opts {
     if k.starts_with("features.") { feats.push((k["features.".len()..k.len()], v)) }
   }

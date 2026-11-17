@@ -28,6 +28,9 @@ pub struct Token {
   pub text: Str
   pub line: Int
   pub col: Int
+  /// A string literal's bytes, escapes applied (text is the same read as UTF-8, lossy); empty for
+  /// other kinds
+  pub raw: Bytes = b""
   /// protoc's column (0 based; a tab moves to the next multiple of 8) of the token's first byte, and of
   /// the byte after it (source info spans)
   pub pcol: Int = 0
@@ -180,7 +183,8 @@ pub fn lex(src: Str) -> Lexed ! ParseErr {
       }
       if !closed { return Err(ParseErr{line: line, col: col, msg: "unterminated string"}) }
       let pcs = pc_at(b, pc, ls, s)
-      out.push(Token{kind: Kind.Str, text: sb.freeze().to_str_lossy(), line: line, col: col, pcol: pcs, pend: pc_at(b, pc, ls, i)})
+      let raw = sb.freeze()
+      out.push(Token{kind: Kind.Str, text: raw.to_str_lossy(), line: line, col: col, pcol: pcs, pend: pc_at(b, pc, ls, i), raw: raw})
     } else if c < 128 {
       let pcs = pc_at(b, pc, ls, i)
       out.push(Token{kind: Kind.Sym, text: src[i..i + 1], line: line, col: col, pcol: pcs, pend: pcs + 1})
@@ -312,12 +316,13 @@ pub struct Field {
   pub oneof: Str
   /// A proto2 `group`: `typ` is its nested message, `name` that name in lower case.
   pub group: Bool = false
-  /// The `default` option's value as written (a string unquoted).
-  pub default_value: Str = ""
+  /// The `default` option's value as written (a string unquoted, its escapes applied, so a bytes
+  /// default may hold any bytes).
+  pub default_value: Bytes = b""
   /// The `json_name` option, empty when not given.
   pub json_name: Str = ""
   /// The field's other options, (name, value as written) in order.
-  pub options: List[(Str, Str)] = []
+  pub options: List[(Str, Bytes)] = []
 }
 
 /// An `extend NAME { ... }` block: the extended message as written and the extension fields.
@@ -329,13 +334,13 @@ pub struct Extend {
 pub struct EnumValue {
   pub name: Str
   pub num: Int
-  pub options: List[(Str, Str)] = []
+  pub options: List[(Str, Bytes)] = []
 }
 
 pub struct Enum {
   pub name: Str
   pub values: List[EnumValue]
-  pub options: List[(Str, Str)] = []
+  pub options: List[(Str, Bytes)] = []
   /// `reserved` numbers, (start, end) with end included; `max` is 2147483647.
   pub reserved: List[(Int, Int)] = []
   pub reserved_names: List[Str] = []
@@ -347,21 +352,21 @@ pub struct Message {
   pub oneofs: List[Str]
   pub nested: List[Message]
   pub enums: List[Enum]
-  pub options: List[(Str, Str)] = []
+  pub options: List[(Str, Bytes)] = []
   /// `reserved` numbers, (start, end) with end included; `max` is 536870911.
   pub reserved: List[(Int, Int)] = []
   pub reserved_names: List[Str] = []
   /// `extensions` ranges, (start, end) with end included.
   pub extensions: List[(Int, Int)] = []
   /// Each range's options (those of its `extensions` statement), parallel to `extensions`.
-  pub extension_options: List[List[(Str, Str)]] = []
+  pub extension_options: List[List[(Str, Bytes)]] = []
   /// For each map field, in field order, how many of `nested` came before it (protoc puts a map's
   /// entry message among the nested messages where the field is).
   pub map_at: List[Int] = []
   /// `extend` blocks inside the message, in order.
   pub extends: List[Extend] = []
   /// Each oneof's options, parallel to `oneofs`.
-  pub oneof_options: List[List[(Str, Str)]] = []
+  pub oneof_options: List[List[(Str, Bytes)]] = []
 }
 
 pub struct Rpc {
@@ -370,7 +375,7 @@ pub struct Rpc {
   pub resp: Str
   pub client_stream: Bool
   pub server_stream: Bool
-  pub options: List[(Str, Str)] = []
+  pub options: List[(Str, Bytes)] = []
   /// The rpc had a `{ ... }` body (protoc then writes its options message, also when empty).
   pub body: Bool = false
 }
@@ -378,7 +383,7 @@ pub struct Rpc {
 pub struct Service {
   pub name: Str
   pub rpcs: List[Rpc]
-  pub options: List[(Str, Str)] = []
+  pub options: List[(Str, Bytes)] = []
 }
 
 pub struct File {
@@ -390,7 +395,7 @@ pub struct File {
   pub messages: List[Message]
   pub enums: List[Enum]
   pub services: List[Service]
-  pub options: List[(Str, Str)] = []
+  pub options: List[(Str, Bytes)] = []
   /// the imports marked `import weak` (also in `imports`)
   pub weak_imports: List[Str] = []
   /// Top level `extend` blocks, in order.
@@ -622,14 +627,20 @@ fn p_int(var p: P) -> Int ! ParseErr {
 }
 
 fn p_str(var p: P) -> Str ! ParseErr {
+  Ok(p_str_bytes(p)?.to_str_lossy())
+}
+
+/// A string literal's bytes, adjacent literals concatenated: escapes that give invalid UTF-8 (`"\377"`)
+/// keep their bytes, as protoc reads them.
+fn p_str_bytes(var p: P) -> Bytes ! ParseErr {
   if p.at >= p.ts.len() || p.ts[p.at].kind != Kind.Str {
     return Err(p_err(p, "expected a string, found `${p_peek(p)}`"))
   }
   p.at += 1
-  var s = p.ts[p.at - 1].text
+  var s = p.ts[p.at - 1].raw
   // adjacent string literals concatenate
   while p.at < p.ts.len() && p.ts[p.at].kind == Kind.Str {
-    s = s + p.ts[p.at].text
+    s = s + p.ts[p.at].raw
     p.at += 1
   }
   Ok(s)
@@ -673,7 +684,7 @@ fn p_extend(var p: P) -> (Extend, List[Message]) ! ParseErr {
 }
 
 /// `option NAME = VALUE;`: (NAME, VALUE as written; an aggregate `{ ... }` is `{}`).
-fn p_option_stmt(var p: P) -> (Str, Str) ! ParseErr {
+fn p_option_stmt(var p: P) -> (Str, Bytes) ! ParseErr {
   p.at += 1
   let o = p_option(p)?
   p_expect(p, ";")?
@@ -684,7 +695,7 @@ fn p_option_stmt(var p: P) -> (Str, Str) ! ParseErr {
 /// unquoted, a negative number with its sign) or an aggregate `{ key: value ... }`, kept as `{`, then
 /// each key and value separated by U+1F and the pairs by U+1E, then `}` (`aggregate_pairs` reads
 /// it); an aggregate holding another one is `{}`.
-fn p_option(var p: P) -> (Str, Str) ! ParseErr {
+fn p_option(var p: P) -> (Str, Bytes) ! ParseErr {
   var name = ""
   while p.at < p.ts.len() && !p_is(p, "=") {
     name = name + p.ts[p.at].text
@@ -692,16 +703,25 @@ fn p_option(var p: P) -> (Str, Str) ! ParseErr {
   }
   p_expect(p, "=")?
   if p_is(p, "{") {
-    var pairs: List[Str] = []
+    var pairs: List[Bytes] = []
     p_aggregate(p, "", pairs)?
-    return Ok((name, "{" + pairs.join("\u{1e}") + "}"))
+    var sb = BytesBuilder.new()
+    sb.write(b"{")
+    var first = true
+    for x in pairs {
+      if !first { sb.write(b"\x1e") }
+      first = false
+      sb.write(x)
+    }
+    sb.write(b"}")
+    return Ok((name, sb.freeze()))
   }
   Ok((name, p_constant(p)?))
 }
 
 /// An aggregate option value `{ key: value ... }` from its `{`: each scalar as `KEY\u{1f}VALUE` in
 /// pairs, a nested message's keys joined to its own with a dot (`limits.min`), in the order written.
-fn p_aggregate(var p: P, prefix: Str, var pairs: List[Str]) -> () ! ParseErr {
+fn p_aggregate(var p: P, prefix: Str, var pairs: List[Bytes]) -> () ! ParseErr {
   let close = if p_is(p, "<") { ">" } else { "}" }
   p.at += 1
   while !p_is(p, close) {
@@ -728,7 +748,7 @@ fn p_aggregate(var p: P, prefix: Str, var pairs: List[Str]) -> () ! ParseErr {
     let key = prefix + name
     if p_is(p, ":") { p.at += 1 }
     if p_is(p, "{") || p_is(p, "<") {
-      pairs.push(key + "{\u{1f}")
+      pairs.push(key.bytes() + b"{\x1f")
       p_aggregate(p, key + ".", pairs)?
       continue
     }
@@ -740,41 +760,41 @@ fn p_aggregate(var p: P, prefix: Str, var pairs: List[Str]) -> () ! ParseErr {
         if p_is(p, ",") {
           p.at += 1
         } else if p_is(p, "{") || p_is(p, "<") {
-          pairs.push(key + "{\u{1f}")
+          pairs.push(key.bytes() + b"{\x1f")
           p_aggregate(p, key + ".", pairs)?
         } else {
-          pairs.push(key + "\u{1f}" + p_constant(p)?)
+          pairs.push(key.bytes() + b"\x1f" + p_constant(p)?)
         }
       }
       p.at += 1
       continue
     }
-    pairs.push(key + "\u{1f}" + p_constant(p)?)
+    pairs.push(key.bytes() + b"\x1f" + p_constant(p)?)
   }
   p.at += 1
 }
 
 /// The (key, value) pairs of an aggregate option value as `p_option` keeps it.
-pub fn aggregate_pairs(v: Str) -> List[(Str, Str)] {
-  aggregate_items(v).filter(fn(kv: (Str, Str)) -> Bool { !kv.0.ends_with("{") })
+pub fn aggregate_pairs(v: Bytes) -> List[(Str, Bytes)] {
+  aggregate_items(v).filter(fn(kv: (Str, Bytes)) -> Bool { !kv.0.ends_with("{") })
 }
 
 /// aggregate_pairs with an item (`KEY{`, "") where each nested message starts (`m { k: 1 } m { k: 2 }` is
 /// `m{`, `m.k`, `m{`, `m.k`), so a repeated message field's elements stay apart.
-pub fn aggregate_items(v: Str) -> List[(Str, Str)] {
-  var out: List[(Str, Str)] = []
-  if v.len() < 3 || !v.starts_with("{") || !v.ends_with("}") { return out }
-  for pair in v[1..v.len() - 1].split("\u{1e}") {
-    let kv = pair.split_n("\u{1f}", 2)
-    if kv.len() == 2 { out.push((kv[0], kv[1])) }
+pub fn aggregate_items(v: Bytes) -> List[(Str, Bytes)] {
+  var out: List[(Str, Bytes)] = []
+  if v.len() < 3 || !v.starts_with(b"{") || !v.ends_with(b"}") { return out }
+  for pair in v[1..v.len() - 1].split(b"\x1e") {
+    let kv = pair.split_n(b"\x1f", 2)
+    if kv.len() == 2 { out.push((kv[0].to_str_lossy(), kv[1])) }
   }
   out
 }
 
 /// A constant: a string (adjacent ones joined, unquoted), or one token with an optional sign.
-fn p_constant(var p: P) -> Str ! ParseErr {
+fn p_constant(var p: P) -> Bytes ! ParseErr {
   if p.at < p.ts.len() && p.ts[p.at].kind == Kind.Str {
-    return p_str(p)
+    return p_str_bytes(p)
   }
   var v = ""
   if p_is(p, "-") || p_is(p, "+") {
@@ -784,12 +804,12 @@ fn p_constant(var p: P) -> Str ! ParseErr {
   if p.at >= p.ts.len() { return Err(p_err(p, "expected an option value")) }
   v = v + p.ts[p.at].text
   p.at += 1
-  Ok(v)
+  Ok(v.bytes())
 }
 
 /// A `[ ... ]` option list when present.
-fn p_opts(var p: P) -> List[(Str, Str)] ! ParseErr {
-  var out: List[(Str, Str)] = []
+fn p_opts(var p: P) -> List[(Str, Bytes)] ! ParseErr {
+  var out: List[(Str, Bytes)] = []
   if !p_is(p, "[") { return Ok(out) }
   p.at += 1
   while true {
@@ -811,7 +831,7 @@ fn p_ranges(var p: P, max: Int) -> (List[(Int, Int)], List[Str]) ! ParseErr {
 }
 
 /// p_ranges, and the statement's `[ ... ]` options.
-fn p_ranges_opts(var p: P, max: Int) -> (List[(Int, Int)], List[Str], List[(Str, Str)]) ! ParseErr {
+fn p_ranges_opts(var p: P, max: Int) -> (List[(Int, Int)], List[Str], List[(Str, Bytes)]) ! ParseErr {
   p.at += 1
   var rs: List[(Int, Int)] = []
   var ns: List[Str] = []
@@ -937,15 +957,15 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
 }
 
 /// A field's options without the `default` and `json_name` pseudo options, and those two.
-fn field_opts(all: List[(Str, Str)]) -> (List[(Str, Str)], Str, Str) {
-  var opts: List[(Str, Str)] = []
-  var dv = ""
+fn field_opts(all: List[(Str, Bytes)]) -> (List[(Str, Bytes)], Bytes, Str) {
+  var opts: List[(Str, Bytes)] = []
+  var dv = b""
   var jn = ""
   for (k, v) in all {
     if k == "default" {
       dv = v
     } else if k == "json_name" {
-      jn = v
+      jn = v.to_str_lossy()
     } else {
       opts.push((k, v))
     }
@@ -991,7 +1011,7 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
       let on = p_ident(p)?
       p_expect(p, "{")?
       m.oneofs.push(on)
-      var oo: List[(Str, Str)] = []
+      var oo: List[(Str, Bytes)] = []
       while !p_is(p, "}") {
         if p.at >= p.ts.len() { return Err(p_err(p, "unterminated oneof `${on}`")) }
         if p_is(p, "option") {
@@ -1016,7 +1036,7 @@ fn p_service(var p: P) -> Service ! ParseErr {
   let name = p_ident(p)?
   p_expect(p, "{")?
   var rpcs: List[Rpc] = []
-  var sopts: List[(Str, Str)] = []
+  var sopts: List[(Str, Bytes)] = []
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated service `${name}`")) }
     if p_is(p, "option") {
@@ -1043,7 +1063,7 @@ fn p_service(var p: P) -> Service ! ParseErr {
       }
       let resp = p_type(p)?
       p_expect(p, ")")?
-      var ropts: List[(Str, Str)] = []
+      var ropts: List[(Str, Bytes)] = []
       let body = p_is(p, "{")
       if body {
         // the rpc's options block
@@ -1172,10 +1192,10 @@ struct GenPack {
 }
 
 /// The value of the `features.NAME` option in opts, None when not set.
-fn g_feature(opts: List[(Str, Str)], name: Str) -> Str? {
+fn g_feature(opts: List[(Str, Bytes)], name: Str) -> Str? {
   var v: Str? = None
   for (k, x) in opts {
-    if k == "features.${name}" { v = Some(x) }
+    if k == "features.${name}" { v = Some(x.to_str_lossy()) }
   }
   v
 }
@@ -1203,7 +1223,7 @@ fn g_unpacked(fl: Field, gtyp: Str, pk: GenPack) -> Bool {
   }
   var packed = !pk.proto2
   for (k, v) in fl.options {
-    if k == "packed" { packed = v == "true" }
+    if k == "packed" { packed = v == b"true" }
   }
   !packed
 }

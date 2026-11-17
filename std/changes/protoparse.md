@@ -1,5 +1,18 @@
 # std/protoparse changes
 
+## 2026-11-16: fix: string literals whose escapes are not UTF-8 keep their bytes (breaking)
+
+- Kind: fix
+- Commit: this push
+- Found by: owner decision #46 (task #109, protocompile's invalid_utf8_strings behavior)
+- Go reference: protoc's tokenizer (ParseStringAppend keeps bytes), protocompile
+- Test: std/protoparse_test.xo ("escapes giving invalid UTF-8 keep their bytes"); internal/stdtest/testdata/corpus/protoparse/aggregate_test.xo
+- Shipped in: not yet released
+
+Option values (`options: List[(Str, Bytes)]`) and `Field.default_value` are `Bytes`: `"\377"` is the byte
+0xFF, not U+FFFD, and adjacent literals join before any read as text. `aggregate_pairs` and `aggregate_items` take
+and give `Bytes`; a string `Token` keeps its bytes in `raw`. Code reading them as text calls `.to_str_lossy()`.
+
 ## 2026-11-16: fix: string escapes, dot floats, split type names, aggregate lists and extension keys, extend groups
 
 - Kind: fix

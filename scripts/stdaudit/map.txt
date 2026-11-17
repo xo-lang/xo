@@ -5578,4 +5578,4 @@ protocompile.behavior.codegen = std/protoparse.gen_set (xo proto gen: messages a
 protocompile.behavior.editions = std/protoparse.parse (edition 2023 and 2024: features options, presence and repeated encoding in gen; protodesc byte exact with protoc on scripts/protocdesc/testdata/editions2023.proto)
 protocompile.behavior.groups = gap: derive Proto has no group (delimited) encoding, so gen refuses a proto2 group and an editions DELIMITED field
 protocompile.behavior.custom_options = std/protodesc.build: custom options (extensions of descriptor.proto's options messages, scalar, enum, message, aggregate and `(ext).a.b` values) as protoc writes them; test scripts/protocdesc/testdata/customopts.proto
-protocompile.behavior.invalid_utf8_strings = gap: a string literal whose escapes give invalid UTF-8 (`"\377"`) is read lossy (U+FFFD for each bad byte), since a Str is valid UTF-8; protoc keeps the bytes (a bytes default, a string or bytes option value)
+protocompile.behavior.invalid_utf8_strings = std/protoparse.parse (option values and Field.default_value are Bytes: `"\377"` keeps byte 0xFF, as protoc; std/protodesc writes them as protoc does, owner decision #46)
