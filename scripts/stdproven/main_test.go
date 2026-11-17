@@ -521,3 +521,17 @@ fn main(os: Os) ! {
 		t.Errorf("without %s: %v, want a memory failure:\n%s", stressCheckEnv, err, out)
 	}
 }
+
+// A race run gives each test the race timeout, not xo test's 60 s default:
+// brotli's quality 0 to 11 round trip passed its race checks but ran past a
+// minute under --race on host 4 (2026-11-17, #152).
+func TestRaceTestTimeout(t *testing.T) {
+	got := raceTestArgs("llvm", "10m", raceRun{target: "--std-module=std/brotli"})
+	want := []string{"test", "--race", "--backend=llvm", "--timeout=10m", "--std-module=std/brotli"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("raceTestArgs = %q, want %q", got, want)
+	}
+	if got := raceTestArgs("llvm", "10m", raceRun{target: "x", real: true}); got[len(got)-2] != "--real" {
+		t.Errorf("a real run: %q", got)
+	}
+}

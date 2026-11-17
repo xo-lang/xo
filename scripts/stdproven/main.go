@@ -704,6 +704,17 @@ func timing(args []string) error {
 	return os.WriteFile(filepath.Join("std", "evidence", module, "timing-"+name+".md"), []byte(b.String()), 0o644)
 }
 
+// raceTestArgs: xo test's arguments for one race run. A race build runs
+// several times slower, so a test gets timeout (xo test --timeout) instead
+// of the 60 s default.
+func raceTestArgs(backend, timeout string, r raceRun) []string {
+	args := []string{"test", "--race", "--backend=" + backend, "--timeout=" + timeout}
+	if r.real {
+		args = append(args, "--real")
+	}
+	return append(args, r.target)
+}
+
 // race runs decision 0616's race kind for one module.
 func race(args []string) error {
 	fs := flag.NewFlagSet("race", flag.ExitOnError)
@@ -714,6 +725,7 @@ func race(args []string) error {
 	churnRounds := fs.Int("churn-rounds", 50, "rounds of 200000 tasks of the task churn against Go's race build (0 skips it; decision 0616 section 2a)")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	stockRT := fs.Bool("stock-runtime", false, "allow clang's own ThreadSanitizer runtime when lib/xo/race has none (not the runtime users get; race.md says so)")
+	testTimeout := fs.String("test-timeout", "10m", "the real time each module or corpus test may take under --race (xo test --timeout; its 60s default stopped brotli's quality 0 to 11 round trip on host 4, 2026-11-17)")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
 		usage()
@@ -748,11 +760,7 @@ func race(args []string) error {
 	var lines []string
 	for _, r := range runs {
 		t0 := time.Now()
-		targs := []string{"test", "--race", "--backend=" + *backend}
-		if r.real {
-			targs = append(targs, "--real")
-		}
-		cmd := exec.Command(xo, append(targs, r.target)...)
+		cmd := exec.Command(xo, raceTestArgs(*backend, *testTimeout, r)...)
 		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
 		out, err := cmd.CombinedOutput()
 		text := string(out)
