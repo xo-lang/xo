@@ -219,6 +219,20 @@ when its state is older.
 2. Measure against the baseline above (state in the shared model with
    redact and allow): live notices and bytes per sync with 2, 20 and 200
    users, server memory, wasm size, time for a filter to show.
+   Notices, syncs and bytes done 2026-11-17 (std/ui "user state wakes
+   only its principal's pages", in-process, one draft act per user, each
+   woken page syncing thin): a draft in the shared model (todo_app with
+   redact) wakes every page, a draft in user state wakes only its
+   principal's page.
+
+   | users | shared: notices, syncs, bytes | user state: notices, syncs, bytes |
+   |---|---|---|
+   | 2 | 4, 6, 1,350 | 2, 4, 1,232 |
+   | 20 | 400, 420, 73,511 | 20, 40, 12,350 |
+   | 200 | 40,000, 40,200, 6,767,872 | 200, 400, 124,070 |
+
+   Server memory, wasm size and filter time are measured with step 4 in
+   Chrome.
 3. Property test: two devices of one user and one of another, random
    acts with drops and reorders, converge; no user's state reaches
    another's view. Done 2026-11-17: std/ui "a principal's devices

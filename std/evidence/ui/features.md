@@ -89,7 +89,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] tab state: with_url_view renders the page's query | 0672 | `std/ui_test.xo:with_url_view renders the page's query on the page, a sync and a prediction`
 - [x] a sync sends the page's query | 0672 | `internal/uiruntime/runtime_test.go:TestSyncSendsPageQuery`
 - [x] user state across devices (a typed per-user part, views over two scopes) | 0672, 0686 plan step 6 | `with_user`, `on_user`; std/ui "a principal's own state is the same on each of its devices and no one else's", "a principal's act emits shared Msgs as that principal, through allow"; internal/uiruntime TestUserActsSyncApart (2026-11-17)
-- [ ] 0672 plan steps 2 to 4: 2/20/200 user measurements, Chrome checks (step 3, the two-device property test, done 2026-11-17: std/ui "a principal's devices converge on one state and no one else sees it, over a lossy network", "user state convergence holds for any seed") | 0672 | open: steps 2 and 4
+- [ ] 0672 plan steps 2 to 4: 2/20/200 user measurements, Chrome checks (step 3, the two-device property test, done 2026-11-17: std/ui "a principal's devices converge on one state and no one else sees it, over a lossy network", "user state convergence holds for any seed") ; step 2 notices, syncs and bytes done 2026-11-17: 200 users, 200 notices and 124 KB with user state against 40,000 and 6.8 MB shared, std/ui "user state wakes only its principal's pages" | 0672 | open: step 2 memory, wasm size, filter time; step 4
 
 ## Scopes, stores and buses (0686)
 

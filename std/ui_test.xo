@@ -2109,3 +2109,95 @@ test "a principal's devices converge on one state and no one else sees it, over 
 test "user state convergence holds for any seed" for seed: Int {
   expect(simulate_user(seed, 60, 400)?) == true
 }
+
+// ---- decision 0672 plan step 2: user state against the shared model ----
+
+/// One sync as `user`, with the answer's size on the wire.
+fn sync_sized(r: http.Router, user: Str, up: Up[Msg]) -> (Int, Sync[Model, Msg]) ! Str {
+  let resp = r.call(http.new_request("POST", "/_xo/sync?thin=1", headers: {"Content-Type": "application/json", "X-User": user}, body: json.encode_str(up).bytes()))
+  let text = resp.text() ?? ""
+  let s = json.decode_str[Sync[Model, Msg]](text).map_err(fn(e) { "${e}" })?
+  (text.len(), s)
+}
+
+/// What n users typing one draft each costs: live notices sent, syncs
+/// the woken pages make, and bytes those syncs answer. With `user` the
+/// drafts are user state (0672); without, each draft is a todo in the
+/// shared model that redact shows only to its author (the baseline).
+struct DraftCost {
+  notices: Int
+  syncs: Int
+  bytes: Int
+}
+
+fn draft_cost(n: Int, user: Bool) -> DraftCost ! Str {
+  let h = if user { host(draft_app(), auth: Some(auth_hdr)) } else { host(todo_app(), auth: Some(auth_hdr), redact: Some(mine)) }
+  let r = routes_for(h)
+  var chs: List[Chan[Int]] = []
+  var vers: List[Int] = []
+  var uvers: List[Int] = []
+  var seens: List[Str] = []
+  for i in 0..n {
+    let (_, c) = h.subscribe("u${i}x")
+    chs.push(c)
+    let (_, s) = sync_sized(r, "u${i}x", Up{client: "c${i}", ver: 0, msgs: [], user: if user { Some(UserUp{ver: 0, msgs: []}) } else { None }})?
+    vers.push(s.ver)
+    uvers.push(if let Some(u) = s.user { u.ver } else { 0 })
+    seens.push(s.seen)
+  }
+  for c in chs {
+    while c.try_recv().is_some() {}
+  }
+  var cost = DraftCost{notices: 0, syncs: 0, bytes: 0}
+  for i in 0..n {
+    let p = "u${i}x"
+    let up = if user {
+      Up{client: "c${i}", ver: vers[i], msgs: [], seen: seens[i], user: Some(UserUp{ver: uvers[i], msgs: [uact(1, DraftAct.Type(s: "${p} draft"))]})}
+    } else {
+      Up{client: "c${i}", ver: vers[i], msgs: [Envelope{seq: 1, msg: Msg.Add(id: "d${i}", title: "${p} draft")}], seen: seens[i]}
+    }
+    let (b, s) = sync_sized(r, p, up)?
+    cost.bytes = cost.bytes + b
+    cost.syncs = cost.syncs + 1
+    vers[i] = s.ver
+    seens[i] = s.seen
+    if let Some(u) = s.user {
+      uvers[i] = u.ver
+    }
+    // every page woken by it syncs
+    for j in 0..n {
+      var woke = false
+      while chs[j].try_recv().is_some() {
+        woke = true
+        cost.notices = cost.notices + 1
+      }
+      if woke {
+        let q = "u${j}x"
+        let (b2, s2) = sync_sized(r, q, Up{client: "c${j}", ver: vers[j], msgs: [], seen: seens[j], user: if user { Some(UserUp{ver: uvers[j], msgs: []}) } else { None }})?
+        cost.bytes = cost.bytes + b2
+        cost.syncs = cost.syncs + 1
+        vers[j] = s2.ver
+        seens[j] = s2.seen
+        if let Some(u) = s2.user {
+          uvers[j] = u.ver
+        }
+      }
+    }
+  }
+  cost
+}
+
+test "user state wakes only its principal's pages: 2, 20 and 200 users (decision 0672 plan step 2)" {
+  // measured 2026-11-17: n=200 shared 40000 notices, 40200 syncs, 6767872 bytes;
+  // user state 200 notices, 400 syncs, 124070 bytes
+  for n in [2, 20, 200] {
+    let shared = draft_cost(n, false)?
+    let own = draft_cost(n, true)?
+    let got = "n=${n}: shared notices ${shared.notices} syncs ${shared.syncs} bytes ${shared.bytes}; user notices ${own.notices} syncs ${own.syncs} bytes ${own.bytes}"
+    if shared.notices != n * n { return Err("a shared draft wakes every page: ${got}") }
+    if own.notices != n { return Err("a user draft wakes only its principal's page: ${got}") }
+    if own.syncs > 2 * n { return Err("user draft syncs: ${got}") }
+    if n >= 20 && own.bytes * 4 > shared.bytes { return Err("user draft bytes: ${got}") }
+  }
+  return Ok(())
+}
