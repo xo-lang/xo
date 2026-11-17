@@ -1,5 +1,32 @@
 # std/tls changes
 
+## 2026-11-17: fix: a TLS 1.3 server answers a handshake message Go cannot decode with decode_error, as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (TestTlsFuzz seed 4, case 2742 of 5000: the ClientHello's type byte flipped to end_of_early_data)
+- Go reference: crypto/tls conn.go unmarshalHandshakeMessage, handshake_messages.go (helloRequestMsg, endOfEarlyDataMsg, serverHelloDoneMsg, keyUpdateMsg, certificateStatusMsg)
+- Test: std/native/llrt tls13srv_test.xo (a first message of a type Go parses but cannot decode is decode_error)
+- Shipped in: not yet released
+
+Go parses every handshake type it knows before it checks the state, so a hello_request, end_of_early_data or
+server_hello_done with a body, a key_update other than 0 or 1, or a malformed certificate_status is a
+decode_error alert. The server answered unexpected_message for these (and did not know hello_request,
+end_of_early_data, server_key_exchange, server_hello_done, client_key_exchange or certificate_status as types
+at all). Peers see the alert Go sends.
+
+## 2026-11-17: fix: a TLS 1.3 server refuses a ClientHello whose early_data is not empty, as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: azure-1 (TestTlsFuzz seed 2, case 4518 of 5000: a supported_groups type byte flipped to early_data)
+- Go reference: crypto/tls handshake_messages.go clientHelloMsg.unmarshal (every extension body read to its end)
+- Test: std/native/llrt tls13srv_test.xo (a ClientHello's early_data is empty)
+- Shipped in: not yet released
+
+A TLS 1.3 server took a ClientHello whose early_data extension held bytes and went on to a protocol_version alert
+where Go answers decode_error. RFC 8446 4.2.10's early_data is empty in a ClientHello.
+
 ## 2026-11-17: fix: the Go backend's TLS 1.3 server reads status_request, SCT, EMS and point formats as Go does
 
 - Kind: fix

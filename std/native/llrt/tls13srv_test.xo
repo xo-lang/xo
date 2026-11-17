@@ -226,3 +226,36 @@ test "a ClientHello's status_request, SCT, EMS and point formats are read as Go 
   expect(parse_hello(hello_with(b"\x00\x0b\x00\x01\x00")).ok) == false
   expect(parse_hello(hello_with(b"\x00\x0b\x00\x02\x02\x00")).ok) == false
 }
+
+test "a ClientHello's early_data is empty, as Go reads it (TestTlsFuzz seed 2 case 4518: a 10 byte early_data was protocol_version, Go's decode_error)" {
+  expect(parse_hello(hello_with(b"\x00\x2a\x00\x00")).ok) == true
+  expect(parse_hello(hello_with(b"\x00\x2a\x00\x00")).early) == true
+  expect(parse_hello(hello_with(b"\x00\x2a\x00\x01\x00")).ok) == false
+  expect(parse_hello(hello_with(b"\x00\x2a\x00\x0a\x00\x08\x00\x1d\x00\x17\x00\x18\x00\x19")).ok) == false
+}
+
+/// The alert a new server sends for one plaintext handshake message.
+fn first_message_alert(t: Int, body: Bytes) -> Int {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  var s = server(conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed")))
+  let msg = tls13.message(t, body)
+  feed(s, asn1.cat([b"\x16\x03\x01", tls13.u16(msg.len()), msg]))
+  s.alert
+}
+
+test "a first message of a type Go parses but cannot decode is decode_error, an unknown type unexpected_message (TestTlsFuzz seed 4 case 2742: an end_of_early_data with a body was unexpected_message)" {
+  expect(first_message_alert(5, b"\x01")) == 50
+  expect(first_message_alert(5, b"")) == 10
+  expect(first_message_alert(0, b"\x01")) == 50
+  expect(first_message_alert(0, b"")) == 10
+  expect(first_message_alert(14, b"\x01")) == 50
+  expect(first_message_alert(24, b"\x02")) == 50
+  expect(first_message_alert(24, b"\x01")) == 10
+  expect(first_message_alert(22, b"\x02\x00\x00\x01\x00")) == 50
+  expect(first_message_alert(22, b"\x01\x00\x00\x00")) == 50
+  expect(first_message_alert(22, b"\x01\x00\x00\x01\x00")) == 10
+  expect(first_message_alert(12, b"\x01")) == 10
+  expect(first_message_alert(16, b"\x01")) == 10
+  expect(first_message_alert(20, b"\x01")) == 10
+  expect(first_message_alert(3, b"\x01")) == 10
+}

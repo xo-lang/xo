@@ -548,6 +548,11 @@ fn handshake(var s: Server, t: Int, msg: Bytes) {
     fail(s, ALERT_UNEXPECTED_MESSAGE, "local error: tls: unexpected message")
     return
   }
+  if !go_decodes(t, msg) {
+    // Go's unmarshalHandshakeMessage: a type it parses, in any state
+    fail(s, ALERT_DECODE_ERROR, "local error: tls: error decoding message")
+    return
+  }
   if s.state == WAIT_CH && t == HS_CLIENT_HELLO {
     client_hello(s, msg)
   } else if s.state == WAIT_CH2 && t == HS_CLIENT_HELLO {
@@ -595,11 +600,32 @@ fn hs_bytes(var s: Server, data: Bytes) {
   }
 }
 
+/// Whether Go's unmarshal of a message msg (header included) of the
+/// fixed or short layouts succeeds (Go 1.26.11 handshake_messages.go);
+/// true for the types whose own handler decodes them.
+fn go_decodes(t: Int, msg: Bytes) -> Bool {
+  let n = msg.len() - 4
+  match t {
+    0 => n == 0
+    5 => n == 0
+    14 => n == 0
+    24 => n == 1 && Int(msg[4]) <= 1
+    22 => n >= 4 && Int(msg[4]) == 1 && tls13.u24_at(msg, 5) == n - 4 && n > 4
+    _ => true
+  }
+}
+
 /// Go's type of a handshake message ("" for a type Go does not parse).
 fn go_type(t: Int) -> Str {
   match t {
+    0 => "*tls.helloRequestMsg"
     1 => "*tls.clientHelloMsg"
     2 => "*tls.serverHelloMsg"
+    5 => "*tls.endOfEarlyDataMsg"
+    12 => "*tls.serverKeyExchangeMsg"
+    14 => "*tls.serverHelloDoneMsg"
+    16 => "*tls.clientKeyExchangeMsg"
+    22 => "*tls.certificateStatusMsg"
     4 => "*tls.newSessionTicketMsgTLS13"
     8 => "*tls.encryptedExtensionsMsg"
     11 => "*tls.certificateMsgTLS13"
@@ -859,8 +885,9 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
     return true
   }
   if t == EXT_EARLY_DATA {
+    // RFC 8446 4.2.10: empty in a ClientHello (Go: decode_error otherwise)
     h.early = true
-    return true
+    return n == 0
   }
   if t == EXT_QUIC {
     h.quic = true

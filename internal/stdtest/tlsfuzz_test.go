@@ -52,6 +52,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -277,7 +278,11 @@ func tlfChange(r *rand.Rand, rec []byte) ([]byte, string) {
 		h.comp = []byte{1}
 		return tlfEncode(h), "no null compression"
 	case 8:
-		h.suites = h.suites[:len(h.suites)-1]
+		if len(h.suites) == 0 {
+			h.suites = []byte{0x13}
+		} else {
+			h.suites = h.suites[:len(h.suites)-1]
+		}
 		return tlfEncode(h), "odd suites"
 	case 9:
 		h.sid = make([]byte, 33)
@@ -295,9 +300,32 @@ func tlfChange(r *rand.Rand, rec []byte) ([]byte, string) {
 	return cp(rec[:n]), fmt.Sprintf("record cut at %d", n)
 }
 
+// tlfDial dials the server under test (a variable so a test can make it
+// fail).
+var tlfDial = func(addr string) (net.Conn, error) { return net.DialTimeout("tcp", addr, 3*time.Second) }
+
+// tlfDialRetry dials addr, waiting out a client with no free local port
+// (EADDRNOTAVAIL: 10,000 cases a seed leave closed connections in
+// TIME_WAIT, and a fuzz run beside it uses ports too; seed 3 lost 772 cases
+// to "can't assign requested address" on the Mac, 2026-11-17).
+func tlfDialRetry(addr string) (net.Conn, error) {
+	deadline := time.Now().Add(2 * time.Minute)
+	wait := 10 * time.Millisecond
+	for {
+		c, err := tlfDial(addr)
+		if err == nil || !errors.Is(err, syscall.EADDRNOTAVAIL) || time.Now().After(deadline) {
+			return c, err
+		}
+		time.Sleep(wait)
+		if wait < time.Second {
+			wait *= 2
+		}
+	}
+}
+
 // tlfSend sends a hello to addr, ends the stream and summarizes the reply.
 func tlfSend(addr string, hello []byte) string {
-	c, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	c, err := tlfDialRetry(addr)
 	if err != nil {
 		return "dial " + err.Error()
 	}
