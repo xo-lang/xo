@@ -26,6 +26,19 @@ keeps each newline); `Bytes.join(parts, sep)` is bytes.Join; and
 
 The native OS Rand's `int(lo, hi)` with a span below 2^32 maps a word from the worker's ChaCha8 buffer by Lemire's multiply, as Go's uint32n, instead of a remainder (decision 0696). Seeded streams (a test binary's `os.rand`, `random.seeded`) and the Go backend keep the remainder and give the same values as before.
 
+## 2026-11-17: perf: Rand.bytes draws from the worker's ChaCha8 keystream (#87)
+
+- Kind: perf
+- Commit: this push
+- Found by: Lang 2's #88 lever 10: every Rand.bytes was a getrandom or getentropy system call
+- Go reference: crypto/rand (vDSO getrandom on Linux, arc4random_buf on macOS), math/rand/v2 ChaCha8
+- Test: internal/llvm TestRuntimeRandChaCha8 (lengths, distinct draws, byte uniformity, taken words zeroed); bench/perf/uuid v4
+- Shipped in: not yet released
+
+Native builds take `Rand.bytes` from the same per-thread ChaCha8 keystream
+as `int`, `float` and `bool` (decision 0700), 8 bytes a word, each word
+zeroed in the buffer as it is taken. Seeded and `xo test` streams are
+unchanged; a thread with no worker record keeps the system call.
 ## 2026-11-16: feature: Atomic[Int].and and or
 
 - Kind: feature

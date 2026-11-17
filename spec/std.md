@@ -1310,12 +1310,13 @@ fn (r: Rand) bytes(n: Int) -> Bytes
 fn (r: Rand) shuffle[T](xs: List[T]) -> List[T]
 ```
 
-Native builds (`--no-gc`, decision 0083) draw `int`, `float` and `bool`
-from a ChaCha8 keystream per worker thread (Go's chacha8rand, with fast
+Native builds (`--no-gc`, decision 0083) draw `int`, `float`, `bool` and
+`bytes` from a ChaCha8 keystream per worker thread (Go's chacha8rand, with fast
 key erasure), seeded from the operating system's generator (`getentropy`,
 `getrandom`) and never repeated in a forked child (decision 0669);
-`bytes` reads the operating system's generator on every call, as
-std/crypto's keys and nonces do. `shuffle` draws one `int` per
+`bytes` takes 8 bytes a word and zeroes each word it takes in the buffer
+(decision 0700), so std/crypto's keys and nonces need no system call
+either. `shuffle` draws one `int` per
 step as on the Go backend, so a test's seeded shuffle is the same
 (decision 0107). `shuffle` is derived from `int` on every backend, for a
 program's own Rand too: Fisher-Yates from the end with that value's
@@ -4511,7 +4512,9 @@ underneath, plus Argon2id and BLAKE2b vendored from `golang.org/x/crypto`
 into the runtime (no module dependency). Native builds (`--no-gc`,
 decision 0083) compute the same results in Xo (std/native/llrt: SHA-256,
 HMAC, PBKDF2, BLAKE2b, Argon2, SHA-512 and Ed25519), with random bytes
-from the operating system (`getentropy` on macOS, `getrandom` on Linux).
+from `Rand.bytes`: a ChaCha8 keystream per worker thread seeded from the
+operating system (`getentropy` on macOS, `getrandom` on Linux; decisions
+0669 and 0700).
 
 ```
 pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes

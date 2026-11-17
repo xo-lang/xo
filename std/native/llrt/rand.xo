@@ -117,8 +117,8 @@ fn next_u64_slow() -> Int {
 // generator behind math/rand/v2's top-level functions), seeded from the
 // system's generator. One system call a draw (plus an 8 byte Bytes) was 60
 // to 354 times Go's draws (bench/perf/random, 2026-11-15). Rand.bytes,
-// which std/crypto's keys and nonces read, stays the system's generator
-// (next_bytes).
+// which std/crypto's keys and nonces read, draws from the same keystream
+// since decision 0700 (next_bytes), each word zeroed as it is taken.
 //
 // Go's design: each refill computes four ChaCha8 blocks (counters c to c +
 // 3) into 32 words; after four refills the last four words of the buffer,
@@ -367,17 +367,77 @@ pub fn fork_differs() -> Int {
 }
 
 /// `rand.bytes(n)`: n random bytes (none when n <= 0); seeded, one draw
-/// per byte (its low byte), as std/rt's seededRand.M_bytes.
+/// per byte (its low byte), as std/rt's seededRand.M_bytes. Else the
+/// worker's ChaCha8 keystream (decision 0700), 8 bytes a word, the first
+/// lowest, each word zeroed in the buffer as it is taken (a later read of
+/// the state does not give bytes already handed out; fast key erasure
+/// covers the words of earlier keys); the system's generator on a thread
+/// with no state.
 pub fn next_bytes(n0: Int) -> Bytes {
   let n = if n0 < 0 { 0 } else { n0 }
   if !testworld.seeded() {
-    return entropy(n)
+    let st = state()
+    if st == 0 {
+      return entropy(n)
+    }
+    return stream_bytes(st, n)
   }
   var s = rt.rs_with_cap(n)
   for _ in 0..n {
     s = rt.rs_push_byte(s, testworld.rand_u64() & 0xFF)
   }
   s.bytes()
+}
+
+/// n bytes of st's keystream (next_bytes), each word taken zeroed in the
+/// buffer.
+fn stream_bytes(st: Int, n: Int) -> Bytes {
+  let out = raw.bytes_buf(n)
+  let d = raw.bytes_addr(out)
+  var k = 0
+  while k < n {
+    var i = rt.mem_load(st, ST_I, 8)
+    if i >= rt.mem_load(st, ST_N, 8) {
+      refill(st)
+      i = 0
+    }
+    rt.mem_store(st, ST_I, i + 1, 8)
+    let at = ST_BUF + 8 * (i & 31)
+    let x = rt.mem_load(st, at, 8)
+    rt.mem_store(st, at, 0, 8)
+    if n - k >= 8 {
+      rt.mem_store(d, k, x, 8)
+      k += 8
+    } else {
+      var j = 0
+      while k < n {
+        rt.mem_store(d, k, x.shr_logical(8 * j) & 0xFF, 1)
+        k += 1
+        j += 1
+      }
+    }
+  }
+  out
+}
+
+/// Whether the buffer words a Rand.bytes(16) took are zero after it
+/// (std/internal rt_probe "rand_bytes_wipe", decision 0700): 1 wiped, 0
+/// not, 2 when this thread has no state or the run is seeded.
+pub fn bytes_wiped() -> Int {
+  if testworld.seeded() {
+    return 2
+  }
+  let st = state()
+  if st == 0 {
+    return 2
+  }
+  // a fresh buffer, so both words come from it
+  refill(st)
+  let b = stream_bytes(st, 16)
+  if b.len() != 16 {
+    return 0
+  }
+  if rt.mem_load(st, ST_BUF, 8) == 0 && rt.mem_load(st, ST_BUF + 8, 8) == 0 { 1 } else { 0 }
 }
 
 /// `rand.int(lo, hi)`: uniform in [lo, hi) by rejection (std/rt's

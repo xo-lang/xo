@@ -39,6 +39,8 @@ func main() {
 			}
 		case "string":
 			sum += len(us[i%5].String()) + i%7
+		case "v4":
+			sum += int(uuid.New().Version()) + i%7
 		case "bytes":
 			b, _ := us[i%5].MarshalBinary()
 			u, err := uuid.FromBytes(b)

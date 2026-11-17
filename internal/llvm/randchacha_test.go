@@ -49,7 +49,7 @@ func TestRuntimeRandChaCha8(t *testing.T) {
 			if err != nil {
 				t.Fatalf("run: %v\n%s", err, out)
 			}
-			for _, name := range []string{"kat", "fork"} {
+			for _, name := range []string{"kat", "fork", "bytes"} {
 				if !strings.Contains(string(out), name+": ok\n") {
 					t.Errorf("no %q:\n%s", name+": ok", out)
 				}

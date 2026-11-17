@@ -269,6 +269,10 @@ fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
       // whether a forked child's next Rand word differs from its parent's
       rand.fork_differs()
     }
+    "rand_bytes_wipe" => {
+      // whether Rand.bytes zeroes the keystream words it takes (decision 0700)
+      rand.bytes_wiped()
+    }
     "sleep_mono" => {
       // poll.sleep_until a ms on the timers' clock: TIMEOUT (3)
       poll.sleep_until(poll.now() + a)

@@ -121,7 +121,37 @@ fn main(os: Os) uses stdio, proc, rand {
   let _r = os.rand.int(0, 1000)
   let f = internal.rt_probe("rand_fork", 0, 0, 0, 0)
   os.stdio.println(if f == 1 { "fork: ok" } else { "fork: FAIL (${f})" })
-  if bad != 0 || f != 1 {
+  // Rand.bytes from the keystream (decision 0700): its lengths, two draws
+  // that differ, each byte value near 1/256 of 256,000 (6 standard
+  // deviations), and the words it took zeroed in the buffer
+  var bytes_bad = 0
+  for n in [0, 1, 7, 8, 9, 15, 16, 17, 1000, 4099] {
+    if os.rand.bytes(n).len() != n {
+      os.stdio.println("bytes(${n}): wrong length")
+      bytes_bad += 1
+    }
+  }
+  if os.rand.bytes(32) == os.rand.bytes(32) {
+    os.stdio.println("bytes: two draws of 32 the same")
+    bytes_bad += 1
+  }
+  var counts = List[Int].filled(256, 0)
+  for c in os.rand.bytes(256000) {
+    counts[Int(c)] += 1
+  }
+  for (v, c) in counts.indexed() {
+    if c < 1000 - 190 || c > 1000 + 190 {
+      os.stdio.println("bytes: value ${v} drawn ${c} times of 256000")
+      bytes_bad += 1
+    }
+  }
+  let wiped = internal.rt_probe("rand_bytes_wipe", 0, 0, 0, 0)
+  if wiped != 1 {
+    os.stdio.println("bytes: words not wiped (${wiped})")
+    bytes_bad += 1
+  }
+  os.stdio.println(if bytes_bad == 0 { "bytes: ok" } else { "bytes: FAIL" })
+  if bad != 0 || f != 1 || bytes_bad != 0 {
     os.proc.exit(1)
   }
 }
