@@ -61,9 +61,20 @@ pub enum MigrateErr {
   Parse(name: Str, msg: Str)
   /// Two files have the same version.
   Duplicate(version: Int, first: Str, second: Str)
-  /// Pending versions below the newest applied one, refused unless
-  /// `allow_missing` (goose's "missing (out-of-order) migration").
-  Missing(versions: List[Int])
+  /// Pending versions below `newest`, the newest applied one, and at or
+  /// below `to`, refused unless `allow_missing` (goose's "missing
+  /// (out-of-order) migration"). `to` is Int.max when `up` has no target.
+  Missing(versions: List[Int], newest: Int, to: Int)
+  /// `up_one` found nothing pending (goose's ErrNoNextVersion).
+  NoNext
+  /// `apply_version` was given a version no migration has
+  /// (goose's ErrVersionNotFound).
+  NotFound(version: Int)
+  /// `apply_version` was given a version already applied
+  /// (goose's ErrAlreadyApplied).
+  AlreadyApplied(version: Int)
+  /// A target or migration version below 1 (goose's errInvalidVersion).
+  BadVersion(version: Int)
   /// A statement of a migration failed. The migrations applied before it
   /// stay; in a transaction, nothing of this one does.
   Failed(version: Int, name: Str, statement: Int, err: sql.SqlErr)
@@ -78,7 +89,16 @@ pub fn (e: MigrateErr) display() -> Str {
   match e {
     Parse(name, msg) => "migrate: ${name}: ${msg}"
     Duplicate(v, a, b) => "migrate: found duplicate migration version ${v}: ${a} and ${b}"
-    Missing(vs) => "migrate: found ${vs.len()} missing (out-of-order) migration(s): ${vs.map(fn(v) { "${v}" }).join(", ")}"
+    Missing(vs, newest, to) => {
+      let what = if vs.len() > 1 { "migrations" } else { "migration" }
+      let target = if to != Int.max { ", with target version (${to})" } else { "" }
+      let list = if vs.len() > 1 { "versions " } else { "version " }
+      "migrate: detected ${vs.len()} missing (out-of-order) ${what} lower than database version (${newest})${target}: ${list}${vs.map(fn(v) { "${v}" }).join(",")}"
+    }
+    NoNext => "migrate: no next version found"
+    NotFound(v) => "migrate: version ${v}: version not found"
+    AlreadyApplied(v) => "migrate: version ${v}: migration already applied"
+    BadVersion(_) => "migrate: version must be greater than 0"
     Failed(v, name, i, err) => "migrate: partial migration error (version ${v}, ${name}, statement ${i + 1}): ${err.display()}"
     Db(err) => "migrate: ${err.display()}"
     Table(name) => "migrate: version table name ${name:?} is not an identifier"
@@ -454,41 +474,41 @@ fn apply[fx: Effects](c: sql.Conn[fx], table: Str, m: Migration, at: Time) -> ()
   }
 }
 
-fn up_locked[fx: Effects](c: sql.Conn[fx], ms: List[Migration], table: Str, clock: Clock, d: Dialect, allow_missing: Bool) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
-  let done = applied(c, table)?
+/// The versions `up` applies, in order, given the migrations' `versions`
+/// and the `applied` ones: goose's UpVersions. Each unapplied version at
+/// or below `to` is applied; one below the newest applied version is
+/// missing (out of order), MigrateErr.Missing unless `allow_missing`.
+pub fn up_versions(versions: List[Int], applied: List[Int], to: Int = Int.max, allow_missing: Bool = false) -> List[Int] ! MigrateErr {
+  var done: Map[Int, Bool] = {}
   var newest = 0
-  for v in done.keys() {
+  for v in applied {
+    done[v] = true
     if v > newest {
       newest = v
     }
   }
-  let pending = ms.filter(fn(m) { !done.contains(m.version) })
-  let missing = pending.filter(fn(m) { m.version < newest }).map(fn(m) { m.version })
-  if missing.len() > 0 && !allow_missing {
-    return Err(MigrateErr.Missing(missing))
-  }
+  var missing: List[Int] = []
   var out: List[Int] = []
-  for m in pending {
-    apply(c, table, m, clock.now())?
-    out.push(m.version)
+  for v in versions.sort() {
+    if done.contains(v) || v > to {
+      continue
+    }
+    if v < newest {
+      missing.push(v)
+      out.push(v)
+    } else if v > newest {
+      out.push(v)
+    }
+  }
+  if missing.len() > 0 && !allow_missing {
+    return Err(MigrateErr.Missing(versions: missing, newest: newest, to: to))
   }
   Ok(out)
 }
 
-/// Applies every pending migration of files in version order, each in its
-/// own transaction (unless NO TRANSACTION), recording it in `table`
-/// (created when missing) with `clock`'s time, and answers the versions
-/// applied. One connection holds the dialect's lock throughout, so a
-/// second process waits and then finds nothing pending. A failure stops at
-/// that migration: the ones before it stay applied (MigrateErr.Failed).
-/// A pending version below the newest applied one is MigrateErr.Missing
-/// unless `allow_missing`, which applies it.
-pub fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
-  up_list(db, collect(files)?, clock, table, dialect, allow_missing)
-}
-
-/// `up` over migrations already collected or parsed.
-pub fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+/// Checks migrations for a repeated version and table for its name, and
+/// sorts the migrations by version.
+fn prepare(migrations: List[Migration], table: Str) -> List[Migration] ! MigrateErr {
   var seen: Map[Int, Str] = {}
   for m in migrations {
     match seen.get(m.version) {
@@ -498,19 +518,155 @@ pub fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: 
     seen[m.version] = m.name
   }
   check_table(table)?
-  let ms = migrations.sort_by(fn(m) { m.version })
+  Ok(migrations.sort_by(fn(m) { m.version }))
+}
+
+// How up_locked picks what to apply.
+const ALL = 0
+const ONE = 1
+const ONLY = 2
+
+/// Applies, under the lock: with ALL, every version up_versions answers;
+/// with ONE, the first of them (MigrateErr.NoNext when none); with ONLY,
+/// the migration of version `to` (MigrateErr.AlreadyApplied when applied).
+fn up_locked[fx: Effects](c: sql.Conn[fx], ms: List[Migration], table: Str, clock: Clock, d: Dialect, allow_missing: Bool, to: Int, how: Int) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+  create_table(c, table, d)?
+  let done = applied(c, table)?
+  if how == ONLY {
+    if done.contains(to) {
+      return Err(MigrateErr.AlreadyApplied(to))
+    }
+    for m in ms {
+      if m.version == to {
+        apply(c, table, m, clock.now())?
+      }
+    }
+    return Ok([to])
+  }
+  let vs = up_versions(ms.map(fn(m) { m.version }), done.keys(), to, allow_missing)?
+  if how == ONE && vs.len() == 0 {
+    return Err(MigrateErr.NoNext)
+  }
+  var want: Map[Int, Bool] = {}
+  for v in vs {
+    want[v] = true
+  }
+  var out: List[Int] = []
+  for m in ms {
+    if !want.contains(m.version) {
+      continue
+    }
+    apply(c, table, m, clock.now())?
+    out.push(m.version)
+    if how == ONE {
+      break
+    }
+  }
+  Ok(out)
+}
+
+fn run_up[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str, d: Dialect, allow_missing: Bool, to: Int, how: Int) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+  if to < 1 {
+    return Err(MigrateErr.BadVersion(to))
+  }
+  let ms = prepare(migrations, table)?
+  if how == ONLY && !ms.any(fn(m) { m.version == to }) {
+    return Err(MigrateErr.NotFound(to))
+  }
   let c = match db.conn() {
     Ok(c) => c
     Err(e) => return Err(MigrateErr.Db(e))
   }
   defer c.close()
-  lock(c, table, dialect)?
-  let r = match create_table(c, table, dialect) {
-    Ok(_) => up_locked(c, ms, table, clock, dialect, allow_missing)
-    Err(e) => Err(e)
-  }
-  unlock(c, table, dialect)
+  lock(c, table, d)?
+  let r = up_locked(c, ms, table, clock, d, allow_missing, to, how)
+  unlock(c, table, d)
   r
+}
+
+/// Applies every pending migration of files at or below `to` in version
+/// order, each in its own transaction (unless NO TRANSACTION), recording it
+/// in `table` (created when missing) with `clock`'s time, and answers the
+/// versions applied (goose's Up, and UpTo with `to`). One connection holds
+/// the dialect's lock throughout, so a second process waits and then finds
+/// nothing pending. A failure stops at that migration: the ones before it
+/// stay applied (MigrateErr.Failed). A pending version below the newest
+/// applied one is MigrateErr.Missing unless `allow_missing`, which applies
+/// it. A `to` below 1 is MigrateErr.BadVersion.
+pub fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+  up_list(db, collect(files)?, clock, table, dialect, allow_missing, to)
+}
+
+/// `up` over migrations already collected or parsed.
+pub fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock) {
+  run_up(db, migrations, clock, table, dialect, allow_missing, to, ALL)
+}
+
+/// Applies the first pending migration of files as `up` would, and answers
+/// its version (goose's UpByOne); MigrateErr.NoNext when none is pending.
+pub fn up_by_one[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock) {
+  up_by_one_list(db, collect(files)?, clock, table, dialect, allow_missing)
+}
+
+/// `up_by_one` over migrations already collected or parsed.
+pub fn up_by_one_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock) {
+  let vs = run_up(db, migrations, clock, table, dialect, allow_missing, Int.max, ONE)?
+  Ok(vs[0])
+}
+
+/// Applies the migration of `version` alone, whatever else is pending
+/// (goose's ApplyVersion, up direction): MigrateErr.BadVersion below 1,
+/// MigrateErr.NotFound when no migration has it, MigrateErr.AlreadyApplied
+/// when it is applied.
+pub fn apply_version[fx: Effects](db: sql.Db[fx], files: embed.Dir, version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> () ! MigrateErr uses (net.dial, fx, clock) {
+  apply_version_list(db, collect(files)?, version, clock, table, dialect)
+}
+
+/// `apply_version` over migrations already collected or parsed.
+pub fn apply_version_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> () ! MigrateErr uses (net.dial, fx, clock) {
+  run_up(db, migrations, clock, table, dialect, false, version, ONLY)?
+  Ok(())
+}
+
+/// The newest applied version, whatever order the versions were applied
+/// in, or 0 when none is (goose's GetDBVersion). Takes no lock.
+pub fn db_version[fx: Effects](db: sql.Db[fx], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> Int ! MigrateErr uses (net.dial, fx) {
+  check_table(table)?
+  let c = match db.conn() {
+    Ok(c) => c
+    Err(e) => return Err(MigrateErr.Db(e))
+  }
+  defer c.close()
+  create_table(c, table, dialect)?
+  var newest = 0
+  for v in applied(c, table)?.keys() {
+    if v > newest {
+      newest = v
+    }
+  }
+  Ok(newest)
+}
+
+/// Whether `up` would apply anything (goose's HasPending). A missing
+/// (out-of-order) version is MigrateErr.Missing unless `allow_missing`, as
+/// for `up`. Takes no lock, so it neither waits for nor blocks a running
+/// `up`.
+pub fn has_pending[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx) {
+  has_pending_list(db, collect(files)?, table, dialect, allow_missing)
+}
+
+/// `has_pending` over migrations already collected or parsed.
+pub fn has_pending_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx) {
+  let ms = prepare(migrations, table)?
+  let c = match db.conn() {
+    Ok(c) => c
+    Err(e) => return Err(MigrateErr.Db(e))
+  }
+  defer c.close()
+  create_table(c, table, dialect)?
+  let done = applied(c, table)?
+  let vs = up_versions(ms.map(fn(m) { m.version }), done.keys(), Int.max, allow_missing)?
+  Ok(vs.len() > 0)
 }
 
 /// Each migration of files in version order with the time it was applied

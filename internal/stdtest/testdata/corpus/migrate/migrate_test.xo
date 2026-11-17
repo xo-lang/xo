@@ -53,10 +53,34 @@ test "up_list and status_list take collected migrations; a pending one below the
   let st = migrate.status_list(db, all, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")
   expect(st.map(fn(s) { (s.version, s.applied_at.is_some()) })) == [(1, true), (2, false), (3, true)]
   match migrate.up_list(db, all, os.clock, dialect: migrate.Dialect.Memory) {
-    Err(e) => expect(e) == migrate.MigrateErr.Missing(versions: [2])
+    Err(e) => expect(e) == migrate.MigrateErr.Missing(versions: [2], newest: 3, to: Int.max)
     Ok(vs) => fault("want Missing, got ${vs:?}")
   }
   expect(owners(db)) == 3
   expect(migrate.up_list(db, all, os.clock, dialect: migrate.Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == [2]
   expect(owners(db)) == 4
+}
+
+test "up_by_one, apply_version, db_version and has_pending, on files and on lists (up_and_down_by_one, apply, TestPending)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  let files = dir({"00001_owners.sql": OWNERS, "00002_seed.sql": SEED, "00003_one.sql": "-- +goose Up\nINSERT INTO owners (owner_name) VALUES ('three');\n"})
+  expect(migrate.db_version(db, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == 0
+  expect(migrate.has_pending(db, files, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == true
+  expect(migrate.up_by_one(db, files, os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == 1
+  expect(migrate.db_version(db, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == 1
+  migrate.apply_version(db, files, 3, os.clock, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")
+  expect(migrate.db_version(db, dialect: migrate.Dialect.Memory) ?? e => fault("${e}")) == 3
+  let all = migrate.collect(files) ?? e => fault("${e}")
+  match migrate.has_pending_list(db, all, dialect: migrate.Dialect.Memory) {
+    Err(e) => expect(e) == migrate.MigrateErr.Missing(versions: [2], newest: 3, to: Int.max)
+    Ok(p) => fault("want Missing, got ${p}")
+  }
+  expect(migrate.has_pending_list(db, all, dialect: migrate.Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == true
+  match migrate.apply_version_list(db, all, 3, os.clock, dialect: migrate.Dialect.Memory) {
+    Err(e) => expect(e) == migrate.MigrateErr.AlreadyApplied(version: 3)
+    Ok(_) => fault("want AlreadyApplied")
+  }
+  expect(migrate.up_by_one_list(db, all, os.clock, dialect: migrate.Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == 2
+  expect(owners(db)) == 4
+  expect(migrate.has_pending(db, files, dialect: migrate.Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == false
 }

@@ -2,8 +2,10 @@
 // internal/sqlparser/parser_test.go and parse_test.go (Copyright (c) 2012
 // Liam Staskawicz, MIT license), with its testdata generated below; the
 // collect tests port provider_collect_test.go's TestCollectFileSources,
-// and the run tests port provider_run_test.go's tx_partial_errors and
-// TestPending on sql.memory.
+// the run tests port provider_run_test.go's tx_partial_errors,
+// apply_unknown_version, run_zero, up_and_down_by_one (up half), up_to,
+// apply (up half) and TestPending on sql.memory, and the up_versions tests
+// port internal/gooseutil/resolve_test.go's TestResolveVersions.
 
 use std/embed
 use std/sql
@@ -211,7 +213,8 @@ test "a pending version below the newest applied one (TestPending)" {
   match up(db, all, os.clock, dialect: Dialect.Memory) {
     Err(e) => {
       expect(e.display().contains("missing (out-of-order) migration")) == true
-      expect(e) == MigrateErr.Missing(versions: [2])
+      expect(e) == MigrateErr.Missing(versions: [2], newest: 3, to: Int.max)
+      expect(e.display()) == "migrate: detected 1 missing (out-of-order) migration lower than database version (3): version 2"
     }
     Ok(vs) => fault("want Missing, got ${vs:?}")
   }
@@ -307,3 +310,162 @@ fn valid_txn() -> List[(Str, Str, Bool)] { [
   ("00002_rename_root.sql", "-- +goose Up\n-- +goose StatementBegin\nUPDATE users SET username='admin' WHERE username='root';\n-- +goose StatementEnd\n\n-- +goose Down\n-- +goose StatementBegin\nUPDATE users SET username='root' WHERE username='admin';\n-- +goose StatementEnd\n", true),
   ("00003_no_transaction.sql", "-- +goose NO TRANSACTION\n-- +goose Up\nCREATE TABLE post (\n    id int NOT NULL,\n    title text,\n    body text,\n    PRIMARY KEY(id)\n);\n\n-- +goose Down\nDROP TABLE post;\n", false),
 ] }
+
+// ---------------------------------------------------------------------------
+// up_versions (goose's internal/gooseutil/resolve_test.go)
+
+fn uv(versions: List[Int], applied: List[Int], to: Int, allow: Bool) -> List[Int] {
+  up_versions(versions, applied, to, allow) ?? e => fault("${e}")
+}
+
+fn uv_err(versions: List[Int], applied: List[Int], to: Int) -> Str {
+  match up_versions(versions, applied, to) {
+    Err(e) => e.display()
+    Ok(vs) => fault("want Missing, got ${vs:?}")
+  }
+}
+
+const MAX = Int.max
+
+test "up_versions without allow_missing (TestResolveVersions not_allow_missing)" {
+  expect(uv([], [], MAX, false)) == []
+  expect(uv([1, 2, 3], [1, 2, 3], MAX, false)) == []
+  expect(uv([1, 2, 3], [], MAX, false)) == [1, 2, 3]
+  expect(uv([3], [3], MAX, false)) == []
+  expect(uv([3, 4], [3], MAX, false)) == [4]
+  expect(uv([1, 2, 3, 4, 5], [1, 2], 4, false)) == [3, 4]
+  expect(uv([1, 2, 3, 4, 5], [1, 2], 0, false)) == []
+  expect(uv_err([1, 2, 3, 4], [1, 3], MAX)) == "migrate: detected 1 missing (out-of-order) migration lower than database version (3): version 2"
+  expect(uv_err([1, 2, 3, 4, 5], [2, 4, 5], MAX)) == "migrate: detected 2 missing (out-of-order) migrations lower than database version (5): versions 1,3"
+  // target_lower_than_max
+  expect(uv([1, 2, 3], [1, 3], 1, false)) == []
+  expect(uv_err([1, 2, 3], [1, 3], 2)) == "migrate: detected 1 missing (out-of-order) migration lower than database version (3), with target version (2): version 2"
+  expect(uv_err([1, 2, 3], [1, 3], 3)) == "migrate: detected 1 missing (out-of-order) migration lower than database version (3), with target version (3): version 2"
+  expect(uv_err([1, 2, 3, 4, 5, 6], [1, 3, 4, 6], 4)) == "migrate: detected 1 missing (out-of-order) migration lower than database version (6), with target version (4): version 2"
+  expect(uv_err([1, 2, 3, 4, 5, 6], [1, 3, 4, 6], 6)) == "migrate: detected 2 missing (out-of-order) migrations lower than database version (6), with target version (6): versions 2,5"
+  match up_versions([1, 2, 3, 4], [1, 3]) {
+    Err(e) => expect(e) == MigrateErr.Missing(versions: [2], newest: 3, to: MAX)
+    Ok(vs) => fault("want Missing, got ${vs:?}")
+  }
+}
+
+test "up_versions with allow_missing (TestResolveVersions allow_missing)" {
+  expect(uv([], [], MAX, true)) == []
+  expect(uv([1, 2, 3], [1, 2, 3], MAX, true)) == []
+  expect(uv([1, 2, 3], [], MAX, true)) == [1, 2, 3]
+  expect(uv([3], [3], MAX, true)) == []
+  expect(uv([3, 4], [3], MAX, true)) == [4]
+  expect(uv([1, 2, 3, 4, 5], [1, 2], 4, true)) == [3, 4]
+  expect(uv([1, 2, 3, 4, 5], [1, 2], 0, true)) == []
+  expect(uv([1, 2, 3], [1, 3], MAX, true)) == [2]
+  expect(uv([1, 2, 3, 4, 5], [2, 4], MAX, true)) == [1, 3, 5]
+  // target_lower_than_max
+  expect(uv([1, 2, 3], [1, 3], 1, true)) == []
+  expect(uv([1, 2, 3], [1, 3], 2, true)) == [2]
+  expect(uv([1, 2, 3], [1, 3], 3, true)) == [2]
+  expect(uv([1, 2, 3, 4, 5, 6], [1, 3, 4, 6], 4, true)) == [2]
+  expect(uv([1, 2, 3, 4, 5, 6], [1, 3, 4, 6], 6, true)) == [2, 5]
+  // unsorted input is sorted first
+  expect(uv([3, 1, 2], [], MAX, false)) == [1, 2, 3]
+}
+
+// ---------------------------------------------------------------------------
+// up to, by one, apply_version, db_version, has_pending
+// (provider_run_test.go)
+
+fn tables() -> embed.Dir {
+  dir({
+    "00001_a.sql": "-- +goose Up\nCREATE TABLE a ( x TEXT );\n",
+    "00002_b.sql": "-- +goose Up\nCREATE TABLE b ( x TEXT );\n",
+    "00003_c.sql": "-- +goose Up\nCREATE TABLE c ( x TEXT );\n",
+    "00004_d.sql": "-- +goose Up\nCREATE TABLE d ( x TEXT );\n",
+  })
+}
+
+test "up with a target applies up to it, inclusive (up_to)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  expect(up(db, tables(), os.clock, dialect: Dialect.Memory, to: 2) ?? e => fault("${e}")) == [1, 2]
+  expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == 2
+  expect(up(db, tables(), os.clock, dialect: Dialect.Memory, to: 2) ?? e => fault("${e}")) == []
+  expect(up(db, tables(), os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == [3, 4]
+}
+
+test "a target or version below 1 (run_zero)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  match up(db, tables(), os.clock, dialect: Dialect.Memory, to: 0) {
+    Err(e) => {
+      expect(e) == MigrateErr.BadVersion(0)
+      expect(e.display()) == "migrate: version must be greater than 0"
+    }
+    Ok(vs) => fault("want BadVersion, got ${vs:?}")
+  }
+  match apply_version(db, tables(), 0, os.clock, dialect: Dialect.Memory) {
+    Err(e) => expect(e) == MigrateErr.BadVersion(0)
+    Ok(_) => fault("want BadVersion")
+  }
+  expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == 0
+}
+
+test "up_by_one applies one at a time, then NoNext (up_and_down_by_one)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  for want in 1..5 {
+    expect(up_by_one(db, tables(), os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")) == want
+    expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == want
+  }
+  match up_by_one(db, tables(), os.clock, dialect: Dialect.Memory) {
+    Err(e) => {
+      expect(e) == MigrateErr.NoNext
+      expect(e.display()) == "migrate: no next version found"
+    }
+    Ok(v) => fault("want NoNext, got ${v}")
+  }
+}
+
+test "apply_version: unknown, then each, then again (apply_unknown_version, apply)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  match apply_version(db, tables(), 999, os.clock, dialect: Dialect.Memory) {
+    Err(e) => {
+      expect(e) == MigrateErr.NotFound(999)
+      expect(e.display()) == "migrate: version 999: version not found"
+    }
+    Ok(_) => fault("want NotFound")
+  }
+  for v in [1, 2, 3, 4] {
+    apply_version(db, tables(), v, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+  }
+  expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == 4
+  match apply_version(db, tables(), 1, os.clock, dialect: Dialect.Memory) {
+    Err(e) => {
+      expect(e) == MigrateErr.AlreadyApplied(1)
+      expect(e.display().contains("version 1: migration already applied")) == true
+    }
+    Ok(_) => fault("want AlreadyApplied")
+  }
+}
+
+test "has_pending with allow_missing (TestPending allow_out_of_order)" {
+  let db = sql.memory() ?? e => fault("${e}")
+  apply_version(db, tables(), 1, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+  apply_version(db, tables(), 3, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+  expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == 3
+  expect(has_pending(db, tables(), dialect: Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == true
+  expect(up(db, tables(), os.clock, dialect: Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == [2, 4]
+  expect(has_pending(db, tables(), dialect: Dialect.Memory, allow_missing: true) ?? e => fault("${e}")) == false
+}
+
+test "has_pending without allow_missing (TestPending disallow_out_of_order)" {
+  for applied in [4, 3] {
+    let db = sql.memory() ?? e => fault("${e}")
+    apply_version(db, tables(), 1, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+    apply_version(db, tables(), applied, os.clock, dialect: Dialect.Memory) ?? e => fault("${e}")
+    expect(db_version(db, dialect: Dialect.Memory) ?? e => fault("${e}")) == applied
+    match has_pending(db, tables(), dialect: Dialect.Memory) {
+      Err(e) => expect(e.display().contains("missing (out-of-order) migration")) == true
+      Ok(b) => fault("want Missing, got ${b}")
+    }
+    match up(db, tables(), os.clock, dialect: Dialect.Memory) {
+      Err(e) => expect(e.display().contains("missing (out-of-order) migration")) == true
+      Ok(vs) => fault("want Missing, got ${vs:?}")
+    }
+  }
+}

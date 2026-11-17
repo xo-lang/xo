@@ -113,7 +113,7 @@ fn check_missing(clock: Clock, i: Int) -> Int ! Str uses (net.dial, clock) {
   let all = [first[0], mig("00002_one.sql", insert(2, "two"))?, first[1]]
   match migrate.up_list(db, all, clock, table: table, dialect: migrate.Dialect.Memory) {
     Err(e) => {
-      if e != migrate.MigrateErr.Missing(versions: [2]) || !e.display().contains("missing (out-of-order) migration") {
+      if e != migrate.MigrateErr.Missing(versions: [2], newest: 3, to: Int.max) || !e.display().contains("missing (out-of-order) migration") {
         return Err("missing: ${e}")
       }
     }

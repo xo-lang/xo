@@ -11685,13 +11685,25 @@ struct Status { version: Int, name: Str, applied_at: Time? }
 enum MigrateErr {
   Parse(name: Str, msg: Str)                       // not a goose migration (goose's texts)
   Duplicate(version: Int, first: Str, second: Str)
-  Missing(versions: List[Int])                     // pending below the newest applied
+  Missing(versions: List[Int], newest: Int, to: Int) // pending below the newest applied
+  NoNext                                           // up_by_one with nothing pending
+  NotFound(version: Int)                           // apply_version: no migration has it
+  AlreadyApplied(version: Int)                     // apply_version: it is applied
+  BadVersion(version: Int)                         // a version or target below 1
   Failed(version: Int, name: Str, statement: Int, err: sql.SqlErr)
   Db(err: sql.SqlErr)
   Table(name: Str)                                 // the version table's name is not an identifier
 }
-fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> List[Int] ! MigrateErr uses (net.dial, fx, clock)
-fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> List[Int] ! MigrateErr uses (net.dial, fx, clock)
+fn up[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock)
+fn up_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false, to: Int = Int.max) -> List[Int] ! MigrateErr uses (net.dial, fx, clock)
+fn up_by_one[fx: Effects](db: sql.Db[fx], files: embed.Dir, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock)
+fn up_by_one_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Int ! MigrateErr uses (net.dial, fx, clock)
+fn apply_version[fx: Effects](db: sql.Db[fx], files: embed.Dir, version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> () ! MigrateErr uses (net.dial, fx, clock)
+fn apply_version_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], version: Int, clock: Clock, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> () ! MigrateErr uses (net.dial, fx, clock)
+fn db_version[fx: Effects](db: sql.Db[fx], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> Int ! MigrateErr uses (net.dial, fx)
+fn has_pending[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx)
+fn has_pending_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres, allow_missing: Bool = false) -> Bool ! MigrateErr uses (net.dial, fx)
+fn up_versions(versions: List[Int], applied: List[Int], to: Int = Int.max, allow_missing: Bool = false) -> List[Int] ! MigrateErr
 fn status[fx: Effects](db: sql.Db[fx], files: embed.Dir, table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx)
 fn status_list[fx: Effects](db: sql.Db[fx], migrations: List[Migration], table: Str = "xo_migrations", dialect: Dialect = Dialect.Postgres) -> List[Status] ! MigrateErr uses (net.dial, fx)
 fn collect(files: embed.Dir) -> List[Migration] ! MigrateErr
@@ -11717,7 +11729,17 @@ fn version_of(name: Str) -> Int?
   name TEXT, applied_at TIMESTAMPTZ`, DATETIME(6) on MySQL) when missing,
   then applies each pending migration: its Up statements and its row in
   one transaction, or one statement at a time for NO TRANSACTION. It
-  answers the versions applied, `[]` when none was pending.
+  answers the versions applied, `[]` when none was pending. With `to`
+  (goose's UpTo; `Int.max`, goose's MaxVersion, by default) it applies
+  only pending versions at or below `to` (`BadVersion` below 1).
+- `up_by_one` applies the first pending migration and answers its
+  version (`NoNext` when none is pending). `apply_version` applies one
+  chosen version whatever else is pending (`NotFound`, `AlreadyApplied`,
+  `BadVersion`). `db_version` answers the newest applied version (0 when
+  none is), `has_pending` whether `up` would apply anything; neither
+  takes the lock. `up_versions` is the pure rule they share (goose's
+  UpVersions): the versions `up` would apply given the migrations' and
+  the applied versions. Error texts are goose's.
 - A failure stops at that migration (`Failed`, with the statement's index
   from 0): the migrations before it stay applied, and a transactional one
   leaves nothing of itself (goose's partial error). A pending version
@@ -11729,7 +11751,9 @@ fn version_of(name: Str) -> Int?
 - Tested by std/migrate_test.xo: goose's sqlparser tests and testdata
   (statement splitting, the nine valid-up goldens, invalid files, NO
   TRANSACTION, annotations), its collect tests, and the up, partial error
-  and out-of-order tests on `sql.memory`.
+  and out-of-order tests on `sql.memory`, goose's UpVersions cases
+  (internal/gooseutil resolve_test.go), and its UpTo, UpByOne,
+  ApplyVersion, GetDBVersion and HasPending provider tests.
 
 ## 86. std/ui
 

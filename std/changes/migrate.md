@@ -1,5 +1,16 @@
 # std/migrate changes
 
+## 2026-11-16: feature: up to a version, up by one, apply one version, current version, pending check
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0655 audit (scripts/stdaudit/map.txt gap rows, task #190)
+- Go reference: pressly/goose v3.27.3 (internal/gooseutil UpVersions, Provider.UpTo, UpByOne, ApplyVersion, GetDBVersion, HasPending, ErrNoNextVersion, ErrVersionNotFound, ErrAlreadyApplied; Copyright (c) 2012 Liam Staskawicz, MIT license)
+- Test: std/migrate_test.xo: resolve_test.go's UpVersions cases with and without allow_missing, up to a target, a target of 0, up_by_one to NoNext, apply_version (unknown, each, again), has_pending with and without allow_missing
+- Shipped in: not yet released
+
+`up` and `up_list` take `to`; new `up_by_one`, `apply_version`, `db_version`, `has_pending`, `up_versions`, and MigrateErr's `NoNext`, `NotFound`, `AlreadyApplied` and `BadVersion`. Breaking: `MigrateErr.Missing` carries `newest` and `to`, and its text is goose's ("detected N missing (out-of-order) migration...").
+
 ## 2026-11-15: feature: std/migrate, schema migrations
 
 - Kind: feature
