@@ -977,6 +977,41 @@ pub fn symlink(target: Str, path: Str) -> Int {
   if ok == 0 { -shim_errno(e) } else { 0 }
 }
 
+/// CreateHardLinkW: a hard link at path to target: 0, or the negative
+/// errno.
+pub fn link(target: Str, path: Str) -> Int {
+  let wt = wide(cpath(target))
+  let wp = wide(cpath(path))
+  let ok = Int(sys_windows.CreateHardLinkW(wp, wt, 0))
+  let e = keep(wp, keep(wt, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 }))
+  if ok == 0 { -shim_errno(e) } else { 0 }
+}
+
+/// The volume serial number and file index of path, following links
+/// (GetFileInformationByHandle: dwVolumeSerialNumber at 28,
+/// nFileIndexHigh at 44, nFileIndexLow at 48; Go's os.SameFile) and 0, or
+/// the errno.
+pub fn file_id(path: Str) -> (Int, Int, Int) {
+  let p = cpath(path)
+  let w = wide(p)
+  let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+  let h = sys_windows.CreateFileW(w, FILE_READ_ATTRIBUTES, share, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0)
+  let e = keep(w, Int(sys_windows.GetLastError()))
+  if h == -1 {
+    return (0, 0, fix(p, shim_errno(e), false))
+  }
+  let buf = obj.scratch()
+  if Int(sys_windows.GetFileInformationByHandle(h, buf)) == 0 {
+    let e2 = shim_errno(Int(sys_windows.GetLastError()))
+    sys_windows.CloseHandle(h)
+    return (0, 0, e2)
+  }
+  let vol = rt.mem_load(buf, 28, 4)
+  let idx = (rt.mem_load(buf, 44, 4) << 32) | rt.mem_load(buf, 48, 4)
+  sys_windows.CloseHandle(h)
+  (vol, idx, 0)
+}
+
 /// Where a symbolic link at path to target points, for the directory
 /// check: target itself when absolute (a leading / or \, or a drive
 /// letter), else target in path's directory.

@@ -106,6 +106,9 @@ fn GetCurrentDirectoryW(n: Int, buf: Int) -> UInt32
 /// ULARGE_INTEGERs at avail, total and free get the bytes available to
 /// the caller, the volume's size and its free bytes; nonzero on success.
 fn GetDiskFreeSpaceExW(dir: Bytes, avail: Int, total: Int, free: Int) -> Int32
+/// CreateHardLinkW of link to the existing file (security attributes 0):
+/// nonzero on success.
+fn CreateHardLinkW(link: Bytes, existing: Bytes, sa: Int) -> Int32
 /// CreateSymbolicLinkW: a BOOLEAN (only the low byte is defined).
 fn CreateSymbolicLinkW(link: Bytes, target: Bytes, flags: Int) -> Int32
 fn DeviceIoControl(h: Int, code: Int, inbuf: Int, inlen: Int, outbuf: Int, outlen: Int, got: Int, overlapped: Int) -> Int32

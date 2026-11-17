@@ -84,6 +84,7 @@ fn rmdir(path: Bytes) -> Int32
 fn mkdir(path: Bytes, mode: Int) -> Int32
 fn chmod(path: Bytes, mode: Int) -> Int32
 fn symlink(target: Bytes, path: Bytes) -> Int32
+fn link(target: Bytes, path: Bytes) -> Int32
 /// readlink(2) of at most n bytes to the address buf: the count.
 fn readlink(path: Bytes, buf: Int, n: Int) -> Int
 /// utimensat(2) with the two struct timespec at the address ts.

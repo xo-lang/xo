@@ -304,6 +304,8 @@ var (
 	_ func(*Task, Fs, string, string) Result[string, FsErr]                                                = Prelude_create_temp_dir
 	_ func(*Task, Env, string) string                                                                      = Prelude_expand_env
 	_ func(*Task, Env) string                                                                              = Prelude_temp_dir
+	_ func(*Task, Fs, string, string) Result[Unit, FsErr]                                                  = Prelude_hard_link
+	_ func(*Task, Fs, string, string) Result[bool, FsErr]                                                  = Prelude_same_file
 	_ func(*Task, Env, Fs, string) Result[string, ProcErr]                                                 = Prelude_look_path
 	_ func(*Task, Fs, string, Bytes) Result[Unit, FsErr]                                                   = Prelude_write_atomic
 	_ func(*File, *Task, int64) Result[Option[Bytes], FsErr]                                               = (*File).M_read

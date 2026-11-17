@@ -197,7 +197,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| os | prelude Fs, Env, Proc, Stdio | partial | Capability based (sections 3.1 to 3.7). Missing (survey 2026-10-29): Hostname, Getpid, process rusage, statfs (disk size and free space); File has read_at and write_at (decision 0479) and seek (decision 0600). |
+| os | prelude Fs, Env, Proc, Stdio | done | Capability based (sections 3.1 to 3.7): Env.hostname, Proc.pid and usage, Fs.disk_usage (statfs), File read_at, write_at (decision 0479) and seek (decision 0600), hard_link and same_file (task #231), temp_dir, expand_env and Str.expand (task #231). Symbol audit: no open os row. Last verified: 2026-11-17. |
 | os/exec | prelude Proc, Cmd, Child | done | Section 3.8. |
 | os/signal | core 7.5 shutdown, task.stop_requested, Proc.kill | partial | Two phase stop on SIGTERM and SIGINT. Missing: subscribing to other signals (SIGHUP for a reload, SIGUSR1), signal.Notify (2 of 5 services in the 2026-10-29 survey). |
 | os/user | Env.home | partial | Home directory only. |

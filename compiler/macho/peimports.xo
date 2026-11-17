@@ -26,6 +26,7 @@ pub fn pe_imports() -> Map[Str, Str] {
     "CreateFileA": "KERNEL32.dll",
     "CreateFileMappingW": "KERNEL32.dll",
     "CreateFileW": "KERNEL32.dll",
+    "CreateHardLinkW": "KERNEL32.dll",
     "CreateIoCompletionPort": "KERNEL32.dll",
     "CreatePipe": "KERNEL32.dll",
     "CreateProcessW": "KERNEL32.dll",

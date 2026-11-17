@@ -266,6 +266,21 @@ pub fn symlink(target: Str, path: Str) -> Int {
   keep(zt, ret_keep(zp, r))
 }
 
+/// link(2): a hard link at path to target: 0, or the negative errno.
+pub fn link(target: Str, path: Str) -> Int {
+  let zt = zpath(target)
+  let zp = zpath(path)
+  let r = Int(sys_darwin.link(zt, zp))
+  keep(zt, ret_keep(zp, r))
+}
+
+/// stat(2) of path, following links: st_dev and st_ino and 0, or the
+/// errno (same_file).
+pub fn file_id(path: Str) -> (Int, Int, Int) {
+  let (s, e) = stat(path, true)
+  (s.dev, s.ino, e)
+}
+
 /// readlink(2) of path (as written), at most 4096 bytes: the target and
 /// 0, or the errno.
 pub fn readlink(path: Str) -> (Str, Int) {

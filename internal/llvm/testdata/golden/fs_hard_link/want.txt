@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+same f h true
+same f g false
+same f ./f true
+f reads changed
+same f lf true
+link over h: true
+missing: true
+link missing: true
+--- stderr

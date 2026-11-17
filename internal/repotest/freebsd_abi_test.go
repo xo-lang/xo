@@ -48,6 +48,8 @@ var freebsdCalls = map[string]string{
 	"unlink":        "unlinkat",
 	"rename":        "renameat",
 	"symlink":       "symlinkat",
+	"link":          "linkat",
+	"file_id":       "fstatat",
 	"readlink":      "readlinkat",
 	"chmod":         "fchmodat",
 	"utimens":       "utimensat",

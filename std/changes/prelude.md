@@ -66,6 +66,21 @@ os.Expand does; `expand_env(env, s)` and `temp_dir(env)` are os.ExpandEnv
 and os.TempDir read through an Env capability, so a test's FakeEnv or
 an attenuated Env decides them.
 
+## 2026-11-17: feature: hard_link and same_file
+
+- Kind: feature
+- Commit: this push
+- Found by: task #231 (std Proven; scripts/stdaudit/map.txt os gap rows Link and SameFile)
+- Go reference: os.Link, os.SameFile (go1.26: linkat, link, CreateHardLinkW; st_dev and st_ino, Windows' volume serial and file index)
+- Test: internal/llvm/testdata/golden/fs_hard_link (arm64, LLVM, Go backend on macOS; the tier runs it on Linux and Windows): a link shares its target's contents and is the same file, a copy is not, a symlink is followed, a link over an existing name is Exists, a missing path NotFound
+- Shipped in: not yet released
+
+`hard_link(fs, target, link)` makes a hard link and `same_file(fs, a, b)`
+says whether two paths name one file (device and inode, following
+symbolic links). Both work on the system's file system and its
+attenuations; on another Fs hard_link is Io and same_file compares the
+cleaned paths of two that exist. WASI has neither (Io).
+
 ## 2026-11-16: feature: Atomic[Int].and and or
 
 - Kind: feature

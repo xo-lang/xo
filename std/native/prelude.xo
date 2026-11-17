@@ -4069,6 +4069,51 @@ fn temp_dir(env: Env) -> Str uses env {
   tempdir.choose(win, vals)
 }
 
+/// Go's os.Link on the system's file system (fsops.link).
+fn hard_link(fs: Fs, existing: Str, link: Str) -> () ! FsErr uses fs.write {
+  // WASI has no hard links (a compile time check: the wasm runtime has
+  // no fsops status calls)
+  if target.arch == TargetArch.Wasm32 {
+    return Err(FsErr.Io(path: link, msg: "WASI has no hard links"))
+  }
+  if userfs.user(fs) is Some(_) || testworld.on() {
+    return Err(FsErr.Io(path: link, msg: "hard links need the system's file system"))
+  }
+  let ot = fs_check(fs, existing, false)?
+  let ol = fs_check(fs, link, true)?
+  let st = fsops.link(ot, ol, link)
+  if st != 0 {
+    return Err(fs_err(st, link))
+  }
+}
+
+/// Go's os.SameFile of two os.Stat results (fsops.file_id); another Fs
+/// compares the cleaned paths of two that exist.
+fn same_file(fs: Fs, a: Str, b: Str) -> Bool ! FsErr uses fs.read {
+  if target.arch == TargetArch.Wasm32 {
+    return Err(FsErr.Io(path: a, msg: "WASI has no file identities"))
+  }
+  if userfs.user(fs) is Some(_) || testworld.on() {
+    for p in [a, b] {
+      if fs.stat(p)? is None {
+        return Err(FsErr.NotFound(path: p))
+      }
+    }
+    return fs_clean("/" + a) == fs_clean("/" + b)
+  }
+  let oa = fs_check(fs, a, false)?
+  let ob = fs_check(fs, b, false)?
+  let ia = fsops.file_id(oa, a)
+  if ia.len() == 0 {
+    return Err(fs_err(sysio.status(), a))
+  }
+  let ib = fsops.file_id(ob, b)
+  if ib.len() == 0 {
+    return Err(fs_err(sysio.status(), b))
+  }
+  ia[0] == ib[0] && ia[1] == ib[1]
+}
+
 fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read) {
   let win = fs_windows()
   let has_sep = name.contains("/") || (win && name.contains("\\"))

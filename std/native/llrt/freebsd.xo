@@ -406,6 +406,28 @@ pub fn symlink(target: Str, path: Str) -> Int {
   keep(zt, keep(zp, r))
 }
 
+/// linkat(2) (495): a hard link at path to target: 0, or the negative
+/// errno.
+pub fn link(target: Str, path: Str) -> Int {
+  let zt = zpath(target)
+  let zp = zpath(path)
+  let r = rt.sys6(495, AT_FDCWD, raw.bytes_addr(zt), AT_FDCWD, raw.bytes_addr(zp), 0, 0)
+  keep(zt, keep(zp, r))
+}
+
+/// fstatat(2) of path, following links: st_dev (at 0) and st_ino (at 8)
+/// and 0, or the errno (same_file).
+pub fn file_id(path: Str) -> (Int, Int, Int) {
+  let z = cpath(path)
+  let buf = obj.scratch()
+  let r = rt.sys6(552, AT_FDCWD, raw.bytes_addr(z), buf, 0, 0, 0)
+  keep(z, 0)
+  if r < 0 {
+    return (0, 0, -r)
+  }
+  (rt.mem_load(buf, 0, 8), rt.mem_load(buf, 8, 8), 0)
+}
+
 /// readlinkat(2) of path: the target and 0, or "" and the errno.
 pub fn readlink(path: Str) -> (Str, Int) {
   let z = zpath(path)

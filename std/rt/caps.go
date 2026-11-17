@@ -1624,6 +1624,66 @@ func Prelude_temp_dir(tk *Task, env Env) string {
 	return d
 }
 
+// Prelude_look_path is `look_path(env, fs, name)` (decision 0606): Go's
+// exec.LookPath rules through Fs's stat and mode, as the native prelude's,
+// so every Fs answers the same way on both backends.
+// Prelude_hard_link is `hard_link(fs, target, link)`: os.Link on the
+// system's file system, Io on another Fs.
+func Prelude_hard_link(tk *Task, fs Fs, target, link string) Result[Unit, FsErr] {
+	rf, ok := fs.(*realFs)
+	if !ok {
+		return Err[Unit](FsErr{Tag: 7, P: FsErr_Io{F_path: link, F_msg: "hard links need the system's file system"}})
+	}
+	ot, e := rf.check(tk, target, false)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	ol, e := rf.check(tk, link, true)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	if err := os.Link(ot, ol); err != nil {
+		return Err[Unit](mapFsErr(err, link))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+// Prelude_same_file is `same_file(fs, a, b)`: os.SameFile of two
+// os.Stat results; another Fs compares the cleaned paths of two that
+// exist.
+func Prelude_same_file(tk *Task, fs Fs, a, b string) Result[bool, FsErr] {
+	rf, ok := fs.(*realFs)
+	if !ok {
+		for _, p := range []string{a, b} {
+			r := fs.M_stat(tk, p)
+			if !r.Ok {
+				return ErrTr[bool](r.E, r.Tr)
+			}
+			if !r.V.Some {
+				return Err[bool](fsErr(1, p))
+			}
+		}
+		return Ok[bool, FsErr](path.Clean("/"+a) == path.Clean("/"+b))
+	}
+	oa, e := rf.check(tk, a, false)
+	if e != nil {
+		return Err[bool](*e)
+	}
+	ob, e := rf.check(tk, b, false)
+	if e != nil {
+		return Err[bool](*e)
+	}
+	sa, err := os.Stat(oa)
+	if err != nil {
+		return Err[bool](mapFsErr(err, a))
+	}
+	sb, err := os.Stat(ob)
+	if err != nil {
+		return Err[bool](mapFsErr(err, b))
+	}
+	return Ok[bool, FsErr](os.SameFile(sa, sb))
+}
+
 func Prelude_look_path(tk *Task, env Env, fs Fs, name string) Result[string, ProcErr] {
 	win := runtime.GOOS == "windows"
 	notFound := Err[string](ProcErr{Tag: 1, P: ProcErr_NotFound{F_cmd: name}})

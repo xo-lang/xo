@@ -1195,6 +1195,34 @@ pub fn symlink(target: Str, p: Str, x: Str) -> Int {
   done(l, if l == 3 { windows.symlink(target, p) } else if l == 2 { darwin.symlink(target, p) } else if l == 4 { freebsd.symlink(target, p) } else { linux.symlink(target, p) }, x)
 }
 
+/// A hard link at p to target (both resolved paths): the status, an error
+/// naming x. A wasm build has none (status ENOSYS).
+pub fn link(target: Str, p: Str, x: Str) -> Int {
+  let l = sysio.layer()
+  if l == 0 {
+    return fail(l, 52, x)
+  }
+  done(l, if l == 3 { windows.link(target, p) } else if l == 2 { darwin.link(target, p) } else if l == 4 { freebsd.link(target, p) } else { linux.link(target, p) }, x)
+}
+
+/// The device and inode (on Windows the volume serial and file index) of
+/// p, following links, in a list of two; the empty list with the status
+/// set on an error. A wasm build has none (status ENOSYS).
+pub fn file_id(p: Str, x: Str) -> List[Int] {
+  let l = sysio.layer()
+  if l == 0 {
+    fail(l, 52, x)
+    return []
+  }
+  let (dev, ino, e) = if l == 3 { windows.file_id(p) } else if l == 2 { darwin.file_id(p) } else if l == 4 { freebsd.file_id(p) } else { linux.file_id(p) }
+  if e != 0 {
+    fail(l, e, x)
+    return []
+  }
+  ok()
+  [dev, ino]
+}
+
 /// The target of the link p in a list of one, the empty list when p is
 /// not a link (status 0) or on an error.
 pub fn read_link(p: Str, x: Str) -> List[Str] {

@@ -1,0 +1,33 @@
+// hard_link and same_file (Go's os.Link and os.SameFile, task #231): a
+// hard link is the same file as its target and shares its contents; a
+// copy, a missing path and a link over an existing name are not.
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-hardlink-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all(name)?
+  let root = base.sub(name)
+  root.write("f.txt", b"hello")?
+  root.write("g.txt", b"hello")?
+  hard_link(root, "f.txt", "h.txt")?
+  out.println("same f h ${same_file(root, "f.txt", "h.txt")?}")
+  out.println("same f g ${same_file(root, "f.txt", "g.txt")?}")
+  out.println("same f ./f ${same_file(root, "f.txt", "./f.txt")?}")
+  root.write("h.txt", b"changed")?
+  out.println("f reads ${root.read_text("f.txt")?}")
+  root.symlink("f.txt", "lf")?
+  out.println("same f lf ${same_file(root, "f.txt", "lf")?}")
+  match hard_link(root, "g.txt", "h.txt") {
+    Ok(_) => out.println("link over h: ok")
+    Err(e) => out.println("link over h: ${e is FsErr.Exists(_)}")
+  }
+  match same_file(root, "f.txt", "missing") {
+    Ok(b) => out.println("missing: ${b}")
+    Err(e) => out.println("missing: ${e is FsErr.NotFound(_)}")
+  }
+  match hard_link(root, "missing", "m2") {
+    Ok(_) => out.println("link missing: ok")
+    Err(e) => out.println("link missing: ${e is FsErr.NotFound(_)}")
+  }
+  base.remove_all(name)?
+}

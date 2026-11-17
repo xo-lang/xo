@@ -7646,7 +7646,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-601 declarations.
+603 declarations.
 
 ### Range
 
@@ -8594,6 +8594,8 @@ fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs
 fn expand_env(env: Env, s: Str) -> Str uses env
 fn temp_dir(env: Env) -> Str uses env
+fn hard_link(fs: Fs, target: Str, link: Str) -> () ! FsErr uses fs.write
+fn same_file(fs: Fs, a: Str, b: Str) -> Bool ! FsErr uses fs.read
 fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read)
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
 fn copy_stream(dst: Stream, src: Stream) -> Int ! CopyErr[NetErr, NetErr] uses net

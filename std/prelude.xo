@@ -1584,6 +1584,19 @@ fn expand_env(env: Env, s: Str) -> Str uses env
 /// TMPDIR, else /tmp; on Windows TMP, TEMP, USERPROFILE, else C:/Windows
 /// (GetTempPath's order), with / separators and no trailing one.
 fn temp_dir(env: Env) -> Str uses env
+/// A hard link at link to the existing file target, both paths of fs
+/// (Go's os.Link): an error when link exists. Only the system's file
+/// system (Fs and its attenuations) has hard links: another Fs, and a
+/// WASI build, give `Io`. A free function, not a method of Fs, so every
+/// type that satisfies Fs still does.
+fn hard_link(fs: Fs, target: Str, link: Str) -> () ! FsErr uses fs.write
+/// Whether paths a and b of fs name the same file, following symbolic
+/// links (Go's os.SameFile of their os.Stat): the same device and inode,
+/// on Windows the same volume and file index, so two hard links to one
+/// file are the same. On another Fs (a program's own, a test's MemFs)
+/// both are stat'ed and their cleaned paths compared. A free function, as
+/// hard_link.
+fn same_file(fs: Fs, a: Str, b: Str) -> Bool ! FsErr uses fs.read
 /// The path of the executable `name` (Go's exec.LookPath, decision 0606):
 /// a name with a `/` (or `\` on Windows) is tried as it is; otherwise each
 /// directory of PATH from env (split on `:`, `;` on Windows; an empty
