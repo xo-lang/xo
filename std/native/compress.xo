@@ -544,6 +544,9 @@ fn lzw_encode(data: Bytes, order: compress.LzwOrder, lit_width: Int) -> Bytes ! 
         }
       }
     }
+    if lsb {
+      return lzw_encode_lsb(data, lit_width)
+    }
     e.put(clear)
     var code = Int(data[0])
     for i in 1..data.len() {
@@ -587,6 +590,111 @@ fn lzw_encode(data: Bytes, order: compress.LzwOrder, lit_width: Int) -> Bytes ! 
     e.out.write_le(bits & 255, 1)
   }
   e.out.freeze()
+}
+
+/// lzw_encode's LSB loop for non-empty data (std/gif's writer): the same
+/// codes as LzwEnc, with the bit buffer, code width and table in locals,
+/// put written out in place, and a reset table made with List.filled.
+fn lzw_encode_lsb(data: Bytes, lit_width: Int) -> Bytes {
+  let clear = 1 << lit_width
+  var out = BytesBuilder.with_capacity(data.len() / 2 + 16)
+  var table: List[Int] = List.filled(16384, 0)
+  var bits = clear
+  var nbits = lit_width + 1
+  var width = lit_width + 1
+  var hi = clear + 1
+  var overflow = clear << 1
+  var code = Int(data[0])
+  let n = data.len()
+  var i = 1
+  while i < n {
+    // the longest run of data[i..] the table extends code with
+    let m = lzw_match(data, i, code, table)
+    i = m >> 12
+    code = m & 4095
+    if i >= n {
+      break
+    }
+    let literal = Int(data[i])
+    i += 1
+    let key = (code << 8) | literal
+    var hash = ((key >> 12) ^ key) & 16383
+    bits = bits | (code << nbits)
+    nbits += width
+    while nbits >= 8 {
+      out.write_byte(UInt8(bits & 255))
+      bits = bits >> 8
+      nbits -= 8
+    }
+    code = literal
+    hi += 1
+    if hi == overflow {
+      width += 1
+      overflow = overflow << 1
+    }
+    if hi == 4095 {
+      bits = bits | (clear << nbits)
+      nbits += width
+      while nbits >= 8 {
+        out.write_byte(UInt8(bits & 255))
+        bits = bits >> 8
+        nbits -= 8
+      }
+      width = lit_width + 1
+      hi = clear + 1
+      overflow = clear << 1
+      table = List.filled(16384, 0)
+      continue
+    }
+    while table[hash] != 0 {
+      hash = (hash + 1) & 16383
+    }
+    table[hash] = (key << 12) | hi
+  }
+  // the last code, Go's incHi after it, and the end code
+  bits = bits | (code << nbits)
+  nbits += width
+  hi += 1
+  if hi == overflow {
+    width += 1
+  }
+  if hi == 4095 {
+    bits = bits | (clear << nbits)
+    nbits += width
+    width = lit_width + 1
+  }
+  bits = bits | ((clear + 1) << nbits)
+  nbits += width
+  while nbits > 0 {
+    out.write_byte(UInt8(bits & 255))
+    bits = bits >> 8
+    nbits -= 8
+  }
+  out.freeze()
+}
+
+/// lzw_encode_lsb's table walk: from data[i] on, extends code while the
+/// table holds (code, byte), and gives the first index it does not, and
+/// the code so far, as index << 12 | code.
+fn lzw_match(data: Bytes, i0: Int, code0: Int, table: List[Int]) -> Int {
+  var i = i0
+  var code = code0
+  let n = data.len()
+  while i < n {
+    let key = (code << 8) | Int(data[i])
+    var h = ((key >> 12) ^ key) & 16383
+    var t = table[h]
+    while t != 0 && key != (t >> 12) {
+      h = (h + 1) & 16383
+      t = table[h]
+    }
+    if t == 0 {
+      return (i << 12) | code
+    }
+    code = t & 4095
+    i += 1
+  }
+  (i << 12) | code
 }
 
 // Go's lzw.Reader error states.

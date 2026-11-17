@@ -1,5 +1,21 @@
 # std/compress changes
 
+## 2026-11-17: perf: the LSB LZW encoder (std/gif's writer) walks its code table in a small loop of its own
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88, bench/perf/gif encode at 1.251 of Go on host 1; a profile put 93% in lzw_encode, and the arm64 backend kept the loop index and data pointer on the stack in the table walk
+- Go reference: compress/lzw writer.go Writer.Write (the same codes; Go's table and hashing)
+- Test: TestLzwFuzz against Go's compress/lzw, seeds 7 and 8, 3000 cases each on arm64 and llvm, byte for byte; the committed lzwfuzz corpus
+- Timing: host 1 `xo bench --ab` bench/perf/gif encode: 0.759 of before (wall 30.7 to 23.31 ms; max RSS 7296 to 7428 KB, the second encoder copy)
+
+lzw_lsb runs its own copy of the encoder: the longest match of the input
+from a position is found by lzw_match, whose few live values stay in
+registers, and the bit buffer, code width and table are locals instead
+of LzwEnc fields. A table reset makes a new table with List.filled (one
+memset) instead of storing 16384 zeroes. The MSB order keeps LzwEnc.
+Mac, 60 encodes of the benchmark's 5 frames: 0.46 s to 0.42 s user.
+
 ## 2026-11-16: perf: a reset Stream keeps its hash tables; the bit count row copy is one memmove
 
 - Kind: perf
