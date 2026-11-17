@@ -1,7 +1,7 @@
 // Package uiruntime tests std/ui's browser runtime (RUNTIME_JS in
 // std/ui.xo) under Node, as tabs of one browser against a fake sync
-// server. The full browser checks (headless Chrome) are run by hand; these
-// cover the runtime's own bookkeeping.
+// server, and (nav_test.go) the page layer of decisions 0668 and 0670 on a
+// fake DOM. The full browser checks (headless Chrome) are run by hand.
 package uiruntime
 
 import (

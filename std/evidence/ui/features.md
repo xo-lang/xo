@@ -78,11 +78,11 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 
 - [x] plain renders a server page the runtime takes over | 0670 | `std/ui_test.xo:plain renders a server page the runtime takes over`
 - [x] serve_runtime serves the runtime without an App | 0670 | `std/ui_test.xo:serve_runtime serves the runtime without an App`
-- [ ] links between pages without a full load, back and forward restore scroll | 0668 | Chrome checked, no automated test (internal/uiruntime has none)
-- [ ] GET forms in place, submit on input | 0670 | Chrome checked, no automated test
-- [ ] POST forms: 303 followed, 422 shown in place, multipart | 0670 | Chrome checked, no automated test
-- [ ] frames patch one element | 0670 | Chrome checked, no automated test
-- [ ] opting out: data-xo-reload, target, download, modifier keys | 0668, 0670 | no automated test
+- [x] links between pages without a full load, back and forward restore scroll | 0668 | `internal/uiruntime/nav_test.go:TestLinkNavigatesInPlace`, `TestBackRestoresScroll`
+- [x] GET forms in place, submit on input | 0670 | `internal/uiruntime/nav_test.go:TestGetFormInPlace`
+- [x] POST forms: 303 followed, 422 shown in place, multipart | 0670 | `internal/uiruntime/nav_test.go:TestPostForm`
+- [x] frames patch one element | 0670 | `internal/uiruntime/nav_test.go:TestFramePatchesOneElement`
+- [x] opting out: data-xo-reload, target, download, modifier keys | 0668, 0670 | `internal/uiruntime/nav_test.go:TestOptOutsLoadNormally`
 
 ## Viewer state (0672)
 
