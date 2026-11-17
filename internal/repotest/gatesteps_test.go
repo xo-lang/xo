@@ -22,3 +22,17 @@ func TestGateStepsShared(t *testing.T) {
 		t.Fatalf("gatesteps_test.sh: %v\n%s", err, out)
 	}
 }
+
+// TestGateLLVMTouchAll: scripts/gate.sh's llvm_touch_all, the check that
+// makes the llvm step run every golden, answers false under
+// XO_GATE_BIN_SELECT=force, as bin_select's own check does (decision 0657
+// stage 2). scripts/lead/gate_llvm_touch_test.sh holds the cases.
+func TestGateLLVMTouchAll(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash")
+	}
+	out, err := exec.Command("bash", filepath.Join(root, "scripts", "lead", "gate_llvm_touch_test.sh")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gate_llvm_touch_test.sh: %v\n%s", err, out)
+	}
+}

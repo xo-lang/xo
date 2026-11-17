@@ -690,6 +690,17 @@ import sys, zlib
 k, n = int(sys.argv[1]), int(sys.argv[2])
 print(",".join(g for g in sys.stdin.read().split() if zlib.crc32(g.encode()) % n == k - 1))' "$1" "$2"
 }
+# llvm_touch_all FILES: true when the changed FILES (one a line) make the
+# llvm step run every golden: internal/llvm's tests, internal/xotool,
+# compiler/xo or the LLVM debug information. XO_GATE_BIN_SELECT=force
+# answers false, as bin_select's own check does, so a measure branch that
+# adds internal/llvm's selection test still measures the selection
+# (decision 0657 stage 2; bsE1 on 2026-11-17 ran every golden without it).
+# scripts/lead/gate_llvm_touch_test.sh holds the cases.
+llvm_touch_all() {
+  [ "${XO_GATE_BIN_SELECT:-0}" != force ] && printf '%s\n' "$1" | grep -q -E '^(internal/llvm/[^/]+$|internal/xotool/|compiler/xo/|compiler/llvm/debug\.xo)'
+}
+
 llvm_goldens() {
   sel_note="$logs/llvm-select.txt"
   if [ "${XO_GATE_LLVM:-}" = all ] && [ -n "$llvm_shard_n" ]; then
@@ -704,7 +715,7 @@ llvm_goldens() {
   fi
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   files=$(git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-)
-  if echo "$files" | grep -q -E '^(internal/llvm/[^/]+$|internal/xotool/|compiler/xo/|compiler/llvm/debug\.xo)'; then
+  if llvm_touch_all "$files"; then
     echo "every golden (the change touches internal/llvm's tests, internal/xotool, compiler/xo or the LLVM debug information)" >"$sel_note"; echo all; return
   fi
   ir_cache_setup
