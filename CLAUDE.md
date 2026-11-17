@@ -99,13 +99,29 @@ in another worktree. Only an empty queue stops you; then ask the lead.
   run_in_background and act on the notification (agent-tools.md
   "Waiting"); never a sleep loop or repeated tail or status checks;
   outside CI and registries at most once a day.
-- After each finished task: write your resume note (open branches and
-  worktrees, queued gates and jobs, next item, key paths), then message
-  "DONE <task>; ready to restart; resume: <path>". The lead closes the
-  session and starts a fresh one (the newest Claude Code) with the same
-  name, given "Resume from <path>". If a gate or background job you must
-  watch is still running, say "restart after <job>" instead (a new
-  session gets no notification from the old one's jobs).
+- After each finished task: update your resume note (open branches and
+  worktrees, queued gates and jobs, next item, key paths), mark the task
+  in xw, and go straight to your next item. No restart after a task
+  (owner, 2026-11-17, xw decision 55: restarts and compactions cost more
+  of the plan than large contexts; auto-compact is "auto"); a session is
+  restarted only when it misbehaves or the owner asks.
+
+## Everything goes through xw (owner, 2026-11-17)
+
+xw (ADR 0658) is the system of record; nothing that xw can hold lives
+only in a note, a chat or a message:
+
+- Decisions: the lead records each owner decision with `xw decide --to
+  AGENTS` (agents ack with `xw ack ID`); owner questions go through
+  `xw ask` and `xw answer`, never only in chat or SendMessage.
+- Directives and work: `xw task add` and `xw decide`, which the xw hook
+  shows the agent; no duplicate SendMessage (only for something urgent
+  or an idle agent).
+- Measures: usage, calls and job time come from `xw activity`, `xw jobs`
+  and `xw gates`; a measure xw lacks becomes an xw-1 task, not a
+  private script. Recurring checks become xw alerts (cost review, #252).
+- Remove, don't tune (xw decision 58): a step, script or rule costing
+  more than a few minutes is first asked whether Xo or xw can remove it.
 
 ## How we work (owner rules, 2026-10-09 to 2026-11-16)
 
