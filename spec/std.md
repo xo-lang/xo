@@ -10941,7 +10941,7 @@ their wire reader and writers are the internal module `std/protowire` (not for p
 fn encode(f: FileDesc) -> Bytes
 fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr
 fn build(f: protoparse.File, name: Str, deps: List[FileDesc] = []) -> FileDesc ! protoparse.ParseErr
-fn build_with_source_info(src: Str, name: Str, deps: List[FileDesc] = []) -> FileDesc ! protoparse.ParseErr
+fn build_with_source_info(src: Str, name: Str, deps: List[FileDesc] = [], extra_comments: Bool = false, extra_option_locations: Bool = false) -> FileDesc ! protoparse.ParseErr
 ```
 
 `encode` writes fields in field number order, the order protobuf-go's Deterministic marshaling uses; a proto2 file has an
@@ -10980,7 +10980,14 @@ fields and indexes that reaches it and its span (0 based line and columns, 3 num
 declarations' leading, trailing and leading detached comments (a block's trailing comment is the one after its `{`;
 a comment group goes to one location only). Checked byte for byte against protoc 36.2 on the 47 files of those
 cases outside google/protobuf, two of them written for comment placement, groups, extend blocks, oneof options,
-ranges and streams.
+ranges and streams. `extra_comments` is protocompile's SourceInfoExtraComments: every location but the file, an
+option statement and a group's field, label and name takes the comments around it (a comment on the line of a closing
+`}`, `]`, `)`, `,` or `;` goes to the token before it). `extra_option_locations` is SourceInfoExtraOptionLocations: a
+location for each field an option's message literal sets (its path the option's, then the field's number and, when
+repeated, its index among the element's options), each element of a list instead of the list's field, and so on into
+nested literals; descriptor.proto's own option messages (features, feature_support, edition_defaults, declaration)
+resolve without importing it. Both checked byte for byte against protocompile v0.14.1 (its internal/testdata files
+and the protoc cases agree apart from where protocompile departs from protoc in the standard mode).
 
 ## 73. std/protowkt
 

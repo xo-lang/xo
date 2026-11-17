@@ -1521,12 +1521,15 @@ fn b_opts(opts: List[(Str, Str)], known: List[(Str, Int, Int, Str)]) -> (Bytes, 
 /// `src` parsed and built (as `build`), with `source_code_info` set as protoc writes it with
 /// `--include_source_info`: the locations of the file, its declarations and their parts (names,
 /// numbers, labels, types, options), and the leading, trailing and detached comments of each
-/// declaration.
-pub fn build_with_source_info(src: Str, name: Str, deps: List[FileDesc] = []) -> FileDesc ! protoparse.ParseErr {
+/// declaration. `extra_comments` and `extra_option_locations` are protocompile's
+/// SourceInfoExtraComments (every location takes the comments around it, not only a declaration's)
+/// and SourceInfoExtraOptionLocations (a location for each field set inside an option's message
+/// literal) modes.
+pub fn build_with_source_info(src: Str, name: Str, deps: List[FileDesc] = [], extra_comments: Bool = false, extra_option_locations: Bool = false) -> FileDesc ! protoparse.ParseErr {
   let f = protoparse.parse(src)?
   var out = build(f, name, deps)?
   let lx = protoparse.lex(src)?
-  var w = Sw{ts: lx.tokens, cs: lx.comments, lead: [], trail: [], used: [], at: 0, o: BytesBuilder.new(), cx: co_cx(out, deps), eof_line: lx.eof_line}
+  var w = Sw{ts: lx.tokens, cs: lx.comments, lead: [], trail: [], used: [], at: 0, o: BytesBuilder.new(), cx: co_cx(out, deps), eof_line: lx.eof_line, extra: extra_comments, xopts: extra_option_locations}
   for _ in 0..w.ts.len() + 1 {
     w.lead.push([])
     w.trail.push([])
@@ -1557,6 +1560,9 @@ struct Sw {
   o: BytesBuilder
   cx: CoCx
   eof_line: Int
+  /// protocompile's SourceInfoExtraComments and SourceInfoExtraOptionLocations modes
+  extra: Bool = false
+  xopts: Bool = false
 }
 
 fn co_cx(out: FileDesc, deps: List[FileDesc]) -> CoCx {
@@ -1676,7 +1682,9 @@ fn sw_donate(w: Sw, prev: Int, tok: Int, lead: List[List[Int]]) -> (List[Int], L
   if last.end_line < tok_line - 1 { return (comment, []) }
   let txt = if tok < w.ts.len() { w.ts[tok].text } else { "" }
   if txt == "" || (w.ts[tok].kind == protoparse.Kind.Sym && txt is "}" | "]" | ")" | "," | ";") {
-    if txt != "" && first.line == prev_end && last.end_line == tok_line { return ([], lead) }
+    // protoc leaves a comment between two tokens of one line to neither; the extra comments
+    // mode gives it to the earlier token, since these symbols have no location of their own
+    if !w.extra && txt != "" && first.line == prev_end && last.end_line == tok_line { return ([], lead) }
     return (comment, [])
   }
   ([], lead)
@@ -1776,8 +1784,19 @@ fn sw_emit(var w: Sw, path: List[Int], span: List[Int], lead: Str?, trail: Str?,
   w.o.write(bb)
 }
 
-/// A location without comments for tokens s..e.
-fn sw_loc(var w: Sw, s: Int, e: Int, path: List[Int]) { sw_emit(w, path, sw_span(w, s, e), None, None, []) }
+/// A location for tokens s..e: without comments, or with the comments around them in the
+/// SourceInfoExtraComments mode (protocompile's newLoc).
+fn sw_loc(var w: Sw, s: Int, e: Int, path: List[Int]) {
+  if w.extra {
+    sw_loc_c(w, s, e, e, path)
+  } else {
+    sw_loc0(w, s, e, path)
+  }
+}
+
+/// A location without comments in every mode (protocompile's newLocWithoutComments: the file, an
+/// option statement, a group's field, label and name, whose comments go to the group's message).
+fn sw_loc0(var w: Sw, s: Int, e: Int, path: List[Int]) { sw_emit(w, path, sw_span(w, s, e), None, None, []) }
 
 /// A location for tokens s..e with the comments before s and the trailing comment of token `tr`.
 fn sw_loc_c(var w: Sw, s: Int, e: Int, tr: Int, path: List[Int]) {
@@ -1824,8 +1843,9 @@ fn sw_extendee(kind: Int) -> Str {
   }
 }
 
-/// A known option's field number in the options message of kind, and whether it is repeated.
-fn sw_known(kind: Int, name: Str) -> (Int, Bool)? {
+/// A known option's field number in the options message of kind, whether it is repeated, and its
+/// message type (`builtin:NAME`, sw_fields) or "".
+fn sw_known(kind: Int, name: Str) -> (Int, Bool, Str)? {
   let table = match kind {
     0 => FILE_OPTS + [("php_generic_services", 42, 0, "")]
     1 => MESSAGE_OPTS + [("deprecated_legacy_json_field_conflicts", 11, 0, "")]
@@ -1837,18 +1857,56 @@ fn sw_known(kind: Int, name: Str) -> (Int, Bool)? {
     7 => ONEOF_OPTS
     _ => [("declaration", 2, 4, ""), ("verification", 3, 2, ""), ("features", 50, 5, "")]
   }
-  for (n, num, _, _) in table {
-    if n == name { return Some((num, (kind == 2 && (num == 19 || num == 20)) || (kind == 8 && num == 2))) }
+  for (n, num, k, enums) in table {
+    if n != name { continue }
+    let tn = if k == 5 { "builtin:FeatureSet" } else if k == 4 && kind == 8 { "builtin:Declaration" } else if k == 4 { "builtin:" + enums } else { "" }
+    return Some((num, (kind == 2 && (num == 19 || num == 20)) || (kind == 8 && num == 2), tn))
   }
   None
+}
+
+/// The fields of message type_name as (name, number, repeated, message, type name): from w.cx, or,
+/// for descriptor.proto's own option messages (`builtin:NAME`), from the tables build uses, so a
+/// file that does not import descriptor.proto has them too.
+fn sw_fields(w: Sw, type_name: Str) -> List[(Str, Int, Bool, Bool, Str)] {
+  var out: List[(Str, Int, Bool, Bool, Str)] = []
+  if type_name.starts_with("builtin:") {
+    let n = type_name[8..type_name.len()]
+    if n == "FeatureSet" {
+      for (fname, num, _, _) in FEATURE_FIELDS { out.push((fname, num, false, false, "")) }
+      out.push(("enforce_naming_style", 7, false, false, ""))
+      out.push(("default_symbol_visibility", 8, false, false, ""))
+    } else if n == "Declaration" {
+      for (fname, num) in [("number", 1), ("full_name", 2), ("type", 3), ("reserved", 5), ("repeated", 6)] {
+        out.push((fname, num, false, false, ""))
+      }
+    } else {
+      for (fname, num, _, _) in aggregate_fields(n) { out.push((fname, num, false, false, "")) }
+    }
+    return out
+  }
+  let md = match w.cx.msgs.get(type_name) {
+    Some(m) => m
+    None => return out
+  }
+  for fd in md.field {
+    let fname = if fd.kind == TYPE_GROUP { fd.type_name[(fd.type_name.rfind(".") ?? -1) + 1..fd.type_name.len()] } else { fd.name }
+    out.push((fname, fd.number, fd.label == LABEL_REPEATED, fd.kind == TYPE_MESSAGE || fd.kind == TYPE_GROUP, fd.type_name))
+  }
+  out
+}
+
+/// The extendee name of type_name (a builtin: one's descriptor.proto name).
+fn sw_extendee_of(type_name: Str) -> Str {
+  if type_name.starts_with("builtin:") { CO_PRE + type_name[8..type_name.len()] } else { type_name }
 }
 
 /// The path within the options message of kind that the option `name` sets (`-1` first for a field's
 /// `default` and `json_name`, which are the field's own), with the index of a repeated field's value
 /// counted in `seen`; None when it names nothing known.
-fn sw_opt_path(w: Sw, kind: Int, name: Str, var seen: Map[Str, Int]) -> List[Int]? {
-  if kind == SW_FIELD && name == "default" { return Some([-1, 7]) }
-  if kind == SW_FIELD && name == "json_name" { return Some([-1, 10]) }
+fn sw_opt_path(w: Sw, kind: Int, name: Str, var seen: Map[Str, Int]) -> (List[Int], Str)? {
+  if kind == SW_FIELD && name == "default" { return Some(([-1, 7], "")) }
+  if kind == SW_FIELD && name == "json_name" { return Some(([-1, 10], "")) }
   var path: List[Int] = []
   var repeated = false
   var rest = ""
@@ -1863,9 +1921,10 @@ fn sw_opt_path(w: Sw, kind: Int, name: Str, var seen: Map[Str, Int]) -> List[Int
     if rest.starts_with(".") { rest = rest[1..rest.len()] }
   } else {
     let parts = name.split(".")
-    let (num, rep) = sw_known(kind, parts[0])?
+    let (num, rep, tn0) = sw_known(kind, parts[0])?
     path.push(num)
     repeated = rep
+    type_name = tn0
     if parts.len() > 1 {
       if parts[0] != "features" || parts.len() != 2 { return None }
       var fnum = match parts[1] {
@@ -1878,7 +1937,7 @@ fn sw_opt_path(w: Sw, kind: Int, name: Str, var seen: Map[Str, Int]) -> List[Int
       }
       if fnum == 0 { return None }
       path.push(fnum)
-      return Some(path)
+      return Some((path, ""))
     }
   }
   if !rest.is_empty() {
@@ -1904,13 +1963,90 @@ fn sw_opt_path(w: Sw, kind: Int, name: Str, var seen: Map[Str, Int]) -> List[Int
     }
   }
   if repeated {
-    var key = ""
-    for x in path { key = key + "${x},"}
-    let n = seen.get(key) ?? 0
-    seen[key] = n + 1
-    path.push(n)
+    path.push(sw_next_index(path, seen))
   }
-  Some(path)
+  Some((path, type_name))
+}
+
+/// The next index of the repeated field at path (relative to the options message) among the
+/// element's options, counted in seen.
+fn sw_next_index(path: List[Int], var seen: Map[Str, Int]) -> Int {
+  var key = ""
+  for x in path { key = key + "${x},"}
+  let n = seen.get(key) ?? 0
+  seen[key] = n + 1
+  n
+}
+
+/// SourceInfoExtraOptionLocations: a location for each field an option's message literal (at token
+/// v) sets, its path the option's (rel, relative to the options message at opts_path) and the field's
+/// number, and its index when repeated; a list's elements each have one, and not the field
+/// (protocompile's generateSourceInfoForOptionChildren). type_name is the literal's message type.
+fn sw_children(var w: Sw, v: Int, opts_path: List[Int], rel: List[Int], type_name: Str, var seen: Map[Str, Int]) {
+  if !sw_tok_is(w, v, "{") && !sw_tok_is(w, v, "<") { return }
+  let close = sw_close(w, v)
+  let fields = sw_fields(w, type_name)
+  var i = v + 1
+  while i < close {
+    let ns = i
+    var name = ""
+    var ne = i
+    let ext = sw_tok_is(w, i, "[")
+    if ext {
+      ne = sw_close(w, i)
+      for k in i + 1..ne { name = name + w.ts[k].text }
+    } else {
+      name = w.ts[i].text
+    }
+    var vs = ne + 1
+    if sw_tok_is(w, vs, ":") { vs += 1 }
+    let ve = if sw_tok_is(w, vs, "<") { sw_close(w, vs) } else { sw_value_end(w, vs) }
+    // the field's location ends with its value, not a `,` or `;` after it
+    let fe = ve
+    i = if sw_tok_is(w, ve + 1, ",") || sw_tok_is(w, ve + 1, ";") { ve + 2 } else { ve + 1 }
+    var num = 0
+    var repeated = false
+    var msg = false
+    var tn = ""
+    if ext {
+      let x = match co_resolve(name, sw_extendee_of(type_name), w.cx) {
+        Some(x) => x
+        None => continue
+      }
+      num = x.number
+      repeated = x.label == LABEL_REPEATED
+      msg = x.kind == TYPE_MESSAGE || x.kind == TYPE_GROUP
+      tn = x.type_name
+    } else {
+      for (fname, fnum, frep, fmsg, ftn) in fields {
+        if fname == name {
+          num = fnum
+          repeated = frep
+          msg = fmsg
+          tn = ftn
+        }
+      }
+      if num == 0 { continue }
+    }
+    let fr = rel + [num]
+    if sw_tok_is(w, vs, "[") {
+      // a list: each element, at its index
+      let lc = sw_close(w, vs)
+      var j = vs + 1
+      while j < lc {
+        let ee = if sw_tok_is(w, j, "<") { sw_close(w, j) } else { sw_value_end(w, j) }
+        let er = fr + [sw_next_index(fr, seen)]
+        sw_loc(w, j, ee, sw_opt_full(opts_path, er))
+        if msg { sw_children(w, j, opts_path, er, tn, seen) }
+        j = ee + 1
+        if sw_tok_is(w, j, ",") { j += 1 }
+      }
+      continue
+    }
+    let r = if repeated { fr + [sw_next_index(fr, seen)] } else { fr }
+    sw_loc(w, ns, fe, sw_opt_full(opts_path, r))
+    if msg { sw_children(w, vs, opts_path, r, tn, seen) }
+  }
 }
 
 /// The option's path joined to the options path (a `-1` path is the element's own field).
@@ -1933,11 +2069,14 @@ fn sw_opt_node(w: Sw, at: Int) -> (Str, Int, Int) {
 /// An `option NAME = VALUE;` statement at w.at.
 fn sw_option_stmt(var w: Sw, opts_path: List[Int], kind: Int, var seen: Map[Str, Int]) {
   let s = w.at
-  let (name, _, ve) = sw_opt_node(w, s + 1)
+  let (name, vs, ve) = sw_opt_node(w, s + 1)
   let e = if sw_tok_is(w, ve + 1, ";") { ve + 1 } else { ve }
   w.at = e + 1
-  sw_loc(w, s, e, opts_path)
-  if let Some(p) = sw_opt_path(w, kind, name, seen) { sw_loc_c(w, s, e, e, sw_opt_full(opts_path, p)) }
+  sw_loc0(w, s, e, opts_path)
+  if let Some((p, tn)) = sw_opt_path(w, kind, name, seen) {
+    sw_loc_c(w, s, e, e, sw_opt_full(opts_path, p))
+    if w.xopts { sw_children(w, vs, opts_path, p, tn, seen) }
+  }
 }
 
 /// A `[ ... ]` option list at w.at, when there is one.
@@ -1950,11 +2089,12 @@ fn sw_compact(var w: Sw, opts_path: List[Int], kind: Int) {
   var i = open + 1
   while i < close {
     let (name, vs, ve) = sw_opt_node(w, i)
-    if let Some(p) = sw_opt_path(w, kind, name, seen) {
+    if let Some((p, tn)) = sw_opt_path(w, kind, name, seen) {
       // a field's `default` (its own field): protoc's location is the value's; `json_name` has the
       // option's and then the value's
       sw_loc(w, if p == [-1, 7] { vs } else { i }, ve, sw_opt_full(opts_path, p))
       if p == [-1, 10] { sw_loc(w, vs, ve, sw_opt_full(opts_path, p)) }
+      if w.xopts { sw_children(w, vs, opts_path, p, tn, seen) }
     }
     i = ve + 1
     if sw_tok_is(w, i, ",") { i += 1 }
@@ -1971,7 +2111,7 @@ fn sw_file(var w: Sw) {
     sw_emit(w, [], [0, 0, 0], None, None, [])
     return
   }
-  sw_loc(w, 0, w.ts.len() - 1, [])
+  sw_loc0(w, 0, w.ts.len() - 1, [])
   var dep = 0
   var pub_dep = 0
   var weak_dep = 0
@@ -2099,11 +2239,11 @@ fn sw_field(var w: Sw, path: List[Int], ext_s: Int, ext_e: Int, in_oneof: Bool, 
     var open = num + 1
     while open < w.ts.len() && !sw_tok_is(w, open, "{") { open += 1 }
     let close = sw_close(w, open)
-    sw_loc(w, s, close, path)
+    sw_loc0(w, s, close, path)
     if ext_s >= 0 { sw_loc(w, ext_s, ext_e, path + [2]) }
-    if label >= 0 { sw_loc(w, label, label, path + [4]) }
+    if label >= 0 { sw_loc0(w, label, label, path + [4]) }
     sw_loc(w, g, g, path + [5])
-    sw_loc(w, n, n, path + [1])
+    sw_loc0(w, n, n, path + [1])
     sw_loc(w, num, num_e, path + [3])
     w.at = num_e + 1
     sw_compact(w, path + [8], SW_FIELD)

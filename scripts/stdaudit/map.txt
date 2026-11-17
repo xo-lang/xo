@@ -5564,11 +5564,11 @@ protocompile.SourceAccessorFromMap = std/protoparse.parse (the caller reads the 
 protocompile.WithStandardImports = std/protoparse.gen_set (google/protobuf's well-known types map to std/protowkt's)
 protocompile.PanicError = not planned: Go runtime machinery: a panic recovered inside a compile; Xo's parse returns ParseErr
 protocompile.PanicError.Error = not planned: Go runtime machinery: a panic recovered inside a compile; Xo's parse returns ParseErr
-protocompile.SourceInfoMode = partial: std/protodesc.build (none) and build_with_source_info (standard); the extra comments and extra option locations modes are gaps
+protocompile.SourceInfoMode = std/protodesc.build (none) and build_with_source_info (standard; extra_comments and extra_option_locations, alone or both)
 protocompile.SourceInfoNone = std/protodesc.build (no SourceCodeInfo, protoc's default without --include_source_info)
 protocompile.SourceInfoStandard = std/protodesc.build_with_source_info: protoc's --include_source_info SourceCodeInfo, byte exact on 47 files (std/protodesc_test.xo, scripts/protocdesc)
-protocompile.SourceInfoExtraComments = gap: build_with_source_info writes protoc's comments only (protocompile's extra mode also gives comments to every location and keeps comments before `}`)
-protocompile.SourceInfoExtraOptionLocations = gap: build_with_source_info writes no locations inside an option's value (an aggregate's fields, a list's elements)
+protocompile.SourceInfoExtraComments = std/protodesc.build_with_source_info: with extra_comments, byte exact with protocompile v0.14.1 (std/protodesc_test.xo)
+protocompile.SourceInfoExtraOptionLocations = std/protodesc.build_with_source_info: with extra_option_locations, byte exact with protocompile v0.14.1 (std/protodesc_test.xo)
 protocompile.IsEditionSupported = std/protoparse.parse (proto2, proto3 and editions 2023 and 2024, as protoc 36.2)
 # protocompile behavior checklist (decision 0655: what a symbol diff misses; an open item is a gap)
 protocompile.behavior.proto3 = std/protoparse.parse (proto3: fields, maps, oneofs, optional, services, options; std/protodesc byte exact with protoc 36.2 on 47 files)

@@ -18,6 +18,22 @@ a `proto3_optional: false` protobuf-go wrote, as it does `json_name`; before, th
 field that is not UTF-8 is still refused (an Xo `Str` is UTF-8), where protobuf-go accepts any bytes in
 descriptor.proto's proto2 strings.
 
+## 2026-11-16: feature: build_with_source_info's extra comments and extra option locations modes
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109, the stdaudit gaps protocompile.SourceInfoExtraComments and SourceInfoExtraOptionLocations
+- Go reference: github.com/bufbuild/protocompile v0.14.1 sourceinfo (WithExtraComments, WithExtraOptionLocations)
+- Test: std/protodesc_test.xo "build_with_source_info's extra modes give protocompile's SourceCodeInfo" (each mode
+  and both, byte exact); by hand, protocompile's internal/testdata files and the protoc cases in every mode
+- Shipped in: not yet released
+
+`build_with_source_info(src, name, deps, extra_comments: true, extra_option_locations: true)`: with
+`extra_comments` every location (not only a declaration's) takes the comments around it, and a comment on the line
+of a closing symbol goes to the token before it; with `extra_option_locations` an option's message literal has a
+location for each field it sets and each element of a list, with the path into the options message, as protocompile
+writes them.
+
 ## 2026-11-16: fix: option values, number and bytes defaults, json_name, groups in extend blocks
 
 - Kind: fix
