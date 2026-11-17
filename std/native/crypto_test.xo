@@ -3195,6 +3195,51 @@ test "go rsa: PSS takes BLAKE2b and OAEP takes BLAKE2b and legacy Keccak, as Go;
   expect(bad) == []
 }
 
+test "a keyed blake2b_hasher written in pieces is Python's hashlib.blake2b(key=, digest_size=32)" {
+  // a keyed digest holds its last write's tail as a view (task #100);
+  // pieces of every size cross the held, the short and the full block
+  let wants = [
+    (0, "6689399b55d2c998473a55fa741f5c0bd91c49e7d15cc211482a37d75a9d95a0"),
+    (1, "8d2e157e494739fa12534dba051ba97be105b144ec7688ccd776369b8871c088"),
+    (127, "be1f9b3363b7211f5300f007a9387f7e3fce0537390fa6b5c5f863e8331a29e5"),
+    (128, "d2e59685d0a3aa2ad41968c5aae207e2575a30effa42deb85bc70e7190fe0e55"),
+    (129, "83678cfe55871c872c41adcf6cde7403fa2be0cece7f0ea41ce80aba47c4fb1b"),
+    (255, "ceeedd7c221fc41b0854100bc5b8e2864c4ae8432fdc6ea04df59deaff0ed824"),
+    (256, "24dbd82086d8cb5cefd1f268ba03d94ccccd9cb95330cfec37917e8d84777fdc"),
+    (257, "bcc3cad1b368507d5127b0af79468bf23c9a0ff2f4225f6e33e55d98a739f5d9"),
+    (300, "2fd9aad9b225ed5e6f58af92f382aeaa9d642bc771498f00232278971fe234a3"),
+  ]
+  var mb = BytesBuilder.with_capacity(300)
+  for i in 0..300 {
+    mb.write_byte(UInt8((i * 7 + 3) & 255))
+  }
+  let m = mb.freeze()
+  var kb = BytesBuilder.with_capacity(32)
+  for i in 1..33 {
+    kb.write_byte(UInt8(i))
+  }
+  let key = kb.freeze()
+  var bad: List[Str] = []
+  for (n, want) in wants {
+    for piece in [1, 5, 64, 127, 128, 129, 200, 300] {
+      var x = blake2b_hasher(32, key) ?? e => fault(e.msg)
+      var i = 0
+      while i < n {
+        let j = if i + piece < n { i + piece } else { n }
+        x.write(m[i..j])
+        i = j
+      }
+      // a sum in the middle leaves the state as it was
+      let mid = x.sum()
+      let got = x.sum().to_hex()
+      if got != want || mid.to_hex() != want {
+        bad.push("${n}/${piece}: ${got}")
+      }
+    }
+  }
+  expect(bad) == []
+}
+
 test "blake2b_hasher and blake2b_xof refuse with Go's texts" {
   expect(blake2b_hasher(0).err().map(fn(e) { e.msg })) == Some("blake2b: invalid hash size")
   expect(blake2b_hasher(32, b"k".repeat(65)).err().map(fn(e) { e.msg })) == Some("blake2b: invalid key size")

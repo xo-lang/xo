@@ -1,5 +1,19 @@
 # std/crypto changes
 
+## 2026-11-17: perf: keyed BLAKE2b digests skip two block copies
+
+- Kind: perf
+- Commit: this push
+- Found by: the BLAKE2b timing row (bench/perf/blake2b keyed still above 1.05 of x/crypto after the padded block fix, task #100)
+- Go reference: golang.org/x/crypto v0.58.0 blake2b digest.Write and Sum
+- Test: std/native "a keyed blake2b_hasher written in pieces is Python's hashlib.blake2b(key=, digest_size=32)"; crypto module tests; xo bench --ab on linux/arm64 host 1, 3 rounds: keyed 0.882 (0.871 to 0.886), small 0.988 (within noise), max RSS the same
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+A write that finds its held block already full compresses it in place
+instead of copying it, and a keyed digest keeps the tail of its last write
+as a view (decision 0330) until the next write or the sum.
+
 ## 2026-11-16: feature: ecdh_generate_key and encapsulate perform only what their Rand performs
 
 - Kind: feature

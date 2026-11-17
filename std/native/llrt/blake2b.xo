@@ -74,11 +74,20 @@ pub fn (s: State) written() -> Int {
 }
 
 /// The block with b[lo..hi] copied in at `at` (Go's copy into d.block).
+/// A keyed digest's held block may be shorter than BLOCK (a view of the
+/// last write's tail, see write); what it lacks reads as zeros.
 fn put_block(blk: Bytes, at: Int, b: Bytes, lo: Int, hi: Int) -> Bytes {
   var o = BytesBuilder.with_capacity(BLOCK)
   o.write(blk[0..at])
   o.write(b[lo..hi])
-  o.write(blk[at + hi - lo..BLOCK])
+  let e = at + hi - lo
+  if e < blk.len() {
+    o.write(blk[e..blk.len()])
+  }
+  let k = o.len()
+  if k < BLOCK {
+    o.write(ZEROS[0..BLOCK - k])
+  }
   o.freeze()
 }
 
@@ -96,7 +105,12 @@ pub fn (var s: State) write(p: Bytes) {
       s.offset += n
       return
     }
-    s.block = put_block(s.block, s.offset, p, 0, remaining)
+    // a full block (a keyed digest's key block, the usual case) takes no
+    // copy: a 128 byte allocation per keyed message (bench/perf/blake2b
+    // keyed 1.177 of Go, 2026-11-16)
+    if remaining > 0 {
+      s.block = put_block(s.block, s.offset, p, 0, remaining)
+    }
     s.t = s.t.wrapping_add(BLOCK)
     digest_tables.blake2b_compress(h, s.block, 0, s.t, false)
     s.offset = 0
@@ -116,7 +130,11 @@ pub fn (var s: State) write(p: Bytes) {
     }
   }
   if i < n {
-    s.block = put_block(s.block, 0, p, i, n)
+    // a keyed digest holds the tail as a view of p: it has no binary
+    // state (Go's "cannot marshal MACs"), so the bytes past offset that
+    // Go keeps are never seen, and a keyed message of one block takes no
+    // copy (bench/perf/blake2b keyed, 2026-11-16)
+    s.block = if s.key.len() > 0 { p[i..n] } else { put_block(s.block, 0, p, i, n) }
     s.offset += n - i
   }
   s.h = h
