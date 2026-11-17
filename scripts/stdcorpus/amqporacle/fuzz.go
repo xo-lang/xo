@@ -310,6 +310,36 @@ func fzTTLPastDuration(b []byte) bool {
 	return false
 }
 
+// fzDroppedBadUTF8: a str or sym that is not UTF-8 in a section go-amqp
+// decodes and then drops (a second delivery annotations, annotations or
+// application properties section replaces the first), which showMsg never
+// sees; std/amqp decodes every section and refuses it (TestAmqpFuzz seed
+// 21, 2026-11-17). Each section is decoded on its own and shown.
+func fzDroppedBadUTF8(b []byte) bool {
+	at := fzSectionAt(b)
+	bad := false
+	for i, p := range at {
+		end := len(b)
+		if i+1 < len(at) {
+			end = at[i+1]
+		}
+		var m amqp.Message
+		if m.UnmarshalBinary(b[p:end]) != nil {
+			continue
+		}
+		fzBadUTF8 = false
+		func() {
+			defer func() { recover() }()
+			showMsg(&m)
+		}()
+		if fzBadUTF8 {
+			bad = true
+		}
+	}
+	fzBadUTF8 = false
+	return bad
+}
+
 // fzRefused: std/amqp's documented departures from go-amqp, which accepts every one of them: a
 // str or sym that is not UTF-8 (Xo's Str is UTF-8; go-amqp keeps the bytes), a second header or
 // properties section, body sections of two kinds or a second value section (go-amqp keeps the
@@ -389,7 +419,7 @@ func fzDecode(b []byte) (out string) {
 		}()
 		out = showMsg(&m)
 	}()
-	if out != "unshowable" && fzRefused(b) {
+	if out != "unshowable" && (fzRefused(b) || fzDroppedBadUTF8(b)) {
 		return "error"
 	}
 	return out

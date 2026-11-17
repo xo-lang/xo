@@ -23,3 +23,18 @@ func TestFuzzHeaderTTLPastDuration(t *testing.T) {
 		t.Fatalf("fzDecode(ttl 1000) = %q, want a decoded message", got)
 	}
 }
+
+// Two delivery annotations sections, the first with a symbol that is not
+// UTF-8: go-amqp keeps the last section and never shows the first, but
+// std/amqp decodes every section and refuses the symbol (its documented
+// departure), so the case is one std/amqp refuses (TestAmqpFuzz seed 21 on
+// darwin/arm64, 2026-11-17, task #152).
+func TestFuzzBadUTF8InDroppedSection(t *testing.T) {
+	b, err := hex.DecodeString("005371d10000001100000002a306782df09f7f8070ffffffff005371d10000001900000004a305782d780079a100a308782d68c3a96c6c6f512d005373d00000001e00000003980100000000000000000000000000000040a106e4b896e7958c005375a004626f6479")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fzDecode(b); got != "error" {
+		t.Fatalf("fzDecode = %q, want error", got)
+	}
+}
