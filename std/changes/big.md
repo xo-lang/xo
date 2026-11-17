@@ -1,5 +1,20 @@
 # std/big changes
 
+## 2026-11-17: perf: BigFloat.mul reads both mantissas from their keys
+
+- Kind: perf
+- Commit: this push
+- Found by: task #89 (std/evidence/big/perf.md: bench/perf/bigfloat mul 1.262 of Go, the module's worst)
+- Go reference: math/big float.go umul (one product list, rounded in place)
+- Test: internal/stdtest TestStdCorpora big, bigfloat, bigrat, randbig (go, arm64, llvm) and the module tests; output unchanged
+- Timing: bench/perf/bigfloat mul on linux/arm64 host 1, xo bench --ab 3 rounds: 0.66 of before (95% interval 0.547 to 0.689; 17.71 to 11.69 ms); std/evidence/big/perf.md worst Xo / Go 1.028 (was 1.262), bigfloat mul 0.830 of Go
+
+The product of two BigFloat mantissas is one list: the second
+mantissa's limbs are decoded into its tail, the multiply rows read them
+there, and the tail and zero top words are cut with one store of the
+length instead of a pop a word. Before, the second mantissa was decoded
+into a list of its own on every multiply.
+
 ## 2026-11-17: perf: BigInt.text's decimal digit loop
 
 - Kind: perf

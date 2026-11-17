@@ -290,6 +290,56 @@ fn key_nat_mul(k: List[Int], y: List[Int]) -> List[Int] {
   z
 }
 
+/// x * y of two nonnegative BigInts' keys (BigFloat mantissas), with one
+/// list: y's limbs are decoded into the product's tail, the rows read them
+/// from there, and the tail is cut off after (2026-11-17: decoding y into
+/// its own list was an allocation and 13% of bench/perf/bigfloat mul).
+fn key_key_mul(kx: List[Int], ky: List[Int]) -> List[Int] {
+  let nx = if kx.is_empty() { 0 } else { kx[0] }
+  let ny = if ky.is_empty() { 0 } else { ky[0] }
+  if nx == 0 || ny == 0 {
+    return []
+  }
+  if nx >= KARATSUBA && ny >= KARATSUBA {
+    return key_nat_mul(kx, parts(big.BigInt{key: ky}).1)
+  }
+  let nz = nx + ny
+  var z = raw.zero_ints(nz + ny)
+  for i in 0..ny {
+    z[nz + i] = ky[ny - i] ^ MIN
+  }
+  let pz = bigmod.addr(z)
+  let py = pz.wrapping_add(8 * nz)
+  for i in 0..nx {
+    let xi = kx[nx - i] ^ MIN
+    if xi == 0 {
+      continue
+    }
+    let row = pz.wrapping_add(8 * i)
+    rt.mem_store(row, 8 * ny, bigmod.mac_row(row, py, xi, ny), 8)
+  }
+  // the tail and the zero top words cut by one store of the length (a
+  // pop a word was a sixth of the time)
+  var n = nz
+  while n > 0 && z[n - 1] == 0 {
+    n -= 1
+  }
+  ints_cut(z, n)
+  z
+}
+
+/// Sets the length of xs, a list of Ints made here and not yet shared, to
+/// n <= its length, as raw.zero_ints stores it (the words past n stay
+/// allocated and are not read).
+fn ints_cut(xs: List[Int], n: Int) {
+  let a = rt.obj_addr(xs)
+  if rt.layout(6) == 8 {
+    rt.mem_store(a, rt.layout(3), n, 8)
+  } else {
+    rt.mem_store(a, rt.layout(3), n, 4)
+  }
+}
+
 fn nat_mul(x: List[Int], y: List[Int]) -> List[Int] {
   if x.is_empty() || y.is_empty() {
     return []
@@ -2457,10 +2507,9 @@ fn f_add(x: big.BigFloat, y: big.BigFloat, yneg: Bool, prec: Int, mode: big.Roun
 fn f_mul(x: big.BigFloat, y: big.BigFloat, prec: Int, mode: big.RoundingMode) -> big.BigFloat {
   let neg = x.neg != y.neg
   if x.form == F_FINITE && y.form == F_FINITE {
-    // y decoded once; x's limbs read from its key (nat_mul's rows)
-    let ym = f_mant(y)
-    let m = key_nat_mul(x.mant.key, ym)
-    return f_round(neg, m, x.exp + y.exp - bigint_bit_len(x.mant) - nat_bit_len(ym) + nat_bit_len(m), 0, prec, mode)
+    // both mantissas read from their keys, into one list (key_key_mul)
+    let m = key_key_mul(x.mant.key, y.mant.key)
+    return f_round(neg, m, x.exp + y.exp - bigint_bit_len(x.mant) - bigint_bit_len(y.mant) + nat_bit_len(m), 0, prec, mode)
   }
   if (x.form == F_ZERO && y.form == F_INF) || (x.form == F_INF && y.form == F_ZERO) {
     fault("multiplication of zero with infinity")
