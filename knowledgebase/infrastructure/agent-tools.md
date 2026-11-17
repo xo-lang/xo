@@ -1734,12 +1734,18 @@ Last verified: 2026-11-15
     the log is bisected over GOOD..BAD's first-parent line on host 2
     (mainbisect-remote.sh: xo built and that one test run at each point,
     at most MB_MAX points, default 9, in one lease of at most MB_MAX_MIN
-    minutes, default 120). Its `bisect.done` event becomes a `bisect`
+    minutes, default 120). A blamed commit is confirmed first (#203):
+    the test runs MB_CONFIRM more times (default 3) alone at it and at
+    its parent; one that passes every run there, or fails at the parent
+    too, goes to the lead as a load flake (`MAINBISECT-FLAKE`, an
+    `error=load flake` event), not a first bad commit. A one-commit range
+    is confirmed on the host too (no host only with MB_CONFIRM=0). Its
+    `bisect.done` event becomes a `bisect`
     alert to the first bad commit's owner (by the push that carried it,
     else its task), or to the lead with a narrowed range. By hand:
     `mainbisect.sh GOOD BAD ./PKG TestName`; MAINBISECT=0 turns the
     automatic run off; logs in $LEAD/notes/bisect/. Last verified:
-    2026-11-16.
+    2026-11-17.
   - Agent rules registry (#139): [agent-rules.md](agent-rules.md) lists
     every rule's home, enforcement and test (TestAgentRulesRegistry in
     internal/repotest fails when a listed path goes missing) and the

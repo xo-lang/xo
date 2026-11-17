@@ -27,3 +27,8 @@ Status: Observed (2026-11-16 to 2026-11-17, xw-1, task #193)
   notes/lead/hourly-short-HHMM-full.log. A note that repeats on one
   package means it is slow enough to fail alone soon: find why (the
   cmd/xo slowdown above).
+- 2026-11-17: TestRunTimed (a Go sleep against a 300 ms timeout) failed
+  under load once more and mainbisect blamed 63657879a, an unrelated
+  std/dns commit; 30 of 30 runs passed at main. mainbisect now confirms
+  a blamed commit alone at it and its parent (MB_CONFIRM runs, #203) and
+  reports a test that passes there as a load flake to the lead.
