@@ -39,10 +39,10 @@ pub fn child(parents: List[Str], name: Str, el: xml.Element) -> Piece {
   Piece{parents: parents, kind: 2, name: name, el: Some(el)}
 }
 
-/// Character data inside the open element.
+/// Character data in the element, after closing the open parents.
 pub fn chardata(text: Str) -> Piece { Piece{parents: [], kind: 3, text: text} }
 
-/// A comment inside the open element.
+/// A comment in the element, after closing the open parents.
 pub fn comment(text: Str) -> Piece { Piece{parents: [], kind: 4, text: text} }
 
 /// An attribute.
@@ -54,16 +54,8 @@ pub fn build(name: Str, attrs: List[xml.Attr], pieces: List[Piece]) -> xml.Eleme
   var names: List[Str] = []
   var kids: List[List[xml.Node]] = [[]]
   for p in pieces {
-    if p.kind == 3 {
-      let last = kids.len() - 1
-      kids[last].push(xml.Node.Raw(xml.escape(p.text)))
-      continue
-    }
-    if p.kind == 4 {
-      let last = kids.len() - 1
-      kids[last].push(xml.Node.Comment(p.text))
-      continue
-    }
+    // Go's printer trims the parent stack to the piece's parents for
+    // character data and comments too (none: they close every parent)
     var keep = 0
     while keep < p.parents.len() && keep < names.len() && p.parents[keep] == names[keep] {
       keep += 1
@@ -76,7 +68,11 @@ pub fn build(name: Str, attrs: List[xml.Attr], pieces: List[Piece]) -> xml.Eleme
       kids.push([])
     }
     let last = kids.len() - 1
-    if p.kind == 1 {
+    if p.kind == 3 {
+      kids[last].push(xml.Node.Raw(xml.escape(p.text)))
+    } else if p.kind == 4 {
+      kids[last].push(xml.Node.Comment(p.text))
+    } else if p.kind == 1 {
       kids[last].push(xml.Node.Elem(xml.Element{name: nm(p.name), attrs: [], children: [xml.Node.Raw(xml.escape(p.text))]}))
     } else if p.kind == 2 {
       if let Some(e) = p.el {
@@ -143,8 +139,12 @@ pub fn write_leaf(var w: Writer, parents: List[Str], name: Str, text: Str) {
   tag_close(w, name)
 }
 
-/// Character data where the writer is (chardata's piece).
-pub fn write_chardata(var w: Writer, text: Str) { xml.escape_to(w.out, text) }
+/// Character data in the started element (chardata's piece): as Go's
+/// printer, the parents the previous field opened are closed first.
+pub fn write_chardata(var w: Writer, text: Str) {
+  write_open(w, [])
+  xml.escape_to(w.out, text)
+}
 
 /// Closes the open parents and the element `name` write_start began.
 pub fn write_end(var w: Writer, name: Str) {

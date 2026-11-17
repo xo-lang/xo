@@ -248,7 +248,8 @@ func xqList(xs []string) []string {
 
 // xcBuild is build's contract, from Go's marshal.go printer: the parents
 // shared with the open stack stay open, the rest close, then the new ones
-// open, and the leaf is written. The answer is Go's token stream in the
+// open, and the leaf is written; character data and comments close every
+// open parent first. The answer is Go's token stream in the
 // corpus's canonical text (xmlTokText), not its bytes: build's element is
 // encoded without indent and read back, which leaves escaping and the
 // shared-parents order as the things that must match (the derive corpus
@@ -283,11 +284,15 @@ func xcBuild(r xcRow) string {
 		toks = append(toks, xml.CharData(text))
 	}
 	for _, p := range r.ps {
+		// marshal.go trims the parent stack for character data and
+		// comments too (s.trim(finfo.parents), their parents empty)
 		switch p.kind {
 		case 3:
+			closeTo(0)
 			addText(p.text)
 			continue
 		case 4:
+			closeTo(0)
 			toks = append(toks, xml.Comment(p.text))
 			continue
 		}

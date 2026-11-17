@@ -35,6 +35,7 @@ the text of every entry is unchanged).
 - Feature (std/sqlite): the DSN takes mattn/go-sqlite3's other keys (`_txlock`, `_auto_vacuum`, `_cache_size`, `_case_sensitive_like`, `_defer_foreign_keys`, `_ignore_check_constraints`, `_locking_mode`, `_query_only`, `_recursive_triggers`, `_secure_delete`, `_writable_schema`, and `_loc`, which changes nothing); a Server error names every extended result code (`SQLITE_CONSTRAINT_TRIGGER`, was `SQLITE_1811`).
 - Fix (std/sql): `Row.time` reads SQLite's date and time text (`2026-11-16 12:34:56`, with a fraction or offset) and a DATE, DATETIME or TIMESTAMP column's Unix integer, as mattn/go-sqlite3 does; only `YYYY-MM-DD` read before.
 - Fixed (std/template): `add` can redefine a template of the set (a `{{block}}` overridden by a later source), as Go's Parse does; it failed with "multiple definition of template" on the native backends.
+- Fixed (std/xml, std/xmlcodec): a derive Xml struct whose `,chardata` field follows a field under a parent path (`p>b`) closes that parent before the text, as Go's Marshal does; it wrote the text inside the parent.
 - Fixed (std/template): on the Go backend, `slice` of a string cut inside a character gives U+FFFD for each cut byte, as the native backends do.
 - Fixed (std/timego): `parse` of a day of year out of range followed by more text reports the extra text, as Go does (`"2023 4345"` against `"2006 002"`).
 - Fixed (std/timego): `parse` of a two digit year with a sign gives Go's result (`-3` is 1997, `+3` is 2003).

@@ -1,5 +1,21 @@
 # std/xmlcodec changes
 
+## 2026-11-16: fix: character data and comments close the open parents, as Go's Marshal
+
+- Kind: fix
+- Commit: this push
+- Found by: task #90 (module tests against Go's Marshal)
+- Go reference: go1.25 encoding/xml marshal.go marshalStruct (s.trim for fCharData and fComment)
+- Test: std/xmlcodec_test.xo (fails before)
+- Timing: none
+
+`build`'s chardata and comment pieces and `write_chardata` (derive Xml's
+encoder) close the parent elements the previous field opened before
+writing, as Go's printer does: a struct with `p>b` then `,chardata` then
+`p>q>c` is `<p><b>b</b></p>t<p><q><c>c</c></q></p>` (it was
+`<p><b>b</b>t<q><c>c</c></q></p>`). The stdcorpus contract had the same
+mistake; its rows and the stress evidence rows are regenerated.
+
 ## 2026-11-16: feature: depth_check, derive Xml's nesting limit
 
 - Kind: feature

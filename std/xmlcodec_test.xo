@@ -1,0 +1,136 @@
+// std/xmlcodec module tests (decision 0616 section 2: the race evidence
+// runs these under --race). Expected texts are Go's encoding/xml and
+// strconv (go1.25) on the same values: Marshal and MarshalIndent of a
+// struct with paths, character data, a comment and a nested element
+// (build and Writer), Unmarshal's root, depth limit, attribute and
+// character data lookups, the strconv texts of int_of, float_of, bool_of
+// and float_text, and many tasks building at once.
+use std/xml
+
+// Go: struct t {ID attr; A p>a; B p>b; chardata; C p>q>c; D r>d;
+// comment; In in {V attr; X x}; E e}
+const GO_MARSHAL: Str = "<t id=\"1&amp;2\"><p><a>a&lt;</a><b>b</b></p>t&amp;<p><q><c>c</c></q></p><r><d>d</d></r><!-- hi --><in v=\"7\"><x>x</x></in><e>e</e></t>"
+
+// the same struct without the comment, MarshalIndent "" "  "
+const GO_INDENT: Str = "<t id=\"1&amp;2\">\n  <p>\n    <a>a&lt;</a>\n    <b>b</b>\n  </p>t&amp;\n  <p>\n    <q>\n      <c>c</c>\n    </q>\n  </p>\n  <r>\n    <d>d</d>\n  </r>\n  <in v=\"7\">\n    <x>x</x>\n  </in>\n  <e>e</e>\n</t>"
+
+fn pieces() -> List[Piece] {
+  let inner = build("in", [attr("v", "7")], [leaf([], "x", "x")])
+  [
+    leaf(["p"], "a", "a<"),
+    leaf(["p"], "b", "b"),
+    chardata("t&"),
+    leaf(["p", "q"], "c", "c"),
+    leaf(["r"], "d", "d"),
+    comment(" hi "),
+    child([], "in", inner),
+    leaf([], "e", "e"),
+  ]
+}
+
+fn write_t(indent: Str) -> Str {
+  var w = writer(indent)
+  write_start(w, "t", [attr("id", "1&2")])
+  write_leaf(w, ["p"], "a", "a<")
+  write_leaf(w, ["p"], "b", "b")
+  write_chardata(w, "t&")
+  write_leaf(w, ["p", "q"], "c", "c")
+  write_leaf(w, ["r"], "d", "d")
+  write_open(w, [])
+  write_start(w, "in", [attr("v", "7")])
+  write_leaf(w, [], "x", "x")
+  write_end(w, "in")
+  write_leaf(w, [], "e", "e")
+  write_end(w, "t")
+  written(w)
+}
+
+fn err_text[T](r: Result[T, xml.XmlErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => e.msg
+  }
+}
+
+test "build closes the open parents before character data and a comment, as Go's Marshal" {
+  let e = build("t", [attr("id", "1&2")], pieces())
+  expect(e.encode().or_fault("encode")) == GO_MARSHAL
+}
+
+test "Writer writes Go's Marshal and MarshalIndent text" {
+  let want = GO_MARSHAL.replace("<!-- hi -->", "")
+  expect(write_t("")) == want
+  expect(write_t("  ")) == GO_INDENT
+}
+
+test "parent paths shared with the previous field stay open, others close" {
+  let e = build("r", [], [leaf(["a", "b"], "x", "1"), leaf(["a", "b"], "y", "2"), leaf(["a", "c"], "z", "3"), open_path(["a"]), leaf([], "w", "4")])
+  expect(e.encode().or_fault("encode")) == "<r><a><b><x>1</x><y>2</y></b><c><z>3</z></c></a><w>4</w></r>"
+}
+
+test "parse_root, attr_of, direct_text and events read the document as Go's Unmarshal" {
+  expect(err_text(parse_root(""))) == "EOF"
+  expect(err_text(parse_root("  "))) == "EOF"
+  let r = parse_root("<r id=\"7\">hi<a>1</a><x><b>2</b></x> there<a>3</a><x><b>4</b><b>5</b></x></r>").or_fault("parse")
+  expect(attr_of(r, "id")) == Some("7")
+  expect(attr_of(r, "nope")) == None
+  expect(direct_text(r)) == "hi there"
+  var got: List[Str] = []
+  for ev in events(r, [["a"], ["x", "b"]]) {
+    got.push("${ev.field}:${ev.el.text()}")
+  }
+  expect(got.join(" ")) == "0:1 1:2 0:3 1:4 1:5"
+}
+
+test "depth_check refuses Go's maxUnmarshalDepth" {
+  expect(err_text(depth_check(0))) == "ok"
+  expect(err_text(depth_check(9999))) == "ok"
+  expect(err_text(depth_check(10000))) == "exceeded max depth"
+}
+
+test "int_of, float_of and bool_of give strconv's values and error texts" {
+  expect(int_of(" 42 ").or_fault("int")) == 42
+  expect(int_of("").or_fault("empty")) == 0
+  expect(int_of("-7").or_fault("neg")) == -7
+  expect(err_text(int_of("x1"))) == "strconv.ParseInt: parsing \"x1\": invalid syntax"
+  expect(err_text(int_of("99999999999999999999"))) == "strconv.ParseInt: parsing \"99999999999999999999\": value out of range"
+  expect(float_of(" 2.5 ").or_fault("float")) == 2.5
+  expect(float_of("").or_fault("empty")) == 0.0
+  expect(err_text(float_of("1e400"))) == "strconv.ParseFloat: parsing \"1e400\": value out of range"
+  expect(err_text(float_of("abc"))) == "strconv.ParseFloat: parsing \"abc\": invalid syntax"
+  expect(bool_of("true").or_fault("t")) == true
+  expect(bool_of(" 0 ").or_fault("0")) == false
+  expect(bool_of("").or_fault("empty")) == false
+  expect(err_text(bool_of("yes"))) == "strconv.ParseBool: parsing \"yes\": invalid syntax"
+}
+
+test "float_text is FormatFloat 'g' -1" {
+  let cases = [(3.0, "3"), (0.1, "0.1"), (1e21, "1e+21"), (1e-7, "1e-07"), (-2.5, "-2.5"), (123456789.0, "1.23456789e+08")]
+  for (f, want) in cases {
+    expect(float_text(f)) == want
+  }
+}
+
+test "many tasks build and write at once" {
+  let n = scope sc {
+    var hs: List[Task[Int, Str]] = []
+    for k in 0..8 {
+      hs.push(sc.spawn(fn() -> Int ! Str {
+        var c = 0
+        for i in 0..200 {
+          let a = build("t", [attr("id", "1&2")], pieces()).encode().map_err(fn(e) { "task ${k}: ${e.msg}" })?
+          if a != GO_MARSHAL { return Err("task ${k} round ${i}: ${a}") }
+          if write_t("  ") != GO_INDENT { return Err("task ${k} round ${i}: writer") }
+          c += 1
+        }
+        Ok(c)
+      }))
+    }
+    var total = 0
+    for x in hs {
+      total += x.await.or_fault("task")
+    }
+    total
+  }
+  expect(n) == 1600
+}
