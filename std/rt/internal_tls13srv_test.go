@@ -47,3 +47,44 @@ func TestTicketsAsGo(t *testing.T) {
 		t.Fatalf("Go's state %x, want %x", b, state)
 	}
 }
+
+// TestHelloExtensionsAsGo checks that t13sParseHello refuses the
+// ClientHello extensions crypto/tls's clientHelloMsg.unmarshal refuses
+// (a decode_error) and keeps the ones it keeps, as tls13srv.xo's
+// extension does. Task #209: a second ClientHello whose ec_point_formats
+// was 69 00 (a length of 105 over one byte) drew illegal_parameter on
+// the Go backend; Go 1.26's server sends decode_error, as native Xo did.
+func TestHelloExtensionsAsGo(t *testing.T) {
+	cases := []struct {
+		name string
+		ext  int
+		data []byte
+		ok   bool
+	}{
+		{"points", 11, []byte{1, 0}, true},
+		{"points length past the end", 11, []byte{0x69, 0}, false},
+		{"points empty vector", 11, []byte{0}, false},
+		{"points no vector", 11, nil, false},
+		{"points trailing byte", 11, []byte{1, 0, 0}, false},
+		{"status_request", 5, []byte{1, 0, 0, 0, 0}, true},
+		{"status_request vectors", 5, []byte{1, 0, 1, 7, 0, 2, 8, 9}, true},
+		{"status_request short", 5, []byte{1, 0, 0, 0}, false},
+		{"status_request trailing byte", 5, []byte{1, 0, 0, 0, 0, 0}, false},
+		{"sct", 18, nil, true},
+		{"sct with data", 18, []byte{0}, false},
+		{"extended master secret", 23, nil, true},
+		{"extended master secret with data", 23, []byte{0}, false},
+	}
+	for _, c := range cases {
+		body := t13U16(nil, 0x0303)
+		body = append(body, make([]byte, 32)...)
+		body = append(body, 0)                      // no session ID
+		body = append(body, 0, 2, 0x13, 0x01, 1, 0) // one suite, null compression
+		exts := t13Ext(nil, 43, []byte{2, 3, 4})
+		exts = t13Ext(exts, c.ext, c.data)
+		m := t13Message(1, append(body, t13Vec16(exts)...))
+		if got := t13sParseHello(m).ok; got != c.ok {
+			t.Errorf("%s: ok %v, want %v (crypto/tls)", c.name, got, c.ok)
+		}
+	}
+}

@@ -1,5 +1,20 @@
 # std/tls changes
 
+## 2026-11-17: fix: the Go backend's TLS 1.3 server reads status_request, SCT, EMS and point formats as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: the full tier at 56a7ca9df (TestTLSServerReplayDiff seed 11 case 1142, task #209)
+- Go reference: crypto/tls handshake_messages.go clientHelloMsg.unmarshal
+- Test: std/rt internal_tls13srv_test.go TestHelloExtensionsAsGo
+- Shipped in: not yet released
+
+The 2026-11-16 fix below reached the native server only: the Go backend's copy (std/rt/internal_tls13srv.go) still
+took a ClientHello whose point formats were not a non-empty vector, whose status_request did not hold a type and two
+vectors, or whose SCT or extended master secret request was not empty. On a second ClientHello after a
+HelloRetryRequest it then answered illegal_parameter ("client illegally modified second ClientHello") where Go 1.26's
+server, and the native one, answer decode_error.
+
 ## 2026-11-16: fix: a server picks its suite by Go's AES-GCM preference and reads status_request, SCT, EMS and point formats as Go does
 
 - Kind: fix

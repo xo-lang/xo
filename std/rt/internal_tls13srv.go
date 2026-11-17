@@ -463,6 +463,20 @@ func (h *t13sHello) extension(t int, d []byte, last bool) bool {
 			return false
 		}
 		h.reneg = d[1:n]
+	case 5:
+		// status_request: a type and two vectors, nothing after (Go's
+		// clientHelloMsg.unmarshal)
+		if n < 5 || n < 5+t13U16At(d, 1) {
+			return false
+		}
+		a := t13U16At(d, 1)
+		return n == 5+a+t13U16At(d, 3+a)
+	case 18, 23:
+		// the SCT and extended master secret requests carry nothing
+		return n == 0
+	case 11:
+		// point formats: a non-empty vector
+		return n >= 2 && int(d[0]) == n-1
 	case 42:
 		h.early = true
 	case 57:
