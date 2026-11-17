@@ -1,0 +1,39 @@
+// std/http's CrossOrigin (Go 1.25's CrossOriginProtection) and the StatusError interface: a refused cross-site
+// POST and an allowed same-origin one through check and the middleware, a trusted origin, and an error type's
+// status and text through the interface.
+use std/http
+
+struct Teapot {}
+
+fn (t: Teapot) status() -> Int { 418 }
+
+fn (t: Teapot) display() -> Str { "short and stout" }
+
+fn describe[E: http.StatusError](e: E) -> Str { "${e.status()} ${e.display()}" }
+
+fn main(os: Os) {
+  os.stdio.println(describe(Teapot{}))
+  let co = match http.cross_origin(trusted: ["https://ok.example"]) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("cross_origin: ${e.msg}")
+      return
+    }
+  }
+  let evil = http.new_request("POST", "http://x.example/a", {"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"})
+  let trusted = http.new_request("POST", "http://x.example/a", {"Sec-Fetch-Site": "cross-site", "Origin": "https://ok.example"})
+  let same = http.new_request("POST", "http://x.example/a", {"Sec-Fetch-Site": "same-origin"})
+  for (name, req) in [("evil", evil), ("trusted", trusted), ("same", same)] {
+    match co.check(req) {
+      Ok(_) => os.stdio.println("check ${name}: allowed")
+      Err(e) => os.stdio.println("check ${name}: ${e.msg}")
+    }
+  }
+  var r = http.router()
+  r.wrap(co.middleware())
+  r.handle("POST /a", fn(_q) { http.text(200, "ok") })
+  for (name, req) in [("evil", evil), ("same", same)] {
+    let resp = r.call(req)
+    os.stdio.println("middleware ${name}: ${resp.status} ${resp.body.to_str_lossy().trim()}")
+  }
+}

@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+418 short and stout
+check evil: cross-origin request detected from Sec-Fetch-Site header
+check trusted: allowed
+check same: allowed
+middleware evil: 403 cross-origin request detected from Sec-Fetch-Site header
+middleware same: 200 ok
+--- stderr
