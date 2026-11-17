@@ -22,6 +22,10 @@
 //     validation), random proto2 and proto3 files, half changed at the
 //     token level: the same outline when protocompile accepts, an error
 //     when it rejects;
+//   - migrate: migrateoracle (pressly/goose v3.27.3's sqlparser, copied,
+//     and NumericComponent), random migration files, most changed at the
+//     line level: the same Up, Down and transaction mode, or an error,
+//     and the same version for a file name;
 //   - protowkt: protowktoracle (protobuf-go's well known types), random
 //     Struct, Value, ListValue, Duration and Timestamp values;
 //   - prototext: prototextoracle (protobuf-go's encoding/prototext), random
@@ -73,6 +77,7 @@ func TestPublicsuffixFuzz(t *testing.T) { corpusFuzz(t, "publicsuffix", "PUBLICS
 func TestRandomFuzz(t *testing.T)       { corpusFuzz(t, "random", "RANDOMFUZZ") }
 func TestProtodescFuzz(t *testing.T)    { corpusFuzz(t, "protodesc", "PROTODESCFUZZ") }
 func TestProtoparseFuzz(t *testing.T)   { corpusFuzz(t, "protoparsefuzz", "PROTOPARSEFUZZ") }
+func TestMigrateFuzz(t *testing.T)      { corpusFuzz(t, "migratefuzz", "MIGRATEFUZZ") }
 func TestProtowktFuzz(t *testing.T)     { corpusFuzz(t, "protowkt", "PROTOWKTFUZZ") }
 func TestPrototextFuzz(t *testing.T)    { corpusFuzz(t, "prototext", "PROTOTEXTFUZZ") }
 

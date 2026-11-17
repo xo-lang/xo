@@ -87,6 +87,7 @@ var generators = map[string]func() string{
 	"gif":          gifCorpus,
 	"mail":         mailCorpus,
 	"metrics":      metricsCorpus,
+	"migratefuzz":  migratefuzzCorpus,
 	"mime":         mimeCorpus,
 	"qp":           qpCorpus,
 	"multipart":    multipartCorpus,
