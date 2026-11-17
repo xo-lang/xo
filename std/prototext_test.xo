@@ -1,0 +1,29 @@
+test "g_fast gives g_text's answer wherever it gives one" {
+  var cases: List[Float] = [0.0, -0.0, 3.0, -3.0, 1.5, 100.0, 123456.0, 999999.0, 999999.5, 1000000.0, 0.1, 0.0001,
+    0.00011, 0.00001, 0.000099, -0.001, 1e20, 1e21, 2.5e-7, 123456.789, 0.5]
+  // decimal values at every scale, and raw bit patterns
+  var s = 0x1e3779b97f4a7c15
+  for _ in 0..4000 {
+    s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+    let k = s.shr_logical(33)
+    let scale = [1.0, 10.0, 1000.0, 1e6, 1e9, 0.01, 1e-5][s.shr_logical(20) % 7]
+    cases.push(Float(k % 100000000) / scale)
+    cases.push(Float.from_bits(s))
+  }
+  var fast = 0
+  for x in cases {
+    if x != x || x > 1.7976931348623157e308 || x < -1.7976931348623157e308 {
+      continue
+    }
+    let t = "${x}"
+    match g_fast(t) {
+      Some(v) => {
+        fast += 1
+        expect((t, v)) == (t, g_text(t))
+      }
+      None => {}
+    }
+  }
+  // the fast path covers most of the decimal values (1876 of these)
+  expect(fast > 1500) == true
+}

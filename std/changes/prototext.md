@@ -1,5 +1,19 @@
 # std/prototext changes
 
+## 2026-11-16: perf: a plain decimal double is written without a rewrite
+
+- Kind: perf
+- Commit: this push
+- Found by: task #153, XO_PROF=cpu of bench/perf/prototext marshal on host 1 after d9e68db69: float_text 13%
+- Go reference: none (same output)
+- Test: std/prototext_test.xo (the fast path agrees with the full rewrite on 1876 of 8021 random and decimal
+  values, and declines the rest); corpus prototext unchanged on arm64, llvm and go
+- Timing: bench/perf/prototext marshal, linux/arm64 host 1, xo bench --ab 15 rounds, new/old wall 0.977 (0.968 to
+  0.986); max RSS 1.0
+
+Xo's text of a double with no exponent, an integer part of at most 6 digits and a value of at least 1e-4 is
+already Go's `%g` text but for a trailing `.0`, which is dropped; other values still go through the full rewrite.
+
 ## 2026-11-16: perf: marshal 0.949 of the previous build (about 1.26 of Go)
 
 - Kind: perf
