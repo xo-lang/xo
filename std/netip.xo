@@ -79,6 +79,10 @@ pub fn parse_addr(s: Str) -> Addr ! ParseErr {
       return Ok(from4(ipv4_fields(s, 0, s.len())?))
     }
     if c == 58 {
+      let a = parse6_plain(s.bytes())
+      if a.bits == 128 {
+        return Ok(a)
+      }
       return parse_ipv6(s)
     }
     if c == 37 {
@@ -679,6 +683,89 @@ fn hexval(c: UInt8) -> Int {
 
 /// The text of b from p (an error's `at`).
 fn rest_text(b: Bytes, p: Int) -> Bytes { b[p..] }
+
+/// The address of b when it is a plain IPv6 address (hex groups of 1 to 4
+/// digits, at most one ::, no zone, no embedded IPv4), else an Addr with
+/// bits 0: one pass for the usual address; anything else, an error
+/// included, takes parse_ipv6 and its error text (bench/perf/netip parse6
+/// was 1.52 of Go's wall on host 1, 2026-11-16).
+fn parse6_plain(b: Bytes) -> Addr {
+  let n = b.len()
+  var th = 0
+  var tl = 0
+  var ellipsis = -1
+  var i = 0
+  var p = 0
+  if n >= 2 && b[0] == 58 && b[1] == 58 {
+    ellipsis = 0
+    p = 2
+  }
+  while p < n {
+    if i >= 16 {
+      return Addr{bits: 0, hi: 0, lo: 0, zone: ""}
+    }
+    var acc = 0
+    var off = 0
+    while p < n && off < 5 {
+      let ci = Int(b[p])
+      let hb = HEXVAL[ci]
+      let hv = Int(hb)
+      if hv == 255 {
+        break
+      }
+      acc = (acc << 4) | hv
+      off += 1
+      p += 1
+    }
+    if off == 0 || off > 4 {
+      return Addr{bits: 0, hi: 0, lo: 0, zone: ""}
+    }
+    if i < 8 {
+      th = th | acc.wrapping_shl(48 - 8 * i)
+    } else {
+      tl = tl | acc.wrapping_shl(112 - 8 * i)
+    }
+    i += 2
+    if p == n {
+      break
+    }
+    if b[p] != 58 || p + 1 == n {
+      return Addr{bits: 0, hi: 0, lo: 0, zone: ""}
+    }
+    p += 1
+    if b[p] == 58 {
+      if ellipsis >= 0 {
+        return Addr{bits: 0, hi: 0, lo: 0, zone: ""}
+      }
+      ellipsis = i
+      p += 1
+    }
+  }
+  if i < 16 {
+    if ellipsis < 0 {
+      return Addr{bits: 0, hi: 0, lo: 0, zone: ""}
+    }
+    // the groups from the :: on move right by the missing zeros
+    let mh = bits_mask(8 * ellipsis)
+    let ml = bits_mask(8 * (ellipsis - 8))
+    let sh = 8 * (16 - i)
+    let th2 = th & (mh ^ -1)
+    let tl2 = tl & (ml ^ -1)
+    var nh = 0
+    var nl = 0
+    if sh >= 64 {
+      nl = lsr(th2, sh - 64)
+    } else {
+      nh = lsr(th2, sh)
+      nl = lsr(tl2, sh) | shl(th2, 64 - sh)
+    }
+    return mk(128, (th & mh) | nh, (tl & ml) | nl, "")
+  }
+  if ellipsis >= 0 {
+    return Addr{bits: 0, hi: 0, lo: 0, zone: ""}
+  }
+  mk(128, th, tl, "")
+}
 
 fn parse_ipv6(input: Str) -> Addr ! ParseErr {
   var s = input

@@ -3371,3 +3371,22 @@ test "a ParseErr keeps Go's parts and builds Go's text on display" {
   expect(p.what) == "netip.ParsePrefix"
   expect(p.display()) == "netip.ParsePrefix(\"1.2.3/8\"): ParseAddr(\"1.2.3\"): IPv4 address too short"
 }
+
+test "the plain IPv6 fast path agrees with parse_ipv6 and declines the rest" {
+  let ok = ["::", "::1", "1::", "1:2:3:4:5:6:7:8", "1:2:3:4:5:6:7::", "::2:3:4:5:6:7:8", "1::8", "ffff::ffff:ffff:ffff:ffff:ffff:ffff", "FE80::AbCd", "8000::", "0:0:0:0:0:0:0:0", "2001:db8::68", "1:2::7:8", "fffF:ffff:ffff:ffff:ffff:ffff:ffff:ffff"]
+  var bad: List[Str] = []
+  for s in ok {
+    let a = parse6_plain(s.bytes())
+    let want = parse_ipv6(s).or_fault("parse_ipv6")
+    if a.bits != 128 || a.hi != want.hi || a.lo != want.lo || a.zone != "" {
+      bad.push("ok ${s.quote()}: got ${a.display()} want ${want.display()}")
+    }
+  }
+  let declined = ["fe80::1%eth0", "::ffff:1.2.3.4", "1:2:3:4:5:6:7:8::", "::1::", "0:0FFFF", "1:", ":1", "1:2:3:4:5:6:7", "1:2:3:4:5:6:7:8:9", "1::2::3", ":", "12345::", "1:g::", "1:2:3:4:5:6:7:"]
+  for s in declined {
+    if parse6_plain(s.bytes()).bits != 0 {
+      bad.push("declined ${s.quote()}: got bits ${parse6_plain(s.bytes()).bits}")
+    }
+  }
+  expect(bad) == []
+}

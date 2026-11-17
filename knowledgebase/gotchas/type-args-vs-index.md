@@ -30,3 +30,9 @@ on generic functions and types". Fixed by decision 0143: a base spelled
 like a constant (`UPPER_SNAKE`) with only lowercase names in the
 brackets is an index. `handlers[Red](x)` above is still a call with type
 arguments.
+
+Observed (2026-11-16, std/netip parse6_plain): decision 0143 covers only
+lowercase names in the brackets, so a constant table indexed by a
+conversion, `HEXVAL[Int(b[p])]`, still parses as type arguments (the
+element starts with the UpperCamel `Int`) and fails with XO0407 and
+XO0160. Bind the index first: `let ci = Int(b[p])` then `HEXVAL[ci]`.

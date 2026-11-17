@@ -1,5 +1,20 @@
 # std/netip changes
 
+## 2026-11-16: perf: plain IPv6 addresses parse in one pass
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (performance Early to Proven), std/evidence/netip/perf.md parse6 at 1.517 of Go on host 1
+- Go reference: net/netip parseIPv6 (one pass over the bytes, hex digits from a table)
+- Test: std/netip_test.xo (the plain IPv6 fast path agrees with parse_ipv6 and declines the rest), Go's ParseAddr table unchanged
+- Timing: 20M parses of the parse6 row on the Mac, 0.70 to 0.73 s before, 0.37 to 0.40 s after
+- Shipped in: not yet released
+
+parse_addr tries a one pass parser for an IPv6 address with no zone and
+no embedded IPv4 part, reading the bytes with a hex table. Anything else
+(a zone, a dotted tail, any error) goes to parse_ipv6 as before, so
+errors keep Go's texts.
+
 ## 2026-11-16: behavior: ParseErr keeps its parts and formats on display (breaking)
 
 - Kind: behavior
