@@ -37,6 +37,8 @@ fn show[T: Display](r: Result[T, grpc.Status]) -> Str {
 }
 
 fn main(os: Os) {
+  let named = grpc.client(http.client(os.net), "api.example:443")
+  os.stdio.println("target ${named.target()} canonical ${named.canonical_target()}")
   let log = Mutex[List[Str]].new([])
   let srv = handlers(os.clock, log)
   for si in srv.services() {

@@ -536,3 +536,30 @@ test "keepalive_server sets the HTTP/2 pings and the idle timeout" uses (net, cl
     expect(c.unary("/k.K/Ok", b"b")) == Ok(b"b")
   }
 }
+
+// grpc-go's target parsing (clientconn.go parseTargetAndFindResolver, the default scheme dns) and ClientConn.Target and
+// CanonicalTarget
+test "target names: dns, passthrough and a bare host:port, as grpc-go's" uses (net, clock) {
+  let hc = http.client(os.net, timeout: 10s)
+  expect(target_url("dns:///h:1")) == "http://h:1"
+  expect(target_url("dns://8.8.8.8/h:1")) == "http://h:1"
+  expect(target_url("passthrough:///10.0.0.1:50051")) == "http://10.0.0.1:50051"
+  expect(target_url("h:1")) == "http://h:1"
+  expect(target_url("https://h:1")) == "https://h:1"
+  expect(client(hc, "h:1").target()) == "h:1"
+  expect(client(hc, "h:1").canonical_target()) == "dns:///h:1"
+  expect(client(hc, "localhost").canonical_target()) == "dns:///localhost"
+  expect(client(hc, "passthrough:///h:1").canonical_target()) == "passthrough:///h:1"
+  expect(client(hc, "http://h:1").canonical_target()) == "http://h:1"
+  // a call through a target name reaches the server
+  var srv = server(os.clock)
+  srv.unary("/t.T/Echo", fn(_c, req) -> Bytes ! Status { Ok(req) })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    for t in ["dns:///${hs.addr()}", "passthrough:///${hs.addr()}", hs.addr()] {
+      expect(client(hc, t).unary("/t.T/Echo", b"x")) == Ok(b"x")
+    }
+  }
+}

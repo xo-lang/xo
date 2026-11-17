@@ -10933,7 +10933,9 @@ fn (r: Recv) next() -> Bytes? ! Status
 fn (s: Send) send(msg: Bytes) -> () ! Status
 fn (s: Send) set_trailer(name: Str, value: Str)
 // the client
-fn client(c: http.Client, base: Str) -> Client
+fn client(c: http.Client, base: Str) -> Client      // base: http(s)://host:port, or a target name: dns:///host:port, passthrough:///host:port, host:port
+fn (c: Client) target() -> Str                      // grpc-go's ClientConn.Target: as given
+fn (c: Client) canonical_target() -> Str            // CanonicalTarget: dns:/// added to a name without a scheme
 fn (c: Client) unary(method: Str, req: Bytes, metadata = {}, timeout: Duration? = None) -> Bytes ! Status
 fn (c: Client) call[R](method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status) -> R ! Status
 fn (c: ClientCall) send(msg: Bytes) -> () ! Status

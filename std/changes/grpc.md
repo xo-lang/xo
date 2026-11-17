@@ -1,5 +1,16 @@
 # std/grpc changes
 
+## 2026-11-17: feature: target names, Client.target and canonical_target
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (std Proven; scripts/stdaudit/map.txt ClientConn.Target, CanonicalTarget, behavior.name_resolution)
+- Go reference: google.golang.org/grpc v1.79.2 clientconn.go parseTargetAndFindResolver (the default scheme dns), Target and CanonicalTarget; internal/resolver/passthrough
+- Test: std/grpc_test.xo "target names: dns, passthrough and a bare host:port" (parsing, and calls through each to a server), arm64 and LLVM; golden grpc_hooks
+- Behavior difference: a dns:// authority (the DNS server) is not used, std/http's resolver is; target names are called over plain HTTP/2
+- Timing: none (once per client)
+- Shipped in: not yet released
+
 ## 2026-11-17: fix: a connection lost under a call is Unavailable, as grpc-go
 
 - Kind: fix

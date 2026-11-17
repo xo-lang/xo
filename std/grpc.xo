@@ -543,6 +543,8 @@ pub struct Client {
   pub default_timeout: Duration? = None
   /// with_on_finish's functions
   pub on_finish: List[fn(Str, Status?) -> ()] = []
+  /// the target as given to client (Client.target)
+  pub target: Str = ""
 }
 
 /// The client sending md with every call (grpc-go's WithDefaultCallOptions with metadata): a call's own metadata
@@ -655,10 +657,79 @@ pub fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server {
   if p.max_connection_idle > 0s { out.with_idle_timeout(p.max_connection_idle) } else { out }
 }
 
-/// A client of `base` (`http://host:port`, plain HTTP/2 with prior knowledge, or `https://host:port`).
+/// A client of `base`: an `http://host:port` URL (plain HTTP/2 with prior knowledge), an `https://host:port` one, or a
+/// grpc-go target name (grpc.NewClient's): `dns:///host:port` (an authority, `dns://server/host:port`, is the DNS
+/// server grpc-go asks; std/http's resolver is used), `passthrough:///host:port`, or `host:port` with no scheme,
+/// which grpc-go reads as `dns:///host:port`. A target name is called over plain HTTP/2; TLS takes an https URL.
 pub fn client(c: http.Client, base: Str) -> Client {
-  let h = if base.starts_with("http://") { c.with_protocols(#{http.Protocol.UnencryptedHttp2}) } else { c }
-  Client{http: h, base: base, gzip: false}
+  let url = target_url(base)
+  let h = if url.starts_with("http://") { c.with_protocols(#{http.Protocol.UnencryptedHttp2}) } else { c }
+  Client{http: h, base: url, gzip: false, target: base}
+}
+
+/// grpc-go's ClientConn.Target: the target as given to `client`.
+pub fn (c: Client) target() -> Str {
+  if c.target.is_empty() { c.base } else { c.target }
+}
+
+/// grpc-go's ClientConn.CanonicalTarget: a target name without a scheme gets grpc-go's default, `dns:///`; a URL or a
+/// target with a scheme is as given.
+pub fn (c: Client) canonical_target() -> Str {
+  let t = c.target()
+  if has_scheme(t) { t } else { "dns:///${t}" }
+}
+
+/// Whether t starts with a target or URL scheme (`dns:`, `passthrough:`, `unix:`, `http:`, ...): letters, digits,
+/// `+`, `-` or `.` after a letter, then `:` and not a port's digits (`host:443` has none).
+fn has_scheme(t: Str) -> Bool {
+  let i = match t.find(":") {
+    Some(i) => i
+    None => return false
+  }
+  if i == 0 {
+    return false
+  }
+  let rest = t[i + 1..].bytes()
+  var digits = !rest.is_empty()
+  for b in rest {
+    if b < 48 || b > 57 {
+      digits = false
+    }
+  }
+  if digits {
+    return false
+  }
+  let head = t[0..i].bytes()
+  for (k, b) in head.indexed() {
+    let letter = (b >= 97 && b <= 122) || (b >= 65 && b <= 90)
+    if !letter && (k == 0 || !((b >= 48 && b <= 57) || b == 43 || b == 45 || b == 46)) {
+      return false
+    }
+  }
+  true
+}
+
+/// The URL a target is called at: http and https URLs as they are; `dns:` and `passthrough:` names and a bare
+/// `host:port` as `http://host:port`; any other scheme as given (the call then fails as an invalid URL).
+fn target_url(t: Str) -> Str {
+  if t.starts_with("http://") || t.starts_with("https://") {
+    return t
+  }
+  for scheme in ["dns:", "passthrough:"] {
+    if t.starts_with(scheme) {
+      var rest = t[scheme.len()..]
+      if rest.starts_with("//") {
+        // //authority/endpoint: the endpoint after the authority
+        let r = rest[2..]
+        rest = match r.find("/") {
+          Some(i) => r[i + 1..]
+          None => r
+        }
+      }
+      return "http://${rest}"
+    }
+  }
+  if has_scheme(t) { t } else { "http://${t}" }
 }
 
 /// The client sending its messages gzip compressed (`grpc-encoding: gzip`); responses are read compressed or not.
