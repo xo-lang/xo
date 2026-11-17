@@ -1520,15 +1520,18 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   tests), stdgen -check, the prelude interface check, TestStdChecks,
   TestVetCostStd and the new goldens. A failed check ends the push
   there, before the wait (log lines say `(before the lane)`). The lane
-  run then rebases and pushes, and reruns a check only when the commits
-  main gained since the pre pass touch its inputs: stdgen on
-  `std/*.xo`, `scripts/stdgen/` or `compiler/gen/`; TestStdChecks on
-  `std/` or `cmd/xo/`; the corpus check on a corpus main's commits
-  bring in; the fast checks when main's commits share a two-level
-  directory with the push's (documentation included: two decisions of
-  one number) or change internal/repotest, xotool or selfhost. The log
-  names what it did not rerun. A HEAD changed after the pre pass runs
-  every check in the lane. The gate's base goes to both runs as
+  run then rebases and pushes, and reruns a check only when this push and
+  the commits main gained since the pre pass overlap (two-level
+  directories, documentation never counting, as pushq's overlap), or
+  both touch that check's inputs: stdgen on `std/*.xo`,
+  `scripts/stdgen/` or `compiler/gen/`; TestStdChecks on `std/` or
+  `cmd/xo/`; the corpus check on a corpus both change (or a generator);
+  the fast checks only on an overlap or a change to internal/repotest,
+  xotool or selfhost (#254, lead 2026-11-17: main gains 30 to 60 files
+  during a wait, so "main touched its inputs" always held and holds
+  stayed 3 to 5.7 min; main's commits were checked when they landed and
+  the 2-hourly tier catches a clash). The log names what it did not
+  rerun. A HEAD changed after the pre pass runs every check in the lane. The gate's base goes to both runs as
   `--base`, so the overlap still counts from the gate's commit; a
   conflict in the pre pass that resolve-addadd cannot settle stops the
   push there (exit 2), before the wait. Before: a median lane
