@@ -70,6 +70,9 @@ var harnesses = map[string][]harness{
 	"crypto":       {{"TestRsaFuzz", "XO_RSAFUZZ"}},
 	"hpke":         {{"TestHpkeFuzz", "XO_HPKEFUZZ"}},
 	"mail":         {{"TestMailFuzz", "XO_MAILFUZZ"}},
+	"mime":         {{"TestMimeFuzz", "XO_MIMEFUZZ"}},
+	"protojson":    {{"TestProtojsonFuzz", "XO_PROTOJSONFUZZ"}},
+	"otlp":         {{"TestOtlpFuzz", "XO_OTLPFUZZ"}},
 	"jwt":          {{"TestJwtFuzz", "XO_JWTFUZZ"}},
 	"bcrypt":       {{"TestBcryptFuzz", "XO_BCRYPTFUZZ"}},
 	"asn1":         {{"TestAsn1Fuzz", "XO_ASN1FUZZ"}},
@@ -77,7 +80,7 @@ var harnesses = map[string][]harness{
 	"sql":          {{"TestMysqlFuzz", "XO_MYSQLFUZZ"}, {"TestPgFuzz", "XO_PGFUZZ"}},
 	"websocket":    {{"TestWsFuzz", "XO_WSFUZZ"}},
 	"dns":          {{"TestDnsFuzz", "XO_DNSFUZZ"}},
-	"tls":          {{"TestTlsFuzz", "XO_TLSFUZZ"}},
+	"tls":          {{"TestTlsFuzz", "XO_TLSFUZZ"}, {"TestPemFuzz", "XO_PEMFUZZ"}},
 	"sse":          {{"TestSseFuzz", "XO_SSEFUZZ"}},
 	"json":         {{"TestJsonFuzz", "XO_JSONFUZZ"}},
 	"otp":          {{"TestOtpFuzz", "XO_OTPFUZZ"}},
@@ -142,6 +145,23 @@ var harnesses = map[string][]harness{
 	"trace":        {{"TestTraceFuzz", "XO_TRACEFUZZ"}},
 	"netip":        {{"TestNetipFuzz", "XO_NETIPFUZZ"}},
 	"amqptest":     {{"TestAmqptestFuzz", "XO_AMQPTFUZZ"}},
+	"protobuf":     {{"TestProtobufFuzz", "XO_PROTOFUZZ"}},
+}
+
+// fixedCases lists the harnesses whose seed makes a fixed number of cases
+// and reads no _N knob: a seed of one counts these, not -batch, so the
+// evidence records the cases that ran.
+var fixedCases = map[string]int{
+	// scripts/stdcorpus/protobuf.go: ten generators of their own sizes
+	"TestProtobufFuzz": 8942,
+}
+
+// seedCases is the number of cases one seed of h runs at -batch batch.
+func seedCases(h harness, batch int) int {
+	if n := fixedCases[h.test]; n > 0 {
+		return n
+	}
+	return batch
 }
 
 func main() {
@@ -558,10 +578,10 @@ func (f fuzzRun) loop(st *fuzzState) error {
 				if len(tail) > 20000 {
 					tail = tail[len(tail)-20000:]
 				}
-				return fmt.Errorf("%s seed %d (%d cases on %s) failed after %d cases: %v\n%s", h.test, st.seed, f.batch, f.backends, st.ran[h.test], err, tail)
+				return fmt.Errorf("%s seed %d (%d cases on %s) failed after %d cases: %v\n%s", h.test, st.seed, seedCases(h, f.batch), f.backends, st.ran[h.test], err, tail)
 			}
-			st.ran[h.test] += f.batch
-			line := fmt.Sprintf("- %s seed %d: %d cases on %s, %s", h.test, st.seed, f.batch, f.backends, now().Sub(t0).Round(time.Second))
+			st.ran[h.test] += seedCases(h, f.batch)
+			line := fmt.Sprintf("- %s seed %d: %d cases on %s, %s", h.test, st.seed, seedCases(h, f.batch), f.backends, now().Sub(t0).Round(time.Second))
 			st.log = append(st.log, line)
 			fmt.Println(line)
 		}

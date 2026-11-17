@@ -347,3 +347,70 @@ func TestRunSteps(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 }
+
+// TestHarnessesCoverEveryFuzz: every Test...Fuzz of internal/stdtest is a
+// harness of some module, so stdproven fuzz runs it (TestMimeFuzz,
+// TestPemFuzz and TestProtojsonFuzz were in none until 2026-11-17, and
+// mime and protojson had no fuzz evidence to run). unregistered lists the
+// exceptions with their reason.
+func TestHarnessesCoverEveryFuzz(t *testing.T) {
+	unregistered := map[string]string{}
+	// the root when an earlier test moved there, else the package directory
+	dir := "internal/stdtest"
+	if _, err := os.Stat(dir); err != nil {
+		dir = "../../internal/stdtest"
+	}
+	files, err := filepath.Glob(dir + "/*_test.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("internal/stdtest: %v (%d files)", err, len(files))
+	}
+	have := map[string]bool{}
+	for _, hs := range harnesses {
+		for _, h := range hs {
+			have[h.test] = true
+		}
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			name, ok := strings.CutPrefix(l, "func ")
+			if !ok || !strings.HasPrefix(name, "Test") {
+				continue
+			}
+			name, _, _ = strings.Cut(name, "(")
+			if !strings.HasSuffix(name, "Fuzz") || have[name] || unregistered[name] != "" {
+				continue
+			}
+			t.Errorf("%s (%s) is no module's harness: add it to harnesses in scripts/stdproven/main.go", name, filepath.Base(f))
+		}
+	}
+}
+
+// a harness with a fixed case count per seed (TestProtobufFuzz, 8,942)
+// counts its own cases, not -batch, and stops once they reach -cases
+func TestFuzzFixedCases(t *testing.T) {
+	var clock time.Time
+	f := fuzzRun{
+		hs:    []harness{{"TestProtobufFuzz", "XO_PROTOFUZZ"}},
+		cases: 20000, batch: 5000, backends: "arm64",
+		limit: 8 * time.Hour,
+		now:   func() time.Time { return clock },
+		run: func(h harness, seed, batch int, backends string) ([]byte, error) {
+			clock = clock.Add(time.Minute)
+			return []byte("--- PASS: " + h.test + " (1s)\n"), nil
+		},
+	}
+	st := fuzzResume("", "src1")
+	if err := f.loop(&st); err != nil {
+		t.Fatal(err)
+	}
+	ev := f.evidence(st, "protobuf", "abc", "src1", "h2", 8, "h2", time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC))
+	for _, want := range []string{"result: pass\n", "TestProtobufFuzz 26826 cases per backend", "seeds: 2 to 4\n", "- TestProtobufFuzz seed 4: 8942 cases"} {
+		if !strings.Contains(ev, want) {
+			t.Errorf("evidence lacks %q:\n%s", want, ev)
+		}
+	}
+}

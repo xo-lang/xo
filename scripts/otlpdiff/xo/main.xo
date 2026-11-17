@@ -1,0 +1,72 @@
+// The Xo side of TestOtlpFuzz (internal/stdtest/otlpfuzz_test.go, task #115):
+// each stdin line is a case of scripts/stdcorpus/otlporacle ("c " and the
+// hex of the Resource and the spans as JSON, tab separated); prints "== i"
+// and "w " with the hex of std/otlp's encode_traces and encode_traces_json.
+// A Str attribute "\x01f" plus a decimal Int is the Float of those bits.
+use std/json
+use std/otlp
+use std/trace
+
+struct Res {
+  service: Str
+  attributes: List[List[Str]]
+  scope: Str
+  version: Str
+} derive Json
+
+fn unhex(s: Str) -> Str { (Bytes.from_hex(s) ?? b"").to_str() ?? "" }
+
+fn value(v: trace.AttrValue) -> trace.AttrValue {
+  match v {
+    trace.AttrValue.Str(s) => {
+      if s.starts_with("\u{1}f") {
+        if let Some(b) = Int.parse(s[2..]) { return trace.AttrValue.Float(Float.from_bits(b)) }
+      }
+      v
+    }
+    _ => v
+  }
+}
+
+fn attrs(xs: List[trace.Attr]) -> List[trace.Attr] {
+  var out: List[trace.Attr] = []
+  for a in xs { out.push(trace.Attr{key: a.key, value: value(a.value)}) }
+  out
+}
+
+fn answer(f: List[Str]) -> Str {
+  let r = match json.decode_str[Res](unhex(f[0])) {
+    Ok(r) => r
+    Err(e) => return "badres ${e}"
+  }
+  let spans = match json.decode_str[List[trace.Span]](unhex(f[1])) {
+    Ok(s) => s
+    Err(e) => return "badspans ${e}"
+  }
+  var kv: List[(Str, Str)] = []
+  for a in r.attributes { kv.push((a[0], a[1])) }
+  let res = otlp.Resource{service: r.service, attributes: kv, scope: r.scope, version: r.version}
+  var ss: List[trace.Span] = []
+  for s in spans {
+    var t = s
+    t.attributes = attrs(s.attributes)
+    var evs: List[trace.Event] = []
+    for e in s.events { evs.push(trace.Event{name: e.name, time_ns: e.time_ns, attributes: attrs(e.attributes)}) }
+    t.events = evs
+    ss.push(t)
+  }
+  "w ${otlp.encode_traces(res, ss).to_hex()} ${otlp.encode_traces_json(res, ss).to_hex()}"
+}
+
+fn main(os: Os) ! {
+  var i = 0
+  for line in os.stdio.lines()? {
+    if !line.starts_with("c ") {
+      os.stdio.eprintln("line ${i}: not a case")
+      continue
+    }
+    os.stdio.println("== ${i}")
+    i += 1
+    os.stdio.println(answer(line.trim_prefix("c ").split("\t")))
+  }
+}

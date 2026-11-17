@@ -1,5 +1,16 @@
 # std/otlp changes
 
+## 2026-11-17: test: differential fuzz against protobuf-go and otlptracehttp's JSON (task #115)
+
+- Kind: test
+- Commit: this commit
+- Found by: task #115 (testing evidence)
+- Go reference: go.opentelemetry.io/proto/otlp v1.11.1 with google.golang.org/protobuf v1.36.12 (deterministic Marshal); otlptracehttp v1.47.0 internal/otlpjson
+- Test: internal/stdtest/otlpfuzz_test.go (TestOtlpFuzz; oracle scripts/stdcorpus/otlporacle, Xo side scripts/otlpdiff/xo)
+- Shipped in: not yet released
+
+Seeded Resources and 0 to 4 std/trace spans (given, derived and malformed ids, every kind and status rule, HTTP statuses, attributes of every value kind with NaN and the infinities, events, scopes and schema URLs): `encode_traces` and `encode_traces_json` equal the oracle's bytes on seeds 2, 3 and 4 (5,000 cases each) on arm64 and llvm. No difference found.
+
 ## 2026-11-17: feature: JSON encoding, gzip, size limits and partial success (task #184)
 
 - Kind: feature
