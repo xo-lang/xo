@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std/x509): `pkcs12_to_pem(data, password)` gives every bag of a PKCS #12 file as PEM blocks with their friendlyName, localKeyId and Microsoft CSP Name headers, as golang.org/x/crypto/pkcs12's ToPEM (keys as PKCS #1 or SEC 1).
 - Breaking (xo --phase-times): a phase line ends `heap_mb=N peak_mb=N` instead of `(heap N MB, peak N MB)`, so `$NF` and `$(NF-1)` no longer read a memory figure as the phase's time (task #179). A script that parsed the old suffix reads the two `key=value` fields; the time is still field 3.
 - Breaking (std/protoparse, std/protodesc; owner decision #46, task #109): an option value and a field's `default_value` are `Bytes`, a string literal's bytes as its escapes give them (`"\377"` is byte 0xFF, as protoc keeps it; it read as U+FFFD), so a bytes default and a string or bytes option value with escapes that are not UTF-8 reach the descriptor as protoc writes them. `options` fields are `List[(Str, Bytes)]`, `aggregate_pairs` and `aggregate_items` take and give `Bytes`, and `Token` has `raw`. Code reading an option or default as text calls `.to_str_lossy()` on it (or compares with a `b"..."` literal).
 - Fix (std/ui): a subscriber that joins `pg_bus` after its LISTEN is up hears -1 (read the store) at once; before, only subscribers there when it listened did, so code waiting for it waited forever

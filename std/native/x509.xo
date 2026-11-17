@@ -1192,6 +1192,35 @@ fn create_request(r: Rand, t: x509.RequestTemplate, key: crypto.PrivateKey) -> x
   parse_request(asn1.enc_seq([tbs, alg_id, asn1.enc_bits(sig)]))
 }
 
+fn pkcs12_to_pem(data: Bytes, password: Str) -> List[crypto.PemBlock] ! x509.CertErr {
+  let p = pkcs12.bags(data, password)
+  if p.err != "" {
+    return Err(x509.CertErr{msg: p.err})
+  }
+  var out: List[crypto.PemBlock] = []
+  for b in p.bags {
+    var hs: Map[Str, Str] = {}
+    for (k, v) in b.headers {
+      hs[k] = v
+    }
+    if b.kind == "cert" {
+      out.push(crypto.PemBlock{kind: "CERTIFICATE", headers: hs, bytes: b.der})
+      continue
+    }
+    let key = match crypto.parse_private_key(b.der) {
+      Ok(k) => k
+      Err(e) => return Err(x509.CertErr{msg: "pkcs12: error parsing PKCS#8 private key: ${e.msg}"})
+    }
+    let der = match key.alg() {
+      crypto.KeyAlg.Rsa => marshal_pkcs1_private_key(key)?
+      crypto.KeyAlg.Ed25519 => return Err(x509.CertErr{msg: "found unknown private key type in PKCS#8 wrapping"})
+      _ => marshal_ec_private_key(key)?
+    }
+    out.push(crypto.PemBlock{kind: "PRIVATE KEY", headers: hs, bytes: der})
+  }
+  Ok(out)
+}
+
 fn parse_pkcs12(data: Bytes, password: Str) -> x509.Pkcs12 ! x509.CertErr {
   let p = pkcs12.parse(data, password)
   if p.err != "" {

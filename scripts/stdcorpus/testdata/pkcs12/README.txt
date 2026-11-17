@@ -1,1 +1,1 @@
-chain.p12: a root and a leaf (openssl pkcs12 -export -certfile, password s3cret); nochain.p12: a leaf, empty password. Made with LibreSSL 3.3.6 on 2026-11-05 for the pkcs12 corpus.
+chain.p12: a root and a leaf (openssl pkcs12 -export -certfile, password s3cret); nochain.p12: a leaf, empty password. Made with LibreSSL 3.3.6 on 2026-11-05 for the pkcs12 corpus. ec.p12: a P-256 key and its self-signed leaf named "ec leaf" (openssl ecparam -name prime256v1, pkcs12 -export -name, password ecpass), made with LibreSSL 3.3.6 on 2026-11-16 for x509.pkcs12_to_pem.

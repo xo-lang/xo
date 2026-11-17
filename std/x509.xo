@@ -247,6 +247,13 @@ struct Pkcs12 {
 /// password. 3DES and 40 bit RC2 with SHA-1 are the encryptions read, as Go's. Err is
 /// CertErr with Go's text (`pkcs12: decryption password incorrect`).
 fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
+/// Every safe bag of a .pfx or .p12 as a PEM block, in file order (Go's pkcs12.ToPEM): a
+/// certificate bag is a CERTIFICATE block of its DER, a PKCS #8 shrouded key bag a PRIVATE KEY
+/// block whose bytes are PKCS #1 for an RSA key and SEC 1 for an ECDSA key (not PKCS #8, as
+/// Go's). The headers are the bag's friendlyName, localKeyId (lowercase hex) and Microsoft CSP
+/// Name attributes, in the file's order; others are dropped. Any other bag (a plain key bag
+/// too), an Ed25519 key, or a malformed attribute is an Err with Go's text.
+fn pkcs12_to_pem(data: Bytes, password: Str) -> List[crypto.PemBlock] ! CertErr
 /// The certificates of a PEM text's CERTIFICATE blocks, in order; Err at the
 /// first that does not parse.
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr

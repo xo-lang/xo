@@ -9136,6 +9136,7 @@ fn parse_certificates(der: Bytes) -> List[Certificate] ! CertErr   // Go's Parse
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
 struct Pkcs12 { key: crypto.PrivateKey, certificate: Certificate, ca: List[Certificate] }
 fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
+fn pkcs12_to_pem(data: Bytes, password: Str) -> List[crypto.PemBlock] ! CertErr   // pkcs12.ToPEM
 fn parse_pkcs1_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr   // Go's ParsePKCS1PrivateKey
 fn parse_ec_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr      // Go's ParseECPrivateKey
 fn parse_pkcs8_private_key(der: Bytes) -> crypto.PrivateKey ! CertErr   // Go's ParsePKCS8PrivateKey
@@ -9227,6 +9228,14 @@ certificates and bags are read, `ca` holds those other than the leaf, the leaf i
 names the key (else the first), and an unencrypted key bag is read too (on the native backends only). The corpus
 (`internal/stdtest/testdata/corpus/pkcs12`) holds Go's three test files and two made with OpenSSL, each with the right
 and a wrong password, truncated and bit-flipped; Go's results are the expected values.
+
+`pkcs12_to_pem` is Go's `ToPEM`: every safe bag in file order as a PEM block, a certificate bag a `CERTIFICATE` block
+of its DER, a PKCS #8 shrouded key bag a `PRIVATE KEY` block whose bytes are PKCS #1 (RSA) or SEC 1 (ECDSA), not PKCS
+#8. The headers are the bag's `friendlyName`, `localKeyId` (lowercase hex) and `Microsoft CSP Name` attributes in the
+file's order (a repeated one keeps its first place and the last value); others are dropped. Any number of bags of each
+kind is read, none need be present, and another bag type (an unencrypted key bag too), an Ed25519 key, or an attribute
+whose value does not read is an Err with Go's text (`don't know how to convert a safe bag of type OID`, `found unknown
+private key type in PKCS#8 wrapping`, `pkcs12: odd-length BMP string`).
 
 ```
 // a development certificate for a local HTTPS server

@@ -3828,7 +3828,7 @@ pkcs12.ErrIncorrectPassword = std/x509.CertErr (Go's pkcs12 texts)
 pkcs12.ErrDecryption = std/x509.CertErr (Go's pkcs12 texts)
 pkcs12.NotImplementedError = std/x509.CertErr (Go's pkcs12 texts)
 pkcs12.NotImplementedError.Error = std/x509.CertErr (Go's pkcs12 texts)
-pkcs12.ToPEM = gap: no PEM blocks of a PKCS #12 file's contents (parse_pkcs12 returns the parsed key and certificates)
+pkcs12.ToPEM = std/x509.pkcs12_to_pem
 # http2, h2c, hpack: golang.org/x/net v0.62.0 (outside.txt; decision 0655)
 h2c.NewHandler = std/http.Server.with_protocols (Protocol.UnencryptedHttp2)
 html.Attribute = std/htmltok.Attribute and std/htmlparse.Attr (with its namespace)

@@ -19,6 +19,7 @@ var (
 	_ func(*Task, Bytes) Result[X509_Certificate, X509_CertErr]                                                                                = X509_parse
 	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                          = X509_parse_certificates
 	_ func(*Task, Bytes, string) Result[X509_Pkcs12, X509_CertErr]                                                                             = X509_parse_pkcs12
+	_ func(*Task, Bytes, string) Result[List[Crypto_PemBlock], X509_CertErr]                                                                   = X509_pkcs12_to_pem
 	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                          = X509_parse_pem
 	_ func(*Task, Bytes) Result[Crypto_PrivateKey, X509_CertErr]                                                                               = X509_parse_pkcs1_private_key
 	_ func(*Task, Bytes) Result[Crypto_PrivateKey, X509_CertErr]                                                                               = X509_parse_ec_private_key

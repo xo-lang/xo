@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,11 +14,12 @@ import (
 	"github.com/xo-lang/xo/std/rt"
 )
 
-// The API this corpus covers: x509.parse_pkcs12 (golang.org/x/crypto/pkcs12 v0.58.0, vendored as
+// The API this corpus covers: x509.parse_pkcs12 and x509.pkcs12_to_pem (golang.org/x/crypto/pkcs12 v0.58.0, vendored as
 // std/rt/xcrypto_pkcs12.go for the Go backend). The inputs are the three .pfx files of its
 // pkcs12_test.go (3DES and 40 bit RC2 bags, null and empty passwords), each with the right
 // password, a wrong one, truncated and bit-flipped copies. Go's result is summarized (the leaf's
-// common name, the CA count, the key's kind) or its error text; a text built from a Go
+// common name, the CA count; for ToPEM each block's type, headers, length and SHA-256 prefix) or
+// its error text; a text built from a Go
 // encoding/asn1 error is compared by its first word only. Go's pkcs12 tests are Copyright 2015
 // The Go Authors, BSD-style license.
 
@@ -66,10 +69,33 @@ func p12Summary(data []byte, pw string) string {
 	return fmt.Sprintf("OK cn=%s ca=%d", r.V.F_certificate.F_subject.F_common_name, rt.List_len(nil, r.V.F_ca))
 }
 
+// p12PemSummary is what the Xo test prints for pkcs12_to_pem: Go's ToPEM through the Go
+// backend's binding, which keeps the bag's attribute order.
+func p12PemSummary(data []byte, pw string) string {
+	r := rt.X509_pkcs12_to_pem(nil, rt.Bytes(data), pw)
+	if !r.Ok {
+		msg := r.E.F_msg
+		if strings.Contains(msg, "asn1:") || strings.Contains(msg, "x509:") {
+			return "ERR asn1"
+		}
+		return "ERR " + msg
+	}
+	var parts []string
+	for _, b := range rt.List_Slice(r.V) {
+		var hs []string
+		for k, v := range rt.Map_All(b.F_headers) {
+			hs = append(hs, k+"="+v)
+		}
+		sum := sha256.Sum256([]byte(b.F_bytes))
+		parts = append(parts, fmt.Sprintf("%s [%s] %d %s", b.F_kind, strings.Join(hs, ","), len(b.F_bytes), hex.EncodeToString(sum[:8])))
+	}
+	return "OK " + strings.Join(parts, " | ")
+}
+
 func pkcs12Corpus() string {
 	var o strings.Builder
-	o.WriteString(header("golang.org/x/crypto/pkcs12's three test files, with passwords, truncations and bit flips, against std/x509's parse_pkcs12 (Go's pkcs12 tests are Copyright 2015 The Go Authors, BSD-style license)"))
-	o.WriteString("\nuse std/base64\nuse std/x509\n\n")
+	o.WriteString(header("golang.org/x/crypto/pkcs12's three test files, with passwords, truncations and bit flips, against std/x509's parse_pkcs12 and pkcs12_to_pem (Go's pkcs12 tests are Copyright 2015 The Go Authors, BSD-style license)"))
+	o.WriteString("\nuse std/base64\nuse std/crypto\nuse std/x509\n\n")
 	fx := p12Fixtures()
 	var names []string
 	for n := range fx {
@@ -77,8 +103,8 @@ func pkcs12Corpus() string {
 	}
 	sortStrings(names)
 	var rows []p12Row
-	// the files of openssl: a chain, and a leaf with an empty password
-	for _, f := range []struct{ file, pw string }{{"chain.p12", "s3cret"}, {"nochain.p12", ""}} {
+	// the files of openssl: a chain, a leaf with an empty password, a P-256 key (SEC 1 in ToPEM)
+	for _, f := range []struct{ file, pw string }{{"chain.p12", "s3cret"}, {"nochain.p12", ""}, {"ec.p12", "ecpass"}} {
 		d, err := os.ReadFile(filepath.Join("scripts", "stdcorpus", "testdata", "pkcs12", f.file))
 		if err != nil {
 			panic(err)
@@ -98,9 +124,9 @@ func pkcs12Corpus() string {
 			rows = append(rows, p12Row{n, "", c, fmt.Sprintf("bit flipped at %d", at)})
 		}
 	}
-	o.WriteString("const PFX: List[(Str, Str, Str, Str)] = [\n")
+	o.WriteString("const PFX: List[(Str, Str, Str, Str, Str)] = [\n")
 	for _, r := range rows {
-		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xq(r.why+": "+r.name), xq(base64.StdEncoding.EncodeToString(r.data)), xq(r.pw), xq(p12Summary(r.data, r.pw)))
+		fmt.Fprintf(&o, "  (%s, %s, %s, %s, %s),\n", xq(r.why+": "+r.name), xq(base64.StdEncoding.EncodeToString(r.data)), xq(r.pw), xq(p12Summary(r.data, r.pw)), xq(p12PemSummary(r.data, r.pw)))
 	}
 	o.WriteString("]\n\n")
 	o.WriteString(`fn summary(data: Bytes, pw: Str) -> Str {
@@ -110,8 +136,41 @@ func pkcs12Corpus() string {
   }
 }
 
+fn pem_summary(data: Bytes, pw: Str) -> Str {
+  match x509.pkcs12_to_pem(data, pw) {
+    Ok(bs) => {
+      var parts: List[Str] = []
+      for b in bs {
+        var hs: List[Str] = []
+        for (k, v) in b.headers {
+          hs.push("${k}=${v}")
+        }
+        parts.push("${b.kind} [${hs.join(",")}] ${b.bytes.len()} ${crypto.sha256(b.bytes)[0..8].to_hex()}")
+      }
+      "OK " + parts.join(" | ")
+    }
+    Err(e) => if e.msg.contains("asn1:") || e.msg.contains("x509:") { "ERR asn1" } else { "ERR ${e.msg}" }
+  }
+}
+
+fn check(got: Str, want: Str) {
+  if want == "ERR asn1" {
+    // a malformed file: an error, with its own wording
+    expect(got.starts_with("ERR")) == true
+  } else {
+    expect(got) == want
+  }
+}
+
+test "pkcs12_to_pem gives the blocks golang.org/x/crypto/pkcs12's ToPEM gives" {
+  for (_, b64, pw, _, want) in PFX {
+    let data = base64.decode(b64, base64.Base64.Std).ok() ?? b""
+    check(pem_summary(data, pw), want)
+  }
+}
+
 test "parse_pkcs12 reads what golang.org/x/crypto/pkcs12 reads" {
-  for (_, b64, pw, want) in PFX {
+  for (_, b64, pw, want, _) in PFX {
     let data = base64.decode(b64, base64.Base64.Std).ok() ?? b""
     let got = summary(data, pw)
     if want == "ERR asn1" {

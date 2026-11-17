@@ -1188,6 +1188,38 @@ func X509_create_request(tk *Task, r Rand, t X509_RequestTemplate, key Crypto_Pr
 	return X509_parse_request(tk, Bytes(der))
 }
 
+// X509_pkcs12_to_pem is x509.pkcs12_to_pem: the vendored ToPEM (xcrypto_pkcs12.go), with each
+// block's headers put in the order of the bag's attributes, as the native port does.
+func X509_pkcs12_to_pem(tk *Task, data Bytes, password string) Result[List[Crypto_PemBlock], X509_CertErr] {
+	fail := func(msg string) Result[List[Crypto_PemBlock], X509_CertErr] {
+		return Err[List[Crypto_PemBlock]](x509Err(textOf(msg)))
+	}
+	enc, err := xp12_bmpString(password)
+	if err != nil {
+		return fail(xp12_ErrIncorrectPassword.Error())
+	}
+	bags, pw, err := xp12_getSafeContents([]byte(data), enc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	out := make([]Crypto_PemBlock, 0, len(bags))
+	for i := range bags {
+		b, err := xp12_convertBag(&bags[i], pw)
+		if err != nil {
+			return fail(err.Error())
+		}
+		var hs Map[string, string]
+		for j := range bags[i].Attributes {
+			k, _, err := xp12_convertAttribute(&bags[i].Attributes[j])
+			if err == nil {
+				Map_put(tk, &hs, textOf(k), textOf(b.Headers[k]))
+			}
+		}
+		out = append(out, Crypto_PemBlock{F_kind: b.Type, F_headers: hs, F_bytes: Bytes(b.Bytes)})
+	}
+	return Ok[List[Crypto_PemBlock], X509_CertErr](ListFromSlice(out))
+}
+
 // X509_parse_pkcs12 is x509.parse_pkcs12 on the vendored x/crypto/pkcs12 (xcrypto_pkcs12.go): any
 // number of bags, the leaf the certificate whose localKeyID names the key.
 func X509_parse_pkcs12(tk *Task, data Bytes, password string) Result[X509_Pkcs12, X509_CertErr] {

@@ -22,21 +22,35 @@ const OID_X509_CERT: Str = "1.2.840.113549.1.9.22.1"
 const OID_3DES: Str = "1.2.840.113549.1.12.1.3"
 const OID_RC2_40: Str = "1.2.840.113549.1.12.1.6"
 const OID_LOCAL_KEY_ID: Str = "1.2.840.113549.1.9.21"
+const OID_FRIENDLY_NAME: Str = "1.2.840.113549.1.9.20"
+const OID_MS_CSP_NAME: Str = "1.3.6.1.4.1.311.17.1"
 
 const MAX_ITERATIONS: Int = 1048576
 
+/// One safe bag in file order, as Go's ToPEM reads it: kind is "cert" (der a certificate's DER),
+/// "key" (der the private key's PKCS #8 DER, decrypted) or another bag type's OID (der empty);
+/// headers are the attributes ToPEM keeps (friendlyName, localKeyId, Microsoft CSP Name, Go's
+/// convertAttribute), and err is "" or the failure converting them.
+pub struct Bag {
+  pub kind: Str
+  pub der: Bytes
+  pub headers: List[(Str, Str)]
+  pub err: Str
+}
+
 /// What a file holds: the certificates (DER) with the localKeyID of each ("" for none), and
-/// the private key as PKCS #8 DER with its localKeyID; err is "" or a failure's text
-/// (Go's, `pkcs12: ...`).
+/// the private key as PKCS #8 DER with its localKeyID; bags is every safe bag when read
+/// with `bags`; err is "" or a failure's text (Go's, `pkcs12: ...`).
 pub struct Pfx {
   pub certs: List[Bytes]
   pub cert_ids: List[Bytes]
   pub key: Bytes
   pub key_id: Bytes
+  pub bags: List[Bag]
   pub err: Str
 }
 
-fn fail(msg: Str) -> Pfx { Pfx{certs: [], cert_ids: [], key: b"", key_id: b"", err: msg} }
+fn fail(msg: Str) -> Pfx { Pfx{certs: [], cert_ids: [], key: b"", key_id: b"", bags: [], err: msg} }
 
 const ERR_PASSWORD: Str = "pkcs12: decryption password incorrect"
 const ERR_DECRYPTION: Str = "pkcs12: decryption error, incorrect padding"
@@ -222,8 +236,93 @@ fn local_key_id(b: Bytes, attrs: asn1.Tlv) -> Bytes {
   b""
 }
 
-/// Reads the safe bags of safe (a DER SEQUENCE OF SafeBag) into out.
-fn read_bags(safe: Bytes, password: Bytes, var out: Pfx) -> Str {
+/// A BMPString's text (Go's decodeBMPString: UCS-2 big endian, a final 0 0 dropped, an unpaired
+/// surrogate U+FFFD as utf16.Decode does); None for an odd length.
+fn bmp_text(v: Bytes) -> Str? {
+  if v.len() % 2 != 0 {
+    return None
+  }
+  var n = v.len()
+  if n >= 2 && v[n - 1] == 0 && v[n - 2] == 0 {
+    n -= 2
+  }
+  var s = StrBuilder.new()
+  var i = 0
+  while i < n {
+    var c = Int(v[i]) * 256 + Int(v[i + 1])
+    i += 2
+    if c >= 0xD800 && c < 0xDC00 && i < n {
+      let d = Int(v[i]) * 256 + Int(v[i + 1])
+      if d >= 0xDC00 && d < 0xE000 {
+        c = 0x10000 + ((c - 0xD800) << 10) + (d - 0xDC00)
+        i += 2
+      } else {
+        c = 0xFFFD
+      }
+    } else if c >= 0xD800 && c < 0xE000 {
+      c = 0xFFFD
+    }
+    s.write("${Rune(c)}")
+  }
+  Some(s.freeze())
+}
+
+/// The headers Go's ToPEM gives a bag (convertAttribute): friendlyName and Microsoft CSP Name as
+/// the text of their one BMPString, localKeyId as the lowercase hex of its one OCTET STRING;
+/// other attributes are dropped. The Str is "" or the failure (Go's text, or encoding/asn1's
+/// first word).
+fn bag_headers(b: Bytes, attrs: asn1.Tlv) -> (List[(Str, Str)], Str) {
+  var out: List[(Str, Str)] = []
+  for a in asn1.children(b, attrs) {
+    let kv = asn1.children(b, a)
+    if kv.len() != 2 || asn1.any_bad(kv) || kv[1].tag != asn1.SET {
+      continue
+    }
+    let id = asn1.oid_text(b, kv[0])
+    let name = if id == OID_FRIENDLY_NAME { "friendlyName" } else if id == OID_LOCAL_KEY_ID { "localKeyId" } else if id == OID_MS_CSP_NAME { "Microsoft CSP Name" } else { "" }
+    if name.is_empty() {
+      continue
+    }
+    let vs = asn1.children(b, kv[1])
+    if vs.len() == 0 || asn1.any_bad(vs) {
+      return (out, "asn1: syntax error: truncated tag or length")
+    }
+    if vs.len() > 1 {
+      return (out, "pkcs12: trailing data found")
+    }
+    var value = ""
+    if id == OID_LOCAL_KEY_ID {
+      if vs[0].tag != asn1.OCTET_STRING {
+        return (out, "asn1: structure error: tags don't match")
+      }
+      value = asn1.contents(b, vs[0]).to_hex()
+    } else {
+      value = match bmp_text(asn1.contents(b, vs[0])) {
+        Some(t) => t
+        None => return (out, "pkcs12: odd-length BMP string")
+      }
+    }
+    // a repeated attribute replaces the first, as a Go map assignment does
+    var j = 0
+    var found = false
+    while j < out.len() {
+      if out[j].0 == name {
+        out[j] = (name, value)
+        found = true
+      }
+      j += 1
+    }
+    if !found {
+      out.push((name, value))
+    }
+  }
+  (out, "")
+}
+
+/// Reads the safe bags of safe (a DER SEQUENCE OF SafeBag) into out; with all, every bag also goes
+/// to out.bags as Go's ToPEM converts it (attributes to headers, a certificate's DER, a shrouded
+/// key's PKCS #8 DER), any other bag type failing as Go's convertBag does.
+fn read_bags(safe: Bytes, password: Bytes, all: Bool, var out: Pfx) -> Str {
   let top = asn1.whole(safe, asn1.SEQUENCE)
   if top.tag < 0 {
     return "pkcs12: error reading P12 data: malformed safe contents"
@@ -238,6 +337,19 @@ fn read_bags(safe: Bytes, password: Bytes, var out: Pfx) -> Str {
     var lk = b""
     if f.len() == 3 && f[2].tag == asn1.SET {
       lk = local_key_id(safe, f[2])
+    }
+    var headers: List[(Str, Str)] = []
+    if all {
+      if f.len() == 3 && f[2].tag == asn1.SET {
+        let (hs, herr) = bag_headers(safe, f[2])
+        if herr != "" {
+          return herr
+        }
+        headers = hs
+      }
+      if id != OID_CERT_BAG && id != OID_SHROUDED_KEY_BAG {
+        return "don't know how to convert a safe bag of type " + id
+      }
     }
     if id == OID_CERT_BAG {
       let cb = asn1.whole(value, asn1.SEQUENCE)
@@ -255,8 +367,11 @@ fn read_bags(safe: Bytes, password: Bytes, var out: Pfx) -> Str {
       }
       out.certs.push(asn1.contents(inner, os))
       out.cert_ids.push(lk)
+      if all {
+        out.bags.push(Bag { kind: "cert", der: asn1.contents(inner, os), headers: headers, err: "" })
+      }
     } else if id == OID_KEY_BAG || id == OID_SHROUDED_KEY_BAG {
-      if out.key.len() > 0 {
+      if out.key.len() > 0 && !all {
         return "pkcs12: expected exactly one key bag"
       }
       if id == OID_KEY_BAG {
@@ -272,6 +387,9 @@ fn read_bags(safe: Bytes, password: Bytes, var out: Pfx) -> Str {
           return "pkcs12: error decrypting PKCS#8 shrouded key bag: " + err
         }
         out.key = plain
+        if all {
+          out.bags.push(Bag { kind: "key", der: plain, headers: headers, err: "" })
+        }
       }
       out.key_id = lk
     }
@@ -325,7 +443,13 @@ fn asn1_outer_error(data: Bytes) -> Str {
 
 /// The file's contents (Go's Decode, getSafeContents and decodeCertBag). The password is
 /// the text the file was made with.
-pub fn parse(data: Bytes, password: Str) -> Pfx {
+pub fn parse(data: Bytes, password: Str) -> Pfx { read(data, password, false) }
+
+/// Every safe bag of the file in order, in Pfx.bags (Go's ToPEM before its key conversion): no
+/// certificate or key need be present, and any number of keys may be.
+pub fn bags(data: Bytes, password: Str) -> Pfx { read(data, password, true) }
+
+fn read(data: Bytes, password: Str, all: Bool) -> Pfx {
   let enc = match bmp_string(password) {
     Some(e) => e
     None => return fail(ERR_PASSWORD)
@@ -369,7 +493,7 @@ pub fn parse(data: Bytes, password: Str) -> Pfx {
   if auth.tag < 0 {
     return fail("pkcs12: error reading P12 data: malformed authenticated safe")
   }
-  var out = Pfx{certs: [], cert_ids: [], key: b"", key_id: b"", err: ""}
+  var out = Pfx{certs: [], cert_ids: [], key: b"", key_id: b"", bags: [], err: ""}
   for item in asn1.children(message, auth) {
     let f = asn1.children(message, item)
     if item.tag != asn1.SEQUENCE || f.len() != 2 || asn1.any_bad(f) || f[1].tag != 0xa0 {
@@ -409,10 +533,13 @@ pub fn parse(data: Bytes, password: Str) -> Pfx {
     } else {
       return fail("pkcs12: only data and encryptedData content types are supported in authenticated safe")
     }
-    let e = read_bags(safe, pw, out)
+    let e = read_bags(safe, pw, all, out)
     if e != "" {
       return fail(e)
     }
+  }
+  if all {
+    return out
   }
   if out.certs.len() == 0 {
     return fail("pkcs12: certificate missing")
