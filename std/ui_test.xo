@@ -931,7 +931,7 @@ struct HubDriver {
 }
 
 fn (d: HubDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[()] ! sql.SqlErr uses net.dial {
-  Ok(HubConn{hub: d.hub, mine: Chan[sql.Notification].new(cap: 64)})
+  Ok(HubConn{hub: d.hub, mine: Chan[sql.Notification].new(cap: 4096)})
 }
 
 struct HubConn {
@@ -941,12 +941,19 @@ struct HubConn {
 
 fn (c: HubConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows[()] ! sql.SqlErr uses net.dial {
   if q.starts_with("SELECT pg_notify") {
-    let (ch, pl) = match (args[0], args[1]) {
-      (sql.SqlValue.Text(a), sql.SqlValue.Text(b)) => (a, b)
+    // pg_notify($1, $2), pg_notify($1, $3), ...: one notice per payload
+    let ch = match args[0] {
+      sql.SqlValue.Text(a) => a
       _ => return Err(sql.SqlErr.Param(msg: "text"))
     }
-    for l in c.hub.ls.with_read(fn(m) { m }) {
-      let _full = l.try_send(sql.Notification{pid: 1, channel: ch, payload: pl})
+    for a in args[1..] {
+      let pl = match a {
+        sql.SqlValue.Text(b) => b
+        _ => return Err(sql.SqlErr.Param(msg: "text"))
+      }
+      for l in c.hub.ls.with_read(fn(m) { m }) {
+        let _full = l.try_send(sql.Notification{pid: 1, channel: ch, payload: pl})
+      }
     }
   }
   Ok(sql.DriverRows{columns: [], rows: []})
@@ -1018,6 +1025,109 @@ test "a subscriber that joins pg_bus after it listens still hears -1" {
   let late = Chan[Int].new(cap: 4)
   (bus.subscribe)(fn(s: Str, v: Int) uses sync { let _full = late.try_send(v) })
   expect(late.recv()) == Some(-1)
+}
+
+test "pg_bus queues the newest version per scope and sends up to 100 NOTIFYs a query" {
+  var m: Map[Str, Int] = {}
+  pg_pending_put(m, "a", 3)
+  pg_pending_put(m, "a", 2)
+  pg_pending_put(m, "b", -1)
+  pg_pending_put(m, "a", 5)
+  expect(m.get("a")) == Some(5)
+  expect(m.get("b")) == Some(-1)
+  let one = pg_notify_batches("ch", m)
+  expect(one.len()) == 1
+  expect(one[0].0) == "SELECT pg_notify($1, $2), pg_notify($1, $3)"
+  expect(one[0].1.len()) == 3
+  expect(one[0].1.contains(sql.str("5:a"))) == true
+  expect(one[0].1.contains(sql.str("-1:b"))) == true
+  var many: Map[Str, Int] = {}
+  for i in 0..250 {
+    pg_pending_put(many, "s${i}", i)
+  }
+  let qs = pg_notify_batches("ch", many)
+  expect(qs.map(fn(q) { q.1.len() - 1 })) == [100, 100, 50]
+  expect(qs[2].0.ends_with("pg_notify($1, $51)")) == true
+  expect(pg_notify_batches("ch", {}).len()) == 0
+}
+
+test "a burst of pg_bus publishes over many scopes reaches the other instance, the last version of each" {
+  let db = sql.open_driver(os.net, HubDriver{hub: Hub{ls: Mutex[List[Chan[sql.Notification]]].new([])}}, "pg")?
+  let ba = pg_bus(db, os.tasks, os.clock)
+  let bb = pg_bus(db, os.tasks, os.clock)
+  let got = Mutex[Map[Str, Int]].new({})
+  let heard = Chan[Int].new(cap: 1)
+  (bb.subscribe)(fn(s: Str, v: Int) uses sync {
+    if v < 0 {
+      let _full = heard.try_send(v)
+      return
+    }
+    let done = got.with(fn(var m) {
+      pg_pending_put(m, s, v)
+      m.len() == 300 && m.values().all(fn(x) { x == 4 })
+    })
+    if done {
+      let _full = heard.try_send(0)
+    }
+  })
+  expect(heard.recv()) == Some(-1)
+  for v in 1..5 {
+    for i in 0..300 {
+      (ba.publish)("s${i}", v)
+    }
+  }
+  expect(heard.recv()) == Some(0)
+}
+
+// A database whose CREATE TABLE fails as Postgres's does when another
+// instance creates the same table at the same moment: the second gets the
+// table's row type as a duplicate object (SQLSTATE 42710).
+struct RaceDriver {
+  n: Int
+}
+
+fn (d: RaceDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[()] ! sql.SqlErr uses net.dial {
+  Ok(RaceConn{n: 0})
+}
+
+struct RaceConn {
+  n: Int
+}
+
+fn (c: RaceConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows[()] ! sql.SqlErr uses net.dial { Ok(sql.DriverRows{columns: [], rows: []}) }
+fn (c: RaceConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  if q.starts_with("CREATE TABLE IF NOT EXISTS xo_ui_log ") {
+    return Err(sql.SqlErr.Server(code: "42710", msg: "type \"xo_ui_log\" already exists"))
+  }
+  if q.starts_with("CREATE TABLE IF NOT EXISTS xo_ui_log_snap") {
+    return Err(sql.SqlErr.Server(code: "42P07", msg: "relation \"xo_ui_log_snap\" already exists"))
+  }
+  if q.starts_with("CREATE") {
+    return Err(sql.SqlErr.Server(code: "42501", msg: "permission denied"))
+  }
+  Ok(sql.ExecResult{rows_affected: 0, last_insert_id: 0})
+}
+fn (c: RaceConn) wait_notification() -> sql.Notification ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Closed) }
+fn (c: RaceConn) begin() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: RaceConn) commit() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: RaceConn) rollback() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: RaceConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: RaceConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "no copy")) }
+fn (c: RaceConn) copy_to(q: Str, out: fn(Bytes) -> () ! sql.SqlErr uses sync) -> Int ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "no copy")) }
+fn (c: RaceConn) prepare(q: Str) -> sql.DriverStmt[()]? ! sql.SqlErr uses net.dial { Ok(None) }
+fn (c: RaceConn) close() uses net.dial {}
+fn (c: RaceConn) is_broken() -> Bool { false }
+fn (c: RaceConn) notices() -> List[sql.Notice] { [] }
+fn (c: RaceConn) pipeline(batches: List[List[sql.BatchQuery]], in_tx: Bool) -> List[Result[List[sql.DriverResult], sql.SqlErr]] ! sql.SqlErr uses net.dial { Err(sql.SqlErr.Driver(msg: "none")) }
+
+test "sql_store starts when another instance created its tables at the same moment (Postgres 42710, 42P07)" {
+  let db = sql.open_driver(os.net, RaceDriver{n: 0}, "pg")?
+  expect(sql_store(db).is_ok()) == true
+  // any other failure still stops it
+  match sql_store(db, table: "other") {
+    Ok(_) => fault("want the permission error")
+    Err(e) => expect(e.contains("permission denied")) == true
+  }
 }
 
 // /room/NAME is room NAME's scope; any other path is not a page.

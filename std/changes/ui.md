@@ -1,5 +1,33 @@
 # std/ui changes
 
+## 2026-11-17: perf: pg_bus sends NOTIFYs from a task, batched
+
+- Kind: perf
+- Commit: this push
+- Found by: task #186 (users over several instances, decision 0686 plan step 4)
+- Go reference: none
+- Test: std/ui "pg_bus queues the newest version per scope and sends up to 100 NOTIFYs a query"; "a burst of pg_bus publishes over many scopes reaches the other instance, the last version of each"
+- Timing: see decision 0686 "Users over several instances (2026-11-17)"
+- Shipped in: not yet released
+
+`pg_bus`'s publish no longer waits a round trip for its NOTIFY: it tells
+the instance's own subscribers, queues the scope's newest version, and a
+task sends what queued, up to 100 NOTIFYs a query.
+
+## 2026-11-17: fix: sql_store starts when another instance creates its tables at the same moment
+
+- Kind: fix
+- Commit: this push
+- Found by: task #186 (four instances started together on Postgres)
+- Go reference: none
+- Test: std/ui "sql_store starts when another instance created its tables at the same moment (Postgres 42710, 42P07)"
+- Shipped in: not yet released
+
+Postgres's CREATE TABLE IF NOT EXISTS can fail for the second of two
+racing sessions with "type ... already exists" (42710) or "relation ...
+already exists" (42P07); sql_store took that as an error and the instance
+did not start. Both now mean the table is there.
+
 ## 2026-11-16: feature: leases route a hot scope's syncs to one instance (decision 0686)
 
 - Kind: feature

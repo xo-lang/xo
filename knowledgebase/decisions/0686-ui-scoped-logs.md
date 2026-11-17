@@ -319,6 +319,45 @@ and 32 clients and even in the eighth (medians 1.44 against 1.59 s at
 runs. Leases ship on that basis as an option (`lease:` on `host_with`),
 off by default; real S3 with concurrent clients is still to measure.
 
+## Users over several instances (2026-11-17, plan step 4)
+
+2, 20, 200 and 2,000 simulated users over 2 to 4 instances on one Docker
+Postgres 17 (sql_store and pg_bus, the Mac), each user a thin page
+syncing its own Msgs one sync at a time and resending any not yet acked,
+in two shapes: one room every user writes (`room`) and a scope per user
+(`own`), closed (no think time) and paced (100 ms between syncs). The
+harness and logs are in ~/xo-lead/notes/stdui/pgscale (fast-*.log,
+resend-*.log). Slowest instance's latencies:
+
+| users | shape | pace | p50 (ms) | p99 (ms) | stored / wanted |
+|---|---|---|---|---|---|
+| 2 | room | 0 | 15 | 42 | 1,000 / 1,000 |
+| 20 | room | 0 | 19 | 74 | 1,000 / 1,000 |
+| 200 | room | 0 | 51 | 121 | 1,000 / 1,000 |
+| 2,000 | room | 0 | 201 | 430 | 10,000 / 10,000 |
+| 2 | own | 0 | 8 | 30 | 1,000 / 1,000 |
+| 20 | own | 0 | 10 | 98 | 1,000 / 1,000 |
+| 200 | own | 0 | 178 | 404 | 1,000 / 1,000 |
+| 2,000 | own | 0 | 839 | 2,837 | 10,000 / 10,000 |
+| 200 | room | 100 | 39 | 91 | 2,000 / 2,000 |
+| 2,000 | room | 100 | 178 | 3,500 | 20,000 / 20,000 |
+| 200 | own | 100 | 78 | 240 | 2,000 / 2,000 |
+| 2,000 | own | 100 | 366 | 3,906 | 20,000 / 20,000 |
+
+Every Msg was stored once in every run and no instance answered an error.
+Two fixes came out of it: pg_bus NOTIFYs from a background task, the
+newest version per scope, up to 100 per query (2,000 scopes each
+publishing one NOTIFY per append held a pool connection per append and
+starved the appends), and sql_store's CREATE TABLE IF NOT EXISTS
+accepting Postgres's 42710 and 42P07 when another instance creates the
+table at the same moment. At 2,000 users the failed syncs (5,282 closed
+and about 10,000 paced in the own shape) are all in the load client:
+500 users in one process dial past the process's idle connection cap
+and the Mac runs out of ephemeral ports (gotchas/http-client-pool-two-idle-per-host.md);
+the resend covers them, and they add to the 2,000 user tail above.
+Room batches stay few (31 for 10,000 Msgs) because group commit folds
+the hot room; own scopes cannot batch across users.
+
 ## Alternatives
 
 - One process (today): no scale beyond one machine, and no failover.
