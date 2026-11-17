@@ -1667,8 +1667,10 @@ prove_checkall() {
 # the compiler's own xo tests (compiler/..._test.xo) with this xo (lead,
 # 2026-11-12: a parser change broke compiler/parser's test, which only
 # hourly.sh ran); a few seconds
+# (no --count=1 since #251: xo's run cache keys on what each test build
+# read, so an unchanged package replays)
 prove_xounit() {
-  if "$XO_CLI" test --count=1 compiler/... >"$logs/xounit.txt" 2>&1; then
+  if "$XO_CLI" test compiler/... >"$logs/xounit.txt" 2>&1; then
     echo "xounit: $(tail -1 "$logs/xounit.txt")"; ran="$ran xounit"
   else
     failed=1; echo "xounit: FAIL ($logs/xounit.txt: $(grep -m1 -- '--- FAIL' "$logs/xounit.txt"))"
@@ -1762,7 +1764,10 @@ prove_stdfast() {
     for d in std/"$m"_test.xo std/"$m"/*_test.xo; do [ -f "$d" ] && t=1; done
     if [ "$t" = 0 ]; then
       echo "stdfast $m: no xo tests of its own"
-    elif "$XO_CLI" test --count=1 --std-module="$(gate_stdfast_test_mod "$m")" >"$logs/stdfast-$m.txt" 2>&1; then
+    # --since (decision 0701, #251): only the tests the change reaches, and
+    # a module whose inputs are unchanged replays its stored run (no
+    # --count=1, which bypassed xo's run cache)
+    elif "$XO_CLI" test --since="$sfb" --std-module="$(gate_stdfast_test_mod "$m")" >"$logs/stdfast-$m.txt" 2>&1; then
       echo "stdfast $m: $(tail -1 "$logs/stdfast-$m.txt")"
     else
       bad=1; echo "stdfast $m: FAIL ($logs/stdfast-$m.txt: $(grep -m1 -- '--- FAIL' "$logs/stdfast-$m.txt"))"
