@@ -101,6 +101,7 @@ var generators = map[string]func() string{
 	"aesmodes":     aesModesCorpus,
 	"ecdh":         ecdhCorpus,
 	"mlkem":        mlkemCorpus,
+	"embedfuzz":    embedfuzzCorpus,
 	"random":       randomCorpus,
 	"uuid":         uuidCorpus,
 	"words":        wordsCorpus,

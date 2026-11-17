@@ -28,6 +28,10 @@
 //     and the same version for a file name;
 //   - protowkt: protowktoracle (protobuf-go's well known types), random
 //     Struct, Value, ListValue, Duration and Timestamp values;
+//   - embed: embedoracle (Go's io/fs over std/evidence/embed's stress
+//     tree), random paths, directories and glob patterns: Dir.read,
+//     contains and sub, and fs().glob and read_dir, as fs.ReadFile, Sub,
+//     Glob and ReadDir answer;
 //   - prototext: prototextoracle (protobuf-go's encoding/prototext), random
 //     messages of every field kind written as text.
 package stdtest
@@ -80,6 +84,7 @@ func TestProtoparseFuzz(t *testing.T)   { corpusFuzz(t, "protoparsefuzz", "PROTO
 func TestMigrateFuzz(t *testing.T)      { corpusFuzz(t, "migratefuzz", "MIGRATEFUZZ") }
 func TestProtowktFuzz(t *testing.T)     { corpusFuzz(t, "protowkt", "PROTOWKTFUZZ") }
 func TestPrototextFuzz(t *testing.T)    { corpusFuzz(t, "prototext", "PROTOTEXTFUZZ") }
+func TestEmbedFuzz(t *testing.T)        { corpusFuzz(t, "embedfuzz", "EMBEDFUZZ") }
 
 // Seeds that found a bug in a generator, kept as tests of their own (#116).
 

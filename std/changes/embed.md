@@ -1,5 +1,17 @@
 # std/embed changes
 
+## 2026-11-17: fix: Dir.sub(".") is the whole Dir, and fs().glob(".") the root
+
+- Kind: fix (behavior change)
+- Commit: this push
+- Found by: the new embed fuzz harness (embedfuzz, task #233), against Go's io/fs
+- Go reference: io/fs Sub (Sub(fsys, ".") is fsys); filepath.Glob(".") (the real Fs's glob answers ["."])
+- Test: std/embed_test.xo ("sub(\".\") is the whole Dir", "fs().glob(\".\") is the root"); corpus embedfuzz on arm64, llvm and go; TestEmbedFuzz (XO_EMBEDFUZZ_SEED) for fresh seeds
+- Timing: none (one comparison per call)
+- Shipped in: not yet released
+
+`Dir.sub(".")` returned an empty Dir (it looked under the directory `./`); it is now the Dir itself, as Go's `fs.Sub(fsys, ".")`, natively and on the Go backend (std/rt/embed.go). `Dir.fs().glob(".")` returned no paths; it now returns `["."]`, as the real Fs's glob and Go's `filepath.Glob(".")`.
+
 ## 2026-11-16: perf: Dir.sub shares its files instead of copying them
 
 - Kind: perf

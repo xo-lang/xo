@@ -46,6 +46,10 @@ func (d *Embed_Dir) M_paths(tk *Task) List[string] {
 // M_sub shares d's files under a longer prefix (no copy, as Go's fs.Sub
 // and std/native/embed.xo's dir_sub).
 func (d *Embed_Dir) M_sub(tk *Task, dir string) Embed_Dir {
+	// "." is the Dir itself, as Go's fs.Sub(fsys, ".") (embedfuzz, task #233)
+	if dir == "." {
+		return *d
+	}
 	return Embed_Dir{F_files: d.F_files, F_prefix: d.F_prefix + strings.TrimSuffix(dir, "/") + "/"}
 }
 

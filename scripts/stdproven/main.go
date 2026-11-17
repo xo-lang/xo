@@ -142,6 +142,7 @@ var harnesses = map[string][]harness{
 	"migrate":      {{"TestMigrateFuzz", "XO_MIGRATEFUZZ"}},
 	"protowkt":     {{"TestProtowktFuzz", "XO_PROTOWKTFUZZ"}},
 	"prototext":    {{"TestPrototextFuzz", "XO_PROTOTEXTFUZZ"}},
+	"embed":        {{"TestEmbedFuzz", "XO_EMBEDFUZZ"}},
 	"backoff":      {{"TestBackoffFuzz", "XO_BACKOFFFUZZ"}},
 	"protowire":    {{"TestProtowireFuzz", "XO_PROTOWIREFUZZ"}},
 	"smtp":         {{"TestSmtpFuzz", "XO_SMTPFUZZ"}},

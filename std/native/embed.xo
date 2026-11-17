@@ -33,7 +33,13 @@ fn dir_paths(d: embed.Dir) -> List[Str] {
 
 /// The files under dir, sharing d's map with a longer prefix (no copy,
 /// as Go's fs.Sub).
-fn dir_sub(d: embed.Dir, dir: Str) -> embed.Dir { embed.Dir{files: d.files, prefix: d.prefix + dir.trim_suffix("/") + "/"} }
+fn dir_sub(d: embed.Dir, dir: Str) -> embed.Dir {
+  // "." is the Dir itself, as Go's fs.Sub(fsys, ".") (embedfuzz, task #233)
+  if dir == "." {
+    return d
+  }
+  embed.Dir{files: d.files, prefix: d.prefix + dir.trim_suffix("/") + "/"}
+}
 
 fn dir_len(d: embed.Dir) -> Int {
   if d.prefix.is_empty() {
@@ -288,6 +294,10 @@ fn (d: DirFs) glob(pattern: Str) -> List[Str] ! FsErr {
   // every file under the root and every directory its path implies; a
   // trailing `**` matches directories only, the root ("") included, as
   // the real Fs's glob
+  // "." names the root, as the real Fs's glob (embedfuzz, task #233)
+  if segs == ["."] {
+    return Ok(["."])
+  }
   let dirs_only = segs[segs.len() - 1] == "**"
   var dirs: Set[Str] = #{""}
   var cands: Set[Str] = #{}

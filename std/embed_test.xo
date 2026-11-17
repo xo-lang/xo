@@ -1,0 +1,22 @@
+// std/embed's own tests: Dir built from a map, as the checker builds the
+// constant (the goldens embed_dir, embed_dir_fs and embed_files embed
+// real directories).
+
+fn tree() -> Dir {
+  var m: Map[Str, Bytes] = {}
+  for p in ["a.txt", "css/site.css", "js/lib/x.js"] {
+    m[p] = p.bytes()
+  }
+  Dir{files: m}
+}
+
+test "sub(\".\") is the whole Dir, as Go's fs.Sub (embedfuzz, task #233)" {
+  expect(tree().sub(".").paths()) == ["a.txt", "css/site.css", "js/lib/x.js"]
+  expect(tree().sub("js").sub(".").paths()) == ["lib/x.js"]
+  expect(tree().sub(".").read("css/site.css")) == Some("css/site.css".bytes())
+}
+
+test "fs().glob(\".\") is the root, as the real Fs's glob (embedfuzz, task #233)" {
+  expect(tree().fs().glob(".")?) == ["."]
+  expect(tree().sub("css").fs().glob(".")?) == ["."]
+}
