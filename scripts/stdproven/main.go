@@ -723,7 +723,11 @@ func race(args []string) error {
 	var lines []string
 	for _, r := range runs {
 		t0 := time.Now()
-		cmd := exec.Command(xo, "test", "--race", "--backend="+*backend, r.target)
+		targs := []string{"test", "--race", "--backend=" + *backend}
+		if r.real {
+			targs = append(targs, "--real")
+		}
+		cmd := exec.Command(xo, append(targs, r.target)...)
 		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
 		out, err := cmd.CombinedOutput()
 		text := string(out)
@@ -783,7 +787,7 @@ func race(args []string) error {
 			line := fmt.Sprintf("- stress program under --race, 64 tasks: %s, %s", last, time.Since(t0).Round(time.Second))
 			fmt.Println(line)
 			lines = append(lines, line)
-			runs = append(runs, raceRun{"stress", dir})
+			runs = append(runs, raceRun{"stress", dir, false})
 		}
 	}
 	result := "pass"
@@ -863,7 +867,19 @@ func stressOnlyNote(module string) string {
 // installs it on an offload host), or $XO_RACE_RUNTIME. Without either it
 // refuses, unless stock allows clang's own runtime (256 KB trace parts).
 // raceRun is one xo test --race target of the race kind.
-type raceRun struct{ name, target string }
+type raceRun struct {
+	name, target string
+	real         bool // a test uses net: xo test --real (the fake network has no UDP)
+}
+
+// realNetTest matches a test header whose uses list names net; such a test
+// runs only under xo test --real (std/udp's tests, 2026-11-16).
+var realNetTest = regexp.MustCompile(`(?m)^test "[^"\n]*" uses \([^)]*\bnet\b`)
+
+func usesRealNet(path string) bool {
+	b, err := os.ReadFile(path)
+	return err == nil && realNetTest.Match(b)
+}
 
 // raceRuns lists the module's tests (std/native/MODULE_test.xo, and
 // std/MODULE_test.xo, which the race kind left out until 2026-11-16:
@@ -871,12 +887,12 @@ type raceRun struct{ name, target string }
 func raceRuns(root, module string) []raceRun {
 	var runs []raceRun
 	if _, err := os.Stat(filepath.Join(root, "std", "native", module+"_test.xo")); err == nil {
-		runs = append(runs, raceRun{"module tests (std/native/" + module + "_test.xo)", "--std-module=native/" + module})
+		runs = append(runs, raceRun{"module tests (std/native/" + module + "_test.xo)", "--std-module=native/" + module, usesRealNet(filepath.Join(root, "std", "native", module+"_test.xo"))})
 	}
 	if _, err := os.Stat(filepath.Join(root, "std", module+"_test.xo")); err == nil {
 		// std/MODULE, not a bare MODULE: with std/native/MODULE_test.xo too,
 		// a bare name is ambiguous to xo test (#152: cbor)
-		runs = append(runs, raceRun{"module tests (std/" + module + "_test.xo)", "--std-module=std/" + module})
+		runs = append(runs, raceRun{"module tests (std/" + module + "_test.xo)", "--std-module=std/" + module, usesRealNet(filepath.Join(root, "std", module+"_test.xo"))})
 	}
 	dirs, _ := filepath.Glob(filepath.Join(root, "internal", "stdtest", "testdata", "corpus", module+"*"))
 	for _, d := range dirs {
@@ -884,7 +900,7 @@ func raceRuns(root, module string) []raceRun {
 		if _, err := os.Stat(filepath.Join(root, "std", base+".xo")); err == nil && base != module {
 			continue // another module's corpus (jsonrpc for json)
 		}
-		runs = append(runs, raceRun{"corpus " + base, d})
+		runs = append(runs, raceRun{"corpus " + base, d, false})
 	}
 	return runs
 }

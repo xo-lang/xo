@@ -1,0 +1,162 @@
+// std/udp module tests (decision 0616 section 2: the race evidence runs
+// these under --race). The fake network has no UDP, so each test uses
+// (net, clock) and runs with xo test --real (stdproven race passes it).
+// After Go's net/udpsock_test.go: round trips through a dialed and a
+// listening socket, the sender's address, truncation at max,
+// empty datagrams, Net.only, and a waiting read failing on close.
+use std/task
+
+test "a dialed socket and a listener exchange datagrams" uses (net, clock) {
+  let srv = listen(os.net, "127.0.0.1:0").or_fault("listen")
+  let c = dial(os.net, srv.local_addr()).or_fault("dial")
+  c.write(b"ping").or_fault("write")
+  let (d, from) = srv.read_from().or_fault("read_from")
+  expect(d) == b"ping"
+  expect(from) == c.local_addr()
+  srv.write_to(b"pong", from).or_fault("write_to")
+  expect(c.read().or_fault("read")) == b"pong"
+  c.close()
+  srv.close()
+}
+
+test "two listeners exchange datagrams with write_to and read_from" uses (net, clock) {
+  let a = listen(os.net, "127.0.0.1:0").or_fault("listen a")
+  let b = listen(os.net, "127.0.0.1:0").or_fault("listen b")
+  a.write_to(b"one", b.local_addr()).or_fault("write_to b")
+  let (d, from) = b.read_from().or_fault("read b")
+  expect(d) == b"one"
+  expect(from) == a.local_addr()
+  b.write_to(b"two", from).or_fault("write_to a")
+  let (d2, from2) = a.read_from().or_fault("read a")
+  expect(d2) == b"two"
+  expect(from2) == b.local_addr()
+  a.close()
+  b.close()
+}
+
+test "port 0 gives a real port" uses (net, clock) {
+  let s = listen(os.net, "127.0.0.1:0").or_fault("listen")
+  let addr = s.local_addr()
+  expect(addr.starts_with("127.0.0.1:")) == true
+  expect(addr.ends_with(":0")) == false
+  s.close()
+}
+
+test "a datagram longer than max is cut to max and the rest discarded" uses (net, clock) {
+  let srv = listen(os.net, "127.0.0.1:0").or_fault("listen")
+  let c = dial(os.net, srv.local_addr()).or_fault("dial")
+  c.write(b"0123456789").or_fault("write long")
+  c.write(b"next").or_fault("write next")
+  let (d, _) = srv.read_from(4).or_fault("read cut")
+  expect(d) == b"0123"
+  // the cut datagram's tail is gone: the next read is the next datagram
+  let (d2, _) = srv.read_from().or_fault("read next")
+  expect(d2) == b"next"
+  c.close()
+  srv.close()
+}
+
+test "an empty datagram is a datagram" uses (net, clock) {
+  let srv = listen(os.net, "127.0.0.1:0").or_fault("listen")
+  let c = dial(os.net, srv.local_addr()).or_fault("dial")
+  c.write(b"").or_fault("write empty")
+  c.write(b"x").or_fault("write x")
+  let (d, _) = srv.read_from().or_fault("read empty")
+  expect(d.len()) == 0
+  let (d2, _) = srv.read_from().or_fault("read x")
+  expect(d2) == b"x"
+  c.close()
+  srv.close()
+}
+
+test "a large datagram arrives whole" uses (net, clock) {
+  let srv = listen(os.net, "127.0.0.1:0").or_fault("listen")
+  let c = dial(os.net, srv.local_addr()).or_fault("dial")
+  var b = BytesBuilder.with_capacity(8192)
+  for i in 0..8192 {
+    b.write_byte(UInt8((i * 7) & 255))
+  }
+  let big = b.freeze()
+  c.write(big).or_fault("write")
+  let (d, _) = srv.read_from().or_fault("read")
+  expect(d) == big
+  c.close()
+  srv.close()
+}
+
+test "Net.only refuses an address outside it" uses (net, clock) {
+  let n = os.net.only(["127.0.0.1"])
+  let s = listen(n, "127.0.0.1:0").or_fault("listen inside")
+  expect(s.write_to(b"x", "192.0.2.1:9").is_err()) == true
+  expect(dial(n, "192.0.2.1:9").is_err()) == true
+  expect(listen(n, "0.0.0.0:0").is_err()) == true
+  s.close()
+}
+
+test "a bad address is an error" uses (net, clock) {
+  expect(listen(os.net, "no-port").is_err()) == true
+  expect(dial(os.net, "127.0.0.1:notaport").is_err()) == true
+  let s = listen(os.net, "127.0.0.1:0").or_fault("listen")
+  expect(s.write_to(b"x", "127.0.0.1").is_err()) == true
+  s.close()
+}
+
+test "a read waiting on a socket fails once it closes, and close is idempotent" uses (net, clock) {
+  let s = listen(os.net, "127.0.0.1:0").or_fault("listen")
+  let failed = scope sc {
+    let waiting = sc.spawn(fn() -> Bool { s.read_from().is_err() })
+    os.clock.sleep(50ms)
+    s.close()
+    waiting.await
+  }
+  expect(failed) == true
+  s.close()
+  expect(s.read_from().is_err()) == true
+  expect(s.write_to(b"x", "127.0.0.1:9").is_err()) == true
+}
+
+test "concurrent clients on one echo socket get their own replies" uses (net, clock) {
+  let srv = listen(os.net, "127.0.0.1:0").or_fault("listen")
+  let addr = srv.local_addr()
+  let total = scope sc {
+    for _ in 0..2 {
+      sc.spawn_background(fn() {
+        while let Ok((d, from)) = srv.read_from() {
+          srv.write_to(d, from).ignore_err("a client closed")
+        }
+      })
+    }
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..8 {
+      hs.push(sc.spawn(fn() -> Int ! Str {
+        let c = if t % 2 == 0 { dial(os.net, addr) } else { listen(os.net, "127.0.0.1:0") }.map_err(fn(e) { "client ${t}: ${e}" })?
+        var ok = 0
+        for i in 0..50 {
+          let msg = "c${t} m${i}".bytes()
+          if t % 2 == 0 { c.write(msg) } else { c.write_to(msg, addr) }.map_err(fn(e) { "write ${t}/${i}: ${e}" })?
+          let got = task.with_timeout(os.clock, 2s, fn() -> Bytes ! NetErr {
+            if t % 2 == 0 { c.read() } else { c.read_from()?.0 }
+          })
+          match got {
+            Ok(d) => {
+              if d != msg { return Err("client ${t}: got ${d.to_str_lossy()} for ${msg.to_str_lossy()}") }
+              ok += 1
+            }
+            _ => {} // loopback may drop a datagram under load
+          }
+        }
+        c.close()
+        Ok(ok)
+      }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.or_fault("client")
+    }
+    srv.close()
+    sc.cancel()
+    n
+  }
+  // loopback drops are rare; most of the 400 must come back
+  expect(total > 350) == true
+}

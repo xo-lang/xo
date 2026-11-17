@@ -172,6 +172,31 @@ func TestRaceRunsStdModuleTests(t *testing.T) {
 	}
 }
 
+// A module whose tests use net runs them with --real: the fake network has
+// no UDP, so std/udp's tests failed under stdproven race (2026-11-16).
+func TestRaceRunsRealNet(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"std/udp_test.xo":  "use std/task\n\ntest \"a datagram\" uses (net, clock) {\n}\n",
+		"std/text_test.xo": "test \"plain\" {\n}\n// uses (net) in a comment\n",
+	}
+	for f, body := range files {
+		p := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for m, want := range map[string]bool{"udp": true, "text": false} {
+		runs := raceRuns(root, m)
+		if len(runs) != 1 || runs[0].real != want {
+			t.Errorf("%s: runs %+v, want one with real=%v", m, runs, want)
+		}
+	}
+}
+
 func TestRaceStressOnly(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "std", "evidence", "websocket", "stress", "main.xo")
