@@ -15,6 +15,20 @@ block live in the thread's scratch instead of new strings, and the zeros
 the one time key's block is xored with are a literal. 2,000,000 seals and
 opens of 64 bytes took 0.87 s on the Mac where they took 0.99.
 
+## 2026-11-17: perf: BLAKE2b's rounds add the message word first
+
+- Kind: perf
+- Commit: this push
+- Found by: the BLAKE2b timing row (bench/perf/blake2b small 1.081 of x/crypto on linux/arm64 host 1, 1.15 on the Mac, task #271): the rounds ran fewer instructions than x/crypto's generic code (1,651 against about 1,800 a block), and loading the message words from memory instead of locals changed nothing, so the difference was the chain each round waits on
+- Go reference: golang.org/x/crypto v0.58.0 blake2b hashBlocksGeneric (v0 += m[s[0]]; v0 += v4)
+- Test: TestDigestTables (the generated rounds); crypto module tests (BLAKE2b vectors); xo bench --ab on linux/arm64 host 1 (ab-host.sh, 3 rounds): small wall 0.961 (0.956 to 0.967), better, max RSS the same
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+Each G computes a + m + b as (a + m) + b where it was (a + b) + m: b is
+the value the step before just made, so one add waits on it instead of
+two. 20,000,000 short digests took 2.96 s on the Mac where they took 3.07.
+
 ## 2026-11-17: perf: keyed BLAKE2b digests skip two block copies
 
 - Kind: perf

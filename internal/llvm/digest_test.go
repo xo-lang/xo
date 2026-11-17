@@ -98,7 +98,12 @@ func mixG(b *bytes.Buffer, a, bb, c, d int, x, y string) {
 		if x == "" {
 			return add(p, q)
 		}
-		return fmt.Sprintf("%s.wrapping_add(%s).wrapping_add(%s)", p, q, m)
+		// the message word first, as Go's blake2bGeneric (v0 += m; v0 +=
+		// v4): q is the value just computed, so (p + m) waits on nothing
+		// and only the last add waits on q; (p + q) + m put two adds
+		// after q on the round's chain (bench/perf/blake2b small 0.965 of
+		// the old order on the Mac, 2026-11-17)
+		return fmt.Sprintf("%s.wrapping_add(%s).wrapping_add(%s)", p, m, q)
 	}
 	va, vb, vc, vd := fmt.Sprintf("v%d", a), fmt.Sprintf("v%d", bb), fmt.Sprintf("v%d", c), fmt.Sprintf("v%d", d)
 	fmt.Fprintf(b, "  %s = %s\n", va, addm(va, vb, x))
