@@ -7,7 +7,7 @@ _xo_f_main:
 LpGL1jtk_f1_begin:
 	.cfi_startproc
 	.cfi_personality 155, _xo_x_personality
-	.cfi_lsda 16, LpGL1jtk_f1_lsda
+	.cfi_lsda 16, lpGL1jtk_f1_lsda
 LpGL1jtk_f1_x1_dc0:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -171,7 +171,7 @@ _xo_f_sieve:
 LpGL1jtk_f2_begin:
 	.cfi_startproc
 	.cfi_personality 155, _xo_x_personality
-	.cfi_lsda 16, LpGL1jtk_f2_lsda
+	.cfi_lsda 16, lpGL1jtk_f2_lsda
 LpGL1jtk_f2_x1_dc0:
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp

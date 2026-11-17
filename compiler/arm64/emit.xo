@@ -2280,8 +2280,17 @@ fn (g: G) lbl_prefix() -> Str {
 /// (nothing looks them up: the unwinder takes the pointer from the FDE,
 /// and std/native/llrt's prof reads __text symbols only). Darwin named it
 /// a symbol until 2026-10-25: 67 of hello's 856 symbols and 559 of CRUD's
-/// 2,971, 3.1 KB and 25.8 KB of the files.
+/// 2,971, 3.1 KB and 25.8 KB of the files. On Darwin it is linker
+/// private (`l`), not assembler-local (`L`): Apple's ld-prime misreads a
+/// DWARF FDE's LSDA reloc that names a section start plus an offset, as
+/// an `L` label assembles to, negating the offset in the FDE, and a
+/// throw through that frame jumped to a wrong landing pad (SIGBUS, task
+/// #189). An `l` symbol stays in the object for the reloc and the linker
+/// drops it from the binary.
 fn (g: G) lsda_label() -> Str {
+  if g.os == "darwin" {
+    return "l${g.lbl_prefix()}_lsda"
+  }
   g.local("${g.lbl_prefix()}_lsda")
 }
 

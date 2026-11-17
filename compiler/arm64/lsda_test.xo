@@ -1,0 +1,23 @@
+// The call site table's label (emit.xo lsda_label, task #189).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// Apple's ld-prime misreads a DWARF FDE's LSDA reloc against a section
+/// start plus an offset, which an `L` label assembles to with clang's
+/// assembler, so on Darwin the label is linker private (`l`): the
+/// assembler names it in the reloc and the linker drops it from the
+/// binary (gotchas/macho-fde-lsda-section-relative.md).
+test "the darwin call site table label is linker private, ELF's assembler local" {
+  var g = G{m: ssa.Module{}, os: "darwin"}
+  var b: List[Str] = []
+  g.cfi_personality(b)
+  let text = b.join("")
+  let key = ".cfi_lsda 16, "
+  let at = text.find(key) ?? -1
+  expect(at >= 0) == true
+  let label = text[at + key.len()..].trim()
+  expect(label[0..1]) == "l"
+  expect(label) == g.lsda_label()
+  var e = G{m: ssa.Module{}, os: "linux"}
+  expect(e.lsda_label()[0..2]) == ".L"
+}

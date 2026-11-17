@@ -269,6 +269,7 @@ fn (var a: Asm) unwind_sections() {
   var o = new_out(64 * sorted.len())
   var relocs: List[Reloc] = []
   let ltmp = a.sects[eh].ltmp
+  var nlsda = 0
   // the CIE of each (personality, lsda encoding), by offset
   var cies: Map[(Int, Int, Int), Int] = {}
   for f in sorted {
@@ -301,6 +302,22 @@ fn (var a: Asm) unwind_sections() {
     a.syms[ltmp].used = true
     body.u64(f.end - f.start)
     if f.lsda >= 0 {
+      if a.syms[f.lsda].temp {
+        // a linker private symbol of its own (the linker drops it from
+        // the binary), as the backend's l labels: Apple's ld-prime
+        // misreads an L label here (its section start plus the offset),
+        // negating the offset in the FDE and dropping it from
+        // __unwind_info's LSDA index (task #189)
+        var k = nlsda
+        while a.names.get("lxo_except${k}".bytes()) != None {
+          k += 1
+        }
+        let nm = "lxo_except${k}".bytes()
+        nlsda = k + 1
+        a.syms[f.lsda].name = nm
+        a.syms[f.lsda].temp = false
+        a.names.put(nm, f.lsda)
+      }
       body.uleb(8)
       let lf = start + 4 + body.n
       body.u64(0 - lf)

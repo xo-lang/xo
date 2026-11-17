@@ -1028,3 +1028,44 @@ test "an immediate in another radix prints as the same instruction (XO_OP_VERIFY
   expect(!same_operands_mod_radix([b"x9", b"#0x19"], [b"x9", b"x1"]))
   expect(!same_operands_mod_radix([b"x9", b"#0x19"], [b"x9", b"#26"]))
 }
+
+// A DWARF mode FDE's LSDA pointer names a linker private symbol of its
+// own, not an L label: Apple's ld-prime misreads the section start plus an
+// offset (an L label's atom) by the offset's sign in the FDE and drops it
+// from __unwind_info's LSDA index, so a throw through an xo function
+// linked by the system ld (cc, with C objects such as std/sqlite's) found
+// the wrong call site table and faulted (task #189, gotchas/
+// macho-fde-lsda-section-relative.md).
+test "a DWARF FDE's LSDA reloc names its own symbol, not the section start plus an offset" {
+  let f = "\t.cfi_startproc\n\t.cfi_personality 155, _pers\n\t.cfi_lsda 16, L%_lsda\n\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n\t.cfi_offset w19, -88\n\tnop\n\tldp x29, x30, [sp], #16\n\tret\n\t.cfi_endproc\n"
+  let src = "\t.p2align 2\n_f1:\n" + f.replace("%", "f1") + "\t.p2align 2\n_f2:\n" + f.replace("%", "f2") + "_pers:\n\tret\n\t.section __TEXT,__gcc_except_tab\n\t.p2align 2\nLf1_lsda:\n\t.long 1\nLf2_lsda:\n\t.long 2\n"
+  var a = Asm{}
+  a.parse(src.bytes())
+  a.finish()
+  expect(a.err) == ""
+  expect(a.eh_sect >= 0) == true
+  let eh = a.sects[a.eh_sect]
+  var named: List[Str] = []
+  for (k, r) in eh.relocs.indexed() {
+    // the UNSIGNED half of each SUBTRACTOR pair to __gcc_except_tab
+    if r.typ == R_UNSIGNED && k > 0 && eh.relocs[k - 1].typ == R_SUBTRACTOR {
+      let s = a.syms[r.sym]
+      if s.sect >= 0 && a.sects[s.sect].name == "__gcc_except_tab" {
+        named.push(bstr(s.name))
+        expect(s.temp) == false
+        // the field holds no offset from the symbol: 0 - field
+        expect(rd32(eh.bytes, r.addr) + r.addr) == 0x100000000
+        expect(rd32(eh.bytes, r.addr + 4)) == 0xffffffff
+      }
+    }
+  }
+  expect(named.len()) == 2
+  expect(named[0] != named[1]) == true
+  for n in named {
+    expect(n.starts_with("L")) == false
+    expect(n.starts_with("ltmp")) == false
+  }
+  // and the object keeps them as locals
+  let o = a.write_object()
+  expect(o.len() > 0) == true
+}
