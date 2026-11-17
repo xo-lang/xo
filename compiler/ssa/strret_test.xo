@@ -5,8 +5,12 @@
 
 /// A function f(p: Str, c: Bool) -> Str: when c, it returns p (or, with
 /// keep, hands p to the owned parameter of sink first), else a constant
-/// (or p again when every is set).
+/// (or p again when every is set, or f(p, c) when rec is set).
 fn strret_mod(keep: Bool, every: Bool) -> Module {
+  strret_mod_self(keep, every, false)
+}
+
+fn strret_mod_self(keep: Bool, every: Bool, rec: Bool) -> Module {
   var m = Module{}
   let s = m.builtin(Kind.Str)
   let b = m.builtin(Kind.Bool)
@@ -26,7 +30,10 @@ fn strret_mod(keep: Bool, every: Bool) -> Module {
     out = f.add(yes, Op.Call, s, Aux.S(s: "sink"), [p])
   }
   let _r1 = f.add(yes, Op.Return, -1, Aux.None, [out])
-  if every {
+  if rec {
+    let rc = f.add(no, Op.Call, s, Aux.S(s: "f"), [p, c])
+    let _r2 = f.add(no, Op.Return, -1, Aux.None, [rc])
+  } else if every {
     let _r2 = f.add(no, Op.Return, -1, Aux.None, [p])
   } else {
     let k = f.add(no, Op.Const, s, Aux.S(s: "."), [])
@@ -63,4 +70,10 @@ test "a Str another use consumes on one path is owned" {
   // sink returns its parameter on every path: owned, so the call consumes p
   expect(r.borrowed[0][0]) == false
   expect(r.borrowed[1][0]) == false
+}
+
+test "a Str returned or handed to a call that returns it is owned" {
+  // rcpart's pass (task #218): borrowed, every return counted it up and
+  // the caller's append copied the whole Str each time
+  expect(strret_borrowed(strret_mod_self(false, false, true))) == false
 }

@@ -69,6 +69,13 @@ and clean dropped it on the building paths. A Str consumed by any other
 use (a call that owns it, a block argument, a tuple) keeps decision
 0046's rule. compiler/ssa/strret_test.xo tests the three cases.
 
+A Str parameter passed to a call that returns a Str keeps decision
+0046's rule too (task #218, fixed 2026-11-17): the call may hand it back
+(bench/perf/rcpart's `pass` returns its argument or passes it to itself),
+so returning the call's result returns the parameter. Borrowed, each
+return counted it up and the caller's append copied the whole Str every
+turn: TestRcpartFlat's row strthru went from about 1 ms to 0.35 s.
+
 ## Alternatives
 
 - **Every type** (the first version): quadratic copies of lists and

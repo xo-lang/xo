@@ -1164,6 +1164,18 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
   for bi in 0..f.blocks.len() {
     for v in f.blocks[bi].instrs {
       let isret = f.values[v].op == Op.Return
+      let vt = ty_of(f.values[v].tb)
+      if f.values[v].op == Op.Call && vt >= 0 && r.types[vt].kind == Kind.Str {
+        // a call that returns a Str may hand back the one it borrows
+        // (rcpart's pass, task #218): its caller returning the result
+        // returns the parameter, so the parameter keeps decision 0046's
+        // rule
+        for a in f.args_iter(f.values[v].args) {
+          for l in r.leaves(f, a) {
+            r.kept_other(f, l, notret)
+          }
+        }
+      }
       for u in r.leaf_uses(f, v) {
         if u.m == Mode.Consume {
           cons = r.consumed(f, u.l, bi, cons)
