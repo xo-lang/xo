@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/grpcreflect): a reflection request or response with a field numbered above 536870911 fails to decode, as protobuf-go's (it was skipped as an unknown field).
 - Fix (std/protodesc): `build` returns an error for a name the file declares twice (two extensions of one name, an enum value and a message), as protoc and protobuf-go's protodesc.NewFile ("descriptor \"p.x\" already declared"); it returned the descriptor.
 - Fix (std/grpcreflect): a response whose packed extension numbers end in a varint cut short (or longer than 10 bytes) is an error, as protobuf-go reads it; it read as no numbers.
 - Fix (xo check): a program reaching a std struct whose field default is a call (std/websocket's connection, through a std/ui host) no longer gets a false XO1201 "this call" at the std file when the build caches are on (task #279).

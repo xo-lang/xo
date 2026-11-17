@@ -238,10 +238,23 @@ fn message_extensions(var out: List[protodesc.FieldDesc], m: protodesc.MessageDe
   }
 }
 
+/// A message's fields as proto.Unmarshal reads them: protowire.walk (ConsumeField takes field numbers up to 2^31-1)
+/// and every number at most 536870911 (protowire.MaxValidNumber; protobuf-go's decoder fails a larger one, found by
+/// TestGrpcReflectFuzz).
+fn fields(b: Bytes) -> List[protowire.Fld] ! protobuf.ProtoErr {
+  let fs = protowire.walk(b)?
+  for f in fs {
+    if f.num > 536870911 {
+      return Err(protobuf.ProtoErr.BadTag)
+    }
+  }
+  Ok(fs)
+}
+
 /// ServerReflectionRequest: its host and question.
 pub fn decode_request(b: Bytes) -> (Str, Request) ! grpc.Status {
   let bad = fn(e: protobuf.ProtoErr) -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling request: ${e}", details: b""} }
-  let flds = protowire.walk(b).map_err(bad)?
+  let flds = fields(b).map_err(bad)?
   var host = ""
   var req = Request.Empty
   for f in flds {
@@ -259,7 +272,7 @@ pub fn decode_request(b: Bytes) -> (Str, Request) ! grpc.Status {
           ListServices => ("", 0)
           Empty => ("", 0)
         }
-        for g in protowire.walk(f.data).map_err(bad)? {
+        for g in fields(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 2) => t = protowire.text(g).map_err(bad)?
             (2, 0) => n = int32(g.v)
@@ -354,7 +367,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
   let bad = fn(e: protobuf.ProtoErr) -> grpc.Status { grpc.Status{code: grpc.Code.Internal, message: "grpc: error unmarshalling response: ${e}", details: b""} }
   var out = Answer.Error(code: 2, message: "the response has no answer")
   var none = true
-  for f in protowire.walk(b).map_err(bad)? {
+  for f in fields(b).map_err(bad)? {
     if f.wire != 2 {
       continue
     }
@@ -374,7 +387,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           Services(_) => []
           Error(_, _) => []
         }
-        for g in protowire.walk(f.data).map_err(bad)? {
+        for g in fields(f.data).map_err(bad)? {
           if g.num == 1 && g.wire == 2 {
             files.push(g.data)
           }
@@ -389,7 +402,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           Services(_) => ("", [])
           Error(_, _) => ("", [])
         }
-        for g in protowire.walk(f.data).map_err(bad)? {
+        for g in fields(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 2) => base = protowire.text(g).map_err(bad)?
             (2, 0) => nums.push(int32(g.v))
@@ -411,10 +424,10 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           ExtensionNumbers(_, _) => []
           Error(_, _) => []
         }
-        for g in protowire.walk(f.data).map_err(bad)? {
+        for g in fields(f.data).map_err(bad)? {
           if g.num == 1 && g.wire == 2 {
             var name = ""
-            for h in protowire.walk(g.data).map_err(bad)? {
+            for h in fields(g.data).map_err(bad)? {
               if h.num == 1 && h.wire == 2 {
                 name = protowire.text(h).map_err(bad)?
               }
@@ -432,7 +445,7 @@ pub fn decode_answer(b: Bytes) -> Answer ! grpc.Status {
           ExtensionNumbers(_, _) => (0, "")
           Services(_) => (0, "")
         }
-        for g in protowire.walk(f.data).map_err(bad)? {
+        for g in fields(f.data).map_err(bad)? {
           match (g.num, g.wire) {
             (1, 0) => code = int32(g.v)
             (2, 2) => msg = protowire.text(g).map_err(bad)?

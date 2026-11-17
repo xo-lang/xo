@@ -105,5 +105,8 @@ test "repeated answers merge and every string is checked, as protobuf-go reads t
   // read it as no numbers)
   expect(decode_answer(b"\x2a\x0c\x0a\x06b.Resp\x12\x02\x96\x01")) == Ok(Answer.ExtensionNumbers(base_type: "b.Resp", numbers: [150]))
   expect(decode_answer(b"\x0a\x01h\x2a\x0d\x0a\x06b.Resp\x12\x03\x89\x9d\x82").is_err()) == true
+  // a field number above 536870911 (protowire.MaxValidNumber) fails, as protobuf-go's decoder; 536870911 is skipped
+  expect(decode_request(b"\xf8\x05\x45\xca\xc7\xa3\xe8\x22\x05\x61\x22\x62\x24\x63").is_err()) == true
+  expect(decode_request(b"\xfa\xff\xff\xff\x0f\x00\x3a\x00").map(fn(r) -> Request { r.1 })) == Ok(Request.ListServices)
   expect(decode_answer(b"\x12\x03\x0a\x01\xff\x32\x00").is_err()) == true
 }

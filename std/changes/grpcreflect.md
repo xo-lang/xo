@@ -1,6 +1,15 @@
 # std/grpcreflect changes
 
 
+
+## 2026-11-17: fix: a field number above 536870911 fails a request or response, as protobuf-go
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestGrpcReflectFuzz on the Mac (task #273): a request with an unknown field numbered 1,168,186,489 was read as empty; protobuf-go fails it
+- Go reference: google.golang.org/protobuf v1.36.12 internal/impl/decode.go (a tag's number above protowire.MaxValidNumber is errDecode)
+- Test: std/grpcreflect_test.xo decode_request of that request fails; field 536870911 is still skipped
+- Shipped in: not yet released
 ## 2026-11-17: fix: a packed extension number cut short is an error
 
 - Kind: fix
