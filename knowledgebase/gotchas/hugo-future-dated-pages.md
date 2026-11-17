@@ -20,3 +20,8 @@ current local time), never a planned later time. After building, check
 the page's output exists: `ls PUBLIC_DIR/releases/X.Y/index.html` or
 `ls PUBLIC_DIR/blog/SLUG/index.html`. `hugo --buildFuture` shows whether a
 missing page is future dated, but do not publish with it on.
+
+Guard (2026-11-16, task #180): the site's `scripts/check-future.sh` lists
+every page `hugo list future` reports and fails; `.github/workflows/pages.yml`
+runs it before the build, so a future-dated page stops the deploy instead
+of vanishing. Run it locally before pushing a dated page.
