@@ -956,15 +956,33 @@ test "Hosts on pg_bus hear each other's appends through NOTIFY" {
   })
   let (_id, live) = b.subscribe()
   // b's listener has LISTENed once its -1 arrives (a NOTIFY before that
-  // is lost, which the -1 makes b read the store for)
+  // is lost, which the -1 makes b read the store for); a subscriber that
+  // joins after the LISTEN hears it too, and may hear it twice
   expect(heard.recv()) == Some(-1)
   a.apply(Msg.Add(id: "x", title: "from a"))
-  expect(heard.recv()) == Some(1)
+  var next = heard.recv()
+  while next == Some(-1) {
+    next = heard.recv()
+  }
+  expect(next) == Some(1)
   // b's live connections were woken (the channel holds one value and
   // folds the rest: here the -1 of b's LISTEN, then they check what
   // changed and send the version they read)
   expect(live.recv().is_some()) == true
   expect(b.model().todos.len()) == 1
+}
+
+test "a subscriber that joins pg_bus after it listens still hears -1" {
+  let db = sql.open_driver(os.net, HubDriver{hub: Hub{ls: Mutex[List[Chan[sql.Notification]]].new([])}}, "pg")?
+  let bus = pg_bus(db, os.tasks, os.clock)
+  let first = Chan[Int].new(cap: 4)
+  (bus.subscribe)(fn(s: Str, v: Int) uses sync { let _full = first.try_send(v) })
+  expect(first.recv()) == Some(-1)
+  // the LISTEN is up: a later subscriber has missed no notice, but it is
+  // told so, as the first one was
+  let late = Chan[Int].new(cap: 4)
+  (bus.subscribe)(fn(s: Str, v: Int) uses sync { let _full = late.try_send(v) })
+  expect(late.recv()) == Some(-1)
 }
 
 // /room/NAME is room NAME's scope; any other path is not a page.

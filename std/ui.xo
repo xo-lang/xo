@@ -1076,6 +1076,9 @@ fn local_bus_of(first: List[fn(Str, Int) uses sync]) -> Bus[sync] {
 pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, channel: Str = "xo_ui") -> Bus[(sync, net.dial, fx, clock)] {
   let subs = Mutex[List[fn(Str, Int) uses sync]].new([])
   let started = Atomic[Int].new(0)
+  // 1 while a LISTEN connection is up: a subscriber that joins then hears
+  // the -1 it would have heard had it joined before the LISTEN
+  let listening = Atomic[Int].new(0)
   let deliver = fn(scope: Str, v: Int) uses sync {
     for f in subs.with_read(fn(l) { l }) {
       f(scope, v)
@@ -1090,11 +1093,15 @@ pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, chan
     },
     subscribe: fn(f: fn(Str, Int) uses sync) uses (sync, net.dial, fx, clock) {
       subs.with(fn(var l) { l.push(f) })
+      if listening.get() == 1 {
+        f("", -1)
+      }
       if started.add(1) == 1 {
         tasks.spawn_background(fn() -> () ! Never uses (sync, net.dial, fx, clock) {
           while !task.is_canceled() {
             // an error ends this connection; the next LISTEN starts again
-            let _ended = pg_listen(db, channel, deliver).is_ok()
+            let _ended = pg_listen(db, channel, listening, deliver).is_ok()
+            listening.set(0)
             if task.is_canceled() {
               break
             }
@@ -1106,12 +1113,14 @@ pub fn pg_bus[fx: Effects](db: sql.Db[fx], tasks: task.Group, clock: Clock, chan
   }
 }
 
-// One LISTEN connection: every scope hears -1 once it listens, then each
+// One LISTEN connection: every scope hears -1 once it listens (listening
+// is 1 from then on, so a later subscriber hears it too), then each
 // notice; returns at the first error.
-fn pg_listen[fx: Effects](db: sql.Db[fx], channel: Str, deliver: fn(Str, Int) uses sync) -> () ! sql.SqlErr uses (sync, net.dial, fx) {
+fn pg_listen[fx: Effects](db: sql.Db[fx], channel: Str, listening: Atomic[Int], deliver: fn(Str, Int) uses sync) -> () ! sql.SqlErr uses (sync, net.dial, fx) {
   let conn = db.conn()?
   defer conn.close()
   conn.listen(channel)?
+  listening.set(1)
   deliver("", -1)
   while {
     let n = conn.wait_notification()?

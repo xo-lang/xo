@@ -1,5 +1,22 @@
 # std/ui changes
 
+## 2026-11-16: fix: a subscriber that joins pg_bus after it listens hears -1
+
+- Kind: fix
+- Commit: this push
+- Found by: xo-4c (`xo test --explore=20 --std-module=ui`: "Hosts on pg_bus hear each other's appends through NOTIFY" deadlocked under seed 2; a likely cause of a stalled linux/arm64 gate)
+- Go reference: none
+- Test: std/ui "a subscriber that joins pg_bus after it listens still hears -1" (deadlocks before); the NOTIFY test under `--explore=300`
+- Timing: none (one atomic read per subscribe)
+- Shipped in: not yet released
+
+pg_bus told its subscribers it was listening (version -1, "read the
+store") only if they joined before its LISTEN connection was up; one that
+joined later never heard it, so code waiting for it waited forever. A
+subscriber that joins while the bus listens now hears -1 at once. It may
+hear -1 twice when it joins as the LISTEN comes up; -1 only asks for a
+store read, so a repeat costs one read.
+
 ## 2026-11-16: perf: pages shown a version already rendered take the scope's locks shared
 
 - Kind: perf
