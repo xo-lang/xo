@@ -110,12 +110,22 @@ fn collect(c: Collector, req: http.Request, metrics_path: Bool) -> http.Response
     c.bad.with(fn(var b) { b.push("${id}: the body is not encode_traces of its spans (${req.body.len()} bytes)") })
     return http.text(200, "")
   }
-  let tries = c.seen.with(fn(var m) {
-    let n = (m.get(id) ?? 0) + 1
-    m.put(id, n)
-    n
-  })
-  match req.header("X-Mode") ?? "ok" {
+  // only a retried export is remembered, and only until its second try:
+  // keeping every id grew the map by about 74 B an export (9 GB in 30
+  // minutes on host 2, 2026-11-17), the program's growth, not otlp's
+  let mode = req.header("X-Mode") ?? "ok"
+  let tries = if mode == "retry" {
+    c.seen.with(fn(var m) {
+      match m.remove(id) {
+        Some(_) => 2
+        None => {
+          m.put(id, 1)
+          1
+        }
+      }
+    })
+  } else { 1 }
+  match mode {
     "reject" => http.text(400, "rejected")
     "retry" if tries == 1 => http.text(503, "again")
     _ => {
