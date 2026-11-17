@@ -1,5 +1,17 @@
 # std/httpproxy changes
 
+## 2026-11-16: perf: a request sent direct no longer copies the proxy URL
+
+- Kind: perf
+- Commit: this push
+- Found by: task #103 (compiler/llrt perf levers from #88: httpproxy route 1.73 of Go)
+- Go reference: x/net/http/httpproxy proxyForURL, which returns its *url.URL pointer only when a proxy applies
+- Test: the std/httpproxy tests (NO_PROXY by name, suffix, CIDR, IP and port; https and http proxies; CGI); bench/perf/httpproxy_rules twincheck output matches Go
+- Timing: bench/perf/httpproxy_rules route on the Mac, 10x loop: 5.86 s to 4.82 s (checksum unchanged); host 1 --ab (n=3) route: 552.3 to 482.4 ms, 0.873 (0.862 to 0.879), max_rss the same
+- Shipped in: not yet released
+
+Rules.proxy_for copied the proxy URL for every request and dropped it again when NO_PROXY sent the request direct. It now checks the scheme and NO_PROXY first and copies the URL only when it is the answer.
+
 ## 2026-11-16: perf: a host name skips the address parse
 
 - Kind: perf

@@ -197,19 +197,20 @@ pub fn canonical_addr(u: http.Url) -> Str {
 }
 
 /// The proxy for u (Go's proxyForURL).
+/// The proxy URL is copied only when it is the answer: most requests a
+/// NO_PROXY list sends direct never pay for the copy and its drop.
 pub fn (r: Rules) proxy_for(u: http.Url) -> http.Url? {
-  let proxy = match u.scheme {
-    "https" => r.https
-    "http" => if r.cfg.cgi { None } else { r.http }
-    _ => None
+  let https = u.scheme == "https"
+  if !https && (u.scheme != "http" || r.cfg.cgi) {
+    return None
   }
-  if proxy is None {
+  if https { if r.https is None { return None } } else if r.http is None {
     return None
   }
   if !r.use_proxy(canonical_addr(u)) {
     return None
   }
-  proxy
+  if https { r.https } else { r.http }
 }
 
 /// Whether a request to addr (`host:port`) goes through the proxy (Go's
