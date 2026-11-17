@@ -1,5 +1,22 @@
 # std/prototext changes
 
+## 2026-11-16: perf: marshal 0.93 and format 0.97 of Go's prototext
+
+- Kind: perf
+- Commit: this push
+- Found by: task #153, XO_PROF=cpu of bench/perf/prototext marshal on host 1 (scalar_out 45%, quote_to and
+  hex_to under w_string, the occurrence list of field_out)
+- Go reference: none (same output)
+- Test: std/prototext_test.xo (every byte's escape against hex_to); corpus prototext unchanged
+- Timing: bench/perf/prototext, linux/arm64 host 1, xo bench --ab 15 rounds. New/old: marshal wall 0.80 (0.791
+  to 0.811), format 0.811 (0.801 to 0.822), max RSS 1.0. Against Go's prototext (Xo/Go): marshal wall 0.929 (0.909
+  to 0.953), max RSS 0.108; format 0.972 (0.955 to 0.974)
+
+A string is scanned once for bytes that need escaping and written in one write when none do; an escape is
+written into a BytesBuilder beside the plain runs. A field's occurrences on a sorted wire are an index range of
+the wire's field list, not a copied list. Only string fields check UTF-8. This supersedes the escape table of the
+entry below (the table is gone).
+
 ## 2026-11-16: perf: a byte's \xNN escape is one write from a table
 
 - Kind: perf
