@@ -1,5 +1,23 @@
 # std/http changes
 
+## 2026-11-17: fix: an HTTP/2 response's NO_ERROR reset follows its trailers
+
+- Kind: fix
+- Commit: this push
+- Found by: task #115: the std/grpc stress (std/evidence/grpc/stress) saw a 50 ms deadline call end with "stream error ... NO_ERROR; received from peer" instead of DeadlineExceeded
+- Go reference: golang.org/x/net/http2 server (RST_STREAM NO_ERROR after the response when the request is still open; RFC 9113 8.1)
+- Test: golden http_h2_rst_after_trailers (arm64 and llvm): a stream error and no trailers before, the trailers after
+- Timing: none
+
+A full duplex HTTP/2 handler that wrote its head and body, let them go
+out, and then ended with trailers while the client was still sending
+its request body had its RST_STREAM NO_ERROR sent at once, before the
+trailers (the reset waited only for queued head and data, not for the
+end of the stream). The client then saw a stream error and no
+trailers; a gRPC call past its deadline lost its grpc-status this way.
+The reset now waits for the trailers (or the empty DATA that ends the
+stream).
+
 ## 2026-11-16: fix: a traced send on the Go backend delivers its WroteHeaders and WroteRequest
 
 - Kind: fix

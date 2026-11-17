@@ -162,6 +162,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_h2_body_budget":        "an HTTP/2 client and server on one connection (the server's body budget), which a component cannot open",
 	"http_request_guards":        "raw connections to its own socket (request smuggling and header guards of the native server and client), which a component cannot open",
 	"http_h2_max_header_bytes":   "HTTP/2 frames on the wire, which the host owns",
+	"http_h2_rst_after_trailers": "HTTP/2 stream resets on the wire, which the host owns",
 	"http_h2c":                   "HTTP/2 on the wire, which the host owns",
 	"http_h2c_sniff":             "HTTP/2 on the wire, which the host owns",
 	"http_handler_fault":         "its router only faults; http_fault covers that",

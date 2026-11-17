@@ -86,6 +86,7 @@ http_h2c # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no
 http_h2c_sniff # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_h2_config # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_h2_max_header_bytes # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_h2_rst_after_trailers # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_tls_state # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_tls_keys # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_pipe # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

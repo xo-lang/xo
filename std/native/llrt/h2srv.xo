@@ -2483,9 +2483,12 @@ fn trailer_job(lines: Str) -> Str {
 }
 
 /// Whether st's reset waits for the output a handler queued before its
-/// fault.
+/// fault or its end: the head, data, and the end of the stream (the
+/// trailers, or an empty DATA with END_STREAM) of a response that ended
+/// while the client was still sending, which the NO_ERROR reset follows
+/// (RFC 9113 8.1).
 fn late(st: Int) -> Bool {
-  on(st, S_RST) && on(st, S_RST_LATE) && !on(st, S_DEAD) && ((on(st, S_RH_READY) && !on(st, S_RH_SENT)) || ld(st, S_OFF) < ld(st, S_OUT + 8))
+  on(st, S_RST) && on(st, S_RST_LATE) && !on(st, S_DEAD) && ((on(st, S_RH_READY) && !on(st, S_RH_SENT)) || ld(st, S_OFF) < ld(st, S_OUT + 8) || (on(st, S_END) && !on(st, S_END_SENT)))
 }
 
 /// Moves queued output into the connection's output: reset streams,

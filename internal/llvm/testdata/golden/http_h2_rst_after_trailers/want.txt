@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+head 200
+body a
+end, x-status 7
+done
+--- stderr

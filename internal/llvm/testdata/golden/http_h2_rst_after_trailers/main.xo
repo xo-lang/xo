@@ -1,0 +1,69 @@
+// A full duplex h2c handler that sends its head and body, then (in a
+// later turn of the server's writer) ends with trailers while the client
+// is still sending its request body: the server ends the stream with the
+// trailers and only then resets it with NO_ERROR (RFC 9113 8.1). Before
+// the fix the reset went out first, so the client saw a stream error and
+// no trailers (a gRPC deadline lost its grpc-status this way).
+use std/http
+
+fn routes(go: Chan[Int]) -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /t", fn(_req, _b) {
+    http.stream(200, fn(w) {
+      w.write("a".bytes())?
+      w.flush()?
+      let _ = go.recv()
+      w.set_trailer("x-status", "7")
+    }).with_full_duplex()
+  })
+  r
+}
+
+fn main(os: Os) {
+  let go = Chan[Int].new(1)
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes(go)).with_protocols(#{http.Protocol.UnencryptedHttp2})
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        let c = http.client(os.net, timeout: 60s).with_protocols(#{http.Protocol.UnencryptedHttp2})
+        let (w, r) = http.pipe()
+        match c.open(http.new_request("POST", "http://${srv.addr()}/t").with_body_reader(r)) {
+          Ok(st) => {
+            os.stdio.println("head ${st.head().status}")
+            var first = true
+            while true {
+              match st.read() {
+                Ok(Some(d)) => {
+                  os.stdio.println("body ${d.to_str() ?? "?"}")
+                  if first {
+                    first = false
+                    go.send(1)
+                  }
+                }
+                Ok(None) => {
+                  os.stdio.println("end, x-status ${st.trailers().get("X-Status") ?? "missing"}")
+                  break
+                }
+                Err(e) => {
+                  os.stdio.println("error: ${e}")
+                  break
+                }
+              }
+            }
+            st.close()
+          }
+          Err(e) => os.stdio.println("open: ${e}")
+        }
+        w.close()
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}
