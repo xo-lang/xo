@@ -490,3 +490,49 @@ test "default call options, on_finish and the peer, as grpc-go's" uses (net, clo
     expect(ended.with(fn(var l: List[Str]) -> List[Str] { l })) == ["/d.D/Echo ok", "/d.D/Fail NotFound", "/d.D/S ok"]
   }
 }
+
+// grpc-go's keepalive client test (keepalive_test.go TestKeepaliveClientClosesUnresponsiveServer): a server that
+// finishes the HTTP/2 handshake and then never answers, nor acks a PING. With keepalive the call fails Unavailable
+// after time (10 s, grpc-go's minimum) and timeout; without it, it would wait for the call's own deadline.
+test "client keepalive closes a connection whose server stopped answering, as grpc-go's" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  scope s {
+    s.spawn_background(fn() {
+      let sc = l.accept().or_fault("accept")
+      // the server's SETTINGS and its ack of the client's, then silence
+      sc.write(b"\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x04\x01\x00\x00\x00\x00").or_fault("settings")
+      while true {
+        match sc.read(65536) {
+          Ok(Some(_)) => {}
+          _ => break
+        }
+      }
+    })
+    let c = client(http.client(os.net, timeout: 60s), "http://${addr}").with_keepalive(ClientKeepalive{time: 1s, timeout: 1s})
+    let start = os.clock.now()
+    let r = c.unary("/k.K/Hang", b"x")
+    let took = os.clock.now() - start
+    match r {
+      Err(st) => expect((st.code, st.message.ends_with("http2: client connection lost"))) == (Code.Unavailable, true)
+      Ok(_) => fault("the call succeeded")
+    }
+    // time 1 s is raised to 10 s; the ack wait is 1 s
+    expect(took >= 10s && took < 30s) == true
+  }
+}
+
+test "keepalive_server sets the HTTP/2 pings and the idle timeout" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/k.K/Ok", fn(_c, req) -> Bytes ! Status { Ok(req) })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = keepalive_server(http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2}), ServerKeepalive{max_connection_idle: 5s, time: 100ms, timeout: 5s})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    // the client acks the server's pings: a call after more than time idle still works
+    expect(c.unary("/k.K/Ok", b"a")) == Ok(b"a")
+    os.clock.sleep(1500ms)
+    expect(c.unary("/k.K/Ok", b"b")) == Ok(b"b")
+  }
+}

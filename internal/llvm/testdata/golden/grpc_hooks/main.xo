@@ -45,13 +45,14 @@ fn main(os: Os) {
     }
   }
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
-  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let hs = grpc.keepalive_server(http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2}), grpc.ServerKeepalive{time: 60s})
   scope s {
     s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
     let ended = Mutex[List[Str]].new([])
     let c = grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
       .with_default_metadata({"x-user": "ann"})
       .with_default_timeout(20s)
+      .with_keepalive(grpc.ClientKeepalive{time: 60s})
       .with_unary_interceptor(fn(m, req, o, inv) -> Bytes ! grpc.Status { inv(m, req + b".", o) })
       .with_stream_interceptor(fn(_m, o) -> grpc.CallOpts ! grpc.Status { Ok(o) })
       .with_on_finish(fn(m, st) { ended.with(fn(var l: List[Str]) { l.push("${m} ${if st is None { "ok" } else { "error" }}") }) })

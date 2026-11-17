@@ -1,5 +1,23 @@
 # std/grpc changes
 
+## 2026-11-17: fix: a connection lost under a call is Unavailable, as grpc-go
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #236, the keepalive test (a keepalive close ended the call Internal)
+- Go reference: google.golang.org/grpc v1.79.2 internal/transport (a closing transport fails its streams with codes.Unavailable)
+- Test: std/grpc_test.xo "client keepalive closes a connection whose server stopped answering" (Internal before, Unavailable now), arm64 and LLVM
+- Shipped in: not yet released
+
+## 2026-11-17: feature: keepalive
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (std Proven; scripts/stdaudit/map.txt grpc keepalive rows)
+- Go reference: google.golang.org/grpc v1.79.2 keepalive/keepalive.go, dialoptions.go WithKeepaliveParams (the 10 s minimum), server.go KeepaliveParams (the 1 s minimum); keepalive_test.go TestKeepaliveClientClosesUnresponsiveServer
+- Test: std/grpc_test.xo "client keepalive closes a connection whose server stopped answering", "keepalive_server sets the HTTP/2 pings and the idle timeout", arm64 and LLVM; golden grpc_hooks
+- Behavior difference: std/http's client pings an idle connection too (PermitWithoutStream true); no enforcement policy and no MaxConnectionAge
+- Timing: none (settings only)
 ## 2026-11-17: behavior: a server's response head has no Date, as grpc-go's
 
 - Kind: behavior

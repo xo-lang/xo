@@ -10910,6 +10910,11 @@ fn (c: Client) with_stream_interceptor(f: fn(Str, CallOpts) -> CallOpts ! Status
 fn (c: Client) with_default_metadata(md: Map[Str, Str]) -> Client   // grpc-go's WithDefaultCallOptions: a call's own metadata adds to it and wins
 fn (c: Client) with_default_timeout(d: Duration) -> Client          // for a call without a timeout of its own
 fn (c: Client) with_on_finish(f: fn(Str, Status?) -> ()) -> Client   // grpc-go's OnFinish: the method and the status (None for OK) when each call ends
+// keepalive (grpc-go's keepalive package) over std/http's HTTP/2 PING settings, which these replace
+struct ClientKeepalive { time: Duration = 0s, timeout: Duration = 20s }   // time 0: no pings; below 10 s: 10 s
+fn (c: Client) with_keepalive(p: ClientKeepalive) -> Client
+struct ServerKeepalive { max_connection_idle: Duration = 0s, time: Duration = 7200s, timeout: Duration = 20s }
+fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server
 fn (r: Recv) next() -> Bytes? ! Status
 fn (s: Send) send(msg: Bytes) -> () ! Status
 fn (s: Send) set_trailer(name: Str, value: Str)
@@ -10954,7 +10959,8 @@ fn (c: Client) with_max_send(n: Int) -> Client
   call; `defer` blocks still run) and ends the call with `DeadlineExceeded`.
 - A message above `max_recv` (4 MiB, `with_max_recv`) is `ResourceExhausted`; a bad frame, a stream cut inside a
   message, or a missing status is `Internal`; a connection that cannot be made is `Unavailable`; a non gRPC response
-  maps its HTTP status to a code as grpc-go does.
+  maps its HTTP status to a code as grpc-go does; a connection lost under a call (a keepalive ping not acked, the
+  server gone) is `Unavailable`.
 - Response metadata, as grpc-go's client gives it: lower case names without the reserved ones (`grpc-status`,
   `grpc-message`, `grpc-encoding`, `grpc-timeout`, `te`; `content-type` kept), `-bin` values left in base64
   (`bin_decode`). A trailers only response has an empty header; its metadata is the trailer's. A server sends
@@ -10964,7 +10970,7 @@ fn (c: Client) with_max_send(n: Int) -> Client
   vs. M)", with grpc-go's "grpc: " prefix for a unary method's response. A response above the client's receive
   limit is `ResourceExhausted` "grpc: received message larger than max (N vs. M)".
 - Not yet: response headers from a handler (grpc-go's SetHeader and SendHeader; the head is written before the
-  handler runs), keepalive, the typed stubs of `xo proto gen`, a TLS example.
+  handler runs), a keepalive enforcement policy, MaxConnectionAge, the typed stubs of `xo proto gen`, a TLS example.
 
 ## 69. std/otlp
 

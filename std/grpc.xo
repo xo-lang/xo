@@ -622,6 +622,39 @@ fn run_invoke(ics: List[fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status], i:
   ics[i](method, req, o, fn(m, r, oo) -> Bytes ! Status { run_invoke(ics, i + 1, m, r, oo, last) })
 }
 
+/// grpc-go's keepalive.ClientParameters: after `time` with nothing read on the connection the client sends an HTTP/2
+/// PING, and closes the connection when no ack comes within `timeout` (its calls fail `Unavailable`). A time of 0
+/// sends none; below 10 s it is 10 s, as grpc-go's (keepalive.go's minimum). std/http's client pings an idle
+/// connection too (grpc-go's PermitWithoutStream true).
+pub struct ClientKeepalive {
+  pub time: Duration = 0s
+  pub timeout: Duration = 20s
+}
+
+/// The client with keepalive pings (grpc-go's WithKeepaliveParams): `send_ping_timeout` and `ping_timeout` of its
+/// http.Client's HTTP/2 settings, which this replaces.
+pub fn (c: Client) with_keepalive(p: ClientKeepalive) -> Client {
+  let t = if p.time == 0s { 0s } else if p.time < 10s { 10s } else { p.time }
+  c with {http: c.http.with_h2_config(http.H2Config{send_ping_timeout: t, ping_timeout: p.timeout})}
+}
+
+/// grpc-go's keepalive.ServerParameters: a connection with no call for `max_connection_idle` is closed (0 never),
+/// and after `time` with nothing read the server sends a PING and closes the connection when no ack comes within
+/// `timeout`. Times below 1 s are 1 s, as grpc-go's. MaxConnectionAge and MaxConnectionAgeGrace are not supported.
+pub struct ServerKeepalive {
+  pub max_connection_idle: Duration = 0s
+  pub time: Duration = 7200s
+  pub timeout: Duration = 20s
+}
+
+/// h with grpc-go's server keepalive (KeepaliveParams): its HTTP/2 settings' `send_ping_timeout` and
+/// `ping_timeout`, which this replaces, and `with_idle_timeout` for `max_connection_idle`.
+pub fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server {
+  let t = if p.time < 1s { 1s } else { p.time }
+  let out = h.with_h2_config(http.H2Config{send_ping_timeout: t, ping_timeout: p.timeout})
+  if p.max_connection_idle > 0s { out.with_idle_timeout(p.max_connection_idle) } else { out }
+}
+
 /// A client of `base` (`http://host:port`, plain HTTP/2 with prior knowledge, or `https://host:port`).
 pub fn client(c: http.Client, base: Str) -> Client {
   let h = if base.starts_with("http://") { c.with_protocols(#{http.Protocol.UnencryptedHttp2}) } else { c }
@@ -1077,7 +1110,9 @@ fn from_client_err(e: http.ClientErr) -> Status {
     Timeout => status_new(Code.DeadlineExceeded, "context deadline exceeded")
     Canceled => status_new(Code.Canceled, "context canceled")
     Connect(msg) => status_new(Code.Unavailable, "connection error: ${msg}")
-    Protocol(msg) => status_new(Code.Internal, msg)
+    // the connection lost under the call (a keepalive ping not acked, the server gone): grpc-go's transport
+    // closing is Unavailable; x/net's errClientConnLost text, the same on the native backends
+    Protocol(msg) => if msg.ends_with("http2: client connection lost") { status_new(Code.Unavailable, msg) } else { status_new(Code.Internal, msg) }
     InvalidUrl(msg) => status_new(Code.Internal, "invalid URL: ${msg}")
     // a TLS failure was Protocol before ClientErr.Tls (decision 0644):
     // the same status and text (grpc-go says Unavailable for a failed
