@@ -696,10 +696,19 @@ fn p_option_stmt(var p: P) -> (Str, Bytes) ! ParseErr {
 /// unquoted, a negative number with its sign) or an aggregate `{ key: value ... }`, kept as `{`, then
 /// each key and value separated by U+1F and the pairs by U+1E, then `}` (`aggregate_pairs` reads
 /// it); an aggregate holding another one is `{}`.
-fn p_option(var p: P) -> (Str, Bytes) ! ParseErr {
+fn p_option(var p: P, compact: Bool = false) -> (Str, Bytes) ! ParseErr {
   var name = ""
+  var prev = ""
   while p.at < p.ts.len() && !p_is(p, "=") {
-    name = name + p.ts[p.at].text
+    let t = p.ts[p.at]
+    // a name part right after another (`import json_name = 1`) is not one
+    // name: protoc's grammar wants `=` there
+    if t.kind == Kind.Ident && (prev == "ident" || prev == ")") {
+      if compact { return Err(p_err(p, "compact option must have a value")) }
+      return Err(p_err(p, "expected `=`, found `${t.text}`"))
+    }
+    prev = if t.kind == Kind.Ident { "ident" } else { t.text }
+    name = name + t.text
     p.at += 1
   }
   p_expect(p, "=")?
@@ -814,7 +823,7 @@ fn p_opts(var p: P) -> List[(Str, Bytes)] ! ParseErr {
   if !p_is(p, "[") { return Ok(out) }
   p.at += 1
   while true {
-    out.push(p_option(p)?)
+    out.push(p_option(p, compact: true)?)
     if p_is(p, ",") {
       p.at += 1
     } else {
@@ -867,30 +876,115 @@ fn p_ranges_opts(var p: P, max: Int) -> (List[(Int, Int)], List[Str], List[(Str,
   Ok((rs, ns, opts))
 }
 
+/// The indexes of rs sorted by start, then end (protocompile's tagRanges).
+fn range_order(rs: List[(Int, Int)]) -> List[Int] {
+  var idx: List[Int] = []
+  for i in 0..rs.len() {
+    var j = idx.len()
+    idx.push(i)
+    while j > 0 && (rs[idx[j - 1]].0 > rs[i].0 || (rs[idx[j - 1]].0 == rs[i].0 && rs[idx[j - 1]].1 > rs[i].1)) {
+      idx[j] = idx[j - 1]
+      j -= 1
+    }
+    idx[j] = i
+  }
+  idx
+}
+
+/// protocompile's validate.go: ranges (end included) that overlap, sorted,
+/// fail at the later one's statement (at, a token index per range).
+fn check_overlap(var p: P, scope: Str, what: Str, rs: List[(Int, Int)], at: List[Int]) ! ParseErr {
+  let o = range_order(rs)
+  for k in 1..o.len() {
+    let (a, b) = rs[o[k - 1]]
+    let (c, d) = rs[o[k]]
+    if c <= b {
+      p.at = at[o[k]]
+      return Err(p_err(p, "${scope}: ${what} ranges overlap: ${a} to ${b} and ${c} to ${d}"))
+    }
+  }
+  Ok(())
+}
+
+/// protocompile's check that no extension range overlaps a reserved one
+/// (its merge of the two sorted lists).
+fn check_ext_reserved(var p: P, scope: Str, rs: List[(Int, Int)], rat: List[Int], xs: List[(Int, Int)], xat: List[Int]) ! ParseErr {
+  let ro = range_order(rs)
+  let xo = range_order(xs)
+  var i = 0
+  var j = 0
+  while i < ro.len() && j < xo.len() {
+    let (rs0, re) = rs[ro[i]]
+    let (xs0, xe) = xs[xo[j]]
+    let r_in_x = rs0 >= xs0 && rs0 <= xe
+    if r_in_x || (xs0 >= rs0 && xs0 <= re) {
+      p.at = if r_in_x { rat[ro[i]] } else { xat[xo[j]] }
+      return Err(p_err(p, "${scope}: extension range ${xs0} to ${xe} overlaps reserved range ${rs0} to ${re}"))
+    }
+    if rs0 < xs0 { i += 1 } else { j += 1 }
+  }
+  Ok(())
+}
+
 fn p_enum(var p: P) -> Enum ! ParseErr {
   let name = p_ident(p)?
   p_expect(p, "{")?
   var e = Enum{name: name, values: []}
+  // token indexes for the checks at the end: allow_alias's value, each
+  // value's number, each reserved range's statement
+  var alias_at = -1
+  var val_at: List[Int] = []
+  var rsv_at: List[Int] = []
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated enum `${name}`")) }
     if p_is(p, "option") {
-      e.options.push(p_option_stmt(p)?)
+      let at = p.at
+      let o = p_option_stmt(p)?
+      if o.0 == "allow_alias" {
+        alias_at = if o.1 == b"true" { at + 3 } else { -1 }
+      }
+      e.options.push(o)
     } else if p_is(p, "reserved") {
+      let at = p.at
       let (rs, ns) = p_ranges(p, 2147483647)?
-      for r in rs { e.reserved.push(r) }
+      for r in rs {
+        e.reserved.push(r)
+        rsv_at.push(at)
+      }
       for n in ns { e.reserved_names.push(n) }
     } else if p_is(p, ";") {
       p.at += 1
     } else {
       let vn = p_ident(p)?
       p_expect(p, "=")?
+      val_at.push(p.at)
       let n = p_int(p)?
       let opts = p_opts(p)?
       p_expect(p, ";")?
       e.values.push(EnumValue{name: vn, num: n, options: opts})
     }
   }
-  p.at += 1
+  let end = p.at
+  // protocompile's validateEnum: aliases, then reserved ranges
+  let scope = "enum ${name}"
+  var has_alias = false
+  for i in 0..e.values.len() {
+    for j in 0..i {
+      if e.values[j].num == e.values[i].num {
+        if alias_at < 0 {
+          p.at = val_at[i]
+          return Err(p_err(p, "${scope}: values ${e.values[j].name} and ${e.values[i].name} both have the same numeric value ${e.values[i].num}; use allow_alias option if intentional"))
+        }
+        has_alias = true
+      }
+    }
+  }
+  if alias_at >= 0 && !has_alias {
+    p.at = alias_at
+    return Err(p_err(p, "${scope}: allow_alias is true but no values are aliases"))
+  }
+  check_overlap(p, scope, "reserved", e.reserved, rsv_at)?
+  p.at = end + 1
   Ok(e)
 }
 
@@ -982,6 +1076,9 @@ fn p_message(var p: P) -> Message ! ParseErr {
 fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
   p_expect(p, "{")?
   var m = Message{name: name, fields: [], oneofs: [], nested: [], enums: []}
+  // each reserved and extensions range's statement (token index)
+  var rsv_at: List[Int] = []
+  var ext_at: List[Int] = []
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated message `${name}`")) }
     if p_is(p, "message") {
@@ -993,14 +1090,20 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
     } else if p_is(p, "option") {
       m.options.push(p_option_stmt(p)?)
     } else if p_is(p, "reserved") {
+      let at = p.at
       let (rs, ns) = p_ranges(p, 536870911)?
-      for r in rs { m.reserved.push(r) }
+      for r in rs {
+        m.reserved.push(r)
+        rsv_at.push(at)
+      }
       for n in ns { m.reserved_names.push(n) }
     } else if p_is(p, "extensions") {
+      let at = p.at
       let (rs, _, opts) = p_ranges_opts(p, 536870911)?
       for r in rs {
         m.extensions.push(r)
         m.extension_options.push(opts)
+        ext_at.push(at)
       }
     } else if p_is(p, "extend") {
       p.at += 1
@@ -1029,7 +1132,14 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
       m = p_field(p, "", m)?
     }
   }
-  p.at += 1
+  // protocompile's validateMessage: reserved ranges, extension ranges,
+  // then one against the other
+  let end = p.at
+  let scope = "message ${name}"
+  check_overlap(p, scope, "reserved", m.reserved, rsv_at)?
+  check_overlap(p, scope, "extension", m.extensions, ext_at)?
+  check_ext_reserved(p, scope, m.reserved, rsv_at, m.extensions, ext_at)?
+  p.at = end + 1
   Ok(m)
 }
 

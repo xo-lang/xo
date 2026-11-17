@@ -10971,7 +10971,12 @@ has its message among the messages of the scope the block is in (the file's or t
   except a `map`, and `required` and `group` are accepted: a group is a nested message plus a field of that type
   named in lower case (`group`). A proto3 file rejects `required` and `group`. An editions file (`edition = "2023"` or
   `"2024"`; `syntax` is then `editions` and `edition` the year) rejects `optional`, `required`, `group` and string
-  reserved names (its reserved names are identifiers); its `features.NAME` options are kept as options. `gen` maps
+  reserved names (its reserved names are identifiers); its `features.NAME` options are kept as options. As
+  protoc (protocompile's validate.go texts), `parse` rejects an enum whose values share a number without
+  `option allow_alias = true` and one with it whose values do not, overlapping `reserved` ranges in a message or
+  enum, overlapping `extensions` ranges or one overlapping a `reserved` range (the error at the later range in
+  start order), and an option name followed by another name (`[import json_name = "x"]`: `compact option must
+  have a value`). `gen` maps
   `required` to a plain field and proto2 `optional` to an Option, and in an editions file a singular field to an
   Option unless its `features.field_presence` (the field's, else the file's; EXPLICIT by default) is IMPLICIT or
   LEGACY_REQUIRED; a repeated number, Bool or enum is written `proto "N,unpacked"` in a proto2 file unless

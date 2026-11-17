@@ -1,5 +1,22 @@
 # std/protoparse changes
 
+## 2026-11-17: fix: four kinds of file protoc rejects are errors
+
+- Kind: fix
+- Commit: this push
+- Found by: task #230 (xw-1's protoparse fuzz against bufbuild/protocompile v0.14.1, task #152: 9 of 74 rejected files accepted)
+- Go reference: protocompile v0.14.1 parser/validate.go (validateMessage, validateEnum: tagRanges, aliases), parser/proto.y ("compact option must have a value")
+- Test: std/protoparse_test.xo (one test per class, protocompile's texts; each failed before: parse accepted the file); the fuzz's nine files are rejected
+- Shipped in: not yet released
+
+`parse` accepted, and now rejects with protocompile's text: an enum with
+`option allow_alias = true` and no two values sharing a number (and, the
+other way, values sharing a number without it), overlapping `reserved`
+ranges (messages and enums), overlapping `extensions` ranges and an
+extension range overlapping a reserved one, and an option name followed
+by another name with no `=` (`[import json_name = "j"]`). The scope names
+the message or enum by its own name (protocompile's is fully qualified).
+
 ## 2026-11-17: feature: gen writes groups and DELIMITED message fields
 
 - Kind: feature

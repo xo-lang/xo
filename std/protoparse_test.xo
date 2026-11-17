@@ -303,3 +303,38 @@ test "escapes giving invalid UTF-8 keep their bytes: a bytes default, string and
   expect(toks[0].raw) == b"\xff"
   expect(toks[0].text) == "\u{fffd}"
 }
+
+fn parse_err(src: Str) -> Str {
+  match parse(src) {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+// task #230 (xw-1's protoparse fuzz against protocompile v0.14.1): files
+// protoc rejects, with protocompile's texts (validate.go, proto.y)
+test "allow_alias with no aliases, and aliases without it, are errors" {
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = true;\n  A = 0;\n  B = 1;\n}")) == "3:24: enum E: allow_alias is true but no values are aliases"
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  A = 0;\n  B = 0;\n}")) == "4:7: enum E: values A and B both have the same numeric value 0; use allow_alias option if intentional"
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = true;\n  A = 0;\n  B = 0;\n}")) == "ok"
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = false;\n  A = 0;\n  B = 1;\n}")) == "ok"
+}
+
+// the error is at the later range in start order (212 to 212 is on line 3)
+test "overlapping reserved ranges are errors, in messages and enums" {
+  expect(parse_err("syntax = \"proto3\";\nmessage M {\n  reserved 152, 212 to 212;\n  reserved 143, 203 to 212;\n}")) == "3:3: message M: reserved ranges overlap: 203 to 212 and 212 to 212"
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  A = 0;\n  reserved 5 to 9;\n  reserved 9;\n}")) == "5:3: enum E: reserved ranges overlap: 5 to 9 and 9 to 9"
+  expect(parse_err("syntax = \"proto3\";\nmessage M {\n  reserved 1 to 4, 5 to 9;\n}")) == "ok"
+}
+
+test "overlapping extension ranges are errors, and against reserved ranges" {
+  expect(parse_err("syntax = \"proto2\";\nmessage M {\n  extensions 1020 to 1025;\n  extensions 1020 to 1025;\n}")) == "4:3: message M: extension ranges overlap: 1020 to 1025 and 1020 to 1025"
+  expect(parse_err("syntax = \"proto2\";\nmessage M {\n  reserved 10 to 20;\n  extensions 15 to 30;\n}")) == "4:3: message M: extension range 15 to 30 overlaps reserved range 10 to 20"
+  expect(parse_err("syntax = \"proto2\";\nmessage M {\n  extensions 100 to 199;\n  extensions 200 to max;\n}")) == "ok"
+}
+
+test "an option name followed by another name has no value" {
+  expect(parse_err("syntax = \"proto3\";\nmessage M {\n  int32 f = 4 [import json_name = \"j16\"];\n}")) == "3:23: compact option must have a value"
+  expect(parse_err("syntax = \"proto3\";\noption java_package go_package = \"x\";")) == "2:21: expected `=`, found `go_package`"
+  expect(parse_err("syntax = \"proto3\";\nmessage M {\n  int32 f = 4 [(my.opt).sub = 1, json_name = \"j\"];\n}")) == "ok"
+}
