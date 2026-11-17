@@ -102,7 +102,7 @@ fn pass(start: Int) -> Int ! Str {
     return Err("generated ${m} messages ${e} enums: got ${f.messages.len()} ${f.enums.len()} ${f.services.len()}")
   }
   let opts = f.messages[m - 1].fields[1].options
-  if opts.len() != 1 || protoparse.aggregate_pairs(opts[0].1) != [("x", "${m - 1}"), ("y", "v")] {
+  if opts.len() != 1 || protoparse.aggregate_pairs(opts[0].1) != [("x", "${m - 1}".bytes()), ("y", b"v")] {
     return Err("generated ${m}: options of M${m - 1}.b")
   }
   let a = protoparse.gen(f).map_err(fn(x) { "generated gen: ${x}" })?
@@ -117,7 +117,7 @@ fn pass(start: Int) -> Int ! Str {
   }
   let nested = protoparse.parse("syntax = \"proto3\";\nmessage M {\n  int32 a = 1 [(my.opt) = { r { k: ${start} } r { k: 2 } }];\n}\n").map_err(fn(x) { "nested: ${x.msg}" })?
   let v = nested.messages[0].fields[0].options[0].1
-  if protoparse.aggregate_items(v) != [("r{", ""), ("r.k", "${start}"), ("r{", ""), ("r.k", "2")] || protoparse.aggregate_pairs(v) != [("r.k", "${start}"), ("r.k", "2")] {
+  if protoparse.aggregate_items(v) != [("r{", b""), ("r.k", "${start}".bytes()), ("r{", b""), ("r.k", b"2")] || protoparse.aggregate_pairs(v) != [("r.k", "${start}".bytes()), ("r.k", b"2")] {
     return Err("aggregate_items of nested messages")
   }
   Ok(FILES.len() * 2 + 4)
