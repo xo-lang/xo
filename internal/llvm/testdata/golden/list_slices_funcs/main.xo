@@ -1,0 +1,38 @@
+// Go's slices.*Func and friends on List, maps.EqualFunc on Map (task
+// #231); the expected output is Go's for the same calls.
+fn by_len(a: Str, b: Str) -> Ordering { a.len().cmp(b.len()) }
+
+fn ord(o: Ordering) -> Str {
+  match o {
+    Less => "-1"
+    Equal => "0"
+    Greater => "1"
+  }
+}
+
+fn pair(t: (Int, Bool)) -> Str { "${t.0} ${t.1}" }
+
+fn idx(i: Int?) -> Str { "${i ?? -1}" }
+
+fn main(os: Os) {
+  let ws = ["bb", "a", "ccc", "dd", "e", "fff"]
+  os.stdio.println("${ws.max_by(by_len) ?? "none"} ${ws.min_by(by_len) ?? "none"}")
+  let none: List[Str] = []
+  os.stdio.println("${none.max_by(by_len) ?? "none"}")
+  os.stdio.println("${ws.is_sorted_by(by_len)} ${["a", "bb", "cc", "ddd"].is_sorted_by(by_len)}")
+  let ns = [1, 3, 5, 7, 9]
+  os.stdio.println("${pair(ns.binary_search_by(fn(x: Int) -> Ordering { x.cmp(5) }))} ${pair(ns.binary_search_by(fn(x: Int) -> Ordering { x.cmp(6) }))} ${pair(ns.binary_search_by(fn(x: Int) -> Ordering { x.cmp(10) }))}")
+  os.stdio.println("${idx(ns.position(fn(x: Int) -> Bool { x > 4 }))} ${idx(ns.position(fn(x: Int) -> Bool { x > 40 }))}")
+  os.stdio.println("${[1, 2, 3, 4, 5, 6, 7].chunks(3)} ${none.chunks(2)}")
+  os.stdio.println("${[1, 1, 2, 3, 3, 3, 1, 4, 4].dedup()}")
+  os.stdio.println("${["a", "A", "b", "B", "b", "c"].dedup_by(fn(x: Str, y: Str) -> Bool { x.equal_fold(y) })}")
+  os.stdio.println("${[1, 2].repeat(3)} ${[1, 2].repeat(0)}")
+  os.stdio.println("${[0, 1, 2, 3, 4].splice(1, 3, [9, 9, 9])} ${[0, 1].splice(2, 2, [5])}")
+  os.stdio.println("${[1, 2, 3].equal_by(["1", "2", "3"], fn(a: Int, b: Str) -> Bool { "${a}" == b })} ${[1, 2].equal_by(["1"], fn(a: Int, b: Str) -> Bool { "${a}" == b })}")
+  let c = fn(a: Int, b: Int) -> Ordering { a.cmp(b) }
+  os.stdio.println("${ord([1, 2, 3].compare_by([1, 2, 4], c))} ${ord([1, 2].compare_by([1, 2, 0], c))} ${ord([1, 2].compare_by([1, 2], c))} ${ord([2].compare_by([1, 9], c))}")
+  // eq against the element before, as Go's: 2, 3 and 4 each go
+  os.stdio.println("${[1, 2, 3, 4, 9].dedup_by(fn(a: Int, b: Int) -> Bool { (a - b).abs() <= 1 })}")
+  let m = {"a": 1, "b": 2}
+  os.stdio.println("${m.equal_by({"a": "1", "b": "2"}, fn(x: Int, y: Str) -> Bool { "${x}" == y })} ${m.equal_by({"a": "1", "c": "2"}, fn(x: Int, y: Str) -> Bool { "${x}" == y })}")
+}

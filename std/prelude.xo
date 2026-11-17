@@ -962,6 +962,40 @@ fn (xs: List[T]) min() -> T?
 /// that sort uses (Go's slices.IsSorted; a NaN Float sorts last here, as
 /// Xo orders it, where Go's cmp puts it first).
 fn (xs: List[T]) is_sorted() -> Bool
+/// Whether no element is ordered before the one before it by cmp (Go's
+/// slices.IsSortedFunc).
+fn (xs: List[T]) is_sorted_by[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> Bool ! E uses fx
+/// The greatest element by cmp, the first of equal ones, or None for an
+/// empty list (Go's slices.MaxFunc, which panics there).
+fn (xs: List[T]) max_by[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> T? ! E uses fx
+/// The least element by cmp, the first of equal ones (Go's slices.MinFunc).
+fn (xs: List[T]) min_by[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> T? ! E uses fx
+/// binary_search with cmp telling how an element compares to the target
+/// (Go's slices.BinarySearchFunc): the first index whose element is not
+/// Less, and whether that element is Equal.
+fn (xs: List[T]) binary_search_by[E, fx: Effects](cmp: fn(T) -> Ordering ! E uses fx) -> (Int, Bool) ! E uses fx
+/// The index of the first element f holds for, or None (Go's
+/// slices.IndexFunc; find returns the element).
+fn (xs: List[T]) position[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Int? ! E uses fx
+/// xs in pieces of n elements, the last shorter when n does not divide
+/// the length (Go's slices.Chunk); a fault for n < 1.
+fn (xs: List[T]) chunks(n: Int) -> List[List[T]]
+/// xs with each run of equal elements kept once (Go's slices.Compact).
+fn (xs: List[T]) dedup() -> List[T]
+/// xs without each element eq(x, before) holds for against the element
+/// before it (Go's slices.CompactFunc).
+fn (xs: List[T]) dedup_by[E, fx: Effects](eq: fn(T, T) -> Bool ! E uses fx) -> List[T] ! E uses fx
+/// xs n times over (Go's slices.Repeat); a fault for n < 0.
+fn (xs: List[T]) repeat(n: Int) -> List[T]
+/// A copy of xs with the elements from i up to j replaced by ys (Go's
+/// slices.Replace on a clone); a fault unless 0 <= i <= j <= len().
+fn (xs: List[T]) splice(i: Int, j: Int, ys: List[T]) -> List[T]
+/// Whether xs and ys have the same length and eq holds for each pair
+/// (Go's slices.EqualFunc).
+fn (xs: List[T]) equal_by[U, E, fx: Effects](ys: List[U], eq: fn(T, U) -> Bool ! E uses fx) -> Bool ! E uses fx
+/// xs and ys compared pair by pair with cmp, the first not Equal deciding,
+/// else the shorter first (Go's slices.CompareFunc).
+fn (xs: List[T]) compare_by[U, E, fx: Effects](ys: List[U], cmp: fn(T, U) -> Ordering ! E uses fx) -> Ordering ! E uses fx
 /// A copy of xs in reverse order (Go's slices.Reverse on a clone).
 fn (xs: List[T]) reverse() -> List[T]
 /// The distinct elements as a set, in order of first appearance.
@@ -1014,6 +1048,9 @@ fn (m: Map[K, V]) get(k: K) -> V?
 /// The value at k; a fault naming k and reason when it is missing (for a
 /// key that must be there).
 fn (m: Map[K, V]) get_or_fault(k: K, reason: Str) -> V
+/// Whether m and other have the same keys and eq holds for each key's two
+/// values (Go's maps.EqualFunc).
+fn (m: Map[K, V]) equal_by[V2, E, fx: Effects](other: Map[K, V2], eq: fn(V, V2) -> Bool ! E uses fx) -> Bool ! E uses fx
 /// Whether k has an entry.
 fn (m: Map[K, V]) contains(k: K) -> Bool
 /// The keys in insertion order.

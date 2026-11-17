@@ -387,6 +387,18 @@ fn (xs: List[T]) binary_search(x: T) -> (Int, Bool) // T Ord, xs sorted: the fir
 fn (xs: List[T]) max() -> T?                 // T Ord; None when empty; the first of equals; a NaN is the result (slices.Max)
 fn (xs: List[T]) min() -> T?                 // as max (slices.Min)
 fn (xs: List[T]) is_sorted() -> Bool         // slices.IsSorted, by Xo's Ord (a NaN Float last, as sort)
+fn (xs: List[T]) is_sorted_by(cmp: fn(T, T) -> Ordering) -> Bool   // slices.IsSortedFunc
+fn (xs: List[T]) max_by(cmp: fn(T, T) -> Ordering) -> T?           // slices.MaxFunc: the first greatest; None when empty
+fn (xs: List[T]) min_by(cmp: fn(T, T) -> Ordering) -> T?           // slices.MinFunc: the first least
+fn (xs: List[T]) binary_search_by(cmp: fn(T) -> Ordering) -> (Int, Bool)   // slices.BinarySearchFunc: cmp compares an element to the target
+fn (xs: List[T]) position(f: fn(T) -> Bool) -> Int?               // slices.IndexFunc
+fn (xs: List[T]) chunks(n: Int) -> List[List[T]]                  // slices.Chunk; a fault for n < 1
+fn (xs: List[T]) dedup() -> List[T]                               // slices.Compact: runs of equal elements once
+fn (xs: List[T]) dedup_by(eq: fn(T, T) -> Bool) -> List[T]        // slices.CompactFunc: eq(x, the element before x)
+fn (xs: List[T]) repeat(n: Int) -> List[T]                        // slices.Repeat; a fault for n < 0
+fn (xs: List[T]) splice(i: Int, j: Int, ys: List[T]) -> List[T]   // slices.Replace on a copy; a fault unless 0 <= i <= j <= len
+fn (xs: List[T]) equal_by(ys: List[U], eq: fn(T, U) -> Bool) -> Bool        // slices.EqualFunc
+fn (xs: List[T]) compare_by(ys: List[U], cmp: fn(T, U) -> Ordering) -> Ordering   // slices.CompareFunc
 fn (xs: List[T]) to_set() -> Set[T]
 (0..n).to_list()                             // Range[Int] to List[Int]
 fn (xs: List[Str]) join(sep: Str) -> Str
@@ -480,6 +492,7 @@ fn (m: Map[K, V]) len() -> Int
 fn (m: Map[K, V]) is_empty() -> Bool
 fn (m: Map[K, V]) get(k: K) -> V?
 fn (m: Map[K, V]) get_or_fault(k: K, reason: Str) -> V   // faults with the key and reason when missing
+fn (m: Map[K, V]) equal_by(other: Map[K, V2], eq: fn(V, V2) -> Bool) -> Bool   // maps.EqualFunc
 fn (m: Map[K, V]) contains(k: K) -> Bool
 fn (m: Map[K, V]) keys() -> List[K]
 fn (m: Map[K, V]) values() -> List[V]
@@ -7646,7 +7659,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-603 declarations.
+616 declarations.
 
 ### Range
 
@@ -8012,6 +8025,18 @@ fn (xs: List[T]) binary_search(x: T) -> (Int, Bool)
 fn (xs: List[T]) max() -> T?
 fn (xs: List[T]) min() -> T?
 fn (xs: List[T]) is_sorted() -> Bool
+fn (xs: List[T]) is_sorted_by[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> Bool ! E uses fx
+fn (xs: List[T]) max_by[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> T? ! E uses fx
+fn (xs: List[T]) min_by[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> T? ! E uses fx
+fn (xs: List[T]) binary_search_by[E, fx: Effects](cmp: fn(T) -> Ordering ! E uses fx) -> (Int, Bool) ! E uses fx
+fn (xs: List[T]) position[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Int? ! E uses fx
+fn (xs: List[T]) chunks(n: Int) -> List[List[T]]
+fn (xs: List[T]) dedup() -> List[T]
+fn (xs: List[T]) dedup_by[E, fx: Effects](eq: fn(T, T) -> Bool ! E uses fx) -> List[T] ! E uses fx
+fn (xs: List[T]) repeat(n: Int) -> List[T]
+fn (xs: List[T]) splice(i: Int, j: Int, ys: List[T]) -> List[T]
+fn (xs: List[T]) equal_by[U, E, fx: Effects](ys: List[U], eq: fn(T, U) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (xs: List[T]) compare_by[U, E, fx: Effects](ys: List[U], cmp: fn(T, U) -> Ordering ! E uses fx) -> Ordering ! E uses fx
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) to_set() -> Set[T]
 fn (xs: List[Str]) join(sep: Str) -> Str
@@ -8034,6 +8059,7 @@ fn (m: Map[K, V]) len() -> Int
 fn (m: Map[K, V]) is_empty() -> Bool
 fn (m: Map[K, V]) get(k: K) -> V?
 fn (m: Map[K, V]) get_or_fault(k: K, reason: Str) -> V
+fn (m: Map[K, V]) equal_by[V2, E, fx: Effects](other: Map[K, V2], eq: fn(V, V2) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (m: Map[K, V]) contains(k: K) -> Bool
 fn (m: Map[K, V]) keys() -> List[K]
 fn (m: Map[K, V]) values() -> List[V]

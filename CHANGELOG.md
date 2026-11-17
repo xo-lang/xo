@@ -29,6 +29,7 @@ the text of every entry is unchanged).
 - Feature (prelude): `Int.reverse_bits` and `Int.div_wide_unsigned` (Go's bits.Reverse64 and bits.Div64).
 - Feature (prelude): `Str.expand`, `expand_env(env, s)` and `temp_dir(env)` (Go's os.Expand, ExpandEnv and TempDir, read through the Env capability).
 - Feature (prelude): `hard_link(fs, target, link)` and `same_file(fs, a, b)` (Go's os.Link and os.SameFile).
+- Feature (prelude): List `max_by`, `min_by`, `is_sorted_by`, `binary_search_by`, `position`, `chunks`, `dedup`, `dedup_by`, `repeat`, `splice`, `equal_by`, `compare_by` and `Map.equal_by` (Go's slices.*Func, Chunk, Compact, Repeat, Replace and maps.EqualFunc).
 - Fix (std/sql, Postgres): a column name (or any backend message string) that is not valid UTF-8 keeps its valid bytes, with U+FFFD for each invalid one; it was read as an empty string.
 - Fix (std/protojson): an integer map key is read as Go's strconv.ParseInt and ParseUint read it: a sign and leading zeros are allowed, an exponent, fraction or space is an error (it was read as a quoted number).
 - Feature (std/toml): `decode(text, strict: true)` rejects keys and tables the type has no field for (go-toml's DisallowUnknownFields) with `DecodeErr.Strict`, each `StrictErr` giving the line, column, key and go-toml's context text. `DecodeErr` is open, so existing matches are unchanged.

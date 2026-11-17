@@ -81,6 +81,23 @@ symbolic links). Both work on the system's file system and its
 attenuations; on another Fs hard_link is Io and same_file compares the
 cleaned paths of two that exist. WASI has neither (Io).
 
+## 2026-11-17: feature: List's slices.*Func functions and Map.equal_by
+
+- Kind: feature
+- Commit: this push
+- Found by: task #231 (std Proven; scripts/stdaudit/map.txt slices and maps gap rows)
+- Go reference: slices MaxFunc, MinFunc, BinarySearchFunc, IndexFunc, IsSortedFunc, Chunk, Compact, CompactFunc, Repeat, Replace, EqualFunc, CompareFunc; maps.EqualFunc (go1.26)
+- Test: internal/llvm/testdata/golden/list_slices_funcs (arm64, LLVM, Go backend), its want.txt Go's output for the same calls (CompactFunc with a non-transitive eq included)
+- Shipped in: not yet released
+
+New List methods: `max_by`, `min_by`, `is_sorted_by` and
+`binary_search_by` take a comparator (Ordering); `position` is
+IndexFunc; `chunks(n)`, `dedup()`, `dedup_by(eq)`, `repeat(n)` and
+`splice(i, j, ys)` return new lists; `equal_by(ys, eq)` and
+`compare_by(ys, cmp)` compare with another list of any element type.
+`Map.equal_by(other, eq)` is maps.EqualFunc. `dedup_by` compares each
+element with the one before it in the list, as Go's CompactFunc does.
+
 ## 2026-11-16: feature: Atomic[Int].and and or
 
 - Kind: feature

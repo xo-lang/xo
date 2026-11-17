@@ -586,6 +586,221 @@ func listExtreme[T any](l List[T], sign int) Option[T] {
 	return Some(m)
 }
 
+// List_is_sorted_by is `xs.is_sorted_by(cmp)` (slices.IsSortedFunc).
+func List_is_sorted_by[T, E any](tk *Task, l List[T], cmp func(*Task, T, T) Result[Ordering, E]) Result[bool, E] {
+	for i := 1; i < len(l.s); i++ {
+		r := cmp(tk, l.s[i], l.s[i-1])
+		if !r.Ok {
+			return ErrTr[bool](r.E, r.Tr)
+		}
+		if r.V.Tag == 1 {
+			return Ok[bool, E](false)
+		}
+	}
+	return Ok[bool, E](true)
+}
+
+func listBestBy[T, E any](tk *Task, l List[T], cmp func(*Task, T, T) Result[Ordering, E], tag int) Result[Option[T], E] {
+	if len(l.s) == 0 {
+		return Ok[Option[T], E](Option[T]{})
+	}
+	m := l.s[0]
+	for _, x := range l.s[1:] {
+		r := cmp(tk, x, m)
+		if !r.Ok {
+			return ErrTr[Option[T]](r.E, r.Tr)
+		}
+		if r.V.Tag == tag {
+			m = x
+		}
+	}
+	return Ok[Option[T], E](Some(m))
+}
+
+// List_max_by is `xs.max_by(cmp)` (slices.MaxFunc: the first greatest).
+func List_max_by[T, E any](tk *Task, l List[T], cmp func(*Task, T, T) Result[Ordering, E]) Result[Option[T], E] {
+	return listBestBy(tk, l, cmp, 3)
+}
+
+// List_min_by is `xs.min_by(cmp)` (slices.MinFunc).
+func List_min_by[T, E any](tk *Task, l List[T], cmp func(*Task, T, T) Result[Ordering, E]) Result[Option[T], E] {
+	return listBestBy(tk, l, cmp, 1)
+}
+
+// List_binary_search_by is `xs.binary_search_by(cmp)` (slices.BinarySearchFunc).
+func List_binary_search_by[T, E any](tk *Task, l List[T], cmp func(*Task, T) Result[Ordering, E]) Result[Tuple2[int64, bool], E] {
+	lo, hi := 0, len(l.s)
+	for lo < hi {
+		h := lo + (hi-lo)/2
+		r := cmp(tk, l.s[h])
+		if !r.Ok {
+			return ErrTr[Tuple2[int64, bool]](r.E, r.Tr)
+		}
+		if r.V.Tag == 1 {
+			lo = h + 1
+		} else {
+			hi = h
+		}
+	}
+	if lo < len(l.s) {
+		r := cmp(tk, l.s[lo])
+		if !r.Ok {
+			return ErrTr[Tuple2[int64, bool]](r.E, r.Tr)
+		}
+		if r.V.Tag == 2 {
+			return Ok[Tuple2[int64, bool], E](Tuple2[int64, bool]{int64(lo), true})
+		}
+	}
+	return Ok[Tuple2[int64, bool], E](Tuple2[int64, bool]{int64(lo), false})
+}
+
+// List_position is `xs.position(f)` (slices.IndexFunc).
+func List_position[T, E any](tk *Task, l List[T], f func(*Task, T) Result[bool, E]) Result[Option[int64], E] {
+	for i, x := range l.s {
+		r := f(tk, x)
+		if !r.Ok {
+			return ErrTr[Option[int64]](r.E, r.Tr)
+		}
+		if r.V {
+			return Ok[Option[int64], E](Some(int64(i)))
+		}
+	}
+	return Ok[Option[int64], E](Option[int64]{})
+}
+
+// List_chunks is `xs.chunks(n)` (slices.Chunk).
+func List_chunks[T any](_ *Task, l List[T], n int64) List[List[T]] {
+	if n < 1 {
+		FaultHere("chunks: n is %d, below 1", n)
+	}
+	var out []List[T]
+	for i := 0; i < len(l.s); {
+		j := min(i+int(n), len(l.s))
+		c := append([]T(nil), l.s[i:j]...)
+		markElems(c)
+		out = append(out, ListOf(c...))
+		i = j
+	}
+	return ListOf(out...)
+}
+
+// List_dedup is `xs.dedup()` (slices.Compact).
+func List_dedup[T any](_ *Task, l List[T]) List[T] {
+	var out []T
+	for i, x := range l.s {
+		if i == 0 || !Eq(x, l.s[i-1]) {
+			out = append(out, x)
+		}
+	}
+	markElems(out)
+	return ListOf(out...)
+}
+
+// List_dedup_by is `xs.dedup_by(eq)` (slices.CompactFunc).
+func List_dedup_by[T, E any](tk *Task, l List[T], eq func(*Task, T, T) Result[bool, E]) Result[List[T], E] {
+	var out []T
+	for i, x := range l.s {
+		if i > 0 {
+			// Go's CompactFunc: eq(x, the element before it in l)
+			r := eq(tk, x, l.s[i-1])
+			if !r.Ok {
+				return ErrTr[List[T]](r.E, r.Tr)
+			}
+			if r.V {
+				continue
+			}
+		}
+		out = append(out, x)
+	}
+	markElems(out)
+	return Ok[List[T], E](ListOf(out...))
+}
+
+// List_repeat is `xs.repeat(n)` (slices.Repeat).
+func List_repeat[T any](_ *Task, l List[T], n int64) List[T] {
+	if n < 0 {
+		FaultHere("repeat: n is %d, below 0", n)
+	}
+	out := make([]T, 0, len(l.s)*int(n))
+	for range n {
+		out = append(out, l.s...)
+	}
+	markElems(out)
+	return ListOf(out...)
+}
+
+// List_splice is `xs.splice(i, j, ys)` (slices.Replace on a clone).
+func List_splice[T any](_ *Task, l List[T], i, j int64, ys List[T]) List[T] {
+	if i < 0 || i > j || j > int64(len(l.s)) {
+		FaultHere("splice: %d to %d is outside 0 to %d", i, j, len(l.s))
+	}
+	out := make([]T, 0, len(l.s)-int(j-i)+len(ys.s))
+	out = append(out, l.s[:i]...)
+	out = append(out, ys.s...)
+	out = append(out, l.s[j:]...)
+	markElems(out)
+	return ListOf(out...)
+}
+
+// List_equal_by is `xs.equal_by(ys, eq)` (slices.EqualFunc).
+func List_equal_by[T, U, E any](tk *Task, l List[T], ys List[U], eq func(*Task, T, U) Result[bool, E]) Result[bool, E] {
+	if len(l.s) != len(ys.s) {
+		return Ok[bool, E](false)
+	}
+	for i := range l.s {
+		r := eq(tk, l.s[i], ys.s[i])
+		if !r.Ok {
+			return ErrTr[bool](r.E, r.Tr)
+		}
+		if !r.V {
+			return Ok[bool, E](false)
+		}
+	}
+	return Ok[bool, E](true)
+}
+
+// List_compare_by is `xs.compare_by(ys, cmp)` (slices.CompareFunc).
+func List_compare_by[T, U, E any](tk *Task, l List[T], ys List[U], cmp func(*Task, T, U) Result[Ordering, E]) Result[Ordering, E] {
+	n := min(len(l.s), len(ys.s))
+	for i := 0; i < n; i++ {
+		r := cmp(tk, l.s[i], ys.s[i])
+		if !r.Ok {
+			return ErrTr[Ordering](r.E, r.Tr)
+		}
+		if r.V.Tag != 2 {
+			return r
+		}
+	}
+	switch {
+	case len(l.s) < len(ys.s):
+		return Ok[Ordering, E](Ordering{Tag: 1})
+	case len(l.s) > len(ys.s):
+		return Ok[Ordering, E](Ordering{Tag: 3})
+	}
+	return Ok[Ordering, E](Ordering{Tag: 2})
+}
+
+// Map_equal_by is `m.equal_by(other, eq)` (maps.EqualFunc).
+func Map_equal_by[K, V, V2, E any](tk *Task, m Map[K, V], other Map[K, V2], eq func(*Task, V, V2) Result[bool, E]) Result[bool, E] {
+	if m.n != other.n {
+		return Ok[bool, E](false)
+	}
+	for k, v := range Map_All(m) {
+		e := Map_find(&other, Hash(k), k)
+		if e == nil {
+			return Ok[bool, E](false)
+		}
+		r := eq(tk, v, e.v)
+		if !r.Ok {
+			return ErrTr[bool](r.E, r.Tr)
+		}
+		if !r.V {
+			return Ok[bool, E](false)
+		}
+	}
+	return Ok[bool, E](true)
+}
+
 // List_is_sorted is `xs.is_sorted()`: slices.IsSorted by Xo's order (Cmp).
 func List_is_sorted[T any](_ *Task, l List[T]) bool {
 	for i := 1; i < len(l.s); i++ {

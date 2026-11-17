@@ -2163,6 +2163,194 @@ fn list_binary_search[T: Ord](xs: List[T], x: T) -> (Int, Bool) {
   (lo, lo < n && !(x < xs[lo]))
 }
 
+/// Go's slices.IsSortedFunc.
+fn list_is_sorted_by[T, E, fx: Effects](xs: List[T], cmp: fn(T, T) -> Ordering ! E uses fx) -> Bool ! E uses fx {
+  for i in 1..xs.len() {
+    if cmp(xs[i], xs[i - 1])? is Ordering.Less {
+      return false
+    }
+  }
+  true
+}
+
+/// Go's slices.MaxFunc: the first greatest.
+fn list_max_by[T, E, fx: Effects](xs: List[T], cmp: fn(T, T) -> Ordering ! E uses fx) -> T? ! E uses fx {
+  if xs.len() == 0 {
+    return None
+  }
+  var m = xs[0]
+  for i in 1..xs.len() {
+    if cmp(xs[i], m)? is Ordering.Greater {
+      m = xs[i]
+    }
+  }
+  Some(m)
+}
+
+/// Go's slices.MinFunc: the first least.
+fn list_min_by[T, E, fx: Effects](xs: List[T], cmp: fn(T, T) -> Ordering ! E uses fx) -> T? ! E uses fx {
+  if xs.len() == 0 {
+    return None
+  }
+  var m = xs[0]
+  for i in 1..xs.len() {
+    if cmp(xs[i], m)? is Ordering.Less {
+      m = xs[i]
+    }
+  }
+  Some(m)
+}
+
+/// Go's slices.BinarySearchFunc.
+fn list_binary_search_by[T, E, fx: Effects](xs: List[T], cmp: fn(T) -> Ordering ! E uses fx) -> (Int, Bool) ! E uses fx {
+  var lo = 0
+  var hi = xs.len()
+  while lo < hi {
+    let h = lo + (hi - lo) / 2
+    if cmp(xs[h])? is Ordering.Less {
+      lo = h + 1
+    } else {
+      hi = h
+    }
+  }
+  if lo < xs.len() && cmp(xs[lo])? is Ordering.Equal {
+    return (lo, true)
+  }
+  (lo, false)
+}
+
+/// Go's slices.IndexFunc.
+fn list_position[T, E, fx: Effects](xs: List[T], f: fn(T) -> Bool ! E uses fx) -> Int? ! E uses fx {
+  for i in 0..xs.len() {
+    if f(xs[i])? {
+      return Some(i)
+    }
+  }
+  None
+}
+
+/// Go's slices.Chunk.
+fn list_chunks[T](xs: List[T], n: Int) -> List[List[T]] {
+  if n < 1 {
+    let q = ""
+    fault.raise_str_at("chunks: n is ${n}, below 1", raw.data(q), 0)
+  }
+  var out: List[List[T]] = []
+  var i = 0
+  while i < xs.len() {
+    let j = if i + n < xs.len() { i + n } else { xs.len() }
+    out.push(xs[i..j])
+    i = j
+  }
+  out
+}
+
+/// Go's slices.Compact.
+fn list_dedup[T: Eq](xs: List[T]) -> List[T] {
+  var out: List[T] = []
+  for i in 0..xs.len() {
+    if i == 0 || xs[i] != xs[i - 1] {
+      out.push(xs[i])
+    }
+  }
+  out
+}
+
+/// Go's slices.CompactFunc: each element is compared, eq(x, before), with
+/// the one before it in xs (not the last kept one).
+fn list_dedup_by[T, E, fx: Effects](xs: List[T], eq: fn(T, T) -> Bool ! E uses fx) -> List[T] ! E uses fx {
+  var out: List[T] = []
+  for i in 0..xs.len() {
+    if i == 0 || !eq(xs[i], xs[i - 1])? {
+      out.push(xs[i])
+    }
+  }
+  out
+}
+
+/// Go's slices.Repeat.
+fn list_repeat[T](xs: List[T], n: Int) -> List[T] {
+  if n < 0 {
+    let q = ""
+    fault.raise_str_at("repeat: n is ${n}, below 0", raw.data(q), 0)
+  }
+  var out: List[T] = []
+  for _i in 0..n {
+    for x in xs {
+      out.push(x)
+    }
+  }
+  out
+}
+
+/// Go's slices.Replace on a clone.
+fn list_splice[T](xs: List[T], i: Int, j: Int, ys: List[T]) -> List[T] {
+  if i < 0 || i > j || j > xs.len() {
+    let q = ""
+    fault.raise_str_at("splice: ${i} to ${j} is outside 0 to ${xs.len()}", raw.data(q), 0)
+  }
+  var out: List[T] = []
+  for k in 0..i {
+    out.push(xs[k])
+  }
+  for y in ys {
+    out.push(y)
+  }
+  for k in j..xs.len() {
+    out.push(xs[k])
+  }
+  out
+}
+
+/// Go's slices.EqualFunc.
+fn list_equal_by[T, U, E, fx: Effects](xs: List[T], ys: List[U], eq: fn(T, U) -> Bool ! E uses fx) -> Bool ! E uses fx {
+  if xs.len() != ys.len() {
+    return false
+  }
+  for i in 0..xs.len() {
+    if !eq(xs[i], ys[i])? {
+      return false
+    }
+  }
+  true
+}
+
+/// Go's slices.CompareFunc.
+fn list_compare_by[T, U, E, fx: Effects](xs: List[T], ys: List[U], cmp: fn(T, U) -> Ordering ! E uses fx) -> Ordering ! E uses fx {
+  let n = if xs.len() < ys.len() { xs.len() } else { ys.len() }
+  for i in 0..n {
+    let c = cmp(xs[i], ys[i])?
+    if !(c is Ordering.Equal) {
+      return c
+    }
+  }
+  if xs.len() < ys.len() {
+    return Ordering.Less
+  }
+  if xs.len() > ys.len() {
+    return Ordering.Greater
+  }
+  Ordering.Equal
+}
+
+/// Go's maps.EqualFunc.
+fn map_equal_by[K, V, V2, E, fx: Effects](m: Map[K, V], other: Map[K, V2], eq: fn(V, V2) -> Bool ! E uses fx) -> Bool ! E uses fx {
+  if m.len() != other.len() {
+    return false
+  }
+  for (k, v) in m {
+    match other.get(k) {
+      Some(w) => {
+        if !eq(v, w)? {
+          return false
+        }
+      }
+      None => return false
+    }
+  }
+  true
+}
+
 /// `xs.is_sorted()`: Go's slices.IsSorted, by Xo's Ord (as sort).
 fn list_is_sorted[T: Ord](xs: List[T]) -> Bool {
   for i in 1..xs.len() {
