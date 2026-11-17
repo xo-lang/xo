@@ -64,9 +64,14 @@ add shows in the same task as its submit, median 0.7 ms over 7 adds
   both answer `same` (`std/ui_test.xo:an idle sync at the current version
   answers same, without the page`).
 
+## Size guard
+
+`cmd/xo:TestUIClientSize` (2026-11-17) builds examples/ui-todo's client
+for wasip1/wasm and fails past 325,000 bytes or 110,000 gzipped (about
+20% over the 270,737 and 91,190 measured here). Raise the budget only
+with a new measurement in this file.
+
 ## Open
 
-- No size guard yet: a test that fails when the ui-todo client grows past
-  a budget would keep this number from drifting.
 - One app (ui-todo); a larger App (examples/ui-shop) has not been
   measured.

@@ -28,6 +28,22 @@ racing sessions with "type ... already exists" (42710) or "relation ...
 already exists" (42P07); sql_store took that as an error and the instance
 did not start. Both now mean the table is there.
 
+## 2026-11-17: feature: commands, server side effects a Msg asks for (decision 0692)
+
+- Kind: feature
+- Commit: this push
+- Found by: owner track (decision 0664 stage 4b, task #186 feature audit)
+- Go reference: none
+- Test: std/ui "a command runs once for each Msg the host commits, planned from the model before it, and a refused Msg plans none"; "two Hosts on one store run each command once, after a lost race too"
+- Timing: none (a Host without commands is unchanged; with them, update runs once more over each committed batch)
+- Shipped in: not yet released
+
+`host(..., commands: ui.commands(tasks, of, run))` plans commands for each
+Msg the Host commits (`of(model before, msg)`), runs each once in a task
+on the instance that committed it, and applies a command's answer as a
+server Msg. Refused Msgs plan none; an instance that loses an append race
+does not run the winner's commands. At most once.
+
 ## 2026-11-16: feature: leases route a hot scope's syncs to one instance (decision 0686)
 
 - Kind: feature

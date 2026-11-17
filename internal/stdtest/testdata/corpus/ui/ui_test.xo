@@ -204,3 +204,31 @@ test "a bucket store keeps a scope's log in objects, created only when new" {
   expect((st.append)("k", ui.Batch{after: 0, count: 1, data: b"[]"})?) == false
   expect((st.read)("k", 0)?.len()) == 1
 }
+
+// A Join asks for a greeting command; Inc asks for none.
+fn greetings(c: Count, a: Act) -> List[Str] {
+  match a {
+    Join(who) => if c.who.contains(who) { [] } else { ["greet:${who}"] }
+    Inc(_) => []
+  }
+}
+
+test "commands run once for each committed Msg and answer with a server Msg (decision 0692)" {
+  let ran = Mutex[List[Str]].new([])
+  let cm = ui.commands(os.tasks, greetings, fn(c: Str) -> Act? uses sync {
+    ran.with(fn(var l) { l.push(c) })
+    Some(Act.Inc(by: 10))
+  })
+  var h = ui.host(counter(), commands: cm)
+  h.apply(Act.Join(who: "ann"))
+  h.apply(Act.Join(who: "ann"))
+  h.apply(Act.Inc(by: 1))
+  var i = 0
+  while (h.commands_running() > 0 || h.model().n < 11) && i < 5000 {
+    os.clock.sleep(1ms)
+    i += 1
+  }
+  expect(h.commands_running()) == 0
+  expect(ran.with_read(fn(l) { l.clone() })) == ["greet:ann"]
+  expect(h.model().n) == 11
+}

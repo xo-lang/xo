@@ -11884,12 +11884,17 @@ fn (r: Replica[M, E]) outbox() -> Up[E]     // the Msgs the server has not ackno
 fn (var r: Replica[M, E]) receive(d: Down[M, E])
 
 pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None, pub same: Bool = false, pub build: Str = "", pub seen: Str = "" }   // derive Json
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"",
+pub fn host[M: Json, E: Json, cx: Effects](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"",
     auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000,
-    scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000) -> Host[M, E]
-pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", ...same options as host) -> Host[M, E, fx, bx] uses bx
+    scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, commands: Commands[M, E, cx]? = None) -> Host[M, E, sync, sync, sync, cx]
+pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "",
+    ...same options as host, lease: Lease[lx]? = None) -> Host[M, E, fx, bx, lx, cx] uses bx
+pub struct Lease[fx: Effects] { pub me: Str, pub forward: fn(Str, http.Request) -> http.Response ! Str uses fx, pub now_ms: fn() -> Int uses fx, pub term_ms: Int = 10000 }
+pub struct Commands[M, E, cx: Effects]
+pub fn commands[M, E, C, cx: Effects](tasks: task.Group, of: fn(M, E) -> List[C], run: fn(C) -> E? uses cx) -> Commands[M, E, cx]
 fn (h: Host[M, E]) apply(msg: E, scope: Str? = None) uses sync               // faults if the store fails
-fn (h: Host[M, E]) try_apply(msg: E, scope: Str? = None) -> () ! Str uses sync
+fn (h: Host[M, E, fx, bx, lx, cx]) try_apply(msg: E, scope: Str? = None) -> () ! Str uses (sync, fx, bx, lx, cx)
+fn (h: Host[M, E]) commands_running() -> Int            // commands started and not yet finished
 pub const SERVER_CLIENT = "~server"
 fn (h: Host[M, E]) model(scope: Str? = None) -> M
 fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "")
@@ -12121,6 +12126,25 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   reads the store before it trusts its copy, and its live pages are
   sent the version it then holds. A `Scope` is the store-backed
   Server, usable without a Host.
+- Leases (decision 0686 item 6). With `lease:` an instance whose
+  group-commit batch loses an append race takes a lease on that scope,
+  kept in the store for `term_ms` and renewed while it serves; the other
+  instances forward that scope's syncs to the holder (`forward` to its
+  `me`) while the lease lasts, so one instance appends and batches.
+  Appends stay conditional: an instance that has not seen the lease or
+  cannot reach its holder still writes correctly. Off unless given.
+- Commands (decision 0692, Proposed). `commands(tasks, of, run)` names
+  the side effects a Msg asks for: `of(model, msg)` plans them from the
+  model before the Msg (a pure function, like update), `run(c)` performs
+  one in a task of `tasks` and may answer a Msg, which the Host applies
+  as a server Msg (`SERVER_CLIENT`) so every replica sees it. The Host
+  plans for each Msg it commits (refused Msgs plan none) and runs them
+  after the append, on the instance that committed it: with several
+  Hosts on one store each command runs once, also after a lost race
+  (the winner's Msgs are not the loser's to run). At most once: a crash
+  before a command finishes loses it. Clients and `predict` never plan
+  or run commands. A Host's type carries the commands' effects (`cx`),
+  so `try_apply` and the sync handler perform them.
 - Tab state (decision 0672, Proposed; prototype). `with_url_view` gives
   the App a view that also reads the page's query: a filter, a sort, a
   selected row or a step lives in the URL, so reload, back and forward

@@ -493,6 +493,10 @@ pub struct Scope[M: Json, E: Json, fx: Effects] {
   // appends lost to other writers (a Host takes a lease on a scope that
   // loses them)
   lost: Int = 0
+  // what the last commit appended and the model before it (a Host with
+  // commands plans them from these)
+  done: List[Entry[E]] = []
+  done_from: M? = None
 }
 
 /// A Scope of store's log key, for app.
@@ -576,6 +580,8 @@ struct Change[M: Json, E: Json, T] {
 // (group commit: the syncs that queue while an append is in flight share
 // the next one); on a lost race, catches up and runs them all again.
 fn (var c: Scope[M, E, fx]) commit_all[T](changes: List[Change[M, E, T]]) -> List[T] ! Str uses (sync, fx) {
+  c.done = []
+  c.done_from = None
   var read = false
   for _ in 0..commit_tries {
     // a copy the Host keeps current (its bus, its lease) appends at once;
@@ -608,7 +614,11 @@ fn (var c: Scope[M, E, fx]) commit_all[T](changes: List[Change[M, E, T]]) -> Lis
     }
     let data = json.encode_str(logged).bytes()
     match (c.store.append)(c.key, Batch{after: v0, count: logged.len(), data: data}) {
-      Ok(true) => return Ok(outs)
+      Ok(true) => {
+        c.done = logged.map(fn(l) { l.entry })
+        c.done_from = Some(before.model)
+        return Ok(outs)
+      }
       Ok(false) => {
         c.s = before
         c.lost += 1
@@ -1548,6 +1558,33 @@ pub struct Lease[fx: Effects] {
   pub term_ms: Int = 10000
 }
 
+/// Side effects a Msg asks for (decision 0692): the commands planned for
+/// each Msg the Host commits, run once each, by the instance that
+/// committed the Msg, after the append, in a task of `tasks`. A command's
+/// result, if any, is applied as a server Msg (Host.apply), so every
+/// replica sees it. At most once: a crash before a command finishes
+/// loses it.
+pub struct Commands[M, E, cx: Effects] {
+  plan: fn(M, E) -> List[fn() -> E? uses cx]
+  tasks: task.Group
+  running: Atomic[Int]
+}
+
+/// Commands: of names the commands for a Msg from the model before it
+/// (pure, like update; clients and predictions never call it) and run
+/// performs one, answering the Msg to apply with its result (None: none).
+/// A Msg the server refuses plans none.
+pub fn commands[M, E, C, cx: Effects](tasks: task.Group, of: fn(M, E) -> List[C], run: fn(C) -> E? uses cx) -> Commands[M, E, cx] {
+  let plan = fn(m: M, e: E) -> List[fn() -> E? uses cx] {
+    var out: List[fn() -> E? uses cx] = []
+    for c in of(m, e) {
+      out.push(fn() -> E? uses cx { run(c) })
+    }
+    out
+  }
+  Commands{plan: plan, tasks: tasks, running: Atomic[Int].new(0)}
+}
+
 // The lease on a scope as this instance knows it: the lease log's length
 // (its term), the holder ("" none) and, on this instance's clock, until
 // when it counts (a follower counts from when it read it, the holder
@@ -1569,7 +1606,7 @@ const forwarded = "X-Xo-Ui-Forwarded"
 
 /// An App served over HTTP (decision 0686): its state in scopes of a
 /// store, each scope this instance serves cached here behind its own lock.
-pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects] {
+pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects] {
   app: App[M, E]
   store: Store[fx]
   bus: Bus[bx]
@@ -1611,6 +1648,7 @@ pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects] {
   subs: Mutex[Map[Int, Sub]]
   next_sub: Atomic[Int]
   lease: Lease[lx]?
+  commands: Commands[M, E, cx]?
 }
 
 // One scope this instance serves: its copy of the log, the newest version
@@ -1658,11 +1696,11 @@ struct Waiting[M: Json, E: Json] {
 /// A host for app starting at app.init: one instance, its log in memory.
 /// scope_of puts each page in a scope of its own (a room, a tenant, a
 /// user), of which the instance keeps at most max_scopes.
-pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000) -> Host[M, E, sync, sync, sync] {
+pub fn host[M: Json, E: Json, cx: Effects](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, commands: Commands[M, E, cx]? = None) -> Host[M, E, sync, sync, sync, cx] {
   let subs = Mutex[Map[Int, Sub]].new({})
   let slots = Mutex[Map[Str, Slot[M, E, sync]]].new({})
   let bus = local_bus_of([waker(slots, subs)])
-  host_core(app, memory_store(), bus, "", scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep)
+  host_core(app, memory_store(), bus, "", scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {commands: commands}
 }
 
 /// A host whose scopes live in store, hearing other instances' appends on
@@ -1670,11 +1708,11 @@ pub fn host[M: Json, E: Json](app: App[M, E], title: Str = "", css: Str = "", ma
 /// behind a load balancer. `scope` is the scope of every page without
 /// scope_of. The Host performs what the store and bus perform (a memory
 /// store: sync; a networked one: net).
-pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, lease: Lease[lx]? = None) -> Host[M, E, fx, bx, lx] uses bx {
+pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, lease: Lease[lx]? = None, commands: Commands[M, E, cx]? = None) -> Host[M, E, fx, bx, lx, cx] uses bx {
   let subs = Mutex[Map[Int, Sub]].new({})
   let slots = Mutex[Map[Str, Slot[M, E, fx]]].new({})
   (bus.subscribe)(waker(slots, subs))
-  host_core(app, store, bus, scope, scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {lease: lease}
+  host_core(app, store, bus, scope, scope_of, max_scopes, slots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {lease: lease, commands: commands}
 }
 
 // What a Host hears from its bus: each instance's append (this one's
@@ -1702,8 +1740,8 @@ fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], 
   }
 }
 
-fn host_core[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx, lx] {
-  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0), lease: None}
+fn host_core[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx, lx, cx] {
+  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0), lease: None, commands: None}
 }
 
 // A live connection: its principal, its scope and its channel.
@@ -1715,7 +1753,7 @@ struct Sub {
 
 // The slot of scope key, made (and the least recently used scope without
 // a live page dropped, past max_scopes) when this instance has none.
-fn (h: Host[M, E, fx, bx, lx]) slot(key: Str) -> Slot[M, E, fx] {
+fn (h: Host[M, E, fx, bx, lx, cx]) slot(key: Str) -> Slot[M, E, fx] {
   let t = h.tick.add(1)
   if let Some(sl) = h.slots.with_read(fn(m) { m.get(key) }) {
     sl.used.set(t)
@@ -1816,7 +1854,7 @@ pub fn (h: Host[M, E]) apply(msg: E, scope: Str? = None) uses sync {
 }
 
 /// Host.apply, with the store's error (decision 0686).
-pub fn (h: Host[M, E]) try_apply(msg: E, scope: Str? = None) -> () ! Str uses sync {
+pub fn (h: Host[M, E, fx, bx, lx, cx]) try_apply(msg: E, scope: Str? = None) -> () ! Str uses (sync, fx, bx, lx, cx) {
   let key = scope ?? h.key
   let sl = h.slot(key)
   let keep = h.keep
@@ -1824,25 +1862,71 @@ pub fn (h: Host[M, E]) try_apply(msg: E, scope: Str? = None) -> () ! Str uses sy
   let again = sl.resync.swap(0) > 0
   // the copy keeps what it caught up even when the append fails (commit
   // undoes its own change), so the closure's result is a value
-  let (v, err) = sl.state.with(fn(var c) -> (Int, Str) {
+  let (v, err, jobs) = sl.state.with(fn(var c) -> (Int, Str, List[fn() -> E? uses cx]) {
     if let Err(e) = c.fresh(latest, again: again) {
-      return (0, e)
+      return (0, e, [])
     }
     match c.apply(msg) {
       Ok(_) => {}
-      Err(e) => return (0, e)
+      Err(e) => return (0, e, [])
     }
+    let planned = h.planned(c)
     if keep > 0 && c.s.log.len() >= 2 * keep {
       // best effort: the next compaction writes the snapshot again
       let _snap = c.compact(keep).is_ok()
     }
-    (c.version(), "")
+    (c.version(), "", planned)
   })
   if err != "" {
     return Err(err)
   }
   (h.bus.publish)(key, v)
+  h.run_commands(key, jobs)
   Ok(())
+}
+
+// The commands for the Msgs scope copy c's last commit appended, each
+// planned from the model before it; none without commands.
+fn (h: Host[M, E, fx, bx, lx, cx]) planned(c: Scope[M, E, fx]) -> List[fn() -> E? uses cx] {
+  var out: List[fn() -> E? uses cx] = []
+  if let Some(cm) = h.commands {
+    if let Some(m0) = c.done_from {
+      var m = m0
+      for e in c.done {
+        if !e.refused {
+          for j in (cm.plan)(m, e.msg) {
+            out.push(j)
+          }
+          m = h.app.update(m, e.msg)
+        }
+      }
+    }
+  }
+  out
+}
+
+// Runs each command in a task and applies its result to scope key.
+fn (h: Host[M, E, fx, bx, lx, cx]) run_commands(key: Str, jobs: List[fn() -> E? uses cx]) uses (sync, fx, bx, lx, cx) {
+  if let Some(cm) = h.commands {
+    for j in jobs {
+      let _n = cm.running.add(1)
+      cm.tasks.spawn_background(fn() -> () ! Never uses (sync, fx, bx, lx, cx) {
+        if let Some(e) = j() {
+          // at most once: a store error loses the result
+          let _ok = h.try_apply(e, scope: Some(key)).is_ok()
+        }
+        let _m = cm.running.add(-1)
+      })
+    }
+  }
+}
+
+/// The commands started and not yet finished (their result applied).
+pub fn (h: Host[M, E]) commands_running() -> Int {
+  match h.commands {
+    Some(cm) => cm.running.get()
+    None => 0
+  }
 }
 
 /// The model of a scope (the Host's own by default) now.
@@ -1964,7 +2048,7 @@ fn lease_key(key: Str) -> Str {
 /// another instance appended to since this one last read it wakes its
 /// live pages, as a notice on a bus would. Answers how many scopes had
 /// news; a scope the store cannot read now is tried at the next poll.
-pub fn (h: Host[M, E, fx, bx, lx]) poll() -> Int uses (sync, fx) {
+pub fn (h: Host[M, E, fx, bx, lx, cx]) poll() -> Int uses (sync, fx) {
   let held = h.slots.with_read(fn(m) {
     var l: List[(Str, Slot[M, E, fx])] = []
     for (k, sl) in m {
@@ -1994,7 +2078,7 @@ pub fn (h: Host[M, E, fx, bx, lx]) poll() -> Int uses (sync, fx) {
 /// Polls (Host.poll) every `every` in a task of tasks until it is
 /// canceled: with local_bus, Hosts on one store hear each other's appends
 /// within `every`, at one store read per held scope each time.
-pub fn (h: Host[M, E, fx, bx, lx]) poll_every(tasks: task.Group, clock: Clock, every: Duration = 1s) uses (sync, fx, clock) {
+pub fn (h: Host[M, E, fx, bx, lx, cx]) poll_every(tasks: task.Group, clock: Clock, every: Duration = 1s) uses (sync, fx, clock) {
   tasks.spawn_background(fn() -> () ! Never uses (sync, fx, clock) {
     while !task.is_canceled() {
       clock.sleep(every)
@@ -2009,7 +2093,7 @@ pub fn (h: Host[M, E, fx, bx, lx]) poll_every(tasks: task.Group, clock: Clock, e
 // Group commit for scope key: unless another request is writing, appends
 // every queued sync as one batch, then what queued during that append,
 // until the queue is empty. Waiters get their answers on their channels.
-fn (h: Host[M, E, fx, bx, lx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (bx, fx, lx) {
+fn (h: Host[M, E, fx, bx, lx, cx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (bx, fx, lx, cx) {
   let keep = h.keep
   while sl.writing.swap(1) == 0 {
     var lost = 0
@@ -2024,14 +2108,14 @@ fn (h: Host[M, E, fx, bx, lx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (
       }
       let latest = sl.latest.get()
       let again = sl.resync.swap(0) > 0
-      let (v0, v, l) = sl.state.with(fn(var c) -> (Int, Int, Int) {
+      let (v0, v, l, jobs) = sl.state.with(fn(var c) -> (Int, Int, Int, List[fn() -> E? uses cx]) {
         let b = c.version()
         let l0 = c.lost
         if let Err(e) = c.fresh(latest, again: again) {
           for w in ws {
             let _sent = w.out.try_send(Err(e))
           }
-          return (b, b, 0)
+          return (b, b, 0, [])
         }
         match c.commit_all(ws.map(fn(w) { w.change })) {
           Ok(outs) => {
@@ -2045,15 +2129,17 @@ fn (h: Host[M, E, fx, bx, lx]) write_queued(key: Str, sl: Slot[M, E, fx]) uses (
             }
           }
         }
+        let planned = h.planned(c)
         if keep > 0 && c.s.log.len() >= 2 * keep {
           let _snap = c.compact(keep).is_ok()
         }
-        (b, c.version(), c.lost - l0)
+        (b, c.version(), c.lost - l0, planned)
       })
       lost += l
       if v != v0 {
         (h.bus.publish)(key, v)
       }
+      h.run_commands(key, jobs)
     }
     sl.writing.set(0)
     if lost > 0 {

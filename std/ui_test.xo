@@ -1804,3 +1804,83 @@ test "serve_runtime serves the runtime without an App" {
   expect(js.header("Cache-Control")) == Some("public, max-age=31536000, immutable")
   expect(js.text()?.contains("data-xo-page")) == true
 }
+
+// ---- commands (decision 0692) ----
+
+// The commands of the todo app: a star for each new todo, and a seat
+// note for each Reserve that takes a seat, planned from the model before
+// the Msg.
+fn todo_commands(m: Model, msg: Msg) -> List[Str] {
+  match msg {
+    Add(id, _) => if m.todos.contains(id) { [] } else { ["star:${id}"] }
+    Reserve(who) => if m.seats > 0 && !m.holders.contains(who) { ["seat:${who}"] } else { [] }
+    Rename(_, _) | Toggle(_) | Star(_) | Remove(_) => []
+  }
+}
+
+test "a command runs once for each Msg the host commits, planned from the model before it, and a refused Msg plans none" {
+  let ran = Mutex[List[Str]].new([])
+  let cm = commands(os.tasks, todo_commands, fn(c: Str) -> Msg? uses sync {
+    ran.with(fn(var l) { l.push(c) })
+    if let Some(id) = c.cut_prefix("star:") { Some(Msg.Star(id: id)) } else { None }
+  })
+  let h = host(todo_app(), commands: cm)
+  let no_b = fn(_m: Model, _p: Str, msg: Msg) -> Bool { msg != Msg.Add(id: "b", title: "b") }
+  let up = Up{client: "c1", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "a", title: "a")}, Envelope{seq: 2, msg: Msg.Add(id: "b", title: "b")}, Envelope{seq: 3, msg: Msg.Reserve(who: "ann")}, Envelope{seq: 4, msg: Msg.Reserve(who: "ann")}]}
+  let sl = h.slot("")
+  let out = Chan[Result[Down[Model, Msg]?, Str]].new(cap: 1)
+  sl.queue.with(fn(var q) { q.push(Waiting{change: Change{principal: "ann", run: fn(var s: Server[Model, Msg]) -> Down[Model, Msg]? { s.receive_as(up, "ann", no_b) }}, out: out}) })
+  h.write_queued("", sl)
+  expect(out.recv()?.is_ok()) == true
+  var i = 0
+  while h.commands_running() > 0 && i < 5000 {
+    os.clock.sleep(1ms)
+    i += 1
+  }
+  expect(h.commands_running()) == 0
+  expect(ran.with_read(fn(l) { l.sort() })) == ["seat:ann", "star:a"]
+  // the star came back as a server Msg every replica sees
+  expect(h.model().todos.get("a")?.stars) == 1
+  expect(h.model().todos.contains("b")) == false
+  expect(sl.state.with_read(fn(c) { c.s.log[c.s.log.len() - 1].client })) == SERVER_CLIENT
+  // a Msg the server applies plans its commands too
+  h.apply(Msg.Add(id: "c", title: "c"))
+  i = 0
+  while h.commands_running() > 0 && i < 5000 {
+    os.clock.sleep(1ms)
+    i += 1
+  }
+  expect(h.model().todos.get("c")?.stars) == 1
+  expect(ran.with_read(fn(l) { l.len() })) == 3
+}
+
+test "two Hosts on one store run each command once, after a lost race too" {
+  let st = memory_store()
+  let ran = Mutex[List[Str]].new([])
+  let cm = commands(os.tasks, todo_commands, fn(c: Str) -> Msg? uses sync {
+    ran.with(fn(var l) { l.push(c) })
+    if let Some(id) = c.cut_prefix("star:") { Some(Msg.Star(id: id)) } else { None }
+  })
+  // each on a bus of its own: b's copy goes stale and loses a race
+  let a = host_with(todo_app(), st, local_bus(), commands: cm)
+  let b = host_with(todo_app(), st, local_bus(), commands: cm)
+  let settle = fn() uses (sync, clock) {
+    var i = 0
+    while cm.running.get() > 0 && i < 5000 {
+      os.clock.sleep(1ms)
+      i += 1
+    }
+  }
+  b.apply(Msg.Add(id: "y", title: "y"))
+  settle()
+  a.apply(Msg.Add(id: "x", title: "x"))
+  settle()
+  b.apply(Msg.Add(id: "z", title: "z"))
+  settle()
+  expect(b.slot("").state.with_read(fn(c) { c.lost }) >= 1) == true
+  expect(ran.with_read(fn(l) { l.sort() })) == ["star:x", "star:y", "star:z"]
+  var sc = scope(todo_app(), st)
+  sc.catch_up()?
+  let m = sc.model()
+  expect((m.todos.get("x")?.stars, m.todos.get("y")?.stars, m.todos.get("z")?.stars)) == (1, 1, 1)
+}

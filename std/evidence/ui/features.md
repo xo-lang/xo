@@ -49,7 +49,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] the view is patched in place, keeping nodes and focus | 0659 | `internal/uiruntime/runtime_test.go:TestMorphKeepsNodes`
 - [x] a new build reloads once the queue drains | 0659 | `internal/uiruntime/runtime_test.go:TestNewBuildReloadsAfterQueue`
 - [x] opening the socket syncs | 0659 | `internal/uiruntime/runtime_test.go:TestSocketOpenSyncs`
-- [x] browser measurement (bundle size, time to resume) | 0659 | `std/evidence/ui/browser.md` (headless Chrome, ui-todo: 104 KB cold, resume 7 ms unthrottled and 866 ms on slow 4G; no size guard yet)
+- [x] browser measurement (bundle size, time to resume) | 0659 | `std/evidence/ui/browser.md` (headless Chrome, ui-todo: 104 KB cold, resume 7 ms unthrottled and 866 ms on slow 4G; size guard `cmd/xo:TestUIClientSize`)
 
 ## Client in wasm (0659 stage 3, 0663)
 
@@ -70,7 +70,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] redact shapes the page and every sync, with no log entries | 0664 | `std/ui_test.xo:redact shapes the page and every sync, and no log entries are sent`
 - [x] with redact, a sync answers same while the view is unchanged | 0664 | `std/ui_test.xo:with redact, a sync answers same while the principal's view did not change`
 - [x] with redact, a live connection hears only of its own view | 0664 | `std/ui_test.xo:with redact, a live connection hears only of changes to its own view`
-- [ ] commands: update returns server commands whose results come back as Msgs | 0664 stage 4b | not built
+- [x] commands: Msgs plan server commands whose results come back as Msgs | 0664 stage 4b, 0692 | "a command runs once for each Msg the host commits, planned from the model before it, and a refused Msg plans none"; "two Hosts on one store run each command once, after a lost race too"
 - [ ] `server` fields never sent to a client | 0659 point 5, 0664 stage 4b | not built (redact blanks fields for now)
 - [ ] query subscriptions (partial replication) | 0659 stage 4, 0664 stage 4c | not built
 
