@@ -681,3 +681,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0687](0687-http2-extended-connect.md): Accepted (owner, 2026-11-16): HTTP/2 extended CONNECT (RFC 8441) off by default as Go's, a tunnel handler started at HEADERS for those streams only, and std/websocket over it; changes 0121 and 0313
 - [0688](0688-wasm-reactor-exports.md): wasm library builds are WASI reactors with `as c` exports (Accepted, owner 2026-11-16)
 - [0689](0689-ui-live-push-views.md): Accepted (owner, 2026-11-16): std/ui live pages get the new view over their socket (push=1), rendered once per version and view for all of its pages, instead of a sync request each
+- [0692](0692-ui-commands.md): Proposed (xo-4c, 2026-11-17): std/ui commands, side effects a committed Msg asks for, run once on the instance that committed it, their results back as server Msgs
