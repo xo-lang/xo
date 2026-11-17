@@ -266,8 +266,13 @@ Step 2a (the checker and the prelude, this push):
   variable closed to `()` and a value whose methods use rand was refused
   as a `Rand[()]`.
 - Checker: a closure's `uses` admits its enclosing function's omitted
-  effect arguments (compiler/check/expr.xo), which no `uses` list can
-  name (core 6.2's rule for the function itself).
+  effect arguments of a capability (`r: Rand`, `c: Clock`, ...;
+  compiler/check/expr.xo), which no `uses` list can name (core 6.2's
+  rule for the function itself). Another generic's omitted argument
+  (`req: Request`) stays an XO0701 the closure must declare (decision
+  0522): c4873ddcc admitted every omitted argument and silenced the
+  habits closure-effect-threaded and codex-elided-effect (TestHabitGolden),
+  narrowed 2026-11-16.
 - XO0701 note when the missing label came from the value passed for an
   omitted capability argument: "pass a `Rand[()]` ... to keep the caller
   pure" (effects.xo capability_value_note).

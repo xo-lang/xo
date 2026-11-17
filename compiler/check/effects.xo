@@ -335,13 +335,23 @@ fn (var c: Checker) capability_value_note(d: Int, sub: Flat, sup: Flat) {
     if !o.flags.elided() || !o.flags.effect() || o.elided_from.is_empty() {
       continue
     }
-    let from = o.elided_from[0]
-    if !(from.text is "Rand" | "Clock" | "Env" | "Fs" | "Net" | "Stdio" | "Proc") {
+    if !c.capability_elided(q) {
       continue
     }
+    let from = o.elided_from[0]
     c.diags[d].notes.push(DNote{message: "`${l}` comes from the value passed for this `${from.text}`, whose effect argument is left out: the callee performs what the value performs; pass a `${from.text}[()]` (a seeded or fixed one) to keep the caller pure (decision 0652)", span: Some(JSpan{file: from.file, line: from.at.start.line, col: from.at.start.col})})
     return
   }
+}
+
+/// Whether effect parameter object p was elided from a capability type
+/// (`r: Rand`, `c: Clock`: decision 0652), not from another generic.
+fn (c: Checker) capability_elided(p: Int) -> Bool {
+  let o = c.objs[p]
+  if o.elided_from.is_empty() {
+    return false
+  }
+  o.elided_from[0].text is "Rand" | "Clock" | "Env" | "Fs" | "Net" | "Stdio" | "Proc"
 }
 
 /// A new effect set (an index into esets).

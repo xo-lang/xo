@@ -2259,10 +2259,11 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
   }
   var eff = cx.eff
   if declared >= 0 {
-    // the enclosing function's omitted effect arguments (a `r: Rand`
-    // parameter's, decision 0652) are allowed: no `uses` list can name
-    // them, and the function itself performs them without naming them
-    // (core 6.2)
+    // the enclosing function's omitted effect arguments of a capability
+    // (a `r: Rand` parameter's, decision 0652) are allowed: the function
+    // itself performs them without naming them (core 6.2). Another
+    // generic's (`req: Request`) stays an error the closure must declare
+    // (decision 0522; habits closure-effect-threaded, codex-elided-effect)
     var k = saved_ctx
     while k >= 0 && c.ctxs[k].fn_obj < 0 && c.ctxs[k].closure {
       k = c.ctxs[k].parent
@@ -2270,7 +2271,7 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
     if k >= 0 && c.ctxs[k].fn_obj >= 0 {
       var extra: List[EffItem] = []
       for p in c.objs[c.ctxs[k].fn_obj].tparams {
-        if c.objs[p].flags.elided() && c.objs[p].flags.effect() {
+        if c.objs[p].flags.elided() && c.objs[p].flags.effect() && c.capability_elided(p) {
           extra.push(EffItem{param: p})
         }
       }
