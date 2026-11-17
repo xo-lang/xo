@@ -771,7 +771,7 @@ func race(args []string) error {
 			// goroutine's), so the program's own memory check is not this
 			// kind's: memory is the stress kind's, and the task churn
 			// below compares the growth per task with Go's
-			memOnly := err != nil && strings.HasSuffix(last, ", FAIL (memory grew)") && strings.Contains(last, " 0 mismatches")
+			memOnly := err != nil && raceMemOnly(last)
 			// only with the task churn in this run to judge memory per
 			// task instead (lead, 2026-11-13: else a race-build leak
 			// would pass unseen)
@@ -1510,6 +1510,20 @@ func serverPerf(args []string) error {
 // stress program, 2026-11-15: "FAIL (memory grew)" then "error: memory
 // grew 12.7%", so a race run read the error line and failed on memory
 // growth that decision 0616 section 2a leaves to the task churn).
+// cleanCount: a stress summary's zero wrong-result count. Decision 0616
+// names it "0 mismatches"; std/dns's stress program says "0 wrong
+// answers" and std/smtp's "0 wrong results" (2026-11-17: dns's race
+// evidence failed on memory alone, the exemption below not seeing a
+// clean count).
+var cleanCount = regexp.MustCompile(` 0 (mismatches|wrong [a-z]+)[,)]`)
+
+// raceMemOnly: a stress summary under --race that failed on memory alone
+// (every result right), which the task churn judges instead (decision
+// 0616 section 2a).
+func raceMemOnly(last string) bool {
+	return strings.HasSuffix(last, ", FAIL (memory grew)") && cleanCount.MatchString(last)
+}
+
 func summaryLine(text string) string {
 	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {

@@ -99,6 +99,28 @@ func TestPerfOwner(t *testing.T) {
 
 // TestSummaryLine: a stress program that returns Err prints its summary,
 // then main's "error: ..." line; the race kind judges the summary.
+// TestRaceMemOnly: a stress program under --race that failed on memory
+// alone, with every result right, is judged by the task churn, whatever
+// its summary calls the count (2026-11-17: dns's "0 wrong answers" failed
+// its race evidence on memory).
+func TestRaceMemOnly(t *testing.T) {
+	for _, c := range []struct {
+		line string
+		want bool
+	}{
+		{"bufio stress: 9 operations by 64 tasks in 10 min, 0 mismatches, rss 1 MB, FAIL (memory grew)", true},
+		{"dns stress: 39309508 lookups by 64 clients in 10 min, 0 wrong answers, rss 204 MB at the mark, 273 MB at the end (34.0%), peak 273 MB, FAIL (memory grew)", true},
+		{"smtp stress: 5 sends by 64 clients in 10 min (1 MB of bodies taken), 0 wrong results, rss 3 MB, FAIL (memory grew)", true},
+		{"bufio stress: 9 operations by 64 tasks in 10 min, 10 mismatches, rss 1 MB, FAIL (memory grew)", false},
+		{"dns stress: 9 lookups by 64 clients in 10 min, 3 wrong answers, rss 1 MB, FAIL (memory grew)", false},
+		{"dns stress: 9 lookups by 64 clients in 10 min, 0 wrong answers, rss 1 MB, pass", false},
+	} {
+		if got := raceMemOnly(c.line); got != c.want {
+			t.Errorf("raceMemOnly(%q) = %v, want %v", c.line, got, c.want)
+		}
+	}
+}
+
 func TestSummaryLine(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{"a\ncrc32 stress: 1 operations, 0 mismatches, rss 1 MB, FAIL (memory grew)\nerror: memory grew 12.6%", "crc32 stress: 1 operations, 0 mismatches, rss 1 MB, FAIL (memory grew)"},
