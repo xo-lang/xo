@@ -1393,7 +1393,7 @@ pub struct PageState[M] {
 /// for the client runtime at runtime_src, which syncs with sync_url and,
 /// when live_url is not "", listens there for new versions. css,
 /// if any, goes in a `<style>` element in the head.
-pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "", query: Str = "", user: Str = "", uver: Int = 0) -> Str {
+pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", runtime_src: Str = "/_xo/ui.js", sync_url: Str = "/_xo/sync", css: Str = "", live_url: Str = "", wasm_url: Str = "", build: Str = "", seen: Str = "", query: Str = "", user: Str = "", uver: Int = 0, subset: Bool = false) -> Str {
   var b = BytesBuilder.new()
   b.write_str("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>")
   b.write_str(html.escape_string(title))
@@ -1428,6 +1428,11 @@ pub fn page[M: Json, E](app: App[M, E], model: M, ver: Int, title: Str = "", run
   if seen != "" {
     b.write_str("\" data-xo-seen=\"")
     b.write_str(html.escape_string(seen))
+  }
+  if subset {
+    // the model is the part this query subscribes to: another query is
+    // another part, fetched, not rendered from this one
+    b.write_str("\" data-xo-subset=\"")
   }
   b.write_str("\">")
   write_html(b, app.show(model, query, user: if user == "" { None } else { Some(user) }))
@@ -1737,6 +1742,9 @@ pub struct Host[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Eff
   auth: (fn(http.Request) -> Str? uses sync)?
   allow: (fn(M, Str, E) -> Bool)?
   redact: (fn(M, Str) -> M)?
+  // Decision 0659 point 5 (query subscriptions): the part of the model a
+  // page with this query replicates, after redact; None for all of it.
+  subset: (fn(M, url.Values) -> M)?
   // Where a page request without a principal is sent (303), "" for 401.
   signin_url: Str
   // The log entries kept (Server.compact once the log holds twice as
@@ -1806,12 +1814,12 @@ struct Waiting[M: Json, E: Json] {
 /// A host for app starting at app.init: one instance, its log in memory.
 /// scope_of puts each page in a scope of its own (a room, a tenant, a
 /// user), of which the instance keeps at most max_scopes.
-pub fn host[M: Json, E: Json, cx: Effects](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, commands: Commands[M, E, cx]? = None) -> Host[M, E, sync, sync, sync, cx] {
+pub fn host[M: Json, E: Json, cx: Effects](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, commands: Commands[M, E, cx]? = None, subset: (fn(M, url.Values) -> M)? = None) -> Host[M, E, sync, sync, sync, cx] {
   let subs = Mutex[Map[Int, Sub]].new({})
   let slots = Mutex[Map[Str, Slot[M, E, sync]]].new({})
   let uslots = Mutex[Map[Str, Slot[Str, Str, sync]]].new({})
   let bus = local_bus_of([waker(slots, uslots, subs)])
-  host_core(app, memory_store(), bus, "", scope_of, max_scopes, slots, uslots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {commands: commands}
+  host_core(app, memory_store(), bus, "", scope_of, max_scopes, slots, uslots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep, subset) with {commands: commands}
 }
 
 /// A host whose scopes live in store, hearing other instances' appends on
@@ -1819,12 +1827,12 @@ pub fn host[M: Json, E: Json, cx: Effects](app: App[M, E], title: Str = "", css:
 /// behind a load balancer. `scope` is the scope of every page without
 /// scope_of. The Host performs what the store and bus perform (a memory
 /// store: sync; a networked one: net).
-pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, lease: Lease[lx]? = None, commands: Commands[M, E, cx]? = None) -> Host[M, E, fx, bx, lx, cx] uses bx {
+pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "", title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"", auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000, scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, lease: Lease[lx]? = None, commands: Commands[M, E, cx]? = None, subset: (fn(M, url.Values) -> M)? = None) -> Host[M, E, fx, bx, lx, cx] uses bx {
   let subs = Mutex[Map[Int, Sub]].new({})
   let slots = Mutex[Map[Str, Slot[M, E, fx]]].new({})
   let uslots = Mutex[Map[Str, Slot[Str, Str, fx]]].new({})
   (bus.subscribe)(waker(slots, uslots, subs))
-  host_core(app, store, bus, scope, scope_of, max_scopes, slots, uslots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep) with {lease: lease, commands: commands}
+  host_core(app, store, bus, scope, scope_of, max_scopes, slots, uslots, subs, title, css, max_batch, client, auth, allow, redact, signin_url, keep, subset) with {lease: lease, commands: commands}
 }
 
 // What a Host hears from its bus: each instance's append (this one's
@@ -1875,11 +1883,11 @@ fn waker[M: Json, E: Json, fx: Effects](slots: Mutex[Map[Str, Slot[M, E, fx]]], 
   }
 }
 
-fn host_core[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], uslots: Mutex[Map[Str, Slot[Str, Str, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int) -> Host[M, E, fx, bx, lx, cx] {
+fn host_core[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], st: Store[fx], b: Bus[bx], scope: Str, scope_of: (fn(Str, Str) -> Str?)?, max_scopes: Int, slots: Mutex[Map[Str, Slot[M, E, fx]]], uslots: Mutex[Map[Str, Slot[Str, Str, fx]]], subs: Mutex[Map[Int, Sub]], title: Str, css: Str, max_batch: Int, client: Bytes, auth: (fn(http.Request) -> Str? uses sync)?, allow: (fn(M, Str, E) -> Bool)?, redact: (fn(M, Str) -> M)?, signin_url: Str, keep: Int, subset: (fn(M, url.Values) -> M)?) -> Host[M, E, fx, bx, lx, cx] {
   if app.user.is_some() && auth.is_none() {
     fault("std/ui: App.with_user needs auth: each principal's state is its own")
   }
-  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0), lease: None, commands: None, uslots: uslots}
+  Host{app: app, store: st, bus: b, key: scope, scope_of: scope_of, max_batch: max_batch, slots: slots, max_scopes: if max_scopes < 1 { 1 } else { max_scopes }, tick: Atomic[Int].new(0), auth: auth, allow: allow, redact: redact, subset: subset, signin_url: signin_url, keep: if keep < 0 { 0 } else { keep }, title: title, css: css, client: client, client_gz: if client.is_empty() { b"" } else { compress.gzip(client, compress.Level.BestCompression) }, client_tag: if client.is_empty() { "" } else { "\"" + crypto.sha256(client).to_hex()[..32] + "\"" }, subs: subs, next_sub: Atomic[Int].new(0), lease: None, commands: None, uslots: uslots}
 }
 
 // A live connection: its principal, its scope and its channel.
@@ -1907,7 +1915,7 @@ fn (h: Host[M, E, fx, bx, lx, cx]) slot(key: Str) -> Slot[M, E, fx] {
 }
 
 // The slot of p's own state (App.with_user), as slot.
-fn (h: Host[M, E, fx, bx, lx]) uslot(p: Str) -> Slot[Str, Str, fx] {
+fn (h: Host[M, E, fx, bx, lx, cx]) uslot(p: Str) -> Slot[Str, Str, fx] {
   let key = USER_SCOPE + p
   let t = h.tick.add(1)
   if let Some(sl) = h.uslots.with_read(fn(m) { m.get(key) }) {
@@ -1960,20 +1968,33 @@ fn (h: Host[M, E]) held() -> Int {
   h.slots.with_read(fn(m) { m.len() })
 }
 
-fn (h: Host[M, E]) shown(m: M, p: Str) -> M {
-  match h.redact {
+// What p is shown of m on a page with query q: redact's part for p, then
+// the subset q subscribes to.
+fn (h: Host[M, E]) shown(m: M, p: Str, q: Str = "") -> M {
+  let r = match h.redact {
     Some(f) => f(m, p)
     None => m
   }
+  match h.subset {
+    Some(f) => f(r, url.parse_query(q).ok() ?? url.values())
+    None => r
+  }
 }
 
-// The digest of what p is shown of m, "" without redact (then every
-// version is news to every viewer).
-fn (h: Host[M, E]) digest(m: M, p: Str) -> Str {
-  match h.redact {
-    Some(f) => crypto.sha256(json.encode_str(f(m, p)).bytes()).to_hex()[..16]
-    None => ""
+// Whether a viewer sees less than the whole model (redact or subset):
+// then a sync sends no log entries and a version is news to a viewer
+// only when its part changed.
+fn (h: Host[M, E]) shaped() -> Bool {
+  h.redact.is_some() || h.subset.is_some()
+}
+
+// The digest of what p is shown of m with query q, "" without redact or
+// subset (then every version is news to every viewer).
+fn (h: Host[M, E]) digest(m: M, p: Str, q: Str = "") -> Str {
+  if !h.shaped() {
+    return ""
   }
+  crypto.sha256(json.encode_str(h.shown(m, p, q: q)).bytes()).to_hex()[..16]
 }
 
 fn (h: Host[M, E]) subscribe(p: Str = "", scope: Str? = None) -> (Int, Chan[Int]) {
@@ -1992,11 +2013,11 @@ fn (h: Host[M, E]) subscribe(p: Str = "", scope: Str? = None) -> (Int, Chan[Int]
 // Each connection asks in its own task, so a change costs the request
 // that made it one send per connection, and the digests run outside every
 // lock.
-fn (h: Host[M, E]) news(p: Str, last: Str, key: Str? = None) -> Str? {
-  if h.redact.is_none() {
+fn (h: Host[M, E]) news(p: Str, last: Str, key: Str? = None, q: Str = "") -> Str? {
+  if !h.shaped() {
     return Some("")
   }
-  let d = h.digest(h.model(scope: key), p)
+  let d = h.digest(h.model(scope: key), p, q: q)
   if d == last { None } else { Some(d) }
 }
 
@@ -2451,7 +2472,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
   let hh = h
   let auth = h.auth
   let allow = h.allow
-  let redact = h.redact
+  let shaped = h.shaped()
   let signin = h.signin_url
   // The principal of req: "" without auth, None when auth refuses it.
   let who = fn(req: http.Request) -> Str? uses sync {
@@ -2460,7 +2481,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       None => Some("")
     }
   }
-  let shown = fn(m: M, p: Str) -> M { hh.shown(m, p) }
+  let shown = fn(m: M, p: Str, q: Str) -> M { hh.shown(m, p, q: q) }
   let show_page = fn(req: http.Request) -> http.Response ! Never {
     let p = match who(req) {
       Some(x) => x
@@ -2490,9 +2511,10 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     if err != "" {
       return http.text(503, "std/ui: ${err}")
     }
-    let m = shown(m0, p)
+    let rq = req.url.to_url().raw_query
+    let m = shown(m0, p, rq)
     let (us, uv) = if app.user.is_some() { hh.user_state(p) } else { ("", 0) }
-    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync + named, css: css, live_url: live + named, wasm_url: wasm, build: build, seen: hh.digest(m0, p), query: req.url.to_url().raw_query, user: us, uver: uv)).with_header("Content-Type", "text/html; charset=utf-8")
+    http.text(200, page(app, m, v, title: title, runtime_src: js, sync_url: sync + named, css: css, live_url: live + named, wasm_url: wasm, build: build, seen: hh.digest(m0, p, q: rq), query: rq, user: us, uver: uv, subset: hh.subset.is_some())).with_header("Content-Type", "text/html; charset=utf-8")
   }
   r.handle("GET ${prefix}/{$}", show_page)
   if h.scope_of.is_some() {
@@ -2541,7 +2563,7 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let uu = up.user ?? UserUp{ver: -1, msgs: []}
     if app.user.is_some() {
       let mnow = sl.state.with_read(fn(c) { c.model() })
-      let (d, es) = match hh.user_sync(p, up.client, uu, shown(mnow, p)) {
+      let (d, es) = match hh.user_sync(p, up.client, uu, shown(mnow, p, up.query)) {
         Ok(Some(x)) => x
         Ok(None) => return http.text(403, "std/ui: this client belongs to another principal")
         Err(e) => return http.text(503, "std/ui: ${e}")
@@ -2596,11 +2618,12 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
       Err(e) => return http.text(503, "std/ui: ${e}")
     }
     let d = dd ?? return http.text(403, "std/ui: this client belongs to another principal")
-    let m = shown(m0, p)
-    // with redact a log entry may hold what this principal must not see
-    let down = if req.query("thin") == Some("1") || redact.is_some() { Down{acked: d.acked, reset: None, entries: [], refused: d.refused} } else { d }
+    let m = shown(m0, p, up.query)
+    // with redact a log entry may hold what this principal must not see,
+    // and with a subset what this page did not subscribe to
+    let down = if req.query("thin") == Some("1") || shaped { Down{acked: d.acked, reset: None, entries: [], refused: d.refused} } else { d }
     let with_model = if req.query("model") == Some("1") { Some(m) } else { None }
-    let seen = hh.digest(m0, p)
+    let seen = hh.digest(m0, p, q: up.query)
     let user_same = match ud {
       Some(u) => uu.msgs.is_empty() && uu.ver == u.ver
       None => true
@@ -2629,8 +2652,9 @@ pub fn (h: Host[M, E]) mount(var r: http.Router, prefix: Str = "") {
     let key = hh.scope_for(req.query("page") ?? "", p) ?? return http.text(404, "std/ui: no such page")
     // a thin page asks for the view itself (push=1, with its query q),
     // others for the version, then sync
-    let push: Str? = if req.query("push") == Some("1") { Some(req.query("q") ?? "") } else { None }
-    websocket.upgrade(req, fn(conn) { serve_live(hh, conn, p, key, push: push, build: build) })
+    let q = req.query("q") ?? ""
+    let push: Str? = if req.query("push") == Some("1") { Some(q) } else { None }
+    websocket.upgrade(req, fn(conn) { serve_live(hh, conn, p, key, push: push, build: build, q: q) })
   })
 }
 
@@ -2653,7 +2677,7 @@ fn (h: Host[M, E]) frame(key: Str, p: Str, q: Str, build: Str) -> Str {
     let _ok = c.fresh(latest, again: again).is_ok()
     (c.model(), c.version())
   })
-  let seen = h.digest(m0, p)
+  let seen = h.digest(m0, p, q: q)
   // with App.with_user the view is p's own at its state's version
   let (us, uv) = if h.app.user.is_some() { h.user_state(p) } else { ("", 0) }
   let vk = if h.app.user.is_some() { "${q}\n${seen}\n${p}\n${uv}" } else { "${q}\n${seen}" }
@@ -2679,7 +2703,7 @@ fn (h: Host[M, E]) frame(key: Str, p: Str, q: Str, build: Str) -> Str {
         return f.text
       }
     }
-    let text = json.encode_str(Push{ver: v, html: render(app.show(h.shown(m0, p), q, user: if app.user.is_some() { Some(us) } else { None })), seen: seen, build: build, q: q, uver: uv})
+    let text = json.encode_str(Push{ver: v, html: render(app.show(h.shown(m0, p, q: q), q, user: if app.user.is_some() { Some(us) } else { None })), seen: seen, build: build, q: q, uver: uv})
     if fs.len() >= 256 {
       fs = {}
     }
@@ -2692,12 +2716,12 @@ fn (h: Host[M, E]) frame(key: Str, p: Str, q: Str, build: Str) -> Str {
 // client syncs when it sees one past its own. With push (the page's
 // query), each new version comes as its view (a Push), so the page need
 // not sync (decision 0689). Reads only to notice the close.
-fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str, key: Str, push: Str? = None, build: Str = "") {
+fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str, key: Str, push: Str? = None, build: Str = "", q: Str = "") {
   let (id, ch) = h.subscribe(p, scope: Some(key))
   defer h.unsubscribe(id)
   // the digest after subscribing: a change in between is seen again and
   // skipped if this view already holds it (the page syncs on open)
-  let first = h.digest(h.model(scope: Some(key)), p)
+  let first = h.digest(h.model(scope: Some(key)), p, q: q)
   let now = h.version_of(key)
   if conn.write_text("${now}") is Err(_) {
     return
@@ -2718,7 +2742,7 @@ fn serve_live[M: Json, E: Json](h: Host[M, E], conn: websocket.WsConn, p: Str, k
           continue
         }
         // with redact, only a change to what p is shown
-        if let Some(d) = h.news(p, last, key: Some(key)) {
+        if let Some(d) = h.news(p, last, key: Some(key), q: q) {
           last = d
           // after a resync (-1) the version is this instance's once it has
           // read the store (model() does), which the runtime syncs to
@@ -2807,6 +2831,9 @@ function boot(){
   var ws=null,wsUp=false,backoff=1000,tick=0;
   var st=JSON.parse(stEl.textContent);
   var wasmUrl=root.getAttribute("data-xo-wasm");
+  // a query subscription (Host subset): this page holds only its query's
+  // part of the model
+  var subset=root.hasAttribute("data-xo-subset");
   var build=root.getAttribute("data-xo-build")||"",stale=false;
   function editing(){var a=document.activeElement;return !!(a&&root.contains(a)&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")&&a.value!=="");}
   var mod=null,confirmed=st.model;
@@ -2958,7 +2985,7 @@ function boot(){
   function connect(){
     if(!live||!window.WebSocket)return;
     // a thin page is sent each new view (decision 0689)
-    var lu=live+(wasmUrl?"":(live.indexOf("?")<0?"?":"&")+"push=1&q="+encodeURIComponent(location.search.slice(1)));
+    var lu=live+(live.indexOf("?")<0?"?":"&")+(wasmUrl?"":"push=1&")+"q="+encodeURIComponent(location.search.slice(1));
     try{ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+lu);}catch(e){return;}
     ws.onopen=function(){wsUp=true;backoff=1000;sync();};// catch up on what changed while the socket was down
     ws.onmessage=function(ev){
@@ -3004,7 +3031,7 @@ function boot(){
   // client loaded, the view for it is rendered here, without a fetch; the
   // server would render the same from the same model
   stop.path=location.pathname;
-  stop.local=function(search){return predict(search.replace(/^\?/,""));};
+  stop.local=function(search){return !subset&&predict(search.replace(/^\?/,""));};
   return stop;
 }
 var cur=boot();

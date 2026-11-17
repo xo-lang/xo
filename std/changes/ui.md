@@ -44,6 +44,20 @@ on the instance that committed it, and applies a command's answer as a
 server Msg. Refused Msgs plan none; an instance that loses an append race
 does not run the winner's commands. At most once.
 
+## 2026-11-17: feature: query subscriptions (host(subset:))
+
+- Kind: feature
+- Commit: this push
+- Found by: task #186 (std/evidence/ui/features.md item 75; decision 0694)
+- Go reference: none
+- Test: std/ui "a subset sends each page only the part of the model its query subscribes to (decision 0659 point 5)", "subset applies after redact: a principal's page holds its own part of its query"
+- Timing: none (a host without subset sends and does what it did)
+- Shipped in: not yet released
+
+`host(subset: fn(M, url.Values) -> M)` sends each page only the part of
+the model its query asks for; a change to another part wakes no live
+page and answers its syncs `same`.
+
 ## 2026-11-17: feature: the wasm client predicts user acts
 
 - Kind: feature

@@ -72,7 +72,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] with redact, a live connection hears only of its own view | 0664 | `std/ui_test.xo:with redact, a live connection hears only of changes to its own view`
 - [x] commands: Msgs plan server commands whose results come back as Msgs | 0664 stage 4b, 0692 | "a command runs once for each Msg the host commits, planned from the model before it, and a refused Msg plans none"; "two Hosts on one store run each command once, after a lost race too"
 - [ ] `server` fields never sent to a client | 0659 point 5, 0664 stage 4b | not built (redact blanks fields for now); the last of the std Proven work, task #200: the owner picks std only server state for commands or the compiler modifier (owner 2026-11-17)
-- [ ] query subscriptions (partial replication) | 0659 stage 4, 0664 stage 4c | not built
+- [x] query subscriptions (partial replication) | 0659 stage 4, 0664 stage 4c, 0694 | `host(subset:)`; std/ui tests "a subset sends each page only the part of the model its query subscribes to (decision 0659 point 5)", "subset applies after redact: a principal's page holds its own part of its query"
 
 ## Pages (0668, 0670)
 

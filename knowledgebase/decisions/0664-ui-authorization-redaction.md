@@ -79,6 +79,7 @@ Later stages, each its own decision:
   blanking by `redact`.
 - 4c: query subscriptions (partial replication) for models too large to
   send whole.
+  Built as `host(subset:)` (decision 0694, 2026-11-17).
 - Later: more than one server process (the log in a store), merge types
   (last writer wins, counters, text CRDTs), a compiler check that a view
   renders a confirmed Msg's pending state, the app shell cached for an

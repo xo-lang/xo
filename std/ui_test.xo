@@ -1654,6 +1654,75 @@ test "with redact, a live connection hears only of changes to its own view" {
   expect(host(todo_app()).news("x", "")) == Some("")
 }
 
+// a query subscription: a page with ?only=done holds the done todos, one
+// with ?only=open the open ones, one without either all of them
+fn by_only(m: Model, q: url.Values) -> Model {
+  let only = q.get("only") ?? ""
+  if only == "" {
+    return m
+  }
+  var n = m
+  n.todos = {}
+  for (id, t) in m.todos.entries() {
+    if (only == "done") == t.done {
+      n.todos.put(id, t)
+    }
+  }
+  n
+}
+
+test "a subset sends each page only the part of the model its query subscribes to (decision 0659 point 5)" {
+  let h = host(todo_app(), subset: Some(by_only))
+  let r = routes_for(h)
+  h.apply(Msg.Add(id: "a", title: "milk"))
+  h.apply(Msg.Add(id: "b", title: "eggs"))
+  h.apply(Msg.Toggle(id: "b"))
+  // the page's state holds the subscribed part only, and says so
+  let done = r.call(http.new_request("GET", "/?only=done")).text() ?? ""
+  expect(done.contains("eggs")) == true
+  expect(done.contains("milk")) == false
+  expect(done.contains("data-xo-subset")) == true
+  let all = r.call(http.new_request("GET", "/")).text() ?? ""
+  expect(all.contains("eggs") && all.contains("milk")) == true
+  // a sync's model is the part, and no log entries are sent (they hold
+  // every Msg)
+  let up = json.encode_str(Up[Msg]{client: "c", ver: 0, msgs: [], query: "only=open"})
+  let resp = r.call(http.new_request("POST", "/_xo/sync?model=1", headers: {"Content-Type": "application/json"}, body: up.bytes()))
+  let s = json.decode_str[Sync[Model, Msg]](resp.text()?)?
+  expect(s.down.entries.len()) == 0
+  let m = s.model ?? return Err("no model")
+  expect(m.todos.keys()) == ["a"]
+  // a change outside the part is no news to the page: same, and its live
+  // connection is not told
+  let seen = s.seen
+  expect(seen.len()) == 16
+  let last = h.digest(h.model(), "", q: "only=open")
+  h.apply(Msg.Star(id: "b"))
+  let again = json.decode_str[Sync[Model, Msg]](r.call(http.new_request("POST", "/_xo/sync", headers: {"Content-Type": "application/json"}, body: json.encode_str(Up[Msg]{client: "c", ver: s.ver, msgs: [], seen: seen, query: "only=open"}).bytes())).text()?)?
+  expect(again.same) == true
+  expect(h.news("", last, q: "only=open")) == None
+  expect(h.news("", h.digest(h.model(), "", q: "only=done"), q: "only=done")) == None
+  h.apply(Msg.Toggle(id: "a"))
+  expect(h.news("", last, q: "only=open").is_some()) == true
+  // without a subset or redact a page is the whole model
+  let plain = routes_for(host(todo_app())).call(http.new_request("GET", "/")).text() ?? ""
+  expect(plain.contains("data-xo-subset")) == false
+}
+
+test "subset applies after redact: a principal's page holds its own part of its query" {
+  let h = host(todo_app(), auth: Some(auth_hdr), redact: Some(mine), subset: Some(by_only))
+  let r = routes_for(h)
+  h.apply(Msg.Add(id: "a", title: "ann milk"))
+  h.apply(Msg.Add(id: "b", title: "ann eggs"))
+  h.apply(Msg.Add(id: "c", title: "bob tea"))
+  h.apply(Msg.Toggle(id: "b"))
+  h.apply(Msg.Toggle(id: "c"))
+  let page = r.call(http.new_request("GET", "/?only=done", headers: {"X-User": "ann"})).text() ?? ""
+  expect(page.contains("ann eggs")) == true
+  expect(page.contains("ann milk")) == false
+  expect(page.contains("bob tea")) == false
+}
+
 // tab state: the view reads the page's query (decision 0672)
 fn filtered(m: Model, q: url.Values) -> Html {
   let only = q.get("only") ?? ""

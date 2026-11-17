@@ -11887,7 +11887,7 @@ fn (var r: Replica[M, E]) receive(d: Down[M, E])
 
 pub struct Sync[M, E] { pub down: Down[M, E], pub ver: Int, pub html: Str, pub model: M? = None, pub same: Bool = false, pub build: Str = "", pub seen: Str = "" }   // derive Json
 pub fn host[M: Json, E: Json, cx: Effects](app: App[M, E], title: Str = "", css: Str = "", max_batch: Int = 256, client: Bytes = b"",
-    auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, signin_url: Str = "", keep: Int = 10000,
+    auth: (fn(http.Request) -> Str? uses sync)? = None, allow: (fn(M, Str, E) -> Bool)? = None, redact: (fn(M, Str) -> M)? = None, subset: (fn(M, url.Values) -> M)? = None, signin_url: Str = "", keep: Int = 10000,
     scope_of: (fn(Str, Str) -> Str?)? = None, max_scopes: Int = 1000, commands: Commands[M, E, cx]? = None) -> Host[M, E, sync, sync, sync, cx]
 pub fn host_with[M: Json, E: Json, fx: Effects, bx: Effects, lx: Effects, cx: Effects](app: App[M, E], store: Store[fx], bus: Bus[bx], scope: Str = "",
     ...same options as host, lease: Lease[lx]? = None) -> Host[M, E, fx, bx, lx, cx] uses bx
@@ -12187,7 +12187,13 @@ fn (var c: Scope[M, E]) compact(keep: Int) -> () ! Str uses sync
   refused entry (it takes a version and leaves the model as it was) and
   counted in the reply's `refused`. `redact(model, principal)`, pure,
   shapes every model and view a principal receives (the page, a sync's
-  `model` and `html`); a host with `redact` sends no log entries. With
+  `model` and `html`); a host with `redact` sends no log entries.
+  `subset(model, query)`, pure (decision 0694), runs after `redact` with
+  the page's query: each page receives only the part of the model its
+  query asks for (the page, a sync, a live push), no log entries are
+  sent, the digest below is per principal and query, and the page's
+  root carries `data-xo-subset` (its runtime syncs on a query change
+  instead of rendering it locally). With
   `redact` each viewer's page and sync carry the digest of what that
   principal is shown (`data-xo-seen`, `Sync.seen`; a SHA-256 prefix of
   the redacted model's JSON), which the runtime sends back as `Up.seen`:
