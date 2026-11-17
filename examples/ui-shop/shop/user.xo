@@ -1,0 +1,151 @@
+// The ui-shop App with the cart in user state (decision 0672 plan step
+// 4): the shared model holds the catalog and the order count only; each
+// principal's cart is their own state (App.with_user), synced to every
+// device they sign in on and never sent to anyone else, so no redact and
+// no allow. A checkout is a shared Msg the cart's step emits, confirmed by
+// the server (stock is shared and limited).
+use std/ui
+use std/url
+
+pub struct Shared {
+  products: List[Product]
+  orders: Int
+} derive Eq, Json
+
+/// A shared Msg: an order of a cart, emitted by the principal's step.
+pub enum Order {
+  Place(cart: Map[Str, Int])
+} derive Eq, Json
+
+/// What a principal does to their own cart.
+pub enum CartAct {
+  Put(sku: Str)
+  Take(sku: Str)
+  Buy
+} derive Eq, Json
+
+fn shared_stock(m: Shared, sku: Str) -> Int {
+  for p in m.products {
+    if p.sku == sku {
+      return p.stock
+    }
+  }
+  0
+}
+
+fn fits(m: Shared, cart: Map[Str, Int]) -> Bool {
+  if cart.len() == 0 {
+    return false
+  }
+  for (sku, q) in cart.entries() {
+    if q > shared_stock(m, sku) {
+      return false
+    }
+  }
+  true
+}
+
+/// The shared step: an order takes the stock when it still fits (another
+/// principal's order may have taken it since the cart's step checked).
+pub fn order(m: Shared, msg: Order) -> Shared {
+  var n = m
+  match msg {
+    Place(cart) => {
+      if fits(n, cart) {
+        n.products = n.products.map(fn(p) {
+          var q = p
+          q.stock = p.stock - (cart.get(p.sku) ?? 0)
+          q
+        })
+        n.orders = n.orders + 1
+      }
+    }
+  }
+  n
+}
+
+/// The principal's step: a cart is bounded by the stock the page showed;
+/// Buy empties it and emits the order.
+pub fn cart_step(m: Shared, cart: Map[Str, Int], act: CartAct) -> (Map[Str, Int], List[Order]) {
+  var c = cart
+  match act {
+    Put(sku) => {
+      let have = c.get(sku) ?? 0
+      if have < shared_stock(m, sku) {
+        c.put(sku, have + 1)
+      }
+    }
+    Take(sku) => {
+      let have = c.get(sku) ?? 0
+      if have <= 1 {
+        c.remove(sku)
+      } else {
+        c.put(sku, have - 1)
+      }
+    }
+    Buy => {
+      if fits(m, c) {
+        return ({}, [Order.Place(cart: c)])
+      }
+    }
+  }
+  (c, [])
+}
+
+fn order_waits(msg: Order) -> Bool {
+  match msg {
+    Place(_) => true
+  }
+}
+
+fn catalog_view(m: Shared) -> ui.Html {
+  ui.el("p", [], [ui.text("orders: ${m.orders}")])
+}
+
+/// The page: the catalog filtered and sorted by the query (tab state), the
+/// principal's cart, the shared order count.
+pub fn cart_view(m: Shared, cart: Map[Str, Int], q: url.Values) -> ui.Html {
+  let tag = q.get("tag") ?? ""
+  var shown = m.products.filter(fn(p) { tag == "" || p.tag == tag })
+  if q.get("sort") == Some("price") {
+    shown = shown.sort_by(fn(p) { p.price })
+  }
+  var rows: List[ui.Html] = []
+  for p in shown {
+    rows.push(ui.el("li", [ui.attr("data-tag", p.tag)], [
+      ui.el("span", [], [ui.text("${p.name} $${p.price} (${p.stock} left)")]),
+      ui.el("button", [ui.on_user("click", CartAct.Put(sku: p.sku))], [ui.text("add")]),
+    ]))
+  }
+  var lines: List[ui.Html] = []
+  var total = 0
+  for p in m.products {
+    let n = cart.get(p.sku) ?? 0
+    if n > 0 {
+      total = total + n * p.price
+      lines.push(ui.el("li", [], [
+        ui.text("${n} x ${p.name}"),
+        ui.el("button", [ui.on_user("click", CartAct.Take(sku: p.sku))], [ui.text("-")]),
+      ]))
+    }
+  }
+  ui.el("main", [], [
+    ui.el("h1", [], [ui.text("Shop")]),
+    ui.el("nav", [ui.attr("class", "filters")], [link(q, "tag", "", "all"), link(q, "tag", "drink", "drinks"), link(q, "tag", "kitchen", "kitchen"), ui.text(" | "), link(q, "sort", "", "by name"), link(q, "sort", "price", "by price")]),
+    ui.el("ul", [ui.attr("class", "catalog")], rows),
+    ui.el("h2", [], [ui.text("Your cart")]),
+    ui.el("ul", [ui.attr("class", "cart")], lines),
+    ui.el("p", [], [ui.text("total $${total}")]),
+    ui.el("button", [ui.on_user("click", CartAct.Buy)], [ui.text("checkout")]),
+    catalog_view(m),
+  ])
+}
+
+/// The user state shop: run its Host with `auth` (user state needs a
+/// principal); redact and allow are not needed.
+pub fn user_app() -> ui.App[Shared, Order] {
+  let empty: Map[Str, Int] = {}
+  ui.app(Shared{products: catalog(), orders: 0}, order, fn(m) { cart_view(m, empty, url.values()) })
+    .confirming(order_waits)
+    .with_user(empty, cart_step, cart_view)
+}

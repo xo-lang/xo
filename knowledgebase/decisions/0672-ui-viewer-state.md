@@ -184,8 +184,12 @@ of the draft with these choices:
   apply fails between the two writes, the user state moved and the
   Msgs are lost. Exactly once would need the shared entry to carry the
   user act's id (an outbox) and is left for when an app needs it.
-- The runtime does not predict user acts (the wasm client would need
-  the user update compiled in); an act shows when its sync returns.
+- The runtime predicts user acts (2026-11-17, with step 4): a predicting
+  client gets the unconfirmed acts as `ClientIn.upending` and `predict`
+  folds the user update over the principal's state, applying the Msgs it
+  emits (a `confirming` Msg counts as awaiting), so an act shows at once
+  and an offline page shows its own. A thin client still waits for the
+  sync.
 - Tab state stays the page's query (above); `view(m, u, query)`.
 
 Test: two devices of ann share the state, bob's is apart, bob on ann's
@@ -231,8 +235,7 @@ when its state is older.
    | 20 | 400, 420, 73,511 | 20, 40, 12,350 |
    | 200 | 40,000, 40,200, 6,767,872 | 200, 400, 124,070 |
 
-   Server memory, wasm size and filter time are measured with step 4 in
-   Chrome.
+   Server memory, wasm size and filter time: with step 4 below.
 3. Property test: two devices of one user and one of another, random
    acts with drops and reorders, converge; no user's state reaches
    another's view. Done 2026-11-17: std/ui "a principal's devices
@@ -246,7 +249,25 @@ when its state is older.
    for every act of one sync (gotchas/ui-user-step-sees-shown-model.md).
 4. Chrome checks: filters survive reload, back and a shared link; a cart
    added offline on one device shows on the other after reconnect; a
-   second user never sees it.
+   second user never sees it. Done 2026-11-17: examples/ui-shop's
+   `user_app` (shop/user.xo: the cart in user state, a checkout a
+   confirmed shared Msg, no redact and no allow), served by `xo run
+   ./server -- :8080 wasm user`, against the baseline (the cart in the
+   shared model with redact and allow), three Chromes (ann twice, bob),
+   ~/xo-lead/notes/stdui/e2e/drive-shop-user.mjs, 17/17 each: offline
+   adds, reconnect, bob kept apart, filters per device, reload,
+   checkout and stock. Back and a shared link are drive-shop-tab.mjs
+   (above).
+
+   | | wasm client | server RSS start, after 3 pages | to other device | filter |
+   |---|---|---|---|---|
+   | shared + redact | 343,009 bytes | 6,576 KB, 10,144 KB | about 100 ms | 2 ms |
+   | user state | 331,677 bytes | 6,800 KB, 9,888 KB | about 100 ms | 2 ms |
+
+   The first user state run found that an offline page did not show its
+   own adds (the runtime did not predict user acts); it does since
+   (above, std/ui "predict folds the principal's pending acts over
+   their state").
 
 ## Alternatives
 

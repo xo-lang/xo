@@ -73,5 +73,9 @@ with a new measurement in this file.
 
 ## Open
 
-- One app (ui-todo); a larger App (examples/ui-shop) has not been
-  measured.
+- No size guard yet: a test that fails when the ui-todo client grows past
+  a budget would keep this number from drifting.
+- Measured for one app (ui-todo). examples/ui-shop's wasm client is
+  331,677 bytes with user state and 343,009 with the cart in the shared
+  model (2026-11-17, decision 0672 Plan step 4); its load bytes and times
+  are not measured here.

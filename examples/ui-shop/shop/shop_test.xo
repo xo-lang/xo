@@ -41,3 +41,32 @@ test "the URL filters and sorts the catalog for this viewer only" {
   // the links keep the other filter
   expect(cheap.contains("href=\"?sort=price&amp;tag=drink\"")) == true
 }
+
+test "user state: a cart is bounded by stock, Buy empties it and orders it" {
+  let m = user_app().init
+  var c: Map[Str, Int] = {}
+  for _ in 0..3 {
+    let (n, out) = cart_step(m, c, CartAct.Put(sku: "pot"))
+    expect(out.len()) == 0
+    c = n
+  }
+  expect(c) == {"pot": 1}
+  let (after, orders) = cart_step(m, c, CartAct.Buy)
+  expect(after.len()) == 0
+  expect(orders) == [Order.Place(cart: {"pot": 1})]
+  let m2 = order(m, orders[0])
+  expect(shared_stock(m2, "pot")) == 0
+  expect(m2.orders) == 1
+  // a second order of the same pot no longer fits: the stock stays
+  let m3 = order(m2, Order.Place(cart: {"pot": 1}))
+  expect(m3) == m2
+}
+
+test "user state: the page shows the principal's cart and keeps the filters" {
+  let m = user_app().init
+  let page = ui.render(cart_view(m, {"tea": 2}, url.parse_query("tag=kitchen")?))
+  expect(page.contains("2 x Green tea")) == true
+  expect(page.contains("Mug")) == true
+  expect(page.contains("(20 left)")) == false
+  expect(page.contains("data-xo-uclick")) == true
+}

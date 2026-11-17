@@ -71,7 +71,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] with redact, a sync answers same while the view is unchanged | 0664 | `std/ui_test.xo:with redact, a sync answers same while the principal's view did not change`
 - [x] with redact, a live connection hears only of its own view | 0664 | `std/ui_test.xo:with redact, a live connection hears only of changes to its own view`
 - [x] commands: Msgs plan server commands whose results come back as Msgs | 0664 stage 4b, 0692 | "a command runs once for each Msg the host commits, planned from the model before it, and a refused Msg plans none"; "two Hosts on one store run each command once, after a lost race too"
-- [ ] `server` fields never sent to a client | 0659 point 5, 0664 stage 4b | not built (redact blanks fields for now)
+- [ ] `server` fields never sent to a client | 0659 point 5, 0664 stage 4b | not built (redact blanks fields for now); the last of the std Proven work, task #200: the owner picks std only server state for commands or the compiler modifier (owner 2026-11-17)
 - [ ] query subscriptions (partial replication) | 0659 stage 4, 0664 stage 4c | not built
 
 ## Pages (0668, 0670)
@@ -89,7 +89,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] tab state: with_url_view renders the page's query | 0672 | `std/ui_test.xo:with_url_view renders the page's query on the page, a sync and a prediction`
 - [x] a sync sends the page's query | 0672 | `internal/uiruntime/runtime_test.go:TestSyncSendsPageQuery`
 - [x] user state across devices (a typed per-user part, views over two scopes) | 0672, 0686 plan step 6 | `with_user`, `on_user`; std/ui "a principal's own state is the same on each of its devices and no one else's", "a principal's act emits shared Msgs as that principal, through allow"; internal/uiruntime TestUserActsSyncApart (2026-11-17)
-- [ ] 0672 plan steps 2 to 4: 2/20/200 user measurements, Chrome checks (step 3, the two-device property test, done 2026-11-17: std/ui "a principal's devices converge on one state and no one else sees it, over a lossy network", "user state convergence holds for any seed") ; step 2 notices, syncs and bytes done 2026-11-17: 200 users, 200 notices and 124 KB with user state against 40,000 and 6.8 MB shared, std/ui "user state wakes only its principal's pages" | 0672 | open: step 2 memory, wasm size, filter time; step 4
+- [x] 0672 plan steps 2 to 4: 2/20/200 user measurements, Chrome checks | 0672 | step 2: std/ui "user state wakes only its principal's pages" (200 users: 200 notices, 124 KB against 40,000 and 6.8 MB); step 3: std/ui "a principal's devices converge on one state and no one else sees it, over a lossy network", "user state convergence holds for any seed"; step 4: examples/ui-shop user_app, shop_test "user state: ...", Chrome drive-shop-user.mjs 17/17 with memory, wasm size and filter time (0672 Plan); std/ui "predict folds the principal's pending acts over their state, so an offline page shows them" (2026-11-17)
 
 ## Scopes, stores and buses (0686)
 

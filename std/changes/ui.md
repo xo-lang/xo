@@ -44,6 +44,20 @@ on the instance that committed it, and applies a command's answer as a
 server Msg. Refused Msgs plan none; an instance that loses an append race
 does not run the winner's commands. At most once.
 
+## 2026-11-17: feature: the wasm client predicts user acts
+
+- Kind: feature
+- Commit: this push
+- Found by: task #186 (decision 0672 Plan step 4: an offline page did not show its own cart adds in Chrome)
+- Go reference: none
+- Test: std/ui "predict folds the principal's pending acts over their state, so an offline page shows them (decision 0672)"; examples/ui-shop shop_test "user state: ..."
+- Timing: none (one fold over the unconfirmed acts per prediction)
+- Shipped in: not yet released
+
+`ClientIn.upending` carries the principal's unconfirmed acts, and
+`predict` folds the user update over their state and applies the Msgs it
+emits, so a user act shows at once and an offline page shows its own.
+
 ## 2026-11-17: feature: user state across devices (App.with_user, on_user)
 
 - Kind: feature

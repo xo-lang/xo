@@ -5,12 +5,15 @@
 //
 //   xo run ./server -- :8080        (predicting wasm client)
 //   xo run ./server -- :8080 thin   (thin client)
+//   xo run ./server -- :8080 wasm user   (carts in user state, decision
+//                                         0672 step 4: shop.user_app)
 use std/http
 use std/log
 use std/ui
 use example.com/uishop/shop
 
 const CLIENT: Bytes = embed.build("example.com/uishop/client", "wasip1/wasm")
+const UCLIENT: Bytes = embed.build("example.com/uishop/uclient", "wasip1/wasm")
 
 fn user_of(r: http.Request) -> Str? {
   if let Some(c) = r.cookie("shop_user") {
@@ -33,10 +36,17 @@ fn signin(r: http.Request) -> http.Response {
 fn main(os: Os) ! {
   let args = os.env.args()
   let addr = args.get(0) ?? ":8080"
-  let client = if args.get(1) == Some("thin") { b"" } else { CLIENT }
+  let thin = args.get(1) == Some("thin")
   var r = http.router()
   r.handle("GET /signin", signin)
-  ui.host(shop.app(), title: "Shop", css: shop.CSS, client: client, auth: Some(user_of), allow: Some(shop.allow), redact: Some(shop.redact), signin_url: "/signin").mount(r)
+  var client = b""
+  if args.get(2) == Some("user") {
+    client = if thin { b"" } else { UCLIENT }
+    ui.host(shop.user_app(), title: "Shop", css: shop.CSS, client: client, auth: Some(user_of), signin_url: "/signin").mount(r)
+  } else {
+    client = if thin { b"" } else { CLIENT }
+    ui.host(shop.app(), title: "Shop", css: shop.CSS, client: client, auth: Some(user_of), allow: Some(shop.allow), redact: Some(shop.redact), signin_url: "/signin").mount(r)
+  }
   let l = os.net.listen(addr)?
   log.info("listening", {"addr": l.addr(), "client_bytes": "${client.len()}"})
   http.server(l, r).serve()?

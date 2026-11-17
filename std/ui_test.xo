@@ -2201,3 +2201,20 @@ test "user state wakes only its principal's pages: 2, 20 and 200 users (decision
   }
   return Ok(())
 }
+
+test "predict folds the principal's pending acts over their state, so an offline page shows them (decision 0672)" {
+  let a = draft_app()
+  let d = json.encode_str(Draft{text: "", posts: 0})
+  let typed = predict(a, ClientIn{model: a.init, pending: [], user: Some(d), upending: [json.encode_str(DraftAct.Type(s: "milk"))]})
+  expect(typed.html.contains("draft: milk")) == true
+  // a Post emits a shared Msg: it is predicted too, and the draft empties
+  let posted = predict(a, ClientIn{model: a.init, pending: [], user: Some(d), upending: [json.encode_str(DraftAct.Type(s: "milk")), json.encode_str(DraftAct.Post)]})
+  expect(posted.html.contains("draft: <")) == true
+  expect(posted.html.contains("milk")) == true
+  // with no state yet the step starts from the App's initial one
+  let fresh = predict(a, ClientIn{model: a.init, pending: [], upending: [json.encode_str(DraftAct.Type(s: "tea"))]})
+  expect(fresh.html.contains("draft: tea")) == true
+  // an act the step cannot decode is skipped
+  let bad = predict(a, ClientIn{model: a.init, pending: [], user: Some(d), upending: ["{"]})
+  expect(bad.html.contains("draft: <")) == true
+}

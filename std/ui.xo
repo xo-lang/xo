@@ -1493,8 +1493,12 @@ pub struct ClientIn[M, E] {
   /// The page's query (tab state, App.with_url_view), without the "?".
   pub query: Str = ""
   /// The principal's confirmed state as JSON text (App.with_user), None
-  /// without one; its pending actions are not predicted.
+  /// without one.
   pub user: Str? = None
+  /// The principal's acts the server has not confirmed, each as JSON text
+  /// (on_user), oldest first: folded over user (and the App's initial
+  /// state without one) after pending, so an offline page shows them.
+  pub upending: List[Str] = []
 } derive Json
 
 /// What the client program answers: the view of the predicted model, and
@@ -1517,7 +1521,26 @@ pub fn predict[M, E](app: App[M, E], input: ClientIn[M, E]) -> ClientOut {
       m = (app.update)(m, e)
     }
   }
-  ClientOut{html: render(app.show(m, input.query, user: input.user)), awaiting: awaiting}
+  var user = input.user
+  if let Some(part) = app.user {
+    if input.upending.len() > 0 {
+      var cur = input.user ?? part.init
+      for ua in input.upending {
+        if let Some((next, msgs)) = (part.step)(m, cur, ua) {
+          cur = next
+          for e in msgs {
+            if (app.confirm)(e) {
+              awaiting += 1
+            } else {
+              m = (app.update)(m, e)
+            }
+          }
+        }
+      }
+      user = Some(cur)
+    }
+  }
+  ClientOut{html: render(app.show(m, input.query, user: user)), awaiting: awaiting}
 }
 
 /// The main of an App's client program, built with `--targets=wasip1/wasm`
@@ -2814,7 +2837,7 @@ function boot(){
   var queue=(saved&&saved.queue)||[];
   var acked=(saved&&saved.acked)||0;
   // the principal's own actions (App.with_user, decision 0672), sent
-  // with their own seqs; they are not predicted
+  // with their own seqs; predict folds them (ClientIn.upending)
   var hasUser=typeof st.user==="string"&&st.user!=="";
   var uconfirmed=hasUser?st.user:null,uver=st.uver||0;
   var unext=(saved&&saved.unext)||1;
@@ -2878,13 +2901,13 @@ function boot(){
   function predict(q){
     if(!mod||stopped)return false;
     var r;
-    try{r=JSON.parse(run(JSON.stringify({model:confirmed,user:uconfirmed,pending:queue.map(function(e){return e.msg;}),query:q==null?location.search.slice(1):q})));}catch(e){return false;}
+    try{r=JSON.parse(run(JSON.stringify({model:confirmed,user:uconfirmed,pending:queue.map(function(e){return e.msg;}),upending:uqueue.map(function(e){return e.msg;}),query:q==null?location.search.slice(1):q})));}catch(e){return false;}
     show(r.html);
     var h=H();if(r.awaiting>0)h.setAttribute("data-xo-awaiting",String(r.awaiting));else h.removeAttribute("data-xo-awaiting");
     return true;
   }
   function send(msg){queue.push({seq:next++,msg:msg});save();mark();predict();sync();}
-  function usend(msg){uqueue.push({seq:unext++,msg:JSON.stringify(msg)});save();mark();sync();}
+  function usend(msg){uqueue.push({seq:unext++,msg:JSON.stringify(msg)});save();mark();predict();sync();}
   function sync(){
     if(dead)return;
     if(busy){again=true;return;}
