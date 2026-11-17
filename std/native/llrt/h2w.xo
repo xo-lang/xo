@@ -244,6 +244,10 @@ pub fn head(d: Int, ha: Int, hn: Int, status: Int, head_req: Bool, p: Int, pn: I
     if !name_ok(kp, kn) || !value_ok(vp, vn) {
       continue
     }
+    // a Date set empty: no date field and none added (net/http's Header["Date"] = nil)
+    if vn == 0 && http1w.mem_is(kp, kn, "Date") {
+      continue
+    }
     // the name lower cased in place after its lengths
     le32(d, at, kn)
     le32(d, at + 4, vn)

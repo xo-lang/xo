@@ -1023,7 +1023,7 @@ fn pull[fx: Effects](st: RecvState, max: Int, more: fn() -> Bytes? ! Status uses
 fn trailers_only(st: Status) -> http.Response {
   http.stream(200, fn(w) -> () ! IoErr {
     finish(w, st)
-  }).with_header("content-type", "application/grpc")
+  }).with_header("content-type", "application/grpc").with_header("date", "")
 }
 
 fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock: Clock, max: Int, max_send: Int, method: Str, req: http.Request, body: http.BodyReader) -> http.Response uses (fx, clock) {
@@ -1065,7 +1065,7 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
       }
     }
     finish(w, st)
-  }).with_header("content-type", "application/grpc").with_full_duplex()
+  }).with_header("content-type", "application/grpc").with_header("date", "").with_full_duplex()
   if gz {
     resp = resp.with_header("grpc-encoding", "gzip")
   }

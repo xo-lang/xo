@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-17: feature: a Date set empty sends no Date
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc.behavior.response_head: grpc-go's server head has no Date)
+- Go reference: net/http server.go (a handler's Header["Date"] = nil suppresses the Date, chunkWriter.writeHeader; x/net/http2 writeResHeaders the same)
+- Test: std/native/http_test.xo "a Date set empty sends no Date" over HTTP/1.1 and h2c (an empty Date field was sent before), arm64 and LLVM
+- Timing: none (one more header test per response head)
+- Shipped in: not yet released
+
 ## 2026-11-17: fix: a WINDOW_UPDATE after a stream's flow control reset no longer ends the HTTP/2 connection
 
 - Kind: fix

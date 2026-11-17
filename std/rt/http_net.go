@@ -177,6 +177,10 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 				wh.Add(k, x)
 			}
 		}
+		// a Date set empty: none sent (net/http's Header["Date"] = nil)
+		if d, ok := wh["Date"]; ok && len(d) == 1 && d[0] == "" {
+			wh["Date"] = nil
+		}
 		if n := len(resp.F_body); n > chunkingSize && resp.XStream == nil && bodyAllowed(resp.F_status) {
 			// a body net/http cannot hold in its 2 KiB buffer would go
 			// out chunked (a Fprintf per chunk); its length is known

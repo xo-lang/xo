@@ -1930,3 +1930,24 @@ test "to_url gives the url.Url of the same text, its query sorted as Values.enco
   let slash = (http.parse_url("https://h.example/x%2Fy").ok() ?? h).to_url()
   expect(slash.escaped_path()) == "/x/y"
 }
+
+// net/http: a handler that sets Header["Date"] = nil sends no Date; Xo's
+// headers hold no nil, so an empty Date value says the same (HTTP/1.1 and
+// HTTP/2; std/grpc's head uses it, as grpc-go's has no Date)
+test "a Date set empty sends no Date, as net/http's Header[\"Date\"] = nil" uses (net, clock) {
+  var r = http.router()
+  r.handle("GET /plain", fn(_req) { http.text(200, "a") })
+  r.handle("GET /nodate", fn(_req) { http.text(200, "b").with_header("Date", "") })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, r).with_protocols(#{http.Protocol.Http1, http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    for p in [http.Protocol.Http1, http.Protocol.UnencryptedHttp2] {
+      let c = http.client(os.net).with_protocols(#{p})
+      let a = c.get("http://${hs.addr()}/plain").or_fault("plain")
+      expect(a.headers.get("Date") is Some(_)) == true
+      let b = c.get("http://${hs.addr()}/nodate").or_fault("nodate")
+      expect((b.status, b.headers.get("Date"), b.body.to_str_lossy())) == (200, None, "b")
+    }
+  }
+}

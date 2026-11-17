@@ -2239,7 +2239,9 @@ task with its own span and request id. Its memory may come from a request
 scoped arena (core 5.5, decision 0066), which no program can observe. A
 response with a body (not 1xx, 204, or 304) that is not a stream is sent
 with a `Content-Length` header unless the handler set one; only streamed
-bodies use chunked transfer encoding. To run a server alongside background
+bodies use chunked transfer encoding. Every response gets a `Date` unless the
+handler set one; a `Date` set to the empty string sends none (net/http's
+`Header["Date"] = nil`). To run a server alongside background
 work:
 
 ```

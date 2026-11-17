@@ -551,10 +551,12 @@ pub const X_CONNECTION: Int = 8
 pub const X_HOST: Int = 16
 pub const X_USER_AGENT: Int = 32
 pub const X_TRAILER: Int = 64
+/// a Date the handler set empty: no Date line at all (net/http's Header["Date"] = nil)
+pub const X_DATE: Int = 128
 
 /// Whether the field named by the kn bytes at kp is among excl's.
 fn excluded(kp: Int, kn: Int, excl: Int) -> Bool {
-  ((excl & X_CONTENT_LENGTH) != 0 && mem_is(kp, kn, "Content-Length")) || ((excl & X_TRANSFER_ENCODING) != 0 && mem_is(kp, kn, "Transfer-Encoding")) || ((excl & X_CONTENT_TYPE) != 0 && mem_is(kp, kn, "Content-Type")) || ((excl & X_CONNECTION) != 0 && mem_is(kp, kn, "Connection")) || ((excl & X_HOST) != 0 && mem_is(kp, kn, "Host")) || ((excl & X_USER_AGENT) != 0 && mem_is(kp, kn, "User-Agent")) || ((excl & X_TRAILER) != 0 && mem_is(kp, kn, "Trailer"))
+  ((excl & X_CONTENT_LENGTH) != 0 && mem_is(kp, kn, "Content-Length")) || ((excl & X_TRANSFER_ENCODING) != 0 && mem_is(kp, kn, "Transfer-Encoding")) || ((excl & X_CONTENT_TYPE) != 0 && mem_is(kp, kn, "Content-Type")) || ((excl & X_CONNECTION) != 0 && mem_is(kp, kn, "Connection")) || ((excl & X_HOST) != 0 && mem_is(kp, kn, "Host")) || ((excl & X_USER_AGENT) != 0 && mem_is(kp, kn, "User-Agent")) || ((excl & X_TRAILER) != 0 && mem_is(kp, kn, "Trailer")) || ((excl & X_DATE) != 0 && mem_is(kp, kn, "Date"))
 }
 
 fn trim_byte(c: Int) -> Bool { c == 32 || c == 9 || c == 13 || c == 10 }
@@ -878,6 +880,9 @@ pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flag
     }
   }
   let date = find(ha, hn, "Date") < 0
+  if !date && val_len(ha, find(ha, hn, "Date")) == 0 {
+    excl = excl | X_DATE
+  }
   if has_cl && has_te && !val_is(ha, tei, "identity") {
     excl = excl | X_CONTENT_LENGTH
     set_cl = -1

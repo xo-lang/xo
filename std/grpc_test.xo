@@ -221,6 +221,8 @@ test "send and receive limits and response metadata, as grpc-go" uses (net, cloc
     }).or_fault("call")
     expect(got.0.get("content-type")) == Some("application/grpc")
     expect(got.0.get("grpc-encoding")) == None
+    // grpc-go's server head has no Date (behavior.response_head)
+    expect(got.0.get("date")) == None
     expect(got.1) == ["ab", "rpc error: code = ResourceExhausted desc = trying to send message larger than max (4 vs. 3)"]
     expect(got.2.get("x-t")) == Some("tv")
     expect(got.2.get("grpc-status")) == None

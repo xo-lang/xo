@@ -1,5 +1,15 @@
 # std/grpc changes
 
+## 2026-11-17: behavior: a server's response head has no Date, as grpc-go's
+
+- Kind: behavior
+- Commit: this commit
+- Found by: task #236 (map.txt grpc.behavior.response_head)
+- Go reference: google.golang.org/grpc v1.79.2 internal/transport/http2_server.go writeHeaderLocked (no date field)
+- Test: std/grpc_test.xo "send and receive limits and response metadata" (header metadata had a date), arm64 and LLVM
+- Timing: none
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: default call options, on_finish and the peer
 
 - Kind: feature

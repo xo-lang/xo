@@ -2574,7 +2574,7 @@ credentials.TLSChannelzSecurityValue = not planned: grpc-go's channelz and trans
 credentials.ErrConnDispatched = not planned: grpc-go's channelz and transport internals
 # grpc behavior checklist (decision 0655: what a symbol diff misses; an open item is a gap)
 grpc.behavior.health = std/grpchealth.Health.register
-grpc.behavior.response_head = gap: an Xo server's response head carries a Date (std/http adds one to every response; grpc-go's server sends none), seen by clients as header metadata
+grpc.behavior.response_head = std/grpc's head sets Date empty, which std/http sends as no Date (as grpc-go's server; test "send and receive limits and response metadata")
 grpc.behavior.reflection = gap: no server reflection (grpc.reflection.v1)
 grpc.behavior.keepalive = gap: no keepalive pings or enforcement
 grpc.behavior.interceptors = std/grpc.Server.intercept, intercept_unary, Client.with_unary_interceptor (decision 0703): chained in registration order, the first outermost; client stream interceptors see the options only
