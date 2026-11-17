@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+marshal true size 36 len 36
+5 -1 300 2 2 1 2
+unknown skipped: a 7
+absent 0
+opt 1318072202080114 7
+1318071c: proto: unexpected end group
+131807: proto: unexpected EOF
+--- stderr

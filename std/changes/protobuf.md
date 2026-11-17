@@ -1,5 +1,16 @@
 # std/protobuf changes
 
+## 2026-11-17: feature: groups (`proto "N,group"`) and read_group
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (protocompile's groups behavior, decision 0530)
+- Go reference: google.golang.org/protobuf v1.36.11 proto.Marshal and proto.Unmarshal of proto2 groups (dynamicpb), protowire.ConsumeGroup
+- Test: golden proto_group (arm64, LLVM, wasm, Go parity): a group, a nested message in it, a repeated group and an Option group, bytes equal to protobuf-go's; an unknown group inside a group is skipped; an END_GROUP of another field and a missing end tag are errors; std/native/protobuf_test.xo ("read_group"); errorcheck proto_group
+- Timing: none (the same writer and reader as a message field, with tags in place of the length)
+
+`derive Proto`'s `group` option writes a message field as a proto2 group (editions' DELIMITED encoding): a START_GROUP tag, the fields, an END_GROUP tag of the same number, no length prefix. It applies to a message field alone, in an Option or in a List; a oneof or a map with it is `XO0422`. `protobuf.read_group(b, at, num)` is protowire's ConsumeGroup: the body as a view and the offset after the end tag.
+
 ## 2026-11-16: feature: message descriptors (descriptor, message_name)
 
 - Kind: feature

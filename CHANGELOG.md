@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (derive Proto, std/protoparse, xo proto gen): the field option `group` (`item proto "2,group": Item`) writes a message field as a proto2 group, an editions `DELIMITED` message: START_GROUP and END_GROUP tags, no length, byte identical to protobuf-go; it applies to a message field alone, in an Option or in a List (`XO0422` on a oneof or a map). `xo proto gen` now generates proto2 groups and DELIMITED message fields (field or file level) instead of refusing them; a group in a oneof is still an error. `protobuf.read_group` is protowire's ConsumeGroup.
 - Feature (std/x509): `pkcs12_to_pem(data, password)` gives every bag of a PKCS #12 file as PEM blocks with their friendlyName, localKeyId and Microsoft CSP Name headers, as golang.org/x/crypto/pkcs12's ToPEM (keys as PKCS #1 or SEC 1).
 - Feature (std/amqp): SASL EXTERNAL (`Sasl.External`) and XOAUTH2 (`Sasl.Xoauth2`, an OAuth 2 bearer token), as go-amqp's SASLTypeExternal and SASLTypeXOAUTH2 (task #184).
 - Feature (std/otlp): `encode_traces_json` and `Exporter.with_encoding(Encoding.Json)` for OTLP/HTTP JSON, `with_compression(Compression.Gzip)`, `with_max_request_size` and `with_max_response_size`, and a partial success response read as `ExportErr.Partial`, as OpenTelemetry Go's otlptracehttp (task #184). `ExportErr` gains three variants; it is an open enum, so a match with a `_` arm is unchanged.

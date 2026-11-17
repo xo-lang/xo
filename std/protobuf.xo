@@ -79,6 +79,10 @@ fn read_bytes(b: Bytes, at: Int) -> (Bytes, Int) ! ProtoErr
 /// The offset after the value of a field with tag number `num` and wire type `wire` starting at
 /// `at`, groups included (ConsumeFieldValue).
 fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! ProtoErr
+/// A group's body (a view) and the offset after its END_GROUP tag: `at` is
+/// just after the START_GROUP tag of field `num` (ConsumeGroup); an end tag of
+/// another field is `ProtoErr.EndGroup`.
+fn read_group(b: Bytes, at: Int, num: Int) -> (Bytes, Int) ! ProtoErr
 
 /// `v` as protobuf wire bytes, fields in declaration order, proto3 implicit presence (a zero
 /// value is not written). `T` derives Proto (decision 0530).

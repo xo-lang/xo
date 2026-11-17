@@ -279,3 +279,19 @@ fn skip_value(b: Bytes, at: Int, num: Int, wire: Int, depth: Int) -> Int ! proto
 fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! protobuf.ProtoErr {
   skip_value(b, at, num, wire, protobuf.MAX_GROUP_DEPTH)
 }
+
+fn read_group(b: Bytes, at: Int, num: Int) -> (Bytes, Int) ! protobuf.ProtoErr {
+  var i = at
+  while true {
+    let t0 = i
+    let (n2, w2, next) = read_tag(b, i)?
+    if w2 == 4 {
+      if n2 != num {
+        return Err(protobuf.ProtoErr.EndGroup)
+      }
+      return Ok((b[at..t0], next))
+    }
+    i = skip_value(b, next, n2, w2, protobuf.MAX_GROUP_DEPTH - 1)?
+  }
+  Err(protobuf.ProtoErr.Truncated)
+}

@@ -1,0 +1,61 @@
+// `proto "N,group"` writes a message field as a proto2 group: a START_GROUP
+// tag, the message's fields, an END_GROUP tag of the same number, no length
+// (decision 0530; editions' DELIMITED message encoding is the same bytes).
+// The bytes are protobuf-go v1.36.11's proto.Marshal of the proto2 message
+//   message Inner { optional int64 v = 1; }
+//   message Outer {
+//     optional int64 x = 1;
+//     optional group Item = 2 { optional int64 a = 3; optional Inner inn = 4; }
+//     optional Inner after = 7;
+//     repeated group Rep = 20 { optional int64 a = 6; }
+//   }
+// with x 5, item {a: -1, inn {v: 300}}, after {v: 2}, rep [{a: 1}, {a: 2}].
+use std/protobuf
+
+struct Inner {
+  v proto "1": Int
+} derive Proto
+
+struct Item {
+  a proto "3": Int
+  inn proto "4": Inner
+} derive Proto
+
+struct Rep {
+  a proto "6": Int
+} derive Proto
+
+struct Outer {
+  x proto "1": Int
+  item proto "2,group": Item
+  after proto "7": Inner
+  rep proto "20,group": List[Rep]
+} derive Proto
+
+struct Opt {
+  item proto "2,group": Item?
+} derive Proto
+
+fn main(os: Os) uses stdio {
+  let o = Outer{x: 5, item: Item{a: -1, inn: Inner{v: 300}}, after: Inner{v: 2}, rep: [Rep{a: 1}, Rep{a: 2}]}
+  let b = protobuf.marshal(o)
+  let want = "08051318ffffffffffffffffff01220308ac02143a020802a3013001a401a3013002a401"
+  os.stdio.println("marshal ${b.to_hex() == want} size ${protobuf.size(o)} len ${b.len()}")
+  let r = protobuf.unmarshal[Outer](Bytes.from_hex(want).or_fault("hex")).or_fault("unmarshal")
+  os.stdio.println("${r.x} ${r.item.a} ${r.item.inn.v} ${r.after.v} ${r.rep.len()} ${r.rep[0].a} ${r.rep[1].a}")
+  // an unknown field inside a group, itself a group (field 9), is skipped
+  let u = protobuf.unmarshal[Outer](Bytes.from_hex("1318074b0801 4c14".replace(" ", "")).or_fault("hex")).or_fault("unknown")
+  os.stdio.println("unknown skipped: a ${u.item.a}")
+  // an Option group: absent writes nothing, present reads back
+  os.stdio.println("absent ${protobuf.marshal(Opt{item: None}).len()}")
+  let ob = protobuf.marshal(Opt{item: Some(Item{a: 7, inn: Inner{v: 1}})})
+  let oo = protobuf.unmarshal[Opt](ob).or_fault("opt")
+  os.stdio.println("opt ${ob.to_hex()} ${if let Some(i) = oo.item { i.a } else { 0 }}")
+  // protobuf-go refuses an END_GROUP of another field and a group with no end
+  for h in ["1318071c", "131807"] {
+    match protobuf.unmarshal[Outer](Bytes.from_hex(h).or_fault("hex")) {
+      Ok(_) => os.stdio.println("${h}: ok")
+      Err(e) => os.stdio.println("${h}: ${e}")
+    }
+  }
+}

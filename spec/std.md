@@ -10653,6 +10653,7 @@ fn read_fixed32(b: Bytes, at: Int) -> (UInt32, Int) ! ProtoErr
 fn read_fixed64(b: Bytes, at: Int) -> (UInt64, Int) ! ProtoErr
 fn read_bytes(b: Bytes, at: Int) -> (Bytes, Int) ! ProtoErr
 fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! ProtoErr   // groups to MAX_GROUP_DEPTH
+fn read_group(b: Bytes, at: Int, num: Int) -> (Bytes, Int) ! ProtoErr   // the body and the offset after END_GROUP
 ```
 
 - Reads return the value and the offset after it. A field number above 536870911 is `BadTag` in the generated

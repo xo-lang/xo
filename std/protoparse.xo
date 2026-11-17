@@ -515,7 +515,8 @@ pub fn gen_set(files: List[(Str, File)]) -> List[Str] ! ParseErr {
       for m in g.messages { enums = g_enum_gens("", m, enums) }
     }
     let pk = GenPack{proto2: f.syntax == "proto2", enums: enums, editions: f.syntax == "editions",
-      presence: g_feature(f.options, "field_presence") ?? "EXPLICIT", repeated: g_feature(f.options, "repeated_field_encoding") ?? "PACKED"}
+      presence: g_feature(f.options, "field_presence") ?? "EXPLICIT", repeated: g_feature(f.options, "repeated_field_encoding") ?? "PACKED",
+      encoding: g_feature(f.options, "message_encoding") ?? "LENGTH_PREFIXED"}
     var o: List[Str] = []
     for e in f.enums { o = g_enum(e, e.name, o) }
     for m in f.messages { o = g_message(m, scope, "", names, pk, o)? }
@@ -1184,11 +1185,12 @@ fn g_enum(e: Enum, gname: Str, out: List[Str]) -> List[Str] {
 struct GenPack {
   proto2: Bool
   enums: List[Str]
-  /// an editions file, with its file level field_presence and repeated_field_encoding (the
-  /// edition 2023 defaults EXPLICIT and PACKED)
+  /// an editions file, with its file level field_presence, repeated_field_encoding and
+  /// message_encoding (the edition 2023 defaults EXPLICIT, PACKED and LENGTH_PREFIXED)
   editions: Bool = false
   presence: Str = "EXPLICIT"
   repeated: Str = "PACKED"
+  encoding: Str = "LENGTH_PREFIXED"
 }
 
 /// The value of the `features.NAME` option in opts, None when not set.
@@ -1228,6 +1230,18 @@ fn g_unpacked(fl: Field, gtyp: Str, pk: GenPack) -> Bool {
   !packed
 }
 
+/// Whether fl's message is written as a group: proto2's `group`, or editions'
+/// `features.message_encoding = DELIMITED` on the field or the file. A scalar,
+/// enum or map field ignores the feature, as protoc does.
+fn g_delimited(fl: Field, msg: Bool, pk: GenPack) -> Bool {
+  fl.group || (msg && fl.key == "" && (g_feature(fl.options, "message_encoding") ?? pk.encoding) == "DELIMITED")
+}
+
+/// Whether field fl, generated as gtyp, holds a message (not a scalar or an enum).
+fn g_is_msg(fl: Field, gtyp: Str, pk: GenPack) -> Bool {
+  g_scalar(fl.typ) is None && !pk.enums.contains(gtyp)
+}
+
 fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], pk: GenPack, out: List[Str]) -> List[Str] ! ParseErr {
   var o = out
   let d = "${scope}${m.name}"
@@ -1240,6 +1254,10 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], pk: 
     for fl in m.fields {
       if fl.oneof != on { continue }
       let ty = g_type(fl.typ, d, names)?
+      if g_delimited(fl, g_is_msg(fl, ty.0, pk), pk) {
+        // derive Proto writes a oneof variant length prefixed; a group's start and end tags would be wrong bytes
+        return Err(ParseErr{line: 0, col: 0, msg: "field `${fl.name}` of `${m.name}` is a group (delimited encoding) in a oneof, which derive Proto does not write"})
+      }
       o.push("  ${g_camel(fl.name)} as \"${fl.num}\"(v: ${ty.0})")
     }
     o.push("} derive Proto")
@@ -1253,10 +1271,6 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], pk: 
       done.push(fl.oneof)
       o.push("  pub ${fl.oneof} proto \"oneof\": ${g}${g_camel(fl.oneof)}?")
       continue
-    }
-    if fl.group || g_feature(fl.options, "message_encoding") == Some("DELIMITED") {
-      // derive Proto writes a message length prefixed; a group's start and end tags would be wrong bytes
-      return Err(ParseErr{line: 0, col: 0, msg: "field `${fl.name}` of `${m.name}` is a group (delimited encoding), which derive Proto does not write"})
     }
     let ty = g_type(fl.typ, d, names)?
     var tx = ty.0
@@ -1273,6 +1287,10 @@ fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], pk: 
       tx = "${tx}?"
     }
     var opts = if fl.key != "" { "" } else { ty.1 }
+    if g_delimited(fl, g_is_msg(fl, ty.0, pk), pk) {
+      // a proto2 group or an editions DELIMITED message: start and end tags, no length (decision 0530)
+      opts = "${opts},group"
+    }
     if fl.repeated && fl.key == "" && g_unpacked(fl, ty.0, pk) {
       opts = "${opts},unpacked"
     }

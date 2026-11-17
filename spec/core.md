@@ -1335,7 +1335,10 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   directory's name, the same from any working directory). Every field carries its number as a `proto` tag, `name proto "N": T`, with
   the options `zigzag` (sint32, sint64), `fixed` (fixed and sfixed types) and
   `unpacked` (a List of numbers, Bools or enums written one key per element,
-  proto2's default `repeated` form) after a comma. A field of type Int, Int32, UInt32, UInt64, Float, Float32,
+  proto2's default `repeated` form) and `group` (a message field, alone, in
+  an Option or in a List, written as a proto2 group or an editions
+  `DELIMITED` message: a START_GROUP tag, the fields, an END_GROUP tag of the
+  same number, no length; its descriptor kind stays `Message`) after a comma. A field of type Int, Int32, UInt32, UInt64, Float, Float32,
   Bool, Str, Bytes, an Int valued enum, or a struct that derives Proto (of
   any file of the package, or `m.T` of an imported module: its generated
   functions are m's, so a struct of another package is `pub`) maps to the

@@ -1,0 +1,19 @@
+// `group` is for a message field, alone, in an Option or in a List (decision 0530).
+
+struct In {
+  v proto "1": Int
+} derive Proto, Json
+
+// derive Json uses the wire name, so the rejected oneof leaves no XO0414.
+enum Shape {
+  Dot as "3"(v: In)
+} derive Json
+
+struct Bad {
+  n proto "1,group": Int // ERROR XO0422 "proto option `group` of field `n` is for a struct deriving Proto"
+  m proto "2,group": Map[Str, In] // ERROR XO0422 "proto option `group` of field `m` is for a message field, alone, in an Option or in a List, not a oneof or a map"
+  s proto "oneof,group": Shape? // ERROR XO0422 "proto option `group` of field `s` is for a message field, alone, in an Option or in a List, not a oneof or a map"
+  ok proto "4,group": In
+} derive Proto
+
+fn main() {}

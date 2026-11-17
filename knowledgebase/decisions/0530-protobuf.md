@@ -60,3 +60,15 @@ generated from it, and the field numbers (not names) are the wire identity.
 - Tag syntax (`name proto "1,packed"` as proposed, or a dedicated `= 1` form).
 - Whether `xo proto gen` is a subcommand or a `go generate` style `xo gen`.
 - Proto2 in the first landing or after proto3.
+
+## Addendum (2026-11-17, task #109): groups
+
+The field option `group` writes a message field as a proto2 group, which is
+also editions' `features.message_encoding = DELIMITED`: a START_GROUP tag, the
+message's fields, an END_GROUP tag of the same number, no length. It takes a
+message field alone, in an Option or in a List; a oneof variant or a map value
+with it is `XO0422`, since protoc writes those length prefixed except for a
+proto2 group in a oneof, which `xo proto gen` reports as an error. A group's
+descriptor kind stays `Message` (`FieldKind` has no Group). The reader is
+`protobuf.read_group` (protowire's ConsumeGroup); an END_GROUP of another
+field or a missing end tag is an error, as in protobuf-go.

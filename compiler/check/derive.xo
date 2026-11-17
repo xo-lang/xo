@@ -1819,6 +1819,9 @@ struct ProtoOpts {
   fixed: Bool
   /// a repeated number written one element per key (proto2's default), not packed
   unpacked: Bool = false
+  /// a message field written as a proto2 group (START_GROUP, its fields, END_GROUP; editions'
+  /// DELIMITED message encoding), not length prefixed
+  group: Bool = false
   bad: Str
 }
 
@@ -1835,6 +1838,8 @@ fn proto_opts(fl: parser.Field) -> ProtoOpts {
           o.fixed = true
         } else if opt == "unpacked" {
           o.unpacked = true
+        } else if opt == "group" {
+          o.group = true
         } else if o.bad.is_empty() {
           o.bad = opt
         }
@@ -2032,6 +2037,12 @@ fn proto_elem(tx: Str, po: ProtoOpts, enums: Map[Str, Str]) -> ProtoElem? {
   let q = if dot > 0 { tx[..dot + 1] } else { "" }
   let n = if dot > 0 { tx[dot + 1..] } else { tx }
   if !n.is_empty() && !n.contains("[") && !n.contains(".") && n.bytes()[0] >= 65 && n.bytes()[0] <= 90 && (q.is_empty() || (q.bytes()[0] >= 97 && q.bytes()[0] <= 122)) {
+    if po.group {
+      // a group (protowire's StartGroupType): the fields between a START_GROUP and an END_GROUP
+      // tag of the field's number, no length, so the size pass takes no slot for it; the end tag
+      // has as many bytes as the start tag (they differ in the low three bits)
+      return Some(ProtoElem{wire: 3, enc: "protobuf.put_tag(${q}proto_write__${n}($B, $V, sz__, at__), ${po.num}, 4)", rd: "protobuf.read_group", conv: "${q}proto_mergedepth__${n}(${q}proto_zero__${n}(), $X, d__ - 1, du__)?", nonzero: "true", zero: "${q}proto_zero__${n}()", packable: false, merge: "${q}proto_mergedepth__${n}($R, $X, d__ - 1, du__)?", size: "${q}proto_sizes__${n}($V, sz__) + ${proto_tag_size(po.num, 4)}"})
+    }
     return Some(ProtoElem{wire: 2, enc: "${q}proto_cwrite__${n}($B, $V, sz__, at__)", rd: "protobuf.read_bytes", conv: "${q}proto_mergedepth__${n}(${q}proto_zero__${n}(), $X, d__ - 1, du__)?", nonzero: "true", zero: "${q}proto_zero__${n}()", packable: false, merge: "${q}proto_mergedepth__${n}($R, $X, d__ - 1, du__)?", size: "${q}proto_csize__${n}($V, sz__)"})
   }
   None
@@ -2064,6 +2075,12 @@ fn proto_tag_size(k: Int, w: Int) -> Int {
     n += 1
   }
   n
+}
+
+/// The read of field k's element at `at` of `data`: a group's reader takes the field number its
+/// END_GROUP tag must carry.
+fn proto_rd(el: ProtoElem, k: Int) -> Str {
+  if el.wire == 3 { "${el.rd}(data, at, ${k})" } else { "${el.rd}(data, at)" }
 }
 
 fn proto_sub(t: Str, b: Str, v: Str, x: Str) -> Str {
@@ -2162,7 +2179,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       continue
     }
     if !po.bad.is_empty() {
-      c.error_at(file, "XO0422", fl.name.span, "unknown proto option `${po.bad}` of field `${f}`; the options are zigzag, fixed and unpacked (decision 0530)")
+      c.error_at(file, "XO0422", fl.name.span, "unknown proto option `${po.bad}` of field `${f}`; the options are zigzag, fixed, unpacked and group (decision 0530)")
       ok = false
       continue
     }
@@ -2182,6 +2199,11 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
     } else if tx.starts_with("List[") && tx.ends_with("]") {
       kind = 2
       tx = tx[5..tx.len() - 1]
+    }
+    if po.group && (po.num == -1 || tx.starts_with("Map[")) {
+      c.error_at(file, "XO0422", fl.name.span, "proto option `group` of field `${f}` is for a message field, alone, in an Option or in a List, not a oneof or a map (decision 0530)")
+      ok = false
+      continue
     }
     if po.num == -1 {
       let ovs = oneofs.get(tx) ?? []
@@ -2293,6 +2315,11 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       continue
     }
     desc.push(proto_field_desc(f, k, tx, po, enums, if kind == 2 { "Repeated" } else { "Optional" }, ""))
+    if po.group && el.wire != 3 {
+      c.error_at(file, "XO0422", fl.name.span, "proto option `group` of field `${f}` is for a struct deriving Proto (decision 0530)")
+      ok = false
+      continue
+    }
     if po.unpacked && !(kind == 2 && el.packable) {
       c.error_at(file, "XO0422", fl.name.span, "proto option `unpacked` of field `${f}` is for a List of numbers, Bools or enums (decision 0530)")
       ok = false
@@ -2307,7 +2334,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       if !el.merge.is_empty() {
         val = proto_sub(el.merge, "", "", "x").replace("$R", "r.${f}")
       }
-      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = ${val}"]))
+      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${proto_rd(el, k)}?", "at = n2", "r.${f} = ${val}"]))
     } else if kind == 1 {
       zeros.push("${f}: None")
       wr.push("  if let Some(x) = v.${f} { b = ${proto_keyed(el.enc, k, w, "x")} }")
@@ -2316,7 +2343,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       if !el.merge.is_empty() {
         val = proto_sub(el.merge, "", "", "x").replace("$R", "(r.${f} ?? ${el.zero})")
       }
-      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = Some(${val})"]))
+      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${proto_rd(el, k)}?", "at = n2", "r.${f} = Some(${val})"]))
     } else {
       zeros.push("${f}: []")
       if el.packable && !po.unpacked {
@@ -2346,7 +2373,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
         // a number list reads both forms, packed and one element per key
         rd.push((" num == ${k} && wire == 2", ["let (x, n2) = protobuf.read_bytes(data, at)?", "at = n2", "var q = 0", "while q < x.len() {", "  let (y, q2) = ${el.rd}(x, q)?", "  q = q2", "  r.${f}.push(${proto_sub(el.conv, "", "", "y")})", "}"]))
       }
-      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f}.push(${proto_sub(el.conv, "", "", "x")})"]))
+      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${proto_rd(el, k)}?", "at = n2", "r.${f}.push(${proto_sub(el.conv, "", "", "x")})"]))
     }
   }
   if !ok {

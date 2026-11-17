@@ -1,5 +1,16 @@
 # std/protoparse changes
 
+## 2026-11-17: feature: gen writes groups and DELIMITED message fields
+
+- Kind: feature
+- Commit: this push
+- Found by: task #109 (protocompile's groups behavior)
+- Go reference: protoc's proto2 groups and editions features.message_encoding (field and file level)
+- Test: std/protoparse_test.xo ("gen writes a group and a DELIMITED message field")
+- Shipped in: not yet released
+
+`gen` no longer refuses a proto2 `group` or an editions `features.message_encoding = DELIMITED` message field: the field gets derive Proto's `group` option (`proto "N,group"`). A file level DELIMITED applies to message fields only, as protoc; a group in a oneof is still an error, since derive Proto writes a oneof variant length prefixed.
+
 ## 2026-11-16: fix: string literals whose escapes are not UTF-8 keep their bytes (breaking)
 
 - Kind: fix

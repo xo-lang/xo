@@ -58,6 +58,16 @@ test "tags, fixed and length delimited values, and skipping" {
   expect(protobuf.skip_field(b"", 0, 1, 6)) == Err(protobuf.ProtoErr.BadWire(wire: 6))
 }
 
+test "read_group: the body and the offset after the end tag, as protowire's ConsumeGroup" {
+  expect(protobuf.read_group(b"\x0b\x10\x05\x0c", 1, 1).or_fault("flat")) == (b"\x10\x05", 4)
+  // a nested group of field 2 is part of the body; the end tag after it closes field 1
+  expect(protobuf.read_group(b"\x0b\x13\x08\x01\x14\x0cxx", 1, 1).or_fault("nested")) == (b"\x13\x08\x01\x14", 6)
+  expect(protobuf.read_group(b"\x0b\x0c", 1, 1).or_fault("empty")) == (b"", 2)
+  // an end tag of another field, and no end tag
+  expect(protobuf.read_group(b"\x0b\x14", 1, 1)) == Err(protobuf.ProtoErr.EndGroup)
+  expect(protobuf.read_group(b"\x0b\x10\x05", 1, 1)) == Err(protobuf.ProtoErr.Truncated)
+}
+
 test "put_* builder forms write the same bytes as append_*" {
   var o = BytesBuilder.new()
   o = protobuf.put_tag(o, 3, 2)

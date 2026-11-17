@@ -131,9 +131,22 @@ test "editions: edition = \"2023\" parses; gen follows field_presence and repeat
   expect(parse("edition = \"2022\";").is_err()) == true
 }
 
-test "gen refuses a group and a DELIMITED message field: derive Proto would write it length prefixed, not with group tags" {
-  expect(gen(must("syntax = \"proto2\";\nmessage M { optional group G = 1 { optional int32 a = 2; } }")).is_err()) == true
-  expect(gen(must("edition = \"2023\";\nmessage M { message I { int32 a = 1; } I i = 1 [features.message_encoding = DELIMITED]; }")).is_err()) == true
+test "gen writes a group and a DELIMITED message field with derive Proto's group option (decision 0530)" {
+  let g2 = gen(must("syntax = \"proto2\";\nmessage M { optional group G = 1 { optional int32 a = 2; } repeated group R = 3 { optional int32 b = 4; } }")).or_fault("proto2")
+  expect(g2.contains("g proto \"1,group\": MG?")) == true
+  expect(g2.contains("r proto \"3,group\": List[MR]")) == true
+  let e = gen(must("edition = \"2023\";\nmessage M { message I { int32 a = 1; } I i = 1 [features.message_encoding = DELIMITED]; I j = 2; }")).or_fault("field feature")
+  expect(e.contains("i proto \"1,group\": MI?")) == true
+  expect(e.contains("j proto \"2\": MI?")) == true
+  // the file's default reaches message fields only: an enum, a scalar or a map keeps its encoding
+  let fd = gen(must("edition = \"2023\";\noption features.message_encoding = DELIMITED;\nenum E { E_ZERO = 0; }\nmessage M { message I { int32 a = 1; } I i = 1; E e = 2; int32 n = 3; map<string, I> m = 4; I l = 5 [features.message_encoding = LENGTH_PREFIXED]; }")).or_fault("file feature")
+  expect(fd.contains("i proto \"1,group\": MI?")) == true
+  expect(fd.contains("e proto \"2\": E?")) == true
+  expect(fd.contains("n proto \"3\": Int32?")) == true
+  expect(fd.contains("m proto \"4\": Map[Str, MI]")) == true
+  expect(fd.contains("l proto \"5\": MI?")) == true
+  // a group in a oneof stays an error: derive Proto writes a oneof variant length prefixed
+  expect(gen(must("edition = \"2023\";\nmessage M { message I { int32 a = 1; } oneof o { I i = 1 [features.message_encoding = DELIMITED]; } }")).is_err()) == true
 }
 
 test "generator: unknown types are an error" {
@@ -195,8 +208,8 @@ test "proto2: labels, required, default, groups, extensions" {
   expect(m.fields[3].typ) == "Res"
   expect(m.nested[0].name) == "Res"
   expect(m.nested[0].fields[0].required) == true
-  // the group parses, but gen refuses it (derive Proto has no group encoding)
-  expect(gen(f).is_err()) == true
+  // the group becomes a nested message written with group tags
+  expect(gen(f).or_fault("group gen").contains("res proto \"4,group\": MRes?")) == true
   let src = gen(must("syntax = \"proto2\";\nmessage M {\n  required int32 a = 1;\n  optional string b = 2 [default = \"x\"];\n}")).or_fault("gen")
   expect(src.contains("a proto \"1\": Int32")) == true
   expect(src.contains("b proto \"2\": Str?")) == true
