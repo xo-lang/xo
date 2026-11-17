@@ -1096,6 +1096,9 @@ fn task_free(t: Int) { tasks.task_free(t) }
 
 fn scope_free(s: Int) { tasks.scope_free(s) }
 
+/// An orphan scope's free after its last unit (pool.xo run_item).
+fn scope_orphan_free(s: Int) { tasks.scope_orphan_free(s) }
+
 fn atomic_free(a: Int) { tasks.atomic_free(a) }
 
 // ---------------------------------------------------------------------------

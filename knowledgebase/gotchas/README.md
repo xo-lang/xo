@@ -1459,3 +1459,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [heartbeat-after-last-line.md](heartbeat-after-last-line.md): a test of a heartbeating job read `tail -1` of its log; a heartbeat landed after the job's line on loaded hosts (TestGateStepsShared, #202)
 - [bcrypt-empty-and-nul-one-key.md](bcrypt-empty-and-nul-one-key.md): the bcrypt stress program expected "" and "\x00" to differ; bcrypt (and Go) treat them as one key, so a 30 min run failed (Observed, #152)
 - [macho-fde-lsda-section-relative.md](macho-fde-lsda-section-relative.md): darwin/arm64 SIGBUS on a throw through a DWARF mode frame; ld-prime misreads an FDE LSDA reloc to an `L` label, so the label is `l` (Observed 2026-11-16)
+- [orphan-scope-free-races-last-unit.md](orphan-scope-free-races-last-unit.md): srv_free freed a never-closed server's task scope while its last task was still counting itself done; the last unit now frees an orphaned scope (#206; Observed)

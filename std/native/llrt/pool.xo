@@ -1542,10 +1542,17 @@ pub fn run_item(p: Int, w: Int, it: Int) {
     // scope's join waits for that too (no queue holds a task the scope
     // frees)
     let s = rt.mem_load(it, T_SCOPE, 8)
+    // what this thread did to s happens before an orphan's free
+    sanhook.release(s)
     if sched.task_dequeued(it, s) != 0 {
       let j = rt.mem_load(s, S_JOINER, 8)
-      sanhook.release(j)
-      park_signal(p, j)
+      if j == SCOPE_ORPHAN {
+        // nobody joins s: the last unit frees it (tasks.xo scope_orphan)
+        let _r = rt.call_c2(rt.fn_addr("scope_orphan_free"), s, 0)
+      } else {
+        sanhook.release(j)
+        park_signal(p, j)
+      }
     }
     return
   }
@@ -3275,6 +3282,11 @@ const S_TASKS = 72
 const S_MU = 104
 const S_PENDING = 30
 const S_JOINER = 248
+
+/// S_JOINER of a scope whose last reference went while its tasks still
+/// ran or were queued (tasks.xo scope_orphan): the last unit frees the
+/// scope instead of waking a joiner (task #206).
+pub const SCOPE_ORPHAN = 1
 const S_LIST = 384
 const S_CLOSED = 400
 const S_NLIST = 432

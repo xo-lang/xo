@@ -1,0 +1,39 @@
+// TestRaceOrphanScope (task #206): a FakeNet stream (http.xo open_mem)
+// dropped before its end without close frees its server's scope
+// (hserve.xo srv_free) while the handler's task may still be in its run's
+// last touch of that scope (tasks.xo run_claimed): --race reported the
+// free racing that touch. Many rounds give the race its chances.
+use std/http
+
+test "streams dropped unclosed while their handler tasks end" {
+  os.net.handle("GET https://orphan.test/s", fn(_r: http.Request) -> http.Response {
+    http.stream(200, fn(w: http.BodyWriter) -> () ! IoErr {
+      w.write("x".bytes())?
+      w.write("y".bytes())
+    })
+  })
+  let c = http.client(os.net)
+  var n = 0
+  var spin = 0
+  for _ in 0..400 {
+    match c.open(http.new_request("GET", "https://orphan.test/s", {})) {
+      Ok(st) => {
+        // the first chunk only: the stream goes unclosed, its end unread
+        match st.read(1) {
+          Ok(Some(b)) => n += b.len()
+          _ => {}
+        }
+        // time for the handler's task to end first, so that this drop is
+        // the server's last reference
+        var k = 0
+        for i in 0..50000 {
+          k = k.wrapping_add(i * i)
+        }
+        spin += k & 1
+      }
+      Err(_) => {}
+    }
+  }
+  expect(n) == 400
+  expect(spin >= 0) == true
+}

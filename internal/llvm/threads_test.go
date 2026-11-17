@@ -873,3 +873,31 @@ func TestRaceBinaryOutlivesToolchain(t *testing.T) {
 		})
 	}
 }
+
+// TestRaceOrphanScope: a stream an in-memory server opened and the
+// program dropped unread frees the server's task scope while its last
+// task may still be counting itself done (task #206; xw-1's std/sse race
+// run on linux/arm64, 2026-11-16: ThreadSanitizer saw heapos.release free
+// the scope after scope_units_done's atomic write, with no
+// happens-before). Since the fix the last unit frees an orphaned scope
+// (tasks.scope_orphan), so xo test --race reports no race.
+func TestRaceOrphanScope(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		t.Skipf("ThreadSanitizer does not run here: %s", why)
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 3; round++ {
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--race", "."))
+		cmd.Dir = filepath.Join("testdata", "race_orphan")
+		b, err := cmd.CombinedOutput()
+		if err != nil || strings.Contains(string(b), "ThreadSanitizer") {
+			t.Fatalf("round %d: xo test --race: %v\n%s", round, err, b)
+		}
+	}
+}

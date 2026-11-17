@@ -591,9 +591,10 @@ pub fn srv_free(a: Int) {
   srv_free_conts(ld(a, hconn.SR_PARKLIST), PC_PLINK)
   let sc = ld(a, hconn.SR_SCOPE)
   if sc != 0 && ld(a, hconn.SR_CLOSED) == 0 {
-    // never closed (serve did not get to its end): its tasks hold the
-    // server, so none is left
-    tasks.h_release(sc)
+    // never closed (serve did not get to its end): its tasks held the
+    // server, but one may still be ending (its last touch of sc comes
+    // after it drops the server), so the last of them frees sc
+    tasks.scope_orphan(sc)
   }
   let cfg = ld(a, hconn.SR_H2CFG)
   if cfg != 0 {

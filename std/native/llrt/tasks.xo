@@ -882,6 +882,34 @@ pub fn scope_free(s: Int) {
   obj.free_obj(s)
 }
 
+/// Drops the last reference to scope s, never closed, whose tasks may
+/// still be ending (hserve.xo srv_free: a task drops the server, the last
+/// reference to s, before its run's last touch of s, run_claimed's
+/// scope_units_done). With no unit pending s goes now; otherwise s is
+/// marked an orphan and the last unit frees it (task #206: the free raced
+/// that last touch under ThreadSanitizer).
+pub fn scope_orphan(s: Int) {
+  st(s, S_JOINER, pool.SCOPE_ORPHAN)
+  while true {
+    let v = rt.slot_load[Int](s + 8 * S_PENDING, 0, ACQUIRE)
+    if (v >> 1) == 0 {
+      scope_orphan_free(s)
+      return
+    }
+    // the waiting bit makes the last unit's end report (sched.xo
+    // scope_units_done); the bit's CAS orders the mark above before it
+    if rt.slot_cas[Int](s + 8 * S_PENDING, 0, v, v | 1, 3) {
+      return
+    }
+  }
+}
+
+/// Frees orphan scope s (scope_orphan) after its last unit.
+pub fn scope_orphan_free(s: Int) {
+  sanhook.acquire(s)
+  h_release(s)
+}
+
 /// An Atomic's (atomic_free).
 pub fn atomic_free(a: Int) { obj.free_obj(a) }
 
@@ -892,6 +920,7 @@ pub fn atomic_free(a: Int) { obj.free_obj(a) }
 
 const T_GONE = 176
 const S_JOINER = 248
+const S_PENDING = 30
 const RELEASE = 2
 
 /// Calls t's entry function (its word T_RUN, a C ABI function of
@@ -1018,7 +1047,12 @@ pub fn run_claimed(t: Int, units: Int) {
   if sched.scope_units_done(s, units) != 0 {
     // the joiner waits for this signal, so s is still there
     stat(rtstats.SIG_TASK)
-    park_signal(ld(s, S_JOINER))
+    let j = ld(s, S_JOINER)
+    if j == pool.SCOPE_ORPHAN {
+      scope_orphan_free(s)
+    } else {
+      park_signal(j)
+    }
   }
   sanhook.task_exit(tfib, tw, tctx)
 }
