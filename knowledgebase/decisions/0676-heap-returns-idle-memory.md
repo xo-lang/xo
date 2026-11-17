@@ -211,3 +211,23 @@ Alternatives for the refill:
 Limits: a solo record (a program that never spawned) is swept from its
 own lists only (gotchas/age-pass-walked-solo-record.md); darwin still
 waits for its MADV_FREE_REUSABLE pairing.
+
+## Addendum 2026-11-17: the scavenger's pages under dense (Xo Lang 1)
+
+The 2026-11-16 (2) advice covered the age pass's runs of small blocks
+only. Page blocks (classes PAGE_CLASS and up, 32 KiB to 256 KiB) go back
+through `scavenge`'s MADV_DONTNEED with no huge page advice, and under
+XO_THP=dense khugepaged refilled them: the websocket stress's idle tail
+on amd64 was 212 MB dense against 96 MB off and 101 MB kernel
+(2026-11-16). internal/llvm testdata/rt/heapidlethp (about 64 MB of
+40 KiB and 200 KiB strings freed, then idle) on linux/arm64 host 2
+(THP `always`): VmRSS 3.7 MB at 70 s, then 13.2, 28.5 and 38.5 MB at
+100, 110 and 120 s.
+
+`scavenge` now also advises the block's whole chunk MADV_NOHUGEPAGE in
+dense mode, once per chunk in a pass: the chunk, not the range, since
+advice per block would split the chunk's mapping per block (Go 1.21.1
+to 1.21.4 ran out of mappings that way), while a chunk's advice is
+idempotent and its mapping merges again. Same program after: 2.7 MB from
+70 s to 120 s. TestRuntimeHeapIdleTHP (150 s idle, arm64 and LLVM, Linux
+with huge pages not `never`) holds it within 8 MB of the start.

@@ -3495,6 +3495,11 @@ pub fn scavenge(m: Int, c: Int) {
     }
     _ => SCAV_PAGE
   }
+  let dense = match target.os {
+    TargetOs.Linux => thp_mode() == 2
+    _ => false
+  }
+  var last = 0
   var r = m
   while r != 0 {
     // a page block (class PAGE_CLASS and up, decision 0425) holds no link
@@ -3520,6 +3525,18 @@ pub fn scavenge(m: Int, c: Int) {
       match target.os {
         TargetOs.Linux => {
           let _a = linux.madvise(lo, hi - lo, 4)
+          // and no huge pages for the block's chunk (XO_THP=dense, decision
+          // 0676): khugepaged refilled the pages given back here within a
+          // minute of idle (amd64, websocket stress, 2026-11-16: dense idle
+          // tail 212 MB, off and kernel 96 and 101). The whole chunk, not
+          // the range: one advice per block would split the chunk's mapping
+          // per block (Go 1.21.1 to 1.21.4 ran out of mappings that way); a
+          // chunk's advice is idempotent and its mappings merge again
+          let ch = lo & (0).wrapping_sub(CHUNK)
+          if dense && ch != last {
+            let _n = linux.madvise(ch, CHUNK, 15)
+            last = ch
+          }
         }
         TargetOs.Darwin => {
           let _a = sys_darwin.madvise(lo, hi - lo, 7)

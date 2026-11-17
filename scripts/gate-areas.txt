@@ -42,6 +42,7 @@
 internal/llvm * @driver
 internal/llvm TestConstantTimeLLVM @llvmbe @crypto
 internal/llvm TestRaceSyncTable @race @sched @llvmbe
+internal/llvm TestRuntimeHeapIdleTHP @sched
 internal/llvm TestRaceSyncTableArm64 @race @sched @arm64be
 internal/llvm TestRaceBinaryOutlivesToolchain @race
 internal/llvm TestRaceRuntimeInlinedUnchecked @race @llvmbe

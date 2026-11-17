@@ -1,0 +1,89 @@
+// heapidlethp (decision 0676): about 64 MB of 40 KiB and 200 KiB strings
+// (the scavenged classes, 32 KiB to 256 KiB) is made and freed, then the
+// program idles for three of the age pass's periods. Under XO_THP=dense
+// the scavenger's MADV_DONTNEED holes were refilled by khugepaged within
+// a minute (the websocket stress's idle tail, 2026-11-16) unless the
+// chunk is also advised MADV_NOHUGEPAGE. Prints `before KIB`, `peak KIB`,
+// `idle SECS KIB AHP_KIB` every 10 s and `after KIB`, then `reuse ok`;
+// TestRuntimeHeapIdleTHP judges them.
+
+fn status_kib(os: Os, path: Str, key: Str) -> Int {
+  let text = os.fs.read_text(path).ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with(key) {
+      return Int.parse(line.trim_prefix(key).trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn rss_kib(os: Os) -> Int { status_kib(os, "/proc/self/status", "VmRSS:") }
+
+fn ahp_kib(os: Os) -> Int { status_kib(os, "/proc/self/smaps_rollup", "AnonHugePages:") }
+
+fn make() -> List[Str] {
+  let mid = "m".repeat(40000)
+  let big = "b".repeat(200000)
+  var held: List[Str] = []
+  for i in 0..800 {
+    held.push("${i}${mid}")
+  }
+  for i in 0..160 {
+    held.push("${i}${big}")
+  }
+  held
+}
+
+/// The burst: the strings are made, summed and dropped here; the resident
+/// set while they are held.
+fn burst(os: Os) -> Int {
+  let held = make()
+  var n = 0
+  for s in held {
+    n += s.len()
+  }
+  let peak = rss_kib(os)
+  if n == 0 {
+    return -1
+  }
+  peak
+}
+
+fn main(os: Os) {
+  // one spawn first: the freed blocks overflow to the central lists the
+  // age pass walks (heapidle/main.xo)
+  scope s {
+    let t = s.spawn(fn() {})
+    t.await
+  }
+  let before = rss_kib(os)
+  os.stdio.println("before ${before}")
+  let peak = burst(os)
+  os.stdio.println("peak ${peak}")
+  let secs = Int.parse(os.env.args().get(0) ?? "") ?? 150
+  var t = 0
+  while t < secs {
+    os.clock.sleep(Duration.from_secs(10.0))
+    t += 10
+    os.stdio.println("idle ${t} ${rss_kib(os)} ${ahp_kib(os)}")
+  }
+  os.stdio.println("after ${rss_kib(os)}")
+  os.stdio.println("reuse ${check()}")
+}
+
+/// The burst again, each string checked after all are made: "ok" or the
+/// first one that differs.
+fn check() -> Str {
+  let held = make()
+  for i in 0..800 {
+    if held[i] != "${i}${"m".repeat(40000)}" {
+      return "bad mid ${i}"
+    }
+  }
+  for i in 0..160 {
+    if held[800 + i] != "${i}${"b".repeat(200000)}" {
+      return "bad big ${i}"
+    }
+  }
+  "ok"
+}
