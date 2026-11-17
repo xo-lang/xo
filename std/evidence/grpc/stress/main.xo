@@ -45,7 +45,7 @@ fn rev(b: Bytes) -> Bytes {
   o.freeze()
 }
 
-fn handlers(clock: Clock) -> grpc.Server {
+fn handlers(clock: Clock[clock]) -> grpc.Server {
   var srv = grpc.server(clock)
   srv.unary("/s.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
     if let Some(c) = call.metadata.get("x-fail") {
@@ -80,7 +80,7 @@ fn handlers(clock: Clock) -> grpc.Server {
   srv
 }
 
-fn round(clock: Clock, c: grpc.Client, t: Int, k: Int) -> () ! Str uses (net.dial, clock) {
+fn round(clock: Clock[clock], c: grpc.Client, t: Int, k: Int) -> () ! Str uses (net.dial, clock) {
   let at = "task ${t} round ${k}"
   let seed = t * 1000003 + k * 7919
   let who = "w${t}.${k}"
@@ -176,7 +176,7 @@ fn round(clock: Clock, c: grpc.Client, t: Int, k: Int) -> () ! Str uses (net.dia
   Ok(())
 }
 
-fn worker(clock: Clock, c: grpc.Client, t: Int, end: Time, rounds: Int) -> Int ! Str uses (net.dial, clock) {
+fn worker(clock: Clock[clock], c: grpc.Client, t: Int, end: Time, rounds: Int) -> Int ! Str uses (net.dial, clock) {
   var k = 0
   while if rounds > 0 { k < rounds } else { clock.now() < end } {
     round(clock, c, t, k)?

@@ -1545,8 +1545,13 @@ func serverPerf(args []string) error {
 // names it "0 mismatches"; std/dns's stress program says "0 wrong
 // answers" and std/smtp's "0 wrong results" (2026-11-17: dns's race
 // evidence failed on memory alone, the exemption below not seeing a
-// clean count).
-var cleanCount = regexp.MustCompile(` 0 (mismatches|wrong [a-z]+)[,)]`)
+// clean count). Other programs say "0 wrong", "0 identities broken",
+// "0 differences", "0 promises broken", "none lost" or "every ... "
+// (grpc and jsonrpc's "every answer right", sse's "every event once and
+// in order"), printed only when every result was right (2026-11-17:
+// jsonrpc's race evidence failed on memory alone, 82% growth under
+// --race with every answer right).
+var cleanCount = regexp.MustCompile(` (0 (mismatches|wrong|wrong [a-z]+|identities broken|differences|promises broken)|none lost|every [a-z ]+)[,)]`)
 
 // raceMemOnly: a stress summary under --race that failed on memory alone
 // (every result right), which the task churn judges instead (decision
