@@ -9,6 +9,7 @@ fn handlers(clock: Clock[clock], log: Mutex[List[Str]]) -> grpc.Server {
     Ok("hello ${req.to_str_lossy()} from ${call.metadata.get("x-user") ?? "nobody"}".bytes())
   })
   srv.stream("/g.G/Feed", fn(_call, recv, send) -> () ! grpc.Status {
+    send.set_compressor("identity")?
     while let Some(m) = recv.next()? {
       send.send(m + b"!")?
     }

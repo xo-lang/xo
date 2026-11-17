@@ -10,6 +10,16 @@
 - Timing: none
 - Shipped in: not yet released
 
+## 2026-11-17: feature: a handler chooses its response compressor
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (std Proven; scripts/stdaudit/map.txt SetSendCompressor, ClientSupportedCompressors)
+- Go reference: google.golang.org/grpc v1.79.2 server.go SetSendCompressor, ClientSupportedCompressors, validateSendCompressor (the texts)
+- Test: std/grpc_test.xo "a handler chooses the response's compressor" (gzip for a plain request and identity for a gzip one, on the wire and through the client; an unknown compressor; a call after the head), arm64 and LLVM; golden grpc_hooks
+- Timing: none
+- Shipped in: not yet released
+
 ## 2026-11-17: fix: a handler that sends nothing ends the call trailers-only, as grpc-go
 
 - Kind: fix

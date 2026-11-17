@@ -241,6 +241,8 @@ pub struct Call {
   pub server_stream: Bool = true
   /// the client's IP address (grpc-go's peer.Peer Addr, which also has the port; std/http's Request keeps none)
   pub peer: Str = ""
+  /// the compressors the client accepts (grpc-go's ClientSupportedCompressors: its grpc-accept-encoding)
+  pub accept_encodings: List[Str] = []
   /// the connection's security (grpc-go's peer AuthInfo): "tls" with the TLS state, or "insecure"
   pub auth_info: AuthInfo = insecure_info()
   /// the request's `:authority` (the Host header over HTTP/1.1; grpc-go's ":authority" metadata)
@@ -448,6 +450,38 @@ pub struct Send {
   pub max_send: Int = 2147483647
   /// whether the response head went out (grpc-go's isHeaderSent): send_header, or the first message
   pub head_sent: Mutex[Bool] = Mutex.new(false)
+  /// set_compressor's choice ("" for none: the request's encoding)
+  pub enc: Mutex[Str] = Mutex.new("")
+  /// the client's grpc-accept-encoding
+  pub accept: List[Str] = []
+}
+
+/// Whether this call's responses go gzip compressed: set_compressor's choice, else the request's encoding.
+fn (s: Send) compressing() -> Bool {
+  let e = s.enc.with(fn(var x) -> Str { x })
+  if e.is_empty() { s.gzip } else { e == "gzip" }
+}
+
+/// grpc-go's SetSendCompressor: the responses go compressed with name ("gzip", or "identity" for none) instead of
+/// the request's encoding. Before the head goes out only; a name std/grpc has no compressor for, or one the
+/// client did not list in grpc-accept-encoding (Call.accept_encodings), is refused with grpc-go's texts.
+pub fn (s: Send) set_compressor(name: Str) -> () ! Status {
+  if name != "identity" {
+    if name != "gzip" {
+      return Err(status_new(Code.Internal, "compressor not registered \"${name}\""))
+    }
+    if !s.accept.contains(name) {
+      return Err(status_new(Code.Internal, "client does not support compressor \"${name}\""))
+    }
+  }
+  let ok = s.head_sent.with(fn(var sent) -> Bool {
+    !sent && s.w.set_header("grpc-encoding", name)
+  })
+  if !ok {
+    return Err(status_new(Code.Internal, "transport: set send compressor called after headers sent or stream done"))
+  }
+  s.enc.with(fn(var x) { x = name })
+  Ok(())
 }
 
 /// grpc-go's ErrIllegalHeaderWrite: header metadata after the head went out.
@@ -491,7 +525,7 @@ pub fn (s: Send) send_header(md: Map[Str, Str] = {}) -> () ! Status {
 
 /// Sends one message (a frame is flushed at once).
 pub fn (s: Send) send(msg: Bytes) -> () ! Status {
-  send_framed(s, frame_msg(msg, s.gzip), "")
+  send_framed(s, frame_msg(msg, s.compressing()), "")
 }
 
 /// Writes frame f; one above the send limit is ResourceExhausted with grpc-go's text, which a unary method's
@@ -621,7 +655,7 @@ pub fn (var s: Server) unary[fx: Effects](method: Str, f: fn(Call, Bytes) -> Byt
     }
     let ics = icpt.with(fn(var ic: Interceptors) -> List[fn(Call, Bytes, UnaryNext) -> Bytes ! Status] { ic.unary })
     let resp = if ics.is_empty() { f(call, req)? } else { run_unary(ics, 0, call, req, h)? }
-    send_framed(send, frame_msg(resp, send.gzip), "grpc: ")?
+    send_framed(send, frame_msg(resp, send.compressing()), "grpc: ")?
   }, client_stream: false, server_stream: false)
 }
 
@@ -1840,11 +1874,17 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
       md[lk] = v
     }
   }
-  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip, auth_info: if req.tls() { tls_info(req.tls_state()) } else { insecure_info() }, authority: req.host()}
+  var accept: List[Str] = []
+  for e in (req.header("grpc-accept-encoding") ?? "").split(",") {
+    if !e.trim().is_empty() {
+      accept.push(e.trim())
+    }
+  }
+  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip, accept_encodings: accept, auth_info: if req.tls() { tls_info(req.tls_state()) } else { insecure_info() }, authority: req.host()}
   let recv = Recv{body: body, st: Mutex[RecvState].new(RecvState{buf: b"", at: 0, done: false, gzip: (req.header("grpc-encoding") ?? "") == "gzip"}), max: max}
   // the head grpc-go's server writes: content-type, and grpc-encoding only when the responses are compressed
   var resp = http.stream(200, fn(w) -> () ! IoErr {
-    let send = Send{w: w, gzip: gz, max_send: max_send}
+    let send = Send{w: w, gzip: gz, max_send: max_send, accept: accept}
     let st = match timeout {
       Some(d) => match task.with_timeout(clock, d, fn() -> () ! Status { f(call, recv, send) }) {
         Ok(_) => Status{code: Code.Ok, message: "", details: b""}

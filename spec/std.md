@@ -10947,6 +10947,7 @@ fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server
 fn (r: Recv) next() -> Bytes? ! Status
 fn (s: Send) send(msg: Bytes) -> () ! Status
 fn (s: Send) set_trailer(name: Str, value: Str)
+fn (s: Send) set_compressor(name: Str) -> () ! Status   // grpc-go's SetSendCompressor: "gzip" or "identity", from Call.accept_encodings, before the head
 fn (s: Send) set_header(name: Str, value: Str) -> () ! Status   // grpc-go SetHeader (decision 0699): Internal "transport: SendHeader called multiple times" once the head went out
 fn (s: Send) send_header(md: Map[Str, Str] = {}) -> () ! Status   // grpc-go SendHeader: md added, the head sent now
 // the client

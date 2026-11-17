@@ -1,4 +1,5 @@
 // Vectors from grpc-go (rpc_util.go, http_util.go encodeTimeout and encodeGrpcMessage, codes).
+use std/compress
 use std/http
 use std/testing
 test "frame and unframe" {
@@ -769,5 +770,70 @@ test "retries follow the service config, as grpc-go's" uses (net, clock, rand) {
     // throttling: 2 tokens, half is 1; the first failure leaves 1, which stops the retries
     let tc = service_config_json("{\"methodConfig\": [{\"name\": [{\"service\": \"r.R\"}], ${policy}}], \"retryThrottling\": {\"maxTokens\": 2, \"tokenRatio\": 0.1}}").or_fault("parse")
     expect(base.with_service_config(tc, os.clock, os.rand).unary("/r.R/Flaky", b"e", {"x-key": "e"})) == Err(status_new(Code.Unavailable, "try again 1"))
+  }
+}
+
+// grpc-go's SetSendCompressor and ClientSupportedCompressors (server.go validateSendCompressor's texts)
+test "a handler chooses the response's compressor from the client's list, as grpc-go's SetSendCompressor" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/z.Z/Gz", fn(call, req) -> Bytes ! Status {
+    Ok("${call.accept_encodings.join(",")} ${req.to_str_lossy()}".bytes())
+  })
+  srv.stream("/z.Z/Force", fn(call, recv, send) -> () ! Status {
+    let m = recv.next()? ?? b""
+    let want = call.metadata.get("x-want") ?? "gzip"
+    send.set_compressor(want)?
+    send.send(m)?
+    // after the head went out
+    match send.set_compressor("gzip") {
+      Ok(_) => send.send(b"no error")?
+      Err(e) => send.send(e.message.bytes())?
+    }
+  }, client_stream: false, server_stream: true)
+  srv.stream("/z.Z/Bad", fn(_c, recv, send) -> () ! Status {
+    let _ = recv.next()?
+    match send.set_compressor("zstd") {
+      Ok(_) => send.send(b"no error")?
+      Err(e) => send.send(e.message.bytes())?
+    }
+  }, client_stream: false, server_stream: true)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 10s), "http://${hs.addr()}")
+    expect(c.unary("/z.Z/Gz", b"x")) == Ok(b"gzip,identity x")
+    let read = fn(cl: Client, md: Map[Str, Str]) -> (Str, List[Str]) ! Status {
+      cl.call("/z.Z/Force", md, None, fn(cc) -> (Str, List[Str]) ! Status {
+        cc.send(b"hello")?
+        cc.close_send()
+        let h = cc.header()?
+        var msgs: List[Str] = []
+        while let Some(m) = cc.recv()? {
+          msgs.push(m.to_str_lossy())
+        }
+        Ok((h.get("grpc-encoding") ?? "-", msgs))
+      })
+    }
+    // the client reads either answer (grpc-encoding is a reserved name, not header metadata)
+    expect(read(c, {"x-want": "gzip"})) == Ok(("-", ["hello", "transport: set send compressor called after headers sent or stream done"]))
+    expect(read(c.with_gzip(), {"x-want": "identity"})) == Ok(("-", ["hello", "transport: set send compressor called after headers sent or stream done"]))
+    // on the wire: a plain request's answer is gzip, its first frame flagged compressed; a gzip request's is identity
+    let hc = http.client(os.net, timeout: 10s).with_protocols(#{http.Protocol.UnencryptedHttp2})
+    for (want, req_enc, flag) in [("gzip", "identity", 1), ("identity", "gzip", 0)] {
+      var h = {"content-type": "application/grpc", "te": "trailers", "x-want": want, "grpc-accept-encoding": "gzip,identity"}
+      let body = if req_enc == "gzip" { frame(compress.gzip(b"hello"), compressed: true) } else { frame(b"hello") }
+      if req_enc == "gzip" {
+        h["grpc-encoding"] = "gzip"
+      }
+      let r = hc.send(http.new_request("POST", "http://${hs.addr()}/z.Z/Force", h, body)).or_fault("raw")
+      expect((r.headers.get("Grpc-Encoding"), Int(r.body[0]))) == (Some(want), flag)
+    }
+    let bad = c.call("/z.Z/Bad", {}, None, fn(cc) -> Str ! Status {
+      cc.send(b"")?
+      cc.close_send()
+      Ok((cc.recv()? ?? b"").to_str_lossy())
+    })
+    expect(bad) == Ok("compressor not registered \"zstd\"")
   }
 }
