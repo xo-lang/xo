@@ -1,0 +1,42 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a leaf over the
+// loop size rule (compiler/arm64 inline.xo INLINE_LEAF_LOOP_INSTRS, task
+// #283) is inlined at its calls inside loops. std/image's draw_px, 150
+// instructions at 3 sites reading its samples with bytes.index (a
+// builtin, which kept it from counting as a leaf), was a call a pixel.
+
+// Over compositing of one pixel, as draw_px's RGBA path.
+fn over_px(dp: Bytes, di: Int, sp: Bytes, si: Int, k: Int) -> Int {
+  let sa = Int(sp[si + 3]) * 257
+  let sr = Int(sp[si]) * 257
+  let sg = Int(sp[si + 1]) * 257
+  let sb = Int(sp[si + 2]) * 257
+  if k == 0 || sa == 65535 {
+    return ((sr >> 8) << 24) | ((sg >> 8) << 16) | ((sb >> 8) << 8) | (sa >> 8)
+  }
+  let a = (65535 - sa) * 257
+  let da = Int(dp[di + 3])
+  ((((Int(dp[di]) * a) / 65535 + sr) >> 8) << 24) | ((((Int(dp[di + 1]) * a) / 65535 + sg) >> 8) << 16) | ((((Int(dp[di + 2]) * a) / 65535 + sb) >> 8) << 8) | (((da * a) / 65535 + sa) >> 8)
+}
+
+// Two pixels a step and an odd last one: three sites in loops.
+fn over_row(dp: Bytes, sp: Bytes, w: Int, k: Int) -> Int {
+  // arm64: -"bl _?xo_f_over__px"
+  var s = 0
+  var x = 0
+  while x + 1 < w {
+    s = s ^ over_px(dp, 4 * x, sp, 4 * x, k)
+    s = s ^ over_px(dp, 4 * x + 4, sp, 4 * x + 4, k)
+    x += 2
+  }
+  while x < w {
+    s = s ^ over_px(dp, 4 * x, sp, 4 * x, k)
+    x += 1
+  }
+  s
+}
+
+fn main(os: Os) {
+  let d = Bytes.from_list([10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120])
+  let p = Bytes.from_list([200, 100, 50, 128, 1, 2, 3, 255, 9, 8, 7, 0])
+  os.stdio.println("${over_row(d, p, 3, 1)}")
+}

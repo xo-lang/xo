@@ -56,6 +56,17 @@ const INLINE_FEW_LOOP_INSTRS = 100
 const INLINE_LOOP_INSTRS = 60
 const INLINE_LOOP_BLOCKS = 24
 const INLINE_LOOP_SITES = 8
+/// A leaf (it calls nothing) is inlined at a call inside a loop up to
+/// this size: its call saved and restored every argument register the
+/// caller kept across it (task #283: std/image's draw_px, 150
+/// instructions at 3 sites, reloaded 6 arguments from the stack and
+/// built its divisor's magic constant on each pixel)
+const INLINE_LEAF_LOOP_INSTRS = 160
+/// and only one of at most this many call sites: without the bound the
+/// maps' entry helpers (leaves of up to 82 instructions at 122 and 136
+/// sites) and others grew xo's __text 0.29%, with it 0.02% (6.6 KB;
+/// both built with XO_BACKEND_CACHE=off)
+const INLINE_LEAF_LOOP_SITES = 4
 /// A function with landing pads and one call site is inlined there up
 /// to this size
 const INLINE_ONE_PADDED_INSTRS = 150
@@ -87,6 +98,9 @@ struct InlineCost {
   /// with its inlined callees calls nothing but inline intrinsics
   consts: Int = 0
   leaf: Bool = true
+  /// leaf, with inline_builtin's calls as instructions too: for
+  /// INLINE_LEAF_LOOP_INSTRS only
+  lleaf: Bool = true
   /// it ends in a tail call of a callee that stays a call (bad, pads or
   /// few): a branch on arm64 (shrink.xo mark_tails), so the function is
   /// a leaf of its own (no frame, its constants immediates), but its
@@ -123,6 +137,14 @@ struct InlineCost {
 /// (ssa call.xo cpu_call; one adcs or adds each): leaving them out kept
 /// nistec.sub_p256 a non-leaf, its constants counted, and a call
 /// (bench/results/arm64-inline-cost-2026-10-16.md).
+/// The builtins calls.xo lowers to instructions and a cold bounds fault:
+/// a function calling only these and inline_intrinsic's is a leaf for
+/// INLINE_LEAF_LOOP_INSTRS (InlineCost.lleaf), not for the other rules,
+/// whose costs and code size stay as they were (task #283).
+fn inline_builtin(n: Str) -> Bool {
+  n is "bytes.index" | "list.index" | "list.len" | "Str.len" | "Str.is_empty" | "Int.min" | "Int.max" | "Int.abs" | "Float.min" | "Float.max" | "Float.sqrt" | "Float.floor" | "Float.ceil" | "Float.trunc" | "Float.round" | "Float.abs" | "Float.is_nan" | "Float.fma"
+}
+
 fn inline_intrinsic(n: Str) -> Bool {
   n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_copy_block" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.u64_divc" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint" | "rt.preempt_poll" | "rt.ct_barrier" | "rt.u64_adc" | "rt.u64_adc_carry" | "rt.u64_carry" | "rt.u64_borrow" | "rt.rl_empty" | "rt.h_zero" ||
     // instructions alone too (calls.xo; 2026-10-25: missing, a function
@@ -288,11 +310,15 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
       // the code they share alike; decision 0252)
       c.instrs += 1
       c.leaf = false
+      c.lleaf = false
       continue
     }
     if ci < 0 {
       if !inline_intrinsic(name) {
         c.leaf = false
+        if !inline_builtin(name) {
+          c.lleaf = false
+        }
       }
       c.instrs += 1
       continue
@@ -319,6 +345,7 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
         c.tail_cold = true
       } else {
         c.leaf = false
+        c.lleaf = false
       }
     } else if ki < s.tails.len() && s.tails[ki] && k.instrs > INLINE_TAIL_MAX && s.instrs > INLINE_TAIL_MAX {
       // a tail call stays one (INLINE_TAIL_MAX): a branch, the caller a
@@ -332,6 +359,7 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
       // unless the site is a tail of its own (then it stays a branch)
       let site_tail = ki < s.tails.len() && s.tails[ki]
       c.leaf = c.leaf && k.leaf && (!k.tail_cold || site_tail)
+      c.lleaf = c.lleaf && k.lleaf && (!k.tail_cold || site_tail)
       c.tail_cold = c.tail_cold || (k.tail_cold && site_tail)
     }
   }
@@ -415,7 +443,7 @@ fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (M
         // update call it once each (2026-10-17: put and find 249M
         // against LLVM's put 169M in update, find inlined there)
         small[f.name] = true
-      } else if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
+      } else if !c.hard && (c.instrs <= INLINE_LOOP_INSTRS || c.lleaf && c.instrs <= INLINE_LEAF_LOOP_INSTRS && (sites.get(f.name) ?? 0) <= INLINE_LEAF_LOOP_SITES) && c.blocks <= INLINE_LOOP_BLOCKS {
         loopy[f.name] = true
       }
     }
@@ -569,7 +597,8 @@ pub fn inline_report(m: ssa.Module, filter: Str) -> List[Str] {
     let how = if small.contains(f.name) { "small" } else if fewl.contains(f.name) { "few" } else if loopy.contains(f.name) { "loop" } else if padded.contains(f.name) { "padded" } else if c.hard { "no (hard: ${c.why})" } else if c.pads { "no (pads)" } else { "no (size)" }
     // view: it returns a view of parameter ret_view (decision 0465 step 2)
     let rv = if f.ret_view >= 0 { " view ${f.ret_view}" } else { "" }
-    out.push("inline ${f.name}: instrs ${c.instrs} blocks ${c.blocks} sites ${sites.get(f.name) ?? 0} ${how}${rv}")
+    let lf = if c.leaf { " leaf" } else if c.lleaf { " lleaf" } else { "" }
+    out.push("inline ${f.name}: instrs ${c.instrs} blocks ${c.blocks} sites ${sites.get(f.name) ?? 0} ${how}${lf}${rv}")
   }
   out
 }
