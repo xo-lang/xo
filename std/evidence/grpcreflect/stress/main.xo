@@ -5,7 +5,8 @@
 // against what the Reflection answers for it locally; every tenth round asks three questions on one stream and
 // checks that a file goes once per stream. A background task samples the resident set every 10 s (Linux
 // /proc/self/status) and prints it each minute. Pass: every answer as expected, no fault, and the resident set at the
-// end within 10% or 4 MB of its median after the mark.
+// end within 10% or 4 MB of its median after the mark (half way; past 30 minutes, within 5%: the level-off guard,
+// task #330, whose 60 minute run on amd64 grew 145 -> 169 MB, all but 4 MB by minute 30).
 //
 //   main [MINUTES (30); 0: 200 rounds per task] [TASKS (16)]
 use std/grpc
@@ -131,7 +132,10 @@ fn main(os: Os) ! {
   let clock = os.clock
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
-  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run
+  // decision 0717: minute 15 of a 30 minute run; a longer run (task #330's
+  // level-off guard, 60 minutes) marks its half way and allows 5%
+  let mark_s = minutes * 30
+  let bound = if minutes > 30 { 5.0 } else { 10.0 }
   let mark = start + Duration.from_secs(Float(mark_s))
   let none_yet: List[Int] = []
   let samples = Mutex.new((none_yet, 0))
@@ -187,7 +191,7 @@ fn main(os: Os) ! {
   let (at_mark, last) = rss_medians(rss_after)
   let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
   let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes ${mark_s / 60} to ${mark_s / 60 + 2}), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
-  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  let mem_ok = at_mark == 0 || growth < bound || last - at_mark < 4096
   os.stdio.println("grpcreflect stress: ${total} rounds by ${tasks} tasks in ${minutes} min, every answer as expected, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
   if !mem_ok {
     return Err("memory grew ${growth}%")
