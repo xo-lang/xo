@@ -1,5 +1,15 @@
 # std/image changes
 
+## 2026-11-18: perf: Over and NRGBA draws carry no overflow checks
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/image over 1.060 of Go on linux/amd64; 25 checked multiplies in draw_rgba_rows' row loop on arm64)
+- Go reference: image/draw drawCopyOver, drawNRGBAOver, drawNRGBASrc (uint32 arithmetic)
+- Test: std/image_test.xo (the multiply-shift divides against `/` across their ranges); TestStdCorpora image ("Image.draw is Go's draw.Draw"); bench/perf/image checksums unchanged
+- Timing: bench/perf/image at 400 passes on the Mac, user time: over 1.12 s to 1.05 s, src 0.75 s to 0.69 s. Every product is under 2^33, so the per pixel math wraps as Go's uint32 math does, and x / 65535 and x / 255 are one multiply and a shift (exact over the range, no sign fixup)
+- Shipped in: not yet released
+
 ## 2026-11-16: perf: Over and NRGBA draws check each pixel's bounds once
 
 - Kind: perf

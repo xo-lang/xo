@@ -1,0 +1,23 @@
+// std/image's divide helpers against `/` at every quotient boundary of
+// their ranges (draw_px: a sample times an alpha, times 257 for 65535).
+
+test "div65535 is x / 65535 for a sample times an alpha times 257" {
+  var x = 0
+  while x <= 255 * 65535 * 257 {
+    expect(div65535(x)) == x / 65535
+    expect(div65535(x + 65534)) == (x + 65534) / 65535
+    x += 65535 * 97
+  }
+  let top = 255 * 65535 * 257
+  expect(div65535(top)) == top / 65535
+  expect(div65535(top - 1)) == (top - 1) / 65535
+}
+
+test "div255 is x / 255 for a sample times an alpha" {
+  var x = 0
+  while x <= 255 * 65535 {
+    expect(div255(x)) == x / 255
+    expect(div255(x + 254)) == (x + 254) / 255
+    x += 255
+  }
+}

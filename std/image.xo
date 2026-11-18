@@ -1176,6 +1176,10 @@ fn draw_src_color(src: Image, sx: Int, sy: Int) -> Color {
 /// pixel at di given the source pixel at si. mk is 0 for an RGBA source, 1 for
 /// NRGBA and 2 for Gray.
 fn draw_px(dp: Bytes, di: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
+  // Every product here is under 2^33 (a sample is at most 255, alpha at
+  // most 65535), so the arithmetic wraps where Go's uint32 math does and
+  // carries no overflow checks (bench/perf/image over: 25 checked
+  // multiplies in the row loop on arm64).
   var sr = 0
   var sg = 0
   var sb = 0
@@ -1183,28 +1187,44 @@ fn draw_px(dp: Bytes, di: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
   if mk == 0 {
     // the last sample first: its index check covers the three before it
     // (the arm64 backend's ranges drop their checks; #103 lever 2)
-    sa = Int(sp[si + 3]) * 257
-    sr = Int(sp[si]) * 257
-    sg = Int(sp[si + 1]) * 257
-    sb = Int(sp[si + 2]) * 257
+    sa = Int(sp[si + 3]).wrapping_mul(257)
+    sr = Int(sp[si]).wrapping_mul(257)
+    sg = Int(sp[si + 1]).wrapping_mul(257)
+    sb = Int(sp[si + 2]).wrapping_mul(257)
   } else if mk == 1 {
-    sa = Int(sp[si + 3]) * 257
-    sr = Int(sp[si]) * sa / 255
-    sg = Int(sp[si + 1]) * sa / 255
-    sb = Int(sp[si + 2]) * sa / 255
+    sa = Int(sp[si + 3]).wrapping_mul(257)
+    sr = div255(Int(sp[si]).wrapping_mul(sa))
+    sg = div255(Int(sp[si + 1]).wrapping_mul(sa))
+    sb = div255(Int(sp[si + 2]).wrapping_mul(sa))
   } else {
-    let g = Int(sp[si]) * 257
+    let g = Int(sp[si]).wrapping_mul(257)
     sr = g
     sg = g
     sb = g
   }
   if over && sa != 65535 {
-    let a = (65535 - sa) * 257
+    let a = (65535 - sa).wrapping_mul(257)
     // the last destination sample first, as the source's above
     let da = Int(dp[di + 3])
-    return ((((Int(dp[di]) * a) / 65535 + sr) >> 8) << 24) | ((((Int(dp[di + 1]) * a) / 65535 + sg) >> 8) << 16) | ((((Int(dp[di + 2]) * a) / 65535 + sb) >> 8) << 8) | (((da * a) / 65535 + sa) >> 8)
+    let r = (div65535(Int(dp[di]).wrapping_mul(a)).wrapping_add(sr)) >> 8
+    let g = (div65535(Int(dp[di + 1]).wrapping_mul(a)).wrapping_add(sg)) >> 8
+    let b = (div65535(Int(dp[di + 2]).wrapping_mul(a)).wrapping_add(sb)) >> 8
+    let al = (div65535(da.wrapping_mul(a)).wrapping_add(sa)) >> 8
+    return r.wrapping_shl(24) | g.wrapping_shl(16) | b.wrapping_shl(8) | al
   }
-  ((sr >> 8) << 24) | ((sg >> 8) << 16) | ((sb >> 8) << 8) | (sa >> 8)
+  (sr >> 8).wrapping_shl(24) | (sg >> 8).wrapping_shl(16) | (sb >> 8).wrapping_shl(8) | (sa >> 8)
+}
+
+/// x / 65535 for 0 <= x < 2^33 (a sample times an alpha times 257): a
+/// multiply and a shift, exact over that range (checked for every sample
+/// and alpha), with no sign fixup or overflow check.
+fn div65535(x: Int) -> Int {
+  x.wrapping_mul(0x80008001) >> 47
+}
+
+/// x / 255 for 0 <= x < 2^24 (a sample times an alpha), as div65535.
+fn div255(x: Int) -> Int {
+  x.wrapping_mul(0x808081) >> 31
 }
 
 /// Go's drawCopyOver, drawCopySrc, drawNRGBAOver, drawNRGBASrc and drawGray
