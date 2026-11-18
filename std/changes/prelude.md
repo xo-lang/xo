@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-11-18: perf: List.filled(n, 0) skips zeroing a new mapping
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/brotli quality 6: zeroing a 4 MiB ring buffer of which 100 KB is written was 22% of the time, every page faulted in)
+- Go reference: runtime mallocgc needzero (a span fresh from the OS is not cleared)
+- Measured: Mac 400 quality 6 brotli encodes 1.04 to 0.82 s, page faults 264k to 57k
+- Test: native/prelude_test.xo "zero fill of a reused large block is all zero" (fails when the skip ignores the mark)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: Str.repeat of over 64 MiB, made and dropped again, reuses its mapping
 
 - Kind: perf

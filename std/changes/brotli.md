@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-18: perf: the encoder's hash table is one zeroed allocation
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/brotli encode profile: growth copies of the table built by pushes were 16% of quality 1)
+- Go reference: andybalholm/brotli encode.go getHashTable (one cleared table)
+- Measured: Mac 2000 quality 1 encodes 1.27 to 0.90 s (page faults 232k to 128k); with the prelude's fresh mapping skip, 400 quality 6 encodes 1.04 to 0.82 s (quality 1 both: 1.28 to 0.95 s)
+- Test: brotli module tests (output bytes unchanged in the bench)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: decoding inlines the bit reader's fast path
 
 - Kind: perf

@@ -2888,10 +2888,10 @@ fn stream_fast(var s: Compressor, data: Bytes, op: Int) {
       w.b[0] = UInt8(s.e.last_bytes & 255)
       w.b[1] = UInt8((s.e.last_bytes >> 8) & 255)
       let tsize = hash_table_size(s.quality, block)
-      var table: List[Int] = []
-      for _ in 0..tsize {
-        table.push(0)
-      }
+      // one zeroed allocation (Go's getHashTable clears its table), not
+      // tsize pushes that grew and copied it (2026-11-18, bench/perf/brotli
+      // enc1: the growth's copies were 16% of the time)
+      var table = List[Int].filled(tsize, 0)
       if s.quality == 0 {
         compress_fragment_fast(data, pos, block, is_last, table, tsize, s.fe, w)
       } else {

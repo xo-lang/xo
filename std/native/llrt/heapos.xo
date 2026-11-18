@@ -333,6 +333,12 @@ fn large_room(n: Int, room: Int) -> Int {
     let size = room.wrapping_add(16).wrapping_add(GRAIN - 1) & (0 - GRAIN)
     m = map_os(size)
     rt.mem_store(m, 0, size, 8)
+    // a new mapping's pages are zero: fresh tells a caller that zeroes
+    // the block it can skip that (and leave pages it never writes
+    // unfaulted)
+    fresh_mark(m.wrapping_add(16))
+  } else {
+    fresh_mark(0)
   }
   rt.mem_store(m, 8, (0).wrapping_sub(n), 8)
   // the budget counts the bytes handed out (decision 0349)
@@ -359,6 +365,7 @@ pub fn large_resize(b: Int, n: Int) -> Int {
   // growth, each copy faulting in fresh pages (darwin's coll push 1.124
   // of the doubling curve, max RSS 1.10)
   let p = large_room(n, if n > old { n.wrapping_shl(2) } else { n })
+  fresh_mark(0)
   rt.mem_copy(p, b.wrapping_add(8), if old < n { old } else { n })
   release(b)
   p
@@ -2966,6 +2973,43 @@ const NEVER = Int.max
 /// TLS_HEAP).
 const TLS_HEAP = 3
 
+/// The record that holds the calling thread's fresh mark: the single
+/// threaded heap while no other thread runs (the main thread has no
+/// TLS_HEAP record then), else the thread's own; 0 none.
+fn fresh_rec() -> Int {
+  let h = obj.solo_heap()
+  if h != 0 { h } else { rt.tlocal_get(TLS_HEAP) }
+}
+
+/// Sets the calling thread's fresh mark (H_FRESH of its heap record; a
+/// thread with no record keeps none, so fresh is false there).
+fn fresh_mark(v: Int) {
+  let h = fresh_rec()
+  if h != 0 {
+    rt.mem_store(h, H_FRESH, v, 8)
+  }
+}
+
+/// Clears this thread's fresh mark: a caller that zeroes a block it is
+/// about to allocate calls it first, so the mark it reads after is the
+/// allocation's own (a block not from large_room leaves it 0).
+pub fn fresh_reset() { fresh_mark(0) }
+
+/// Whether the block at a (an object address the allocation just
+/// returned, after fresh_reset) came from a new mapping, so its bytes
+/// are zero already, as Go's needzero (2026-11-18, bench/perf/brotli
+/// enc6: zeroing a 4 MiB ring buffer it writes 100 KB of was 22% of the
+/// time, every page faulted in). The mark is cleared.
+pub fn fresh(a: Int) -> Bool {
+  let h = fresh_rec()
+  if h == 0 {
+    return false
+  }
+  let f = rt.mem_load(h, H_FRESH, 8)
+  rt.mem_store(h, H_FRESH, 0, 8)
+  f != 0 && f == a
+}
+
 /// rt.static_word: the list of every heap record (its first record, the
 /// main one at start), its lock word, and a record's size.
 const W_HEAPS = 27
@@ -3021,8 +3065,13 @@ const H_RTAG = H_RNEXT + 8
 const H_RINBOX = H_RTAG + 8
 /// Word 0: the bump as the previous age pass saw it (bump_age, decision
 /// 0714; its low bit set once the tail was given back). Words 1 to
-/// PAGE_CLASS - 1 held decision 0704's spare magazines, unused since 0714.
+/// PAGE_CLASS - 1 held decision 0704's spare magazines, unused since 0714
+/// (word 1 is H_FRESH since 2026-11-18).
 const H_IDLE = H_RINBOX + 8
+/// Word 1 of H_IDLE: the block large_room last handed out on the record's
+/// thread when it came from a new mapping (its pages all zero), else 0
+/// (fresh; every thread local word is taken, sched.xo's table).
+const H_FRESH = H_IDLE + 8
 const H_SIZE = H_IDLE + 8 * 77
 /// A C library's (decision 0574): 1 while the record's thread has exited,
 /// so a new thread takes it (thread_heap; orphan); the pthread key of the

@@ -155,6 +155,38 @@ test "List.filled: UInt32 bulk path fills every packed element" {
   }
 }
 
+// heapos.fresh: filled(n, 0) skips zeroing a block from a new mapping
+// only; a large block the cache hands back again (its old bytes still
+// there) is zeroed. Rounds of dirty large lists dropped and refilled.
+test "List.filled: zero fill of a reused large block is all zero" {
+  for round in 0..6 {
+    for n in [70000, 300000, 1 << 20] {
+      let pad = List[UInt8].with_capacity(round * 4096 + 1)
+      var b = List[UInt8].filled(n, 171)
+      b[n - 1] = 7
+      let bz = List[UInt8].filled(n, 0)
+      var bad = 0
+      for x in bz {
+        if x != 0 { bad += 1 }
+      }
+      expect(bad == 0 && bz.len() == n && pad.len() == 0 && b[0] == 171)
+      var i = List[Int].filled(n, -1)
+      i[0] = 3
+      let iz = List[Int].filled(n, 0)
+      for x in iz {
+        if x != 0 { bad += 1 }
+      }
+      var u = List[UInt32].filled(n, 4294967295)
+      u[0] = 3
+      let uz = List[UInt32].filled(n, 0)
+      for x in uz {
+        if x != 0 { bad += 1 }
+      }
+      expect(bad == 0 && i[0] == 3 && u[0] == 3)
+    }
+  }
+}
+
 test "list_swap: packed Float32 elements keep their values" {
   var xs: List[Float32] = [1.5, -2.25, 0.75]
   rt.list_swap(xs, 0, 1)
