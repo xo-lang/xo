@@ -896,6 +896,22 @@ var perfHelpers = map[string][]string{
 	"protowire": {"protodesc", "protojson", "protowkt"},
 }
 
+// perfHostWhy: "" when a perf file's host may time Proven evidence, else
+// why not. ADR 0712 as amended (9985b92af, task #301): the amd64 host or
+// host 2, lane exclusive; a host 1 row (json's and time's say only
+// "linux/arm64") dated on or before 2026-11-17 stays; hosts 3 and 4 are
+// containers on the Mac Studio and never count, nor does the Mac.
+func perfHostWhy(hdr map[string]string) string {
+	h, d := hdr["host"], hdr["date"]
+	switch {
+	case h == "linux/amd64 host", h == "linux/arm64 host 2":
+		return ""
+	case (h == "linux/arm64 host 1" || h == "linux/arm64") && d != "" && d <= "2026-11-17":
+		return ""
+	}
+	return "perf evidence timed on " + h + " (" + d + "): ADR 0712 counts the amd64 host or host 2, lane exclusive"
+}
+
 func perf(m string) mark {
 	if users, ok := perfHelpers[m]; ok {
 		var low mark
@@ -907,7 +923,7 @@ func perf(m string) mark {
 		return mark{low.level, "the lowest of its users' marks (" + strings.Join(users, ", ") + ")", low.ev}
 	}
 	e := ev(m)
-	if p, ok := e["perf"]; ok {
+	if p, ok := e["perf"]; ok && perfHostWhy(p.hdr) == "" {
 		meas := p.hdr["measure"]
 		if mm := reWorst.FindStringSubmatch(meas); mm != nil {
 			if v, _ := strconv.ParseFloat(mm[1], 64); v <= 1.05 {
@@ -1107,7 +1123,9 @@ func missing(m string, f, t, p mark) map[string][]string {
 	if p.level != "Proven" {
 		var xs []string
 		if pe, ok := ev(m)["perf"]; ok {
-			if mm := reWorst.FindStringSubmatch(pe.hdr["measure"]); mm != nil {
+			if why := perfHostWhy(pe.hdr); why != "" {
+				xs = append(xs, why+" ("+pe.path+")")
+			} else if mm := reWorst.FindStringSubmatch(pe.hdr["measure"]); mm != nil {
 				xs = append(xs, "worst Xo / Go "+mm[1]+" over 1.05 ("+pe.path+")")
 			} else {
 				xs = append(xs, "perf evidence without a worst Xo / Go figure ("+pe.path+")")
