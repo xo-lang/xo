@@ -801,18 +801,25 @@ const P_CFG_PT = 200
 /// an HTTP/1.1 connection's limit of idle ones for its key (the client's
 /// with_max_idle_per_host: 0 the default, H1_PER_HOST; negative none)
 const P_MAX_IDLE = 208
-const P_SIZE = 216 // own: an HTTP/2 connection record's size, not the pool record's
+/// H2Config's idle pings (http Client.with_idle_pings, cfg entry 6): the
+/// idle pinger takes the connection from the pool every P_CFG_PI of read
+/// silence to PING it; and when its last PING was acked (mono ns)
+const P_CFG_IP = 216
+const P_PING_AT = 224
+const P_SIZE = 232 // own: an HTTP/2 connection record's size, not the pool record's
 
 /// An exchange on a connection (r's h2, an obj.xo object): the
 /// connection, whether it came from the pool (a failure before an answer
 /// is retried), the request's body (malloc'd, count), and why
-/// cl_h2_read gave no frame (CC_*, CC_TOO_LARGE).
+/// cl_h2_read gave no frame (CC_*, CC_TOO_LARGE), and whether it is the
+/// idle pinger's (idle_ping_start: no stream, its idle time kept).
 const X_PC = 0
 const X_POOLED = 8
 const X_BODY = 16
 const X_BN = 24
 const X_RRES = 32
-const X_SIZE = 40
+const X_PING = 40
+const X_SIZE = 48
 
 /// xo_cresp's exchange and its retry (an int); the header's capacity
 /// and the body's (nbuf).
@@ -908,6 +915,7 @@ pub fn conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int, cfg: List[Int] = 
   st(pc, P_CFG_MF, mf)
   st(pc, P_CFG_PI, cfg_at(cfg, 4, 0))
   st(pc, P_CFG_PT, cfg_at(cfg, 5, 15000000000))
+  st(pc, P_CFG_IP, cfg_at(cfg, 6, 0))
   var at = http1w.put(o, 0, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
   at += h2w.frame_head(o + at, 24 + (if dt > 0 { 6 } else { 0 }), 4, 0, 0)
   if dt > 0 {
@@ -984,6 +992,67 @@ fn conn_is(pc: Int, h1: Int, roots: Int, kp: Int, kn: Int) -> Bool { ld4(pc, P_H
 /// close (xo_h2.c h2_pool_take).
 pub fn pool_take(roots: Int, kp: Int, kn: Int) -> Int { pool_take_kind(0, roots, kp, kn) }
 
+/// The idle pinger's next connection (http Client.with_idle_pings, as
+/// Go's http2 Transport ReadIdleTimeout pings a connection with no
+/// stream): an idle HTTP/2 one with idle pings whose read silence (since
+/// it went idle or its last PING's ack) is its send_ping_timeout, taken
+/// from the pool as a request takes it; 0 when none is due. Also the ns
+/// until the next one is due (0: no connection with idle pings).
+pub fn idle_ping_take() -> (Int, Int) {
+  let now = sysio.mono_ns()
+  let pl = h2pool()
+  var found = 0
+  var wait = 0
+  pool.lock(pl + PL_MU)
+  var prev = 0
+  var pc = ld(pl, PL_FIRST)
+  while pc != 0 {
+    let next = ld(pc, P_NEXT)
+    let pi = ld(pc, P_CFG_PI)
+    var take = false
+    if ld4(pc, P_H1) == 0 && ld(pc, P_CFG_IP) != 0 && pi > 0 && now - ld(pc, P_IDLE) <= IDLE_NS {
+      let last = if ld(pc, P_PING_AT) > ld(pc, P_IDLE) { ld(pc, P_PING_AT) } else { ld(pc, P_IDLE) }
+      let due = last + pi - now
+      if due <= 0 && found == 0 {
+        take = true
+      } else {
+        let d = if due > 0 { due } else { 1 }
+        if wait == 0 || d < wait {
+          wait = d
+        }
+      }
+    }
+    if take {
+      if prev == 0 {
+        st(pl, PL_FIRST, next)
+      } else {
+        st(prev, P_NEXT, next)
+      }
+      st(pl, PL_N, ld(pl, PL_N) - 1)
+      st(pc, P_NEXT, 0)
+      found = pc
+    } else {
+      prev = pc
+    }
+    pc = next
+  }
+  pool.unlock(pl + PL_MU)
+  (found, wait)
+}
+
+/// An exchange record for the idle pinger's PING on pc (idle_ping_take's):
+/// http1.h2_idle_ping runs it, and h2_end gives pc back to the pool (its
+/// idle time kept) or closes it.
+pub fn idle_ping_start(pc: Int) -> rthttp.CResp {
+  let r = tasks.new_handle(R_SIZE, rt.fn_addr("cresp_free"))
+  st(r, R_PREFIX, cstr_dup(""))
+  exchange_start(r, pc, 1, 0, 0, 0)
+  st(ld(r, R_H2), X_PING, 1)
+  let h = rt.obj_at[rthttp.CResp](r)
+  tasks.h_release(r)
+  h
+}
+
 /// pool_take of kind h1 (1 HTTP/1.1, 0 HTTP/2): the newest idle one.
 fn pool_take_kind(h1: Int, roots: Int, kp: Int, kn: Int) -> Int {
   let now = sysio.mono_ns()
@@ -1028,7 +1097,7 @@ fn pool_take_kind(h1: Int, roots: Int, kp: Int, kn: Int) -> Int {
 /// at most 100 stay, the oldest goes (MaxIdleConns); an HTTP/1.1 one
 /// closes when its client's limit for its key are idle already
 /// (MaxIdleConnsPerHost: P_MAX_IDLE, 0 for H1_PER_HOST).
-fn pool_put(pc: Int) -> Str {
+fn pool_put(pc: Int, idle_at: Int = 0) -> Str {
   if ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
     conn_free(pc)
     return "http: putIdleConn: connection is in bad state"
@@ -1053,7 +1122,7 @@ fn pool_put(pc: Int) -> Str {
       return "http: putIdleConn: too many idle connections for host"
     }
   }
-  st(pc, P_IDLE, sysio.mono_ns())
+  st(pc, P_IDLE, if idle_at > 0 { idle_at } else { sysio.mono_ns() })
   if target.arch != TargetArch.Wasm32 {
     // the idle connections are closed at exit (entry.xo, decision 0233);
     // a wasm instance's sockets end with it
@@ -1560,7 +1629,16 @@ pub fn h2_end(r: rthttp.CResp, sv: rt.Any, res: Int, why: Str, flags: Int) {
   } else {
     let tls = ld(pc + P_C, C_TLS)
     let al = if ld(x, X_POOLED) == 0 && res != CC_OK && res != CC_TIMEOUT && res != CC_CANCELED && why.is_empty() && tls != 0 { tlsio.alert(tls) } else { "" }
-    let _kept = pool_put(pc)
+    // the idle pinger's PING keeps the idle time (IdleConnTimeout counts
+    // from the last request, as Go's idle timer) and dates the ack
+    var at = 0
+    if ld(x, X_PING) != 0 {
+      at = ld(pc, P_IDLE)
+      if res == CC_OK {
+        st(pc, P_PING_AT, sysio.mono_ns())
+      }
+    }
+    let _kept = pool_put(pc, at)
     finish(a, res, why, al)
   }
   st(a, R_H2, 0)

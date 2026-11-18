@@ -1663,6 +1663,13 @@ func (c Http_Client) M_with_redirects(_ *Task, max int64) Http_Client {
 	return c
 }
 
+// M_with_idle_pings is `c.with_idle_pings(tasks, clock)`: Go's http2
+// Transport pings an idle connection after SendPingTimeout of read
+// silence itself, so the client is unchanged.
+func (c Http_Client) M_with_idle_pings(_ *Task, _ Task_Group, _ Clock) Http_Client {
+	return c
+}
+
 // M_with_max_idle_per_host is `c.with_max_idle_per_host(n)`: the
 // transport's MaxIdleConnsPerHost.
 func (c Http_Client) M_with_max_idle_per_host(_ *Task, n int64) Http_Client {

@@ -2284,6 +2284,7 @@ interface CookieStore[fx: Effects] {                          // cookiejar.Jar i
 }
 fn (c: Client) with_protocols(p: Set[Protocol]) -> Client  // Go's Transport.Protocols (4.6, decision 0434)
 fn (c: Client) with_h2_config(cfg: H2Config) -> Client     // Go's Transport.HTTP2 (4.6)
+fn (c: Client) with_idle_pings(tasks: task.Group, clock: Clock) -> Client uses clock  // idle HTTP/2 connections pinged too (Go's ReadIdleTimeout)
 fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
 fn (r: Request) with_idle_timeout(d: Duration) -> Request  // decision 0404
 fn (r: Request) with_expect_continue(timeout: Duration = 1s) -> Request  // Go's Transport.ExpectContinueTimeout: sets `Expect: 100-continue`; an HTTP/1.1 client sends the head, waits up to timeout for `100 Continue`, then sends the body; a final response first is the result and the body is never sent (the connection is not reused); other 1xx are skipped. A with_body_reader body is not read before the 100. No effect without a body, over HTTP/2 or for Client.open

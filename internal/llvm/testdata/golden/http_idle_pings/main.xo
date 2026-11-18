@@ -1,0 +1,105 @@
+// Client.with_idle_pings: an HTTP/2 connection in the pool is pinged
+// while no request is open, as Go's http2 Transport pings an idle
+// connection after ReadIdleTimeout, and one whose PING gets no ack within
+// ping_timeout leaves the pool, so the next request dials a new
+// connection instead of picking a dead one. Without with_idle_pings an
+// idle connection gets no PING. A proxy between the client and an h2c
+// server counts the client's PING frames and its connections; the second
+// proxy stops forwarding the server's bytes after the first request.
+use std/http
+
+fn pings(b: Bytes) -> Int {
+  var n = 0
+  var i = 24
+  while i + 9 <= b.len() {
+    let len = (Int(b[i]) << 16) | (Int(b[i + 1]) << 8) | Int(b[i + 2])
+    if i + 9 + len > b.len() {
+      break
+    }
+    if Int(b[i + 3]) == 6 && (Int(b[i + 4]) & 1) == 0 {
+      n = n + 1
+    }
+    i = i + 9 + len
+  }
+  n
+}
+
+fn run(os: Os, name: Str, idle: Bool, deafen: Bool) uses net, stdio, clock {
+  var rt = http.router()
+  rt.handle("GET /", fn(_req) { http.text(200, "ok") })
+  let hs = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), rt).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let pl = os.net.listen("127.0.0.1:0").or_fault("listen")
+  // the client's bytes on its first connection, the connections, and
+  // whether the first connection still gets the server's bytes
+  let first = Mutex[Bytes].new(b"")
+  let conns = Atomic[Int].new(0)
+  let deaf = Atomic[Bool].new(false)
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    s.spawn_background(fn() uses (net, sync) {
+      while let Ok(a) = pl.accept() {
+        let one = conns.add(1) == 1
+        let b = os.net.dial(hs.addr()).or_fault("dial")
+        s.spawn_background(fn() uses (net, sync) {
+          while let Ok(Some(x)) = b.read(65536) {
+            if one && deaf.get() {
+              continue
+            }
+            if a.write(x).is_err() {
+              break
+            }
+          }
+        })
+        s.spawn_background(fn() uses (net, sync) {
+          while let Ok(Some(x)) = a.read(65536) {
+            if one {
+              first.with(fn(var v: Bytes) { v = v + x })
+            }
+            if b.write(x).is_err() {
+              break
+            }
+          }
+        })
+      }
+    })
+    var hc = http.client(os.net, timeout: 10s).with_protocols(#{http.Protocol.UnencryptedHttp2}).with_h2_config(http.H2Config{send_ping_timeout: 50ms, ping_timeout: 200ms})
+    if idle {
+      hc = hc.with_idle_pings(s.group(), os.clock)
+    }
+    let url = "http://${pl.addr()}/"
+    let r1 = hc.get(url).or_fault("get 1")
+    if deafen {
+      deaf.set(true)
+    }
+    os.clock.sleep(600ms)
+    let p = pings(first.with(fn(var v: Bytes) -> Bytes { v }))
+    let t0 = os.clock.now()
+    let r2 = hc.get(url)
+    let waited = os.clock.now() - t0
+    let got = match r2 {
+      Ok(r) => "${r.status} ${r.text() ?? ""}"
+      Err(_) => "error"
+    }
+    os.stdio.println("${name}: ${r1.status} ${got}, idle pings ${if p > 0 { "yes" } else { "no" }}, the next request ${if waited < 150ms { "at once" } else { "waits" }}, connections ${conns.get()}")
+  }
+}
+
+/// The task with_idle_pings starts ends with its group at once, not
+/// after its sleep (1 s here, with no connection pooled).
+fn ends(os: Os) uses net, stdio, clock {
+  let t0 = os.clock.now()
+  scope s {
+    let _hc = http.client(os.net, timeout: 10s).with_h2_config(http.H2Config{send_ping_timeout: 5s}).with_idle_pings(s.group(), os.clock)
+    os.clock.sleep(50ms)
+  }
+  let took = os.clock.now() - t0
+  os.stdio.println("the task ends with its group: ${if took < 500ms { "at once" } else { "after its sleep" }}")
+}
+
+fn main(os: Os) uses net, stdio, clock {
+  run(os, "without idle pings", false, false)
+  run(os, "with idle pings", true, false)
+  run(os, "a dead connection", true, true)
+  run(os, "a dead connection without idle pings", false, true)
+  ends(os)
+}

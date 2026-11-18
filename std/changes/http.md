@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-17: feature: Client.with_idle_pings pings idle HTTP/2 connections
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc-go's keepalive.ClientParameters PermitWithoutStream true needs pings with no stream open)
+- Go reference: golang.org/x/net/http2 transport.go (ReadIdleTimeout: healthCheck on a connection with no stream, closed when the ack misses PingTimeout)
+- Test: internal/llvm/testdata/golden/http_idle_pings (an idle pooled connection gets PINGs; a dead one leaves the pool and the next request goes out at once, where without the call it waits ping_timeout on the dead one)
+- Timing: none (one task per client; each sweep walks the HTTP/2 pool under its lock)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: HTTP/2 server connection age limit (H2Config max_connection_age, max_connection_age_grace)
 
 - Kind: feature

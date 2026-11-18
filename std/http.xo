@@ -15,6 +15,7 @@ use std/url
 use std/netip
 use std/x509
 use std/tls
+use std/task
 
 struct Router {}
 type Next = fn(Request) -> Response
@@ -553,7 +554,8 @@ struct H2Config {
   max_decoder_header_table_size: Int = 0
   /// the HPACK table used for what is sent (0: 4096)
   max_encoder_header_table_size: Int = 0
-  /// read silence before a PING is sent (0: none)
+  /// read silence before a PING is sent (0: none; a client's idle
+  /// connection only with Client.with_idle_pings)
   send_ping_timeout: Duration = 0s
   /// the wait for a PING's ack before the connection closes (0: 15 s)
   ping_timeout: Duration = 0s
@@ -698,6 +700,21 @@ fn (c: Client) with_cert(cert: TlsCert) -> Client
 fn (c: Client) with_protocols(p: Set[Protocol]) -> Client
 /// The client's HTTP/2 settings (Go's Transport.HTTP2; decision 0434).
 fn (c: Client) with_h2_config(cfg: H2Config) -> Client
+/// The client's HTTP/2 connections pinged while idle too, as Go's http2
+/// Transport pings a connection with no stream after ReadIdleTimeout:
+/// a task in tasks takes each idle connection whose read silence reached
+/// H2Config.send_ping_timeout out of the pool, sends a PING, and gives it
+/// back at the ack, or closes it when no ack comes within ping_timeout,
+/// so a dead connection is gone before a request picks it. Without it a
+/// PING goes only while a request is open. The task ends with tasks.
+/// Without send_ping_timeout it pings nothing. The connections it pings
+/// keep their idle time (90 s, IdleConnTimeout, from their last
+/// request). The HTTP/2 pool is process wide: a running task pings every
+/// pooled connection of a client with idle pings, also one whose own
+/// task's group has ended. On the Go backend, Go's Transport pings idle connections
+/// itself, with or without this call, so it adds nothing; on wasm
+/// nothing either.
+fn (c: Client) with_idle_pings(tasks: task.Group, clock: Clock) -> Client uses clock
 /// A reverse proxy to target, for a handle_stream route:
 /// `r.handle_stream("/api/", fn(req, body) { p.serve(req, body) })`. It forwards each request to
 /// target (decision 0404, httputil.ReverseProxy with SetURL and

@@ -140,6 +140,7 @@ var componentGoldens = []struct {
 // no way to reach or leaves to the host.
 var componentGoldensNotRun = map[string]string{
 	"http_set_header":            "it listens on a socket of its own for its HTTP/1.1 and HTTP/2 clients to call (and drives Router.call from main), which a component cannot; set_header itself is plain std/http",
+	"http_idle_pings":            "it serves on a native socket behind a proxy and measures the client's idle HTTP/2 pings; a component has no h2 client pool and no idle pinger (with_idle_pings is native only)",
 	"http_cross_origin":          "it drives the router in process with Router.call and prints each response from main; a component only serves requests (CrossOrigin is plain std/http)",
 	"http_timeout_handler":       "it drives the router in process with Router.call and prints each response from main; a component only serves requests (the middleware is plain std/http on task.with_timeout)",
 	"http_escaped_path":          "it listens on a socket of its own for new_request's client to call, which a component cannot; TestWasmComponentClient runs the client",

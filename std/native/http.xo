@@ -179,6 +179,9 @@ struct Client {
   /// defaults); hclient's prior knowledge dial is Lang 3's
   protocols: Set[http.Protocol]? = None
   h2cfg: http.H2Config? = None
+  /// with_idle_pings: its HTTP/2 connections are pinged while idle too
+  /// (H2Config entry 6, hclient P_CFG_IP)
+  idle_pings: Bool = false
   /// the attenuation lists of the Net it was made from (Net.only,
   /// decision 0175): "" for none
   lists: Str = ""
@@ -3873,7 +3876,7 @@ fn client_alpn(c: Client) -> List[Str] {
 /// for the default (hclient.cfg_at).
 fn client_h2cfg(c: Client) -> List[Int] {
   match c.h2cfg {
-    Some(f) => [f.max_receive_buffer_per_stream, f.max_receive_buffer_per_connection, f.max_read_frame_size, f.max_decoder_header_table_size, f.send_ping_timeout.nanos(), f.ping_timeout.nanos()]
+    Some(f) => [f.max_receive_buffer_per_stream, f.max_receive_buffer_per_connection, f.max_read_frame_size, f.max_decoder_header_table_size, f.send_ping_timeout.nanos(), f.ping_timeout.nanos(), if c.idle_pings { 1 } else { 0 }]
     None => []
   }
 }
@@ -3888,6 +3891,41 @@ fn client_h2c(c: Client) -> Bool {
 }
 
 fn (c: Client) with_h2_config(cfg: http.H2Config) -> Client { c with {h2cfg: Some(cfg)} }
+
+fn (c: Client) with_idle_pings(tasks: task.Group, clock: Clock) -> Client uses clock {
+  if target.arch != TargetArch.Wasm32 {
+    // with no connection due, it looks again after send_ping_timeout
+    // (at most 1 s), so a connection pooled while it sleeps is not
+    // pinged late
+    let tick = match c.h2cfg {
+      Some(f) if f.send_ping_timeout > 0s && f.send_ping_timeout < 1s => f.send_ping_timeout
+      _ => 1s
+    }
+    tasks.spawn_background(fn() uses (clock, sync) { idle_pinger(clock, tick) })
+  }
+  c with {idle_pings: true}
+}
+
+/// with_idle_pings' task (Lang 3's review: one per client, not one per
+/// connection): each idle HTTP/2 connection with idle pings whose read
+/// silence reached its send_ping_timeout is taken from the pool as a
+/// request takes it, pinged, and given back (or closed when no ack comes
+/// within ping_timeout); then a sleep until the next one is due (tick
+/// with none). It ends when its group does.
+fn idle_pinger(clock: Clock, tick: Duration) uses (clock, sync) {
+  while !task.is_canceled() {
+    let (pc, wait) = hclient.idle_ping_take()
+    if pc != 0 {
+      let r = hclient.idle_ping_start(pc)
+      let _ok = http1.h2_idle_ping(r)
+      continue
+    }
+    // a canceled group ends the sleep, so its scope does not wait out a tick
+    if clock.sleep_or_cancel(if wait > 0 && wait < tick.nanos() { Duration.from_nanos(wait) } else { tick }).is_err() {
+      return
+    }
+  }
+}
 
 /// The client following at most max redirects (decision 0404): 0 returns
 /// a 3xx response as it came, its Location as the server sent it.

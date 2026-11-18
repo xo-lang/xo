@@ -2899,6 +2899,9 @@ pub struct H2X {
   ping_idle: Int = 0
   ping_wait: Int = 0
   ping_sent: Bool = false
+  /// the idle pinger's exchange (h2_idle_ping): no stream, it ends at its
+  /// PING's ack, and only the ack answers the PING
+  ping_only: Bool = false
   /// request trailers (decision 0433): the declared names and f, which
   /// gives [name, value, ...] once the body is sent; tsent when they went
   tnames: Str = ""
@@ -2964,6 +2967,10 @@ fn (var x: H2X) frame(r: rthttp.CResp, f: Str) -> (Bool, Str) {
   } else if ty == H2T_PING {
     if (flags & H2F_ACK) == 0 && len == 8 {
       x.out = push_frame(x.out, 8, H2T_PING, H2F_ACK, 0) + rawb.str_slice(f, 9, 17)
+    } else if x.ping_only && len == 8 && rawb.str_slice(f, 9, 17) == "keepaliv" {
+      // the ack of this exchange's PING (its data, as Go's healthCheck
+      // matches), not another stream's
+      x.ended = true
     }
   } else if ty == H2T_WINUP {
     if len == 4 {
@@ -3206,6 +3213,20 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
   h2_done(r, x)
 }
 
+/// The idle pinger's PING on the pooled connection r's exchange holds
+/// (hclient.idle_ping_start; http Client.with_idle_pings, as Go's http2
+/// healthCheck): a PING, the connection's frames read (SETTINGS,
+/// WINDOW_UPDATE, GOAWAY, a server's PING) until its ack, then the
+/// connection back to the pool; no ack within ping_timeout, or the
+/// connection failing, closes it. Whether the ack came.
+pub fn h2_idle_ping(r: rthttp.CResp) -> Bool {
+  var x = h2_begin(r, "", "", "", [], [], 0, ping_only: true)
+  h2_pump(r, x, H2_TO_END)
+  let ok = x.res == CC_OK && x.ended
+  h2_done(r, x)
+  ok
+}
+
 /// A traced HTTP/2 exchange (decision 0677) up to the response's head:
 /// WroteHeaders once its header frames went, WroteRequest and
 /// GotFirstResponseByte when the head came (the body is sent by the
@@ -3253,7 +3274,7 @@ pub const H2_TO_DATA: Int = 2
 
 /// h2_exchange's start: the connection's state taken from the pool and
 /// the request's header frames sent.
-pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names0: List[Str], values0: List[Str], bn: Int, src: List[fn(Int) -> BodyPart uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> H2X {
+pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names0: List[Str], values0: List[Str], bn: Int, src: List[fn(Int) -> BodyPart uses sync] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], ping_only: Bool = false) -> H2X {
   // declared trailers: a Trailer field in the head (net/http's)
   var names = names0
   var values = values0
@@ -3275,6 +3296,14 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names0: Li
   x.src = src
   x.tnames = tnames
   x.tfn = tfn
+  if ping_only {
+    // the idle pinger's: no stream, its PING waits ping_timeout for the ack
+    x.ping_only = true
+    x.out = push_frame(x.out, 8, H2T_PING, 0, 0) + "keepaliv"
+    x.ping_sent = true
+    let _ok = x.flush(r)
+    return x
+  }
   let why = h2_check(names, values)
   if !why.is_empty() {
     x.why = why
@@ -3492,7 +3521,7 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
       let _ok = x.flush(r)
       continue
     }
-    if !f.is_empty() {
+    if !f.is_empty() && !x.ping_only {
       x.ping_sent = false
     }
     if f.is_empty() && tick && hclient.h2_rres(r) == hclient.CC_TIMEOUT && (orig == 0 || hclient.cl_deadline(0) < orig) {
