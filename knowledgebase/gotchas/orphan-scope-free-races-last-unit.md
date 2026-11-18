@@ -32,3 +32,21 @@ TestRaceOrphanScope (`testdata/race_orphan`, 3 rounds).
 When an object owns a scope whose tasks may outlive the object's last
 reference, never free the scope directly: hand it to the scope's own
 unit count.
+
+## Follow-up: the orphan was freed still linked (2026-11-18, task #326)
+
+TestRaceOrphanScope still failed now and then on host 2 after the fix
+above. `xo test --check=all` in `testdata/race_orphan` showed the cause
+on every run on the Mac: XO_FREE_CHECK saw a freed 480 byte block
+written at offset 32. A hand made free site tracer (the check names no
+site) showed the block was the orphaned scope, freed from `srv_free`, and
+offset 32 is its body node's `N_PREV`. `scope_detached` links the body
+node below main's root, and only the scope's close unlinked it, so an
+orphan freed unclosed stayed in the tree and a sibling's later unlink
+wrote into the freed block. `scope_free` now unlinks the scope's nodes
+first (a no-op for a closed scope). Test: internal/llvm
+TestFreeCheckOrphanScope (`xo test --check=free,guard` on the same
+programs).
+
+A runtime record that sits in a shared intrusive list must leave the
+list in its free function, not only on its normal close path.

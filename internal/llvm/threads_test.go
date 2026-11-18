@@ -893,13 +893,37 @@ func TestRaceOrphanScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// --count=1: a passed run is cached (decision 0439), so without it
+	// rounds 2 and 3 replayed round 1's report (task #326)
 	for round := 0; round < 3; round++ {
-		cmd := testtmp.Guard(exec.Command(xo, "test", "--race", "."))
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--race", "--count=1", "."))
 		cmd.Dir = filepath.Join("testdata", "race_orphan")
 		b, err := cmd.CombinedOutput()
 		if err != nil || strings.Contains(string(b), "ThreadSanitizer") {
 			t.Fatalf("round %d: xo test --race: %v\n%s", round, err, b)
 		}
+	}
+}
+
+// TestFreeCheckOrphanScope (task #326): a server's detached task scope
+// that is never closed is freed by its last unit (tasks.scope_orphan)
+// while its nodes still hung below main's root, so a sibling's later
+// unlink stored its N_PREV into the freed block. The race reports of
+// TestRaceOrphanScope on host 2 were that write meeting the block's
+// next owner. scope_free now unlinks the nodes first; XO_FREE_CHECK
+// catches the old write on every run.
+func TestFreeCheckOrphanScope(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := testtmp.Guard(exec.Command(xo, "test", "--check=free,guard", "--count=1", "."))
+	cmd.Dir = filepath.Join("testdata", "race_orphan")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo test --check=free,guard: %v\n%s", err, b)
 	}
 }
 

@@ -1,0 +1,74 @@
+// Task #326: more ways a server's detached task scope ends unclosed
+// (tasks.scope_orphan): a stream's capture freed at exit after a task
+// wrote it, a handler ending after its stream was dropped, and a
+// spinning handler outliving its dropped stream. TestRaceOrphanScope runs
+// them under --race, TestFreeCheckOrphanScope under --check=free,guard.
+use std/http
+
+test "a stream function's capture freed at exit after a task wrote it" {
+  let m = Mutex[Int].new(0)
+  os.net.handle("GET https://late.test/s", fn(_r: http.Request) -> http.Response {
+    http.stream(200, fn(w: http.BodyWriter) -> () ! IoErr {
+      let v = m.with(fn(var x: Int) -> Int { x += 1; x })
+      w.write("${v}".bytes())
+    })
+  })
+  let c = http.client(os.net)
+  match c.open(http.new_request("GET", "https://late.test/s", {})) {
+    Ok(st) => {
+      let _b = st.read(16).ignore_err("only the stream's start matters")
+    }
+    Err(_) => {}
+  }
+  m.with(fn(var x: Int) { x += 10 })
+  expect(m.with(fn(var x: Int) -> Int { x })) == 11
+}
+
+test "a handler ends after its stream was dropped unclosed" {
+  let gate = Chan[Int].new(cap: 1)
+  os.net.handle("GET https://late.test/g", fn(_r: http.Request) -> http.Response {
+    http.stream(200, fn(w: http.BodyWriter) -> () ! IoErr {
+      w.write("x".bytes())?
+      let _g = gate.recv()
+      w.write("y".bytes())
+    })
+  })
+  let c = http.client(os.net)
+  var n = 0
+  for _ in 0..20 {
+    match c.open(http.new_request("GET", "https://late.test/g", {})) {
+      Ok(st) => match st.read(1) {
+        Ok(Some(b)) => n += b.len()
+        _ => {}
+      }
+      Err(_) => {}
+    }
+    gate.send(1)
+  }
+  expect(n) == 20
+}
+
+test "a spinning handler outlives its dropped stream" {
+  os.net.handle("GET https://late.test/p", fn(_r: http.Request) -> http.Response {
+    http.stream(200, fn(w: http.BodyWriter) -> () ! IoErr {
+      w.write("x".bytes())?
+      var k = 0
+      for i in 0..30000000 {
+        k = k.wrapping_add(i * i)
+      }
+      w.write(if k == 1 { "z" } else { "y" }.bytes())
+    })
+  })
+  let c = http.client(os.net)
+  var n = 0
+  for _ in 0..4 {
+    match c.open(http.new_request("GET", "https://late.test/p", {})) {
+      Ok(st) => match st.read(1) {
+        Ok(Some(b)) => n += b.len()
+        _ => {}
+      }
+      Err(_) => {}
+    }
+  }
+  expect(n) == 4
+}
