@@ -1,5 +1,18 @@
 # std/path changes
 
+## 2026-11-17: perf: is_match reads an ASCII byte of a class or `?` without a rune decode
+
+- Kind: perf
+- Commit: this push
+- Found by: task #302, the match row of bench/perf/path at 1.070 of Go on linux/amd64
+- Go reference: path.Match (go1.26.11), whose utf8.DecodeRuneInString inlines its ASCII test
+- Test: internal/arm64 TestTextCost/match (1,801,812,599 instructions on the Mac before, 1,494,515,542 after, ceiling 1.6 G), std/path module tests
+- Timing: bench/perf/path match on the Mac: 135 M instructions before, 125 M after (Go 119 to 127 M).
+
+`get_esc` and `match_chunk` called `decode_rune` for every byte of a
+class and every `?`; an ASCII byte is its own rune, so they take it
+directly. The results are the same.
+
 ## 2026-11-17: perf: base returns a view without a count; ext reads each byte once
 
 - Kind: perf

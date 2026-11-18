@@ -529,6 +529,14 @@ fn get_esc(p: Bytes, i0: Int, end: Int) -> (Int, Int, Bool) {
       return (0, i, true)
     }
   }
+  // an ASCII byte is its rune, as utf8.DecodeRuneInString's inlined
+  // test in Go (task #302: decode_rune's call was 43% of path/match)
+  if p[i] < 128 {
+    if i + 1 >= end {
+      return (0, i, true)
+    }
+    return (Int(p[i]), i + 1, false)
+  }
   let (r0, n) = p.decode_rune(i)
   let r = Int(r0)
   if r == 0xfffd && n == 1 {
@@ -557,9 +565,14 @@ fn match_chunk(p: Bytes, c0: Int, ce: Int, s: Bytes, s0: Int) -> (Int, Bool, Boo
       // a byte class: `[`, `[^`, ranges and `]`, and one rune of s
       var r = 0
       if !failed {
-        let (r0, n) = s.decode_rune(si)
-        r = Int(r0)
-        si += n
+        if s[si] < 128 {
+          r = Int(s[si])
+          si += 1
+        } else {
+          let (r0, n) = s.decode_rune(si)
+          r = Int(r0)
+          si += n
+        }
       }
       c += 1
       var negated = false
@@ -599,8 +612,12 @@ fn match_chunk(p: Bytes, c0: Int, ce: Int, s: Bytes, s0: Int) -> (Int, Bool, Boo
     } else if ch == 63 {
       if !failed {
         failed = s[si] == 47
-        let (_, n) = s.decode_rune(si)
-        si += n
+        if s[si] < 128 {
+          si += 1
+        } else {
+          let (_, n) = s.decode_rune(si)
+          si += n
+        }
       }
       c += 1
     } else if ch == 92 {

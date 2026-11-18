@@ -44,6 +44,23 @@ const trimCostProg = `fn main(os: Os) {
 }
 `
 
+// matchCostProg matches 2,000,000 paths against patterns with byte
+// classes and `?`.
+const matchCostProg = `use std/path
+
+fn main(os: Os) {
+  let pats = ["[a-z]*.gz", "file.[tc]*", "a/?/c[0-9]", "[^x]?[a-c]*"]
+  let names = ["ls.1.gz", "file.tar", "a/b/c7", "abc.txt", "zz"]
+  var h = 0
+  for i in 0..2000000 {
+    if path.is_match(pats[i % 4], names[i % 5]).ok() ?? false {
+      h += 1
+    }
+  }
+  os.stdio.println("${h}")
+}
+`
+
 // TestTextCost guards the cost of Int.parse and Str.trim_chars (task
 // #302). On the Mac (2026-11-17) the atoi program ran 540M instructions
 // with the overflow checked loop alone and 370M with strconv.Atoi's fast
@@ -64,6 +81,7 @@ func TestTextCost(t *testing.T) {
 		what             string
 	}{
 		{"atoi", atoiCostProg, "-948823852", 450_000_000, 120 * time.Millisecond, "Int.parse lost strconv.Atoi's fast path"},
+		{"match", matchCostProg, "400000", 1_600_000_000, 400 * time.Millisecond, "path.is_match decodes an ASCII byte of a class or `?` with a call (Go inlines utf8.DecodeRuneInString's ASCII test)"},
 		{"trim", trimCostProg, "58800000", 788_000_000, 250 * time.Millisecond, "Str.trim_chars no longer trims both ends of an ASCII cutset in one pass"},
 	}
 	for _, c := range cases {
