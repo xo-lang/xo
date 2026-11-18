@@ -14,7 +14,11 @@
 // stays flat: unthrottled producers outran the consumers (a backlog of
 // 225,000 messages after 2 minutes, 2026-11-18) and a map of every
 // accepted id held each message's frame, which the resident set check
-// read as a leak.
+// read as a leak. A drainer per queue receives its dead letter queue
+// over std/amqp (receive and delete, as Service Bus's dead letter
+// receivers do), so the dead letters do not pile up in the broker either:
+// 84,883 of them held about 90 MB at the end of a 20 minute run
+// (2026-11-18, task #323).
 // A background task samples the resident set every 10 s (Linux
 // /proc/self/status) and prints it each minute. Pass: those checks, no
 // fault, and the resident set at the end within 10% or 4 MB of its sample
@@ -80,6 +84,29 @@ fn producer(os: Os, addr: Str, t: Int, end: Time, passes: Int, stop: Mutex[Bool]
   }
   c.close().map_err(fn(e) { "producer ${t}: close: ${es(e)}" })?
   Ok(k)
+}
+
+/// One drainer: receives queue `q`'s dead letters until the consumers are done and none are left,
+/// counting each in `drained` and `done`.
+fn drainer(os: Os, b: amqptest.Broker, addr: Str, q: Int, drained: Mutex[Int], done: Mutex[Int], consuming: Mutex[Bool]) -> Int ! Str uses (net, clock) {
+  let c = amqp.dial(os.net, addr, opts(os)).map_err(fn(e) { "drainer ${q}: dial: ${es(e)}" })?
+  let sess = c.begin().map_err(fn(e) { "drainer ${q}: begin: ${es(e)}" })?
+  let rcv = c.new_receiver(sess, "q${q}/$DeadLetterQueue", amqp.ReceiverOptions{name: "d${q}", credit: 64}).map_err(fn(e) { "drainer ${q}: receiver: ${es(e)}" })?
+  var n = 0
+  while true {
+    match rcv.receive(300) {
+      Ok(_) => {
+        n += 1
+        drained.with(fn(var x: Int) { x += 1 })
+        done.with(fn(var x: Int) { x += 1 })
+      }
+      Err(_) => {
+        if !consuming.with_read(fn(p: Bool) -> Bool { p }) && b.dead_letters("q${q}").is_empty() { break }
+      }
+    }
+  }
+  c.close().map_err(fn(e) { "drainer ${q}: close: ${es(e)}" })?
+  Ok(n)
 }
 
 /// One consumer: settles until `drained` says the producers are done and its queue is empty.
@@ -173,9 +200,10 @@ fn main(os: Os) ! {
   let addr = l.addr()
   let no_bits: List[Int] = []
   let accepted = Mutex[List[List[Int]]].new(List[List[Int]].filled(tasks, no_bits))
-  // accepted plus dead lettered (the dead ones counted by the ticker)
+  // accepted plus dead lettered (the dead ones counted by the drainers)
   let done = Mutex[Int].new(0)
-  let dead_seen = Mutex[Int].new(0)
+  let drained = Mutex[Int].new(0)
+  let consuming = Mutex[Bool].new(true)
   let producing = Mutex[Bool].new(true)
   let stop = Mutex[Bool].new(false)
   let sent = Mutex[Int].new(0)
@@ -188,10 +216,6 @@ fn main(os: Os) ! {
         clock.sleep(10s)
         let v = rss_kib(os)
         ticks += 1
-        var nd = 0
-        for q in 0..QUEUES { nd += b.dead_letters("q${q}").len() }
-        let was = dead_seen.with(fn(var x: Int) -> Int { let o = x; x = nd; o })
-        done.with(fn(var d: Int) { d += nd - was })
         if ticks % 6 == 0 && v > 0 {
           os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB, ${sent.with_read(fn(n: Int) -> Int { n })} sent")
         }
@@ -211,6 +235,10 @@ fn main(os: Os) ! {
     for t in 0..tasks {
       cs.push(s.spawn(fn() -> Int ! Str { consumer(os, b, addr, t, accepted, done, producing) }))
     }
+    var ds: List[Task[Int, Str]] = []
+    for q in 0..QUEUES {
+      ds.push(s.spawn(fn() -> Int ! Str { drainer(os, b, addr, q, drained, done, consuming) }))
+    }
     var ps: List[Task[Int, Str]] = []
     for t in 0..tasks {
       ps.push(s.spawn(fn() -> Int ! Str { producer(os, addr, t, end, passes, stop, sent, done) }))
@@ -224,12 +252,16 @@ fn main(os: Os) ! {
     for h in cs {
       took += h.await.map_err(fn(e) { "a consumer: ${e}" })?
     }
+    consuming.with(fn(var p: Bool) { p = false })
+    for h in ds {
+      let _ = h.await.map_err(fn(e) { "a drainer: ${e}" })?
+    }
     l.close()
     s.cancel()
     (made, took)
   }
   // every message accepted once or dead lettered, and nothing left
-  var dead = 0
+  var dead = drained.with_read(fn(n: Int) -> Int { n })
   for q in 0..QUEUES {
     dead += b.dead_letters("q${q}").len()
     if !b.ready("q${q}").is_empty() || b.locked("q${q}") != 0 {
