@@ -1102,3 +1102,62 @@ test "ClientCall.peer is the address the call went to, as grpc-go's grpc.Peer ca
   expect(plain_peer(client(http.client(os.net), "http://[::1]"))) == "[::1]:80"
   expect(plain_peer(client(http.client(os.net), "unix:///tmp/g.sock"))) == "unix:/tmp/g.sock"
 }
+
+// decision 0709: grpc-go's wrapped ClientStream (SendMsg, RecvMsg) in a StreamClientInterceptor
+test "with_message_interceptor wraps a streaming call's messages, as a grpc-go stream interceptor's ClientStream" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.stream("/m.M/Echo", fn(_c, recv, send) -> () ! Status {
+    while let Some(m) = recv.next()? {
+      send.send(m)?
+    }
+  })
+  let h = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { h.serve().ignore_err("the test ends the server") })
+    let log = Mutex[List[Str]].new([])
+    let note = fn(t: Str) { log.with(fn(var l: List[Str]) { l.push(t) }) }
+    let c = client(http.client(os.net, timeout: 10s), "http://${h.addr()}")
+      .with_message_interceptor(fn(m, b) -> Bytes ! Status {
+        note("send1 ${m} ${b.to_str_lossy()}")
+        Ok(b + b"1")
+      }, fn(_m, b) -> Bytes ! Status {
+        note("recv1 ${b.to_str_lossy()}")
+        if b == b"stop12" {
+          return Err(status_new(Code.Aborted, "stopped"))
+        }
+        Ok(b + b"r1")
+      })
+      .with_message_interceptor(fn(_m, b) -> Bytes ! Status {
+        note("send2 ${b.to_str_lossy()}")
+        Ok(b + b"2")
+      }, fn(_m, b) -> Bytes ! Status {
+        note("recv2 ${b.to_str_lossy()}")
+        Ok(b)
+      })
+    let got = c.call("/m.M/Echo", {}, None, fn(cc) -> List[Str] ! Status {
+      cc.send(b"a")?
+      let a = cc.recv()?.map(fn(b) -> Str { b.to_str_lossy() }) ?? "-"
+      cc.send(b"stop")?
+      let e = match cc.recv() {
+        Ok(_) => "no error"
+        Err(st) => "${st.code} ${st.message}"
+      }
+      Ok([a, e])
+    })
+    expect(got) == Ok(["a12r1", "Aborted stopped"])
+    expect(log.with(fn(var l: List[Str]) -> List[Str] { l })) == ["send1 /m.M/Echo a", "send2 a1", "recv2 a12", "recv1 a12", "send1 /m.M/Echo stop", "send2 stop1", "recv2 stop12", "recv1 stop12"]
+    // an on_send error: send returns it and nothing goes out
+    let d = client(http.client(os.net, timeout: 10s), "http://${h.addr()}").with_message_interceptor(fn(_m, _b) -> Bytes ! Status {
+      Err(status_new(Code.PermissionDenied, "no"))
+    }, fn(_m, b) -> Bytes ! Status { Ok(b) })
+    expect(d.call("/m.M/Echo", {}, None, fn(cc) -> Str ! Status {
+      let r = cc.send(b"x")
+      cc.close_send()
+      expect(cc.recv()) == Ok(None)
+      Ok(match r {
+        Ok(_) => "sent"
+        Err(st) => "${st.code}"
+      })
+    })) == Ok("PermissionDenied")
+  }
+}

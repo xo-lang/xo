@@ -743,6 +743,9 @@ pub struct Client {
   /// with_unary_interceptor's and with_stream_interceptor's functions, in registration order
   pub unary_icpt: List[fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status] = []
   pub stream_icpt: List[fn(Str, CallOpts) -> CallOpts ! Status] = []
+  /// with_message_interceptor's functions, on each message a streaming call sends and on each it receives
+  pub send_icpt: List[fn(Str, Bytes) -> Bytes ! Status] = []
+  pub recv_icpt: List[fn(Str, Bytes) -> Bytes ! Status] = []
   /// with_default_metadata and with_default_timeout (grpc-go's WithDefaultCallOptions)
   pub default_md: Map[Str, Str] = {}
   pub default_timeout: Duration? = None
@@ -844,6 +847,22 @@ pub fn (c: Client) with_stream_interceptor[fx: Effects](f: fn(Str, CallOpts) -> 
   var ics = c.stream_icpt
   ics.push(fn(m, o) -> CallOpts ! Status { g((m, o)) })
   c with {stream_icpt: ics}
+}
+
+/// The client with on_send around each message a streaming `call` sends and on_recv around each it receives (the
+/// rest of grpc-go's StreamClientInterceptor, decision 0709: the wrapped ClientStream's SendMsg and RecvMsg). Each
+/// gets the method and the message, and returns the message to go on (as it came or changed) or an error: from
+/// on_send, `send` returns it and sends nothing; from on_recv, `recv` returns it and the call ends with it. Several
+/// run in the order added, the first outermost: on_send first to last, on_recv last to first. Unary calls take
+/// with_unary_interceptor, as grpc-go's. Their effects are counted here.
+pub fn (c: Client) with_message_interceptor[fx: Effects](on_send: fn(Str, Bytes) -> Bytes ! Status uses fx, on_recv: fn(Str, Bytes) -> Bytes ! Status uses fx) -> Client uses fx {
+  let gs = pure1(fn(a: (Str, Bytes)) -> Result[Bytes, Status] { on_send(a.0, a.1) })
+  let gr = pure1(fn(a: (Str, Bytes)) -> Result[Bytes, Status] { on_recv(a.0, a.1) })
+  var ss = c.send_icpt
+  ss.push(fn(m, b) -> Bytes ! Status { gs((m, b)) })
+  var rs = c.recv_icpt
+  rs.insert(0, fn(m, b) -> Bytes ! Status { gr((m, b)) })
+  c with {send_icpt: ss, recv_icpt: rs}
 }
 
 fn run_invoke(ics: List[fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status], i: Int, method: Str, req: Bytes, o: CallOpts, last: Invoker) -> Bytes ! Status {
@@ -1839,6 +1858,10 @@ pub struct ClientCall {
   pub gzip: Bool = false
   /// the client's send limit (Client.with_max_send)
   pub max_send: Int = 2147483647
+  /// the method, and the client's message interceptors (with_message_interceptor)
+  pub method: Str = ""
+  pub send_icpt: List[fn(Str, Bytes) -> Bytes ! Status] = []
+  pub recv_icpt: List[fn(Str, Bytes) -> Bytes ! Status] = []
 }
 
 pub struct CallState {
@@ -1884,7 +1907,7 @@ fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str]
     r = r.with_host(auth)
   }
   let head = Chan[(http.ClientStream?, Status?, Str)].new(1)
-  let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: c.max_recv, gzip: c.gzip, max_send: c.max_send}
+  let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: c.max_recv, gzip: c.gzip, max_send: c.max_send, method: method, send_icpt: c.send_icpt, recv_icpt: c.recv_icpt}
   var result: R? = None
   var failure: Status? = None
   scope s {
@@ -1925,7 +1948,11 @@ fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str]
 }
 
 /// Sends one message.
-pub fn (c: ClientCall) send(msg: Bytes) -> () ! Status {
+pub fn (c: ClientCall) send(msg0: Bytes) -> () ! Status {
+  var msg = msg0
+  for ic in c.send_icpt {
+    msg = ic(c.method, msg)?
+  }
   let f = frame_msg(msg, c.gzip)
   if f.len() - 5 > c.max_send {
     return Err(send_too_large(f.len() - 5, c.max_send))
@@ -2032,6 +2059,25 @@ pub fn (c: ClientCall) trailer() -> Map[Str, Str] {
 }
 
 pub fn (c: ClientCall) recv() -> Bytes? ! Status uses net.dial {
+  var msg = match c.recv_raw()? {
+    Some(m) => m
+    None => return Ok(None)
+  }
+  for ic in c.recv_icpt {
+    match ic(c.method, msg) {
+      Ok(m) => msg = m
+      Err(e) => {
+        // the call ends with the interceptor's error, as a grpc-go wrapper's RecvMsg error
+        c.st.with(fn(var s) { s.failed = Some(e) })
+        return Err(e)
+      }
+    }
+  }
+  Ok(Some(msg))
+}
+
+/// recv before the message interceptors.
+fn (c: ClientCall) recv_raw() -> Bytes? ! Status uses net.dial {
   let out = c.st.with(fn(var s) -> Result[Bytes?, Status] uses (net.dial, sync) {
     if let Some(e) = s.failed {
       return Err(e)

@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+got a12<2<1
+got b12<2<1
+err rpc error: code = Aborted desc = stopped in /g.G/Echo
+--- stderr

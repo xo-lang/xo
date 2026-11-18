@@ -2,6 +2,16 @@
 
 
 
+
+## 2026-11-17: feature: Client.with_message_interceptor, on each message of a streaming call
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc-go's StreamClientInterceptor wraps the ClientStream's SendMsg and RecvMsg; decision 0709)
+- Go reference: google.golang.org/grpc v1.79.2 interceptor.go StreamClientInterceptor, Streamer
+- Test: std/grpc_test.xo "with_message_interceptor wraps a streaming call's messages, as a grpc-go stream interceptor's ClientStream"
+- Timing: none (no interceptor: one empty loop per message)
+- Shipped in: not yet released
 ## 2026-11-17: feature: ClientCall.peer, the server address a call went to
 
 - Kind: feature

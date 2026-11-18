@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Feature (std/grpc): `Client.with_message_interceptor(on_send, on_recv)` runs on each message a streaming call sends and receives, to change it or end the call (the rest of grpc-go's stream client interceptors, decision 0709).
 - Feature (std/grpc): `ClientCall.peer()` returns the server address a call went to (grpc-go's `grpc.Peer` call option): with `with_addrs`, `with_dns` or `with_resolver` the address the balancer picked, else the base URL's host:port or `unix:PATH`.
 - Fix (std/udp, TCP listen and dial, native backends): an address splits as Go's net.SplitHostPort: an unbracketed IPv6 host ("::1:53") and a stray bracket are errors (they opened a socket before), and an empty port ("127.0.0.1:") is port 0 (it failed before). Programs that passed "::1:PORT" write "[::1]:PORT".
 - Performance (native backends): an integer comparison a dominating branch already decided is folded, and a reference counted field read twice is read once, so a loop guarded by `i < n` drops an inlined helper's `i >= n` test (std/toml decode 6.4% fewer instructions on the Mac).

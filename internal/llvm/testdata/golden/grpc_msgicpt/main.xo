@@ -1,0 +1,42 @@
+// std/grpc's message interceptors (decision 0709, task #236): hooks on each message a streaming call sends and
+// receives, run in the order added on send and last to first on receive; a hook's error ends the call.
+use std/grpc
+use std/http
+
+fn main(os: Os) {
+  var srv = grpc.server(os.clock)
+  srv.stream("/g.G/Echo", fn(_call, recv, send) -> () ! grpc.Status {
+    while let Some(m) = recv.next()? {
+      send.send(m)?
+    }
+  }, client_stream: true, server_stream: true)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    let c = grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
+      .with_message_interceptor(fn(_m, b) -> Bytes ! grpc.Status { Ok(b + b"1") }, fn(_m, b) -> Bytes ! grpc.Status { Ok(b + b"<1") })
+      .with_message_interceptor(fn(_m, b) -> Bytes ! grpc.Status { Ok(b + b"2") }, fn(m, b) -> Bytes ! grpc.Status {
+        if b.to_str_lossy().contains("stop") {
+          return Err(grpc.Status{code: grpc.Code.Aborted, message: "stopped in ${m}", details: b""})
+        }
+        Ok(b + b"<2")
+      })
+    let r = c.call("/g.G/Echo", {}, None, fn(cc) -> List[Str] ! grpc.Status {
+      var out: List[Str] = []
+      for w in ["a", "b", "stop"] {
+        cc.send(w.bytes())?
+        match cc.recv()? {
+          Some(m) => out.push(m.to_str_lossy())
+          None => out.push("end")
+        }
+        os.stdio.println("got ${out.last() ?? ""}")
+      }
+      Ok(out)
+    })
+    match r {
+      Ok(l) => os.stdio.println("ok ${l.join(",")}")
+      Err(e) => os.stdio.println("err ${e}")
+    }
+  }
+}
