@@ -1,5 +1,18 @@
 # std/protojson changes
 
+## 2026-11-18: fix: a Duration may leave out its integer part or its fraction's digits
+
+- Kind: fix
+- Commit: this push
+- Found by: TestProtojsonFuzz seed 179 (Mac, arm64 and llvm): Go read "+.000001s", Xo refused it
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protojson parseDuration
+- Test: std/protojson_test.xo "a Duration may leave out its integer part or its fraction's digits,
+  as in Go" (failed before)
+- Shipped in: not yet released
+
+A Duration string such as ".5s" or "+.000001s" (no digit before the period) and "1.s" or ".s"
+(no digit after it) is read as Go reads it: 0.5 s, 1 µs, 1 s and 0 s. Each was an error before.
+
 ## 2026-11-18: fix: an Any's well known type value counts against RecursionLimit as in Go
 
 - Kind: fix

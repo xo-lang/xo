@@ -75,6 +75,28 @@ test "a Timestamp's fraction may follow a comma, as Go's time.Parse reads it" {
   expect(parse_timestamp("2000-01-01T00:00:00,Z").is_err()) == true
 }
 
+// Go's parseDuration takes a fraction with no integer part and an empty
+// fraction after the period (TestProtojsonFuzz seed 179, 2026-11-18: Go read
+// "+.000001s", which Xo refused; values from Go's protojson.Unmarshal)
+test "a Duration may leave out its integer part or its fraction's digits, as in Go" {
+  let d = fn(s: Str) -> Str {
+    match parse_duration(s) {
+      Ok(b) => b.debug()
+      Err(_) => "error"
+    }
+  }
+  expect(d(".5s")) == d("0.5s")
+  expect(d("+.000001s")) == d("0.000001s")
+  expect(d("-.5s")) == d("-0.5s")
+  expect(d("1.s")) == d("1s")
+  expect(d(".s")) == d("0s")
+  expect(d("-.s")) == d("0s")
+  expect(d("+s")) == "error"
+  expect(d("..5s")) == "error"
+  expect(d(".1234567891s")) == "error"
+  expect(d("00.5s")) == "error"
+}
+
 // Go's protojson counts the Any against RecursionLimit but not a well known
 // type in its "value" (unmarshalAnyValue calls the type's own unmarshaler), and
 // an object in a member it skips while finding "@type" may nest only as deep as

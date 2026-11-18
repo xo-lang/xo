@@ -2429,7 +2429,8 @@ fn parse_duration(s: Str) -> Bytes ! JsonErr {
       return Err(e)
     }
     secs = Int.parse(s[s0..i]) ?? return Err(e)
-  } else {
+  } else if b[i] != 46 {
+    // a fraction with no integer part (".5s") is accepted, as in Go
     return Err(e)
   }
   var nanos = 0
@@ -2439,7 +2440,8 @@ fn parse_duration(s: Str) -> Bytes ! JsonErr {
     }
     let s0 = i + 1
     let nd = end - s0
-    if nd == 0 || nd > 9 {
+    // an empty fraction ("1.s", ".s") is accepted, as in Go
+    if nd > 9 {
       return Err(e)
     }
     var v = 0
