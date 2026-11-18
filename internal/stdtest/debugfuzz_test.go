@@ -85,10 +85,12 @@ func debugFuzz(seed int64, n int) string {
 		fmt.Fprintf(&b, "  (%s, %v, %d, %d),\n", xoStr(q), auth, status, secs)
 	}
 	b.WriteString("]\n\n")
-	// a test per 500 cases: a profile takes about 30 ms of real time on
-	// llvm, and each test has 60 s
-	for lo := 0; lo < n; lo += 500 {
-		hi := min(lo+500, n)
+	// a test per 100 cases: a profile takes about 30 ms of real time on
+	// llvm and each test has 60 s, but xo test runs a process per core
+	// and a loaded host (host 3, 2026-11-18: 8 of 10 tests of 500 cases
+	// on llvm passed 60 s at seed 9) takes over 4 times as long
+	for lo := 0; lo < n; lo += 100 {
+		hi := min(lo+100, n)
 		fmt.Fprintf(&b, `
 test "debug's profile route reads seconds as Go's net/http does, cases %d to %d" {
   let ok = debug.router(os.clock, fn(_r) { true })
