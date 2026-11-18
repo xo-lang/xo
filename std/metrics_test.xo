@@ -527,7 +527,8 @@ test "process_collector reports what update read (NewProcessCollector, ProcessCo
   let t = r.text()
   expect(t.contains("# TYPE app_process_cpu_seconds_total counter\napp_process_cpu_seconds_total ")) == true
   expect(pc.max_rss.get() > 0) == true
-  expect(t.contains("app_process_max_resident_memory_bytes ${pc.max_rss.get()}\n")) == true
+  // the text format writes a value as Go's FormatFloat(v, 'g', -1): 2.0381696e+07
+  expect(t.contains("app_process_max_resident_memory_bytes ${num(Float(pc.max_rss.get()))}\n")) == true
   expect(t.contains("app_process_start_time_seconds ")) == true
 }
 
@@ -701,7 +702,7 @@ test "pid_from_file and pid_collector (NewPidFileFn, ProcessCollectorOpts.PidFn)
     Ok(_) => {
       expect(pc.rss.get() > 0) == true
       expect(pc.start_ms.get() > 1000000000000) == true
-      expect(r.text().contains("child_process_resident_memory_bytes ${pc.rss.get()}\n")) == true
+      expect(r.text().contains("child_process_resident_memory_bytes ${num(Float(pc.rss.get()))}\n")) == true
     }
     // elsewhere there is no /proc
     Err(e) => expect(e.msg.starts_with("process metrics need /proc/")) == true
