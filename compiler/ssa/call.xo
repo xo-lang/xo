@@ -315,9 +315,10 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "crc32cx" => if b.goarch == "arm64" || b.goarch == "amd64" { "crc32cx" } else { "" }
     // IEEE 64 bytes a step with PCLMULQDQ (ssa x86crc32.xo): amd64 only
     "crc32_fold" | "crc32_fold_ymm" => if b.goarch == "amd64" { b.obj_name(fo) } else { "" }
-    // the SHA3 extension's Keccak rounds (ssa a64keccak.xo): arm64 only,
-    // amd64 and wasm run the body (sha3.xo calls it only with HW_SHA3)
-    "keccak_f1600" => if b.goarch == "arm64" { "keccak_f1600" } else { "" }
+    // Keccak's rounds: the SHA3 extension on arm64 (ssa a64keccak.xo),
+    // the general registers on amd64 (ssa x86keccak.xo); wasm runs the
+    // body (sha3.xo calls it only with HW_KECCAK)
+    "keccak_f1600" => if b.goarch == "arm64" || b.goarch == "amd64" { "keccak_f1600" } else { "" }
     "ghash_blocks" => if b.goarch == "arm64" { "ghash_blocks" } else { "" }
     // SSE2 on amd64 (x86mlkem.xo), NEON on arm64 (a64mlkem.xo)
     "mlkem_ntt" | "mlkem_inverse_ntt" | "mlkem_mul_acc" => if b.goarch == "amd64" || b.goarch == "arm64" { b.obj_name(fo) } else { "" }

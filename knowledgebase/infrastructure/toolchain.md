@@ -4979,7 +4979,11 @@ winxc LLVM above):
     xo build --backend=llvm --target=darwin/amd64 -o prog .
 
 Both link (an x86-64 PIE ELF against glibc 2.31; an x86_64 Mach-O);
-neither runs on this Mac (no Rosetta). Last verified: 2026-10-15.
+neither runs on this Mac (no Rosetta); copy the linux one to the
+linux/amd64 host (offload.sh --put) to run it. The recipe built a
+sysroot again on 2026-11-18 (kept at ~/xo-tools/lxsys/root on the Mac,
+untracked) for the x86 Keccak kernel's LLVM inline asm. Last verified:
+2026-11-18.
 
 ### xo1 on x86-64 hosts
 

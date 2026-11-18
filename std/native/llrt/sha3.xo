@@ -1217,11 +1217,12 @@ pub fn rate(s: Sponge) -> Int { s.rate }
 /// Whether output was read (a write then is the caller's error).
 pub fn squeezing(s: Sponge) -> Bool { s.squeezing }
 
-/// Keccak-f[1600] on the 25 lanes: arm64's SHA3 extension where the CPU
-/// has it (cpu.keccak_f1600, Go's keccakF1600NEON; every Apple arm64
-/// CPU, 2026-10-28), else keccak's scalar rounds.
+/// Keccak-f[1600] on the 25 lanes: cpu.keccak_f1600's kernel where hw()
+/// has it (arm64's SHA3 extension, Go's keccakF1600NEON, on every Apple
+/// arm64 CPU, 2026-10-28; x86-64's general registers, Go's keccakF1600
+/// for amd64, 2026-11-18), else keccak's scalar rounds.
 fn permute(var a: List[Int]) {
-  if (cpu.hw() & cpu.HW_SHA3) != 0 && a.len() == 25 {
+  if (cpu.hw() & cpu.HW_KECCAK) != 0 && a.len() == 25 {
     // a write first makes a this call's own
     a[0] = a[0]
     cpu.keccak_f1600(rt.obj_addr(a).wrapping_add(rt.layout(2)), rt.obj_addr(RCS).wrapping_add(rt.layout(2)))
@@ -1232,7 +1233,7 @@ fn permute(var a: List[Int]) {
 
 /// Keccak-f[1600] on the 25 lanes at la (raw memory), as permute.
 fn permute_at(la: Int) {
-  if (cpu.hw() & cpu.HW_SHA3) != 0 {
+  if (cpu.hw() & cpu.HW_KECCAK) != 0 {
     cpu.keccak_f1600(la, rt.obj_addr(RCS).wrapping_add(rt.layout(2)))
     return
   }

@@ -2199,6 +2199,19 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.keccak_f1600" if g.x86 => {
+      // Keccak-f[1600] in the general registers (ssa.keccak_x86_lines,
+      // Go's keccakF1600 for amd64): $u0 the state, read first, so it may
+      // be in a register the lines write (IF_CLOB_MID); rbx and r12 to
+      // r15 restored by them, the round constants their immediates
+      var cl: List[Int] = []
+      for r in ssa.keccak_x86_gprs() {
+        cl.push(r)
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.keccak_x86_lines("$u0").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0)))], fl: IF_X86 | IF_CLOB_MID, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.keccak_f1600" => {
       // Keccak-f[1600] with the SHA3 extension (ssa.keccak_neon_lines,
       // Go's keccakF1600NEON): x9 and x10 its constants' cursor and the

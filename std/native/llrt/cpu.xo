@@ -65,6 +65,10 @@ pub const HW_SHA512: Int = 4096
 /// Every Apple arm64 CPU; Linux's AT_HWCAP DIT bit (Graviton2 and other
 /// Armv8.2 cores have none, where dit_set's instructions are undefined).
 pub const HW_DIT: Int = 8192
+/// keccak_f1600's kernel: arm64's with the SHA3 extension (set with
+/// HW_SHA3) and x86-64's in the general registers (ssa x86keccak.xo, Go's
+/// keccakF1600 for amd64: every x86-64 CPU, 2026-11-18).
+pub const HW_KECCAK: Int = 16384
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -118,9 +122,12 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL | HW_SHA1 | HW_SHA512 | HW_DIT)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL | HW_SHA1 | HW_SHA512 | HW_DIT | HW_KECCAK)
   }
-  let f = if lowered() != 0 { detect() } else { 0 }
+  let d = if lowered() != 0 { detect() } else { 0 }
+  // keccak_f1600's kernel: with the SHA3 extension on arm64, on every
+  // x86-64 CPU (no extension: the general registers)
+  let f = if (d & HW_SHA3) != 0 || (lowered() != 0 && target.arch == TargetArch.Amd64) { d | HW_KECCAK } else { d }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
   f
 }
@@ -171,7 +178,8 @@ fn detect() -> Int {
 
 /// Keccak-f[1600]'s 24 rounds on the 25 lanes at st (lane i at st + 8 i),
 /// with the round constants at rc (24 words): arm64's SHA3 extension
-/// (ssa a64keccak.xo). Call it only when hw() has HW_SHA3; the body is
+/// (ssa a64keccak.xo), x86-64's general registers (ssa x86keccak.xo).
+/// Call it only when hw() has HW_KECCAK; the body is
 /// the reference.
 pub fn keccak_f1600(st: Int, rc: Int) { keccak_f1600_soft(st, rc) }
 

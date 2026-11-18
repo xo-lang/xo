@@ -1,0 +1,387 @@
+// Keccak-f[1600] on x86-64 in its general registers: the instruction
+// sequence both x86-64 lowerings use (compiler/arm64 calls.xo,
+// compiler/llvm call.xo) for rt.keccak_f1600 (std/native/llrt/cpu.xo
+// keccak_f1600, which sha3.xo calls where hw() has HW_KECCAK: every
+// x86-64 CPU). Ported from Go's
+// crypto/internal/fips140/sha3/_asm/keccakf_amd64_asm.go (keccakF1600,
+// which writes sha3_amd64.s; Copyright 2024 The Go Authors, BSD-style
+// license; translated by Go from the public domain KeccakCodePackage):
+// the 24 rounds unrolled with lane complementing (six lanes kept
+// inverted, so chi needs one NOT a plane), theta's column parities
+// carried in registers from round to round, the rounds alternating
+// between two 200 byte copies of the state.
+//
+// Two changes to Go's register plan: rbp stays the frame pointer (a
+// profiler's walk reads it at any instruction), so rdi holds Go's rCe,
+// and both copies of the state are on the stack (Go's rdi points at the
+// caller's state, one of them): the lines copy the lanes in, inverting
+// the six, and out again. Below the red zone the lines take 576 bytes of
+// stack: the two copies (0 and 200 from rsp), the state's address (400),
+// and rbx and r12 to r15 (408 to 440), which they restore, so a caller
+// lists only rax, rcx, rdx, rsi, rdi, r8 to r10 and r11 as written; rdi
+// holds the state's address again at the end.
+
+// Go's registers (keccakf_amd64_asm.go): rT1 the temporary, rDa to rDu
+// theta's D values, rBa to rBu the lanes of a plane, rCa to rCu the
+// column parities (rCi and rCo share rBi and rBo).
+const RT1 = "%rax"
+const RDA = "%rbx"
+const RDE = "%rcx"
+const RDI = "%rdx"
+const RDO = "%r8"
+const RDU = "%r9"
+const RBA = "%r10"
+const RBE = "%r11"
+const RBI = "%r12"
+const RBO = "%r13"
+const RBU = "%r14"
+const RCA = "%rsi"
+const RCE = "%rdi"
+const RCI = "%r12"
+const RCO = "%r13"
+const RCU = "%r15"
+
+// The lanes' byte offsets in a copy of the state (lane x + 5 y, Go's _ba
+// to _su).
+const L_BA = 0
+const L_BE = 8
+const L_BI = 16
+const L_BO = 24
+const L_BU = 32
+const L_GA = 40
+const L_GE = 48
+const L_GI = 56
+const L_GO = 64
+const L_GU = 72
+const L_KA = 80
+const L_KE = 88
+const L_KI = 96
+const L_KO = 104
+const L_KU = 112
+const L_MA = 120
+const L_ME = 128
+const L_MI = 136
+const L_MO = 144
+const L_MU = 152
+const L_SA = 160
+const L_SE = 168
+const L_SI = 176
+const L_SO = 184
+const L_SU = 192
+
+/// The stack the lines take below the red zone, and where in it the
+/// second copy, the state's address and the saved registers are.
+const KX_FRAME = 576
+const KX_COPY2 = 200
+const KX_ADDR = 400
+const KX_SAVES = 408
+
+/// The 24 round constants (FIPS 202 3.2.5, sha3.xo RCS).
+fn keccak_x86_rcs() -> List[Int] {
+  [1, 32898, -9223372036854742902, -9223372034707259392, 32907, 2147483649, -9223372034707259263, -9223372036854743031, 138, 136, 2147516425, 2147483658, 2147516555, -9223372036854775669, -9223372036854742903, -9223372036854743037, -9223372036854743038, -9223372036854775680, 32778, -9223372034707292150, -9223372034707259263, -9223372036854742912, 2147483649, -9223372034707259384]
+}
+
+/// The general registers keccak_x86_lines writes and does not restore
+/// (x86 register numbers: rax, rcx, rdx, rsi, rdi, r8, r9, r10; and r11,
+/// the emitter's scratch). rdi holds the state's address at the end.
+pub fn keccak_x86_gprs() -> List[Int] { [0, 1, 2, 6, 7, 8, 9, 10] }
+
+/// The lanes the lines keep inverted (Go's NOTQ of _be, _bi, _go, _ki,
+/// _mi and _sa), by index.
+fn keccak_x86_inverted(i: Int) -> Bool { i == 1 || i == 2 || i == 8 || i == 12 || i == 17 || i == 20 }
+
+fn o2(op: Str, a: Str, b: Str) -> Str { "${op} ${a}, ${b}" }
+
+/// The lane at off of the copy at base (0 or KX_COPY2).
+fn at(base: Int, off: Int) -> Str { "${base + off}(%rsp)" }
+
+/// rc into rT1: a sign extended 32 bit immediate where it fits.
+fn imm_rax(rc: Int) -> Str {
+  if rc >= -2147483648 && rc <= 2147483647 { "movq $${rc}, %rax" } else { "movabsq $${rc}, %rax" }
+}
+
+/// The lines of Keccak-f[1600]'s 24 rounds on the 25 lanes at st (lane i
+/// at st + 8 i, little endian words): st is a general register (any but
+/// rsp and rbp), read before any register is written.
+pub fn keccak_x86_lines(st: Str) -> List[Str] {
+  var t: List[Str] = [
+    "movq ${st}, %rax",
+    "leaq -${128 + KX_FRAME}(%rsp), %rsp",
+    "movq %rax, ${KX_ADDR}(%rsp)",
+    "movq %rbx, ${KX_SAVES}(%rsp)",
+    "movq %r12, ${KX_SAVES + 8}(%rsp)",
+    "movq %r13, ${KX_SAVES + 16}(%rsp)",
+    "movq %r14, ${KX_SAVES + 24}(%rsp)",
+    "movq %r15, ${KX_SAVES + 32}(%rsp)",
+  ]
+  // the user state into the internal one (Go's first NOTQs)
+  for i in 0..25 {
+    t.push("movq ${8 * i}(%rax), %rcx")
+    if keccak_x86_inverted(i) {
+      t.push("notq %rcx")
+    }
+    t.push("movq %rcx, ${8 * i}(%rsp)")
+  }
+  // theta's first column parities (Go's "Execute the KeccakF permutation")
+  t.push(o2("movq", at(0, L_BA), RCA))
+  t.push(o2("movq", at(0, L_BE), RCE))
+  t.push(o2("movq", at(0, L_BU), RCU))
+  t.push(o2("xorq", at(0, L_GA), RCA))
+  t.push(o2("xorq", at(0, L_GE), RCE))
+  t.push(o2("xorq", at(0, L_GU), RCU))
+  t.push(o2("xorq", at(0, L_KA), RCA))
+  t.push(o2("xorq", at(0, L_KE), RCE))
+  t.push(o2("xorq", at(0, L_KU), RCU))
+  t.push(o2("xorq", at(0, L_MA), RCA))
+  t.push(o2("xorq", at(0, L_ME), RCE))
+  t.push(o2("xorq", at(0, L_MU), RCU))
+  t.push(o2("xorq", at(0, L_SA), RCA))
+  t.push(o2("xorq", at(0, L_SE), RCE))
+  t.push(o2("movq", at(0, L_SI), RDI))
+  t.push(o2("movq", at(0, L_SO), RDO))
+  t.push(o2("xorq", at(0, L_SU), RCU))
+  let rcs = keccak_x86_rcs()
+  for (i, rc) in rcs.indexed() {
+    let (ib, ob) = if i % 2 == 0 { (0, KX_COPY2) } else { (KX_COPY2, 0) }
+    for l in keccak_x86_round(ib, ob, rc, i == rcs.len() - 1) {
+      t.push(l)
+    }
+  }
+  // the internal state back into the user one (Go's last NOTQs): the
+  // last round wrote the copy at 0
+  t.push("movq ${KX_ADDR}(%rsp), %rdi")
+  for i in 0..25 {
+    t.push("movq ${8 * i}(%rsp), %rcx")
+    if keccak_x86_inverted(i) {
+      t.push("notq %rcx")
+    }
+    t.push("movq %rcx, ${8 * i}(%rdi)")
+  }
+  t.push("movq ${KX_SAVES}(%rsp), %rbx")
+  t.push("movq ${KX_SAVES + 8}(%rsp), %r12")
+  t.push("movq ${KX_SAVES + 16}(%rsp), %r13")
+  t.push("movq ${KX_SAVES + 24}(%rsp), %r14")
+  t.push("movq ${KX_SAVES + 32}(%rsp), %r15")
+  t.push("leaq ${128 + KX_FRAME}(%rsp), %rsp")
+  t
+}
+
+/// One round from the copy at ib into the copy at ob with round constant
+/// rc (Go's mKeccakRound): the last round leaves out the next round's
+/// column parities (Go's NOP macros).
+fn keccak_x86_round(ib: Int, ob: Int, rc: Int, last: Bool) -> List[Str] {
+  var t: List[Str] = []
+  t.push(o2("movq", RCE, RDA))
+  t.push(o2("rolq", "$1", RDA))
+  t.push(o2("movq", at(ib, L_BI), RCI))
+  t.push(o2("xorq", at(ib, L_GI), RDI))
+  t.push(o2("xorq", RCU, RDA))
+  t.push(o2("xorq", at(ib, L_KI), RCI))
+  t.push(o2("xorq", at(ib, L_MI), RDI))
+  t.push(o2("xorq", RDI, RCI))
+  t.push(o2("movq", RCI, RDE))
+  t.push(o2("rolq", "$1", RDE))
+  t.push(o2("movq", at(ib, L_BO), RCO))
+  t.push(o2("xorq", at(ib, L_GO), RDO))
+  t.push(o2("xorq", RCA, RDE))
+  t.push(o2("xorq", at(ib, L_KO), RCO))
+  t.push(o2("xorq", at(ib, L_MO), RDO))
+  t.push(o2("xorq", RDO, RCO))
+  t.push(o2("movq", RCO, RDI))
+  t.push(o2("rolq", "$1", RDI))
+  t.push(o2("movq", RCU, RDO))
+  t.push(o2("xorq", RCE, RDI))
+  t.push(o2("rolq", "$1", RDO))
+  t.push(o2("movq", RCA, RDU))
+  t.push(o2("xorq", RCI, RDO))
+  t.push(o2("rolq", "$1", RDU))
+  t.push(o2("movq", at(ib, L_BA), RBA))
+  t.push(o2("movq", at(ib, L_GE), RBE))
+  t.push(o2("xorq", RCO, RDU))
+  t.push(o2("movq", at(ib, L_KI), RBI))
+  t.push(o2("movq", at(ib, L_MO), RBO))
+  t.push(o2("movq", at(ib, L_SU), RBU))
+  t.push(o2("xorq", RDE, RBE))
+  t.push(o2("rolq", "$44", RBE))
+  t.push(o2("xorq", RDI, RBI))
+  t.push(o2("xorq", RDA, RBA))
+  t.push(o2("rolq", "$43", RBI))
+  t.push(o2("movq", RBE, RCA))
+  t.push(imm_rax(rc))
+  t.push(o2("orq", RBI, RCA))
+  t.push(o2("xorq", RBA, RT1))
+  t.push(o2("xorq", RT1, RCA))
+  t.push(o2("movq", RCA, at(ob, L_BA)))
+  t.push(o2("xorq", RDU, RBU))
+  t.push(o2("rolq", "$14", RBU))
+  t.push(o2("movq", RBA, RCU))
+  t.push(o2("andq", RBE, RCU))
+  t.push(o2("xorq", RBU, RCU))
+  t.push(o2("movq", RCU, at(ob, L_BU)))
+  t.push(o2("xorq", RDO, RBO))
+  t.push(o2("rolq", "$21", RBO))
+  t.push(o2("movq", RBO, RT1))
+  t.push(o2("andq", RBU, RT1))
+  t.push(o2("xorq", RBI, RT1))
+  t.push(o2("movq", RT1, at(ob, L_BI)))
+  t.push("notq ${RBI}")
+  t.push(o2("orq", RBA, RBU))
+  t.push(o2("orq", RBO, RBI))
+  t.push(o2("xorq", RBO, RBU))
+  t.push(o2("xorq", RBE, RBI))
+  t.push(o2("movq", RBU, at(ob, L_BO)))
+  t.push(o2("movq", RBI, at(ob, L_BE)))
+  if !last { t.push(o2("movq", RBI, RCE)) }
+  t.push(o2("movq", at(ib, L_GU), RBE))
+  t.push(o2("xorq", RDU, RBE))
+  t.push(o2("movq", at(ib, L_KA), RBI))
+  t.push(o2("rolq", "$20", RBE))
+  t.push(o2("xorq", RDA, RBI))
+  t.push(o2("rolq", "$3", RBI))
+  t.push(o2("movq", at(ib, L_BO), RBA))
+  t.push(o2("movq", RBE, RT1))
+  t.push(o2("orq", RBI, RT1))
+  t.push(o2("xorq", RDO, RBA))
+  t.push(o2("movq", at(ib, L_ME), RBO))
+  t.push(o2("movq", at(ib, L_SI), RBU))
+  t.push(o2("rolq", "$28", RBA))
+  t.push(o2("xorq", RBA, RT1))
+  t.push(o2("movq", RT1, at(ob, L_GA)))
+  if !last { t.push(o2("xorq", RT1, RCA)) }
+  t.push(o2("xorq", RDE, RBO))
+  t.push(o2("rolq", "$45", RBO))
+  t.push(o2("movq", RBI, RT1))
+  t.push(o2("andq", RBO, RT1))
+  t.push(o2("xorq", RBE, RT1))
+  t.push(o2("movq", RT1, at(ob, L_GE)))
+  if !last { t.push(o2("xorq", RT1, RCE)) }
+  t.push(o2("xorq", RDI, RBU))
+  t.push(o2("rolq", "$61", RBU))
+  t.push(o2("movq", RBU, RT1))
+  t.push(o2("orq", RBA, RT1))
+  t.push(o2("xorq", RBO, RT1))
+  t.push(o2("movq", RT1, at(ob, L_GO)))
+  t.push(o2("andq", RBE, RBA))
+  t.push(o2("xorq", RBU, RBA))
+  t.push(o2("movq", RBA, at(ob, L_GU)))
+  t.push("notq ${RBU}")
+  if !last { t.push(o2("xorq", RBA, RCU)) }
+  t.push(o2("orq", RBU, RBO))
+  t.push(o2("xorq", RBI, RBO))
+  t.push(o2("movq", RBO, at(ob, L_GI)))
+  t.push(o2("movq", at(ib, L_BE), RBA))
+  t.push(o2("movq", at(ib, L_GI), RBE))
+  t.push(o2("movq", at(ib, L_KO), RBI))
+  t.push(o2("movq", at(ib, L_MU), RBO))
+  t.push(o2("movq", at(ib, L_SA), RBU))
+  t.push(o2("xorq", RDI, RBE))
+  t.push(o2("rolq", "$6", RBE))
+  t.push(o2("xorq", RDO, RBI))
+  t.push(o2("rolq", "$25", RBI))
+  t.push(o2("movq", RBE, RT1))
+  t.push(o2("orq", RBI, RT1))
+  t.push(o2("xorq", RDE, RBA))
+  t.push(o2("rolq", "$1", RBA))
+  t.push(o2("xorq", RBA, RT1))
+  t.push(o2("movq", RT1, at(ob, L_KA)))
+  if !last { t.push(o2("xorq", RT1, RCA)) }
+  t.push(o2("xorq", RDU, RBO))
+  t.push(o2("rolq", "$8", RBO))
+  t.push(o2("movq", RBI, RT1))
+  t.push(o2("andq", RBO, RT1))
+  t.push(o2("xorq", RBE, RT1))
+  t.push(o2("movq", RT1, at(ob, L_KE)))
+  if !last { t.push(o2("xorq", RT1, RCE)) }
+  t.push(o2("xorq", RDA, RBU))
+  t.push(o2("rolq", "$18", RBU))
+  t.push("notq ${RBO}")
+  t.push(o2("movq", RBO, RT1))
+  t.push(o2("andq", RBU, RT1))
+  t.push(o2("xorq", RBI, RT1))
+  t.push(o2("movq", RT1, at(ob, L_KI)))
+  t.push(o2("movq", RBU, RT1))
+  t.push(o2("orq", RBA, RT1))
+  t.push(o2("xorq", RBO, RT1))
+  t.push(o2("movq", RT1, at(ob, L_KO)))
+  t.push(o2("andq", RBE, RBA))
+  t.push(o2("xorq", RBU, RBA))
+  t.push(o2("movq", RBA, at(ob, L_KU)))
+  if !last { t.push(o2("xorq", RBA, RCU)) }
+  t.push(o2("movq", at(ib, L_GA), RBE))
+  t.push(o2("xorq", RDA, RBE))
+  t.push(o2("movq", at(ib, L_KE), RBI))
+  t.push(o2("rolq", "$36", RBE))
+  t.push(o2("xorq", RDE, RBI))
+  t.push(o2("movq", at(ib, L_BU), RBA))
+  t.push(o2("rolq", "$10", RBI))
+  t.push(o2("movq", RBE, RT1))
+  t.push(o2("movq", at(ib, L_MI), RBO))
+  t.push(o2("andq", RBI, RT1))
+  t.push(o2("xorq", RDU, RBA))
+  t.push(o2("movq", at(ib, L_SO), RBU))
+  t.push(o2("rolq", "$27", RBA))
+  t.push(o2("xorq", RBA, RT1))
+  t.push(o2("movq", RT1, at(ob, L_MA)))
+  if !last { t.push(o2("xorq", RT1, RCA)) }
+  t.push(o2("xorq", RDI, RBO))
+  t.push(o2("rolq", "$15", RBO))
+  t.push(o2("movq", RBI, RT1))
+  t.push(o2("orq", RBO, RT1))
+  t.push(o2("xorq", RBE, RT1))
+  t.push(o2("movq", RT1, at(ob, L_ME)))
+  if !last { t.push(o2("xorq", RT1, RCE)) }
+  t.push(o2("xorq", RDO, RBU))
+  t.push(o2("rolq", "$56", RBU))
+  t.push("notq ${RBO}")
+  t.push(o2("movq", RBO, RT1))
+  t.push(o2("orq", RBU, RT1))
+  t.push(o2("xorq", RBI, RT1))
+  t.push(o2("movq", RT1, at(ob, L_MI)))
+  t.push(o2("orq", RBA, RBE))
+  t.push(o2("xorq", RBU, RBE))
+  t.push(o2("movq", RBE, at(ob, L_MU)))
+  t.push(o2("andq", RBA, RBU))
+  t.push(o2("xorq", RBO, RBU))
+  t.push(o2("movq", RBU, at(ob, L_MO)))
+  if !last { t.push(o2("xorq", RBE, RCU)) }
+  t.push(o2("movq", at(ib, L_BI), RBA))
+  t.push(o2("movq", at(ib, L_GO), RBE))
+  t.push(o2("movq", at(ib, L_KU), RBI))
+  t.push(o2("xorq", RDI, RBA))
+  t.push(o2("movq", at(ib, L_MA), RBO))
+  t.push(o2("rolq", "$62", RBA))
+  t.push(o2("xorq", RDO, RBE))
+  t.push(o2("movq", at(ib, L_SE), RBU))
+  t.push(o2("rolq", "$55", RBE))
+  t.push(o2("xorq", RDU, RBI))
+  t.push(o2("movq", RBA, RDU))
+  t.push(o2("xorq", RDE, RBU))
+  t.push(o2("rolq", "$2", RBU))
+  t.push(o2("andq", RBE, RDU))
+  t.push(o2("xorq", RBU, RDU))
+  t.push(o2("movq", RDU, at(ob, L_SU)))
+  t.push(o2("rolq", "$39", RBI))
+  if !last { t.push(o2("xorq", RDU, RCU)) }
+  t.push("notq ${RBE}")
+  t.push(o2("xorq", RDA, RBO))
+  t.push(o2("movq", RBE, RDA))
+  t.push(o2("andq", RBI, RDA))
+  t.push(o2("xorq", RBA, RDA))
+  t.push(o2("movq", RDA, at(ob, L_SA)))
+  if !last { t.push(o2("xorq", RDA, RCA)) }
+  t.push(o2("rolq", "$41", RBO))
+  t.push(o2("movq", RBI, RDE))
+  t.push(o2("orq", RBO, RDE))
+  t.push(o2("xorq", RBE, RDE))
+  t.push(o2("movq", RDE, at(ob, L_SE)))
+  if !last { t.push(o2("xorq", RDE, RCE)) }
+  t.push(o2("movq", RBO, RDI))
+  t.push(o2("movq", RBU, RDO))
+  t.push(o2("andq", RBU, RDI))
+  t.push(o2("orq", RBA, RDO))
+  t.push(o2("xorq", RBI, RDI))
+  t.push(o2("xorq", RBO, RDO))
+  t.push(o2("movq", RDI, at(ob, L_SI)))
+  t.push(o2("movq", RDO, at(ob, L_SO)))
+  t
+}

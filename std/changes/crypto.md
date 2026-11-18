@@ -1,5 +1,22 @@
 # std/crypto changes
 
+## 2026-11-18: perf: SHA-3 and Keccak on x86-64 permute in one register kernel
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/sha3 on linux/amd64: big 1.809 and small 1.591 of Go's crypto/sha3)
+- Go reference: crypto/internal/fips140/sha3 keccakf1600 (the amd64 assembly's lane complementing, unrolled rounds)
+- Measured: linux/amd64 host, 5 rounds: sha3 big 150.2 to 83.7 ms (Go 82.5, 1.015 of Go), small 109.8 to 72.8 ms (Go 69.2, 1.052); LLVM 1.095 and 1.069
+- Test: the digests of every SHA3 and Keccak size at lengths 0 to 300 equal to Go's (601 lines, native and LLVM on linux/amd64); crypto module tests; test/codegen/intrinsics pattern for the kernel call
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+The Keccak-f[1600] permutation on x86-64 (native and LLVM) is one
+compiler kernel (compiler/ssa/x86keccak.xo) that keeps the state's lanes
+in registers through the 24 rounds, where each round's lanes went
+through memory as on targets without the kernel. Other targets are
+unchanged.
+
 ## 2026-11-17: perf: AES-CBC decryption on arm64 runs four blocks at once
 
 - Kind: perf

@@ -974,6 +974,16 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))}, ptr ${g.raw_ptr(g.f.arg(x.args, 5))}, ptr ${g.raw_ptr(g.f.arg(x.args, 6))})")
     }
+    "rt.keccak_f1600" if g.arch() == "amd64" => {
+      // ssa.keccak_x86_lines as inline asm: the state in rdi, which holds
+      // it again at the end; rbx and r12 to r15 restored by the lines,
+      // the round constants their immediates
+      var t: List[Str] = []
+      for l in ssa.keccak_x86_lines("@0@") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0"))
+      }
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"{rdi},~{rax},~{rcx},~{rdx},~{rsi},~{r8},~{r9},~{r10},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))})")
+    }
     "rt.keccak_f1600" => {
       // arm64 only (ssa call.xo): ssa.keccak_neon_lines as inline asm, x9
       // and x10 and its V registers clobbered (d8 to d15 restored by it)

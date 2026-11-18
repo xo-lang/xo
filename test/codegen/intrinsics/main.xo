@@ -118,11 +118,13 @@ fn main(os: Os) {
 
 // Keccak-f[1600] with arm64's SHA3 extension (cpu.keccak_f1600, ssa
 // a64keccak.xo, Go's keccakF1600NEON; 2026-10-28): theta's eor3 and
-// rax1, rho and pi's xar, chi's bcax; inline asm on LLVM; amd64 keeps the
-// scalar rounds.
+// rax1, rho and pi's xar, chi's bcax; inline asm on LLVM. On amd64 the
+// unrolled scalar rounds of Go's keccakF1600 (ssa x86keccak.xo,
+// 2026-11-18): its own frame past the red zone, rbx and r12 to r15
+// saved there, the lanes rotated with rolq.
 // func sha3.permute
 // arm64: "eor3 v25.16b, v10.16b, v15.16b, v20.16b" "rax1 v30.2d, v25.2d, v27.2d" "xar v25.2d, v1.2d, v30.2d, #63" "bcax v20.16b, v26.16b, v22.16b, v8.16b"
-// amd64: -"eor3"
+// amd64: -"eor3" "leaq -704\(%rsp\), %rsp" "movq %rbx, 408\(%rsp\)" "rolq \$1, %rbx" "leaq 704\(%rsp\), %rsp"
 // llvm/arm64: "eor3 v25.16b" "bcax v20.16b"
 
 // The CPU's AES rounds (hw4 and encrypt_n call hw_n).
