@@ -383,6 +383,21 @@ func TestPgEmptyError(t *testing.T) {
 	pgfDiff(t, cases, []string{"arm64"}, 0)
 }
 
+// TestPgDuplicateColumn: a row whose two columns share a name (SELECT 1
+// AS c, 2 AS c) shows each column's own value, as pgx's Values does; the
+// Xo side read both by name and showed the first twice (TestPgFuzz seed 7
+// case 700 on linux/arm64 host 2, 2026-11-18, task #152).
+func TestPgDuplicateColumn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds pgx and the Xo client")
+	}
+	one, two := "1", "2"
+	kinds := []pgfKind{pgfKinds[2], pgfKinds[2]} // int4, int4
+	desc := pgfRowDesc([]string{"c1", "c1"}, kinds, 2)
+	cases := []pgfCase{{msgs: [][]byte{desc, pgfDataRow([]*string{&one, &two}), pgfMsg('C', pgfCstr(nil, "SELECT 1")), pgfReady}}}
+	pgfDiff(t, cases, []string{"arm64"}, 0)
+}
+
 // pgfDiff serves cases to the reference and to the Xo client on each
 // backend and fails on any case whose answers differ (a changed case's
 // refusal by Xo aside).

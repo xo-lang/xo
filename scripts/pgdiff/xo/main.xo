@@ -216,7 +216,8 @@ fn types_line(cts: List[sql.ColumnType]) -> Str {
 }
 
 fn row_line(r: sql.Row) -> Str {
-  let vals = r.columns().map(fn(c) { r.value(c).or_fault("column") })
+  // by position: two columns can share a name (SELECT 1 AS c, 2 AS c)
+  let vals = r.values()
   "Row{cols: ${r.columns().debug()}, vals: ${vals.debug()}}"
 }
 
