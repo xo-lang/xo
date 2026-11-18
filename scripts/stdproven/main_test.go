@@ -662,3 +662,48 @@ func TestTwoOfThree(t *testing.T) {
 		t.Error("a memory-only failure is not memOnly")
 	}
 }
+
+// TestCheckFailureNamesModuleAndTrap (task #349): a failed --check=all
+// stress run names the module and the trap first. The fault is a real one:
+// native/llrt/heapos's planted write after free under --check=free (a
+// stress program cannot plant it: safe Xo frees nothing and a `use c`
+// program's malloc is the C library's, not Xo's heap; 2026-11-18). The
+// other traps are their report lines.
+func TestCheckFailureNamesModuleAndTrap(t *testing.T) {
+	dir := filepath.Join("std", "evidence", "zlib", "stress")
+	for _, c := range []struct {
+		name, text string
+		err        error
+		want       string
+	}{
+		{"leak", "zlib stress: 9 rounds, 0 mismatches, rss not sampled, pass\nxo leakcheck: 3 live of 90 allocations", errors.New("exit status 1"), "std/zlib: the arm64 --check=all stress run trapped: blocks live at exit (xo leakcheck: 3 live of 90 allocations)"},
+		{"crash", "(the crash report faulted: SIGSEGV)", errors.New("signal: segmentation fault"), "std/zlib: the arm64 --check=all stress run trapped: a crash whose report faulted (the crash report faulted: SIGSEGV)"},
+		{"no pass", "zlib stress: 9 rounds, 1 mismatches, FAIL\nxo leakcheck: 0 live of 90 allocations", nil, "std/zlib: the arm64 --check=all stress run trapped: no pass line"},
+	} {
+		if got := checkFailure(dir, "arm64", c.err, c.text).Error(); !strings.HasPrefix(got, c.want+" (decision 0638") {
+			t.Errorf("%s: %q, want prefix %q", c.name, got, c.want)
+		}
+	}
+	if runtime.GOARCH != "arm64" || testing.Short() {
+		t.Skip("the planted fault builds arm64 programs")
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	xo := filepath.Join(root, "bin", "xo")
+	if _, err := os.Stat(xo); err != nil {
+		t.Skip("no bin/xo (go run ./scripts/xobuild)")
+	}
+	cmd := exec.Command(xo, "test", "--count=1", "--std-module=native/llrt/heapos", "--backend=arm64", "--run=write after free", "--check=free")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("the planted write after free ran to the end under --check=free:\n%s", out)
+	}
+	want := "std/zlib: the arm64 --check=all stress run trapped: XO_FREE_CHECK: a freed block was written after its free"
+	if got := checkFailure(dir, "arm64", err, string(out)).Error(); !strings.HasPrefix(got, want) {
+		t.Errorf("got %q, want prefix %q", got[:min(len(got), 300)], want)
+	}
+}

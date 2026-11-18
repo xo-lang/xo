@@ -1306,14 +1306,57 @@ func stressCheck(dir, tmp string, minutes, tasks int) (string, string, error) {
 		}
 	}
 	if err != nil || passLine == "" || !strings.HasPrefix(leakLine, "xo leakcheck: 0 live ") {
-		if len(text) > 20000 {
-			text = text[len(text)-20000:]
-		}
-		return "", "", fmt.Errorf("%s --check=all stress: %v\n%s", nb, err, text)
+		return "", "", checkFailure(dir, nb, err, text)
 	}
 	line := fmt.Sprintf("- %s --check=all: %s; %s, %s", nb, passLine, leakLine, time.Since(t0).Round(time.Second))
 	fmt.Println(line)
 	return line, fmt.Sprintf(", %d min on %s under --check=all with 0 faults and 0 blocks live at exit", minutes, nb), nil
+}
+
+// checkFailure: the error of a failed --check=all stress run (task
+// #349): the module (dir is std/evidence/MODULE/stress) and the trap
+// first, its fault line, the blocks live at exit, a signal or a missing
+// pass line, so a par round's interleaved log says which module trapped
+// and how; then the run's output, its last 20000 bytes.
+func checkFailure(dir, nb string, err error, text string) error {
+	module := filepath.Base(filepath.Dir(dir))
+	if filepath.Base(dir) != "stress" {
+		module = dir
+	}
+	trap := ""
+	var leak, crash string
+	pass := false
+	for _, l := range strings.Split(text, "\n") {
+		// xo test indents a test's output; the program prints at column 0
+		l = strings.TrimSpace(l)
+		switch {
+		case trap == "" && strings.HasPrefix(l, "fault: "):
+			trap = strings.TrimPrefix(l, "fault: ")
+		case strings.HasPrefix(l, "xo leakcheck: "):
+			leak = l
+		case crash == "" && strings.HasPrefix(l, "(the crash report faulted: "):
+			crash = l
+		case strings.HasSuffix(l, ", pass"):
+			pass = true
+		}
+	}
+	switch {
+	case trap != "":
+	case crash != "":
+		trap = "a crash whose report faulted " + crash
+	case leak != "" && !strings.HasPrefix(leak, "xo leakcheck: 0 live "):
+		trap = "blocks live at exit (" + leak + ")"
+	case err != nil:
+		trap = err.Error()
+	case !pass:
+		trap = "no pass line"
+	default:
+		trap = "no leak report"
+	}
+	if len(text) > 20000 {
+		text = text[len(text)-20000:]
+	}
+	return fmt.Errorf("std/%s: the %s --check=all stress run trapped: %s (decision 0638; no stress.md written)\n%s", module, nb, trap, text)
 }
 
 // stressCheckEnv marks the --check=all run for the stress program, whose
