@@ -1,5 +1,23 @@
 # std/udp changes
 
+## 2026-11-17: fix: an empty address listens on port 0
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 3, the udp fuzz evidence run (TestUdpFuzz seed 3, case 2934)
+- Go reference: net.ListenPacket("udp", "")
+- Test: std/udp_test.xo "an empty address listens on port 0"; TestUdpFuzz
+  seed 3 (1 of 5,000 cases differed before, 5,000 equal on arm64 and
+  llvm after)
+- Timing: none
+- Shipped in: since std/udp (decision 0406) through v0.35.0
+
+`udp.listen(net, "")` failed with "missing port in address" where Go's
+ListenPacket binds port 0 of every interface. It now listens as `":0"`
+does, on the native backends and in a wasip2 command; `udp.dial(net, "")`
+is still an error, as in Go. The harness also stops trimming its steps, so an
+empty address is tested at all.
+
 ## 2026-11-17: fix: addresses split as Go's net.SplitHostPort splits them
 
 - Kind: fix

@@ -567,7 +567,10 @@ pub fn hc_send(cn: Int, p: Int, n: Int, deadline: Int) -> Int {
 
 /// udp.listen (dial false) or udp.dial: the socket, or dead with the
 /// error recorded (err_now).
-pub fn udp_open(lists: Str, addr: Str, dial: Bool) -> Conn {
+pub fn udp_open(lists: Str, addr0: Str, dial: Bool) -> Conn {
+  // an empty address listens on port 0 of every interface, as Go's
+  // net.ListenPacket (TestUdpFuzz, 2026-11-17); a dial still needs one
+  let addr = if !dial && addr0.is_empty() { ":0" } else { addr0 }
   let op = if dial { "dial" } else { "listen" }
   if !netpolicy.admits_addr(lists, addr) {
     fail(6, addr)

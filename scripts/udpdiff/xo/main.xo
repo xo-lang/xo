@@ -74,11 +74,12 @@ fn step(os: Os, w: List[Str]) -> Str ! NetErr {
 
 fn main(os: Os) ! {
   for line in os.stdio.lines()? {
-    let w = line.trim().split(" ")
+    // not trimmed: an empty address ("listen ") is a step of its own
+    let w = line.split(" ")
     if w.len() < 2 {
       continue
     }
-    os.stdio.println("== ${line.trim()}")
+    os.stdio.println("== ${line}")
     match step(os, w) {
       Ok(s) => os.stdio.println(s)
       Err(_) => os.stdio.println("error")

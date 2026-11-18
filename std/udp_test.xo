@@ -171,3 +171,12 @@ test "addresses split as Go's net splits them" uses (net, clock) {
   expect(s.local_addr().ends_with(":0")) == false
   s.close()
 }
+
+// Go's net.ListenPacket (TestUdpFuzz seed 3, 2026-11-17): an empty
+// address listens on port 0; a dial needs an address.
+test "an empty address listens on port 0" uses (net, clock) {
+  let s = listen(os.net, "").or_fault("listen on an empty address")
+  expect(s.local_addr().ends_with(":0")) == false
+  s.close()
+  expect(dial(os.net, "") is Err(_)) == true
+}

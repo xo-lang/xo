@@ -1664,7 +1664,10 @@ pub fn conn_close(cn: Int) {
 
 /// `udp.listen(net, addr)` (dial false) or `udp.dial(net, addr)` (dial
 /// true): the socket's handle, or 0 with the error recorded.
-pub fn udp_open(lists: Str, addr: Str, dial: Bool) -> Int {
+pub fn udp_open(lists: Str, addr0: Str, dial: Bool) -> Int {
+  // an empty address listens on port 0 of every interface, as Go's
+  // net.ListenPacket (TestUdpFuzz, 2026-11-17); a dial still needs one
+  let addr = if !dial && addr0.is_empty() { ":0" } else { addr0 }
   let c = ctx.cur()
   let op = if dial { "dial" } else { "listen" }
   if !netpolicy.admits_addr(lists, addr) {
