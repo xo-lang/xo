@@ -168,7 +168,7 @@ pub fn (h: Health) register(var s: grpc.Server) uses clock {
     }
     Ok(o.freeze())
   })
-  s.stream(WATCH, fn(_call, recv, send) -> () ! grpc.Status {
+  s.stream(WATCH, fn(call, recv, send) -> () ! grpc.Status {
     let req = match recv.next()? {
       Some(m) => m
       None => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: client sent no request message"})
@@ -193,7 +193,18 @@ pub fn (h: Health) register(var s: grpc.Server) uses clock {
       }
     })
     var last = -1
-    while let Some(n) = ch.recv() {
+    // the watcher goes when the client does (grpc-go's stream.Context().Done(),
+    // decision 0718), not at the service's next change
+    let done = call.done()
+    while true {
+      let got = select {
+        v = ch.recv() => v
+        _g = done.recv() => None
+      }
+      let n = match got {
+        Some(x) => x
+        None => break
+      }
       if n == last {
         continue
       }

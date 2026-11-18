@@ -1,5 +1,13 @@
 # std/grpchealth changes
 
+## 2026-11-18: fix: a canceled Watch is removed at once
+
+- Kind: fix
+- Commit: this push
+- Found by: #152 grpchealth stress program (5 canceled watches stayed registered until the next status change)
+- Go reference: grpc-go health/server.go Watch (returns on stream.Context().Done())
+- Test: std/grpchealth_test.xo "check, list and watch over HTTP/2" (fails before: 5 watchers left, want 0)
+
 ## 2026-11-18: fix: list refuses a service name that is not UTF-8
 
 - Kind: fix

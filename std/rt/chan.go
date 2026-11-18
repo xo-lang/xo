@@ -183,6 +183,12 @@ func Chan_try_recv[T any](tk *Task, c *Chan[T]) Option[T] {
 // Chan_close is `ch.close()`. Closing twice has no effect.
 func Chan_close[T any](tk *Task, c *Chan[T]) {
 	tk.Yield()
+	chanShut(c)
+}
+
+// chanShut closes c from outside a task (Request.gone's channel, closed
+// by net/http's context).
+func chanShut[T any](c *Chan[T]) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {

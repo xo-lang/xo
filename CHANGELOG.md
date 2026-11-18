@@ -8,6 +8,8 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Feature (std/http, std/grpc; decision 0718): `Request.gone()` is a channel closed when a server's HTTP/2 request's client is gone (its stream reset, the connection ended, or the stream finished), as Go's `r.Context().Done()`; `grpc.Call.done()` gives it to gRPC handlers. Not yet closed for HTTP/1.1.
+- Fix (std/grpchealth): a Watch whose client canceled is removed at once; it stayed registered until the service's next status change.
 - Fix (std/grpchealth; #152 fuzz): `list` refuses a HealthListResponse whose service name is not UTF-8, as protobuf-go; it read the name as "".
 - Fix (std/sql, Postgres; task #90): a NoticeResponse or ErrorResponse whose fields lack their closing zero byte is a malformed message error, as pgx's pgconn reports it; Xo had kept it (TestPgFuzz seed 15).
 - Fix (format specs; task #242 b33): a sized integer (`Int8`, `UInt8`, `Int32`, `UInt64` and the rest) with only a width is right aligned, as `Int` and Go's fmt are (`${a:4}` of an `Int8` 5 is `   5`; it was `5   `), on every backend; an explicit `<` or `^` still aligns it.

@@ -247,7 +247,14 @@ pub struct Call {
   pub auth_info: AuthInfo = insecure_info()
   /// the request's `:authority` (the Host header over HTTP/1.1; grpc-go's ":authority" metadata)
   pub authority: Str = ""
+  /// the request's http.Request.gone (decision 0718)
+  gone: Chan[()]? = None
 }
+
+/// A channel closed when the call's client is gone: it canceled the call (its stream reset), the connection
+/// ended, or the call finished (grpc-go's `stream.Context().Done()`, decision 0718). Never closed for a call over
+/// HTTP/1.1 or one built as a struct literal.
+pub fn (c: Call) done() -> Chan[()] { c.gone ?? Chan[()].new(0) }
 
 /// A connection's protection (grpc-go's credentials.SecurityLevel), ordered: a level below another is weaker.
 pub enum SecurityLevel {
@@ -2675,7 +2682,7 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
       accept.push(e.trim())
     }
   }
-  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip, accept_encodings: accept, auth_info: if req.tls() { tls_info(req.tls_state()) } else { insecure_info() }, authority: req.host()}
+  let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip, accept_encodings: accept, auth_info: if req.tls() { tls_info(req.tls_state()) } else { insecure_info() }, authority: req.host(), gone: Some(req.gone())}
   let t = server_tracer(stats)
   let begin = t.begin(method, client_stream, server_stream)
   t.in_header(method, md, req.header("grpc-encoding") ?? "", req.remote_ip)

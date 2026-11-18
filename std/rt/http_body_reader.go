@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -36,6 +37,31 @@ const streamBody = "\x00body"
 func withStreamBody(req Http_Request, src io.Reader) Http_Request {
 	req.XValues = &reqValues{name: streamBody, v: &bodyReader{src: src, empty: src == http.NoBody}, next: req.XValues}
 	return req
+}
+
+// goneValue names the request value that carries Request.gone's channel
+// (std/native/http.xo's "xo:gone"); no Key has an empty type.
+const goneValue = "\x00gone"
+
+// withGone is req carrying a channel closed when ctx is done: net/http
+// cancels a served request's context when the client goes away or the
+// handler returns.
+func withGone(req Http_Request, ctx context.Context) Http_Request {
+	ch := Chan_new[Unit](nil, 0)
+	context.AfterFunc(ctx, func() { chanShut(ch) })
+	req.XValues = &reqValues{name: goneValue, v: ch, next: req.XValues}
+	return req
+}
+
+// M_gone is Request.gone: the served request's channel, else one that is
+// never closed (a request made in Xo, Router.call).
+func (r Http_Request) M_gone(*Task) *Chan[Unit] {
+	for n := r.XValues; n != nil; n = n.next {
+		if n.name == goneValue && n.t == nil {
+			return n.v.(*Chan[Unit])
+		}
+	}
+	return Chan_new[Unit](nil, 0)
 }
 
 // streamTrailer gives req's streamed body (withStreamBody) its trailers.

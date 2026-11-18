@@ -321,6 +321,8 @@ fn conn_body(next: fn(Int) -> http1.BodyPart uses sync, finish: List[fn() -> () 
 /// The request value that carries a server's unread body to its
 /// handle_stream route.
 const STREAM_BODY = "xo:stream-body"
+/// Request.gone's channel (decision 0718)
+const GONE = "xo:gone"
 
 /// The most one read of a streamed body asks of the connection.
 const READ_MAX = 1048576
@@ -1528,6 +1530,19 @@ fn header_get(h: Map[Str, Str], name: Str) -> Str? {
 }
 
 fn request_header(r: Request, name: Str) -> Str? { header_get(r.headers, name) }
+
+/// Closed when the client of a server's HTTP/2 request is gone (decision
+/// 0718); never closed for another request.
+fn request_gone(r: Request) -> Chan[()] {
+  for rv in r.values {
+    if rv.name == GONE {
+      if let Some(g) = rt.any_get[Chan[()]](rv.v) {
+        return g
+      }
+    }
+  }
+  Chan[()].new(0)
+}
 
 fn request_json[T: Json](r: Request) -> T ! js.DecodeErr { js.decode(r.body) }
 
@@ -3785,7 +3800,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   let th = hconn.tls_of(q.conn)
   let scheme = if q.scheme.is_empty() { if th != 0 { "https" } else { "http" } } else { q.scheme }
   let url = http.Url{scheme: scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.host, ext_protocol: q.protocol, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
+  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.host, ext_protocol: q.protocol, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields, values: gone_values(q.conn)}
   if !q.streamed {
     return req
   }
@@ -3793,7 +3808,21 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   // rest resets the stream when the handler ends (h2srv handler_done)
   let st = q.conn
   let b = conn_body(fn(max: Int) -> http1.BodyPart { h2srv.body_next(st, max) }, [], declared_trailers(q.trailer))
-  req with {values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
+  var vs = req.values
+  vs.push(ReqValue{name: STREAM_BODY, v: rt.any_of(b)})
+  req with {values: vs}
+}
+
+/// Request.gone's channel for HTTP/2 stream connection h (decision 0718),
+/// closed by the connection's fiber when the stream dies; kept in the
+/// request's values (a Chan field would make every Request shared state).
+fn gone_values(h: rthttp.HConn) -> List[ReqValue] {
+  if target.arch == TargetArch.Wasm32 {
+    return []
+  }
+  let g = Chan[()].new(0)
+  h2srv.gone_add(h, rt.obj_addr(g))
+  [ReqValue{name: GONE, v: rt.any_of(g)}]
 }
 
 // ---------------------------------------------------------------------------

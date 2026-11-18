@@ -2002,3 +2002,40 @@ test "with_dial_addr dials one address for every request, a Unix socket included
     }
   }
 }
+
+// decision 0718 (Go's r.Context().Done()): a handler waiting on gone()
+// returns when its HTTP/2 client resets the stream, and gone() of a
+// request built in Xo code never closes
+test "Request.gone closes when the HTTP/2 client resets the stream" uses (net, clock) {
+  let saw = Chan[Int].new(1)
+  var r = http.router()
+  r.handle("GET /wait", fn(req) {
+    let gone = req.gone()
+    http.stream(200, fn(w) {
+      w.write(b"a")?
+      w.flush()?
+      let _g = gone.recv()
+      saw.send(1)
+    })
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, r).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    let c = http.client(os.net).with_protocols(#{http.Protocol.UnencryptedHttp2})
+    let st = c.open(http.Request{method: "GET", path: "/wait", url: http.parse_url("http://${hs.addr()}/wait").or_fault("url"), headers: {}, body: b"", remote_ip: ""}).or_fault("open")
+    expect(st.head().status) == 200
+    expect(st.read().or_fault("read")) == Some(b"a")
+    st.close()
+    var got = None
+    var waited = 0
+    while got is None && waited < 300 {
+      os.clock.sleep(10ms)
+      waited += 1
+      got = saw.try_recv()
+    }
+    expect(got) == Some(1)
+  }
+  let lit = http.Request{method: "GET", path: "/", url: http.parse_url("http://h/").or_fault("url"), headers: {}, body: b"", remote_ip: ""}
+  expect(lit.gone().try_recv()) == None
+}

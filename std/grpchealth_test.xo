@@ -84,6 +84,20 @@ test "check, list and watch over HTTP/2" uses (net, clock) {
       n < 3
     }).or_fault("watch")
     expect(seen.with_read(fn(l) { l })) == ["SERVICE_UNKNOWN", "SERVING", "NOT_SERVING"]
+    // a client that stops watching a service that never changes: its
+    // watcher goes when its stream does, as grpc-go's ends with the
+    // stream's context (each one stayed until the service's next change)
+    for _i in 0..5 {
+      watch(c, "c.C", fn(_st) -> Bool { false }).or_fault("watch c.C")
+    }
+    var left = 5
+    var waited = 0
+    while left > 0 && waited < 200 {
+      os.clock.sleep(10ms)
+      waited += 1
+      left = h.st.with_read(fn(st) { (st.watchers.get("c.C") ?? []).len() })
+    }
+    expect(left) == 0
   }
 }
 

@@ -1,5 +1,14 @@
 # std/grpc changes
 
+## 2026-11-18: feature: Call.done closes when the call's client is gone
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0718
+- Go reference: grpc-go ServerStream.Context().Done()
+- Test: std/grpchealth_test.xo "check, list and watch over HTTP/2" (a canceled Watch leaves)
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: Client.with_idle_keepalive (grpc-go's PermitWithoutStream true)
 
 - Kind: feature

@@ -1,5 +1,14 @@
 # std/http changes
 
+## 2026-11-18: feature: Request.gone closes when an HTTP/2 client is gone
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0718 (the grpchealth Watch leak, xw question 153)
+- Go reference: net/http Request.Context (the server cancels it when the client's connection closes or its HTTP/2 stream resets)
+- Test: std/native/http_test.xo "Request.gone closes when the HTTP/2 client resets the stream"
+- Shipped in: not yet released
+
 ## 2026-11-17: perf: a chunked response body no longer copies the buffered input for each chunk
 
 - Kind: perf

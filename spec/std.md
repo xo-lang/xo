@@ -1942,6 +1942,7 @@ fn (r: Request) param_opt(name: Str) -> Str?        // None if the pattern has n
 fn (r: Request) param_int(name: Str) -> Int         // segment must be declared {name:Int}
 fn (r: Request) query(name: Str) -> Str?
 fn (r: Request) query_all(name: Str) -> List[Str]   // every value of a repeated key, in order
+fn (r: Request) gone() -> Chan[()]   // closed when a server HTTP/2 request's client is gone (decision 0718)
 fn (r: Request) form() -> url.Values ! url.EscapeErr   // an urlencoded POST, PUT, or PATCH body (20)
 fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr   // decision 0282
 fn (r: Request) header(name: Str) -> Str?           // case insensitive for a token name; any other name matches only exactly
@@ -10930,6 +10931,7 @@ fn bin_encode(data: Bytes) -> Str            // a `-bin` metadata value: unpadde
 fn bin_decode(value: Str) -> Bytes?          // padded or not; None when it is not base64
 // the server
 struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration?, client_stream: Bool, server_stream: Bool, peer: Str, auth_info: AuthInfo, authority: Str }   // peer: the client's IP; authority: the request's :authority
+fn (c: Call) done() -> Chan[()]   // closed when the call's client is gone: stream reset, connection ended, call finished (decision 0718)
 fn server(clock: Clock) -> Server
 fn (var s: Server) unary(method: Str, f: fn(Call, Bytes) -> Bytes ! Status)
 fn (var s: Server) stream(method: Str, f: fn(Call, Recv, Send) -> () ! Status, client_stream: Bool = true, server_stream: Bool = true)

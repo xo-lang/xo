@@ -41,6 +41,7 @@ use native/llrt/ctx
 use native/llrt/h2w
 use native/llrt/hpack
 use native/llrt/netwasi
+use native/llrt/obj
 use native/llrt/inlstr
 use native/llrt/http1
 use native/llrt/http1w
@@ -314,8 +315,13 @@ const S_OTRL = 392
 /// address while it waits); past the native record's end (s_size)
 /// the bytes of S_BODY counted in the connection's C_BUFD
 const S_BUFC = 416
-const S_WPARK = 424
-const S_SIZE = 424
+/// Request.gone's channels (decision 0718): a block of channel addresses,
+/// each holding a reference, closed and released when the stream dies
+/// (the peer's RST_STREAM, a stream error, the connection's end) or its
+/// record is freed after the handler.
+const S_GONE = 424
+const S_WPARK = 448
+const S_SIZE = 448
 
 /// The stream record's size: wasm's has the park word after it.
 fn s_size() -> Int { if target.arch == TargetArch.Wasm32 { S_SIZE + 8 } else { S_SIZE } }
@@ -552,6 +558,7 @@ fn body_release(st: Int) {
 }
 
 fn stream_free(st: Int) {
+  gone_close(st)
   req_free(st)
   body_release(st)
   bfree(st, S_TRL)
@@ -635,6 +642,7 @@ fn drop_unread(c: Int, st: Int) {
 fn close_stream(c: Int, st: Int) {
   drop_unread(c, st)
   sto(st, S_DEAD, 1)
+  gone_close(st)
   signal_stream(st)
   if on(st, S_IN_TABLE) {
     sto(st, S_IN_TABLE, 0)
@@ -707,6 +715,7 @@ fn stream_err(c: Int, sid: Int, code: Int) {
     drop_unread(c, st)
     sto(st, S_RST, code + 1)
     sto(st, S_DEAD, 1)
+    gone_close(st)
     signal_stream(st)
     ready(c, st)
   }
@@ -1080,6 +1089,46 @@ pub fn stream_release(st: Int) {
   lk(c)
   handler_done(c, st)
   unref(st)
+  unlk(c)
+}
+
+/// Closes and releases st's Request.gone channels (decision 0718).
+fn gone_close(st: Int) {
+  let p = ld(st, S_GONE)
+  if p == 0 {
+    return
+  }
+  for i in 0..ld(st, S_GONE + 8) / 8 {
+    let ch = rt.mem_load(p, 8 * i, 8)
+    let _c = rt.call_c2(rt.fn_addr("chan_close"), ch, 0)
+    if rc.dec(ch) != 0 {
+      obj.h_free_n(ch)
+    }
+  }
+  bfree(st, S_GONE)
+  sto(st, S_GONE + 8, 0)
+  sto(st, S_GONE + 16, 0)
+}
+
+/// Request.gone (decision 0718): channel ch (an address, a reference
+/// taken here) closes when stream connection h's stream dies or is
+/// freed; at once when it is already dead.
+pub fn gone_add(h: rthttp.HConn, ch: Int) {
+  let st = hconn.h2s(h)
+  if st == 0 {
+    return
+  }
+  let c = ld(st, S_C)
+  lk(c)
+  if on(st, S_DEAD) || on(c, C_DEAD) {
+    unlk(c)
+    let _c = rt.call_c2(rt.fn_addr("chan_close"), ch, 0)
+    return
+  }
+  rc.inc(ch)
+  room(st, S_GONE, 8)
+  rt.mem_store(tail(st, S_GONE), 0, ch, 8)
+  grew(st, S_GONE, 8)
   unlk(c)
 }
 

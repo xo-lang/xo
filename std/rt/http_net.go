@@ -129,6 +129,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			u.F_scheme = "https"
 		}
 		req := Http_Request{XRawPath: hr.URL.EscapedPath(), XHost: urlTextOf(hr.Host), XTLS: hr.TLS != nil, XTLSState: tlsStateOf(hr.TLS), XProtocol: textOf(proto), F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
+		req = withGone(req, hr.Context())
 		if stream {
 			req = withStreamBody(req, hr.Body)
 			streamTrailer(req, func() map[string][]string { return hr.Trailer })
