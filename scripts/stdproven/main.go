@@ -155,6 +155,7 @@ var harnesses = map[string][]harness{
 	"protobuf":     {{"TestProtobufFuzz", "XO_PROTOFUZZ"}},
 	"udp":          {{"TestUdpFuzz", "XO_UDPFUZZ"}},
 	"term":         {{"TestTermFuzz", "XO_TERMFUZZ"}},
+	"sqlite":       {{"TestSqliteFuzz", "XO_SQLITEFUZZ"}},
 }
 
 // fixedCases lists the harnesses whose seed makes a fixed number of cases
