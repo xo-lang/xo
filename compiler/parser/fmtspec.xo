@@ -40,6 +40,9 @@ pub const SPEC_TEXT = 4
 pub const SPEC_STR = 5
 /// Float32: converted with Float(x) first.
 pub const SPEC_FLOAT_CONV = 6
+/// An integer type other than Int with no base, sign or zero padding: its
+/// text, right aligned as Int's (b33: it was SPEC_TEXT, left aligned).
+pub const SPEC_INT_TEXT = 7
 
 /// The spec forms, for XO0180's note.
 pub const SPEC_FORMS = "[[fill]align][+][0][width][.prec][type]: align `<` `>` `^`; type `d` `x` `X` `o` `b` for integers, `f` `e` `g` for Float, `s` for text; `?` alone for the Debug text"
@@ -285,6 +288,7 @@ pub fn spec_expr(x: Expr, s: FmtSpec, kind: Int) -> Expr {
         core = method(core, name, head, colon0, args)
       }
     }
+    SPEC_INT_TEXT => core = text_of(core, head)
     SPEC_STR => default_right = false
     _ => {
       default_right = false

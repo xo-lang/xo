@@ -2332,8 +2332,12 @@ fn (var c: Checker) check_spec(x: Expr, t: Int, spec: parser.FmtSpec) {
   } else if c.is_prelude(t, "Str") {
     kind = parser.SPEC_STR
   }
-  // an integer type other than Int with only a width pads its text
-  let check_kind = if kind == parser.SPEC_TEXT && c.is_int(t) { parser.SPEC_INT } else { kind }
+  // an integer type other than Int with only a width pads its text,
+  // right aligned as Int's (core 1.6)
+  if kind == parser.SPEC_TEXT && c.is_int(t) {
+    kind = parser.SPEC_INT_TEXT
+  }
+  let check_kind = if kind == parser.SPEC_INT_TEXT { parser.SPEC_INT } else { kind }
   let why = parser.spec_misfit(spec, check_kind, what)
   if why != "" {
     let d = c.error(parser.SPEC_BAD, sp, "format spec `:${spec.raw.to_str() ?? ""}`: ${why}")
