@@ -209,6 +209,16 @@ fn (var r: Rd) i16() -> Int ! WireErr {
   v
 }
 
+/// An unsigned int16: pgproto3 reads counts and a column's attribute number
+/// with Uint16 (TestPgFuzz seed 37 case 3906: a count of 0x8001 read signed
+/// was a negative count, a RowDescription of no fields).
+fn (var r: Rd) u16() -> Int ! WireErr {
+  if r.at + 2 > r.b.len() { return Err(WireErr.Bad(msg: "int16 past the end")) }
+  let v = (Int(r.b[r.at]) << 8) | Int(r.b[r.at + 1])
+  r.at += 2
+  v
+}
+
 fn (var r: Rd) cstr() -> Str ! WireErr {
   var i = r.at
   while i < r.b.len() && r.b[i] != 0 { i += 1 }
@@ -297,7 +307,7 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
       Backend.CommandComplete(tag: tag)
     }
     "D" => {
-      let n = r.i16()?
+      let n = r.u16()?
       var vals: List[Bytes?] = List.with_capacity(n)
       for _ in 0..n {
         let len = r.i32()?
@@ -315,7 +325,7 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
     }
     "n" => Backend.NoData
     "t" => {
-      let n = r.i16()?
+      let n = r.u16()?
       var oids: List[Int] = []
       for _ in 0..n { oids.push(r.i32()? & 4294967295) }
       Backend.ParamDescription(oids: oids)
@@ -328,12 +338,12 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
     "s" => Backend.PortalSuspended
     "Z" => Backend.Ready(status: r.take(1)?.to_str() ?? "?")
     "T" => {
-      let n = r.i16()?
+      let n = r.u16()?
       var fs: List[Field] = List.with_capacity(n)
       for _ in 0..n {
         let name = r.cstr()?
         let table = r.i32()? & 4294967295
-        let col = r.i16()?
+        let col = r.u16()?
         let oid = r.i32()? & 4294967295
         let size = r.i16()?
         let modifier = r.i32()?

@@ -697,6 +697,18 @@ function still passes; a closure that counts rows in an Atomic or collects notic
 The 2026-11-15 parity change made Xo ignore them as v1.10.1 does; they are a malformed row again, a `Conn`
 error that drops the connection.
 
+## 2026-11-18: fix: Postgres reads message counts and column numbers unsigned
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestPgFuzz seed 37 case 3906 (task #90, linux/arm64 host 2)
+- Go reference: pgx v5 pgproto3 RowDescription.Decode, DataRow.Decode and ParameterDescription.Decode read the count with binary.BigEndian.Uint16, and FieldDescription.TableAttributeNumber is a uint16
+- Test: native/llrt/pgwire's "decode reads counts and a column number unsigned, as pgproto3's Uint16" on arm64; TestPgFuzz seed 37
+
+Xo read them as signed int16: a RowDescription of 0x8001 fields was a description of no columns, and a
+column number of 32768 or more was negative. Such a count now reads past the message and is a malformed
+message error, as pgconn's.
+
 ## 2026-11-18: fix: Postgres refuses a NoticeResponse or ErrorResponse cut before its last zero
 
 - Kind: fix

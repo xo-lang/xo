@@ -930,3 +930,16 @@ test "decode refuses a NoticeResponse or ErrorResponse without the zero ending i
   expect(decode(Bytes.from_hex("4500000024" + cut) ?? b"")) == Err(WireErr.Bad(msg: "fields without their terminating zero"))
   expect(decode(Bytes.from_hex("4e00000025" + cut + "00") ?? b"").is_ok()) == true
 }
+
+test "decode reads counts and a column number unsigned, as pgproto3's Uint16 (TestPgFuzz seed 37 case 3906)" {
+  // RowDescription of 0x8001 fields holding one: pgproto3 fails, short of the second
+  expect(decode(Bytes.from_hex("540000001b8001633000000000000000000000150002ffffffff0000") ?? b"").is_err()) == true
+  // DataRow and ParameterDescription of 0xffff, with none present
+  expect(decode(Bytes.from_hex("4400000006ffff") ?? b"").is_err()) == true
+  expect(decode(Bytes.from_hex("7400000006ffff") ?? b"").is_err()) == true
+  // one field whose column is 0x8001 is column 32769
+  match decode(Bytes.from_hex("540000001b0001633000000000008001000000150002ffffffff0000") ?? b"") {
+    Ok(Backend.RowDesc(fields: fs)) => expect(fs.map(fn(f) { f.column })) == [32769]
+    _ => expect("not a RowDesc") == "a RowDesc"
+  }
+}
