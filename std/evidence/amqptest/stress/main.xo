@@ -8,6 +8,13 @@
 // stop and the consumers drain the queues. Every message must end
 // accepted exactly once or in its queue's dead letter queue, none lost,
 // none accepted twice, and the broker must hold nothing ready or locked.
+// The producers wait while more than INFLIGHT messages are neither
+// accepted nor dead lettered, and the consumers record each accepted
+// message as a bit per producer and number, so the program's own memory
+// stays flat: unthrottled producers outran the consumers (a backlog of
+// 225,000 messages after 2 minutes, 2026-11-18) and a map of every
+// accepted id held each message's frame, which the resident set check
+// read as a leak.
 // A background task samples the resident set every 10 s (Linux
 // /proc/self/status) and prints it each minute. Pass: those checks, no
 // fault, and the resident set at the end within 10% or 4 MB of its sample
@@ -18,6 +25,9 @@ use std/amqp
 use std/amqptest
 
 const QUEUES: Int = 4
+
+/// Messages sent but not yet accepted or dead lettered, at most.
+const INFLIGHT: Int = 4096
 
 /// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
 fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
@@ -45,7 +55,7 @@ fn opts(os: Os) -> amqp.ConnOptions {
   amqp.ConnOptions{container_id: "stress", clock: Some(os.clock), sasl: amqp.Sasl.Anonymous, timeout_ms: 10000}
 }
 
-fn producer(os: Os, addr: Str, t: Int, end: Time, passes: Int, stop: Mutex[Bool], sent: Mutex[Int]) -> Int ! Str uses (net, clock) {
+fn producer(os: Os, addr: Str, t: Int, end: Time, passes: Int, stop: Mutex[Bool], sent: Mutex[Int], done: Mutex[Int]) -> Int ! Str uses (net, clock) {
   let c = amqp.dial(os.net, addr, opts(os)).map_err(fn(e) { "producer ${t}: dial: ${es(e)}" })?
   let sess = c.begin().map_err(fn(e) { "producer ${t}: begin: ${es(e)}" })?
   var snds: List[amqp.Sender] = []
@@ -54,6 +64,12 @@ fn producer(os: Os, addr: Str, t: Int, end: Time, passes: Int, stop: Mutex[Bool]
   }
   var k = 0
   while if passes > 0 { k < passes } else { os.clock.now() < end && !stop.with_read(fn(b: Bool) -> Bool { b }) } {
+    if k % 16 == 0 {
+      // the backlog stays bounded: wait while INFLIGHT are outstanding
+      while sent.with_read(fn(n: Int) -> Int { n }) - done.with_read(fn(n: Int) -> Int { n }) > INFLIGHT && os.clock.now() < end {
+        os.clock.sleep(1ms)
+      }
+    }
     let m = amqp.Message{body: amqp.Body.Data(sections: ["${t}.${k}".bytes()])}
     match snds[k % QUEUES].send(m).map_err(fn(e) { "producer ${t} message ${k}: ${es(e)}" })? {
       Some(amqp.DeliveryState.Accepted) => {}
@@ -67,7 +83,7 @@ fn producer(os: Os, addr: Str, t: Int, end: Time, passes: Int, stop: Mutex[Bool]
 }
 
 /// One consumer: settles until `drained` says the producers are done and its queue is empty.
-fn consumer(os: Os, b: amqptest.Broker, addr: Str, t: Int, accepted: Mutex[Map[Str, Int]], producing: Mutex[Bool]) -> Int ! Str uses (net, clock) {
+fn consumer(os: Os, b: amqptest.Broker, addr: Str, t: Int, accepted: Mutex[List[List[Int]]], done: Mutex[Int], producing: Mutex[Bool]) -> Int ! Str uses (net, clock) {
   let q = "q${t % QUEUES}"
   let c = amqp.dial(os.net, addr, opts(os)).map_err(fn(e) { "consumer ${t}: dial: ${es(e)}" })?
   let sess = c.begin().map_err(fn(e) { "consumer ${t}: begin: ${es(e)}" })?
@@ -99,11 +115,21 @@ fn consumer(os: Os, b: amqptest.Broker, addr: Str, t: Int, accepted: Mutex[Map[S
       }
       _ => {
         rcv.accept(d).map_err(fn(e) { "consumer ${t}: accept ${id}: ${es(e)}" })?
-        let twice = accepted.with(fn(var m: Map[Str, Int]) -> Bool {
-          let seen = m.contains(id)
-          m.put(id, (m.get(id) ?? 0) + 1)
+        let parts = id.split(".")
+        let (pt, pk) = if parts.len() == 2 { (Int.parse(parts[0]) ?? -1, Int.parse(parts[1]) ?? -1) } else { (-1, -1) }
+        let twice = accepted.with(fn(var m: List[List[Int]]) -> Bool {
+          if pt < 0 || pt >= m.len() || pk < 0 { return true }
+          var w = m[pt]
+          let none: List[Int] = []
+          m[pt] = none
+          while w.len() <= pk / 32 { w.push(0) }
+          let bit = 1 << (pk % 32)
+          let seen = (w[pk / 32] & bit) != 0
+          w[pk / 32] = w[pk / 32] | bit
+          m[pt] = w
           seen
         })
+        done.with(fn(var d: Int) { d += 1 })
         if twice {
           return Err("consumer ${t}: ${id} accepted twice")
         }
@@ -145,7 +171,11 @@ fn main(os: Os) ! {
   }
   let l = os.net.listen("127.0.0.1:0")?
   let addr = l.addr()
-  let accepted = Mutex[Map[Str, Int]].new({})
+  let no_bits: List[Int] = []
+  let accepted = Mutex[List[List[Int]]].new(List[List[Int]].filled(tasks, no_bits))
+  // accepted plus dead lettered (the dead ones counted by the ticker)
+  let done = Mutex[Int].new(0)
+  let dead_seen = Mutex[Int].new(0)
   let producing = Mutex[Bool].new(true)
   let stop = Mutex[Bool].new(false)
   let sent = Mutex[Int].new(0)
@@ -158,6 +188,10 @@ fn main(os: Os) ! {
         clock.sleep(10s)
         let v = rss_kib(os)
         ticks += 1
+        var nd = 0
+        for q in 0..QUEUES { nd += b.dead_letters("q${q}").len() }
+        let was = dead_seen.with(fn(var x: Int) -> Int { let o = x; x = nd; o })
+        done.with(fn(var d: Int) { d += nd - was })
         if ticks % 6 == 0 && v > 0 {
           os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB, ${sent.with_read(fn(n: Int) -> Int { n })} sent")
         }
@@ -175,11 +209,11 @@ fn main(os: Os) ! {
     })
     var cs: List[Task[Int, Str]] = []
     for t in 0..tasks {
-      cs.push(s.spawn(fn() -> Int ! Str { consumer(os, b, addr, t, accepted, producing) }))
+      cs.push(s.spawn(fn() -> Int ! Str { consumer(os, b, addr, t, accepted, done, producing) }))
     }
     var ps: List[Task[Int, Str]] = []
     for t in 0..tasks {
-      ps.push(s.spawn(fn() -> Int ! Str { producer(os, addr, t, end, passes, stop, sent) }))
+      ps.push(s.spawn(fn() -> Int ! Str { producer(os, addr, t, end, passes, stop, sent, done) }))
     }
     var made = 0
     for h in ps {
@@ -202,7 +236,19 @@ fn main(os: Os) ! {
       return Err("q${q} still holds messages")
     }
   }
-  let once = accepted.with_read(fn(m: Map[Str, Int]) -> Int { m.len() })
+  let once = accepted.with_read(fn(m: List[List[Int]]) -> Int {
+    var n = 0
+    for w in m {
+      for x in w {
+        var y = x
+        while y != 0 {
+          y = y & (y - 1)
+          n += 1
+        }
+      }
+    }
+    n
+  })
   if once != took || took + dead != made {
     return Err("${made} sent, ${took} accepted (${once} distinct), ${dead} dead lettered: lost or duplicated")
   }
