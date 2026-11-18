@@ -36,13 +36,23 @@ func TestOffloadGateLease(t *testing.T) {
 
 // TestOffloadAmd64Exclusive runs scripts/lead/offload_amd64_excl_test.sh:
 // on the amd64 host only a timing (OFF_TIMING=1) takes every slot; any
-// other OFF_EXCLUSIVE=1 job is a 2-slot memory lease (task #370).
+// other OFF_EXCLUSIVE=1 job is a 2-slot memory lease (task #370), also
+// when the caller runs inside a heavyd lane.
 func TestOffloadAmd64Exclusive(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("no bash")
 	}
-	out, err := exec.Command("bash", filepath.Join(root, "scripts", "lead", "offload_amd64_excl_test.sh")).CombinedOutput()
-	if err != nil {
-		t.Fatalf("offload_amd64_excl_test.sh: %v\n%s", err, out)
+	// pushq runs it inside heavyd's merge lane: with HEAVY_LANE set
+	// offload.sh skipped the lease and the cases failed on main
+	// (2026-11-18, 2a630e23a); a caller's lane must not reach them
+	env := append(os.Environ(), "HEAVY_LANE=merge", "HEAVY_LANE_SLOT=1",
+		"HEAVY_LANE_ENV=offload-arm64b.env", "OFF_NO_LANE=1")
+	for _, e := range [][]string{os.Environ(), env} {
+		cmd := exec.Command("bash", filepath.Join(root, "scripts", "lead", "offload_amd64_excl_test.sh"))
+		cmd.Env = e
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("offload_amd64_excl_test.sh: %v\n%s", err, out)
+		}
 	}
 }
