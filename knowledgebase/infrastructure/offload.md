@@ -148,8 +148,11 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   lanes.go ExclStarve, NoLaneOK, TestExclStarveNoLane,
   TestExclStarveDrainsMachine, TestExclStarveOutlastsHold; Last
   verified: 2026-11-18). Past HEAVYD_EXCL_STARVE_MIN the drain's
-  backfill stops too (no plain run starts beside it however short its
-  -max), and a gate that came after it no longer goes first by
+  backfill stops too (no plain run starts beside it whose -max ends past
+  the latest limit of the runs going; one that ends by that limit still
+  starts, since the exclusive waits for those runs anyway: lead,
+  2026-11-18, amd64 idled 5 of 6 slots over 2 h while one plain run held
+  slot 2 for 4h18m; TestExclStarveFitsRunningLimit), and a gate that came after it no longer goes first by
   HEAVYD_GATE_AGE_MIN: gates go first until the exclusive has waited 20
   minutes, then it waits only for the runs already going (lead,
   2026-11-18, #317: amd64 perf runs waited 29 to 82 min while each x86
