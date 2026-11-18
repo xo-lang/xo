@@ -235,7 +235,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   the host it chose. The arm64 host runs 3 jobs at
   once since 2026-10-31 (owner: OFF_SLOTS=3 in offload.env, `arm64 3 2
   offload.env` in heavyd-lanes.conf; an exclusive run still takes the
-  whole host). OFF_PRIORITY=1 puts a job ahead of every waiting job
+  whole host). A lane's slots in heavyd-lanes.conf and its host file's
+  OFF_SLOTS must be equal: heavyd starts SLOTS leases and offload.sh runs
+  OFF_SLOTS at once, so the rest hang on the host's lock until their
+  -max (2026-11-18: amd64 6 against OFF_SLOTS=2 hung 4 of 6 jobs).
+  heavyd writes `SLOTS drift lane ...` to heavyd.log at start and
+  `heavy.sh --status` shows `SLOTS DRIFT` under the lane (SlotDrift,
+  TestSlotDrift; Last verified: 2026-11-18). OFF_PRIORITY=1 puts a job ahead of every waiting job
   without it, exclusive ones included (it never stops a running one):
   for a run that confirms a fix to main or unblocks another agent, not
   for measurements (owner, 2026-10-31). A job that names no host file
