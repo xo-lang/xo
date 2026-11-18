@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-11-17: perf: List[UInt32].filled fills in bulk
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (std performance to Proven; brotli encode profile, quality 6: 13.5% in list_filled[UInt32])
+- Go reference: make([]uint32, n) (Go's allocator clears the block in bulk)
+- Test: std/native/prelude_test.xo "List.filled: UInt32 bulk path fills every packed element" (64, 65 and 1000 elements; 0, all ones and a high bit value; push after)
+- Shipped in: not yet released
+
+`List[UInt32].filled(n, x)` for 64 or more elements on the native
+targets sets every element at once (one memset for zero, a four byte
+store an element otherwise) where it pushed each one, as the Int and
+UInt8 lists already did. std/brotli's encoder makes a 2 MB hash table
+this way for each stream: quality 6 on the Mac took 0.058 s where it took
+0.062 (Go 0.034).
+
 ## 2026-11-17: feature: Str.to_title, Bytes to_title, runes, lines, join and hex_dump
 
 - Kind: feature
