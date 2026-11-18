@@ -74,3 +74,40 @@ test "a Timestamp's fraction may follow a comma, as Go's time.Parse reads it" {
   expect(parse_timestamp("2000-01-01T00:00:00.123456789123Z").is_err()) == true
   expect(parse_timestamp("2000-01-01T00:00:00,Z").is_err()) == true
 }
+
+// Go's protojson counts the Any against RecursionLimit but not a well known
+// type in its "value" (unmarshalAnyValue calls the type's own unmarshaler), and
+// an object in a member it skips while finding "@type" may nest only as deep as
+// the levels left. TestProtojsonFuzz (AllowPartial and RecursionLimit, limit 2)
+// found a Timestamp in an Any refused, which Go reads.
+
+fn wkt_reg() -> Registry {
+  let any = protodesc.MessageDesc{name: "Any", field: [
+    protodesc.FieldDesc{name: "type_url", number: 1, label: 1, kind: 9},
+    protodesc.FieldDesc{name: "value", number: 2, label: 1, kind: 12},
+  ]}
+  let ts = protodesc.MessageDesc{name: "Timestamp", field: [
+    protodesc.FieldDesc{name: "seconds", number: 1, label: 1, kind: 3},
+    protodesc.FieldDesc{name: "nanos", number: 2, label: 1, kind: 5},
+  ]}
+  let empty = protodesc.MessageDesc{name: "Empty"}
+  let w = protodesc.MessageDesc{name: "W", field: [
+    protodesc.FieldDesc{name: "a", number: 1, label: 1, kind: 11, type_name: ".google.protobuf.Any"},
+  ]}
+  registry([protodesc.FileDesc{name: "wkt.proto", package: "google.protobuf", syntax: "proto3", message_type: [any, ts, empty, w]}])
+}
+
+test "a well known type in an Any's value does not count against the recursion limit, as in Go" {
+  let r = wkt_reg()
+  let u = "type.googleapis.com/google.protobuf."
+  let tsj = "{\"@type\":\"${u}Timestamp\",\"value\":\"2000-01-01T00:00:00Z\"}"
+  expect(unmarshal(r, "google.protobuf.Any", tsj, Opts{recursion_limit: 1}).is_ok()) == true
+  expect(unmarshal(r, "google.protobuf.W", "{\"a\":${tsj}}", Opts{recursion_limit: 2}).is_ok()) == true
+  expect(unmarshal(r, "google.protobuf.W", "{\"a\":${tsj}}", Opts{recursion_limit: 1}).is_err()) == true
+  let ej = "{\"@type\":\"${u}Empty\",\"value\":{}}"
+  expect(unmarshal(r, "google.protobuf.Any", ej, Opts{recursion_limit: 1}).is_err()) == true
+  expect(unmarshal(r, "google.protobuf.Any", ej, Opts{recursion_limit: 2}).is_ok()) == true
+  let aj = "{\"@type\":\"${u}Any\",\"value\":${ej}}"
+  expect(unmarshal(r, "google.protobuf.Any", aj, Opts{recursion_limit: 2}).is_err()) == true
+  expect(unmarshal(r, "google.protobuf.Any", aj, Opts{recursion_limit: 3}).is_ok()) == true
+}

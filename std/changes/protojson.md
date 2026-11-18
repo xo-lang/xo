@@ -1,5 +1,16 @@
 # std/protojson changes
 
+## 2026-11-18: fix: an Any's well known type value counts against RecursionLimit as in Go
+
+- Kind: fix
+- Commit: this push
+- Found by: the protojson fuzz harness (TestProtojsonFuzz, linux/arm64, "unmarshal with AllowPartial and RecursionLimit equals Go's protojson"): at limit 2 Go read a message holding an Any of a Timestamp, Xo failed it
+- Go reference: google.golang.org/protobuf v1.36.12 encoding/protojson well_known_types.go unmarshalAny, unmarshalAnyValue, findTypeURL and skipJSONValue
+- Test: std/protojson_test.xo "a well known type in an Any's value does not count against the recursion limit, as in Go" (fails before); results from Go's protojson.Unmarshal
+- Shipped in: not yet released
+
+The Any counts one level of RecursionLimit, and a well known type in its "value" no longer counts another. As in Go, an object or array in a member other than "@type" may nest only as deep as the levels left (an Any of Empty with "value":{} fails at limit 1).
+
 ## 2026-11-17: fix: a Timestamp's fraction may follow a comma, as in Go
 
 - Kind: fix

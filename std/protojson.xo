@@ -2607,6 +2607,13 @@ fn any_wire(r: Registry, info: MsgInfo, jv: Jv, o: Opts) -> Bytes ! JsonErr {
   }
   var url = ""
   for m in members {
+    if m.0 != "@type" {
+      // Go's findTypeURL skips the other members first (skipJSONValue), and an object or array nested deeper than
+      // the levels left is an error there.
+      if jv_nesting(m.1) > o.recursion_limit {
+        return Err(jerr("exceeded max recursion depth"))
+      }
+    }
     if m.0 == "@type" {
       if !url.is_empty() {
         return Err(jerr("duplicate \"@type\" field"))
@@ -2649,7 +2656,7 @@ fn any_wire(r: Registry, info: MsgInfo, jv: Jv, o: Opts) -> Bytes ! JsonErr {
         if found {
           return Err(jerr("duplicate \"value\" field"))
         }
-        value = msg_wire(r, em, m.1, o)?
+        value = any_value_wire(r, em, m.1, o)?
         found = true
       } else if !o.discard_unknown {
         return Err(jerr("unknown field ${jstr(m.0)}"))
@@ -2664,7 +2671,7 @@ fn any_wire(r: Registry, info: MsgInfo, jv: Jv, o: Opts) -> Bytes ! JsonErr {
         continue
       }
       if m.0 == "value" {
-        value = msg_wire(r, em, m.1, o)?
+        value = any_value_wire(r, em, m.1, o)?
       } else if !o.discard_unknown {
         return Err(jerr("unknown field ${jstr(m.0)}"))
       }
@@ -2680,6 +2687,36 @@ fn any_wire(r: Registry, info: MsgInfo, jv: Jv, o: Opts) -> Bytes ! JsonErr {
     out.write(value)
   }
   Ok(out.freeze())
+}
+
+/// The wire bytes of a well known type from an Any's "value": Go's unmarshalAnyValue calls the type's own
+/// unmarshaler, not unmarshalMessage, so this level does not count against the recursion limit.
+fn any_value_wire(r: Registry, em: MsgInfo, jv: Jv, o: Opts) -> Bytes ! JsonErr {
+  match wkt_wire(r, em, jv, o)? {
+    Some(b) => Ok(b)
+    None => msg_wire_obj(r, em, jv, o, false)
+  }
+}
+
+/// How deeply objects and arrays nest in `jv` (0 for a scalar).
+fn jv_nesting(jv: Jv) -> Int {
+  match jv {
+    Obj(m) => {
+      var d = 0
+      for e in m {
+        d = d.max(jv_nesting(e.1))
+      }
+      d + 1
+    }
+    Arr(a) => {
+      var d = 0
+      for e in a {
+        d = d.max(jv_nesting(e))
+      }
+      d + 1
+    }
+    Null | Bool(_) | Num(_) | Text(_) => 0
+  }
 }
 
 /// The well known types with a special JSON form.
