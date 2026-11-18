@@ -1,5 +1,26 @@
 # std/udp changes
 
+## 2026-11-17: fix: addresses split as Go's net.SplitHostPort splits them
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 3, the new udp differential against Go's net package
+  (internal/stdtest TestUdpFuzz, std Proven fuzz evidence)
+- Go reference: net.SplitHostPort, net.ListenPacket, net.Dial
+- Test: std/udp_test.xo "addresses split as Go's net splits them";
+  TestUdpFuzz (8 of 300 cases differed at seed 2 before, 3,000 of 3,000
+  equal on arm64 and llvm after)
+- Timing: none
+- Shipped in: since std/udp (decision 0406) through v0.35.0
+
+`udp.listen` and `udp.dial` (and TCP's listen and dial and udp's
+write_to, which share llrt/netpolicy.split_hostport) split an address at
+its last colon whatever came before it, so "::1:53" reached getaddrinfo
+as host "::1" and opened a socket where Go reports "too many colons",
+and an empty port (`listen(net, "127.0.0.1:")`, `":"`) failed where Go
+binds port 0. The split is now Go's: an IPv6 host needs its brackets, a
+stray bracket is an error, and an empty port is port 0.
+
 ## 2026-11-03: port: std/udp in a wasip2/wasm command
 
 - Kind: port

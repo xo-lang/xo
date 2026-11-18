@@ -1,0 +1,87 @@
+// The Xo side of the UDP differential test (internal/stdtest TestUdpFuzz):
+// each step on standard input runs through std/udp and prints what the
+// test prints for Go's net package on the same step:
+//
+//   listen ADDR            "ok" or "error" (the socket closed at once)
+//   dial ADDR              "ok" or "error"
+//   send VIA LEN MAX SEED  a datagram of LEN bytes (byte k is
+//                          (SEED + 7 k) % 256) from a second socket on
+//                          127.0.0.1 (VIA "dial": a dialed socket's write;
+//                          "to": a bound socket's write_to) to a bound
+//                          one, read with read_from(MAX), then the reply
+//                          sent back with write_to and read by the sender
+//                          (read(MAX) or read_from(MAX)): each read prints
+//                          its length, the first and last 8 bytes, and
+//                          whether the sender address is the peer's.
+use std/udp
+
+fn payload(n: Int, seed: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for k in 0..n {
+    b.write_byte(UInt8((seed + 7 * k) % 256))
+  }
+  b.freeze()
+}
+
+fn show(d: Bytes) -> Str {
+  let n = d.len()
+  let head = if n > 8 { d[0..8] } else { d }
+  let tail = if n > 8 { d[n - 8..n] } else { d }
+  "${n} ${head.to_hex()} ${tail.to_hex()}"
+}
+
+fn step(os: Os, w: List[Str]) -> Str ! NetErr {
+  match w[0] {
+    "listen" => {
+      let c = udp.listen(os.net, w[1])?
+      c.close()
+      Ok("ok")
+    }
+    "dial" => {
+      let c = udp.dial(os.net, w[1])?
+      c.close()
+      Ok("ok")
+    }
+    _ => {
+      let n = Int.parse(w[2]) ?? 0
+      let max = Int.parse(w[3]) ?? 1
+      let seed = Int.parse(w[4]) ?? 0
+      let a = udp.listen(os.net, "127.0.0.1:0")?
+      let via_dial = w[1] == "dial"
+      let b = if via_dial { udp.dial(os.net, a.local_addr())? } else { udp.listen(os.net, "127.0.0.1:0")? }
+      let data = payload(n, seed)
+      if via_dial {
+        b.write(data)?
+      } else {
+        b.write_to(data, a.local_addr())?
+      }
+      let (got, from) = a.read_from(max)?
+      let first = "${show(got)} ${if from == b.local_addr() { "peer" } else { "other ${from}" }}"
+      let back = payload(n, seed + 1)
+      a.write_to(back, from)?
+      let second = if via_dial {
+        "${show(b.read(max)?)} peer"
+      } else {
+        let (d, f2) = b.read_from(max)?
+        "${show(d)} ${if f2 == a.local_addr() { "peer" } else { "other ${f2}" }}"
+      }
+      a.close()
+      b.close()
+      Ok("${first}\n${second}")
+    }
+  }
+}
+
+fn main(os: Os) ! {
+  for line in os.stdio.lines()? {
+    let w = line.trim().split(" ")
+    if w.len() < 2 {
+      continue
+    }
+    os.stdio.println("== ${line.trim()}")
+    match step(os, w) {
+      Ok(s) => os.stdio.println(s)
+      Err(_) => os.stdio.println("error")
+    }
+  }
+}

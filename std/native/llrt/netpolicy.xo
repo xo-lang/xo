@@ -201,28 +201,22 @@ pub fn admits_addr(lists: Str, addr: Str) -> Bool {
   admits(lists, host, raw.str_slice(addr, p0, p1))
 }
 
-/// Splits "host:port", "[v6]:port", or ":port" at the last colon (the
-/// brackets of a host removed): whether there is a colon, the host, and
-/// the port.
+/// Splits "host:port", "[v6]:port", or ":port" as Go's net.SplitHostPort
+/// (split_go): whether the address splits, the host (its brackets
+/// removed), and the port, an empty one read as "0" as Go's net reads it.
+/// An unbracketed host with a colon ("::1:53") and a stray bracket do not
+/// split (TestUdpFuzz, 2026-11-17: they reached getaddrinfo, which took
+/// "::1:53" as host "::1").
 pub fn split_hostport(a: Str) -> (Bool, Str, Str) {
   let b = a.bytes()
-  var c = b.len() - 1
-  while c >= 0 && b[c] != 58 {
-    c -= 1
-  }
-  if c < 0 {
+  let (ok, h0, h1, p0, p1) = split_go(b, 0, b.len())
+  if !ok {
     return (false, "", "")
-  }
-  var h0 = 0
-  var h1 = c
-  if c >= 2 && b[0] == 91 && b[c - 1] == 93 {
-    h0 = 1
-    h1 = c - 1
   }
   // byte copies, not Str slices: a may come from outside (a redirect's
   // Location) and not be UTF-8, and a slice next to a broken sequence
   // faults (TestHTTPFuzz/client, 2026-10-18; decision 0259)
-  (true, raw.str_slice(a, h0, h1), raw.str_slice(a, c + 1, b.len()))
+  (true, raw.str_slice(a, h0, h1), if p0 == p1 { "0" } else { raw.str_slice(a, p0, p1) })
 }
 
 /// Whether port is a number above 65535. Darwin's getaddrinfo rejects

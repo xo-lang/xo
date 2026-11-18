@@ -160,3 +160,14 @@ test "concurrent clients on one echo socket get their own replies" uses (net, cl
   // loopback drops are rare; most of the 400 must come back
   expect(total > 350) == true
 }
+
+// Go's net.SplitHostPort (TestUdpFuzz, 2026-11-17): an IPv6 host needs
+// its brackets, and an empty port is port 0.
+test "addresses split as Go's net splits them" uses (net, clock) {
+  expect(listen(os.net, "::1:0") is Err(_)) == true
+  expect(dial(os.net, "::1:53") is Err(_)) == true
+  expect(listen(os.net, "[127.0.0.1]0") is Err(_)) == true
+  let s = listen(os.net, "127.0.0.1:").or_fault("an empty port is 0")
+  expect(s.local_addr().ends_with(":0")) == false
+  s.close()
+}
