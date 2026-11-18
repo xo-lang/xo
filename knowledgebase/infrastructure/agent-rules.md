@@ -103,9 +103,17 @@ here (#335).
 
 ## Schedules
 
+A periodic job that is not a launchd agent is a line of xw's schedule,
+`~/xo-lead/xw-schedule.conf` (`NAME EVERY COMMAND [ARGS...]`, EVERY like
+8h or 30m, COMMAND relative to `~/xo-lead`; xw sched.xo, 2026-11-18):
+the alert pass starts it when due, its output is `xw/sched/NAME.out`
+(the row's evidence), and a run that exits nonzero is a sched-failed
+alert carrying its last `SCHED-TRAP: ` line.
+
 | Schedule | Runs | Every (min) | Evidence | Waits on |
 |---|---|---|---|---|
 | mainwatch | launchd org.xolang.mainwatch: hourly.sh, diskguard.sh | 120 | `beat:mainwatch` | |
 | hourly | the main check (hourly.sh, from mainwatch) | 120 | `log:notes/lead/hourly.log` | `beat:mainwatch` |
 | ctier | launchd org.xolang.ctier: the full tier on main | 120 | `beat:ctier` | |
 | heavyd | launchd org.xolang.heavyd (KeepAlive) | 10 | `log:heavyd.log` | |
+| golden-freecheck | xw schedule (`~/xo-lead/xw-schedule.conf`): `agents/golden-freecheck.sh`, every arm64 golden (full tier) under `XO_GOLDEN_FREE_CHECK=1` on host 4 (task #350) | 480 | `log:xw/sched/golden-freecheck.out` | |
