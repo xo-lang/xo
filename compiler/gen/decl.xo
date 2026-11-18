@@ -117,6 +117,8 @@ fn (g: Gen) local_type_name(t: Int) -> Str {
 struct FieldRef {
   name: Str
   code: Str
+  /// a server field (decision 0719): its Debug text is `<server>`
+  server: Bool = false
 }
 
 /// The fields of a struct read through recv.
@@ -124,7 +126,7 @@ fn (g: Gen) struct_fields(t: Int, recv: Str) -> List[FieldRef] {
   var fs: List[FieldRef] = []
   for f in g.c.objs[t].fields {
     let n = check.text(f.name)
-    fs.push(FieldRef{name: n, code: recv + "." + go_field(n)})
+    fs.push(FieldRef{name: n, code: recv + "." + go_field(n), server: f.is_server})
   }
   fs
 }
@@ -239,6 +241,10 @@ fn (var g: Gen) gen_derived(t: Int, self: Str, fs: List[FieldRef], os: List[Fiel
     g.pl("\tb.WriteString(${(tname + "{").quote()})")
     for (i, f) in fs.indexed() {
       let sep = if i > 0 { ", " } else { "" }
+      if f.server {
+        g.pl("\tb.WriteString(${(sep + f.name + ": <server>").quote()})")
+        continue
+      }
       g.pl("\tb.WriteString(${(sep + f.name + ": ").quote()})")
       g.pl("\t${rt}DebugTo(b, ${f.code})")
     }

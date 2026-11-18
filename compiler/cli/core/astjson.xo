@@ -191,6 +191,7 @@ fn decl_json(d: parser.Decl) -> Str {
         var fo = node("Field", f.span)
         fo.opt("doc", doc_json_of(f.doc))
         fo.flag("pub", f.is_pub)
+        fo.flag("server", f.is_server)
         fo.put("name", ident_json(f.name))
         if let Some(w) = f.wire {
           fo.str("wire", w)

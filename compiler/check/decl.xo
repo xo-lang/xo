@@ -320,7 +320,12 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           c.error("XO0437", fl.wire_span ?? fl.name.span, "the `string` option applies to scalar fields only: field `${text(fl.name.name)}` is not a Bool, Int, Float, Str or an Option of one (decision 0555)")
           qstr = false
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.exports_all(c.objs[t].module) && !c.objs[t].flags.std_internal()), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire, json_skip: json_skip, sql_skip: sql_skip})
+        if fl.is_server && fl.default == None {
+          // a client decodes a model without its server fields and gets
+          // their defaults (decision 0719)
+          c.error("XO0441", fl.name.span, "server field `${text(fl.name.name)}` needs a default (`= ...`): a client's copy of the value holds the default in its place (decision 0719)")
+        }
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.exports_all(c.objs[t].module) && !c.objs[t].flags.std_internal()), is_server: fl.is_server, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire, json_skip: json_skip, sql_skip: sql_skip})
       }
       c.objs[t].derives = c.derives_of(sd.derive)
       c.objs[t].fields = c.wire_keys(t, sd, fields, c.objs[t].derives)
@@ -1143,7 +1148,7 @@ fn (var c: Checker) resolve_err_spec(es: parser.ErrSpec?, var env: TypeEnv) -> I
 }
 
 fn is_effect_label(name: Str) -> Bool {
-  name is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "secrets" | "secrets.read" | "secrets.write" | "ffi" | "log" | "sync" | "go"
+  name is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "secrets" | "secrets.read" | "secrets.write" | "ffi" | "log" | "sync" | "go" | "server"
 }
 
 /// The effect set of effect labels and variables (decl.go
@@ -1172,7 +1177,7 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
         }
       }
     }
-    var cands = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "secrets", "secrets.read", "secrets.write", "ffi", "log", "sync", "go"]
+    var cands = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "secrets", "secrets.read", "secrets.write", "ffi", "log", "sync", "go", "server"]
     for (n, p) in env.params.entries() {
       if c.objs[p].flags.effect() {
         cands.push(text(n))

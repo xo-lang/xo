@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v11"
+pub const AST_CODEC_VERSION = "xo ast codec v12"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -307,6 +307,7 @@ fn (var e: Enc) decl(d: Decl) {
           e.bytes(fw.wire)
           e.span(fw.span)
         }
+        e.bool(f.is_server)
       }
       e.oexpr(s.inv)
       e.idents(s.derive)
@@ -1353,7 +1354,8 @@ fn (var r: Dec) decl() -> Decl {
           let ws = r.span()
           fws.push(FormatWire{format: fm, wire: w, span: ws})
         }
-        fs.push(Field{span: fsp, doc: fdoc, is_pub: fpb, name: fname, typ: ftyp, default: fdef, wire: wire, wire_span: wsp, formats: fws})
+        let fsv = r.bool()
+        fs.push(Field{span: fsp, doc: fdoc, is_pub: fpb, name: fname, typ: ftyp, default: fdef, wire: wire, wire_span: wsp, formats: fws, is_server: fsv})
       }
       let inv = r.oexpr()
       let dv = r.idents()

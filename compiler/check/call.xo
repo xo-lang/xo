@@ -718,6 +718,7 @@ fn (var c: Checker) field_of(bt: Int, span: Span, x: Expr, sel: Ident, place: Bo
         if c.field_hidden(o, f.is_pub) {
           c.internal_note(c.error("XO0605", sel.span, "field `${text(name)}` of `${text(c.objs[o].name)}` is not `pub`"), o)
         }
+        c.server_field(o, f, sel.span)
         return c.subst(f.ty, c.args_subst(c.objs[o].tparams, c.tys[r].args))
       }
     }
@@ -783,6 +784,15 @@ fn (var c: Checker) habit_field(bt: Int, span: Span, x: Expr, sel: Ident, place:
 /// the module being checked (XO0605): another module's non-pub field; std's
 /// modules and their native implementations see each other's, including
 /// an `@internal` struct's (decision 0440).
+/// A read, write, literal or pattern naming field f of struct o at span:
+/// a `server` field performs `server` (decision 0719), so a pure function
+/// (std/ui's update and view) cannot touch it.
+fn (var c: Checker) server_field(o: Int, f: FieldInfo, span: parser.Span) {
+  if f.is_server {
+    c.perform(c.new_eset([EffItem{label: "server", file: c.path, span: span, via: "${text(c.objs[o].name)}.${text(f.name)}"}]))
+  }
+}
+
 fn (c: Checker) field_hidden(o: Int, is_pub: Bool) -> Bool {
   let m = c.objs[o].module
   let cm = c.cur_mod

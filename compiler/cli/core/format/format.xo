@@ -471,6 +471,9 @@ fn (var p: Printer) print_item(it: Item) {
     Field(fs) => {
       let f = fs[0]
       p.pub_kw(f.is_pub)
+      if f.is_server {
+        p.w("server ")
+      }
       p.w(name_of(f.name))
       if let Some(ws) = f.wire_span {
         // its wire name (decision 0277), as written

@@ -1039,6 +1039,11 @@ fn (var c: Checker) effect_chain(d: Int, w0: EffItem, key: Str) {
       c.chain_note(d, w, w.via)
       return
     }
+    if w.label == "server" && w.fn_obj < 0 && !w.via.is_empty() && !w.file.is_empty() {
+      // a server field (decision 0719): via is `Type.field`
+      c.chain_note(d, w, "`${w.via}` is a server field, read or written here (decision 0719)")
+      return
+    }
     var via = w.via
     if w.fn_obj >= 0 {
       via = c.display_name(w.fn_obj)

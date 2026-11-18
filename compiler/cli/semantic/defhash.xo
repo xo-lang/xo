@@ -605,6 +605,10 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
       for f in x.fields {
         open(b, "Field")
         bool(b, f.is_pub)
+        if f.is_server {
+          // written only when set, so other structs' hashes stay
+          bool(b, true)
+        }
         ident_n(b, f.name)
         c.typ(b, f.typ)
         c.opt_expr(b, f.default)

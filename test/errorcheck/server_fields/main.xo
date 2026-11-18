@@ -1,0 +1,53 @@
+// Decision 0719 (0659 point 5): a field marked `server` is read or
+// written only by code that performs `server`. Pure code (std/ui's update
+// and view) may copy the value and build one that leaves the field to its
+// default.
+
+pub struct Model {
+  pub n: Int
+  pub server key: Str = ""
+  /// still a field name: the modifier is `server` then a name
+  pub server: Int = 0
+}
+
+pub struct Bad {
+  server token: Str // ERROR XO0441 "needs a default"
+}
+
+pub fn view(m: Model) -> Str { m.key } // ERROR XO0701 "performs `server`"
+
+pub fn set(m: Model) -> Model { m with {key: "k"} } // ERROR XO0701 "performs `server`"
+
+pub fn lit() -> Model { Model{n: 1, key: "k", server: 0} } // ERROR XO0701 "performs `server`"
+
+pub fn pat(m: Model) -> Str { // ERROR XO0701 "performs `server`"
+  let Model{key, ..} = m
+  key
+}
+
+pub fn assign(m0: Model) -> Model { // ERROR XO0701 "performs `server`"
+  var m = m0
+  m.key = "k"
+  m
+}
+
+/// Pure: a copy that does not name the field, a literal that leaves it to
+/// its default, the field named `server`, and ==.
+pub fn bump(m: Model) -> Model { m with {n: m.n + 1, server: m.server} }
+pub fn fresh() -> Model { Model{n: 0} }
+pub fn same(a: Model, b: Model) -> Bool { a == b }
+
+/// Server code says so.
+pub fn reveal(m: Model) -> Str uses server { m.key }
+
+/// A non pub function infers it, and a pure function type refuses it.
+fn peek(m: Model) -> Str { m.key }
+pub fn take(f: fn(Model) -> Str) -> Str { f(Model{n: 0}) }
+pub fn hand() -> Str { take(peek) } // ERROR XO0701 "performs `server`"
+
+/// Storing a function that performs `server` is fine; calling it performs it.
+pub struct App {
+  pub serve: fn(Model) -> Str uses server
+}
+pub fn app() -> App { App{serve: reveal} }
+pub fn run(a: App) -> Str uses server { (a.serve)(Model{n: 0}) }

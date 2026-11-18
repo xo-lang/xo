@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+Model{name: "room", key: <server>, count: 2}
+6
+Model{name: "room", key: <server>, count: 3}
+--- stderr

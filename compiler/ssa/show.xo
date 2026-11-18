@@ -461,8 +461,13 @@ fn (var b: Builder) debug_body(ct: Int, t: Int, cap: Bool = false) {
         let short = b.add(Op.Gt, bt, Aux.None, [b.cint(FRAME_TEXT + 1), b.call("Str.len", it, "", [b.read(av)])])
         let (no, join) = b.if_then_begin(short)
         var fa = b.lit(b.read(av), "${if i > 0 { ", " } else { "" }}${check.text(f.name)}: ")
-        let fv = b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v])
-        fa = b.debug_sub_cap(fa, fv, b.c.subst(f.ty, sb))
+        if f.is_server {
+          // a server field's value never shows (decision 0719)
+          fa = b.lit(fa, "<server>")
+        } else {
+          let fv = b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v])
+          fa = b.debug_sub_cap(fa, fv, b.c.subst(f.ty, sb))
+        }
         b.write_var(av, fa)
         b.if_then_end(no, join)
       }
@@ -476,6 +481,11 @@ fn (var b: Builder) debug_body(ct: Int, t: Int, cap: Bool = false) {
       let fi = b.m.field_index(t, check.text(f.name))
       if fi < 0 {
         b.unsupported("the Debug text of `${b.c.show(ct)}`")
+        continue
+      }
+      if f.is_server {
+        // a server field's value never shows (decision 0719)
+        a = b.lit(a, "<server>")
         continue
       }
       let fv = b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v])

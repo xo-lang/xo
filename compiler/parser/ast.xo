@@ -198,6 +198,9 @@ pub struct Field {
   /// per-format overrides, `json "..."`, `xml "..."`, `sql "..."`
   /// (decision 0315), in source order
   pub formats: List[FormatWire] = []
+  /// `server f: T = d` (decision 0719): read or written only by code that
+  /// performs `server`; json's public encoding leaves it out
+  pub is_server: Bool = false
 }
 
 /// One format's wire string of a field (decision 0315): `xml "ID,attr"`.

@@ -1369,6 +1369,13 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
       let fstart = p.tok.span.start
       let fdoc = p.doc_for(fstart.line)
       let fpub = p.got(Kind.Pub)
+      // `server f: T` (decision 0719): contextual, so a field may still be
+      // named `server` (`server: T`, `server as "s": T`)
+      var fserver = false
+      if p.at_ident(b"server") && p.peek(1).kind == Kind.Ident {
+        p.next()
+        fserver = true
+      }
       let fname = p.expect_ident("a field name")
       // its wire name, `kind as "type": Str` (decision 0277)
       var wire: Bytes? = None
@@ -1407,7 +1414,7 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
           typ = p.param_result_type(typ, "a new line or `=` after the field's type", "a struct field")
         }
       }
-      var f = Field{span: p.tok.span, doc: fdoc, is_pub: fpub, name: fname, typ: typ, wire: wire, wire_span: wire_span, formats: formats}
+      var f = Field{span: p.tok.span, doc: fdoc, is_pub: fpub, name: fname, typ: typ, wire: wire, wire_span: wire_span, formats: formats, is_server: fserver}
       if p.got(Kind.Assign) {
         f.default = Some(p.parse_expr())
       }

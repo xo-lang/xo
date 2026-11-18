@@ -1,0 +1,18 @@
+// A server field's value never shows in Debug text (decision 0719).
+struct Model {
+  name: Str
+  server key: Str = ""
+  count: Int
+}
+
+fn make() -> Model uses server {
+  Model{name: "room", key: "s3cret", count: 2}
+}
+
+fn main(os: Os) uses (server, stdio) {
+  let m = make()
+  os.stdio.println("${m:?}")
+  os.stdio.println("${m.key.len()}")
+  let n = m with {count: 3}
+  os.stdio.println("${n:?}")
+}

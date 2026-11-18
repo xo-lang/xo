@@ -62,6 +62,10 @@ pub struct FieldInfo {
   /// its sql (or shared `as`) string is exactly `-`: derive SqlRow never
   /// reads it (decision 0622)
   pub sql_skip: Bool = false
+  /// `server f: T = d` (decision 0719): reading or writing it performs
+  /// `server`; derived formatting shows `<server>`, json's public encoding
+  /// leaves it out
+  pub is_server: Bool = false
 }
 
 /// A field of an enum variant; a `from` field has no name.

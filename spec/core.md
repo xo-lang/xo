@@ -2918,6 +2918,7 @@ The builtin effects are:
 | `ffi` | | Calls into C through `use c` (4.5, native builds) |
 | `log` | | Writing a `std/log` record (`debug`, `info`, `warn`, `error`) |
 | `sync` | | A closure's use of captured shared state: a `Chan`, `Mutex` or `Atomic` (decision 0662) |
+| `server` | | A read or write of a `server` field: values only the server holds, never sent to a client (decision 0719) |
 
 A function with no `uses` clause is **pure**: it performs no capability
 effects. It may still allocate, fault and be cancelled. A pure function
@@ -2941,6 +2942,27 @@ effects. It may still allocate, fault and be cancelled. A pure function
   shows it in its parameter type.
 - std/native modules are exempt until a seed that knows `sync` is cut
   (the seed compiles them).
+
+A struct field marked `server` (`[pub] server name: T = default`,
+decision 0719) holds a value only the server has: a std/ui model's
+token or key, which a client's copy of the struct holds as the default
+in its place. `server` is contextual: it marks a field only before the
+field's name, so a field may still be named `server`.
+
+- A server field needs a default (XO0441).
+- Code that names the field performs `server`: a read (`m.key`), an
+  assignment (`m.key = k`), a struct literal or `with` that sets it
+  (`Model{key: k, ..}`, `m with {key: k}`) and a pattern that binds it
+  (`let Model{key, ..} = m`). A function that does so declares `uses
+  server` when it is `pub` (XO0701, with a note naming `Type.field`);
+  `server` needs no capability and is inferred for other functions.
+- Pure: a literal that leaves the field to its default, a `with` that
+  does not name it, `==` and hashing, and derived code (Debug, Eq, Hash,
+  Json): the compiler's own code performs no effect.
+- Derived Debug and `${x:?}` print `<server>` in place of the value, as
+  `Secret[T]` prints `<redacted>`.
+- A function type may say `uses server` (`fn(Model) -> Model uses
+  server`), so a struct can carry a function that reads server fields.
 
 Logging (`std/log`) performs the `log` effect (decision 0156): a `pub`
 function that logs declares `uses log`, so a dependency's logging is
@@ -4165,6 +4187,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0437` | error | checker | the `string` wire option on a field that is not a Bool, integer, float or Str, or an Option of one (core 2.2, decision 0555) |
 | `XO0438` | warning | checker | an argument of a `log.debug`, `log.info`, `log.warn` or `log.error` call (or a Logger's) performs an effect other than `log`; it runs only when the record is at or above the configured level (decision 0558, std.md 6) |
 | `XO0440` | error | checker | a field left out of a derive with `-` (decision 0622) has no default and its type no zero value (a struct, an enum, a function); add a default, or write `-,` for the key `-` (core 2.2) |
+| `XO0441` | error | checker | a `server` field (decision 0719) has no default: a client's copy of the value holds the default in its place |
 | `XO0439` | error | checker | a type's `var` method where an interface's method of its name takes a plain `self`: the type does not implement the interface, since a call through it would lose the update; declare the interface method `var self` or make the method plain (core 2.4, decision 0613) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding, to a captured variable, or to an element of `Bytes` (core 5.2, 3.3) |

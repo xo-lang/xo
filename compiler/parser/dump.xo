@@ -242,6 +242,7 @@ fn dump_decl(var out: StrBuilder, depth: Int, label: Str, decl: Decl) {
       for (i, f) in s.fields.indexed() {
         head(out, d, "fields[${i}]", "Field", f.span)
         flag(out, "pub", f.is_pub)
+        flag(out, "server", f.is_server)
         if let Some(w) = f.wire {
           attr(out, "wire", w)
         }
