@@ -1,5 +1,21 @@
 # std/debug changes
 
+## 2026-11-18: fix: mem_peak is never below a mem_mapped read before it
+
+- Kind: fix
+- Commit: this push
+- Found by: the debug stress program under decision 0717 (arm64 host 4, 2026-11-18): "mem_peak 89949856 under 90269624"
+- Go reference: none (runtime introspection; runtime.MemStats has no peak)
+- Test: std/debug_test.xo "mem_peak is never below a mem_mapped read before it, with tasks mapping at once" (fails before: 38 to 55 bad reads of 4,096)
+- Shipped in: not yet released
+
+The heap's count raised its high-water mark with a load and a plain
+store after the count's add, so a racing smaller store lost a larger
+peak, and a read between an add and its raise saw the peak below the
+count. The mark is now raised with a compare and swap, a mapping given
+back raises it to the count before the count falls, and mem_peak
+returns the larger of the mark and the count.
+
 ## 2026-11-18: fix: /sched reports each runtime counter from its own slot
 
 - Kind: fix

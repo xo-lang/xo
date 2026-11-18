@@ -1,0 +1,35 @@
+// std/debug's memory counts under concurrent allocation.
+
+test "mem_peak is never below a mem_mapped read before it, with tasks mapping at once" {
+  // the debug stress program, 2026-11-18: mem_peak 89,949,856 under a
+  // mem_mapped of 90,269,624 read just before; the peak was raised with
+  // a load and a store after the count's add, so a racing smaller store
+  // lost a larger peak, and a read between the add and the store saw it.
+  // Every block here is kept until its task ends, so each add is a new
+  // high and the tasks race to raise the peak.
+  let bad = scope s {
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..16 {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var bad = 0
+        var kept: List[List[Int]] = []
+        for i in 0..256 {
+          // a large block (past 256 KiB), its pages never touched
+          kept.push(List.with_capacity(40000 + (t * 7 + i) % 64 * 8))
+          let m = mem_mapped()
+          let pk = mem_peak()
+          if pk < m {
+            bad += 1
+          }
+        }
+        bad + kept.len() - 256
+      }))
+    }
+    var n = 0
+    for h in hs {
+      n += h.await.or_fault("a task")
+    }
+    n
+  }
+  expect(bad) == 0
+}

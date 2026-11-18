@@ -26,13 +26,23 @@ const ACQ_REL = 3
 /// Adds d bytes to the count (negative for a mapping given back) and
 /// stops the process when a mapping takes it past the budget.
 pub fn add(d: Int) {
-  let total = rt.slot_add(rt.static_word(W_MAPPED), 0, d, RELAXED).wrapping_add(d)
-  if d > 0 {
-    // the high-water mark: a racing larger store may be lost, which
-    // only makes the peak a little low under contention
-    if total > rt.slot_load(rt.static_word(W_PEAK), 0, RELAXED) {
-      rt.slot_store(rt.static_word(W_PEAK), 0, total, RELAXED)
+  if d <= 0 {
+    // a mapping given back: the peak is raised to the count before the
+    // count falls, so peak (the larger of the two) is never below a count
+    // read before it (std/debug's mem_peak under a mem_mapped read just
+    // before, the debug stress program 2026-11-18: an add's own raise
+    // had not landed yet when the count fell)
+    while true {
+      let cur = rt.slot_load(rt.static_word(W_MAPPED), 0, ACQUIRE)
+      raise_peak(cur)
+      if rt.slot_cas(rt.static_word(W_MAPPED), 0, cur, cur.wrapping_add(d), ACQ_REL) {
+        return
+      }
     }
+  }
+  let total = rt.slot_add(rt.static_word(W_MAPPED), 0, d, ACQ_REL).wrapping_add(d)
+  if d > 0 {
+    raise_peak(total)
     let b = rt.slot_load(rt.static_word(W_BUDGET), 0, RELAXED)
     // the first mapping past the budget takes the budget (sets it to 0)
     // and stops the process: a mapping the stop itself makes, or one on
@@ -48,8 +58,24 @@ pub fn add(d: Int) {
 /// The bytes in use as the budget counts them.
 pub fn mapped() -> Int { rt.slot_load(rt.static_word(W_MAPPED), 0, RELAXED) }
 
-/// The most they have been.
-pub fn peak() -> Int { rt.slot_load(rt.static_word(W_PEAK), 0, RELAXED) }
+/// The most they have been: the high-water mark, or the count when an
+/// add's raise has not landed yet.
+pub fn peak() -> Int {
+  let p = rt.slot_load(rt.static_word(W_PEAK), 0, ACQUIRE)
+  let m = rt.slot_load(rt.static_word(W_MAPPED), 0, ACQUIRE)
+  if m > p { m } else { p }
+}
+
+/// Raises the high-water mark to v (a compare and swap: a plain store lost
+/// a racing larger one, and the peak read below the count).
+fn raise_peak(v: Int) {
+  while true {
+    let p = rt.slot_load(rt.static_word(W_PEAK), 0, ACQUIRE)
+    if v <= p || rt.slot_cas(rt.static_word(W_PEAK), 0, p, v, ACQ_REL) {
+      return
+    }
+  }
+}
 
 /// Sets the budget in bytes (0 or less: none).
 pub fn set_budget(b: Int) { rt.slot_store(rt.static_word(W_BUDGET), 0, if b > 0 { b } else { 0 }, RELAXED) }
