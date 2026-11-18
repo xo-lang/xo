@@ -1,0 +1,42 @@
+// dst[0..n) += src[0..n) * k with MULX, ADCX and ADOX (ADX and BMI2): the
+// instruction sequence both x86-64 lowerings use (compiler/arm64
+// calls.xo, compiler/llvm call.xo) for rt.mac_row_adx
+// (std/native/llrt/cpu.xo mac_row_adx, which bigmod.mac_row calls where
+// hw() has HW_ADX). Ported from Go's
+// crypto/internal/fips140/bigmod/_asm/nat_amd64_asm.go (addMulVVW's adx
+// path, which writes nat_amd64.s; Copyright 2022 The Go Authors,
+// BSD-style license): k in rdx, the implicit source of MULX; per word one
+// MULX, the carry word (the last word's high half) added on ADCX's chain
+// (CF), dst's word on ADOX's (OF), the high and carry registers
+// alternated instead of a MOV.
+//
+// Go unrolls the loop fully for 1024, 1536 and 2048 bit moduli; any
+// length comes here, so the lines run len % 4 words one at a time, then
+// 4 a step, each step ending with both carries added into the carry word
+// (which cannot overflow: the row's value is below 2^(64 (n + 1))), so a
+// DEC and JNZ may close the loop (they leave CF and OF clear).
+//
+// $u0 dst, $u1 src, $u2 k, $u3 n (words), $d0 the carry word out, written
+// last; rax, rcx, rdx, rsi, rdi and r8 to r10 written (mac_row_adx_gprs),
+// r11 the emitter's scratch.
+
+/// The lines of rt.mac_row_adx (AT&T syntax) with the operands named
+/// dst, src, k, n and out.
+pub fn mac_row_adx_lines(dst: Str, src: Str, k: Str, n: Str, out: Str) -> List[Str] {
+  var t = ["movq ${dst}, %rdi", "movq ${src}, %rsi", "movq ${n}, %rcx", "movq ${k}, %rdx", "movq %rcx, %rax", "shrq $2, %rcx", "andq $3, %rax", "xorl %r8d, %r8d", "xorl %r10d, %r10d"]
+  // len % 4 words, one a step (andq left CF and OF clear, xorl too)
+  t = t + ["testq %rax, %rax", "je 2f", "1:", "mulxq (%rsi), %r9, %r11", "adcxq %r8, %r9", "adoxq (%rdi), %r9", "movq %r9, (%rdi)", "movq %r11, %r8", "adcxq %r10, %r8", "adoxq %r10, %r8", "leaq 8(%rsi), %rsi", "leaq 8(%rdi), %rdi", "decq %rax", "jnz 1b", "2:"]
+  // 4 words a step
+  t = t + ["testq %rcx, %rcx", "je 4f", "3:"]
+  for i in 0..4 {
+    let o = 8 * i
+    let (hi, cin) = if i % 2 == 0 { ("%r11", "%r8") } else { ("%r8", "%r11") }
+    t = t + ["mulxq ${o}(%rsi), %r9, ${hi}", "adcxq ${cin}, %r9", "adoxq ${o}(%rdi), %r9", "movq %r9, ${o}(%rdi)"]
+  }
+  t = t + ["adcxq %r10, %r8", "adoxq %r10, %r8", "leaq 32(%rsi), %rsi", "leaq 32(%rdi), %rdi", "decq %rcx", "jnz 3b", "4:", "movq %r8, ${out}"]
+  t
+}
+
+/// The general registers mac_row_adx_lines writes besides r11: rax,
+/// rcx, rdx, rsi, rdi, r8, r9, r10 (x86 numbering).
+pub fn mac_row_adx_gprs() -> List[Int] { [0, 1, 2, 6, 7, 8, 9, 10] }

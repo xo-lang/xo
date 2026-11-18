@@ -316,6 +316,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "crc32cx" => if b.goarch == "arm64" || b.goarch == "amd64" { "crc32cx" } else { "" }
     // IEEE 64 bytes a step with PCLMULQDQ (ssa x86crc32.xo): amd64 only
     "crc32_fold" | "crc32_fold_ymm" => if b.goarch == "amd64" { b.obj_name(fo) } else { "" }
+    // MULX, ADCX and ADOX (ssa x86adx.xo): amd64 only, bigmod calls it
+    // only with HW_ADX
+    "mac_row_adx" => if b.goarch == "amd64" { b.obj_name(fo) } else { "" }
     // Keccak's rounds: the SHA3 extension on arm64 (ssa a64keccak.xo),
     // the general registers on amd64 (ssa x86keccak.xo); wasm runs the
     // body (sha3.xo calls it only with HW_KECCAK)

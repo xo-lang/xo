@@ -53,6 +53,14 @@ fn main(os: Os) {
 // amd64: "mulq -?[0-9]*\(%r" "adcq -?[0-9]*\(%r" -"\tbtq " -"(?s)(\timulq .*){8}" -"\tjo "
 // llvm: "llvm.uadd.with.overflow.i64"
 
+// A row of a bignum product, dst += src * k (Go's addMulVVW): on x86-64
+// with ADX and BMI2 the kernel of ssa x86adx.xo, a MULX per word and two
+// carry chains, ADCX's in CF and ADOX's in OF (2026-11-18), behind the
+// HW_ADX check; arm64 adds with adcs chains.
+// func bigmod.mac_row
+// amd64: "mulxq \(%rsi\), %r9, %r11" "adcxq %r8, %r9" "adoxq 24\(%rdi\), %r9" "adoxq %r10, %r8"
+// arm64: -"mulx" "adcs "
+
 // P-256's field product adds with carry in (decision 0231's addendum):
 // each pair of cpu.adc and adc_carry of the same operands is one adcs
 // (adds for a carry in of 0), a chain an instruction per pair with the

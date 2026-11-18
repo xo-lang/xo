@@ -98,6 +98,43 @@ test "keccak_f1600 is its body (the SHA3 extension where the CPU has it)" {
   }
 }
 
+test "mac_row_adx is its body (MULX, ADCX and ADOX where the CPU has them)" {
+  // a seeded walk of rows of every length from 0 to 40 (the kernel's
+  // one word steps and its four word steps), all ones words among them
+  var x = 88172645463325252
+  for n in 0..41 {
+    for r in 0..8 {
+      var d = List[Int].with_capacity(n)
+      var s = List[Int].with_capacity(n)
+      for _ in 0..n {
+        x = x ^ x.wrapping_shl(13)
+        x = x ^ x.shr_logical(7)
+        x = x ^ x.wrapping_shl(17)
+        d.push(if r == 0 { -1 } else { x })
+        s.push(if r == 0 { -1 } else { x.wrapping_mul(31) })
+      }
+      let k = if r == 0 { -1 } else { x ^ 77 }
+      var e = List[Int].with_capacity(n)
+      for v in d {
+        e.push(v)
+      }
+      let want = mac_row_soft(lanes_addr(e), lanes_addr(s), k, n)
+      if r == 0 && n == 1 {
+        // (2^64 - 1) + (2^64 - 1)^2 = 2^128 - 2^64: word 0, carry -1
+        expect(e[0]) == 0
+        expect(want) == -1
+      }
+      if (hw() & HW_ADX) != 0 {
+        let got = mac_row_adx(lanes_addr(d), lanes_addr(s), k, n)
+        expect(got) == want
+        for i in 0..n {
+          expect(d[i]) == e[i]
+        }
+      }
+    }
+  }
+}
+
 test "dit_set sets Arm's DIT bit and returns the old one, where the CPU has it (decision 0619)" {
   if (hw() & HW_DIT) == 0 {
     if target.arch == TargetArch.Arm64 {

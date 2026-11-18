@@ -354,6 +354,12 @@ pub fn msub_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
 /// arm64 106 to 104, 2026-10-21), unrolled by 4 with wrapping offsets;
 /// the carry word out.
 pub fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
+  // x86-64 with ADX and BMI2: Go's addMulVVW kernel (two carry chains in
+  // CF and OF, ssa x86adx.xo; big exp's rows were 80% of its time on
+  // linux/amd64, 2026-11-18)
+  if (cpu.hw() & cpu.HW_ADX) != 0 {
+    return cpu.mac_row_adx(dst, src, k, len)
+  }
   var cw = 0
   var o = 0
   // len is not negative: the byte offsets by shifts and a mask, not a

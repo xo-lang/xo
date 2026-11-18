@@ -907,6 +907,15 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
       g.set(v, "call i64 asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(i64 ${g.op(g.f.arg(x.args, 0))}, i64 ${g.op(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))})")
     }
+    "rt.mac_row_adx" => {
+      // amd64 only (ssa cpu_call): ssa.mac_row_adx_lines as inline asm
+      // (its immediates' `$` doubled), its registers clobbered
+      var t: List[Str] = []
+      for l in ssa.mac_row_adx_lines("@1@", "@2@", "@3@", "@4@", "@0@") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3").replace("@4@", "$4"))
+      }
+      g.set(v, "call i64 asm sideeffect \"${t.join("\\0A")}\", \"=r,r,r,r,r,~{rax},~{rcx},~{rdx},~{rsi},~{rdi},~{r8},~{r9},~{r10},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))}, i64 ${g.op(g.f.arg(x.args, 3))})")
+    }
     "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(g.f.arg(x.args, 0)), g.raw_ptr(g.f.arg(x.args, 1)), g.raw_ptr(g.f.arg(x.args, 2)))
     "rt.chacha8_rand4" => g.chacha8rand4(g.raw_ptr(g.f.arg(x.args, 0)), g.raw_ptr(g.f.arg(x.args, 1)))
     "rt.ghash4" => {

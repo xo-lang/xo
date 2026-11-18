@@ -15,6 +15,20 @@ minutes or faulted. An operand wholly below the other's lowest bit and
 the result's rounding bit is now passed as one bit just under both,
 which rounds the same at every mode. Native was right.
 
+## 2026-11-18: perf: multiply rows on x86-64 with MULX, ADCX and ADOX
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/big exp 1.13 of Go on linux/amd64; the rows were 80% of its time)
+- Go reference: crypto/internal/fips140/bigmod nat_amd64.s addMulVVW (the ADX path)
+- Test: std/native/llrt cpu_test (mac_row_adx is its body for lengths 0 to 40, where the CPU has ADX); bench/perf/big outputs same as Go on linux/amd64
+- Timing: bench/perf/big on the linux/amd64 host, exclusive, 9-run medians, 3 rounds: exp 0.981, 0.979, 0.986 of Go (1.129, 1.122, 1.130 before); mul 0.84 (0.89), quorem 0.67 (0.69), text 0.69 (0.76), parse 0.58 (0.60)
+
+bigmod's mac_row, the inner loop of Montgomery multiplication, runs Go's
+addMulVVW kernel on x86-64 CPUs with ADX and BMI2: one MULX a word, the
+carry word on the CF chain (ADCX) and dst's word on the OF chain (ADOX),
+4 words a step. Other CPUs keep the unrolled loop. Output is unchanged.
+
 ## 2026-11-17: perf: BigFloat.mul reads both mantissas from their keys
 
 - Kind: perf

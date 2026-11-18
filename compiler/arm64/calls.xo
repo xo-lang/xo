@@ -1957,6 +1957,19 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         g.set(v, [d])
       }
     }
+    "rt.mac_row_adx" => {
+      // amd64 only (ssa cpu_call): MULX, ADCX and ADOX (ssa x86adx.xo),
+      // its registers clobbered, r11 the emitter's scratch; the carry word
+      // written last, so it may share a register with a use
+      let cl = ssa.mac_row_adx_gprs()
+      let us = [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2))), g.real(g.word(g.f.arg(x.args, 3)))]
+      let d = g.new_vreg(false)
+      let i = g.add(Inst{kind: K_PLAIN, text: ssa.mac_row_adx_lines("$u0", "$u1", "$u2", "$u3", "$d0").join("\n"), defs: [d], us: us, fl: IF_X86, clobbers: cl})
+      // a store: kept when its carry word is dead
+      g.blocks[g.cur].insts[i].fl = g.blocks[g.cur].insts[i].fl | IF_KEEP
+      g.clobber()
+      g.set(v, [d])
+    }
     "rt.u64_borrow" => {
       if !g.has_val[v] {
         g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(g.f.arg(x.args, 0)), g.word(g.f.arg(x.args, 1))])])
