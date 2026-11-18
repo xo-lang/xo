@@ -535,3 +535,19 @@ func TestRaceTestTimeout(t *testing.T) {
 		t.Errorf("a real run: %q", got)
 	}
 }
+
+// TestDefaultBackends: on linux/amd64 the runs take the x86-64 backend and
+// llvm, on arm64 the arm64 backend and llvm (decision 0708, task #297).
+func TestDefaultBackends(t *testing.T) {
+	for _, c := range []struct{ arch, want, native string }{
+		{"amd64", "amd64,llvm", "amd64"},
+		{"arm64", "arm64,llvm", "arm64"},
+	} {
+		if got := defaultBackends(c.arch); got != c.want {
+			t.Errorf("defaultBackends(%q) = %q, want %q", c.arch, got, c.want)
+		}
+		if got := nativeBackend(c.arch); got != c.native {
+			t.Errorf("nativeBackend(%q) = %q, want %q", c.arch, got, c.native)
+		}
+	}
+}

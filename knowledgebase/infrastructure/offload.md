@@ -464,8 +464,9 @@ Last verified: 2026-11-08.
 
 The owner's second machine (2026-10-29): a 16-core x86-64 box running
 Windows with OpenSSH (password login, user `xo`, no administrator) and a
-WSL2 Ubuntu 24.04 distribution for that user (28 CPUs, 62 GB from its
-`.wslconfig`). Its values live in `~/xo-lead/offload-amd64.env` (mode
+WSL2 Ubuntu 24.04 distribution for that user (28 CPUs; the machine has
+96 GB, of which its `.wslconfig` gives WSL 62 GB: MemTotal 65,843,224 kB,
+last verified 2026-11-17; raising the cap is the owner's, on Windows). Its values live in `~/xo-lead/offload-amd64.env` (mode
 600) with `OFF_KIND=wsl` and `OFF_SEED` the WSL path of the 0.37.0
 linux-amd64 seed (`~/xo-ci/seed-0.37.0/xo/bin/xo`; Windows itself uses
 `~/xo-ci/seed-0.37.0/xo/bin/xo.exe`; the private seeds in `~/xo-ci/seed-SEED`, newest 0.52.0-38164047 in WSL and Windows, last verified: 2026-11-15); WSL has clang 18, lld,
@@ -807,7 +808,9 @@ on PATH is refused)
 A Go twin with `require` lines (twin.txt) or a `go/` module builds offline
 (`GOPROXY=off`, scripts/twincheck), so every module it needs, and that
 module's own requirements, must already be in user xo's Go module cache
-(`/home/xo/go/pkg/mod`) on each linux/arm64 host. Without them a twin does
+(`/home/xo/go/pkg/mod`) on each linux/arm64 host and the linux/amd64
+host (there since 2026-11-17, task #297: x/crypto v0.57.0 and v0.58.0, x/sys
+v0.48.0 and v0.49.0, pgx v5.11.0, gorilla/websocket v1.5.3). Without them a twin does
 not build and `stdproven perf` writes no row (host 1 lacked
 golang.org/x/crypto v0.58.0, so std/crypto's blake2b twin did not build,
 2026-11-16). x/crypto v0.57.0 (aead, chacha) and v0.58.0 (bcrypt, blake2b),
@@ -939,4 +942,26 @@ through ab-host.sh and `SP_EXCLUSIVE=1` stdproven perf runs (offload.sh
 exclusive leases). Before this, the guard was opt-in (#265), and on
 2026-11-17 a gate rerouted to host 1 as a memory lease held its 3 slots
 for 1h15m while a `--ab` waited and host 3 had free slots.
+Last verified: 2026-11-17.
+
+## Proven evidence on the amd64 host (ADR 0708, task #297, 2026-11-17)
+
+stdproven-offload.sh picks from hosts 2, 3 and 4 and the amd64 host
+(`SP_HOSTS` default, least loaded by heavyd's lanes). That host has no
+`/work`: `scripts/lead/offload-roots.sh` gives each host kind its roots
+(ssh hosts `/work`, `/work/in`; wsl `~/xo-work` in the WSL home, or
+`OFF_WORK` in the env file, and bundles in the Windows home's `xo-ci/off`,
+seen by the job as `/mnt/c/Users/USER/xo-ci/off`). The wsl private
+repository is `~/xo-ci/priv`, shared with offload-amd64.sh, since bundles
+are cut thin against its `refs/offload-amd64/sent` (a fresh repository
+under `~/xo-work` lacks their prerequisite commits). stdproven-remote.sh
+makes the work root (and on ssh hosts the private repository) on the first run, and
+race-rt.sh installs xo's linux-amd64 race runtime under `ROOT/race`
+(race-rt-host.sh reads `XO_RACE_ROOT`). A run there is a lease in the
+`amd64` lane (`OFF_MAX_MIN`, default 240), never outside it, since the lane
+also takes timing runs exclusive. A run picked for (or pinned to) the amd64
+host gets `-host "linux/amd64 host"` and amd64 for arm64 in `-backends`;
+stdproven's backends default to the host's native backend and llvm.
+`offload.sh --rm` is for ssh hosts only, so a failed run's bundle can stay
+in `xo-ci/off` there (the remote side removes it once fetched).
 Last verified: 2026-11-17.

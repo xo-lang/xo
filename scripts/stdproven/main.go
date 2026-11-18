@@ -407,7 +407,7 @@ func fuzz(args []string) error {
 	hours := fs.Float64("hours", 8, "time limit, over every shard")
 	minutes := fs.Float64("minutes", 0, "this shard's time limit (0: none): stop at a seed boundary and write result: partial, which the next run resumes")
 	batch := fs.Int("batch", 5000, "cases a seed")
-	backends := fs.String("backends", "arm64,llvm", "backends, comma separated")
+	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm)")
 	hostLabel := fs.String("host", "", "the host's name in the evidence (no network names: e.g. \"linux/arm64 host 2\")")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
@@ -638,7 +638,7 @@ func gitOut(args ...string) (string, error) {
 func timing(args []string) error {
 	fs := flag.NewFlagSet("timing", flag.ExitOnError)
 	n := fs.Int("n", 1000000, "measurements per pair")
-	backends := fs.String("backends", "arm64,llvm", "backends, comma separated")
+	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm)")
 	pairs := fs.String("pairs", "", "class pairs A:B, comma separated")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	fs.Parse(args)
@@ -1087,8 +1087,8 @@ func stress(args []string) error {
 	fs := flag.NewFlagSet("stress", flag.ExitOnError)
 	minutes := fs.Int("minutes", 30, "run time per backend")
 	tasks := fs.Int("tasks", 64, "concurrent tasks")
-	backends := fs.String("backends", "arm64,llvm", "backends, comma separated")
-	checkMin := fs.Int("check-minutes", 5, "minutes of a further arm64 run built with --check=all (decision 0638: use after free and overruns fault, a leak fails the run; 0 skips it)")
+	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm)")
+	checkMin := fs.Int("check-minutes", 5, "minutes of a further native backend run built with --check=all (decision 0638: use after free and overruns fault, a leak fails the run; 0 skips it)")
 	checkOnly := fs.Bool("check-only", false, "run only the --check=all run and add it to the module's stress.md, which must pass at the current source hash")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	parallel := fs.Bool("parallel", false, "run the backends and the --check=all run at once rather than in turn (#152: about 35 minutes a module rather than 65; each still runs its full -minutes)")
@@ -1189,8 +1189,9 @@ func stress(args []string) error {
 // line and the measure's note.
 func stressCheck(dir, tmp string, minutes, tasks int) (string, string, error) {
 	bin := filepath.Join(tmp, "s-check")
-	if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--check=all", "--backend=arm64", "-o", bin, dir).CombinedOutput(); err != nil {
-		return "", "", fmt.Errorf("xo build --check=all --backend=arm64 %s: %v\n%s", dir, err, out)
+	nb := nativeBackend(runtime.GOARCH)
+	if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--check=all", "--backend="+nb, "-o", bin, dir).CombinedOutput(); err != nil {
+		return "", "", fmt.Errorf("xo build --check=all --backend=%s %s: %v\n%s", nb, dir, err, out)
 	}
 	t0 := time.Now()
 	cmd := exec.Command(bin, strconv.Itoa(minutes), strconv.Itoa(tasks))
@@ -1209,11 +1210,11 @@ func stressCheck(dir, tmp string, minutes, tasks int) (string, string, error) {
 		if len(text) > 20000 {
 			text = text[len(text)-20000:]
 		}
-		return "", "", fmt.Errorf("arm64 --check=all stress: %v\n%s", err, text)
+		return "", "", fmt.Errorf("%s --check=all stress: %v\n%s", nb, err, text)
 	}
-	line := fmt.Sprintf("- arm64 --check=all: %s; %s, %s", passLine, leakLine, time.Since(t0).Round(time.Second))
+	line := fmt.Sprintf("- %s --check=all: %s; %s, %s", nb, passLine, leakLine, time.Since(t0).Round(time.Second))
 	fmt.Println(line)
-	return line, fmt.Sprintf(", %d min on arm64 under --check=all with 0 faults and 0 blocks live at exit", minutes), nil
+	return line, fmt.Sprintf(", %d min on %s under --check=all with 0 faults and 0 blocks live at exit", minutes, nb), nil
 }
 
 // stressCheckEnv marks the --check=all run for the stress program, whose
@@ -1583,4 +1584,19 @@ func summaryLine(text string) string {
 		}
 	}
 	return lines[len(lines)-1]
+}
+
+// nativeBackend is xo's native backend for a Go GOARCH: amd64 on linux/amd64
+// (decision 0708: Proven evidence may come from that host), arm64 otherwise.
+func nativeBackend(goarch string) string {
+	if goarch == "amd64" {
+		return "amd64"
+	}
+	return "arm64"
+}
+
+// defaultBackends: the backends a fuzz, timing or stress run takes by
+// default, the host's native backend and llvm (decision 0708).
+func defaultBackends(goarch string) string {
+	return nativeBackend(goarch) + ",llvm"
 }
