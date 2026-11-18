@@ -1,5 +1,23 @@
 # std/sqlite changes
 
+## 2026-11-18: fix: a transaction's first write beside busy writers gets its turn
+
+- Kind: fix
+- Commit: this push
+- Found by: task #324 (the std/sql stress on host 4: a deferred transaction's first INSERT failed
+  with SQLITE_BUSY at its busy timeout beside busy writers)
+- Go reference: github.com/mattn/go-sqlite3 has no write gate (see the 2026-11-18 entry below)
+- Test: std/sqlite_test.xo "a transaction's first write beside busy writers gets its turn before
+  its busy timeout" (failed before 3 of 4 runs; with a 1000 ms busy timeout, 9 of 40 such writes
+  got SQLITE_BUSY before and none after)
+- Shipped in: not yet released
+
+The write gate covered only writes outside a transaction, so after a deferred BEGIN the first
+INSERT polled for the lock on its own and lost nearly every turn to the gated writers. A statement
+in a transaction that holds no lock yet (sqlite3_txn_state is SQLITE_TXN_NONE) now goes through the
+gate too. A transaction that has already read or written still steps outside it: its locks may be
+what the queue's head waits for.
+
 ## 2026-11-18: fix: a writer beside busy writers gets its turn before its busy timeout
 
 - Kind: fix

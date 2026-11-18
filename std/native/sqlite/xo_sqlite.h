@@ -66,6 +66,7 @@ const char *sqlite3_errmsg(sqlite3 *db);
 int sqlite3_busy_timeout(sqlite3 *db, int ms);
 const char *sqlite3_libversion(void);
 int sqlite3_get_autocommit(sqlite3 *db);
+int sqlite3_txn_state(sqlite3 *db, const char *schema);
 int sqlite3_stmt_readonly(sqlite3_stmt *s);
 int sqlite3_stmt_busy(sqlite3_stmt *s);
 const char *sqlite3_sql(sqlite3_stmt *s);

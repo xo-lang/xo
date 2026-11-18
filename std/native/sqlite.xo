@@ -298,10 +298,18 @@ fn (c: SqliteConn) step(st: c3.Sqlite3Stmt) -> Int32 uses fs {
 
 /// Whether st's next step waits its turn at the write gate: its first
 /// step (a running statement may hold the lock the queue's head waits
-/// for), outside a transaction (whose locks the head may wait for too),
-/// and a write or a BEGIN (which sqlite3_stmt_readonly counts as reads).
+/// for), outside a transaction or in one that holds no lock yet (a
+/// deferred BEGIN's first statement; the locks of a transaction that has
+/// read or written the head may wait for), and a write or a BEGIN (which
+/// sqlite3_stmt_readonly counts as reads). A transaction's first write
+/// polled outside the gate and lost every turn to the gated writers
+/// (task #324).
 fn (c: SqliteConn) gated(st: c3.Sqlite3Stmt) -> Bool {
-  if c3.sqlite3_stmt_busy(st) != 0 || c3.sqlite3_get_autocommit(c.db) == 0 {
+  if c3.sqlite3_stmt_busy(st) != 0 {
+    return false
+  }
+  // SQLITE_TXN_NONE (0): no read or write transaction open on main
+  if c3.sqlite3_get_autocommit(c.db) == 0 && c3.sqlite3_txn_state(c.db, "main") != 0 {
     return false
   }
   if c3.sqlite3_stmt_readonly(st) == 0 {

@@ -68,7 +68,8 @@ fn client_pass(db: sql.Db, clock: Clock, t: Int, i: Int) -> Int ! Str uses (fs, 
   }
   let tx = db.begin().map_err(fn(e) { "begin: ${e.debug()}" })?
   let k2 = k + 500000
-  tx.exec("INSERT INTO t (id, v) VALUES ($1, $2)", [sql.int(k2), sql.int(i)]).map_err(fn(e) { "tx INSERT ${k2}: ${e.debug()}" })?
+  let t1 = clock.now()
+  tx.exec("INSERT INTO t (id, v) VALUES ($1, $2)", [sql.int(k2), sql.int(i)]).map_err(fn(e) { "tx INSERT ${k2} after ${clock.since(t1).millis()} ms: ${e.debug()}" })?
   let in_tx = tx.query("SELECT v FROM t WHERE id = $1", [sql.int(k2)]).map_err(fn(e) { "tx SELECT ${k2}: ${e.debug()}" })?
   if in_tx.map(fn(r) { r.values() }) != [[sql.SqlValue.Integer(n: i)]] {
     return Err("tx SELECT ${k2}: got ${in_tx.map(fn(r) { r.values() }).debug()}")
