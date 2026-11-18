@@ -1458,20 +1458,29 @@ fn (var b: Builder) cmp_sub(x0: Int, y0: Int) {
   b.if_then_end(no, join)
 }
 
-/// Whether x0 and y0 differ in the derived order and whether x0 is the
-/// lesser: an Int as two compares, a Str by str.cmp, anything else by its
-/// own cmp function.
-fn (var b: Builder) cmp_field(x0: Int, y0: Int) -> (Int, Int) {
+/// Whether x0 and y0 differ in the derived order, and the two values whose
+/// `<` says x0 is the lesser (cmp_less, built where they differ): an Int
+/// as two compares, a Str by str.cmp, anything else by its own cmp
+/// function (c, 0).
+fn (var b: Builder) cmp_field(x0: Int, y0: Int) -> (Int, Int, Int, Bool) {
   let it = b.int_t()
   let bt = b.bool_t()
   let x = b.unbox(x0)
   let y = b.unbox(y0)
   let k = b.m.types[b.vty(x)].kind
   if k == Kind.Int {
-    return (b.compare(Op.Ne, x, y), b.compare(Op.Lt, x, y))
+    return (b.compare(Op.Ne, x, y), x, y, true)
   }
   let c = if k == Kind.Str { b.call("str.cmp", it, "", [x, y]) } else { b.call(b.cmp_func(b.vty(x)), it, "", [x, y]) }
-  (b.add(Op.Ne, bt, Aux.None, [c, b.cint(0)]), b.add(Op.Lt, bt, Aux.None, [c, b.cint(0)]))
+  (b.add(Op.Ne, bt, Aux.None, [c, b.cint(0)]), c, b.cint(0), false)
+}
+
+/// cmp_field's lesser test of its (x, y): a compare of the Ints, or c < 0.
+fn (var b: Builder) cmp_less(x: Int, y: Int, is_int: Bool) -> Int {
+  if is_int {
+    return b.compare(Op.Lt, x, y)
+  }
+  b.add(Op.Lt, b.bool_t(), Aux.None, [x, y])
 }
 
 /// Returns -1 when lt holds, then 1 when gt holds (cmpFunc's lt).
@@ -1510,16 +1519,19 @@ fn (var b: Builder) cmp_func(t: Int) -> Str {
         // field into one exit that returns -1 or 1 (each field's own
         // cmp and its `if c != 0 { return c }` made netip.Addr's 81
         // instructions in 45 blocks, too big to inline into the sort's
-        // loops, 2026-11-04)
+        // loops, 2026-11-04). The lesser test is made only where the
+        // field differs: made before the branch, x86-64 set a byte from
+        // it on every equal field too (netip compare's merge, 2026-11-18)
         let out = b.new_block()
         let lt = b.s.f.add_param(out, bt)
         for i in 0..b.num_fields(t) {
           let ft = b.field_type(t, i)
           let a = b.add(Op.Field, ft, Aux.I(n: i), [l])
           let c = b.add(Op.Field, ft, Aux.I(n: i), [r])
-          let (ne, less) = b.cmp_field(a, c)
+          let (ne, lx, ly, is_int) = b.cmp_field(a, c)
           let (yes, no) = b.branch(ne)
           b.s.cur = yes
+          let less = b.cmp_less(lx, ly, is_int)
           b.jump(out, [less])
           b.s.cur = no
         }

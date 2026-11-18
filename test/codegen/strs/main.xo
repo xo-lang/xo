@@ -291,11 +291,34 @@ fn count_desc(hs: List[Str]) -> Int {
   n
 }
 
+struct Key3 {
+  a: Int
+  b: Int
+  c: Int
+} derive Ord
+
+// A derived order tests a field's `<` only where the field differs: made
+// before the branch, x86_64 set a byte for it (setl, movzbl) on each equal
+// field too (2026-11-18, netip.Addr's sort on the amd64 host).
+fn count_desc3(ks: List[Key3]) -> Int {
+  // amd64: -"setl" -"movzbl"
+  var n = 0
+  var i = 1
+  while i < ks.len() {
+    if ks[i] < ks[i - 1] {
+      n += 1
+    }
+    i += 1
+  }
+  n
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
   os.stdio.println("${count_desc(["b", "a", "", "", "ab", "abc", "abd", "ab", "b", "ba", "B"])} ${count_desc(hs)}")
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
   os.stdio.println("${count_empty(["", "a", ""])} ${joined("http", "h", "p")}")
+  os.stdio.println("${count_desc3([Key3 { a: 1, b: 2, c: 3 }, Key3 { a: 1, b: 2, c: 2 }, Key3 { a: 1, b: 3, c: 0 }, Key3 { a: 0, b: 9, c: 9 }, Key3 { a: 0, b: 9, c: 9 }])}")
   let b = "abcde".bytes()
   os.stdio.println("${half_byte(b)} ${half_shift(b)} ${half_unguarded(b)} ${half_none(b, 2)} ${half_elem(hs)}")
   os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)} ${count_ab(hs)} ${uuid_byte(uuid.nil(), b.len())}")

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Perf (native compiler): a derived order (`derive Ord`) tests a field's less than only when that field differs, a branch where it was a set, a widen and a compare on every equal field: bench/perf/netip compare on linux/amd64 1.00 to 1.04 of Go before, 1.00 to 1.01 after.
 - Feature (std/http, std/grpc; decision 0718): `Request.gone()` is a channel closed when a server's HTTP/2 request's client is gone (its stream reset, the connection ended, or the stream finished), as Go's `r.Context().Done()`; `grpc.Call.done()` gives it to gRPC handlers. Not yet closed for HTTP/1.1.
 - Fix (std/grpchealth): a Watch whose client canceled is removed at once; it stayed registered until the service's next status change.
 - Fix (std/grpchealth; #152 fuzz): `list` refuses a HealthListResponse whose service name is not UTF-8, as protobuf-go; it read the name as "".
