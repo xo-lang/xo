@@ -1,0 +1,56 @@
+// Two tasks accepting on one listener at once (2026-11-18): the second
+// waiter's park took the descriptor's one read slot, so the readiness of a
+// connection woke only it and the first accept waited forever while its
+// client waited for an echo. Each round starts two accepting tasks before
+// dialing, so both wait; every client must get its echo before its read
+// deadline. The cancel at the end ends any accept still waiting.
+
+fn main(os: Os) {
+  let clock = os.clock
+  let rounds = 20
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  var ok = 0
+  var bad = 0
+  for _r in 0..rounds {
+    let got: Chan[Int] = Chan[Int].new(cap: 2)
+    scope s {
+      for _k in 0..2 {
+        s.spawn_background(fn() {
+          match l.accept() {
+            Ok(c) => {
+              // the cancel at the end of a lost round ends this read
+              match c.read(1) {
+                Ok(Some(b)) => {
+                  c.write(b).ignore_err("the client may be gone")
+                }
+                _ => ()
+              }
+            }
+            Err(_) => ()
+          }
+        })
+      }
+      // both accepts are waiting before the first connection comes
+      clock.sleep(5ms)
+      for k in 0..2 {
+        s.spawn(fn() {
+          let c = os.net.dial(l.addr()).or_fault("dial")
+          c.set_read_deadline(clock, Some(clock.now() + 3s))
+          c.write(b"x").or_fault("client write")
+          match c.read(1) {
+            Ok(Some(_)) => got.send(1)
+            _ => got.send(0)
+          }
+          c.close()
+          let _k = k
+        })
+      }
+      for _i in 0..2 {
+        if (got.recv() ?? 0) == 1 { ok += 1 } else { bad += 1 }
+      }
+      s.cancel()
+    }
+  }
+  l.close()
+  os.stdio.println("${ok} echoes, ${bad} lost")
+}

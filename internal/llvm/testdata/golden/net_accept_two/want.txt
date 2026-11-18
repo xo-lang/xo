@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+40 echoes, 0 lost
+--- stderr

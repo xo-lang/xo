@@ -152,6 +152,15 @@ const D_WWAIT = layout.D_WWAIT
 const D_NEXT = layout.D_NEXT
 const D_TIMERS = layout.D_TIMERS
 const D_CONT = layout.D_CONT
+const D_MORE = layout.D_MORE
+
+/// A waiter queued behind the one in a descriptor's slot (D_MORE's list,
+/// pd_wait_ctx): its park, its slot (D_RWAIT or D_WWAIT; 0 once a waker
+/// took it off the list), the next node. Its waiter owns the memory.
+const WQ_PARK = 0
+const WQ_SLOT = 8
+const WQ_NEXT = 16
+const WQ_SIZE = 24
 
 /// A timer's park, C function, and fired flag (xo_rt.c struct xo_timer).
 const T_PARK = 16
@@ -204,18 +213,10 @@ fn signal(p: Int) {
 pub fn pd_kick(pd: Int, mode: Int) {
   lk(addw(pd, D_MU))
   if (mode & 1) != 0 {
-    let w = rt.mem_load(pd, D_RWAIT, 8)
-    if w != 0 {
-      signal(w)
-      rt.mem_store(pd, D_RWAIT, 0, 8)
-    }
+    wake(pd, D_RWAIT)
   }
   if (mode & 2) != 0 {
-    let w = rt.mem_load(pd, D_WWAIT, 8)
-    if w != 0 {
-      signal(w)
-      rt.mem_store(pd, D_WWAIT, 0, 8)
-    }
+    wake(pd, D_WWAIT)
   }
   unlk(addw(pd, D_MU))
 }
@@ -231,12 +232,10 @@ pub fn pd_ready(pd: Int, mode: Int) {
     rt.mem_store(pd, D_RHUP, 1, 4)
   }
   if (mode & 1) != 0 {
-    let w = rt.mem_load(pd, D_RWAIT, 8)
-    if w != 0 {
+    if rt.mem_load(pd, D_RWAIT, 8) != 0 {
       stat(ST_POLL_WAKE)
       stat(rtstats.SIG_READY)
-      signal(w)
-      rt.mem_store(pd, D_RWAIT, 0, 8)
+      wake(pd, D_RWAIT)
     } else {
       rt.mem_store(pd, D_RREADY, 1, 4)
       cont = rt.mem_load(pd, D_CONT, 8)
@@ -244,12 +243,10 @@ pub fn pd_ready(pd: Int, mode: Int) {
     }
   }
   if (mode & 2) != 0 {
-    let w = rt.mem_load(pd, D_WWAIT, 8)
-    if w != 0 {
+    if rt.mem_load(pd, D_WWAIT, 8) != 0 {
       stat(ST_POLL_WAKE)
       stat(rtstats.SIG_READY)
-      signal(w)
-      rt.mem_store(pd, D_WWAIT, 0, 8)
+      wake(pd, D_WWAIT)
     } else {
       rt.mem_store(pd, D_WREADY, 1, 4)
     }
@@ -676,11 +673,91 @@ pub fn pd_end(pd: Int) {
   }
 }
 
+/// Wakes the waiters of pd's slot k (D_RWAIT or D_WWAIT; under D_MU):
+/// the one in the slot and every one queued behind it, each of which
+/// looks again (two tasks accepting on one listener both try; the one
+/// that finds no connection waits again). Waking only the slot's waiter
+/// left a queued accept waiting with a connection pending (2026-11-18).
 fn wake(pd: Int, k: Int) {
   let w = rt.mem_load(pd, k, 8)
   if w != 0 {
     signal(w)
     rt.mem_store(pd, k, 0, 8)
+  }
+  var prev = 0
+  var n = rt.mem_load(pd, D_MORE, 8)
+  while n != 0 {
+    let next = rt.mem_load(n, WQ_NEXT, 8)
+    if rt.mem_load(n, WQ_SLOT, 8) == k {
+      if prev == 0 {
+        rt.mem_store(pd, D_MORE, next, 8)
+      } else {
+        rt.mem_store(prev, WQ_NEXT, next, 8)
+      }
+      rt.mem_store(n, WQ_SLOT, 0, 8)
+      signal(rt.mem_load(n, WQ_PARK, 8))
+    } else {
+      prev = n
+    }
+    n = next
+  }
+}
+
+/// Empties pd's slot k as its waiter leaves on its own (a timeout, a
+/// cancel; under D_MU) and moves the first waiter queued for k into it,
+/// so the next readiness wakes it and not D_RREADY.
+fn vacate(pd: Int, k: Int) {
+  rt.mem_store(pd, k, 0, 8)
+  var prev = 0
+  var n = rt.mem_load(pd, D_MORE, 8)
+  while n != 0 {
+    let next = rt.mem_load(n, WQ_NEXT, 8)
+    if rt.mem_load(n, WQ_SLOT, 8) == k {
+      if prev == 0 {
+        rt.mem_store(pd, D_MORE, next, 8)
+      } else {
+        rt.mem_store(prev, WQ_NEXT, next, 8)
+      }
+      rt.mem_store(n, WQ_SLOT, 0, 8)
+      rt.mem_store(pd, k, rt.mem_load(n, WQ_PARK, 8), 8)
+      return
+    }
+    prev = n
+    n = next
+  }
+}
+
+/// Puts node n at the end of pd's queued waiters (under D_MU).
+fn enqueue(pd: Int, n: Int) {
+  rt.mem_store(n, WQ_NEXT, 0, 8)
+  var e = rt.mem_load(pd, D_MORE, 8)
+  if e == 0 {
+    rt.mem_store(pd, D_MORE, n, 8)
+    return
+  }
+  while rt.mem_load(e, WQ_NEXT, 8) != 0 {
+    e = rt.mem_load(e, WQ_NEXT, 8)
+  }
+  rt.mem_store(e, WQ_NEXT, n, 8)
+}
+
+/// Takes node n off pd's queued waiters (under D_MU; it is on the list).
+fn unqueue(pd: Int, n: Int) {
+  var prev = 0
+  var e = rt.mem_load(pd, D_MORE, 8)
+  while e != 0 {
+    if e == n {
+      let next = rt.mem_load(e, WQ_NEXT, 8)
+      if prev == 0 {
+        rt.mem_store(pd, D_MORE, next, 8)
+      } else {
+        rt.mem_store(prev, WQ_NEXT, next, 8)
+      }
+      rt.mem_store(n, WQ_SLOT, 0, 8)
+      return
+    }
+    prev = e
+    e = rt.mem_load(e, WQ_NEXT, 8)
   }
 }
 
@@ -742,6 +819,8 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
   rt.mem_store(c, ctx.C_LOCKS, 0, 8)
   var t = 0
   var res = READY
+  // this task's node when another waits in the slot (enqueue)
+  var node = 0
   while true {
     if budget.canceled(c) {
       res = CANCELED
@@ -760,7 +839,18 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
       break
     }
     pool.park_reset(park)
-    rt.mem_store(pd, slot, park, 8)
+    if rt.mem_load(pd, slot, 8) == 0 {
+      rt.mem_store(pd, slot, park, 8)
+    } else {
+      // another task waits on this side (two accepting on one listener):
+      // queue behind it, since taking the slot left it waiting forever
+      if node == 0 {
+        node = rt.heap_large(WQ_SIZE)
+      }
+      rt.mem_store(node, WQ_PARK, park, 8)
+      rt.mem_store(node, WQ_SLOT, slot, 8)
+      enqueue(pd, node)
+    }
     let win = windows()
     if win && afd() != 0 {
       // the poller watches what someone waits for
@@ -780,9 +870,13 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
       pool.net_wait(-1)
     }
     lk(addw(pd, D_MU))
-    let mine = rt.mem_load(pd, slot, 8) == park
+    // still in the slot or still queued: nobody handed it readiness
+    var mine = rt.mem_load(pd, slot, 8) == park
     if mine {
-      rt.mem_store(pd, slot, 0, 8)
+      vacate(pd, slot)
+    } else if node != 0 && rt.mem_load(node, WQ_SLOT, 8) == slot {
+      unqueue(pd, node)
+      mine = true
     }
     let closed = rt.mem_load(pd, D_CLOSED, 4) != 0
     unlk(addw(pd, D_MU))
@@ -802,6 +896,10 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
   }
   if t != 0 {
     timer_disarm(t)
+  }
+  if node != 0 {
+    // off the list: a waker or this task took it off under D_MU
+    rt.heap_release(subw(node, 8))
   }
   res
 }
@@ -1595,7 +1693,7 @@ pub fn pd_wait_or_signal(pd: Int, c: Int, deadline: Int) -> Bool {
     }
     lk(addw(pd, D_MU))
     if rt.mem_load(pd, D_RWAIT, 8) == park {
-      rt.mem_store(pd, D_RWAIT, 0, 8)
+      vacate(pd, D_RWAIT)
     }
     if rt.mem_load(pd, D_CLOSED, 4) != 0 {
       ok = false

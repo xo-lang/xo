@@ -99,6 +99,7 @@ http_wire # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has n
 lock_drop_relock # wasip1 wasip2 # files: WASI has no file modes or locks
 multipart_basic # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 native_sql # wasip1 # network: the network (`rt.net_dial`): WASI preview1 has no sockets
+net_accept_two # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 net_close_flush # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 net_close_stuck # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 net_dial_dual_stack # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

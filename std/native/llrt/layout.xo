@@ -361,9 +361,12 @@ pub const D_WWAIT = 40
 pub const D_NEXT = 48
 pub const D_TIMERS = 56
 pub const D_CONT = 64
+/// the waiters queued behind the one in D_RWAIT or D_WWAIT (two tasks
+/// accepting on one listener; poll.xo WQ_*: park, side, next), 0 when none
+pub const D_MORE = 72
 
 /// the record's bytes off Windows (without the AFD words of D_SIZE_WIN)
-pub const D_SIZE = 72
+pub const D_SIZE = 80
 
 pub const D_FD = 8
 pub const D_CLOSED = 12
@@ -375,11 +378,11 @@ pub const D_OPS = 16
 /// socket's base handle, the events of the poll in flight (0 none), whether
 /// to poll again once it ends, and whether its completion frees the record
 /// (pd_free ran).
-pub const DW_IOSB = 72
-pub const DW_INFO = 88
-pub const DW_BASE = 120
-pub const DW_ARMED = 128
-pub const DW_REARM = 132
-pub const DW_DYING = 136
+pub const DW_IOSB = 80
+pub const DW_INFO = 96
+pub const DW_BASE = 128
+pub const DW_ARMED = 136
+pub const DW_REARM = 140
+pub const DW_DYING = 144
 /// the record's bytes on Windows (xo_pd with its AFD words, DW_IOSB to DW_DYING)
-pub const DW_SIZE = 144
+pub const DW_SIZE = 152
