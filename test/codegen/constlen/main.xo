@@ -1,0 +1,48 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): the length of a
+// constant's List literal of compile time values is a constant (task
+// #302, bench/perf/trimchars), so `i % NAMES.len()` divides by a
+// constant: no divide instruction and no read of the List's length.
+
+const NAMES = ["ada", "bo", "cy", "di", "ed"]
+
+fn width(n: Int) -> Int { n * 2 }
+
+// Its initializer calls code, which may fault, and every read raises the
+// fault again (core 3.1): the length is read from the built List.
+const WIDTHS = [width(1), width(2), width(3)]
+
+fn pick(i: Int) -> Int {
+  // arm64: -"sdiv" -"udiv"
+  // amd64: -"divq"
+  if i < 0 {
+    return 0
+  }
+  NAMES[i % NAMES.len()].len()
+}
+
+fn count() -> Int {
+  // arm64: "mov x0, #5"
+  // amd64: "movl \$5, %eax"
+  NAMES.len()
+}
+
+fn none() -> Bool {
+  // arm64: "mov [wx]0, #0"
+  NAMES.is_empty()
+}
+
+fn pick_built(i: Int) -> Int {
+  // arm64: "sdiv"
+  // amd64: "divq"
+  if i < 0 {
+    return 0
+  }
+  WIDTHS[i % WIDTHS.len()]
+}
+
+fn main(os: Os) {
+  os.stdio.println("${pick(7) + count() + pick_built(4)}")
+  if none() {
+    os.stdio.println("empty")
+  }
+}

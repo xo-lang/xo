@@ -2326,6 +2326,20 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
         if fname == "get" && args.len() == 1 && recv_after_args(ci.recv[0]) {
           li = b.value_as(args[0].value, it)
         }
+        if fname == "len" || fname == "is_empty" {
+          // a constant's List literal has its length at compile time, so
+          // `i % TEXTS.len()` divides by a constant (a multiply) as Go's
+          // len of a package slice literal does not, and Go's compiler
+          // folds len of an array (task #302: bench/perf/trimchars, two
+          // sdiv a call)
+          let n = b.const_list_len(ci.recv[0])
+          if n >= 0 {
+            if fname == "len" {
+              return b.cint(n)
+            }
+            return b.cbool(n == 0)
+          }
+        }
         let l = b.expr(ci.recv[0])
         if b.tkind(b.vty(l)) == Kind.List {
           match fname {
@@ -3189,4 +3203,33 @@ fn (var b: Builder) float_range_check(v: Int, to: Int, span: Span) {
   b.add(Op.Unreachable, -1, Aux.None, [])
   b.dead()
   b.if_then_end(no, join)
+}
+
+/// The number of elements of the List literal that the constant e names
+/// (a name or a module's selector), or -1 when e is not such a constant
+/// or its initializer is not compile time.
+fn (b: Builder) const_list_len(e: Expr) -> Int {
+  let r = match e {
+    Ident(x) => {
+      if b.c.var_of(b.s.file, x) >= 0 {
+        return -1
+      }
+      b.c.ref_of(b.s.file, x)
+    }
+    SelectorExpr(sel: sel, ..) => b.c.ref_of(b.s.file, sel)
+    _ => -1
+  }
+  if r < 0 || b.c.objs[r].kind != check.ObjKind.Const || b.c.objs[r].decl_file < 0 {
+    return -1
+  }
+  let df = b.c.objs[r].decl_file
+  match b.c.top_decl(df, b.c.objs[r].decl_idx) {
+    // only a literal of compile time values: an initializer that calls
+    // code may fault, and every read raises it again (core 3.1)
+    Some(ConstDecl(d)) if b.c.is_compile_time(df, d.value) => match d.value {
+      ListLit(elems: es, rest: false, ..) => es.len()
+      _ => -1
+    }
+    _ => -1
+  }
 }

@@ -43,10 +43,32 @@ fn cycle(n: Int) -> Int {
   // amd64: "_xo_x_const_once" -"\tjae " -"callq _xo_h"
   var s = 0
   for i in 0..n {
+    s += YS[i % YS.len()]
+  }
+  s
+}
+
+// The length of XS, a literal of constants, is the constant 6 (task
+// #302), so `i % XS.len()` divides by a constant (a multiply, no sdiv or
+// divq). The bounds check then stays: rem_of_len matches a divisor that
+// is a length read of the same list, and no fact says XS holds 6.
+fn cycle_lit(n: Int) -> Int {
+  // arm64: "_?xo_x_const_once" -"sdiv" -"bl _?xo_h"
+  // amd64: "_xo_x_const_once" -"divq" -"callq _xo_h"
+  var s = 0
+  for i in 0..n {
     s += XS[i % XS.len()]
   }
   s
 }
+
+fn six() -> Int {
+  6
+}
+
+/// A constant whose initializer calls code: its length is read at run
+/// time, so `i % YS.len()` keeps rem_of_len's proof.
+const YS: List[Int] = [3, 1, 4, 1, 5, six()]
 
 // The other edge of a guard is a fact too: `hi > xs.len()` returning
 // leaves `hi <= xs.len()` for everything after it, so a loop bounded by
@@ -116,7 +138,7 @@ fn reserved(n: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${sum([1, 2, n])} ${pick([1, 2, n], 5)} ${cycle(7)}")
+  os.stdio.println("${sum([1, 2, n])} ${pick([1, 2, n], 5)} ${cycle(7)} ${cycle_lit(7)}")
   os.stdio.println("${guard_fact([1, 2, n], 2)} ${clamp_fact([1, 2, n], 2)} ${fact_not_dominating([1, 2, n], 2, n > 3)}")
   os.stdio.println("${reserved(n + 8)}")
 }
