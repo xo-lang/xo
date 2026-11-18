@@ -147,24 +147,25 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   run.sh start beside an exclusive waiting since 02:41) (heavyd
   lanes.go ExclStarve, NoLaneOK, TestExclStarveNoLane,
   TestExclStarveDrainsMachine, TestExclStarveOutlastsHold; Last
-  verified: 2026-11-18). Past HEAVYD_EXCL_STARVE_MIN the drain's
-  backfill stops too (no plain run starts beside it whose -max ends past
-  the latest limit of the runs going; one that ends by that limit still
-  starts, since the exclusive waits for those runs anyway: lead,
-  2026-11-18, amd64 idled 5 of 6 slots over 2 h while one plain run held
-  slot 2 for 4h18m; TestExclStarveFitsRunningLimit), and a gate that came after it no longer goes first by
+  verified: 2026-11-18). Past HEAVYD_EXCL_STARVE_MIN the lane drains
+  for it (task #374, lead 2026-11-18): no new plain lease starts there,
+  short, bounded, -long or ending by the latest running limit, whether
+  it waits for slots or for a no-lane run; the leases running finish
+  (TestExclStarveDrainsLane). The two exceptions it replaced (plain
+  leases beside a wait for a no-lane run, and a -max that ended by the
+  latest running limit) kept pass2 and amd64 busy while 30 s to 2 min
+  timings waited 1 to 5 h (pass2 over 24 h: 559 of 1530 waiting minutes
+  were 4 exclusive timings; plain leases waited 0). A gate that came after it no longer goes first by
   HEAVYD_GATE_AGE_MIN: gates go first until the exclusive has waited 20
   minutes, then it waits only for the runs already going (lead,
   2026-11-18, #317: amd64 perf runs waited 29 to 82 min while each x86
   gate sample started 0 s after the last; TestExclStarveStopsBackfill).
-  While the starved exclusive still waits for a no-lane run, every plain
-  lease (bounded, unbounded or -long) starts beside it, since the
-  exclusive cannot start before that run ends; once it ends the plain
-  leases drain for the exclusive (lead, 2026-11-18: pass2 froze 140
-  minutes, every plain lease, all at offload.sh's default -max=180
-  -long, held behind an exclusive a 200 minute no-lane fuzz run kept
-  out; TestExclStarveNoLane, TestExclStarveDrainsMachine,
-  TestExclStarveOutlastsHold). After heavyd starts (a restart, an
+  A stdproven perf or serverperf timing on host 2 offers heavyd a move
+  to the amd64 lane after SP_MOVE_MIN (5) minutes in pass2's queue (ADR
+  0712 takes either host), relabelled there (`-host`, `-backends`) so
+  the evidence names the host and arch it ran on; SP_ARCH_PIN=1 (a
+  timing for an arm64 claim) or a perf part without `-host` stays put
+  (#374, stdproven_offload_test.sh). After heavyd starts (a restart, an
   install), it grants no lane lease for 15 s (AdoptGrace), so the runs
   still going from before re-adopt their slots first (lead, 2026-11-07: a
   new lease took pass2's slot 1 in the same second an adopted run came
