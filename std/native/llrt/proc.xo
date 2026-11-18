@@ -439,14 +439,19 @@ struct Spec {
 fn word(l: List[Str], i: Int) -> Str { if i < l.len() { l[i] } else { "" } }
 
 /// The count in word i of l (decimal digits; anything else ends it, as
-/// strtoll; a negative count is 0).
+/// strtoll; a negative count is 0; Int's largest when the digits pass it,
+/// as strtoll saturates: before, 20 digits faulted, task #352).
 fn count(l: List[Str], i: Int) -> Int {
   var v = 0
   for c in word(l, i).bytes() {
     if c < 48 || c > 57 {
       break
     }
-    v = v * 10 + Int(c) - 48
+    let d = Int(c) - 48
+    if v > (Int.max - d) / 10 {
+      return Int.max
+    }
+    v = v * 10 + d
   }
   v
 }

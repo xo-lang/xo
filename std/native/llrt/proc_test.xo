@@ -1,0 +1,6 @@
+test "a count of 20 digits is Int's largest, as strtoll saturates (task #352)" {
+  expect(count(["99999999999999999999"], 0)) == 9223372036854775807
+  expect(count(["9223372036854775807"], 0)) == 9223372036854775807
+  expect(count(["12x"], 0)) == 12
+  expect(count([], 0)) == 0
+}

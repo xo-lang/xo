@@ -1604,15 +1604,26 @@ pub fn max_body() -> Int {
   if e.is_empty() {
     return HTTP_MAX_BODY
   }
-  // atoll: the leading digits
+  let v = leading_digits(e[0])
+  if v > 0 { v } else { HTTP_MAX_BODY }
+}
+
+/// atoll of s: its leading decimal digits, Int's largest when they pass
+/// it (C's strtoll saturates; before, 20 digits faulted with an integer
+/// overflow, task #352).
+fn leading_digits(s: Str) -> Int {
   var v = 0
-  for c in e[0].bytes() {
+  for c in s.bytes() {
     if c < 48 || c > 57 {
       break
     }
-    v = v * 10 + Int(c) - 48
+    let d = Int(c) - 48
+    if v > (MAX_INT - d) / 10 {
+      return MAX_INT
+    }
+    v = v * 10 + d
   }
-  if v > 0 { v } else { HTTP_MAX_BODY }
+  v
 }
 
 /// The X1 record of connection h, made on first use.

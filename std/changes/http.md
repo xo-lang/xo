@@ -9,6 +9,15 @@
 - Test: std/native/llrt/http1_test.xo "a Content-Length at Int's top is that length, one past it is an error (Go's ParseUint of 63 bits)"
 - Shipped in: not yet released
 
+## 2026-11-18: fix: an XO_HTTP_MAX_BODY past Int no longer faults
+
+- Kind: fix
+- Commit: this commit
+- Found by: review of the `v * 10 + c - 48` parsers after the Content-Length overflow (task #352)
+- Go reference: none (XO_HTTP_MAX_BODY is Xo's own; it reads as C's atoll, which saturates at LLONG_MAX)
+- Test: std/native/llrt/http1_test.xo "XO_HTTP_MAX_BODY's digits past Int are Int's largest, as atoll saturates (task #352)"
+- Shipped in: not yet released
+
 ## 2026-11-18: feature: Request.gone closes when an HTTP/2 client is gone
 
 - Kind: feature

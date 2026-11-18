@@ -147,3 +147,10 @@ test "a Content-Length at Int's top is that length, one past it is an error (Go'
   let past = parse_response("HTTP/1.1 200 OK\r\nContent-Length: 9223372036854775808\r\n\r\n", false, "GET")
   expect(past.why) == "bad Content-Length \"9223372036854775808\""
 }
+
+test "XO_HTTP_MAX_BODY's digits past Int are Int's largest, as atoll saturates (task #352)" {
+  expect(leading_digits("99999999999999999999")) == 9223372036854775807
+  expect(leading_digits("9223372036854775807")) == 9223372036854775807
+  expect(leading_digits("1048576k")) == 1048576
+  expect(leading_digits("x")) == 0
+}
