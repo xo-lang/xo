@@ -803,10 +803,11 @@ fn rejected_reason(var s: BrokerState, qi: Int, seq: Int, e: amqp.WireError) -> 
 /// azservicebus reads them (message.go; they were only in a delivery annotation, so a client read
 /// none, TestAmqptestFuzz, 2026-11-16).
 fn dead_letter(var s: BrokerState, qi: Int, seq: Int, reason: Str, description: Str) {
-  var q = s.queues[qi]
-  let i = find_seq(q, seq)
+  // in place through s.queues[qi]: a copy of the queue shares its message list, and the first
+  // write then copied all of it, O(queue length) per settle (stress heap profile, 2026-11-17)
+  let i = find_seq(s.queues[qi], seq)
   if i < 0 { return }
-  var m = q.msgs[i]
+  var m = s.queues[qi].msgs.remove_at(i)
   m.locked_until = 0
   m.lock_token = b""
   m.dead_reason = reason
@@ -815,25 +816,22 @@ fn dead_letter(var s: BrokerState, qi: Int, seq: Int, reason: Str, description: 
   props.push(("DeadLetterReason", amqp.Value.Str(v: reason)))
   props.push(("DeadLetterErrorDescription", amqp.Value.Str(v: description)))
   m.m.app_properties = Some(props)
-  q.dead.push(m)
-  q.msgs = q.msgs.filter(fn(x: FakeMsg) { x.seq != seq })
-  put_queue(s, qi, q)
+  s.queues[qi].dead.push(m)
   notify_all(s)
 }
 
 /// Gives a locked message back; past the maximum delivery count it is dead lettered.
 fn unlock(var s: BrokerState, qi: Int, seq: Int, count_it: Bool) {
-  var q = s.queues[qi]
-  let i = find_seq(q, seq)
+  // in place through s.queues[qi]: a copy of the queue shares its message list, and the first
+  // write then copied all of it, O(queue length) per settle (stress heap profile, 2026-11-17)
+  let i = find_seq(s.queues[qi], seq)
   if i < 0 { return }
-  var m = q.msgs[i]
-  m.locked_until = 0
-  m.lock_token = b""
-  if !count_it && m.delivery_count > 0 { m.delivery_count -= 1 }
-  put_msg(q, i, m)
-  put_queue(s, qi, q)
-  if m.delivery_count >= q.opts.max_delivery_count {
-    dead_letter(s, qi, seq, "MaxDeliveryCountExceeded", "Message could not be consumed after ${q.opts.max_delivery_count} delivery attempts.")
+  s.queues[qi].msgs[i].locked_until = 0
+  s.queues[qi].msgs[i].lock_token = b""
+  if !count_it && s.queues[qi].msgs[i].delivery_count > 0 { s.queues[qi].msgs[i].delivery_count -= 1 }
+  let max = s.queues[qi].opts.max_delivery_count
+  if s.queues[qi].msgs[i].delivery_count >= max {
+    dead_letter(s, qi, seq, "MaxDeliveryCountExceeded", "Message could not be consumed after ${max} delivery attempts.")
   }
   notify_all(s)
 }
@@ -842,11 +840,11 @@ fn unlock(var s: BrokerState, qi: Int, seq: Int, count_it: Bool) {
 /// properties; a key is a symbol or a string, a later one replaces an earlier one.
 fn apply_modified(var s: BrokerState, qi: Int, seq: Int, ann: List[(amqp.Value, amqp.Value)]) {
   if ann.is_empty() { return }
-  var q = s.queues[qi]
-  let i = find_seq(q, seq)
+  // in place through s.queues[qi]: a copy of the queue shares its message list, and the first
+  // write then copied all of it, O(queue length) per settle (stress heap profile, 2026-11-17)
+  let i = find_seq(s.queues[qi], seq)
   if i < 0 { return }
-  var m = q.msgs[i]
-  var props: List[(Str, amqp.Value)] = m.m.app_properties ?? []
+  var props: List[(Str, amqp.Value)] = s.queues[qi].msgs[i].m.app_properties ?? []
   for (k, v) in ann {
     var name = ""
     match k {
@@ -863,9 +861,7 @@ fn apply_modified(var s: BrokerState, qi: Int, seq: Int, ann: List[(amqp.Value, 
     }
     if !found { props.push((name, v)) }
   }
-  m.m.app_properties = Some(props)
-  put_msg(q, i, m)
-  put_queue(s, qi, q)
+  s.queues[qi].msgs[i].m.app_properties = Some(props)
 }
 
 fn complete(var s: BrokerState, qi: Int, seq: Int) {
@@ -878,15 +874,13 @@ fn complete(var s: BrokerState, qi: Int, seq: Int) {
 }
 
 fn defer_msg(var s: BrokerState, qi: Int, seq: Int) {
-  var q = s.queues[qi]
-  let i = find_seq(q, seq)
+  // in place through s.queues[qi]: a copy of the queue shares its message list, and the first
+  // write then copied all of it, O(queue length) per settle (stress heap profile, 2026-11-17)
+  let i = find_seq(s.queues[qi], seq)
   if i < 0 { return }
-  var m = q.msgs[i]
-  m.locked_until = 0
-  m.lock_token = b""
-  m.deferred = true
-  put_msg(q, i, m)
-  put_queue(s, qi, q)
+  s.queues[qi].msgs[i].locked_until = 0
+  s.queues[qi].msgs[i].lock_token = b""
+  s.queues[qi].msgs[i].deferred = true
 }
 
 /// Gives back everything connection `conn` holds locked (it went away).
@@ -896,34 +890,24 @@ fn release_conn(var s: BrokerState, conn: Int, now: Int) {
   for x in 0..s.queues.len() { expire_locks(s, x, now) }
   var qi = 0
   while qi < s.queues.len() {
-    var q = s.queues[qi]
+    // in place, as expire_locks: a copy of the queue made the first write copy its whole list
     var i = 0
-    var changed = false
-    while i < q.msgs.len() {
-      var m = q.msgs[i]
-      if m.lock_conn == conn && m.locked_until > 0 {
-        m.locked_until = 0
-        m.lock_token = b""
-        m.lock_conn = 0
-        put_msg(q, i, m)
-        changed = true
+    while i < s.queues[qi].msgs.len() {
+      if s.queues[qi].msgs[i].lock_conn == conn && s.queues[qi].msgs[i].locked_until > 0 {
+        s.queues[qi].msgs[i].locked_until = 0
+        s.queues[qi].msgs[i].lock_token = b""
+        s.queues[qi].msgs[i].lock_conn = 0
       }
       i += 1
     }
     var j = 0
-    var sess = q.sessions
-    while j < sess.len() {
-      if sess[j].owner == conn {
-        var z = sess[j]
-        z.owner = 0
-        z.locked_until = 0
-        sess[j] = z
-        changed = true
+    while j < s.queues[qi].sessions.len() {
+      if s.queues[qi].sessions[j].owner == conn {
+        s.queues[qi].sessions[j].owner = 0
+        s.queues[qi].sessions[j].locked_until = 0
       }
       j += 1
     }
-    q.sessions = sess
-    if changed { put_queue(s, qi, q) }
     qi += 1
   }
   s.wakes = s.wakes.filter(fn(w: (Int, Chan[Bool])) { w.0 != conn })
@@ -2188,9 +2172,10 @@ fn on_disposition(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, d: amqp.Dis
               None => {}
             }
             expire_locks(s, qi, now)
-            let q = s.queues[qi]
-            let mi = find_seq(q, seq)
-            if mi < 0 || q.msgs[mi].locked_until == 0 || q.msgs[mi].lock_conn != conn || q.msgs[mi].lock_token != tok {
+            // read through the place: a `let q` copy held the message list shared while
+            // complete's remove_at ran, which then copied all of it
+            let mi = find_seq(s.queues[qi], seq)
+            if mi < 0 || s.queues[qi].msgs[mi].locked_until == 0 || s.queues[qi].msgs[mi].lock_conn != conn || s.queues[qi].msgs[mi].lock_token != tok {
               return amqp.DeliveryState.Rejected(error: Some(werr("com.microsoft:message-lock-lost", "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue.")))
             }
             match state {

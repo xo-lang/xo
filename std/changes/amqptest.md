@@ -208,3 +208,16 @@ keeps that delivery counted (the give-back took it back). A rejection with `com.
 description and properties to modify from the error's info, as azservicebus sends them (the condition was the reason),
 and a dead lettered message carries DeadLetterReason and DeadLetterErrorDescription in its application properties, where
 azservicebus reads them (they were only a delivery annotation). `ready` and `locked` apply the locks that ran out first.
+
+## 2026-11-17: perf: releasing, abandoning, deferring and dead lettering a message no longer copies its queue
+
+- Kind: perf
+- Commit: this commit
+- Found by: xo-lang-3 (std/evidence/amqptest/stress heap profile, decision 122: 65% of 885 GB allocated in 10 min at put_msg)
+- Go reference: none (the broker is Xo's own; Go's twin in bench/perf/amqptest updates the message in place)
+- Test: native/amqptest "settling a message does not copy the queue's message list"
+
+unlock, apply_modified, defer_msg, dead_letter and release_conn took a copy of the queue, which shares its message
+list, so the first change copied the whole list: O(queue length) per settle. They now change the message through
+`s.queues[qi]` in place, as enqueue, complete and expire_locks have since 2026-11-16, and dead_letter takes the
+message out with remove_at in place of a filter over the list.

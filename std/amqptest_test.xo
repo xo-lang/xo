@@ -1396,3 +1396,31 @@ test "rule actions: a copy per matching rule with an action, SET and REMOVE, and
   b.put("t", amqp.Message{app_properties: Some([("qty", amqp.Value.Int(v: Int32(1)))]), body: amqp.Body.Data(sections: [b"one"])})
   expect(b.ready("t/Subscriptions/s").len()) == 5
 }
+
+// Settling a message changes it in place (stress heap profile, 2026-11-17): unlock, apply_modified,
+// defer_msg and dead_letter copied the queue, so the first write copied its whole message list, and
+// 65% of the stress run's allocation was those copies. 8,000 releases, abandons, defers and dead
+// letters on a queue of 8,000 messages copied 128 M messages before; the budget is 1 s.
+test "settling a message does not copy the queue's message list" uses clock {
+  let n = 8000
+  var s = BrokerState{}
+  var msgs: List[FakeMsg] = []
+  for i in 0..n { msgs.push(FakeMsg{seq: i + 1, m: msg("m${i}"), locked_until: 1, lock_token: b"t", delivery_count: 1}) }
+  s.queues.push(FakeQueue{name: "q", opts: QueueOptions{max_delivery_count: 1000}, msgs: msgs})
+  let ann = [(amqp.Value.Symbol(v: "k"), amqp.Value.Str(v: "v"))]
+  let t0 = os.clock.now()
+  for i in 0..n / 2 {
+    unlock(s, 0, i + 1, false)
+    apply_modified(s, 0, i + 1, ann)
+  }
+  for i in n / 2..n * 3 / 4 { defer_msg(s, 0, i + 1) }
+  for i in n * 3 / 4..n { dead_letter(s, 0, i + 1, "r", "d") }
+  let took = os.clock.now() - t0
+  expect(s.queues[0].msgs.len()) == n * 3 / 4
+  expect(s.queues[0].dead.len()) == n / 4
+  expect(s.queues[0].msgs[0].locked_until) == 0
+  expect(s.queues[0].msgs[0].delivery_count) == 0
+  expect(s.queues[0].msgs[n / 2].deferred) == true
+  expect(s.queues[0].dead[0].dead_reason) == "r"
+  expect(took < 1000ms) == true
+}
