@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-17: perf: a chunked response body no longer copies the buffered input for each chunk
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 125 (std/sse stress heap profile: raw.str_at under cbody_next was 59% of its allocation)
+- Go reference: net/http/internal/chunked.go (chunkedReader reads the size line with bufio.Reader.ReadSlice, no copy of what follows)
+- Test: std/native/http_test.xo "a chunked body of many small chunks in one buffer is read without copying the buffer per chunk" (50,000 one byte chunks behind an 800 KB header: 289 to 472 ms before, 24 ms after, budget 150 ms)
+- Timing: the client's CRLF check copies at most 2 bytes and its size line at most 4098; the trailer of the last chunk still reads all the buffered input, once per body
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: Client.with_idle_pings pings idle HTTP/2 connections
 
 - Kind: feature

@@ -4413,7 +4413,7 @@ pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
         return bstep(CC_OK, "")
       }
     } else if b.mode == 2 && b.crlf {
-      let s = hclient.input(r, 2)
+      let s = hclient.input_upto(r, 2)
       if s.len() >= 2 {
         let bs = s.bytes()
         if bs[0] != 13 || bs[1] != 10 {
@@ -4427,8 +4427,9 @@ pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
         return bstep(CC_ERR, "unexpected EOF")
       }
     } else if b.mode == 2 {
-      // a chunk's size line; the last chunk's trailer through chunked
-      let s = hclient.input(r, 2)
+      // a chunk's size line (chunk_line reads at most 4096 bytes and its
+      // CRLF of it); the last chunk's trailer through chunked
+      let s = hclient.input_upto(r, 4098)
       let eof = hclient.eof(r)
       let l = chunk_line(s, s.bytes(), 0, eof, b.excess)
       if l.res == HB_ERR {
@@ -4437,7 +4438,7 @@ pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
       if l.res == HB_OK {
         b.excess = l.excess
         if l.size == 0 {
-          let c = chunked(s, eof)
+          let c = chunked(hclient.input(r, 2), eof)
           if c.res == HB_OK {
             hclient.skip(r, c.used)
             b.done = true

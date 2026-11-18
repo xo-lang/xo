@@ -1863,6 +1863,35 @@ test "a bare Listener's chunked and close delimited responses, and the request i
   }
 }
 
+test "a chunked body of many small chunks in one buffer is read without copying the buffer per chunk" uses (net, clock) {
+  // the client parsed each chunk's size line and CRLF out of a copy of
+  // all the buffered input, so a buffer of k chunks was copied k times
+  // (std/sse stress, 2026-11-17: 59% of its allocation); a long header
+  // grows the buffer, so each read fills up to 1 MB
+  let n = 50000
+  let body = "1\r\nx\r\n".repeat(n) + "0\r\n\r\n"
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.group().spawn(fn() {
+      let c = l.accept().or_fault("accept")
+      c.read(4096).ignore_err("the request bytes are not inspected")
+      c.write(("HTTP/1.1 200 OK\r\nX-Pad: ${"p".repeat(800000)}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" + body).bytes()).or_fault("write")
+      c.close()
+    })
+    let t0 = os.clock.now()
+    let st = http.client(os.net).open(http.new_request("GET", "http://${l.addr()}/many")).or_fault("open")
+    var got = 0
+    while let Some(b) = st.read().or_fault("read") {
+      got += b.len()
+    }
+    st.close()
+    let took = os.clock.now() - t0
+    expect(got) == n
+    // 24 ms on the Mac Studio, 289 to 472 ms copying the buffer per chunk
+    expect(took < 150ms) == true
+  }
+}
+
 test "a bad escape in the user stops at the colon before the password, as Go's url.Parse" {
   // http URL fuzz seed 2 (decision 0616): Go unescapes the user and the
   // password apart, so its error names "%s", not "%s:"

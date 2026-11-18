@@ -592,6 +592,18 @@ pub fn input(r: rthttp.CResp, mode: Int) -> Str {
   raw.str_at(p, if mode == 0 { head_len(p, n) } else { n })
 }
 
+/// The unread input's first k bytes, or all of it when less is buffered
+/// (a chunked body's CRLF and size line: input(r, 2) copied all of it).
+pub fn input_upto(r: rthttp.CResp, k: Int) -> Str {
+  let c = rec(r) + R_C
+  let b = ld(c, C_BUF)
+  if b == 0 {
+    return ""
+  }
+  let n = ld(c, C_N) - ld(c, C_OFF)
+  raw.str_at(b + ld(c, C_OFF), if n < k { n } else { k })
+}
+
 pub fn avail(r: rthttp.CResp) -> Int {
   let c = rec(r) + R_C
   ld(c, C_N) - ld(c, C_OFF)
