@@ -1123,6 +1123,14 @@ pub const FN_SCOPE = 3
 /// only records that it fired.
 const FN_PD = 4
 const T_ARG = 32
+/// A scope deadline's hold on the deadlock check (FN_SCOPE timers): the
+/// pool's deadlock record whose DLK_UNCOUNTED it raised, 0 when none.
+/// Tasks waiting on a channel inside task.with_timeout count as blocked,
+/// but the deadline will cancel them (spec core 11.4: waits a timer can
+/// end do not count), so the pending timer keeps the check off until it
+/// fires or ends (four tasks in with_timeout(1ms) on a channel faulted
+/// XO-F001 on every run, the grpc fuzz's false deadlocks, 2026-11-18).
+const T_HOLD = 48
 const SEL_FIRED = 32
 const SEL_CHOSEN = 40
 const SEL_PARK = 64
@@ -1165,6 +1173,8 @@ pub fn fire(t: Int, mu: Int) {
     rt.fence(RELEASE)
     rt.mem_store(s, SC_TIMED_OUT, 1, 4)
     pool.node_cancel(ctx.pool(), addw(s, SC_BODY))
+    // after the cancel: the waits it ended are queued by now
+    hold_end(t)
     return
   }
   let _c = rt.call_c2(f, t, 0)
@@ -1179,8 +1189,28 @@ pub fn timer_fn(d: Int, f: Int, arg: Int) -> Int {
   rt.mem_store(t, T_IDX, -1, 8)
   rt.mem_store(t, T_FN, f, 8)
   rt.mem_store(t, T_ARG, arg, 8)
+  if f == FN_SCOPE && !virt() {
+    // not the test world's virtual clock: its check moves the clock to
+    // the next timer instead (pool.xo dl_check)
+    let pl = ctx.pool()
+    if pl != 0 {
+      let dlk = rt.mem_load(pl, layout.P_DLK, 8)
+      rt.slot_add(dlk, layout.DLK_UNCOUNTED, 1, SEQ_CST)
+      rt.mem_store(t, T_HOLD, dlk, 8)
+    }
+  }
   timer_add(t)
   t
+}
+
+/// Ends timer t's hold on the deadlock check (T_HOLD), once: under the
+/// timers' lock, from fire or timer_del, whichever comes first.
+fn hold_end(t: Int) {
+  let dlk = rt.mem_load(t, T_HOLD, 8)
+  if dlk != 0 {
+    rt.mem_store(t, T_HOLD, 0, 8)
+    rt.slot_add(dlk, layout.DLK_UNCOUNTED, -1, SEQ_CST)
+  }
 }
 
 /// Sleeps d ns in context c unless it is or becomes canceled (xo_rt.c
@@ -1235,6 +1265,7 @@ pub fn timer_del(t: Int) {
   if rt.mem_load(t, T_IDX, 8) >= 0 {
     timer_remove(t)
   }
+  hold_end(t)
   unlk(mu)
 }
 

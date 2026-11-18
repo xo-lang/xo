@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix (native runtime): tasks waiting on a channel, mutex or `await` inside `task.with_timeout` no longer fault XO-F001 (deadlock) while the deadline is pending; the deadline ends those waits, so they do not count as blocked (spec core 11.4). Four tasks in `with_timeout(1ms)` on a channel faulted on every run (golden deadline_chan_wait); it was the grpc fuzz's intermittent false deadlock.
 - Fix (std/term): `Terminal.read_line` drops a byte that is not UTF-8 and reads on, as golang.org/x/term does; it read until the input ended and answered Eof.
 - Perf: the arm64 inliner sizes a function with landing pads without the blocks only a fault runs, and inlines a small one at up to 8 call sites (decision 0716); std/brotli decodes text 9% faster on linux/arm64 (host 1 `--ab` 0.909), 12 to 14% on the Mac; xo itself is 2.8% larger.
 - Fix (std/protoparse): `parse` rejects a `required` field in an `extend` block, as protocompile does ("extension NAME: extension fields cannot be 'required'").

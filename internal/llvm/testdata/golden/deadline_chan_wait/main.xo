@@ -1,0 +1,31 @@
+// A task.with_timeout deadline ends the channel waits in its scope, so
+// they do not count as a deadlock while it is pending (spec core 11.4):
+// four tasks each wait 100 times on a channel nobody sends to, each wait
+// ended by a 1 ms deadline (XO-F001 on every run before, 2026-11-18)
+
+use std/task
+
+fn main(os: Os) {
+  let ch = Chan[Int].new(cap: 0)
+  let n = scope s {
+    var hs = List[Task[Int, Never]].with_capacity(4)
+    for _t in 0..4 {
+      let c = ch
+      hs.push(s.spawn(fn() -> Int {
+        var k = 0
+        for _i in 0..100 {
+          let r = task.with_timeout(os.clock, 1ms, fn() -> Int {
+            let _v = c.recv()
+            1
+          })
+          if r.is_err() { k += 1 }
+        }
+        k
+      }))
+    }
+    var tot = 0
+    for h in hs { tot += h.await }
+    tot
+  }
+  os.stdio.println("timeouts ${n}")
+}
