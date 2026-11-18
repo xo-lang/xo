@@ -11,6 +11,11 @@ build, ad hoc counters, println) only when the row's tool falls short,
 and say in the report which tool you used and, if none, why; a missing
 tool is an xw task, never a quiet workaround. Each tool's details are in
 the section named, or in toolchain.md.
+`xw task start ID [--kind memory|perf|hang|miscompile|flaky|evidence]`
+prints this table's rows for the task's kind (from the title when no
+--kind), and a bug fix or perf task is closed with `xw task done ID
+"tool: NAME"` (or `"tool: none, WHY"`): without that line xw warns and
+`xw check` raises a no-tool-line alert (xw #340, workstream 286f38d).
 
 | Symptom | First tool | Then |
 |---|---|---|
