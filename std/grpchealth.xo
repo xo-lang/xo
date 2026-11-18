@@ -281,7 +281,11 @@ pub fn list(c: grpc.Client, timeout: Duration? = None) -> Map[Str, ServingStatus
     var v = ServingStatus.Unknown
     for e in es {
       if e.num == 1 && e.wire == 2 {
-        k = protowire.text(e).ok() ?? ""
+        // a proto3 string: protobuf-go refuses one that is not UTF-8
+        k = match protowire.text(e) {
+          Ok(t) => t
+          Err(x) => return Err(grpc.Status{code: grpc.Code.Internal, message: "grpc: failed to unmarshal the received message: ${x}"})
+        }
       } else if e.num == 2 && e.wire == 2 {
         v = read_response(e.data)?
       }

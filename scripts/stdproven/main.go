@@ -95,6 +95,7 @@ var harnesses = map[string][]harness{
 	"url":          {{"TestUrlFuzz", "XO_URLQFUZZ"}, {"TestUrlTypeFuzz", "XO_URLTFUZZ"}},
 	"html":         {{"TestHtmlFuzz", "XO_HTMLFUZZ"}},
 	"grpcreflect":  {{"TestGrpcReflectFuzz", "XO_GRPCREFLECTFUZZ"}},
+	"grpchealth":   {{"TestGrpcHealthFuzz", "XO_GRPCHEALTHFUZZ"}},
 	"fnv":          {{"TestFnvFuzz", "XO_FNVFUZZ"}},
 	"uuid":         {{"TestUuidFuzz", "XO_UUIDFUZZ"}},
 	"norm":         {{"TestNormFuzz", "XO_NORMFUZZ"}},

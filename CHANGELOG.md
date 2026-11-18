@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix (std/grpchealth; #152 fuzz): `list` refuses a HealthListResponse whose service name is not UTF-8, as protobuf-go; it read the name as "".
 - Fix (std/sql, Postgres; task #90): a NoticeResponse or ErrorResponse whose fields lack their closing zero byte is a malformed message error, as pgx's pgconn reports it; Xo had kept it (TestPgFuzz seed 15).
 - Fix (format specs; task #242 b33): a sized integer (`Int8`, `UInt8`, `Int32`, `UInt64` and the rest) with only a width is right aligned, as `Int` and Go's fmt are (`${a:4}` of an `Int8` 5 is `   5`; it was `5   `), on every backend; an explicit `<` or `^` still aligns it.
 - Fix (diagnostics; task #242 b34): text after an interpolation's colon that is not a format spec gets XO0180 alone; the lexer's errors from reading the spec as code (XO0155 for `${n:5d junk}`, a number suffix) no longer follow it.

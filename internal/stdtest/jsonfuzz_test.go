@@ -555,7 +555,8 @@ func TestJsonFuzz(t *testing.T) {
 // runFuzzDir writes a generated test file of a public std module's cases
 // into a temp directory and runs it with xo test on each backend, as
 // TestStdCorpora runs a corpus: every generated test must pass.
-func runFuzzDir(t *testing.T, file, content string, backends []string, cases int) {
+// extra goes to xo test before the directory (--real for a program that uses net or clock).
+func runFuzzDir(t *testing.T, file, content string, backends []string, cases int, extra ...string) {
 	t.Helper()
 	root, err := xotool.Root()
 	if err != nil {
@@ -575,7 +576,8 @@ func runFuzzDir(t *testing.T, file, content string, backends []string, cases int
 		t.Fatal(err)
 	}
 	for _, b := range backends {
-		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend="+b, work))
+		args := append(append([]string{"test", "--backend=" + b}, extra...), work)
+		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
 		out, err := cmd.CombinedOutput()
 		passed, failed, ok := probeSummary(string(out))

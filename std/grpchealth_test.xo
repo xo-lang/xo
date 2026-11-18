@@ -90,3 +90,17 @@ test "check, list and watch over HTTP/2" uses (net, clock) {
 test "a request with a field number over 536870911 fails to unmarshal, as grpc-go's codec" {
   expect(read_request(b"\xca\xc7\xa3\xe8\x22\x00").is_ok()) == false
 }
+
+// protobuf-go's Unmarshal refuses a HealthListResponse whose map key is not
+// UTF-8 (a proto3 string); grpchealth fuzz (#152) found list read it as ""
+test "list refuses a status whose name is not UTF-8" uses (net, clock) {
+  let base = grpc.client(http.client(os.net, timeout: 10s), "http://127.0.0.1:9")
+  let answer = fn(b: Bytes) -> grpc.Client {
+    base.with_unary_interceptor(fn(_m, _r, _o, _inv) -> Bytes ! grpc.Status { Ok(b) })
+  }
+  match list(answer(b"\x0a\x0c\x0a\x06\xe8\x3c\x45\x72\xcc\xec\x12\x02\x08\x01")) {
+    Ok(m) => fault("read ${m.len()} statuses")
+    Err(st) => expect(st.code) == grpc.Code.Internal
+  }
+  expect(list(answer(b"\x0a\x07\x0a\x01a\x12\x02\x08\x01")).or_fault("valid").get("a")) == Some(ServingStatus.Serving)
+}

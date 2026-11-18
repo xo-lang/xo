@@ -263,6 +263,10 @@ func interopMain() bool {
 		seed, _ := strconv.ParseInt(os.Args[2], 10, 64)
 		n, _ := strconv.Atoi(os.Args[3])
 		reflectFuzz(seed, n)
+	case "healthfuzz":
+		seed, _ := strconv.ParseInt(os.Args[2], 10, 64)
+		n, _ := strconv.Atoi(os.Args[3])
+		healthFuzz(seed, n)
 	case "serve-tls":
 		tlsServe(os.Args[2])
 	case "client-tls":

@@ -1,5 +1,14 @@
 # std/grpchealth changes
 
+## 2026-11-18: fix: list refuses a service name that is not UTF-8
+
+- Kind: fix
+- Commit: this push
+- Found by: #152: the new grpchealth fuzz (TestGrpcHealthFuzz, seed 2) found list reading an invalid UTF-8 map key as ""
+- Go reference: protobuf-go proto.Unmarshal (a proto3 string field must be valid UTF-8)
+- Test: std/grpchealth_test.xo "list refuses a status whose name is not UTF-8" (fails before: read 1 statuses)
+- Shipped in: not yet released
+
 ## 2026-11-17: fix: a field number over 536870911 fails to decode
 
 - Kind: fix
