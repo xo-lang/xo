@@ -1,5 +1,22 @@
 # std/sql changes
 
+## 2026-11-18: fix: Postgres refuses a second RowDescription before the statement's CommandComplete
+
+- Kind: fix
+- Commit: this push
+- Found by: stdproven fuzz sql (task #152), TestPgFuzz seed 10 case 3488 on host 2
+- Go reference: jackc/pgx v5.11.0 (pgconn ResultReader takes the last RowDescription)
+- Test: internal/stdtest TestPgRowShape "second RowDescription"
+- Timing: none
+
+A RowDescription that comes before the statement's CommandComplete, after
+another one, is an error on a broken connection, "a second RowDescription
+before the statement's CommandComplete". It started a second result set
+(Db.query's rows, a script's), or was skipped by a cursor, whose rows after
+it were decoded by the first one's types. pgconn decodes them by the new
+columns; a cursor has already handed out its columns, so Xo refuses (only a
+broken or hostile server sends it).
+
 ## 2026-11-18: fix: Postgres refuses a CommandComplete with bytes after its tag
 
 - Kind: fix

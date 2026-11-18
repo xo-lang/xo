@@ -762,6 +762,9 @@ fn (p: PgConn) collect_of(described: Bool) -> Results ! sql.SqlErr uses net.dial
   while {
     match p.recv()? {
       RowDesc(fs) => {
+        if open {
+          return Err(p.desc_again())
+        }
         open = true
         if sets > 1 {
           res.more.push(cur)
@@ -853,6 +856,15 @@ fn (p: PgConn) unended() -> sql.SqlErr {
   conn_err("ReadyForQuery before the rows' CommandComplete")
 }
 
+/// A second RowDescription for one statement's rows (before its
+/// CommandComplete) breaks the connection: pgconn decodes the rows after it
+/// by the new columns, which a cursor has already handed out (TestPgFuzz
+/// seed 10 case 3488, a DataRow's type byte changed to 'T').
+fn (p: PgConn) desc_again() -> sql.SqlErr {
+  p.broken.set(true)
+  conn_err("a second RowDescription before the statement's CommandComplete")
+}
+
 fn (p: PgConn) row_first() -> sql.SqlErr {
   p.broken.set(true)
   conn_err("a DataRow before its RowDescription")
@@ -911,6 +923,13 @@ fn (c: PgCursor) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
             c.st.with(fn(var s) { s.ended = true })
           }
           CommandComplete(_) => c.st.with(fn(var s) { s.ended = true })
+          RowDesc(_) => {
+            if !c.st.with(fn(s) { s.ended }) {
+              let e = c.p.desc_again()
+              let _ = c.finish()
+              return Err(e)
+            }
+          }
           Ready(_) => {
             let ended = c.st.with(fn(s) { s.ended })
             if let Some(e) = c.finish() {
@@ -1346,6 +1365,9 @@ fn (p: PgConn) pipe_result() -> PipeRes ! sql.SqlErr uses net.dial {
   while {
     match p.recv()? {
       RowDesc(fs) => {
+        if described {
+          return Err(p.desc_again())
+        }
         described = true
         oids = fs.map(fn(f) { f.type_oid })
         res = sql.DriverResult{columns: fs.map(fn(f) { f.name }), rows: [], column_types: column_types(fs)}

@@ -493,7 +493,9 @@ func pgfDiff(t *testing.T, cases []pgfCase, backends []string, seed int64) {
 
 // TestPgRowShape: std/sql's Postgres driver refuses a DataRow of another
 // width than its RowDescription, and one before any RowDescription, with
-// an error on a broken connection. It faulted on the first (a mutex
+// an error on a broken connection, and a second RowDescription before the
+// statement's CommandComplete (it decoded the rows after it by the first
+// one's types, TestPgFuzz seed 10 case 3488). It faulted on the first (a mutex
 // poisoned in PgConn.next_msg, found by TestPgFuzz seed 2 case 45) and
 // returned the second as a row. Needs no reference build.
 func TestPgRowShape(t *testing.T) {
@@ -505,6 +507,7 @@ func TestPgRowShape(t *testing.T) {
 		{msgs: append([][]byte{desc, pgfDataRow([]*string{&one})}, done...), note: "short row"},
 		{msgs: append([][]byte{desc, pgfDataRow([]*string{&one, &two, &two})}, done...), note: "long row"},
 		{msgs: append([][]byte{pgfDataRow([]*string{&one, &two}), desc}, done...), note: "row first"},
+		{msgs: append([][]byte{desc, pgfRowDesc([]string{"d0", "d1"}, []pgfKind{pgfKinds[8], pgfKinds[8]}, 2), pgfDataRow([]*string{&one, &two})}, done...), note: "second RowDescription"},
 		{msgs: append([][]byte{desc, pgfDataRow([]*string{&one, &two})}, done...)},
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -534,7 +537,7 @@ func TestPgRowShape(t *testing.T) {
 	}
 	host, port, _ := net.SplitHostPort(l.Addr().String())
 	cmd := testtmp.Guard(exec.Command(bin, fmt.Sprintf("postgres://u@%s:%s/db?sslmode=disable", host, port)))
-	cmd.Stdin = strings.NewReader("SELECT c0\nSELECT c1\nSELECT c2\nSELECT c3\n")
+	cmd.Stdin = strings.NewReader("SELECT c0\nSELECT c1\nSELECT c2\nSELECT c3\nSELECT c4\n")
 	cmd.Env = append(os.Environ(), "PG_FRESH=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -544,12 +547,12 @@ func TestPgRowShape(t *testing.T) {
 	if len(got) != len(cases) {
 		t.Fatalf("%d answers, want %d:\n%s", len(got), len(cases), out)
 	}
-	for i, c := range cases[:3] {
+	for i, c := range cases[:4] {
 		if !strings.HasPrefix(got[i], "error ") {
 			t.Errorf("%s: got\n%swant an error", c.note, got[i])
 		}
 	}
-	if !strings.Contains(got[3], `Integer(n: 1), Text(s: "2")`) {
-		t.Errorf("a well formed row: got\n%s", got[3])
+	if !strings.Contains(got[4], `Integer(n: 1), Text(s: "2")`) {
+		t.Errorf("a well formed row: got\n%s", got[4])
 	}
 }
