@@ -863,19 +863,30 @@ pub fn task_free(t: Int) {
   obj.free_obj(t)
 }
 
+/// Unlinks scope s's nodes (its tasks' node, the ones s.cancel()
+/// replaced, its body's) as its close does: scope_free's for a scope
+/// freed unclosed (task #348).
+fn scope_unlink(s: Int) {
+  pool.node_unlink(ld(s, S_TASKS))
+  let old = ld(s, S_OLD)
+  for i in 0..ld4(s, S_NOLD) {
+    pool.node_unlink(ld(old, 8 * i))
+  }
+  pool.node_unlink(s + S_BODY)
+}
+
 /// A scope's (scope_free): its budget, its failed and faulted tasks, the
 /// node of its tasks and the ones s.cancel() replaced.
 pub fn scope_free(s: Int) {
-  // a scope freed unclosed (scope_orphan: an HTTP server's detached
-  // scope, its body below main's root) still hangs in the node tree:
-  // unlink its nodes as the close does, or a sibling's later unlink
-  // writes into the freed block (task #326; no-ops for a closed scope)
-  pool.node_unlink(ld(s, S_TASKS))
-  let old0 = ld(s, S_OLD)
-  for i in 0..ld4(s, S_NOLD) {
-    pool.node_unlink(ld(old0, 8 * i))
+  // the invariant (task #348): no scope is freed while its nodes hang
+  // in the node tree, or a sibling's later unlink writes into the freed
+  // block (task #326). The close unlinks the body's node last, so one
+  // test of its parent covers them all; a scope freed unclosed
+  // (scope_orphan: an HTTP server's detached scope, its body below
+  // main's root) leaves the tree here as the close would
+  if ld(s, S_BODY + layout.N_PARENT) != 0 {
+    scope_unlink(s)
   }
-  pool.node_unlink(s + S_BODY)
   budget.release(ld(s, S_BUD))
   if ld(s, S_FAIL) != 0 {
     h_release(ld(s, S_FAIL))

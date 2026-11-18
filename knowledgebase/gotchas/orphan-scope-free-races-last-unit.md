@@ -48,5 +48,12 @@ first (a no-op for a closed scope). Test: internal/llvm
 TestFreeCheckOrphanScope (`xo test --check=free,guard` on the same
 programs).
 
+Task #348 (owner, 2026-11-18: guard the class, not the instance) makes
+it an invariant of `scope_free`: no scope is freed while its body node
+is linked. One test of the body node's parent (the close unlinks it
+last) costs 2 instructions a closed scope (callgrind, 200,000 scopes in
+the arm64 container: 472.91M on main, 473.31M with the test, 476.1M
+with #326's unconditional unlink).
+
 A runtime record that sits in a shared intrusive list must leave the
 list in its free function, not only on its normal close path.
