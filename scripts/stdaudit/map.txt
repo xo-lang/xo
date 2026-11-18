@@ -868,6 +868,8 @@ image.NewGray = std/image.Image
 image.* = not planned: Point arithmetic, Uniform, Alpha and NYCbCrA layouts, format registration and subsample ratio constants (std/image's Image and Rect)
 
 # database/sql: std/sql (Db, Tx, Row, Rows)
+sql.behavior.timestamp_wide = gap: a Postgres or MySQL timestamp outside Time (1677-09-21 to 2262-04-11) is Text, where database/sql gives a time.Time; decision 0614 (b) asks a Civil reader (Row.civil) for these columns
+time.behavior.range = not planned: Time is int64 nanoseconds from 1970 (1677-09-21 to 2262-04-11), Go's covers years 1 to 9999 and more; decision 0614 keeps it and gives wider years to Civil (time.parse_civil, Civil.unix)
 sql.DB = std/sql.Db
 sql.DB.Query = std/sql.Db.query
 sql.DB.QueryContext = std/sql.Db.query

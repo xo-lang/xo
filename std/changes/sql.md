@@ -9,6 +9,21 @@
 - Test: std/native/llrt/mysqlwire_test.xo "a length of Int's largest past the start is a short packet, not an overflow (task #352)"
 - Shipped in: not yet released
 
+## 2026-11-18: docs: a timestamp outside Time is Text
+
+- Kind: docs
+- Commit: this push
+- Found by: stdproven fuzz sql, TestPgFuzz seed 43 case 472 (a byte changed 2024 to 2824), task #90
+- Go reference: database/sql and jackc/pgx v5.11.0 read any year into a time.Time
+- Test: internal/stdtest TestPgTimePastTime
+- Timing: none
+
+A Postgres `timestamp` or `timestamptz` value outside a `Time` (about
+1677-09-21 to 2262-04-11; decision 0614) comes back as `Text`, the server's
+text, and `Row.time` refuses it; Go gives a `time.Time`. spec/std.md 10.9
+says so. A `Civil` reader for these columns (decision 0614 (b)) is still to
+come.
+
 ## 2026-11-18: fix: Postgres refuses a second RowDescription before the statement's CommandComplete
 
 - Kind: fix
