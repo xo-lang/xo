@@ -1141,19 +1141,26 @@ func stress(args []string) error {
 		if out, err := exec.Command(filepath.Join("bin", "xo"), "build", "--backend="+b, "-o", bin, dir).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("xo build --backend=%s %s: %v\n%s", b, dir, err, out)
 		}
-		t0 := time.Now()
-		out, err := exec.Command(bin, strconv.Itoa(*minutes), strconv.Itoa(*tasks)).CombinedOutput()
-		text := strings.TrimSpace(string(out))
-		last := text[strings.LastIndex(text, "\n")+1:]
-		if err != nil || !strings.HasSuffix(last, ", pass") {
-			if len(text) > 20000 {
-				text = text[len(text)-20000:]
+		lines, err := twoOfThree(func(i int) (string, bool, error) {
+			t0 := time.Now()
+			out, err := exec.Command(bin, strconv.Itoa(*minutes), strconv.Itoa(*tasks)).CombinedOutput()
+			text := strings.TrimSpace(string(out))
+			last := summaryLine(text)
+			memFail := memOnly(last)
+			if !memFail && (err != nil || !strings.HasSuffix(last, ", pass")) {
+				if len(text) > 20000 {
+					text = text[len(text)-20000:]
+				}
+				return "", false, fmt.Errorf("%s stress run %d: %v\n%s", b, i, err, text)
 			}
-			return "", fmt.Errorf("%s stress: %v\n%s", b, err, text)
+			line := fmt.Sprintf("- %s run %d: %s, %s", b, i, last, time.Since(t0).Round(time.Second))
+			fmt.Println(line)
+			return line, memFail, nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("%s: %v", b, err)
 		}
-		line := fmt.Sprintf("- %s: %s, %s", b, last, time.Since(t0).Round(time.Second))
-		fmt.Println(line)
-		return line, nil
+		return strings.Join(lines, "\n"), nil
 	}
 	// decision 0638: the same program built with --check=all, so a use
 	// after free or an overrun faults and a block still live at exit
@@ -1183,10 +1190,39 @@ func stress(args []string) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "kind: stress\nmodule: %s\nresult: pass\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, commit, src, time.Now().UTC().Format("2006-01-02"), host)
 	fmt.Fprintf(&b, "command: go run ./scripts/stdproven stress -minutes %d -tasks %d -backends %s -check-minutes %d -host %q %s\n", *minutes, *tasks, *backends, *checkMin, host, module)
-	fmt.Fprintf(&b, "measure: %d tasks for %d min on each of %s, 0 mismatches, 0 faults, memory under 10%% growth after 5 min%s, %s\n\n", *tasks, *minutes, *backends, checkNote, time.Since(start).Round(time.Second))
+	fmt.Fprintf(&b, "measure: %d tasks for %d min on each of %s, 0 mismatches, 0 faults, memory under 10%% growth from minutes 15 to 17 to the last 3 on 2 of 3 runs a backend (decision 0717)%s, %s\n\n", *tasks, *minutes, *backends, checkNote, time.Since(start).Round(time.Second))
 	fmt.Fprintf(&b, "Stress evidence (decision 0616): the program %s, every result checked against Go's answer, the resident set sampled every 10 s.\n\n", dir)
 	b.WriteString(strings.Join(lines, "\n") + "\n")
 	return os.WriteFile(filepath.Join("std", "evidence", module, "stress.md"), []byte(b.String()), 0o644)
+}
+
+// twoOfThree: decision 0717's memory bar. run does run i (1 to 3) and
+// returns its evidence line and whether it failed on memory alone (every
+// result right); an error (a mismatch, a fault, a crash) fails at once.
+// It stops after 2 runs pass the memory bar, or fails after 2 do not;
+// every run's line is kept, failures included.
+func twoOfThree(run func(i int) (string, bool, error)) ([]string, error) {
+	var lines []string
+	pass, fail := 0, 0
+	for i := 1; i <= 3; i++ {
+		line, memFail, err := run(i)
+		if err != nil {
+			return lines, err
+		}
+		lines = append(lines, line)
+		if memFail {
+			fail++
+		} else {
+			pass++
+		}
+		if pass == 2 {
+			return lines, nil
+		}
+		if fail == 2 {
+			break
+		}
+	}
+	return lines, fmt.Errorf("memory grew on %d of %d runs (decision 0717 needs 2 of 3 to pass):\n%s", fail, len(lines), strings.Join(lines, "\n"))
 }
 
 // stressCheck runs the stress program built with --check=all (decision
@@ -1581,6 +1617,12 @@ var cleanCount = regexp.MustCompile(` (0 (mismatches|wrong|wrong [a-z]+|identiti
 // (every result right), which the task churn judges instead (decision
 // 0616 section 2a).
 func raceMemOnly(last string) bool {
+	return memOnly(last)
+}
+
+// memOnly: a stress summary that failed on memory alone, every result
+// right (decision 0717 lets 1 of 3 such runs pass the kind).
+func memOnly(last string) bool {
 	return strings.HasSuffix(last, ", FAIL (memory grew)") && cleanCount.MatchString(last)
 }
 

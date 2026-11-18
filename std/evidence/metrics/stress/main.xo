@@ -6,7 +6,7 @@
 // tests that use the system (a pid file, a failing send over the network,
 // the process collectors). A background task samples the resident set
 // every 10 s (Linux /proc/self/status). Pass: no mismatch, no fault, and
-// the resident set at the end within 10% or 4 MB of its sample at 5
+// the resident set at the end within 10% or 4 MB of its sample at 15
 // minutes.
 //
 //   main [MINUTES (30)] [TASKS (64)]
@@ -96,7 +96,8 @@ fn main(os: Os) ! {
   let clock = os.clock
   let start = clock.now()
   let end = start + Duration.from_secs(Float(minutes * 60))
-  let mark = start + Duration.from_secs(Float(if minutes >= 10 { 300 } else { minutes * 30 }))
+  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run
+  let mark = start + Duration.from_secs(Float(mark_s))
   let none_yet: List[Int] = []
   let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak): decision 0616, medians since 2026-11-17
   let ops = scope s {
@@ -138,7 +139,7 @@ fn main(os: Os) ! {
   let (rss_after, peak) = samples.with_read(fn(t) { t })
   let (at_mark, last) = rss_medians(rss_after)
   let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
-  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes 5 to 7), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes ${mark_s / 60} to ${mark_s / 60 + 2}), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
   let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
   os.stdio.println("metrics stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
   if !ok {
@@ -638,7 +639,7 @@ fn check_14(os: Os) -> Str {
 
 /// The resident set early and late, in KiB (decision 0616 as amended
 /// 2026-11-17, owner): the median of the samples in the 2 minutes after
-/// the mark (minutes 5 to 7 of a 30 minute run) and the median of the last
+/// the mark (minutes 15 to 17 of a 30 minute run, decision 0717) and the median of the last
 /// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
 /// short run takes a third of its samples each. (0, 0) when none.
 fn rss_medians(xs: List[Int]) -> (Int, Int) {

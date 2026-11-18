@@ -576,3 +576,41 @@ func TestDefaultBackends(t *testing.T) {
 		}
 	}
 }
+
+// TestTwoOfThree: decision 0717's memory bar. Two passes end it with no
+// third run; one memory failure takes a third run, recorded with the
+// others; two memory failures fail the kind; a mismatch fails at once.
+func TestTwoOfThree(t *testing.T) {
+	for _, c := range []struct {
+		runs  string // per run: p pass, m memory only, e error
+		lines int
+		ok    bool
+	}{
+		{"pp", 2, true},
+		{"mpp", 3, true},
+		{"pmp", 3, true},
+		{"pmm", 3, false},
+		{"mm", 2, false},
+		{"pe", 1, false},
+		{"mpe", 2, false},
+	} {
+		n := 0
+		lines, err := twoOfThree(func(i int) (string, bool, error) {
+			if i != n+1 || n >= len(c.runs) {
+				t.Fatalf("%s: run %d after %d runs", c.runs, i, n)
+			}
+			r := c.runs[n]
+			n++
+			if r == 'e' {
+				return "", false, errors.New("2 mismatches")
+			}
+			return fmt.Sprintf("- arm64 run %d", i), r == 'm', nil
+		})
+		if n != len(c.runs) || len(lines) != c.lines || (err == nil) != c.ok {
+			t.Errorf("%s: %d runs, lines %q, err %v", c.runs, n, lines, err)
+		}
+	}
+	if !memOnly("websocket stress: 9 messages by 64 tasks in 30 min, 0 mismatches, rss 200 MB at the mark (median of minutes 15 to 17), 240 MB at the end (median of the last 3 minutes; 20%), peak 241 MB, FAIL (memory grew)") {
+		t.Error("a memory-only failure is not memOnly")
+	}
+}

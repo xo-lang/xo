@@ -14,11 +14,16 @@ import (
 
 // TestStressRssMedians: the stress programs' memory rule (decision 0616 as
 // amended 2026-11-17, owner): every std/evidence/*/stress/main.xo holds the
-// same rss_medians, and it compares the median of minutes 5 to 7 with the
-// median of the last 3 minutes. amqp's llvm run (2026-11-17, host 2) failed
+// same rss_medians, and it compares the median of minutes 15 to 17 (decision
+// 0717, owner 2026-11-18; minutes 5 to 7 before) with the median of the
+// last 3 minutes. Every program also
+// takes its mark at minute 15 of a 30 minute run. amqp's llvm run (2026-11-17, host 2) failed
 // the old rule on one dip at the mark (211 MB, then a 217 to 230 MB
 // plateau, 12% from the dip, about 6% from the plateau); a single dip now
 // passes, and steady growth still fails.
+// stressMark0717: the mark every stress program takes (decision 0717).
+const stressMark0717 = "  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run\n  let mark = start + Duration.from_secs(Float(mark_s))\n"
+
 func TestStressRssMedians(t *testing.T) {
 	root, err := xotool.Root()
 	if err != nil {
@@ -39,6 +44,9 @@ func TestStressRssMedians(t *testing.T) {
 		if i < 0 || !strings.Contains(s, "let (at_mark, last) = rss_medians(") {
 			t.Errorf("%s: no rss_medians (decision 0616's median rule)", p)
 			continue
+		}
+		if !strings.Contains(s, stressMark0717) {
+			t.Errorf("%s: its mark is not decision 0717's (minute 15 of a 30 minute run)", p)
 		}
 		h := s[i:]
 		if helper == "" {
