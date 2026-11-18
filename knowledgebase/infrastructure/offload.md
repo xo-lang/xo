@@ -866,8 +866,12 @@ golang.org/x/net v0.62.0 (scripts/stdcorpus/httpproxyoracle,
 TestHttpproxyFuzz) are on all four hosts since 2026-11-18 (the fuzz:sql
 and fuzz:httpproxy runs before failed or skipped on host 2 for want of
 them: "module lookup disabled by GOPROXY=off").
+github.com/mattn/go-sqlite3 v1.14.53 (scripts/stdcorpus/sqliteoracle,
+TestSqliteFuzz of fuzz:sqlite; cgo, so the host's C compiler builds SQLite)
+is on hosts 2 and 3 since 2026-11-18 (the first fuzz:sqlite run on host 3
+failed at seed 2 for want of it); hosts 1 and 4 and the amd64 host lack it.
 Last verified: 2026-11-18 (hosts 1 to 4: both x/crypto versions, pgx v5.11.0,
-gorilla/websocket v1.5.3, the mysql and x/net references build offline)
+gorilla/websocket v1.5.3, the mysql and x/net references build offline); hosts 2 and 3: the sqlite oracle builds offline with CGO_ENABLED=1
 
 ## The Windows arm64 VM (owner, 2026-11-09)
 
