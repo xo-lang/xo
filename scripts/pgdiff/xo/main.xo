@@ -4,12 +4,19 @@
 use std/sql
 use std/time
 
+/// The first line of a server's message, "" for an empty one (an
+/// ErrorResponse with no fields, TestPgEmptyError).
+fn first_line(s: Str) -> Str {
+  let ls = s.lines()
+  if ls.is_empty() { "" } else { ls[0] }
+}
+
 fn err_line(e: sql.SqlErr) -> Str {
   match e {
-    Constraint(msg, code, _) => "error ${code} ${msg.lines()[0]}"
-    Syntax(msg) => "error 42601 ${msg.lines()[0]}"
+    Constraint(msg, code, _) => "error ${code} ${first_line(msg)}"
+    Syntax(msg) => "error 42601 ${first_line(msg)}"
     NoTable(name) => "error 42P01 relation \"${name}\" does not exist"
-    Server(code, msg) => "error ${code} ${msg.lines()[0]}"
+    Server(code, msg) => "error ${code} ${first_line(msg)}"
     other => "error ${other}"
   }
 }

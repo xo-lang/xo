@@ -368,6 +368,21 @@ func TestPgInvalidName(t *testing.T) {
 	pgfDiff(t, cases, []string{"arm64"}, 0)
 }
 
+// TestPgEmptyError: an ErrorResponse with no fields (TestPgFuzz seed 6
+// case 909: a DataRow's type byte changed to 'E') is "error  " in both
+// clients; scripts/pgdiff's Xo client took the first line of an empty
+// message and faulted (task #152).
+func TestPgEmptyError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds pgx and the Xo client")
+	}
+	one := "1"
+	kinds := []pgfKind{pgfKinds[2]} // int4
+	desc := pgfRowDesc([]string{"c0"}, kinds, 1)
+	cases := []pgfCase{{msgs: [][]byte{desc, pgfDataRow([]*string{&one}), pgfMsg('E', []byte{0}), pgfReady}}}
+	pgfDiff(t, cases, []string{"arm64"}, 0)
+}
+
 // pgfDiff serves cases to the reference and to the Xo client on each
 // backend and fails on any case whose answers differ (a changed case's
 // refusal by Xo aside).
