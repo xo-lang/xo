@@ -1,6 +1,6 @@
 # 0616: The testing evidence for a Proven std module
 
-Status: Accepted (owner, 2026-11-12). Proposed by Xo Lang 3, 2026-11-12, at the lead's request; the owner set std maturity to Proven as the std track on 2026-11-12).
+Status: Accepted (owner, 2026-11-12); amended by 0708 (evidence may come from linux/amd64). Proposed by Xo Lang 3, 2026-11-12, at the lead's request; the owner set std maturity to Proven as the std track on 2026-11-12).
 
 ## Context
 
