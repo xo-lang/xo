@@ -433,9 +433,8 @@ func fuzz(args []string) error {
 	if dirty, _ := gitOut("status", "--porcelain", "--", "std", ":(exclude)std/evidence", "compiler", "internal/stdtest"); dirty != "" {
 		return fmt.Errorf("std, compiler or internal/stdtest has uncommitted changes: evidence names a commit:\n%s", dirty)
 	}
-	out := filepath.Join("std", "evidence", module, "fuzz.md")
-	prev, _ := os.ReadFile(out)
-	st := fuzzResume(string(prev), src)
+	dir := filepath.Join("std", "evidence", module)
+	st := fuzzResume(fuzzPrev(dir), src)
 	if st.shards > 0 {
 		fmt.Printf("stdproven fuzz: resuming %s from seed %d after %d shard(s), %s\n", module, st.first, st.shards, st.prior.Round(time.Second))
 	}
@@ -448,16 +447,68 @@ func fuzz(args []string) error {
 	if host == "" {
 		host = runtime.GOOS + "/" + runtime.GOARCH
 	}
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(out, []byte(f.evidence(st, module, commit, src, host, *hours, *hostLabel, time.Now())), 0o644); err != nil {
+	if err := fuzzWrite(dir, f.evidence(st, module, commit, src, host, *hours, *hostLabel, time.Now()), st.pass); err != nil {
 		return err
 	}
 	if !st.pass {
 		fmt.Printf("stdproven fuzz: %s partial at seed %d (%s of %s): run again to resume\n", module, st.seed-1, st.prior.Round(time.Second), f.limit)
 	}
 	return nil
+}
+
+// A partial never replaces a pass (#152, lead 2026-11-18: a 385,000-case
+// amqptest shard replaced the passing 1,000,000-case fuzz.md in bfd76fd9f
+// and the module fell from Proven to Early). While fuzz.md says pass, a
+// partial goes to fuzz-partial.md (stdcov reads fuzz.md only), which the
+// next shard resumes; the pass that ends the run writes fuzz.md and
+// removes fuzz-partial.md.
+
+// fuzzPrev is the earlier evidence a fuzz in dir resumes from:
+// fuzz-partial.md when there is one, else fuzz.md.
+func fuzzPrev(dir string) string {
+	if b, err := os.ReadFile(filepath.Join(dir, "fuzz-partial.md")); err == nil {
+		return string(b)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "fuzz.md"))
+	return string(b)
+}
+
+// fuzzWrite writes a fuzz's evidence text in dir: a pass to fuzz.md, a
+// partial to fuzz.md unless that holds a pass.
+func fuzzWrite(dir, text string, pass bool) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	main := filepath.Join(dir, "fuzz.md")
+	part := filepath.Join(dir, "fuzz-partial.md")
+	if pass {
+		if err := os.WriteFile(main, []byte(text), 0o644); err != nil {
+			return err
+		}
+		if err := os.Remove(part); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	out := main
+	if b, err := os.ReadFile(main); err == nil && fuzzHeader(string(b))["result"] == "pass" {
+		out = part
+	}
+	return os.WriteFile(out, []byte(text), 0o644)
+}
+
+// fuzzHeader is an evidence file's header lines (key: value, up to the
+// first blank line).
+func fuzzHeader(text string) map[string]string {
+	h := map[string]string{}
+	for _, l := range strings.Split(text, "\n") {
+		k, v, ok := strings.Cut(l, ":")
+		if strings.TrimSpace(l) == "" || !ok {
+			break
+		}
+		h[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return h
 }
 
 // fuzzState is a fuzz's progress: what earlier shards did (fuzzResume) and

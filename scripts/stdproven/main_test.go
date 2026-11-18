@@ -356,6 +356,54 @@ func TestFuzzShardsMerge(t *testing.T) {
 	}
 }
 
+// TestFuzzPartialKeepsPass (#152, lead 2026-11-18: a 385,000-case
+// partial amqptest shard replaced the passing 1,000,000-case fuzz.md in
+// bfd76fd9f and the module fell from Proven to Early): a partial never
+// replaces a pass. It goes to fuzz-partial.md, which the next shard
+// resumes; the pass that ends the run writes fuzz.md and removes it.
+func TestFuzzPartialKeepsPass(t *testing.T) {
+	dir := t.TempDir()
+	old := "kind: fuzz\nresult: pass\nsource: src0\nseeds: 2 to 201\n\n- TestXFuzz seed 201\n"
+	if err := os.WriteFile(filepath.Join(dir, "fuzz.md"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) string {
+		b, _ := os.ReadFile(filepath.Join(dir, name))
+		return string(b)
+	}
+	part := "kind: fuzz\nresult: partial\nsource: src1\nseeds: 202 to 278\nshards: 1\n\n- TestXFuzz seed 278\n"
+	if err := fuzzWrite(dir, part, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := read("fuzz.md"); got != old {
+		t.Errorf("a partial replaced the pass:\n%s", got)
+	}
+	if got := read("fuzz-partial.md"); got != part {
+		t.Errorf("fuzz-partial.md holds %q, want the partial", got)
+	}
+	if st := fuzzResume(fuzzPrev(dir), "src1"); st.first != 202 || st.seed != 279 || st.shards != 1 {
+		t.Errorf("the next shard does not resume the partial: %+v", st)
+	}
+	pass := "kind: fuzz\nresult: pass\nsource: src1\nseeds: 202 to 401\n\n- TestXFuzz seed 401\n"
+	if err := fuzzWrite(dir, pass, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := read("fuzz.md"); got != pass {
+		t.Errorf("the pass did not replace fuzz.md:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "fuzz-partial.md")); err == nil {
+		t.Error("fuzz-partial.md stays after the pass")
+	}
+	// with no pass yet, a partial is fuzz.md as before (the shard loop commits it)
+	d2 := t.TempDir()
+	if err := fuzzWrite(d2, part, false); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(d2, "fuzz.md")); string(b) != part {
+		t.Errorf("a first partial went elsewhere: %q", b)
+	}
+}
+
 // TestRunSteps (#152): in parallel every step runs at once (each waits for
 // all to start), the lines keep the steps' order, and an error is the
 // first step's in that order.
