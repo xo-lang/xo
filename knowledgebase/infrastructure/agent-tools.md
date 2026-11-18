@@ -313,7 +313,9 @@ yourself.
   2026-11-16; `MAINWATCH_LOAD_MAX`, `_WAIT`, `_POLL`). At every wake and
   every 30 minutes of a wait it runs the installed diskguard.sh (Go's build
   cache trimmed by age under 200 GB free, an xw `disk.low` event under 100;
-  trims and alerts in notes/lead/diskguard.log). Each loop writes a
+  trims and alerts in notes/lead/diskguard.log; scripts/lead/diskcap.sh,
+  task #303, keeps each pile under a cap: dry run until the owner OKs
+  `--real`). Each loop writes a
   heartbeat at every wait (`~/xo-lead/xw/beat/NAME`: due epoch and what
   it waits on), and xw raises `loop-stale` when one is overdue. Stop a
   session's copy before installing (mainwatch2.sh in the lead's session;
