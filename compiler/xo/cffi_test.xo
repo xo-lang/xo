@@ -11,3 +11,17 @@ test "a failed adapter compile names the header and the C declaration" {
   expect(adapter_note("/w/prog/nmc.c", data, "/w/prog/nmc.c:3:1: error: x\n")) == ""
   expect(adapter_note(src, data, "ld: error\n")) == ""
 }
+
+test "--race compiles vendored third-party C without ThreadSanitizer, Xo's own C with it (decision 0715)" {
+  let race = ["--target=aarch64-linux-gnu", "-fsanitize=thread", "-mllvm", "-tsan-instrument-func-entry-exit=0", "-O2"]
+  let plain = ["--target=aarch64-linux-gnu", "-O2"]
+  // SQLite's amalgamation, vendored unchanged: its WAL index reads are benign races by design
+  expect(c_src_flags("/x/std/native/sqlite/sqlite3.c", race)) == plain
+  expect(c_src_flags("std/native/sqlite/sqlite3.c", race)) == plain
+  // Xo's own adapter beside it, a user's C, and the generated adapters stay instrumented
+  expect(c_src_flags("/x/std/native/sqlite/xo_sqlite.c", race)) == race
+  expect(c_src_flags("/home/u/app/sqlite3.c", race)) == race
+  expect(c_src_flags("/c/build/arm64/w-1/cffi/xo_c_nmc_e4.c", race)) == race
+  // a build without --race is unchanged
+  expect(c_src_flags("/x/std/native/sqlite/sqlite3.c", plain)) == plain
+}

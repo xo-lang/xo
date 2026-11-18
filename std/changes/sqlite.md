@@ -18,6 +18,21 @@ in a transaction that holds no lock yet (sqlite3_txn_state is SQLITE_TXN_NONE) n
 gate too. A transaction that has already read or written still steps outside it: its locks may be
 what the queue's head waits for.
 
+## 2026-11-18: behavior: --race leaves the SQLite amalgamation uninstrumented
+
+- Kind: behavior
+- Commit: this push
+- Found by: task #152 (xw-1's std/sqlite race evidence on linux/arm64 host 3): ThreadSanitizer
+  reported SQLite's own WAL index read marks (walRestartHdr against walTryBeginRead), a benign
+  race by SQLite's design
+- Go reference: Go's race detector does not instrument cgo's C (mattn/go-sqlite3 the same)
+- Test: compiler/xo/cffi_test.xo "--race compiles vendored third-party C without
+  ThreadSanitizer, Xo's own C with it (decision 0715)"
+- Shipped in: not yet released
+
+A `--race` build compiles sqlite3.c without ThreadSanitizer (decision 0715); std/sqlite's Xo
+code and its C adapter xo_sqlite.c stay instrumented.
+
 ## 2026-11-18: fix: a writer beside busy writers gets its turn before its busy timeout
 
 - Kind: fix

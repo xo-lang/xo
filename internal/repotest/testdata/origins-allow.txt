@@ -134,3 +134,4 @@ std/native/llrt/cabi_wincrt.xo	/// _localtime64_s (SQLite's localtime modifier):
 std/native/llrt/windows.xo	/// zone, for cabi_wincrt.xo's _localtime64_s (SQLite's localtime
 std/htmlparse.xo	//webtechs//dtd mozilla html 2.0//",
 std/htmlparse.xo	//webtechs//dtd mozilla html//",
+compiler/xo/cffi.xo	/// ThreadSanitizer reports inside one is not Xo's to fix. SQLite's WAL index reads its read

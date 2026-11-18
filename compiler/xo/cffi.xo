@@ -122,6 +122,39 @@ fn c_inputs(os: Os, c: check.Checker, dir: Str, std: Str, tgoos: Str, tgoarch: S
 /// directory, as the Xo code's DWARF does, so a binary carries no path of
 /// the machine that built it. The second result is the first failure's
 /// output, "" when every compile succeeded.
+/// The vendored third-party C sources (decision 0715), by the end of their path: copied
+/// unchanged from their projects (the directory's README names the Origin), so a race that
+/// ThreadSanitizer reports inside one is not Xo's to fix. SQLite's WAL index reads its read
+/// marks before it locks and checks them again after, a benign race by its design.
+const THIRD_PARTY_C = ["/native/sqlite/sqlite3.c"]
+
+/// The C compile flags for source s: under --race a vendored third-party source drops
+/// -fsanitize=thread and its `-mllvm -tsan-*` options, as Go's race detector leaves cgo's C
+/// uninstrumented (decision 0715); every other source, Xo's own adapters and llrt among them,
+/// keeps them.
+fn c_src_flags(s: Str, cflags: List[Str]) -> List[Str] {
+  let p = if s.starts_with("/") { s } else { "/${s}" }
+  if !THIRD_PARTY_C.any(fn(x) { p.ends_with(x) }) {
+    return cflags
+  }
+  var out: List[Str] = []
+  var i = 0
+  while i < cflags.len() {
+    let f = cflags[i]
+    if f == "-fsanitize=thread" {
+      i += 1
+      continue
+    }
+    if f == "-mllvm" && i + 1 < cflags.len() && cflags[i + 1].starts_with("-tsan-") {
+      i += 2
+      continue
+    }
+    out.push(f)
+    i += 1
+  }
+  out
+}
+
 fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim: Bool) -> (List[Str], Str) {
   var out: List[Str] = []
   // xo:allow XO0903 the working directory from $PWD when getcwd fails
@@ -140,7 +173,8 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
       Ok(_) => {}
       Err(e) => return ([], "${e}\n")
     }
-    var args = cflags + ["-g", "-O2", "-c", s]
+    let cf = c_src_flags(s, cflags)
+    var args = cf + ["-g", "-O2", "-c", s]
     // the key names the source by its file name under trim: the
     // generated sources (xo_buildinfo.c, the adapters) are written in
     // each build's own directory, which the object does not record
@@ -159,7 +193,7 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
       // -ffile-prefix-map, not clang's -fdebug-compilation-dir, which gcc
       // (linux's cc) rejects
       args = args + ["-ffile-prefix-map=${cwd}=.", "-ffile-prefix-map=${sd}=${rel}"]
-      kargs = cflags + ["-g", "-O2", "-c", "${rel}/${base_name(s)}", "cwd=."]
+      kargs = cf + ["-g", "-O2", "-c", "${rel}/${base_name(s)}", "cwd=."]
     }
     let key = crypto.sha256("c_objects v3\n${kargs.join("\x00")}\n".bytes() + data).to_hex()
     let obj = "${cdir}/${base_name(s).trim_suffix(".c")}-${key[0..16]}.o"

@@ -3827,7 +3827,10 @@ natively for the deterministic scheduler (7.4, decision 0350). `--race` keeps th
 native backend where a ThreadSanitizer runtime ships for the target
 (darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64)
 and otherwise
-takes the LLVM backend's (decision 0273 addendum). Contract fuzzing (9.2) runs on every backend
+takes the LLVM backend's (decision 0273 addendum). Its `use c` sources are
+instrumented too, except the vendored third-party C that std ships (SQLite's
+amalgamation, under std/sqlite), which is compiled without ThreadSanitizer as Go's race
+detector leaves cgo's C: a race inside it is not reported (decision 0715). Contract fuzzing (9.2) runs on every backend
 (decision 0250): the same targets, cases, and seeds, the same tests named
 `contract fuzz: MODULE.F` (which `--run` matches like any test name), and
 the same regression tests; a target whose generated native test does not
