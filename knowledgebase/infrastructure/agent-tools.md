@@ -1125,7 +1125,7 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   Every --ab runs 3 rounds, small effects and "no slower" claims too
   (owner, 2026-10-31: "I thought all tests were dropped to 3?"; no
   10-round confirmations); report a 3-round verdict on an effect under
-  about 3% as such. `xo bench --ab` itself defaults to 3 rounds since 2026-11-01. A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
+  about 3% as such. `xo bench --ab` itself defaults to 3 rounds since 2026-11-01. Since 2026-11-18 (task #372, lead decision #162) an odd count runs one more round, so 3 runs 4, each side first in 2: with 3, one side ran first twice, and a second-run-slower effect read as a speedup of the other; a wall_ms verdict also needs both medians at 100 ms or more ("too short"). A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
   the run stops once wall, CPU and max RSS (or `--metrics`) are each
   decided better, worse, or the same within 1% at two looks in a row,
   each look at alpha over the number of looks; the output says "stopped

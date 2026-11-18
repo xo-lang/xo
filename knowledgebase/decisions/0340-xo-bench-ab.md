@@ -189,3 +189,13 @@ that 3 rounds would have answered. The default is now 3, as ab-host.sh's has bee
 --early's rule holds: its first look is round 5 and it needs two looks in a row,
 so it can stop only a run above 5 rounds, and `--early` alone runs 3 rounds and
 never stops early. A longer run still names `--rounds`.
+
+Addendum (2026-11-18, task #372, from xw-1 #347's null A/B): the order
+alternated by round number with the warmup counted, so the default 3
+rounds ran B first in 2 of them, and a "the second run is slower" effect
+(5% on a 17 ms netip program) read as a B speedup. The order now
+alternates over the measured rounds from A first, and an odd `--rounds`
+runs one more round (3 runs 4) so each side runs first equally often;
+`--early` stops only after an even count. A wall_ms verdict needs both
+medians at 100 ms or more (stats.xo MIN_WALL_MS, "too short"), as
+cpu_ms's "too coarse".

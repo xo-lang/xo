@@ -1253,12 +1253,16 @@ codec), hooks in `caps.go`, `http.go`, `sched.go`, `main.go`, `stop.go`,
 `xo bench --ab [flags] A [B] [-- ARGS...]` (decision 0340,
 compiler/cli/bench, 2026-10-22) runs two programs, or one program under
 two settings (`--env-a/--env-b`, `--args-a/--args-b`), in interleaved
-rounds (3 by default, `--rounds`; the order alternates each round) and prints per metric each
+rounds (3 by default, `--rounds`; an odd count runs one more round, so
+the default runs 4, and the order alternates over the measured rounds
+starting with A: task #372, 2026-11-18, each side first equally often) and prints per metric each
 side's median and interquartile spread, the ratio B/A with a 95%
 percentile bootstrap interval over the rounds, and a verdict (better,
 worse, within noise; too few rounds under 3 (decision 0340's 2026-10-31 addendum); no ratio when A's median
 is 0 and B's is not, both 0 is ratio 1; too coarse when both medians are
-under 10x the metric's resolution, cpu_ms being 10 ms). Metrics: wall_ms, cpu_ms,
+under 10x the metric's resolution, cpu_ms being 10 ms; too short when both
+wall_ms medians are under 100 ms, stats.xo MIN_WALL_MS, task #372: loop the
+work to 100 ms or more per run). Metrics: wall_ms, cpu_ms,
 cpu_us_per_op, instructions, instructions_per_op, cycles, cycles_per_op and
 ipc (instructions per cycle, higher is better; these from macOS `time -l`'s
 "instructions retired" and "cycles elapsed" lines, 2026-10-26; on Linux

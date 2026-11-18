@@ -29,6 +29,8 @@ pub fn usage() -> Str {
 
 struct Opts {
   rounds: Int = 3
+  /// the --rounds given when it was odd (balanced_rounds made it even), else 0
+  asked: Int = 0
   warmup: Int = 1
   env_a: List[Str] = []
   env_b: List[Str] = []
@@ -179,7 +181,29 @@ fn parse_opts(args: List[Str]) -> Opts ! Str {
   if o.rounds < 1 {
     return Err("--rounds must be at least 1")
   }
+  let even = balanced_rounds(o.rounds)
+  if even != o.rounds {
+    o.asked = o.rounds
+    o.rounds = even
+  }
   o
+}
+
+/// balanced_rounds is n rounded up to even (task #372, 2026-11-18): the
+/// order alternates per measured round, so an odd count runs one side
+/// first once more than the other, and a "the second run is slower"
+/// effect (null.sh's netip: 9 of 10) read as a change of the side run
+/// first less often. The default 3 runs 4.
+pub fn balanced_rounds(n: Int) -> Int {
+  if n % 2 == 0 { n } else { n + 1 }
+}
+
+/// a_first_at is whether A runs first in round n (warmup rounds
+/// included, warmup of them): measured rounds alternate from A first,
+/// counted from the first measured round, not round 0 (task #372: with
+/// one warmup, n % 2 ran B first in 2 of 3 measured rounds).
+pub fn a_first_at(n: Int, warmup: Int) -> Bool {
+  if n < warmup { (warmup - n) % 2 == 0 } else { (n - warmup) % 2 == 0 }
 }
 
 /// The 1 minute load average (0.0 when unreadable).
@@ -632,7 +656,9 @@ fn rows_of(o: Opts, rounds: List[Round]) -> List[Row] {
     let mb = median(xb)
     var vd = verdict(rt, xa.len(), !higher_better(k))
     let src = if k == "cpu_us_per_op" { "cpu_ms" } else { k }
-    if vd != "too few rounds" && coarse(if src == k { ma } else { cpu_med_a }, if src == k { mb } else { cpu_med_b }, resolution(src)) {
+    if vd != "too few rounds" && k == "wall_ms" && too_short(ma, mb) {
+      vd = "too short"
+    } else if vd != "too few rounds" && coarse(if src == k { ma } else { cpu_med_a }, if src == k { mb } else { cpu_med_b }, resolution(src)) {
       vd = "too coarse"
     }
     rows.push(Row{name: k, n: xa.len(), med_a: ma, med_b: mb, spread_a: spread_pct(xa), spread_b: spread_pct(xb), r: rt, verdict: vd, pos_first: same_pos(rounds, k, true), pos_second: same_pos(rounds, k, false)})
@@ -659,7 +685,7 @@ fn early_key(o: Opts, used: List[Round]) -> Str {
     if !watch.contains(r.name) {
       continue
     }
-    if r.verdict == "too coarse" {
+    if r.verdict is "too coarse" | "too short" {
       continue
     }
     let d = decided(r.r, !higher_better(r.name))
@@ -796,6 +822,9 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
   if !shared.is_empty() {
     os.stdio.eprintln("xo bench: ${shared}")
   }
+  if o0.asked > 0 && !o0.json {
+    os.stdio.eprintln("xo bench: --rounds=${o0.asked} runs ${o0.rounds} rounds: an even count runs each side first equally often")
+  }
   var o = o0
   o.base_load = load1(os, h.goos)
   let aa = side_args(o, true)
@@ -805,7 +834,7 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
   var last_key = ""
   var stopped = ""
   for n in 0..(o.warmup + o.rounds) {
-    let a_first = n % 2 == 0
+    let a_first = a_first_at(n, o.warmup)
     var ra: Sample = Sample{vals: {}, ok: false, why: ""}
     var rb: Sample = Sample{vals: {}, ok: false, why: ""}
     var la = 0.0
@@ -853,7 +882,8 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
           }
         }
         let k = early_key(o, u)
-        if !k.is_empty() && k == last_key {
+        // stops only after an even count, the order balanced (task #372)
+        if !k.is_empty() && k == last_key && rounds.len() % 2 == 0 {
           stopped = "stopped early after ${rounds.len()} of ${o.rounds} rounds: ${k} at two looks in a row (per-look alpha ${fmt(early_alpha(o.alpha, o.rounds))})"
           break
         }

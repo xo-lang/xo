@@ -194,6 +194,18 @@ pub fn coarse(med_a: Float, med_b: Float, res: Float) -> Bool {
   med_a < lim && med_b < lim
 }
 
+/// MIN_WALL_MS is the shortest wall time a verdict is given for (task
+/// #372, 2026-11-18): under it a run's start (page faults, the cache, the
+/// scheduler) is a large share of the sample, and a null A/B of a 17 ms
+/// program (xw-1 #347, netip) moved 7.6% alone. Loop the work to 100 ms
+/// or more per run.
+pub const MIN_WALL_MS = 100.0
+
+/// too_short is true when both wall time medians are under MIN_WALL_MS.
+pub fn too_short(med_a: Float, med_b: Float) -> Bool {
+  med_a < MIN_WALL_MS && med_b < MIN_WALL_MS
+}
+
 /// resolution is the step of a metric's clock in its own unit: cpu_ms
 /// comes from /usr/bin/time (centiseconds), others are fine grained.
 pub fn resolution(name: Str) -> Float {

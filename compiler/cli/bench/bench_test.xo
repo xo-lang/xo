@@ -39,15 +39,16 @@ test "options" {
   expect(parse_opts(["--ab", "a"]).is_err())
   expect(parse_opts(["--ab", "--env-b=X=1", "a"]).is_ok())
   expect(parse_opts(["--ab", "--rounds=x", "a", "b"]).is_err())
-  // every --ab runs 3 rounds unless told otherwise (decision 0340)
+  // every --ab runs 3 rounds unless told otherwise (decision 0340),
+  // rounded up to even (task #372)
   match parse_opts(["--ab", "a", "b"]) {
-    Ok(o) => expect(o.rounds == 3)
+    Ok(o) => expect(o.rounds == 4 && o.asked == 3)
     Err(e) => expect(e == "")
   }
   expect(parse_opts(["--ab", "--bogus", "a", "b"]).is_err())
   match parse_opts(["--ab", "--rounds=7", "--env-a=K=V", "--args-b=-x 1", "p", "q", "--", "z"]) {
     Ok(o) => {
-      expect(o.rounds == 7 && o.env_a == ["K=V"] && o.args_b == ["-x", "1"] && o.common == ["z"] && o.progs == ["p", "q"])
+      expect(o.rounds == 8 && o.asked == 7 && o.env_a == ["K=V"] && o.args_b == ["-x", "1"] && o.common == ["z"] && o.progs == ["p", "q"])
     }
     Err(e) => expect(e == "")
   }
@@ -56,7 +57,7 @@ test "options" {
 test "a value flag takes its value as the next word" {
   match parse_opts(["--ab", "--rounds", "7", "--env-a", "K=V", "--args-b", "-x 1", "p", "q"]) {
     Ok(o) => {
-      expect(o.rounds == 7 && o.env_a == ["K=V"] && o.args_b == ["-x", "1"] && o.progs == ["p", "q"])
+      expect(o.rounds == 8 && o.env_a == ["K=V"] && o.args_b == ["-x", "1"] && o.progs == ["p", "q"])
     }
     Err(e) => expect(e == "")
   }
@@ -228,4 +229,54 @@ test "a shared back-end cache is warned about; a cache per side or off is not" {
   expect(shared_cache_note(one_off, "", "").is_empty()) == false
   let not_xo = parse_opts(["--ab", "a", "b", "--", "-n", "100"]).or_fault("valid flags")
   expect(shared_cache_note(not_xo, "", "")) == ""
+}
+
+// a null A/B (the same program on both sides) whose second run of a
+// round is 5% slower, as null.sh's netip (xw-1 #347): the rounds in the
+// order the loop runs them
+fn null_rounds(rounds: Int, warmup: Int) -> List[Round] {
+  var rs: List[Round] = []
+  for n in 0..(warmup + rounds) {
+    let af = a_first_at(n, warmup)
+    if n >= warmup {
+      rs.push(pos_round(if af { 200.0 } else { 210.0 }, if af { 210.0 } else { 200.0 }, af))
+    }
+  }
+  rs
+}
+
+test "a null A/B with a second-run-slower effect reports no change (task #372)" {
+  for asked in [3, 5, 7] {
+    match parse_opts(["--ab", "--rounds=${asked}", "a", "b"]) {
+      Ok(o) => {
+        let rs = null_rounds(o.rounds, o.warmup)
+        expect(rs.filter(fn(r: Round) { r.a_first }).len() * 2 == rs.len())
+        expect(rs[0].a_first)
+        let row = rows_of(o, rs).filter(fn(r: Row) { r.name == "wall_ms" })[0]
+        expect(row.r.ratio) == 1.0
+        expect(row.verdict) == "within noise"
+      }
+      Err(e) => expect(e) == ""
+    }
+  }
+  expect(balanced_rounds(1)) == 2
+  expect(balanced_rounds(4)) == 4
+}
+
+test "a wall time verdict needs 100 ms samples (task #372)" {
+  match parse_opts(["--ab", "a", "b"]) {
+    Ok(o) => {
+      var rs: List[Round] = []
+      for i in 0..4 {
+        rs.push(pos_round(17.0, 15.0, i % 2 == 0))
+      }
+      expect(rows_of(o, rs)[0].verdict) == "too short"
+      var long: List[Round] = []
+      for i in 0..4 {
+        long.push(pos_round(170.0, 150.0, i % 2 == 0))
+      }
+      expect(rows_of(o, long)[0].verdict) == "better"
+    }
+    Err(e) => expect(e) == ""
+  }
 }
