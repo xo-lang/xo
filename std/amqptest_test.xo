@@ -1460,3 +1460,32 @@ test "a delivery does not scan the queue for expired locks" uses clock {
   expect(s.queues[0].msgs[k - 1].locked_until) == 5000 + (k - 1) % 500 + 1000
   expect(took < 100ms) == true
 }
+
+// A settle finds its message by binary search (task #323, 2026-11-18): find_seq scanned the queue
+// from the front, so each settle cost O(queue depth) and the stress run's broker work per message
+// grew with its backlog. 10,000 unlocks at the back of a queue of 100,000 walked about 950 M
+// messages before; the budget is 100 ms. Lookups across gaps and of missing numbers still answer.
+test "a settle does not scan the queue for its message" uses clock {
+  let n = 100000
+  let k = 10000
+  var s = BrokerState{}
+  var msgs: List[FakeMsg] = []
+  for i in 0..n { msgs.push(FakeMsg{seq: i + 1, m: msg("m${i}"), locked_until: 1, lock_token: b"t", delivery_count: 1}) }
+  s.queues.push(FakeQueue{name: "q", opts: QueueOptions{max_delivery_count: 1000}, msgs: msgs})
+  let t0 = os.clock.now()
+  for i in 0..k { unlock(s, 0, n - i, false) }
+  let took = os.clock.now() - t0
+  expect(s.queues[0].msgs[n - 1].locked_until) == 0
+  expect(s.queues[0].msgs[n - k].locked_until) == 0
+  expect(s.queues[0].msgs[n - k - 1].locked_until) == 1
+  expect(took < 100ms) == true
+  // gaps: remove every other message among the first 10
+  for i in 0..5 { dead_letter(s, 0, 2 * i + 2, "r", "d") }
+  expect(find_seq(s.queues[0], 1)) == 0
+  expect(find_seq(s.queues[0], 2)) == -1
+  expect(find_seq(s.queues[0], 3)) == 1
+  expect(find_seq(s.queues[0], 11)) == 5
+  expect(find_seq(s.queues[0], n)) == n - 6
+  expect(find_seq(s.queues[0], n + 1)) == -1
+  expect(find_seq(s.queues[0], 0)) == -1
+}

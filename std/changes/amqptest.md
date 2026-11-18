@@ -1,5 +1,17 @@
 # std/amqptest changes
 
+## 2026-11-18: perf: a settle finds its message by binary search (task #323)
+
+- Kind: perf
+- Commit: this push
+- Found by: the stress program (std/evidence/amqptest/stress): with the producers throttled (969431c93) it moved 1,407,957 messages in 2 minutes against 543,371 with a backlog, so the broker's work per message grew with the queue depth
+- Go reference: none (a broker's message bookkeeping)
+- Test: std/amqptest_test.xo "a settle does not scan the queue for its message" (10,000 unlocks at the back of a queue of 100,000 within 100 ms; fails before)
+- Timing: the test above
+- Shipped in: not yet released
+
+Completing, abandoning, deferring, dead lettering and every other settle looked its message up by scanning the queue from the front, O(queue depth) each. A queue's messages are in sequence order, so the lookup is now a binary search.
+
 ## 2026-11-17: perf: a delivery no longer scans the whole queue for expired locks
 
 - Kind: perf

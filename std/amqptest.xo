@@ -760,11 +760,18 @@ fn take(var s: BrokerState, qi: Int, conn: Int, now: Int, sess: Str, settle: Boo
   None
 }
 
+/// The index of the message with sequence number `seq` in `q`, or -1. A queue's messages are in
+/// sequence order (enqueue appends the next number; removals and filters keep the order), so this
+/// is a binary search: a linear scan made every settle O(queue depth), and the stress run's
+/// broker work per message grew with its backlog (task #323, 2026-11-18).
 fn find_seq(q: FakeQueue, seq: Int) -> Int {
-  var i = 0
-  while i < q.msgs.len() {
-    if q.msgs[i].seq == seq { return i }
-    i += 1
+  var lo = 0
+  var hi = q.msgs.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    let v = q.msgs[mid].seq
+    if v == seq { return mid }
+    if v < seq { lo = mid + 1 } else { hi = mid }
   }
   -1
 }
