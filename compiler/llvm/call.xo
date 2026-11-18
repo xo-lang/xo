@@ -1018,6 +1018,21 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))})")
     }
+    "rt.aes_cbc_dec10" | "rt.aes_cbc_dec12" | "rt.aes_cbc_dec14" => {
+      // arm64 only (ssa call.xo): ssa.aes_cbc_dec_lines as inline asm, x9
+      // to x11 and its V registers clobbered
+      let nr = Int.parse(g.f.name_of(x).trim_prefix("rt.aes_cbc_dec")) ?? 10
+      var t = [".arch_extension crypto"]
+      for l in ssa.aes_cbc_dec_lines(nr, "$0", "$1", "$2", "$3", "$4", "x9", "x10", "x11") {
+        t.push(l)
+      }
+      var clob = "r,r,r,r,r,~{x9},~{x10},~{x11}"
+      for r in ssa.aes_cbc_dec_vregs() {
+        clob = clob + ",~{q${r}}"
+      }
+      clob = clob + ",~{memory},~{cc}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))})")
+    }
     // decision 0619: PSTATE.DIT set to the argument, its old value the
     // result (arm64 only, ssa call.xo)
     "rt.dit_set" => g.set(v, "call i64 asm sideeffect \"lsl x9, $1, #24\\0Amrs $0, s3_3_c4_c2_5\\0Amsr s3_3_c4_c2_5, x9\\0Aubfx $0, $0, #24, #1\", \"=&r,r,~{x9}\"(i64 ${g.op(g.f.arg(x.args, 0))})")

@@ -1,0 +1,76 @@
+// AES-CBC decryption on arm64 (Xo Lang 2, 2026-11-17, task #271: Cipher
+// cbc_decrypt ran cpu.aes_dec10 a block, each reloading the round keys
+// and applying AESIMC to every middle key for every block, 2.5 times Go's
+// time on linux/arm64 host 1): cpu.aes_cbc_dec10, aes_cbc_dec12 and
+// aes_cbc_dec14 as one loop. The decryption keys (the encryption keys in
+// reverse, the middle ones through AESIMC, as Go's expanded decryption
+// schedule) are made once a call in v16 to v30. CBC decryption does not
+// chain through the cipher, so four blocks go side by side (v0 to v3, the
+// ciphertext kept in v4 to v7 for the xor), then one block a pass for the
+// rest; the chain value is in v31.
+
+/// The V registers aes_cbc_dec_lines clobbers.
+pub fn aes_cbc_dec_vregs() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] }
+
+/// dst = the CBC decryption of the n bytes (a multiple of 16) at src with
+/// nr rounds (10, 12, 14), the encryption round keys at rk and the IV at
+/// iv; the last ciphertext block is stored back at iv (the next call's
+/// IV). dst and src may be the same. p, q and c are scratch registers for
+/// dst, src and the bytes left.
+pub fn aes_cbc_dec_lines(nr: Int, dst: Str, src: Str, rk: Str, iv: Str, n: Str, p: Str, q: Str, c: Str) -> List[Str] {
+  var t = ["ldr q31, [${iv}]"]
+  for i in 0..nr + 1 {
+    let off = 16 * (nr - i)
+    t.push(if off == 0 { "ldr q${16 + i}, [${rk}]" } else { "ldr q${16 + i}, [${rk}, #${off}]" })
+  }
+  for i in 1..nr {
+    t.push("aesimc v${16 + i}.16b, v${16 + i}.16b")
+  }
+  t = t + ["mov ${p}, ${dst}", "mov ${q}, ${src}", "mov ${c}, ${n}", "cmp ${c}, #64", "b.lo 3f", "1:",
+    "ldp q4, q5, [${q}]", "ldp q6, q7, [${q}, #32]",
+    "mov v0.16b, v4.16b", "mov v1.16b, v5.16b", "mov v2.16b, v6.16b", "mov v3.16b, v7.16b"]
+  for r in 0..nr - 1 {
+    for s in 0..4 {
+      t.push("aesd v${s}.16b, v${16 + r}.16b")
+      t.push("aesimc v${s}.16b, v${s}.16b")
+    }
+  }
+  for s in 0..4 {
+    t.push("aesd v${s}.16b, v${16 + nr - 1}.16b")
+    t.push("eor v${s}.16b, v${s}.16b, v${16 + nr}.16b")
+  }
+  t = t + [
+    "eor v0.16b, v0.16b, v31.16b",
+    "eor v1.16b, v1.16b, v4.16b",
+    "eor v2.16b, v2.16b, v5.16b",
+    "eor v3.16b, v3.16b, v6.16b",
+    "mov v31.16b, v7.16b",
+    "stp q0, q1, [${p}]",
+    "stp q2, q3, [${p}, #32]",
+    "add ${p}, ${p}, #64",
+    "add ${q}, ${q}, #64",
+    "sub ${c}, ${c}, #64",
+    "cmp ${c}, #64",
+    "b.hs 1b",
+    "3:",
+    "cbz ${c}, 2f",
+    "4:",
+    "ldr q4, [${q}], #16",
+    "mov v0.16b, v4.16b",
+  ]
+  for r in 0..nr - 1 {
+    t.push("aesd v0.16b, v${16 + r}.16b")
+    t.push("aesimc v0.16b, v0.16b")
+  }
+  t + [
+    "aesd v0.16b, v${16 + nr - 1}.16b",
+    "eor v0.16b, v0.16b, v${16 + nr}.16b",
+    "eor v0.16b, v0.16b, v31.16b",
+    "mov v31.16b, v4.16b",
+    "str q0, [${p}], #16",
+    "subs ${c}, ${c}, #16",
+    "b.hi 4b",
+    "2:",
+    "str q31, [${iv}]",
+  ]
+}

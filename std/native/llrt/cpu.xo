@@ -494,6 +494,44 @@ pub fn aes_cbc_enc12(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_enc
 
 pub fn aes_cbc_enc14(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_enc_soft(dst, src, rk, iv, n, 14) }
 
+/// dst = the AES-CBC decryption of the n bytes (a multiple of 16) at src,
+/// with the nr + 1 encryption round keys at rk and the IV at iv (16
+/// bytes), the last ciphertext block stored back at iv; dst and src may be
+/// the same. arm64 and LLVM there run one loop with the decryption keys
+/// made once in vector registers and four blocks side by side (ssa
+/// a64aescbcdec.xo); elsewhere aes_decNN a block.
+pub fn aes_cbc_dec10(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_dec_soft(dst, src, rk, iv, n, 10) }
+
+pub fn aes_cbc_dec12(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_dec_soft(dst, src, rk, iv, n, 12) }
+
+pub fn aes_cbc_dec14(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_dec_soft(dst, src, rk, iv, n, 14) }
+
+/// The aes_cbc_dec functions' body where they are not lowered: each block
+/// copied to a 16 byte state, aes_decNN on it, then xored with the last
+/// ciphertext block (iv's 16 bytes, which then take this one).
+fn aes_cbc_dec_soft(dst: Int, src: Int, rk: Int, iv: Int, n: Int, nr: Int) {
+  let st = [0, 0]
+  let sp = addr(st)
+  var i = 0
+  while i < n {
+    let c0 = rt.mem_load(src, i, 8)
+    let c1 = rt.mem_load(src, i + 8, 8)
+    rt.mem_store(sp, 0, c0, 8)
+    rt.mem_store(sp, 8, c1, 8)
+    match nr {
+      10 => aes_dec10(sp, rk)
+      12 => aes_dec12(sp, rk)
+      _ => aes_dec14(sp, rk)
+    }
+    rt.mem_store(dst, i, rt.mem_load(sp, 0, 8) ^ rt.mem_load(iv, 0, 8), 8)
+    rt.mem_store(dst, i + 8, rt.mem_load(sp, 8, 8) ^ rt.mem_load(iv, 8, 8), 8)
+    rt.mem_store(iv, 0, c0, 8)
+    rt.mem_store(iv, 8, c1, 8)
+    i += 16
+  }
+  keep(st)
+}
+
 /// The aes_cbc_enc functions' body where they are not lowered: the chain
 /// value in iv's 16 bytes, aes_encNN on it a block.
 fn aes_cbc_enc_soft(dst: Int, src: Int, rk: Int, iv: Int, n: Int, nr: Int) {

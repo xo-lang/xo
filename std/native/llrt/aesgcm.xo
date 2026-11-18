@@ -843,6 +843,25 @@ pub fn (c: Cipher) cbc_decrypt(iv: Bytes, data: Bytes) -> Bytes {
   var out = rt.rs_with_cap(data.len())
   var p0 = rt.bytes_word(iv, 0)
   var p1 = rt.bytes_word(iv, 8)
+  let n0 = data.len()
+  if n0 > 0 && (c.hw & cpu.HW_AES) != 0 {
+    // the CPU's CBC decryption kernel: the decryption keys made once in
+    // registers and four blocks side by side, as Go's cbc decrypter
+    let ivl = [p0, p1]
+    let kp = addr(c.rk)
+    let q0 = raw.data(out)
+    let sp = raw.bytes_addr(data)
+    match c.nr {
+      10 => cpu.aes_cbc_dec10(q0, sp, kp, addr(ivl), n0)
+      12 => cpu.aes_cbc_dec12(q0, sp, kp, addr(ivl), n0)
+      _ => cpu.aes_cbc_dec14(q0, sp, kp, addr(ivl), n0)
+    }
+    keep(ivl)
+    keep(c.rk)
+    keep_bytes(data)
+    out = rt.rs_set_len(out, n0)
+    return out.bytes()
+  }
   let n = data.len() / 16
   var b = 0
   while b < n {

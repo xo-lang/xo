@@ -80,6 +80,9 @@ cbc 9 blocks 95fbb49eff9de1419b870214057c32e430e51b29 true
 cbc 10 blocks f27c80ee0743e23243435e3d77bbe0da0208aec2 true
 cbc 11 blocks 67b9a2277d1975c1d0923de816c0526c4436f2ca true
 cbc 12 blocks e32ad8cf1fcfa47c2cde9228d93458667d5f8eda true
+cbc decrypt 128 1 to 9 blocks true
+cbc decrypt 192 1 to 9 blocks true
+cbc decrypt 256 1 to 9 blocks true
 sha1 abc a9993e364706816aba3e25717850c26c9cd0d89d
 sha1 448 84983e441c3bd26ebaae4aa1f95129e5e54670f1
 sha1 lengths f8b7ce1492c3d9b3318d7125921582d2bab6ffc4

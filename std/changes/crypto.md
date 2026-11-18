@@ -1,5 +1,25 @@
 # std/crypto changes
 
+## 2026-11-17: perf: AES-CBC decryption on arm64 runs four blocks at once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (std performance to Proven; linux/arm64 host 1 evidence 3ee0bcee0: aesmodes cbcdec 2.545 of Go)
+- Go reference: crypto/internal/fips140/aes cbc.go (CBCDecrypter.CryptBlocks with the expanded decryption key schedule)
+- Measured: host 1 xo bench --ab, aesmodes cbcdec 15.86 to 1.331 ms (0.084, 95% interval 0.082 to 0.087, 3 rounds)
+- Test: internal/llvm/testdata/golden/cbc_prims, every key size for 1 to 9 blocks both ways round (the kernel's four block passes and its one block rest), with its SP 800-38A and random block cases
+- Shipped in: not yet released
+
+`crypto.cbc_decrypt` and a CBC decrypter on arm64 (native and LLVM)
+decrypt in one loop (cpu.aes_cbc_dec10, 12, 14; compiler/ssa
+a64aescbcdec.xo): the decryption keys are made once a call in vector
+registers, where each block reloaded the round keys and put every middle
+key through AESIMC again, and four blocks go side by side, since CBC
+decryption does not chain through the cipher. On the Mac a 64 KiB
+message decrypted 200 times took 5.7 ms where it took 11.7 (Go 14.0);
+TLS 1.2 CBC records (bench/perf/aead cbc_small) 0.245 of Go's time.
+Other targets keep a block at a time.
+
 ## 2026-11-17: perf: ChaCha20-Poly1305 seals and opens allocate less
 
 - Kind: perf
