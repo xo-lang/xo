@@ -1,6 +1,6 @@
 # 0708: Proven evidence may come from linux/amd64
 
-Status: Accepted (owner, 2026-11-17). Amends 0616 (testing evidence) and the
+Status: Accepted (owner, 2026-11-17); amended by 0712 (perf evidence not on host 1). Amends 0616 (testing evidence) and the
 performance rows' host rule; written by the lead.
 
 ## Context
