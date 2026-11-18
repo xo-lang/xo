@@ -126,7 +126,8 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   also a memory lease is never its own aged gate, and a waiting exclusive
   lease holds the plain leases behind it (backfill aside) also while it
   defers to an aged gate, for at most HEAVYD_EXCL_HOLD_MIN (120; 0 for
-  good) of waiting; past that, plain runs start beside its wait (lead,
+  good) of waiting, and only with the starve rule below off; past that,
+  plain runs start beside its wait (lead,
   2026-11-10: host 1's exclusive release-vs-go-http.sh waited from 05:41
   while its status named itself as the aged gate and plain steps started;
   heavyd lanes.go ExclHold, TestLaneDecide,
@@ -139,9 +140,12 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   HEAVYD_EXCL_STARVE_MIN (20; 0 off), offload.sh starts no new no-lane
   run on that machine (`heavyd nolane ENV` exits 1 with the reason; the
   run waits, saying so once) and the plain leases behind it in its lane
-  drain, until it starts or HEAVYD_EXCL_HOLD_MIN runs out (heavyd
+  drain, until it starts: the hold never runs out while the starve rule
+  fires (#321 follow-up, 2026-11-18: at 120 minutes the hold let a plain
+  run.sh start beside an exclusive waiting since 02:41) (heavyd
   lanes.go ExclStarve, NoLaneOK, TestExclStarveNoLane,
-  TestExclStarveDrainsMachine; Last verified: 2026-11-18). After heavyd starts (a restart, an
+  TestExclStarveDrainsMachine, TestExclStarveOutlastsHold; Last
+  verified: 2026-11-18). After heavyd starts (a restart, an
   install), it grants no lane lease for 15 s (AdoptGrace), so the runs
   still going from before re-adopt their slots first (lead, 2026-11-07: a
   new lease took pass2's slot 1 in the same second an adopted run came
