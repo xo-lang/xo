@@ -73,10 +73,10 @@ test "a write after free ends the program under the free check" {
   }
 }
 
-test "an age pass gives an idle class's spare magazine to the central list" {
-  // decision 0704: the first pass notes the spare (H_IDLE), the next one
-  // that finds the same spare moves it to central, where the sweep and
-  // other records' refills see its blocks
+test "an age pass gives a class's spare magazine and free list to the central list" {
+  // decision 0714 (superseding 0704's second look): every pass moves the
+  // spare and the free list to central, where the sweep and other
+  // records' refills see their blocks
   if !pages_on() {
     return
   }
@@ -102,9 +102,19 @@ test "an age pass gives an idle class's spare magazine to the central list" {
   let fl = h.wrapping_add(c.wrapping_shl(3))
   let m = rt.mem_load(fl, H_MAG, 8)
   expect(m != 0)
+  expect(rt.mem_load(fl, H_FREE_LISTS, 8) != 0)
   let _a = age(false)
-  expect(rt.mem_load(fl, H_MAG, 8)) == m
-  let _b = age(false)
   expect(rt.mem_load(fl, H_MAG, 8)) == 0
-  expect(alloc.central_first(h, c)) == m
+  expect(rt.mem_load(fl, H_FREE_LISTS, 8)) == 0
+  // both on the class's central list: the free list's magazine first
+  // (pushed last), the spare after it
+  var seen = false
+  var q = alloc.central_first(h, c)
+  while q != 0 {
+    if q == m {
+      seen = true
+    }
+    q = alloc.cnext(false, q)
+  }
+  expect(seen)
 }

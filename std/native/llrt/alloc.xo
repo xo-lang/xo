@@ -328,6 +328,30 @@ pub fn spare_to_central(h: Int, c: Int) -> Bool {
   true
 }
 
+/// Gives record h's free list of prefixed class c (under a magazine's
+/// worth, linked by each block's first word) to the central list as one
+/// magazine, by its first block's second word (task #310): the age pass
+/// hands a worker's lists over so the sweep (decision 0676), which reads
+/// only the central lists and its own record, sees every free block and
+/// can give back a unit whose blocks different threads freed. A refill
+/// takes it back as any magazine (NFREE is set to a full magazine's
+/// count, an upper bound: the list's end, not the count, ends it).
+pub fn list_to_central(h: Int, c: Int) -> Bool {
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  let m = rt.mem_load(fl, FREE_LISTS, 8)
+  if m == 0 {
+    return false
+  }
+  rt.mem_store(fl, FREE_LISTS, 0, 8)
+  rt.mem_store(fl, NFREE, 0, 8)
+  let cen = rt.mem_load(h, CENTRAL, 8)
+  clock(h, cen, c)
+  rt.mem_store(m, 8, rt.slot_load(cen, c, RELAXED), 8)
+  rt.slot_store(cen, c, m, RELAXED)
+  cunlock(h, cen, c)
+  true
+}
+
 pub fn cnext(pg: Bool, m: Int) -> Int {
   if pg { rt.mem_load(pword(m, PT_CLINK), 0, 8) } else { rt.mem_load(m, 8, 8) }
 }

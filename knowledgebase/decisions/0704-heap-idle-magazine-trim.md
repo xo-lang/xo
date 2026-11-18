@@ -1,6 +1,6 @@
 # 0704: a heap record gives back the magazines of size classes it has not used for a period
 
-Status: Accepted (owner 2026-11-17, lead decision #97; proposed by xo-lang-1, task #213)
+Status: Accepted (owner 2026-11-17, lead decision #97; proposed by xo-lang-1, task #213). The spare rule is superseded by 0714 (every pass, with the free list).
 
 ## Context
 

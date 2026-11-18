@@ -64,6 +64,10 @@ const CACHE_SWITCH = 24 + 8 * CACHE_N
 const WANT_N = 16
 const CACHE_WANT = CACHE_SWITCH + 8
 const CACHE_WANT_AT = CACHE_WANT + 8 * WANT_N
+/// The mappings the previous age pass found in the cache (task #310):
+/// CACHE_N words, 0 for an empty slot; cache_age unmaps a mapping found
+/// there again (a whole period unused).
+const CACHE_SEEN = CACHE_WANT_AT + 8
 
 /// A large mapping's size is a multiple of this (16 KiB pages on Apple
 /// silicon, 64 KiB the Windows allocation granularity).
@@ -541,6 +545,12 @@ fn take(need: Int) -> Int {
       rt.mem_store(t, at, rt.mem_load(t, (24).wrapping_add(n.wrapping_shl(3)), 8), 8)
       rt.mem_store(t, 16, n, 8)
       rt.mem_store(t, 8, rt.mem_load(t, 8, 8).wrapping_sub(size), 8)
+      // taken: in use this period (cache_age)
+      for i in 0..CACHE_N {
+        if rt.mem_load(t, CACHE_SEEN + 8 * i, 8) == m {
+          rt.mem_store(t, CACHE_SEEN + 8 * i, 0, 8)
+        }
+      }
       cache_advise(m, size, true)
       clock_give()
       return m
@@ -586,6 +596,49 @@ pub fn cache_drop(min: Int) {
   clock_give()
 }
 pub const CACHE_DROP_MIN = 1048576
+
+/// The age pass's rule for the large block cache (task #310): a mapping
+/// in the cache at this pass that the previous pass saw there too (no
+/// take for a whole period, SCAV_EVERY) is unmapped; the rest are
+/// remembered for the next pass. On Linux a kept mapping stays resident
+/// (cache_advise has no advice there), so the cache held up to CACHE_MAX
+/// (64 MB) through a server's life (std/sse stress, 37 MB at exit).
+pub fn cache_age() {
+  let w = rt.static_word(W_CACHE)
+  if rt.slot_load(w, 0, ACQUIRE) == 0 {
+    return
+  }
+  clock_take()
+  let t = rt.mem_load(w, 0, 8)
+  let n = rt.mem_load(t, 16, 8)
+  var bytes = rt.mem_load(t, 8, 8)
+  var kept = 0
+  var k = 0
+  while k < n {
+    let m = rt.mem_load(t, (24).wrapping_add(k.wrapping_shl(3)), 8)
+    var seen = false
+    for i in 0..CACHE_N {
+      if rt.mem_load(t, CACHE_SEEN + 8 * i, 8) == m {
+        seen = true
+      }
+    }
+    if seen {
+      let size = rt.mem_load(m, 0, 8)
+      bytes = bytes.wrapping_sub(size)
+      unmap_os(m, size)
+    } else {
+      rt.mem_store(t, (24).wrapping_add(kept.wrapping_shl(3)), m, 8)
+      kept = kept.wrapping_add(1)
+    }
+    k = k.wrapping_add(1)
+  }
+  for i in 0..CACHE_N {
+    rt.mem_store(t, CACHE_SEEN + 8 * i, if i < kept { rt.mem_load(t, (24).wrapping_add(i.wrapping_shl(3)), 8) } else { 0 }, 8)
+  }
+  rt.mem_store(t, 16, kept, 8)
+  rt.mem_store(t, 8, bytes, 8)
+  clock_give()
+}
 
 /// Gives the system the pages of the calling thread's free page blocks
 /// (classes PAGE_CLASS and up on its heap record's free lists and spare
@@ -1723,21 +1776,25 @@ pub fn age_from(central: Bool, own: Bool) -> Int {
       k += age_list(rt.mem_load(fl, H_MAG, 8), c, pg, gave)
     }
   }
-  // a prefixed class's spare magazine that no free or refill replaced
-  // since the previous pass (the same address in H_IDLE) goes to central
-  // (decision 0704), so this period's sweep sees its blocks; a busy
-  // class's spare changes every magazine's worth of frees and stays, and
-  // a record that needs it again takes it back by its refill
+  // each prefixed class's spare magazine and free list go to central at
+  // every pass (decision 0714, superseding 0704's unchanged spare rule),
+  // so this period's sweep sees their blocks: the sweep reads the central
+  // lists and the claiming record only, so a unit whose blocks other
+  // threads freed stayed on their lists and never went back, and an idle
+  // worker that marks nothing runs one pass and sleeps, so 0704's second
+  // look at a spare never came (heapidlelists: 34 MB kept of 104); a busy
+  // record takes them back by its next refill
   if h != 0 && rt.mem_load(h, H_RFLAG, 8) == 0 && rt.mem_load(h, H_CENTRAL, 8) != 0 {
     for c in 1..PAGE_CLASS {
-      let m = rt.mem_load(h.wrapping_add(c.wrapping_shl(3)), H_MAG, 8)
-      let iw = h.wrapping_add(H_IDLE).wrapping_add(c.wrapping_shl(3))
-      if m != 0 && rt.mem_load(iw, 0, 8) == m && alloc.spare_to_central(h, c) {
-        rt.mem_store(iw, 0, 0, 8)
-      } else {
-        rt.mem_store(iw, 0, m, 8)
-      }
+      let _m = alloc.spare_to_central(h, c)
+      let _l = alloc.list_to_central(h, c)
     }
+  }
+  // the record's bump tail a whole period unused (task #310)
+  if h != 0 && rt.mem_load(h, H_RFLAG, 8) == 0 {
+    let b = bump_age(h, pg)
+    k += b & 4294967295
+    gave += b.shr_logical(32)
   }
   if central {
     let hc = heaps_head()
@@ -1762,9 +1819,55 @@ pub fn age_from(central: Bool, own: Bool) -> Int {
     // sweep's units given back)
     let cb = cache_bytes()
     cache_drop(CACHE_DROP_MIN)
+    cache_age()
     gave += cb.wrapping_sub(cache_bytes())
   }
   (k & 4294967295) | gave.shr_logical(14).wrapping_shl(32)
+}
+
+/// Gives back the unused tail of heap record h's bump run (its words at
+/// 24 and 32) once a pass finds the bump where the previous one left it
+/// (H_IDLE's word 0, its low bit set once given): Linux, pg its page size.
+/// Under XO_THP=dense the next chunk is advised MADV_HUGEPAGE before it
+/// faults (thp_filled), so a thread's first block there made a whole 2 MiB
+/// page resident, the run's unused rest on no free list for the sweep to
+/// find (heapidlelists: 18 MB kept under dense, 7 MB with the advice off).
+/// The tail also loses its huge page advice, as advise_run's runs, so
+/// khugepaged does not fill it again; thp_filled advises the chunk again
+/// once it is used up. The bytes given back above bit 32, and 1 below it
+/// while the tail waits a pass (the worker's W_AGE_MORE).
+fn bump_age(h: Int, pg: Int) -> Int {
+  match target.os {
+    TargetOs.Linux => {}
+    _ => return 0
+  }
+  if pg <= 0 {
+    return 0
+  }
+  let bw = h.wrapping_add(H_IDLE)
+  let cur = rt.mem_load(h, 24, 8)
+  let end = rt.mem_load(h, 32, 8)
+  let mask = (0).wrapping_sub(pg)
+  let lo = cur.wrapping_add(pg).wrapping_sub(1) & mask
+  let hi = end & mask
+  if cur == 0 || hi <= lo {
+    rt.mem_store(bw, 0, 0, 8)
+    return 0
+  }
+  let seen = rt.mem_load(bw, 0, 8)
+  if seen == cur | 1 {
+    return 0
+  }
+  if seen != cur {
+    rt.mem_store(bw, 0, cur, 8)
+    return 1
+  }
+  rt.mem_store(bw, 0, cur | 1, 8)
+  let _a = linux.madvise(lo, hi.wrapping_sub(lo), 4)
+  if thp_mode() == 2 {
+    let _n = linux.madvise(lo, hi.wrapping_sub(lo), 15)
+  }
+  hi.wrapping_sub(lo).wrapping_shl(32)
 }
 
 /// age's walk of one list of page blocks of class c (trim_list's links):
@@ -2880,8 +2983,9 @@ const H_RNEXT = H_RFLAG + 8
 /// The record's routing words (alloc.xo RTAG, RINBOX).
 const H_RTAG = H_RNEXT + 8
 const H_RINBOX = H_RTAG + 8
-/// Decision 0704: each prefixed class's spare magazine as the previous
-/// age pass saw it (classes 1 to PAGE_CLASS - 1; word 0 unused).
+/// Word 0: the bump as the previous age pass saw it (bump_age, decision
+/// 0714; its low bit set once the tail was given back). Words 1 to
+/// PAGE_CLASS - 1 held decision 0704's spare magazines, unused since 0714.
 const H_IDLE = H_RINBOX + 8
 const H_SIZE = H_IDLE + 8 * 77
 /// A C library's (decision 0574): 1 while the record's thread has exited,

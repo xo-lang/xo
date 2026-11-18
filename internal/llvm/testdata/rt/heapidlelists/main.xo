@@ -1,0 +1,87 @@
+// heapidlelists (task #310): sixteen tasks at once each make and free a
+// little under a magazine (64 KiB) of blocks in each of 64 prefixed
+// classes (16 B to 1 KiB strings), so the freed blocks stay on the free
+// lists of every worker's heap record, not on the central lists; then the
+// program idles three age pass periods (pool.xo SCAV_EVERY_NS, 30 s). The
+// sweep (decision 0676) reads only the central lists and the claiming
+// worker's record, so before task #310 the other records' lists kept the
+// burst resident. Prints `before KIB`, `peak KIB` and `after KIB` (Linux
+// VmRSS), then `reuse ok`; TestRuntimeHeapIdleLists judges them.
+
+fn rss_kib(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+/// One task's burst: per class a little under a magazine of strings,
+/// held together, then dropped here (on this task's worker). The bytes.
+fn burst(k: Int) -> Int {
+  var held: List[Str] = []
+  for c in 1..65 {
+    let size = c * 16 - 8
+    let n = 60000 / (size + 8)
+    let s = "x".repeat(size - 4)
+    for i in 0..n {
+      held.push("${i % 10}${s}")
+    }
+  }
+  var b = 0
+  for s in held {
+    b += s.len()
+  }
+  b + k
+}
+
+fn main(os: Os) {
+  scope s {
+    let t = s.spawn(fn() {})
+    t.await
+  }
+  let before = rss_kib(os)
+  os.stdio.println("before ${before}")
+  var peak = 0
+  // four rounds of sixteen tasks: the frees land on many records
+  for r in 0..4 {
+    scope s {
+      for k in 0..16 {
+        let _t = s.spawn(fn() -> Int { burst(k + r) })
+      }
+    }
+    let now = rss_kib(os)
+    if now > peak {
+      peak = now
+    }
+  }
+  os.stdio.println("peak ${peak}")
+  let secs = Int.parse(os.env.args().get(0) ?? "") ?? 95
+  os.clock.sleep(Duration.from_secs(Float(secs)))
+  os.stdio.println("after ${rss_kib(os)}")
+  os.stdio.println("reuse ${check()}")
+}
+
+/// A burst again, each string checked: "ok" or the first that differs.
+fn check() -> Str {
+  var held: List[Str] = []
+  for c in 1..65 {
+    let s = "y".repeat(c * 16 - 12)
+    for i in 0..200 {
+      held.push("${i % 10}${s}")
+    }
+  }
+  var j = 0
+  for c in 1..65 {
+    let s = "y".repeat(c * 16 - 12)
+    for i in 0..200 {
+      if held[j] != "${i % 10}${s}" {
+        return "bad ${c} ${i}"
+      }
+      j += 1
+    }
+  }
+  "ok"
+}
