@@ -66,5 +66,23 @@ const char *sqlite3_errmsg(sqlite3 *db);
 int sqlite3_busy_timeout(sqlite3 *db, int ms);
 const char *sqlite3_libversion(void);
 int sqlite3_get_autocommit(sqlite3 *db);
+int sqlite3_stmt_readonly(sqlite3_stmt *s);
+int sqlite3_stmt_busy(sqlite3_stmt *s);
+const char *sqlite3_sql(sqlite3_stmt *s);
+
+/* the write gate (task #229): one per database file in the process, so a
+   writer that has waited too long gets the next turn instead of losing
+   every release to writers that come straight back. 0 is no gate (an
+   in-memory or temporary database, or past the table's 64 files). Times
+   are poll.now()'s nanoseconds. */
+long long xo_sq_gate(sqlite3 *db);
+/* queue a waiter until deadline; its ticket (never 0) */
+long long xo_sq_gate_join(long long g, long long now, long long deadline);
+/* 1 when ticket t (0: a writer not queued) may step now: the queue is
+   empty, t is its head, or the head has waited under the grace period
+   (since it joined or since the last head left, the later) */
+int xo_sq_gate_may(long long g, long long t, long long now);
+/* t leaves the queue; now starts the next grace period when t was its head */
+void xo_sq_gate_leave(long long g, long long t, long long now);
 
 #endif

@@ -1,5 +1,25 @@
 # std/sqlite changes
 
+## 2026-11-18: fix: a writer beside busy writers gets its turn before its busy timeout
+
+- Kind: fix
+- Commit: this push
+- Found by: task #229 (xw-1 #152's std/sql stress evidence): a cold writer beside 8 hot ones on one
+  WAL file failed at its 2 s busy timeout in 9 of 10 runs on the Mac
+- Go reference: github.com/mattn/go-sqlite3 v1.14.53 fails the same program in 4 of 20 runs (its
+  busy handler sleeps in C); Xo now fails none
+- Test: std/sqlite_test.xo "a writer beside busy writers gets its turn before its busy timeout"
+  (failed before 3 of 3: SQLITE_BUSY "database is locked")
+- Shipped in: not yet released
+
+A writer that got SQLITE_BUSY napped and tried again, while one that had just finished a statement
+stepped again at once and won nearly every release. A write outside a transaction now goes
+through a write gate per database file in the process: a writer that got SQLITE_BUSY joins a
+queue, and once the oldest waiter has waited 50 ms (and 50 ms have passed since the last such
+turn) the next turn is its own. Between those turns writers step as before, so throughput is
+unchanged (69,000 to 129,000 inserts in the same program, as before). Statements inside a
+transaction, reads, and connections in other processes are not gated.
+
 ## 2026-11-17: fix: a statement's prepare waits out the busy timeout
 
 - Kind: fix

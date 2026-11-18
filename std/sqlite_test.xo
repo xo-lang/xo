@@ -205,3 +205,51 @@ test "a prepare waits out the busy timeout as a step does" uses (fs, env, net, c
   a.close().or_fault("close a")
   os.fs.remove_all(dir).or_fault("remove")
 }
+
+// Task #229: a writer that gets SQLITE_BUSY naps and tries again, while
+// one that just finished a statement steps again at once and wins nearly
+// every release. Before the write gate a cold writer beside 8 hot ones
+// failed at its busy timeout in 9 of 10 runs on the Mac (mattn/go-sqlite3,
+// whose busy handler sleeps in C, 4 of 20); the test asks 3 cold writes.
+test "a writer beside busy writers gets its turn before its busy timeout" uses (fs, env, net, clock) {
+  let dir = tmp_dir(os.env, os.fs)
+  let dsn = "file:s.db?_journal=wal&_busy_timeout=1000"
+  var dbs: List[sql.Db] = []
+  for _ in 0..9 {
+    dbs.push(sql.open_driver(os.net, driver(os.fs.sub(dir)), dsn, max_open: 1, max_idle: 1).or_fault("open"))
+  }
+  dbs[0].exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").or_fault("create")
+  let clock = os.clock
+  let done = Atomic.new(false)
+  let (cold, hot) = scope sc {
+    var hs: List[Task[Int, Str]] = []
+    for h in 0..8 {
+      hs.push(sc.spawn(fn() -> Int ! Str {
+        var n = 0
+        while !done.get() {
+          dbs[h].exec("INSERT INTO t (v) VALUES ($1)", [sql.int(h)]).map_err(fn(e) { "hot ${h}: ${e.debug()}" })?
+          n += 1
+        }
+        Ok(n)
+      }))
+    }
+    clock.sleep(100ms)
+    var got: List[Str] = []
+    for _ in 0..3 {
+      got.push(err_text(dbs[8].exec("INSERT INTO t (v) VALUES (-1)")))
+      clock.sleep(50ms)
+    }
+    done.set(true)
+    var errs: List[Str] = []
+    for x in hs {
+      if let Err(e) = x.await { errs.push(e) }
+    }
+    (got, errs)
+  }
+  expect(cold) == ["ok", "ok", "ok"]
+  expect(hot) == []
+  for db in dbs {
+    db.close().or_fault("close")
+  }
+  os.fs.remove_all(dir).or_fault("remove")
+}

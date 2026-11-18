@@ -230,6 +230,8 @@ struct SqliteConn {
   busy_ms: Int
   /// the DSN's BEGIN statement (`_txlock`)
   begin_sql: Str
+  /// the database file's write gate in xo_sqlite.c (0: none)
+  gate: Int
 }
 
 fn (d: SqliteDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[fs] ! sql.SqlErr uses fs {
@@ -248,7 +250,7 @@ fn (d: SqliteDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[fs] ! sql.Sql
   // The cause underneath is the runtime's (task #94: the preemption signal
   // reaches a worker in a C call, and a blocked worker is not replaced).
   c3.sqlite3_busy_timeout(db, Int32(0))
-  let c = SqliteConn{db: db, broken: Atomic.new(false), busy_ms: cfg.busy_ms, begin_sql: cfg.begin}
+  let c = SqliteConn{db: db, broken: Atomic.new(false), busy_ms: cfg.busy_ms, begin_sql: cfg.begin, gate: c3.xo_sq_gate(db)}
   for p in cfg.pragmas {
     if let Err(e) = c.run(p, []) {
       c3.sqlite3_close_v2(db)
@@ -264,7 +266,18 @@ fn (d: SqliteDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[fs] ! sql.Sql
 /// to 16 ms, on the runtime's timers like clock.sleep) so its worker runs
 /// the task that holds the lock. A statement that got
 /// SQLITE_BUSY took no lock and may step again (sqlite3_step's v2 rules).
+///
+/// A statement that starts a write outside a transaction goes through the
+/// file's write gate (xo_sqlite.c, task #229): a writer that got
+/// SQLITE_BUSY joins its queue, and once the oldest waiter has waited
+/// 50 ms (and 50 ms have passed since the last such turn) the next turn
+/// is its own. Without it a writer that just finished
+/// steps again at once and wins nearly every release from the one napping
+/// (8 writers on one file: one failed at its 2 s timeout in 9 of 10 runs).
 fn (c: SqliteConn) step(st: c3.Sqlite3Stmt) -> Int32 uses fs {
+  if c.gate != 0 && c.busy_ms > 0 && c.gated(st) {
+    return c.gated_step(st)
+  }
   var rc = c3.sqlite3_step(st)
   if !is_busy(rc) || c.busy_ms <= 0 {
     return rc
@@ -281,6 +294,58 @@ fn (c: SqliteConn) step(st: c3.Sqlite3Stmt) -> Int32 uses fs {
     rc = c3.sqlite3_step(st)
   }
   rc
+}
+
+/// Whether st's next step waits its turn at the write gate: its first
+/// step (a running statement may hold the lock the queue's head waits
+/// for), outside a transaction (whose locks the head may wait for too),
+/// and a write or a BEGIN (which sqlite3_stmt_readonly counts as reads).
+fn (c: SqliteConn) gated(st: c3.Sqlite3Stmt) -> Bool {
+  if c3.sqlite3_stmt_busy(st) != 0 || c3.sqlite3_get_autocommit(c.db) == 0 {
+    return false
+  }
+  if c3.sqlite3_stmt_readonly(st) == 0 {
+    return true
+  }
+  let q = c3.sqlite3_sql(st).trim_start()
+  q.len() >= 5 && q[0..5].to_upper() == "BEGIN"
+}
+
+/// step through the write gate: step at once unless a waiter's turn has
+/// come, and after SQLITE_BUSY queue and step only when the gate allows,
+/// leaving the queue however it ends. A writer that never got a turn
+/// steps once at its deadline, so its error is the library's own.
+fn (c: SqliteConn) gated_step(st: c3.Sqlite3Stmt) -> Int32 uses fs {
+  let start = poll.now()
+  if c3.xo_sq_gate_may(c.gate, 0, start) != 0 {
+    let rc = c3.sqlite3_step(st)
+    if !is_busy(rc) {
+      return rc
+    }
+  }
+  let deadline = start + c.busy_ms * 1000000
+  let t = c3.xo_sq_gate_join(c.gate, poll.now(), deadline)
+  defer c3.xo_sq_gate_leave(c.gate, t, poll.now())
+  var nap = 1
+  while true {
+    let now = poll.now()
+    if now >= deadline {
+      return c3.sqlite3_step(st)
+    }
+    if c3.xo_sq_gate_may(c.gate, t, now) != 0 {
+      let rc = c3.sqlite3_step(st)
+      if !is_busy(rc) {
+        return rc
+      }
+      nap = 1
+    } else if nap < 16 {
+      nap *= 2
+    }
+    if poll.sleep_until(poll.now() + nap * 1000000) == poll.CANCELED {
+      return c3.sqlite3_step(st)
+    }
+  }
+  Int32(5)
 }
 
 fn is_busy(rc: Int32) -> Bool { (Int(rc) & 255) == 5 && Int(rc) != 517 }
