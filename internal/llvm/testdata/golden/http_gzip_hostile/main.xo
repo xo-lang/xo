@@ -11,6 +11,11 @@
 // and up to 47 MB with 8 copies running, the full tier 54 MB under suite
 // load (task #77, 2026-11-15; XO_HEAP_MID_MAX=65536 did not change it). 96
 // MB is 1.8 times the highest and 14 times under the bug it guards.
+// Under the free check (XO_FREE_CHECK=1, xo test --check=free) every
+// thread holds its last 65536 freed blocks poisoned and mapped (heapos.xo
+// FQ_N), and the peak counts them: host 4 measured 96 to 117 MB there
+// against 31 to 38 MB without it (task #371, 2026-11-18), so the bound is
+// 256 MB, 2.2 times that and still 5.5 times under the bug.
 use std/compress
 use std/debug
 use std/http
@@ -65,8 +70,9 @@ fn main(os: Os) {
     }
   }
   let peak = debug.mem_peak()
-  os.stdio.println("heap peak under 96 MB: ${peak < 100663296}")
-  if peak >= 100663296 {
-    os.stdio.eprintln("heap peak ${peak / 1048576} MB")
+  let bound = if (os.env.get("XO_FREE_CHECK") ?? "") == "1" { 268435456 } else { 100663296 }
+  os.stdio.println("heap peak under its bound: ${peak < bound}")
+  if peak >= bound {
+    os.stdio.eprintln("heap peak ${peak / 1048576} MB, bound ${bound / 1048576} MB")
   }
 }

@@ -3,5 +3,5 @@ exit 0
 gzip body: about 1030 KB for 1000 MB
 read(65536): 1048576000 bytes, no read over 65536: true, nonzero 0
 read(1048576): 1048576000 bytes, no read over 1048576: true, nonzero 0
-heap peak under 96 MB: true
+heap peak under its bound: true
 --- stderr
