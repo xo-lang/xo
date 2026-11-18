@@ -2379,8 +2379,17 @@ fn series_of(f: Family, values: List[Str]) -> Series? {
     if st.list.len() >= MAX_SERIES {
       return None
     }
-    let s = new_series(values, nb, kind, age_buckets)
-    st.at.put(key, st.list.len())
+    // the store keeps copies: the caller's label strings put in the
+    // shared store became shared themselves, so each later retain and
+    // drop of them, in the caller and on every hit, was an atomic count
+    // (four a Counter.inc; client_golang's strings have no count: the
+    // counter row was 1.66 Go's on linux/amd64, 2026-11-17)
+    var own: List[Str] = List[Str].with_capacity(values.len())
+    for v in values {
+      own.push(v.clone())
+    }
+    let s = new_series(own, nb, kind, age_buckets)
+    st.at.put(if own.len() == 1 { own[0] } else { key.clone() }, st.list.len())
     st.list.push(s)
     Some(s)
   })
@@ -2458,6 +2467,24 @@ fn counter_value(cells: List[Atomic[Int]]) -> Float {
 fn hit_add(f: Family, values: List[Str], counter: Bool, d: Float) -> Bool {
   if values.len() != f.labels.len() {
     return false
+  }
+  if values.len() == 1 {
+    // one label: its value is the key, read in place (key_of's copy is a
+    // retain and a drop a call: 20% of bench/perf/metrics counter on
+    // linux/amd64, 2026-11-17)
+    return f.series.with_read(fn(st: Store) -> Bool {
+      match st.at.get(values[0]) {
+        Some(i) => {
+          if counter {
+            counter_cells_add(st.list[i].cells, d)
+          } else {
+            add_float(st.list[i].cells[0], d)
+          }
+          true
+        }
+        None => false
+      }
+    })
   }
   let key = key_of(values)
   f.series.with_read(fn(st: Store) -> Bool {

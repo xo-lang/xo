@@ -395,3 +395,15 @@ empty one.
 `metrics.registry()` makes a registry; counters, gauges and histograms
 take label values and are safe from any task; `text()` and `handler()`
 write the exposition. One source for every backend (std/go_compiled.txt).
+
+## 2026-11-18: perf: a one-label counter or gauge hit reads its key in place; the store keeps its own label copies
+
+- Kind: perf
+- Commit: (this commit)
+- Found by: task #271 (std performance to Proven), bench/perf/metrics counter at 1.66 Go's on linux/amd64
+- Go reference: client_golang (not the standard library); the timing row is bench/perf/metrics
+- Test: internal/llvm/testdata/golden/metrics_text and the module's tests (no behavior change)
+
+A hit on a family with one label looks its value up directly (no key
+copy), and a new series stores copies of its label strings, so the
+caller's strings never become shared and pay atomic counts on each use.
