@@ -235,8 +235,14 @@ func wsfChange(r *rand.Rand, c *wsfCase) {
 		f = wsfFrame(true, 0, 2, nil, []byte("short"), pgfPick(r, 16, 64))
 		c.note = "long length form"
 	case 8:
-		f = []byte{0x82, 127, 0x80, 0, 0, 0, 0, 0, 0, 5, 'x', 'x', 'x', 'x', 'x'}
-		c.note = "length top bit"
+		// a hostile length in the 16 or 64-bit form (task #352)
+		if r.Intn(2) == 0 {
+			f = binary.BigEndian.AppendUint16([]byte{0x82, 126}, uint16(HostilePick(r, HostileLengths(16))))
+		} else {
+			f = binary.BigEndian.AppendUint64([]byte{0x82, 127}, HostilePick(r, HostileLengths(64)))
+		}
+		f = append(f, "xxxxx"...)
+		c.note = "hostile length"
 	case 9:
 		c.frames = append(c.frames[:i:i], f[:r.Intn(len(f))])
 		c.note = "cut"

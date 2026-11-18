@@ -995,6 +995,22 @@ yourself.
 
 ### Std maturity evidence (decision 0616)
 
+A fuzz harness (`internal/stdtest/*fuzz_test.go`) puts the hostile
+dictionary in a share of its cases (task #352, 2026-11-18):
+`internal/stdtest/hostilevals_test.go` has `HostileInts`, `HostileUints`,
+`HostileLengths(width)` (top-bit lengths and counts), `HostileDigits` and
+`HostileHex` (runs past Int), `HostileUTF8` and `CutUTF8(s)` (cut inside
+a rune, surrogates, overlong), `Nest(open, close, n)` with
+`HostileDepths`, and `HostilePick(r, xs)`. Use them in place of a
+harness's own edge values: about 15 std faults on such input were found
+by reviews after the module was fuzzed. repotest
+TestFuzzHarnessUsesHostile fails on a harness that never calls them;
+harnesses not yet converted are listed in
+`internal/repotest/testdata/fuzz-hostile-todo.txt` (drop the line when
+converting). The html and websocket harnesses, with the dictionary in
+place of their own values, find 5834fc96c's and 6d6aaf8a4's Int overflows
+again within 10,000 cases when those fixes are reverted.
+
 A module reaches Proven with evidence files under
 `std/evidence/MODULE/` (race, stress, fuzz, review), each with a header
 naming its commit and the module's source hash.

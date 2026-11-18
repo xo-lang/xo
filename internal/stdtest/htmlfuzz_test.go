@@ -44,9 +44,22 @@ var hxAlphabet = []string{
 	"&amp;amp;", "&unknown;", "&;", "&#", "&#;", "&#x", "&#x;", "&#X41;",
 	"&#39;", "&#34", "&#916;", "&#x3bb;", "&#x3BB", "&#0;", "&#128;",
 	"&#x80;", "&#x9F;", "&#150", "&#xD800;", "&#xDFFF;", "&#x10FFFF;",
-	"&#x110000;", "&#1114112;", "&#99999999999999999999;",
-	"&#xFFFFFFFFFFFFFFFFFF;", "&#00000065;", "&#x0000041", "&#-1;",
+	"&#x110000;", "&#1114112;", "&#-1;",
 	"&#65a", "&#x41g",
+}
+
+// hxHostile is a numeric reference of a hostile run of digits (task
+// #352): decimal or hexadecimal, past Int or long with leading zeros, with
+// or without its semicolon.
+func hxHostile(r *rand.Rand) string {
+	ref := "&#" + HostilePick(r, HostileDigits())
+	if r.Intn(2) == 0 {
+		ref = "&#" + HostilePick(r, []string{"x", "X"}) + HostilePick(r, HostileHex())
+	}
+	if r.Intn(4) != 0 {
+		ref += ";"
+	}
+	return ref
 }
 
 // hxMutBytes are the bytes a mutation puts in (ASCII, so the text stays
@@ -58,6 +71,10 @@ const hxMutBytes = "&#;x0a9F<"
 func hxText(r *rand.Rand) string {
 	var b strings.Builder
 	for i, n := 0, r.Intn(17); i < n; i++ {
+		if r.Intn(12) == 0 {
+			b.WriteString(hxHostile(r))
+			continue
+		}
 		b.WriteString(hxAlphabet[r.Intn(len(hxAlphabet))])
 	}
 	s := b.String()
