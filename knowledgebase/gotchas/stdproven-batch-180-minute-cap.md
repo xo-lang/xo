@@ -26,3 +26,8 @@ Run one module per stdproven-offload.sh call and give each its budget:
 runs, a 10 minute stress under --race, the 30 minute stress and its
 check). ~/xo-lead/notes/xw-1/98/chain.sh does this, a chain per kind, to
 stay within the cap of two arm64 jobs per agent.
+
+Since 2026-11-18 (task #331) a batch or `par N` run with OFF_MAX_MIN
+unset gets SP_MOD_MIN (140) minutes a module, a fuzz group's -minutes M
+counting at least M + 40, so a several-module batch no longer hits 180;
+set OFF_MAX_MIN for a batch whose runs need more.
