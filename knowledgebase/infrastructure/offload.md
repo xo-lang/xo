@@ -946,15 +946,15 @@ Last verified: 2026-11-17.
 
 ## Proven evidence on the amd64 host (ADR 0708, task #297, 2026-11-17)
 
-stdproven-offload.sh picks fuzz, race and stress hosts from hosts 2, 3
-and 4 (`SP_HOSTS` default, least loaded by heavyd's lanes). Since
-2026-11-18 (task #317) the amd64 host is out of that default: it is the
-perf host (ADR 0712) and perf takes it exclusive, so evidence runs there
-and perf queued behind each other (431 min of waits over 10 amd64 jobs in
-6 h, alert #23741). A run goes there only with
-`OFFLOAD_ENV=offload-amd64.env` or an `SP_HOSTS` that names it; perf for
-several modules goes as one exclusive lease (`batch perf A + perf B ...`).
-Last verified: 2026-11-18. That host has no
+stdproven-offload.sh picks from hosts 2, 3 and 4 and the amd64 host
+(`SP_HOSTS` default, least loaded by heavyd's lanes). The amd64 host is
+the perf host (ADR 0712) and perf takes it exclusive, so since 2026-11-18
+(task #317; 431 min of waits over 10 amd64 jobs in 6 h, alert #23741) an
+unpinned run takes it only when its lane has a free slot and no exclusive
+lease waiting (`SP_IDLE_ONLY`, default `offload-amd64.env`; the owner,
+2026-11-17: that host must not sit idle); otherwise hosts 2 to 4. Perf
+for several modules goes as one exclusive lease (`batch perf A + perf B
+...`). Last verified: 2026-11-18. That host has no
 `/work`: `scripts/lead/offload-roots.sh` gives each host kind its roots
 (ssh hosts `/work`, `/work/in`; wsl `~/xo-work` in the WSL home, or
 `OFF_WORK` in the env file, and bundles in the Windows home's `xo-ci/off`,
