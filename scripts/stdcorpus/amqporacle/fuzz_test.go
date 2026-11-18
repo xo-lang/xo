@@ -38,3 +38,19 @@ func TestFuzzBadUTF8InDroppedSection(t *testing.T) {
 		t.Fatalf("fzDecode = %q, want error", got)
 	}
 }
+
+// Every section twice after the header (delivery annotations, annotations,
+// properties, data), the header a list32 whose size (115) runs past its five
+// fields: go-amqp keeps the last properties, std/amqp refuses the second one
+// (its documented departure), so the case is one std/amqp refuses
+// (TestAmqpFuzz seed 104 on linux/arm64 host 3, 2026-11-18, task #152).
+func TestFuzzSecondPropertiesAfterLongHeader(t *testing.T) {
+	b, err := hex.DecodeString("005370d00000007300000005415006700000a697405202005371d10000000d00000002a305782d6b6579a000005372d10000000900000002550360a7ff005373d0000000160000000c4040404040a104636f727240404040405294005375a00863c985b1dff08ffd005371d10000000d00000002a305782d6b6579a000005372d10000000900000002550360a7ff005373d0000000160000000c4040404040a104636f727240404040405294005375a00863c985b1dff08ffd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("sections %x at %v", fzSections(b), fzSectionAt(b))
+	if got := fzDecode(b); got != "error" {
+		t.Fatalf("fzDecode = %q, want error", got)
+	}
+}

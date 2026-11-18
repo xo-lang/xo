@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -262,14 +263,20 @@ func fzSectionAt(b []byte) []int {
 	described := func(p int) bool {
 		return p+2 < len(b) && b[p] == 0 && b[p+1] == 0x53 || p+9 < len(b) && b[p] == 0 && b[p+1] == 0x80
 	}
+	// a prefix that ends where go-amqp reads a section can still fail on its own: a list32 or
+	// map32 whose size runs past the prefix (go-amqp checks a size against what is left, then
+	// reads the fields by count), so each prefix is also tried followed by a data section long
+	// enough for any size in it (TestAmqpFuzz seed 104, 2026-11-18)
+	pad := append([]byte{0, 0x53, 0x75, 0xb0, 0, 0, 0, 0}, make([]byte, len(b))...)
+	binary.BigEndian.PutUint32(pad[4:8], uint32(len(b)))
 	var out []int
 	for p := 0; p < len(b); p++ {
 		if !described(p) {
 			continue
 		}
 		if p > 0 {
-			var m amqp.Message
-			if m.UnmarshalBinary(b[:p]) != nil {
+			var m, n amqp.Message
+			if m.UnmarshalBinary(b[:p]) != nil && n.UnmarshalBinary(append(b[:p:p], pad...)) != nil {
 				continue
 			}
 		}
