@@ -215,6 +215,8 @@ const TLS_W = 2
 /// The fiber this thread runs now (sched.xo TLS_FIB_AT / 8), 0 on its
 /// scheduler's stack.
 const TLS_FIB = 1
+/// The thread's heap record (sched.xo TLS_HEAP).
+const TLS_HEAP = 3
 const TLS_SCRATCH_AT = 32
 
 /// The test world's clock move after a deadlock check, while the clock
@@ -1848,7 +1850,7 @@ pub fn async_park() {
   // the kick read the worker's words from another thread; the drop
   // worklist's flag is this thread's own (obj.defer_busy): the
   // interrupted code resumes at once
-  if obj.defer_busy() {
+  if obj.defer_busy_in(rt.tlocal_get(TLS_HEAP)) {
     return
   }
   stat(ST_PREEMPT)
@@ -1864,8 +1866,11 @@ pub fn async_park() {
 /// outside the native backends' unsafe ranges, and a fiber preempted there
 /// kept the worklist busy while it waited pinned, so its worker's other
 /// fibers queued their drops behind it and their memory stayed live).
-pub fn async_held(w: Int, f: Int) -> Bool {
-  rt.mem_load(w, W_LOCKS, 8) != 0 || rt.mem_load(f, F_NOPRE, 8) != 0 || obj.defer_busy()
+/// th is the thread's TLS_HEAP word: this test reads no thread local
+/// word itself, which in an LLVM build would make it hold F_NOPRE while
+/// it runs and so always decline (compiler/llvm apreempt.xo; task #306).
+pub fn async_held(w: Int, f: Int, th: Int) -> Bool {
+  rt.mem_load(w, W_LOCKS, 8) != 0 || rt.mem_load(f, F_NOPRE, 8) != 0 || obj.defer_busy_in(th)
 }
 
 /// async_held for the calling fiber; false outside a worker's fiber (for
@@ -1873,7 +1878,7 @@ pub fn async_held(w: Int, f: Int) -> Bool {
 pub fn async_held_here() -> Bool {
   let w = rt.tlocal_get(TLS_W)
   let f = rt.tlocal_get(TLS_FIB)
-  w != 0 && f != 0 && async_held(w, f)
+  w != 0 && f != 0 && async_held(w, f, rt.tlocal_get(TLS_HEAP))
 }
 
 /// Puts fiber f, preempted by SIGURG, on w's own list.
@@ -1974,7 +1979,7 @@ pub fn async_signal(uc: Int) {
     return
   }
   let f = rt.tlocal_get(TLS_FIB)
-  if f == 0 || async_held(w, f) {
+  if f == 0 || async_held(w, f, rt.tlocal_get(TLS_HEAP)) {
     return
   }
   // the interrupted pc and sp (unwind.xo prof_regs' layouts). arm64:

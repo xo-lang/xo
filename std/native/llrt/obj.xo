@@ -821,10 +821,16 @@ pub fn heap_started() -> Bool { rt.mem_load(rt.static_word(HEAP), H_SLOW, 8) != 
 /// stayed live until it ran again (task #213: bufio's stress grew 17 to
 /// 40 MB on arm64). LLVM builds hold F_NOPRE there (compiler/llvm
 /// apreempt.xo).
-pub fn defer_busy() -> Bool {
+///
+/// th is the thread local heap word (TLS_HEAP), read by the caller: in an
+/// LLVM build a runtime function that reads the thread local table holds
+/// the fiber's no-preemption count while it runs (compiler/llvm
+/// apreempt.xo), so the SIGURG handler's test, reading it here, saw its
+/// own count and declined every preemption (task #306).
+pub fn defer_busy_in(th: Int) -> Bool {
   var h = rt.mem_load(rt.static_word(HEAP), 0, 8)
   if h == 0 {
-    h = rt.tlocal_get(TLS_HEAP)
+    h = th
   }
   h != 0 && rt.mem_load(h & -2, DEFER_BUSY, 8) != 0
 }
