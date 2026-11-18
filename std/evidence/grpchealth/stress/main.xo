@@ -1,0 +1,177 @@
+// grpchealth stress program (decision 0616 section 2): a grpc server with std/grpchealth on a loopback listener and
+// TASKS client tasks, each owning service sT. Each round a task sets its service's status (seeded), checks it, the
+// server's ("") and a service never set over Check; every tenth round lists every service and checks its own entry
+// and the count; every fifth round watches its own service, changes it from the callback and expects the new status
+// next. A watch of a service that never changes is left out (its watcher stays after the client leaves, xw question
+// 153). A background task samples the resident set every 10 s (Linux /proc/self/status) and prints it each minute.
+// Pass: every answer as expected, no fault, and the resident set at the end within 10% or 4 MB of its median after
+// the mark.
+//
+//   main [MINUTES (30); 0: 200 rounds per task] [TASKS (16)]
+use std/grpc
+use std/grpchealth
+use std/http
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+fn pick(x: Int) -> grpchealth.ServingStatus {
+  if (x >> 30) % 2 == 0 { grpchealth.ServingStatus.Serving } else { grpchealth.ServingStatus.NotServing }
+}
+
+fn other(s: grpchealth.ServingStatus) -> grpchealth.ServingStatus {
+  if s == grpchealth.ServingStatus.Serving { grpchealth.ServingStatus.NotServing } else { grpchealth.ServingStatus.Serving }
+}
+
+fn worker(os: Os, c: grpc.Client, h: grpchealth.Health, t: Int, tasks: Int, end: Time, rounds: Int) -> Int ! Str uses (net, clock) {
+  var x = next(t + 1)
+  var n = 0
+  let me = "s${t}"
+  while if rounds > 0 { n < rounds } else { os.clock.now() < end } {
+    x = next(x)
+    let at = "task ${t} round ${n}"
+    let want = pick(x)
+    h.set_serving_status(me, want)
+    let got = grpchealth.check(c, me).map_err(fn(e) -> Str { "${at}: check: ${e.display()}" })?
+    if got != want {
+      return Err("${at}: check ${me} is ${got.name()}, want ${want.name()}")
+    }
+    let srv = grpchealth.check(c, "").map_err(fn(e) -> Str { "${at}: check \"\": ${e.display()}" })?
+    if srv != grpchealth.ServingStatus.Serving {
+      return Err("${at}: the server is ${srv.name()}")
+    }
+    match grpchealth.check(c, "nope${t}") {
+      Err(st) => if st.code != grpc.Code.NotFound || st.message != "unknown service" {
+        return Err("${at}: check nope: ${st.display()}")
+      }
+      Ok(v) => return Err("${at}: an unknown service answered ${v.name()}")
+    }
+    if n % 10 == 9 {
+      let m = grpchealth.list(c).map_err(fn(e) -> Str { "${at}: list: ${e.display()}" })?
+      if m.len() != tasks + 1 || m.get(me) != Some(want) || m.get("") != Some(grpchealth.ServingStatus.Serving) {
+        return Err("${at}: list has ${m.len()} services (want ${tasks + 1}), ${me} ${m.get(me).map(fn(v) -> Str { v.name() }) ?? "missing"}")
+      }
+    }
+    if n % 5 == 4 {
+      // the current status first, then the one the callback sets
+      let flip = other(want)
+      var seen: List[grpchealth.ServingStatus] = []
+      let st = Mutex.new(seen)
+      grpchealth.watch(c, me, fn(s) -> Bool {
+        let k = st.with(fn(var l) {
+          l.push(s)
+          l.len()
+        })
+        if k == 1 {
+          h.set_serving_status(me, flip)
+        }
+        k < 2
+      }).map_err(fn(e) -> Str { "${at}: watch: ${e.display()}" })?
+      seen = st.with_read(fn(l) { l })
+      if seen != [want, flip] {
+        return Err("${at}: watch saw ${seen.map(fn(s) -> Str { s.name() })}, want ${want.name()} then ${flip.name()}")
+      }
+    }
+    n += 1
+  }
+  Ok(n)
+}
+
+fn rss_kib(os: Os) -> Int {
+  // stdproven sets XO_STRESS_CHECK=1 for the --check=all run, whose leak
+  // report judges memory there: the resident set is not sampled
+  if (os.env.get("XO_STRESS_CHECK") ?? "") == "1" { return 0 }
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 16 } else { 16 }
+  let rounds = if minutes == 0 { 200 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run
+  let mark = start + Duration.from_secs(Float(mark_s))
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))
+  var srv = grpc.server(clock)
+  let h = grpchealth.new()
+  for t in 0..tasks {
+    h.set_serving_status("s${t}", grpchealth.ServingStatus.Serving)
+  }
+  h.register(srv)
+  let l = os.net.listen("127.0.0.1:0").map_err(fn(e) { "listen: ${e}" })?
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let addr = hs.addr()
+  let total = scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let after_mark = marked || clock.now() >= mark
+        samples.with(fn(var x) {
+          var (m, p) = x
+          if after_mark && v > 0 { m.push(v) }
+          x = (m, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs2: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      let c = grpc.client(http.client(os.net, timeout: 30s), "http://${addr}")
+      hs2.push(s.spawn(fn() -> Int ! Str { worker(os, c, h, t, tasks, end, rounds) }))
+    }
+    var n = 0
+    for h in hs2 {
+      n += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    s.cancel()
+    n
+  }
+  let (rss_after, peak) = samples.with_read(fn(x) { x })
+  let (at_mark, last) = rss_medians(rss_after)
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes ${mark_s / 60} to ${mark_s / 60 + 2}), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("grpchealth stress: ${total} rounds by ${tasks} tasks in ${minutes} min, every answer as expected, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 15 to 17 of a 30 minute run, decision 0717) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}
