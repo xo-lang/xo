@@ -1,5 +1,18 @@
 # std/json changes
 
+## 2026-11-18: feature: encode(public: true) leaves server fields out (decision 0719)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #369: std/ui (decision 0659 point 5) sends a model to its clients without the fields only the server holds
+- Go reference: none (Go has no server fields; encoding/json's `json:"-"` is the nearest)
+- Test: golden json_public_server (go, arm64, LLVM): server fields at depth, in a List, an Option, enum payloads and a type that refers to itself; omitempty on a server field; encode_indent_str; a type with no server field encodes as before
+- Timing: none (a type that reaches no server field shares its encoders; others get a second set only when encoded with `public: true`)
+
+`encode`, `encode_str`, `encode_indent` and `encode_indent_str` take
+`public: Bool = false`. With `true`, every struct's `server` fields are
+left out of the text, wherever the struct sits in the value.
+
 ## 2026-11-16: feature: json.Number (decision 0673)
 
 - Kind: feature

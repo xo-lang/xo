@@ -2833,8 +2833,11 @@ http_brotli_responses (go, arm64, LLVM; a token of its own included).
 /// is true by default), passed through `html_escape`, or put in through
 /// std/template's HTML mode; written raw, a value holding `</script>`
 /// closes the element.
-pub fn encode[T: Json](v: T) -> Bytes
-pub fn encode_str[T: Json](v: T) -> Str
+/// `public: true` leaves every struct's server fields out, at any depth
+/// (core 6.1, decision 0719): the text a client may see. The call is
+/// pure; reading the fields is the encoder's, not the caller's.
+pub fn encode[T: Json](v: T, public: Bool = false) -> Bytes
+pub fn encode_str[T: Json](v: T, public: Bool = false) -> Str
 pub fn decode[T: Json](data: Bytes) -> T ! DecodeErr
 pub fn decode_str[T: Json](s: Str) -> T ! DecodeErr
 /// decode with encoding/json's rules for null and missing fields (decision
@@ -2843,8 +2846,8 @@ pub fn decode_str[T: Json](s: Str) -> T ! DecodeErr
 /// value (a declared default still wins). Other errors are decode's.
 pub fn decode_go[T: Json](data: Bytes) -> T ! DecodeErr
 pub fn decode_go_str[T: Json](s: Str) -> T ! DecodeErr
-pub fn encode_indent[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Bytes      // Go's MarshalIndent
-pub fn encode_indent_str[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Str
+pub fn encode_indent[T: Json](v: T, prefix: Str = "", indent: Str = "  ", public: Bool = false) -> Bytes      // Go's MarshalIndent
+pub fn encode_indent_str[T: Json](v: T, prefix: Str = "", indent: Str = "  ", public: Bool = false) -> Str
 pub fn indent(text: Str, prefix: Str = "", indent: Str = "  ") -> Str ! DecodeErr      // Go's Indent over a text (the whitespace after the value is kept)
 pub fn compact(text: Str) -> Str ! DecodeErr                                            // Go's Compact
 pub fn html_escape(text: Str) -> Str                                                    // Go's HTMLEscape: < > & U+2028 U+2029 as \u escapes

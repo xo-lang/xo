@@ -7,9 +7,23 @@ use std/json
 use native/llrt/jsontext
 use native/rtjson
 
-fn encode[T: Json](v: T) -> Bytes { rtjson.json_enc("", v).bytes() }
+/// json.encode(public: true)'s value (decision 0719): json_enc of it is
+/// v's text with every struct's server fields left out. A wrapper, not
+/// an intrinsic of its own, so the seed builds this module.
+struct XoPublicJson[T] {
+  v: T
+}
 
-fn encode_str[T: Json](v: T) -> Str { rtjson.json_enc("", v) }
+fn encode[T: Json](v: T, public: Bool) -> Bytes { encode_str(v, public).bytes() }
+
+fn encode_str[T: Json](v: T, public: Bool) -> Str {
+  if public {
+    // server fields left out (decision 0719): compiler/ssa json.xo
+    // knows the wrapper
+    return rtjson.json_enc("", XoPublicJson{v: v})
+  }
+  rtjson.json_enc("", v)
+}
 
 fn decode[T: Json](data: Bytes) -> T ! json.DecodeErr {
   let tape = jsontext.parse(data)
@@ -406,9 +420,9 @@ fn val_u64(n: Int) -> json.Value {
 /// The Value of a Bytes, Duration or Time field: the Str of the encoder's
 /// text (base64, Go's duration and RFC 3339 forms), read back as parse
 /// reads it.
-fn val_bytes(v: Bytes) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }
-fn val_duration(v: Duration) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }
-fn val_time(v: Time) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }
+fn val_bytes(v: Bytes) -> json.Value { parse_value(encode_str(v, false)).ok() ?? json.Value.Null }
+fn val_duration(v: Duration) -> json.Value { parse_value(encode_str(v, false)).ok() ?? json.Value.Null }
+fn val_time(v: Time) -> json.Value { parse_value(encode_str(v, false)).ok() ?? json.Value.Null }
 
 /// The Value of a json.Value field: its text read back (a Trusted becomes
 /// its Str, a whole Num an Int).
@@ -449,11 +463,11 @@ fn value_append(out: Str, v: json.Value) -> Str {
 
 fn value_encode(v: json.Value) -> Str { value_append("", v) }
 
-fn encode_indent[T: Json](v: T, prefix: Str, indent: Str) -> Bytes { encode_indent_str(v, prefix, indent).bytes() }
+fn encode_indent[T: Json](v: T, prefix: Str, indent: Str, public: Bool) -> Bytes { encode_indent_str(v, prefix, indent, public).bytes() }
 
-fn encode_indent_str[T: Json](v: T, prefix: Str, indent: Str) -> Str {
+fn encode_indent_str[T: Json](v: T, prefix: Str, indent: Str, public: Bool) -> Str {
   // the encoder's text is valid JSON, so the walk cannot fail
-  indent_text(encode_str(v), prefix, indent).ok() ?? ""
+  indent_text(encode_str(v, public), prefix, indent).ok() ?? ""
 }
 
 fn indent(text: Str, prefix: Str, indent: Str) -> Str ! json.DecodeErr { indent_text(text, prefix, indent) }

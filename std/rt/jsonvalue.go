@@ -192,16 +192,16 @@ func (v *Json_Value) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 
 // Json_encode_indent is `json.encode_indent(v, prefix, indent)`: Go's
 // MarshalIndent (Marshal then Indent).
-func Json_encode_indent[T any](tk *Task, v T, prefix string, indent string) Bytes {
+func Json_encode_indent[T any](tk *Task, v T, prefix string, indent string, public ...bool) Bytes {
 	var b bytes.Buffer
-	if err := json.Indent(&b, []byte(Json_encode(tk, v)), prefix, indent); err != nil {
-		return Json_encode(tk, v)
+	if err := json.Indent(&b, []byte(Json_encode(tk, v, public...)), prefix, indent); err != nil {
+		return Json_encode(tk, v, public...)
 	}
 	return Bytes(b.Bytes())
 }
 
-func Json_encode_indent_str[T any](tk *Task, v T, prefix string, indent string) string {
-	return string(Json_encode_indent(tk, v, prefix, indent))
+func Json_encode_indent_str[T any](tk *Task, v T, prefix string, indent string, public ...bool) string {
+	return string(Json_encode_indent(tk, v, prefix, indent, public...))
 }
 
 // Json_indent is `json.indent(text, prefix, indent)`: Go's Indent; a text

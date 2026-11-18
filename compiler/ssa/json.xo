@@ -65,6 +65,20 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     if name == "json_enc" {
       let acc = b.value_as(es[0] ?? fault("arg"), st)
       let v = b.value_as(es[1] ?? fault("arg"), b.typ(ct))
+      let po = b.named_obj(ct)
+      if po >= 0 && b.obj_mod(po) >= 0 && b.c.mods[b.obj_mod(po)].native && b.c.mods[b.obj_mod(po)].implements == "std/json" && b.obj_name(po) == "XoPublicJson" {
+        // json.encode(public: true) (decision 0719): std/native/json's
+        // wrapper, so a seed that knows no public encoders builds it
+        // (as a plain struct, on a path xo never takes); its value's
+        // encoders leave server fields out
+        let inner = b.ty_args(ct)[0]
+        let iv = b.add(Op.Field, b.m.types[b.typ(ct)].fields[0].ty, Aux.I(n: 0), [v])
+        let saved_pub = b.enc_pub
+        b.enc_pub = true
+        let f = b.json_enc(inner)
+        b.enc_pub = saved_pub
+        return b.call(f, st, "", [acc, b.unbox(iv)])
+      }
       let f = b.json_enc(ct)
       return b.call(f, st, "", [acc, v])
     }
@@ -270,16 +284,82 @@ fn (var b: Builder) json_sub(a: Int, x0: Int, xt: Int) -> Int {
 fn (var b: Builder) json_enc(ct: Int) -> Str {
   let st = b.str_t()
   let t = b.typ(ct)
-  let name = "xo.json.enc[${b.type_name(ct)}]"
+  // json.encode(public: true)'s own encoders only for a type that
+  // reaches a server field (decision 0719): every other type's are the
+  // same, so it shares them
+  let saved_pub = b.enc_pub
+  b.enc_pub = saved_pub && b.json_pub_reach(ct)
+  let name = "xo.json.enc${if b.enc_pub { "pub" } else { "" }}[${b.type_name(ct)}]"
   let fi = b.thunk_func(name, [st, t], [st], [])
   if fi < 0 {
+    b.enc_pub = saved_pub
     return name
   }
   let saved = b.begin(fi, b.s.file)
   b.json_enc_body(ct, t)
   b.finish_fn()
   b.end(saved)
+  b.enc_pub = saved_pub
   name
+}
+
+/// Whether encoding ct reaches a struct's server field (decision 0719):
+/// the server fields of the types ct reaches (fields, payloads, type
+/// arguments, a `via` proxy), each type visited once per question, so
+/// a cycle of types is answered whole.
+fn (var b: Builder) json_pub_reach(ct0: Int) -> Bool {
+  if b.any_server < 0 {
+    b.any_server = 0
+    for o in b.c.objs {
+      for f in o.fields {
+        if f.is_server {
+          b.any_server = 1
+        }
+      }
+    }
+  }
+  if b.any_server == 0 {
+    return false
+  }
+  let ct = b.c.resolve(ct0)
+  if let Some(r) = b.pub_reach.get(ct) {
+    return r
+  }
+  var seen: Map[Int, Bool] = {}
+  var todo = [ct]
+  var r = false
+  while !todo.is_empty() && !r {
+    let x = b.c.resolve(todo.pop() ?? 0)
+    if seen.get(x) is Some(_) {
+      continue
+    }
+    seen[x] = true
+    for a in b.c.tys[x].args {
+      todo.push(a)
+    }
+    let obj = b.named_obj(x)
+    if obj < 0 {
+      continue
+    }
+    let o = b.c.objs[obj]
+    if o.json_via >= 0 {
+      todo.push(o.json_via)
+    }
+    let sb = b.c.args_subst(o.tparams, b.ty_args(x))
+    for f in o.fields {
+      if f.is_server && !f.json_skip {
+        r = true
+      }
+      todo.push(b.c.subst(f.ty, sb))
+    }
+    for vo in o.variants {
+      for f in vo.fields {
+        todo.push(b.c.subst(f.ty, sb))
+      }
+    }
+  }
+  b.pub_reach[ct] = r
+  r
 }
 
 fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
@@ -627,8 +707,9 @@ fn (var b: Builder) json_struct_obj(acc: Int, v: Int, t: Int, obj: Int, sb: Map[
     if fi < 0 {
       continue
     }
-    if f.json_skip {
-      // `-`: left out of the JSON (decision 0622)
+    if f.json_skip || (f.is_server && b.enc_pub) {
+      // `-`: left out of the JSON (decision 0622); a server field under
+      // json.encode(public: true) too (decision 0719)
       continue
     }
     // its key: the field's wire name or its case rule (decision 0277),

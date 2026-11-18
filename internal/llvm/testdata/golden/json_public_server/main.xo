@@ -1,0 +1,38 @@
+// json.encode(public: true) leaves server fields out (decision 0719), at
+// any depth: a field's struct, a List, an Option, an enum payload, a type
+// that refers to itself. Without it every field is written.
+use std/json
+
+struct User {
+  name: Str
+  server token: Str = ""
+  server hits as "n,omitempty": Int = 0
+} derive Json
+
+struct Room {
+  title: Str
+  users: List[User]
+  owner: User?
+  next: Room? = None
+} derive Json
+
+enum Event {
+  Joined(u: User)
+  Left(who: User, why: Str)
+} derive Json
+
+struct Plain {
+  a: Int
+  b: Str
+} derive Json
+
+fn main(os: Os) uses (server, stdio) {
+  let u = User{name: "ann", token: "t1", hits: 3}
+  let r = Room{title: "x", users: [u, User{name: "bo", token: "t2"}], owner: Some(u), next: Some(Room{title: "y", users: [u], owner: None})}
+  os.stdio.println(json.encode_str(r))
+  os.stdio.println(json.encode_str(r, public: true))
+  os.stdio.println(json.encode_str([Event.Joined(u), Event.Left(who: u, why: "bye")], public: true))
+  os.stdio.println(json.encode_str(Plain{a: 1, b: "q"}, public: true))
+  os.stdio.println(json.encode_indent_str(u, public: true))
+  os.stdio.println("${json.encode(u, public: true).len()} ${json.encode(u).len()}")
+}

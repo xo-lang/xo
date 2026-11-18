@@ -17,9 +17,10 @@ fn (var g: Gen) gen_json_struct(t: Int) {
   let fields = g.c.objs[t].fields
   var has_patch = false
   for f in fields {
-    if g.is_patch(f.ty) || f.omit_empty {
-      // an omitempty field (decision 0309) too: whether it is written is
-      // known only when the code runs
+    if g.is_patch(f.ty) || f.omit_empty || (f.is_server && !f.json_skip) {
+      // an omitempty field (decision 0309) or a server field (decision
+      // 0719, left out under `public: true`) too: whether it is written
+      // is known only when the code runs
       has_patch = true
     }
   }
@@ -34,18 +35,23 @@ fn (var g: Gen) gen_json_struct(t: Int) {
       let n = check.text(f.name)
       // its key: the wire name or its case rule (decision 0277)
       let k = check.text(f.json_key)
+      if f.is_server {
+        // left out under json.encode(public: true) (decision 0719)
+        g.pl("\tif !w.Public {")
+      }
       if g.is_patch(f.ty) {
         g.pl("\tif !${rt}Json_Patch_PatchAbsent(v.${go_field(n)}) {")
         g.pl("\t\tw.Field(${k.quote()})\n\t\t${g.json_enc_value(t, i, "v." + go_field(n))}\n\t}")
-        continue
-      }
-      if f.omit_empty {
+      } else if f.omit_empty {
         g.pl("\tif !${rt}JsonEmpty(v.${go_field(n)}) {")
         g.pl("\t\tw.Field(${k.quote()})\n\t\t${g.json_enc_value(t, i, "v." + go_field(n))}\n\t}")
-        continue
+      } else {
+        g.pl("\tw.Field(${k.quote()})")
+        g.pl("\t${g.json_enc_value(t, i, "v." + go_field(n))}")
       }
-      g.pl("\tw.Field(${k.quote()})")
-      g.pl("\t${g.json_enc_value(t, i, "v." + go_field(n))}")
+      if f.is_server {
+        g.pl("\t}")
+      }
     }
     g.pl("\tw.ObjEnd()\n}\n")
   } else {

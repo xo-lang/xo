@@ -24,6 +24,9 @@ import (
 type JsonW struct {
 	b     []byte
 	count []int // values written in each open object or array
+	// Public is json.encode(public: true) (decision 0719): generated
+	// encoders leave server fields out.
+	Public bool
 }
 
 type jsonEncoder interface {
@@ -916,8 +919,10 @@ func jsonValue(dec *json.Decoder) (any, error) {
 // Json_encode is `json.encode(v)`. The text is built in a pooled buffer
 // and copied out once, at its final size: growing a fresh buffer cost
 // several allocations per value (about ten for a list of 64 records).
-func Json_encode[T any](tk *Task, v T) Bytes {
+// public is the optional `public:` argument (decision 0719).
+func Json_encode[T any](tk *Task, v T, public ...bool) Bytes {
 	w := getJsonW()
+	w.Public = len(public) > 0 && public[0]
 	JsonEnc(tk, w, v)
 	out := Bytes(w.b)
 	putJsonW(w)
@@ -935,12 +940,14 @@ func putJsonW(w *JsonW) {
 	if cap(w.b) > jsonWKeep {
 		return
 	}
-	w.b, w.count = w.b[:0], w.count[:0]
+	w.b, w.count, w.Public = w.b[:0], w.count[:0], false
 	jsonWPool.Put(w)
 }
 
 // Json_encode_str is `json.encode_str(v)`.
-func Json_encode_str[T any](tk *Task, v T) string { return string(Json_encode(tk, v)) }
+func Json_encode_str[T any](tk *Task, v T, public ...bool) string {
+	return string(Json_encode(tk, v, public...))
+}
 
 // JsonGoMode reports whether tk runs json.decode_go (generated decoders
 // read it for a missing field).

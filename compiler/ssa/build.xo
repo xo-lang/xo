@@ -325,6 +325,13 @@ pub struct Builder {
   /// Building the decoders of json.decode_go (decision 0553): a null leaves the
   /// zero value and a missing field takes it.
   dec_go: Bool = false
+  /// Building the encoders of json.encode(public: true) (decision 0719):
+  /// a struct leaves its server fields out.
+  enc_pub: Bool = false
+  /// json_pub_reach's answers by checker type, and whether the program
+  /// has a server field at all (-1 not yet known).
+  pub_reach: Map[Int, Bool] = {}
+  any_server: Int = -1
   /// `xo test --real` (core 9.2, decision 0120): the tests that declare
   /// `uses` are built, with the real Fs (Options.RealTests).
   pub real_tests: Bool = false

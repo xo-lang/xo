@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+{"title":"x","users":[{"name":"ann","token":"t1","n":3},{"name":"bo","token":"t2"}],"owner":{"name":"ann","token":"t1","n":3},"next":{"title":"y","users":[{"name":"ann","token":"t1","n":3}],"owner":null,"next":null}}
+{"title":"x","users":[{"name":"ann"},{"name":"bo"}],"owner":{"name":"ann"},"next":{"title":"y","users":[{"name":"ann"}],"owner":null,"next":null}}
+[{"Joined":{"u":{"name":"ann"}}},{"Left":{"who":{"name":"ann"},"why":"bye"}}]
+{"a":1,"b":"q"}
+{
+  "name": "ann"
+}
+14 33
+--- stderr
