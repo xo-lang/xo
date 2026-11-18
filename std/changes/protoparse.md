@@ -1,5 +1,17 @@
 # std/protoparse changes
 
+## 2026-11-17: fix: a proto3 enum whose first value is not zero is an error
+
+- Kind: fix
+- Commit: this push
+- Found by: task #152 (xw-1's protoparse fuzz against protocompile v0.14.1, seed 3 at 5000 files on host 3: 1 of 2555 rejected files accepted, a proto3 enum with allow_alias starting at -1)
+- Go reference: protocompile v0.14.1 parser/validate.go validateEnum (the proto3 first value check, before the alias checks)
+- Test: std/protoparse_test.xo "a proto3 enum's first value is zero" (accepted before; top level, nested, with and without allow_alias; proto2 and editions still start anywhere)
+- Shipped in: not yet released
+
+parse rejected nothing for a proto3 enum's first value; it now gives protocompile's
+`enum E: proto3 requires that first value of enum have numeric value zero` at the first value's number.
+
 ## 2026-11-17: feature: gen writes typed gRPC stubs for services
 
 - Kind: feature

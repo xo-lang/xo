@@ -1041,8 +1041,13 @@ fn p_enum(var p: P) -> Enum ! ParseErr {
     }
   }
   let end = p.at
-  // protocompile's validateEnum: aliases, then reserved ranges
+  // protocompile's validateEnum: a proto3 enum's first value is zero,
+  // then aliases, then reserved ranges
   let scope = "enum ${name}"
+  if !p.proto2 && !p.editions && e.values.len() > 0 && e.values[0].num != 0 {
+    p.at = val_at[0]
+    return Err(p_err(p, "${scope}: proto3 requires that first value of enum have numeric value zero"))
+  }
   var has_alias = false
   for i in 0..e.values.len() {
     for j in 0..i {

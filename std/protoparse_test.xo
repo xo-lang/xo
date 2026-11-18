@@ -316,6 +316,17 @@ fn parse_err(src: Str) -> Str {
 
 // task #230 (xw-1's protoparse fuzz against protocompile v0.14.1): files
 // protoc rejects, with protocompile's texts (validate.go, proto.y)
+// task #152 (protoparse fuzz seed 3 on host 3, 2026-11-17): protocompile's
+// validateEnum rejects a proto3 enum whose first value is not zero, before
+// its alias checks; proto2 and editions files may start anywhere
+test "a proto3 enum's first value is zero" {
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = true;\n  A = -1;\n  B = -1;\n  C = 1;\n}")) == "4:7: enum E: proto3 requires that first value of enum have numeric value zero"
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  A = 1;\n  B = 1;\n}")) == "3:7: enum E: proto3 requires that first value of enum have numeric value zero"
+  expect(parse_err("syntax = \"proto3\";\nmessage M {\n  enum E {\n    A = 2;\n  }\n}")) == "4:9: enum E: proto3 requires that first value of enum have numeric value zero"
+  expect(parse_err("syntax = \"proto2\";\nenum E {\n  A = 1;\n}")) == "ok"
+  expect(parse_err("edition = \"2023\";\nenum E {\n  option features.enum_type = CLOSED;\n  A = 1;\n}")) == "ok"
+}
+
 test "allow_alias with no aliases, and aliases without it, are errors" {
   expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = true;\n  A = 0;\n  B = 1;\n}")) == "3:24: enum E: allow_alias is true but no values are aliases"
   expect(parse_err("syntax = \"proto3\";\nenum E {\n  A = 0;\n  B = 0;\n}")) == "4:7: enum E: values A and B both have the same numeric value 0; use allow_alias option if intentional"
