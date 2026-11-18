@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-18: perf: quality 10 and 11 encode prices commands once per copy code (task #271)
+
+- Kind: perf
+- Commit: this push
+- Found by: the Proven perf run on the linux/amd64 host (enc11 1.645 of Go)
+- Go reference: andybalholm/brotli's zopfli (updateNodes, the cost model built per block)
+- Test: std/brotli_test.xo's round trips at every quality (output unchanged; bench/perf/brotli's enc1, enc6, enc11 and text outputs match before and after)
+- Shipped in: not yet released
+
+update_nodes no longer rebuilds its constant Lists on each call, computes a command's cost once for each copy code instead of once per length, and rb_match compares 4 bytes a step. `xo bench --ab` of bench/perf/brotli enc11 on host 1: wall 0.937 (0.93 to 0.947), 3 of 3 rounds better. The rest of the gap to Go is arm64 register allocation in update_nodes (its loop values spill; notes on the regalloc work under decision #142).
+
 ## 2026-11-16: perf: the encoder's hash tables hold uint32s, as Go's do (task #156)
 
 - Kind: perf (memory)

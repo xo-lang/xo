@@ -3520,6 +3520,13 @@ fn ldl32(b: List[UInt8], i: Int) -> Int {
 /// findMatchLengthWithLimit over the ring buffer.
 fn rb_match(b: List[UInt8], a: Int, c: Int, limit: Int) -> Int {
   var m = 0
+  while m + 4 <= limit {
+    if b[a + m] != b[c + m] { return m }
+    if b[a + m + 1] != b[c + m + 1] { return m + 1 }
+    if b[a + m + 2] != b[c + m + 2] { return m + 2 }
+    if b[a + m + 3] != b[c + m + 3] { return m + 3 }
+    m += 4
+  }
   while m < limit && b[a + m] == b[c + m] {
     m += 1
   }
@@ -5067,6 +5074,9 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
   let max_zopfli_len = if e.quality <= 10 { 150 } else { 325 }
   let max_iters = if e.quality <= 10 { 1 } else { 5 }
   var result = 0
+  let dci = Z_DC_INDEX
+  let dco = Z_DC_OFFSET
+  let copy_extra = ENC_COPY_EXTRA
   evaluate_node(block_start, pos, max_backward_limit, start_dc, m, q, z)
   let q0 = zq_at(q, 0)
   let min_cost0 = q.cost[q0] + m.min_cost_cmd + zm_lit(m, q.pos[q0], pos)
@@ -5080,7 +5090,7 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
     var best_len = min_len - 1
     var j = 0
     while j < 16 && best_len < max_len {
-      let backward = q.dc[4 * qi + Z_DC_INDEX[j]] + Z_DC_OFFSET[j]
+      let backward = q.dc[4 * qi + dci[j]] + dco[j]
       if cur_m + best_len > mask {
         break
       }
@@ -5096,11 +5106,18 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
       let len = rb_match(b, prev, cur_m, max_len)
       let dist_cost = base_cost + m.cost_dist[j]
       var l = best_len + 1
+      // copy_code is nondecreasing in l: the command's cost changes only
+      // when it does.
+      var last_cc = -1
+      var cost = Float32(0.0)
       while l <= len {
         let copycode = copy_code(l)
-        let cmdcode = combine_length_codes(inscode, copycode, j == 0)
-        let tmp = if cmdcode < 128 { base_cost } else { dist_cost }
-        let cost = tmp + Float32(ENC_COPY_EXTRA[copycode]) + m.cost_cmd[cmdcode]
+        if copycode != last_cc {
+          let cmdcode = combine_length_codes(inscode, copycode, j == 0)
+          let tmp = if cmdcode < 128 { base_cost } else { dist_cost }
+          cost = tmp + Float32(copy_extra[copycode]) + m.cost_cmd[cmdcode]
+          last_cc = copycode
+        }
         if cost < z.cost[pos + l] {
           zn_update(z, pos, start, l, l, backward, j + 1, cost)
           result = max_i(result, l)
@@ -5122,11 +5139,16 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
         if len < max_match_len && (is_dict || max_match_len > max_zopfli_len) {
           len = max_match_len
         }
+        var last_cc = -1
+        var cost = Float32(0.0)
         while len <= max_match_len {
           let len_code = if is_dict { match_len_code_of(mt) } else { len }
           let copycode = copy_code(len_code)
-          let cmdcode = combine_length_codes(inscode, copycode, false)
-          let cost = dist_cost + Float32(ENC_COPY_EXTRA[copycode]) + m.cost_cmd[cmdcode]
+          if copycode != last_cc {
+            let cmdcode = combine_length_codes(inscode, copycode, false)
+            cost = dist_cost + Float32(copy_extra[copycode]) + m.cost_cmd[cmdcode]
+            last_cc = copycode
+          }
           if cost < z.cost[pos + len] {
             zn_update(z, pos, start, len, len_code, dist, 0, cost)
             if len > result {
