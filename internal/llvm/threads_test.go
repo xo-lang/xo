@@ -369,6 +369,7 @@ func usesStdC(t *testing.T, src []byte) bool {
 // for the uninstrumented scheduler, which TestGolden and the native
 // goldens still check.
 var tsanTimingSkips = map[string]string{
+	"busy_timers": "the 200 ms wake bound is for the uninstrumented scheduler (natively 0 to 36 ms late at 2 threads); TestGolden and the native goldens check it",
 	"fair_pairs": "the 300 ms wake bound is for the uninstrumented scheduler (natively 110 to 130 ms late at 1 to 4 threads; under TSan it passed 300 ms at 1 thread in the 0.33.1 release tier); TestGolden and the native goldens check it",
 }
 

@@ -1,0 +1,50 @@
+// busy_timers (task #152): with 2 workers, 32 CPU bound tasks (no channel
+// or sleep, preempted once a slice) and a task that sleeps 20 ms: the
+// median of five wakes is under 200 ms late. find_work took the fibers
+// SIGURG preempted (each worker's own list) before the inject queue,
+// where the poller thread puts a fiber a timer woke, so the sleeper waited
+// for the fairness step, every 64th round of 10 ms slices: 550 to 840 ms
+// late (2026-11-18). The median, not the worst, as fair_pairs: a loaded
+// machine delays one wake; starvation delays all five. The output does
+// not depend on the timing.
+
+fn busy(n: Int) -> Int {
+  var s = 0
+  for r in 0..n {
+    var xs: List[Int] = []
+    for k in 0..64 {
+      xs.push(k ^ r)
+    }
+    s += xs[r % 64]
+  }
+  s
+}
+
+fn main(os: Os) {
+  let out = Chan[Int].new(1)
+  let sums = Chan[Int].new(32)
+  scope s {
+    for _ in 0..32 {
+      s.spawn(fn() {
+        sums.send(busy(3000000))
+      })
+    }
+    s.spawn(fn() {
+      var lates: List[Int] = []
+      for _ in 0..5 {
+        let t0 = os.clock.now()
+        os.clock.sleep(20ms)
+        lates.push(os.clock.since(t0).millis() - 20)
+      }
+      lates = lates.sort()
+      out.send(lates[2])
+    })
+  }
+  var total = 0
+  for _ in 0..32 {
+    total += sums.recv() ?? 0
+  }
+  let median = out.recv() ?? -1
+  os.stdio.println("busy: ${total}")
+  os.stdio.println("median wake under 200 ms late: ${median >= 0 && median < 200}")
+}

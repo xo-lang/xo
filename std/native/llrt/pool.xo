@@ -1060,7 +1060,8 @@ fn push(p: Int, t: Int, handoff: Bool) {
 /// 2026-10-21).
 pub fn batch_wake(p: Int) { wakep(p) }
 
-/// Takes w's own work: next, then the head of its ring.
+/// Takes w's own work: next, then the head of its ring. The fibers
+/// SIGURG preempted come later (take_pinned), after the inject queue.
 fn take_local(w: Int) -> Int {
   var t = 0
   if rt.slot_load(w, W_NEXT_I, RELAXED) != 0 {
@@ -1070,10 +1071,27 @@ fn take_local(w: Int) -> Int {
     owner_check(w)
     t = sched.rq_get(w)
   }
-  if t == 0 && rt.mem_load(w, W_PIN, 8) != 0 {
-    // a fiber SIGURG preempted (decision 0318): only this worker runs it
-    t = pin_pop(w) | 1
+  owed_off(w, t)
+}
+
+/// The head of w's list of fibers SIGURG preempted (decision 0318: only
+/// this worker runs them), or 0. find_work takes it after the inject
+/// queue: a preempted fiber is behind everything queued, as one the loop
+/// polls preempt goes to the inject queue's tail. Taken before it, CPU
+/// bound fibers past the workers kept every worker's list full, and a
+/// fiber a timer woke on the poller thread (the inject queue) waited for
+/// the fairness step, every 64th round of 10 ms slices: a 20 ms sleep
+/// woke 550 to 840 ms late on 2 workers with 32 busy fibers (2026-11-18,
+/// task #152's task race stress, golden busy_timers).
+fn take_pinned(w: Int) -> Int {
+  if rt.mem_load(w, W_PIN, 8) == 0 {
+    return 0
   }
+  owed_off(w, pin_pop(w) | 1)
+}
+
+/// t, after clearing w's owed wake when t is work of its own.
+fn owed_off(w: Int, t: Int) -> Int {
   if t != 0 && rt.slot_load(w, W_DEFER_AT_W, RELAXED) != 0 {
     // this worker runs its own work: no wake is owed
     rt.slot_store(w, W_DEFER_AT_W, 0, RELAXED)
@@ -1243,6 +1261,9 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
   if t == 0 && np_poll(p, w, 0) > 0 {
     // the network's ready fibers, on this worker (decision 0324)
     t = take_local(w)
+  }
+  if t == 0 {
+    t = take_pinned(w)
   }
   if t != 0 || spinning == 0 {
     return t

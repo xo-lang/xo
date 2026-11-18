@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+busy: 143996928000000
+median wake under 200 ms late: true
+--- stderr
