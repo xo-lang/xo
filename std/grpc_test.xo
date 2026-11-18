@@ -1161,3 +1161,139 @@ test "with_message_interceptor wraps a streaming call's messages, as a grpc-go s
     })) == Ok("PermissionDenied")
   }
 }
+
+fn stats_line(e: Stats) -> Str {
+  match e {
+    Stats.Begin(call, client, method, cs, ss, _) => "${call} Begin ${client} ${method} ${cs} ${ss}"
+    Stats.OutHeader(call, _, method, header, compression, _) => "${call} OutHeader ${method} x-k=${header.get("x-k") ?? "-"} ${compression}"
+    Stats.InHeader(call, _, _, header, _, remote) => "${call} InHeader x-h=${header.get("x-h") ?? "-"} ${remote != ""}"
+    Stats.OutPayload(call, _, len, clen, wire, _) => "${call} OutPayload ${len} ${clen} ${wire}"
+    Stats.InPayload(call, _, len, clen, wire, _) => "${call} InPayload ${len} ${clen} ${wire}"
+    Stats.OutTrailer(call, _, _) => "${call} OutTrailer"
+    Stats.InTrailer(call, _, trailer) => "${call} InTrailer x-t=${trailer.get("x-t") ?? "-"}"
+    Stats.End(call, _, status, _, begin, end) => {
+      let code = match status {
+        Some(st) => "${st.code}"
+        None => "ok"
+      }
+      "${call} End ${code} ${end >= begin}"
+    }
+  }
+}
+
+test "with_stats_handler sees each call's events in grpc-go's order, with message sizes" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/s.S/Get", fn(_c, req) -> Bytes ! Status { Ok(req + b"!") })
+  srv.stream("/s.S/Echo", fn(_c, recv, send) -> () ! Status {
+    send.set_header("x-h", "1")?
+    while let Some(m) = recv.next()? {
+      send.send(m + m)?
+    }
+    send.set_trailer("x-t", "2")
+    Ok(())
+  })
+  let h = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { h.serve().ignore_err("the test ends the server") })
+    let log = Mutex[List[Str]].new([])
+    let c = client(http.client(os.net, timeout: 10s), "http://${h.addr()}")
+      .with_stats_handler(fn(e) { log.with(fn(var l: List[Str]) { l.push(stats_line(e)) }) }, os.clock)
+    expect(c.unary("/s.S/Get", b"abc", {"x-k": "v"})) == Ok(b"abc!")
+    expect(c.unary("/s.S/Nope", b"", {}).is_err()) == true
+    expect(c.call("/s.S/Echo", {}, None, fn(cc) -> Int ! Status {
+      cc.send(b"xy")?
+      var n = 0
+      cc.close_send()
+      while let Some(m) = cc.recv()? {
+        n += m.len()
+      }
+      Ok(n)
+    })) == Ok(4)
+    expect(log.with(fn(var l: List[Str]) -> List[Str] { l })) == [
+      "1 Begin true /s.S/Get false false",
+      "1 OutHeader /s.S/Get x-k=v ",
+      "1 OutPayload 3 3 8",
+      "1 InHeader x-h=- true",
+      "1 InPayload 4 4 9",
+      "1 InTrailer x-t=-",
+      "1 End ok true",
+      "2 Begin true /s.S/Nope false false",
+      "2 OutHeader /s.S/Nope x-k=- ",
+      "2 OutPayload 0 0 5",
+      // the server's Unimplemented comes as a head and a trailer, not trailers only, so InHeader comes (grpc-go)
+      "2 InHeader x-h=- true",
+      "2 InTrailer x-t=-",
+      "2 End Unimplemented true",
+      "3 Begin true /s.S/Echo true true",
+      "3 OutHeader /s.S/Echo x-k=- ",
+      "3 OutPayload 2 2 7",
+      "3 InHeader x-h=1 true",
+      "3 InPayload 4 4 9",
+      "3 InTrailer x-t=2",
+      "3 End ok true",
+    ]
+  }
+}
+
+test "Server.with_stats_handler sees each call's events in grpc-go's order" uses (net, clock) {
+  let log = Mutex[List[Str]].new([])
+  var srv = server(os.clock)
+  srv.unary("/s.S/Get", fn(_c, req) -> Bytes ! Status { Ok(req + b"!") })
+  // added after a method and before another: both see it
+  srv = srv.with_stats_handler(fn(e) {
+    let line = match e {
+      Stats.OutHeader(call, _, method, header, _, _) => "${call} OutHeader ${method} x-h=${header.get("x-h") ?? "-"}"
+      Stats.OutTrailer(call, _, trailer) => "${call} OutTrailer x-t=${trailer.get("x-t") ?? "-"}"
+      Stats.InHeader(call, client, method, header, _, remote) => "${call} InHeader ${client} ${method} x-k=${header.get("x-k") ?? "-"} ${remote != ""}"
+      Stats.Begin(..) | Stats.OutPayload(..) | Stats.InPayload(..) | Stats.InTrailer(..) | Stats.End(..) => stats_line(e)
+    }
+    log.with(fn(var l: List[Str]) { l.push(line) })
+  })
+  srv.stream("/s.S/Echo", fn(_c, recv, send) -> () ! Status {
+    send.set_header("x-h", "1")?
+    while let Some(m) = recv.next()? {
+      send.send(m + m)?
+    }
+    send.set_trailer("x-t", "2")
+    Ok(())
+  }, client_stream: true, server_stream: false)
+  srv.stream("/s.S/Fail", fn(_c, _r, _s) -> () ! Status { Err(status_new(Code.NotFound, "no")) })
+  let h = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { h.serve().ignore_err("the test ends the server") })
+    let c = client(http.client(os.net, timeout: 10s), "http://${h.addr()}")
+    expect(c.unary("/s.S/Get", b"abc", {"x-k": "v"})) == Ok(b"abc!")
+    expect(c.call("/s.S/Echo", {}, None, fn(cc) -> Int ! Status {
+      cc.send(b"xy")?
+      cc.close_send()
+      var n = 0
+      while let Some(m) = cc.recv()? {
+        n += m.len()
+      }
+      Ok(n)
+    })) == Ok(4)
+    expect(c.unary("/s.S/Fail", b"", {}).is_err()) == true
+    expect(log.with(fn(var l: List[Str]) -> List[Str] { l })) == [
+      "1 Begin false /s.S/Get false false",
+      "1 InHeader false /s.S/Get x-k=v true",
+      "1 InPayload 3 3 8",
+      "1 OutHeader /s.S/Get x-h=-",
+      "1 OutPayload 4 4 9",
+      "1 OutTrailer x-t=-",
+      "1 End ok true",
+      "2 Begin false /s.S/Echo true false",
+      "2 InHeader false /s.S/Echo x-k=- true",
+      "2 InPayload 2 2 7",
+      "2 OutHeader /s.S/Echo x-h=1",
+      "2 OutPayload 4 4 9",
+      "2 OutTrailer x-t=2",
+      "2 End ok true",
+      // nothing sent: a trailers-only response, no OutHeader (grpc-go's WriteStatus)
+      "3 Begin false /s.S/Fail true true",
+      "3 InHeader false /s.S/Fail x-k=- true",
+      // the handler read nothing: no InPayload (grpc-go's comes from RecvMsg)
+      "3 OutTrailer x-t=-",
+      "3 End NotFound true",
+    ]
+  }
+}

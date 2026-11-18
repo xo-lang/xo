@@ -1,0 +1,67 @@
+// std/grpc's stats handlers (decision 0710, task #236): a client's and a server's handlers see each call's events
+// in grpc-go's order, with the message sizes on the wire.
+use std/grpc
+use std/http
+
+fn line(e: grpc.Stats) -> Str {
+  match e {
+    grpc.Stats.Begin(call, client, method, _, _, _) => "${call} begin ${method} client=${client}"
+    grpc.Stats.OutHeader(call, _, _, header, _, _) => "${call} out header ${header.get("x-h") ?? header.get("x-k") ?? "-"}"
+    grpc.Stats.InHeader(call, _, _, header, _, _) => "${call} in header ${header.get("x-h") ?? header.get("x-k") ?? "-"}"
+    grpc.Stats.OutPayload(call, _, len, _, wire, _) => "${call} out payload ${len} (${wire} on the wire)"
+    grpc.Stats.InPayload(call, _, len, _, wire, _) => "${call} in payload ${len} (${wire} on the wire)"
+    grpc.Stats.OutTrailer(call, _, trailer) => "${call} out trailer ${trailer.get("x-t") ?? "-"}"
+    grpc.Stats.InTrailer(call, _, trailer) => "${call} in trailer ${trailer.get("x-t") ?? "-"}"
+    grpc.Stats.End(call, _, status, _, begin, end) => {
+      let code = match status {
+        Some(st) => "${st.code}"
+        None => "OK"
+      }
+      "${call} end ${code} timed=${end >= begin}"
+    }
+  }
+}
+
+fn main(os: Os) {
+  let slog = Mutex[List[Str]].new([])
+  let clog = Mutex[List[Str]].new([])
+  var srv = grpc.server(os.clock).with_stats_handler(fn(e) { slog.with(fn(var l: List[Str]) { l.push(line(e)) }) })
+  srv.stream("/g.G/Twice", fn(_call, recv, send) -> () ! grpc.Status {
+    send.set_header("x-h", "hi")?
+    while let Some(m) = recv.next()? {
+      send.send(m + m)?
+    }
+    send.set_trailer("x-t", "bye")
+  }, client_stream: true, server_stream: true)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    let c = grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}")
+      .with_stats_handler(fn(e) { clog.with(fn(var l: List[Str]) { l.push(line(e)) }) }, os.clock)
+    let r = c.call("/g.G/Twice", {"x-k": "key"}, None, fn(cc) -> Int ! grpc.Status {
+      cc.send(b"abc")?
+      cc.close_send()
+      var n = 0
+      while let Some(m) = cc.recv()? {
+        n += m.len()
+      }
+      Ok(n)
+    })
+    os.stdio.println("got ${r ?? _ => -1} bytes")
+    // the server's End comes after its trailer went out: wait for it (bounded)
+    var tries = 0
+    while tries < 400 && !slog.with(fn(var l: List[Str]) -> Bool { l.len() > 0 && l[l.len() - 1].contains(" end ") }) {
+      os.clock.sleep(5ms)
+      tries += 1
+    }
+    os.stdio.println("client:")
+    for x in clog.with(fn(var l: List[Str]) -> List[Str] { l }) {
+      os.stdio.println("  ${x}")
+    }
+    os.stdio.println("server:")
+    for x in slog.with(fn(var l: List[Str]) -> List[Str] { l }) {
+      os.stdio.println("  ${x}")
+    }
+  }
+}

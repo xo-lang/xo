@@ -10947,6 +10947,9 @@ type Invoker = fn(Str, Bytes, CallOpts) -> Bytes ! Status
 fn (c: Client) with_unary_interceptor(f: fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status) -> Client
 fn (c: Client) with_stream_interceptor(f: fn(Str, CallOpts) -> CallOpts ! Status) -> Client   // before a call opens
 fn (c: Client) with_message_interceptor(on_send: fn(Str, Bytes) -> Bytes ! Status, on_recv: fn(Str, Bytes) -> Bytes ! Status) -> Client   // on each message of a streaming call (decision 0709); an error ends the send or the call
+fn (c: Client) with_stats_handler(f: fn(Stats) -> (), clock: Clock) -> Client   // StatsHandler: each call's events (decision 0710)
+fn (s: Server) with_stats_handler(f: fn(Stats) -> ()) -> Server   // StatsHandler server option, every method's calls
+enum Stats { Begin, OutHeader, InHeader, OutPayload, InPayload, OutTrailer, InTrailer, End }   // grpc-go's stats events; each carries call (a per-client or per-server number) and client
 fn (c: Client) with_default_metadata(md: Map[Str, Str]) -> Client   // grpc-go's WithDefaultCallOptions: a call's own metadata adds to it and wins
 fn (c: Client) with_default_timeout(d: Duration) -> Client          // for a call without a timeout of its own
 fn (c: Client) with_on_finish(f: fn(Str, Status?) -> ()) -> Client   // grpc-go's OnFinish: the method and the status (None for OK) when each call ends

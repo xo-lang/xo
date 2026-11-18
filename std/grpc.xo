@@ -412,6 +412,8 @@ pub struct RecvState {
   pub done: Bool = false
   /// the peer sends `grpc-encoding: gzip`: a message with the compressed flag is inflated
   pub gzip: Bool = false
+  /// the last message's length as sent, before any inflating (a stats handler's InPayload, decision 0710)
+  pub last_wire: Int = 0
 }
 
 /// The messages of a call's request stream, as a handler reads them.
@@ -419,6 +421,8 @@ pub struct Recv {
   pub body: http.BodyReader
   pub st: Mutex[RecvState]
   pub max: Int
+  /// the server's stats handlers for this call (decision 0710)
+  tr: Tracer = Tracer{}
 }
 
 /// The next message; None when the client has finished sending. A message above the receive limit is
@@ -433,6 +437,9 @@ pub fn (r: Recv) next() -> Bytes? ! Status {
     }) {
       Ok((msg, ns)) => {
         s = ns
+        if let Some(m) = msg {
+          r.tr.in_payload(m.len(), ns.last_wire)
+        }
         Ok(msg)
       }
       Err(e) => Err(e)
@@ -454,6 +461,26 @@ pub struct Send {
   pub enc: Mutex[Str] = Mutex.new("")
   /// the client's grpc-accept-encoding
   pub accept: List[Str] = []
+  /// the server's stats handlers for this call, and the header and trailer metadata set, for their events
+  tr: Tracer = Tracer{}
+  method: Str = ""
+  md: Mutex[Map[Str, Str]] = Mutex[Map[Str, Str]].new({})
+  trl: Mutex[Map[Str, Str]] = Mutex[Map[Str, Str]].new({})
+}
+
+/// The head is going out now: OutHeader with the header metadata set.
+fn (s: Send) traced_head() {
+  if s.tr.on() {
+    let md = s.md.with(fn(var m: Map[Str, Str]) -> Map[Str, Str] { m })
+    let enc = if s.compressing() { "gzip" } else { "" }
+    s.tr.out_header(s.method, md, enc, "")
+  }
+}
+
+fn (s: Send) note_header(name: Str, value: Str) {
+  if s.tr.on() {
+    s.md.with(fn(var m: Map[Str, Str]) { m[name] = value })
+  }
 }
 
 /// Whether this call's responses go gzip compressed: set_compressor's choice, else the request's encoding.
@@ -497,6 +524,7 @@ pub fn (s: Send) set_header(name: Str, value: Str) -> () ! Status {
   if !ok {
     return Err(illegal_header())
   }
+  s.note_header(name.to_lower(), value)
 }
 
 /// Sends the response head now with md added (grpc-go's grpc.SendHeader); a second call, or one after a message,
@@ -510,6 +538,7 @@ pub fn (s: Send) send_header(md: Map[Str, Str] = {}) -> () ! Status {
       if !s.w.set_header(k.to_lower(), v) {
         return false
       }
+      s.note_header(k.to_lower(), v)
     }
     sent = true
     true
@@ -517,6 +546,7 @@ pub fn (s: Send) send_header(md: Map[Str, Str] = {}) -> () ! Status {
   if !ok {
     return Err(illegal_header())
   }
+  s.traced_head()
   match s.w.flush() {
     Ok(_) => Ok(())
     Err(e) => Err(status_new(Code.Unavailable, "${e}"))
@@ -534,9 +564,16 @@ fn send_framed(s: Send, f: Bytes, prefix: Str) -> () ! Status {
   if f.len() - 5 > s.max_send {
     return Err(status_new(Code.ResourceExhausted, "${prefix}trying to send message larger than max (${f.len() - 5} vs. ${s.max_send})"))
   }
-  s.head_sent.with(fn(var sent) { sent = true })
+  let first = s.head_sent.with(fn(var sent) -> Bool {
+    let was = sent
+    sent = true
+    !was
+  })
+  if first {
+    s.traced_head()
+  }
   match s.w.write(f) {
-    Ok(_) => ()
+    Ok(_) => s.tr.out_payload(if s.tr.on() { f.len() - 5 } else { 0 }, f.len())
     Err(e) => return Err(status_new(Code.Unavailable, "${e}"))
   }
   match s.w.flush() {
@@ -548,6 +585,9 @@ fn send_framed(s: Send, f: Bytes, prefix: Str) -> () ! Status {
 /// A trailer sent after the last message, next to `grpc-status` and `grpc-message`.
 pub fn (s: Send) set_trailer(name: Str, value: Str) {
   s.w.set_trailer(name, value)
+  if s.tr.on() {
+    s.trl.with(fn(var m: Map[Str, Str]) { m[name.to_lower()] = value })
+  }
 }
 
 /// A gRPC server: methods registered on it are served through `router()` by an HTTP/2 `http.Server`.
@@ -564,6 +604,40 @@ pub struct Server {
   pub has_unknown: Bool = false
   /// intercept's and intercept_unary's functions, in registration order
   pub icpt: Mutex[Interceptors] = Mutex[Interceptors].new(Interceptors{})
+  /// with_stats_handler's functions and the calls' counter (decision 0710)
+  stats: Mutex[ServerStats] = Mutex[ServerStats].new(ServerStats{})
+}
+
+struct ServerStats {
+  hs: List[fn(Stats) -> ()] = []
+  now: List[fn() -> Time] = []
+  seq: Int = 0
+}
+
+/// A call's tracer for the server's stats handlers; one that does nothing when there are none.
+fn server_tracer(m: Mutex[ServerStats]) -> Tracer {
+  m.with(fn(var x: ServerStats) -> Tracer {
+    if x.hs.is_empty() {
+      return Tracer{}
+    }
+    x.seq += 1
+    Tracer{hs: x.hs, now: x.now, id: x.seq, client: false}
+  })
+}
+
+/// The server giving f every stats event of its calls (grpc-go's StatsHandler server option, decision 0710):
+/// Begin, InHeader, InPayload for each message received, OutHeader when the response head goes out, OutPayload for
+/// each message sent, OutTrailer and End, for every method registered before or after it. The server's clock times
+/// the events; several handlers run in the order added. f's effects are counted here.
+pub fn (s: Server) with_stats_handler[fx: Effects](f: fn(Stats) -> () uses fx) -> Server uses (fx, clock) {
+  let g = pure1(fn(e: Stats) { f(e) })
+  let c = s.clock
+  let nw = pure1(fn(_u: Int) -> Time { c.now() })
+  s.stats.with(fn(var x: ServerStats) {
+    x.hs.push(fn(e) { g(e) })
+    x.now = [fn() -> Time { nw(0) }]
+  })
+  s
 }
 
 /// grpc-go's StreamInterceptor and ChainStreamInterceptor (decision 0703): f runs around every method's handler,
@@ -669,13 +743,14 @@ pub fn (var s: Server) stream[fx: Effects](method: Str, f: fn(Call, Recv, Send) 
   s.methods.push(method)
   s.infos.push(MethodInfo{name: method, client_stream: client_stream, server_stream: server_stream})
   let icpt = s.icpt
+  let stats = s.stats
   let g = pure1(fn(a: (Call, Recv, Send)) -> Result[(), Status] { f(a.0, a.1, a.2) })
   let h: StreamNext = fn(c, r, sd) -> () ! Status { g((c, r, sd)) }
   s.routes.handle_stream("POST ${method}", fn(req, body) -> http.Response {
     serve_call(fn(call, recv, send) -> () ! Status {
       let ics = icpt.with(fn(var ic: Interceptors) -> List[fn(Call, Recv, Send, StreamNext) -> () ! Status] { ic.stream })
       run_stream(ics, 0, call with {client_stream: client_stream, server_stream: server_stream}, recv, send, h)
-    }, clock, max, max_send, method, req, body)
+    }, clock, max, max_send, method, req, body, stats, client_stream, server_stream)
   })
 }
 
@@ -688,6 +763,7 @@ pub fn (var s: Server) unknown[fx: Effects](f: fn(Call, Recv, Send) -> () ! Stat
   let clock = s.clock
   s.has_unknown = true
   let icpt = s.icpt
+  let stats = s.stats
   let g = pure1(fn(a: (Call, Recv, Send)) -> Result[(), Status] { f(a.0, a.1, a.2) })
   let h: StreamNext = fn(c, r, sd) -> () ! Status { g((c, r, sd)) }
   // a route for every path, so the request body streams as a registered method's does; the methods'
@@ -700,7 +776,7 @@ pub fn (var s: Server) unknown[fx: Effects](f: fn(Call, Recv, Send) -> () ! Stat
     serve_call(fn(call, recv, send) -> () ! Status {
       let ics = icpt.with(fn(var ic: Interceptors) -> List[fn(Call, Recv, Send, StreamNext) -> () ! Status] { ic.stream })
       run_stream(ics, 0, call, recv, send, h)
-    }, clock, max, max_send, req.path, req, body)
+    }, clock, max, max_send, req.path, req, body, stats, true, true)
   })
 }
 
@@ -751,6 +827,11 @@ pub struct Client {
   pub default_timeout: Duration? = None
   /// with_on_finish's functions
   pub on_finish: List[fn(Str, Status?) -> ()] = []
+  /// with_stats_handler's functions (decision 0710), the clock's now captured with them, and the calls' counter
+  /// shared by copies of the client
+  pub stats: List[fn(Stats) -> ()] = []
+  pub stats_now: List[fn() -> Time] = []
+  stats_seq: Mutex[Int] = Mutex[Int].new(0)
   /// the target as given to client (Client.target)
   pub target: Str = ""
   /// decision 0707: with_balancer's policy, and the addresses calls are spread over (with_addrs, with_dns,
@@ -799,6 +880,30 @@ pub fn (c: Client) with_on_finish[fx: Effects](f: fn(Str, Status?) -> () uses fx
   c with {on_finish: fs}
 }
 
+/// The client giving f every stats event of its calls (grpc-go's WithStatsHandler, decision 0710): Begin, OutHeader,
+/// OutPayload for each message sent, InHeader, InPayload for each message received, InTrailer and End, a retried
+/// call's attempts each from Begin to End. clock times the events; several handlers run in the order added. f's
+/// effects are counted here.
+pub fn (c: Client) with_stats_handler[fx: Effects](f: fn(Stats) -> () uses fx, clock: Clock) -> Client uses (fx, clock) {
+  let g = pure1(fn(e: Stats) { f(e) })
+  let nw = pure1(fn(_u: Int) -> Time { clock.now() })
+  var fs = c.stats
+  fs.push(fn(e) { g(e) })
+  c with {stats: fs, stats_now: [fn() -> Time { nw(0) }]}
+}
+
+/// A call's tracer for the client's stats handlers; one that does nothing when there are none.
+fn (c: Client) tracer() -> Tracer {
+  if c.stats.is_empty() {
+    return Tracer{}
+  }
+  let id = c.stats_seq.with(fn(var n: Int) -> Int {
+    n += 1
+    n
+  })
+  Tracer{hs: c.stats, now: c.stats_now, id: id, client: true}
+}
+
 /// A call's metadata and timeout after the client's defaults.
 fn (c: Client) opts(metadata: Map[Str, Str], timeout: Duration?) -> CallOpts {
   var md = c.default_md
@@ -816,6 +921,104 @@ fn (c: Client) finished[T](method: Str, r: Result[T, Status]) {
   }
   for f in c.on_finish {
     f(method, st)
+  }
+}
+
+/// A stats event (grpc-go's stats package, decision 0710), given to a client's or server's stats handlers. call
+/// numbers a call within its client or server, so a handler can pair its events (grpc-go's TagRPC context); client
+/// is true on the client side. Lengths: length is the message, compressed_length its bytes as sent (compressed or
+/// not), wire_length those plus the 5-byte message prefix. Metadata is as ClientCall.header gives it.
+pub enum Stats {
+  Begin(call: Int, client: Bool, method: Str, client_stream: Bool, server_stream: Bool, at: Time)
+  OutHeader(call: Int, client: Bool, method: Str, header: Map[Str, Str], compression: Str, remote: Str)
+  InHeader(call: Int, client: Bool, method: Str, header: Map[Str, Str], compression: Str, remote: Str)
+  OutPayload(call: Int, client: Bool, length: Int, compressed_length: Int, wire_length: Int, at: Time)
+  InPayload(call: Int, client: Bool, length: Int, compressed_length: Int, wire_length: Int, at: Time)
+  OutTrailer(call: Int, client: Bool, trailer: Map[Str, Str])
+  InTrailer(call: Int, client: Bool, trailer: Map[Str, Str])
+  End(call: Int, client: Bool, status: Status?, trailer: Map[Str, Str], begin: Time, end: Time)
+}
+
+/// One call's view of the stats handlers: off (no handlers) costs one empty-list check per event.
+struct Tracer {
+  hs: List[fn(Stats) -> ()] = []
+  now: List[fn() -> Time] = []
+  id: Int = 0
+  client: Bool = true
+  /// the trailer metadata InTrailer gave, for End
+  trailer: Mutex[Map[Str, Str]] = Mutex[Map[Str, Str]].new({})
+}
+
+fn (t: Tracer) on() -> Bool {
+  !t.hs.is_empty()
+}
+
+fn (t: Tracer) emit(e: Stats) {
+  for h in t.hs {
+    h(e)
+  }
+}
+
+fn (t: Tracer) time() -> Time {
+  let f = t.now[0]
+  f()
+}
+
+/// Begin; the time it gave, for End (None when off).
+fn (t: Tracer) begin(method: Str, client_stream: Bool, server_stream: Bool) -> Time? {
+  if !t.on() {
+    return None
+  }
+  let at = t.time()
+  t.emit(Stats.Begin(call: t.id, client: t.client, method: method, client_stream: client_stream, server_stream: server_stream, at: at))
+  Some(at)
+}
+
+fn (t: Tracer) out_header(method: Str, md: Map[Str, Str], compression: Str, remote: Str) {
+  if t.on() {
+    t.emit(Stats.OutHeader(call: t.id, client: t.client, method: method, header: md, compression: compression, remote: remote))
+  }
+}
+
+fn (t: Tracer) in_header(method: Str, md: Map[Str, Str], compression: Str, remote: Str) {
+  if t.on() {
+    t.emit(Stats.InHeader(call: t.id, client: t.client, method: method, header: md, compression: compression, remote: remote))
+  }
+}
+
+/// OutPayload for a message of len bytes sent as a frame of framed bytes.
+fn (t: Tracer) out_payload(len: Int, framed: Int) {
+  if t.on() {
+    t.emit(Stats.OutPayload(call: t.id, client: t.client, length: len, compressed_length: framed - 5, wire_length: framed, at: t.time()))
+  }
+}
+
+/// InPayload for a message of len bytes that came as wire bytes after its prefix.
+fn (t: Tracer) in_payload(len: Int, wire: Int) {
+  if t.on() {
+    t.emit(Stats.InPayload(call: t.id, client: t.client, length: len, compressed_length: wire, wire_length: wire + 5, at: t.time()))
+  }
+}
+
+fn (t: Tracer) in_trailer(md: Map[Str, Str]) {
+  if t.on() {
+    t.trailer.with(fn(var m: Map[Str, Str]) { m = md })
+    t.emit(Stats.InTrailer(call: t.id, client: t.client, trailer: md))
+  }
+}
+
+fn (t: Tracer) out_trailer(md: Map[Str, Str]) {
+  if t.on() {
+    t.trailer.with(fn(var m: Map[Str, Str]) { m = md })
+    t.emit(Stats.OutTrailer(call: t.id, client: t.client, trailer: md))
+  }
+}
+
+/// End, for a call that began at begin.
+fn (t: Tracer) end(begin: Time?, st: Status?) {
+  if let Some(b) = begin {
+    let trl = t.trailer.with(fn(var m: Map[Str, Str]) -> Map[Str, Str] { m })
+    t.emit(Stats.End(call: t.id, client: t.client, status: st, trailer: trl, begin: b, end: t.time()))
   }
 }
 
@@ -1799,6 +2002,19 @@ fn (c: Client) unary_call(method: Str, req: Bytes, metadata: Map[Str, Str], time
 /// One attempt of a unary call: its outcome, whether a response head came (the call is then committed, grpc-go's
 /// rule, and not retried), and the server's grpc-retry-pushback-ms.
 fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], timeout: Duration?) -> (Result[Bytes, Status], Bool, Str?) uses net.dial {
+  let t = c.tracer()
+  let begin = t.begin(method, false, false)
+  let res = c.unary_attempt_traced(t, method, req, metadata0, timeout)
+  if begin.is_some() {
+    t.end(begin, match res.0 {
+      Ok(_) => None
+      Err(e) => Some(e)
+    })
+  }
+  res
+}
+
+fn (c: Client) unary_attempt_traced(t: Tracer, method: Str, req: Bytes, metadata0: Map[Str, Str], timeout: Duration?) -> (Result[Bytes, Status], Bool, Str?) uses net.dial {
   // per-RPC credentials on each attempt, as grpc-go asks them per attempt; a failure ends the call
   let metadata = match creds_metadata(c, method, metadata0) {
     Ok(m) => m
@@ -1816,10 +2032,12 @@ fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], 
   if auth != "" {
     r = r.with_host(auth)
   }
-  let st = match open_call(c, r) {
-    Ok((s, _)) => s
+  let (st, peer) = match open_call(c, r) {
+    Ok(x) => x
     Err(e) => return (Err(e), false, None)
   }
+  t.out_header(method, metadata, if c.gzip { "gzip" } else { "" }, peer)
+  t.out_payload(req.len(), body.len())
   let head = st.head()
   if let Some(e) = head_status(head) {
     st.close()
@@ -1827,6 +2045,9 @@ fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], 
   }
   // a trailers-only response (grpc-status in the head) leaves the call uncommitted, as grpc-go's
   let committed = head.headers.get("Grpc-Status") is None
+  if committed {
+    t.in_header(method, metadata_of(head.headers), head.headers.get("Grpc-Encoding") ?? "", peer)
+  }
   let data = match st.read_all() {
     Ok(b) => b
     Err(e) => {
@@ -1837,12 +2058,18 @@ fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], 
   let fin = final_status(st)
   let pushback = st.trailers().get("Grpc-Retry-Pushback-Ms") ?? head.headers.get("Grpc-Retry-Pushback-Ms")
   let enc = head.headers.get("Grpc-Encoding") ?? ""
+  let trl = if t.on() { metadata_of(if committed { st.trailers() } else { head.headers }) } else { {} }
   st.close()
   if fin.code != Code.Ok {
+    t.in_trailer(trl)
     return (Err(fin), committed, pushback)
   }
   match pull(RecvState{buf: data, at: 0, done: true, gzip: enc == "gzip"}, c.max_recv, fn() -> Bytes? ! Status { Ok(None) }) {
-    Ok((Some(msg), _)) => (Ok(msg), committed, None)
+    Ok((Some(msg), ns)) => {
+      t.in_payload(msg.len(), ns.last_wire)
+      t.in_trailer(trl)
+      (Ok(msg), committed, None)
+    }
     Ok((None, _)) => (Err(status_new(Code.Internal, "grpc: no response message")), committed, None)
     Err(e) => (Err(e), committed, None)
   }
@@ -1862,6 +2089,8 @@ pub struct ClientCall {
   pub method: Str = ""
   pub send_icpt: List[fn(Str, Bytes) -> Bytes ! Status] = []
   pub recv_icpt: List[fn(Str, Bytes) -> Bytes ! Status] = []
+  /// the client's stats handlers for this call (decision 0710)
+  tr: Tracer = Tracer{}
 }
 
 pub struct CallState {
@@ -1907,7 +2136,11 @@ fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str]
     r = r.with_host(auth)
   }
   let head = Chan[(http.ClientStream?, Status?, Str)].new(1)
-  let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: c.max_recv, gzip: c.gzip, max_send: c.max_send, method: method, send_icpt: c.send_icpt, recv_icpt: c.recv_icpt}
+  let t = c.tracer()
+  let begin = t.begin(method, true, true)
+  // before any message, so OutHeader comes first; the peer is not known yet (ClientCall.peer has it)
+  t.out_header(method, metadata, if c.gzip { "gzip" } else { "" }, "")
+  let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: c.max_recv, gzip: c.gzip, max_send: c.max_send, method: method, send_icpt: c.send_icpt, recv_icpt: c.recv_icpt, tr: t}
   var result: R? = None
   var failure: Status? = None
   scope s {
@@ -1941,6 +2174,7 @@ fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str]
       x.close()
     }
   }
+  t.end(begin, failure)
   if let Some(e) = failure {
     return Err(e)
   }
@@ -1958,7 +2192,10 @@ pub fn (c: ClientCall) send(msg0: Bytes) -> () ! Status {
     return Err(send_too_large(f.len() - 5, c.max_send))
   }
   match c.w.write(f) {
-    Ok(_) => Ok(())
+    Ok(_) => {
+      c.tr.out_payload(msg.len(), f.len())
+      Ok(())
+    }
     Err(e) => Err(status_new(Code.Unavailable, "${e}"))
   }
 }
@@ -1990,6 +2227,8 @@ fn await_head(c: ClientCall, var s: CallState) -> () ! Status uses sync {
         // trailers only: what it carries is the trailer metadata (grpc-go)
         s.trailer = s.header
         s.header = {}
+      } else {
+        c.tr.in_header(c.method, s.header, st.head().headers.get("Grpc-Encoding") ?? "", peer)
       }
       Ok(())
     }
@@ -2105,7 +2344,11 @@ fn (c: ClientCall) recv_raw() -> Bytes? ! Status uses net.dial {
           }
           stream.close()
           s.final = Some(fin)
+          c.tr.in_trailer(s.trailer)
           return if fin.code == Code.Ok { Ok(None) } else { Err(fin) }
+        }
+        if let Some(m) = msg {
+          c.tr.in_payload(m.len(), ns.last_wire)
         }
         Ok(msg)
       }
@@ -2187,6 +2430,7 @@ fn pull[fx: Effects](st: RecvState, max: Int, more: fn() -> Bytes? ! Status uses
     match unframe(s.buf, s.at, max) {
       Ok((compressed, msg, next)) => {
         s.at = next
+        s.last_wire = msg.len()
         if compressed {
           if !s.gzip {
             return Err(status_new(Code.Internal, "grpc: compressed message received without a grpc-encoding"))
@@ -2241,7 +2485,7 @@ fn trailers_only(st: Status) -> http.Response {
   }).with_header("content-type", "application/grpc").with_header("date", "")
 }
 
-fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock: Clock, max: Int, max_send: Int, method: Str, req: http.Request, body: http.BodyReader) -> http.Response uses (fx, clock) {
+fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock: Clock, max: Int, max_send: Int, method: Str, req: http.Request, body: http.BodyReader, stats: Mutex[ServerStats], client_stream: Bool, server_stream: Bool) -> http.Response uses (fx, clock) {
   let ct = req.header("content-type") ?? ""
   if !ct.starts_with("application/grpc") {
     return http.empty(415)
@@ -2270,10 +2514,13 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
     }
   }
   let call = Call{method: method, metadata: md, timeout: timeout, peer: req.remote_ip, accept_encodings: accept, auth_info: if req.tls() { tls_info(req.tls_state()) } else { insecure_info() }, authority: req.host()}
-  let recv = Recv{body: body, st: Mutex[RecvState].new(RecvState{buf: b"", at: 0, done: false, gzip: (req.header("grpc-encoding") ?? "") == "gzip"}), max: max}
+  let t = server_tracer(stats)
+  let begin = t.begin(method, client_stream, server_stream)
+  t.in_header(method, md, req.header("grpc-encoding") ?? "", req.remote_ip)
+  let recv = Recv{body: body, st: Mutex[RecvState].new(RecvState{buf: b"", at: 0, done: false, gzip: (req.header("grpc-encoding") ?? "") == "gzip"}), max: max, tr: t}
   // the head grpc-go's server writes: content-type, and grpc-encoding only when the responses are compressed
   var resp = http.stream(200, fn(w) -> () ! IoErr {
-    let send = Send{w: w, gzip: gz, max_send: max_send, accept: accept}
+    let send = Send{w: w, gzip: gz, max_send: max_send, accept: accept, tr: t, method: method}
     let st = match timeout {
       Some(d) => match task.with_timeout(clock, d, fn() -> () ! Status { f(call, recv, send) }) {
         Ok(_) => Status{code: Code.Ok, message: "", details: b""}
@@ -2294,6 +2541,11 @@ fn serve_call[fx: Effects](f: fn(Call, Recv, Send) -> () ! Status uses fx, clock
     })
     if !early || !head_status_fields(w, st) {
       finish(w, st)
+    }
+    if begin.is_some() {
+      // the handler's trailer metadata, without grpc-status (grpc-go's OutTrailer)
+      t.out_trailer(send.trl.with(fn(var m: Map[Str, Str]) -> Map[Str, Str] { m }))
+      t.end(begin, if st.code == Code.Ok { None } else { Some(st) })
     }
   }).with_header("content-type", "application/grpc").with_header("date", "").with_late_head()
   if gz {

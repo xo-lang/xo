@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+got 6 bytes
+client:
+  1 begin /g.G/Twice client=true
+  1 out header key
+  1 out payload 3 (8 on the wire)
+  1 in header hi
+  1 in payload 6 (11 on the wire)
+  1 in trailer bye
+  1 end OK timed=true
+server:
+  1 begin /g.G/Twice client=false
+  1 in header key
+  1 in payload 3 (8 on the wire)
+  1 out header hi
+  1 out payload 6 (11 on the wire)
+  1 out trailer bye
+  1 end OK timed=true
+--- stderr

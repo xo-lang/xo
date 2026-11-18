@@ -14,18 +14,18 @@ grpc.StatsHandler and grpc.WithStatsHandler partial (task #236).
 ## Decision
 
 1. One event enum after grpc-go's event structs, with Xo values in place of Go's (a `Map[Str, Str]` for metadata,
-   `Status?` for the error, `Instant` for times, the address as `Str`):
+   `Status?` for the error, `Time` for times (a clock reading, as grpc-go's time.Time), the address as `Str`):
 
    ```
    enum Stats {
-     Begin(call: Int, client: Bool, method: Str, client_stream: Bool, server_stream: Bool, at: Instant)
+     Begin(call: Int, client: Bool, method: Str, client_stream: Bool, server_stream: Bool, at: Time)
      OutHeader(call: Int, client: Bool, method: Str, header: Map[Str, Str], compression: Str, remote: Str)
      InHeader(call: Int, client: Bool, method: Str, header: Map[Str, Str], compression: Str, remote: Str, wire_length: Int)
-     OutPayload(call: Int, client: Bool, length: Int, compressed_length: Int, wire_length: Int, at: Instant)
-     InPayload(call: Int, client: Bool, length: Int, compressed_length: Int, wire_length: Int, at: Instant)
+     OutPayload(call: Int, client: Bool, length: Int, compressed_length: Int, wire_length: Int, at: Time)
+     InPayload(call: Int, client: Bool, length: Int, compressed_length: Int, wire_length: Int, at: Time)
      OutTrailer(call: Int, client: Bool, trailer: Map[Str, Str])
      InTrailer(call: Int, client: Bool, trailer: Map[Str, Str], wire_length: Int)
-     End(call: Int, client: Bool, status: Status?, trailer: Map[Str, Str], begin: Instant, end: Instant)
+     End(call: Int, client: Bool, status: Status?, trailer: Map[Str, Str], begin: Time, end: Time)
      ConnBegin(client: Bool, remote: Str, local: Str)
      ConnEnd(client: Bool, remote: Str, local: Str)
    }
@@ -36,7 +36,7 @@ grpc.StatsHandler and grpc.WithStatsHandler partial (task #236).
    uses a message interceptor, decision 0709); `DelayedPickComplete` and `IsTransparentRetryAttempt` are left out
    (no transparent retries); `FailFast` is left out (no wait-for-ready).
 
-2. `Client.with_stats_handler(h: fn(Stats) -> () uses fx) -> Client uses fx` and
+2. `Client.with_stats_handler(h: fn(Stats) -> () uses fx, clock: Clock) -> Client uses (fx, clock)` (the clock the event times come from; a server uses its own) and
    `Server.with_stats_handler(h)`, effect laundered at registration as decision 0703's interceptors; several
    handlers run in the order added, as grpc-go's list. Events come in grpc-go's order: Begin, OutHeader,
    OutPayload..., InHeader, InPayload..., InTrailer, End on a client; Begin, InHeader, InPayload..., OutHeader,

@@ -332,3 +332,13 @@ New module: the 17 status codes, `Status`, the message frame, `grpc-timeout` and
 registers unary and streaming handlers and mounts on `http.server`, and a `Client` with `unary` and `call` for the
 three streaming shapes. Deadlines cancel a server handler. Unfinished against decision 0535: compression, binary metadata,
 extra response metadata, `xo proto gen` stubs, fuzzing of the trailer parser beyond the random byte tests, a timing row.
+
+## 2026-11-17: feature: stats handlers on Client and Server
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc-go's stats.Handler, WithStatsHandler and StatsHandler; decision 0710)
+- Go reference: google.golang.org/grpc v1.79.2 stats/stats.go, stats/handlers.go, internal/transport/http2_server.go WriteStatus, stream.go
+- Test: std/grpc_test.xo "with_stats_handler sees each call's events in grpc-go's order, with message sizes" and "Server.with_stats_handler sees each call's events in grpc-go's order"; golden grpc_stats
+- Timing: none (no handler: one empty-list check per event)
+- Shipped in: not yet released
