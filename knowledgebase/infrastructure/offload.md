@@ -145,7 +145,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   run.sh start beside an exclusive waiting since 02:41) (heavyd
   lanes.go ExclStarve, NoLaneOK, TestExclStarveNoLane,
   TestExclStarveDrainsMachine, TestExclStarveOutlastsHold; Last
-  verified: 2026-11-18). After heavyd starts (a restart, an
+  verified: 2026-11-18). Past HEAVYD_EXCL_STARVE_MIN the drain's
+  backfill stops too (no plain run starts beside it however short its
+  -max), and a gate that came after it no longer goes first by
+  HEAVYD_GATE_AGE_MIN: gates go first until the exclusive has waited 20
+  minutes, then it waits only for the runs already going (lead,
+  2026-11-18, #317: amd64 perf runs waited 29 to 82 min while each x86
+  gate sample started 0 s after the last; TestExclStarveStopsBackfill). After heavyd starts (a restart, an
   install), it grants no lane lease for 15 s (AdoptGrace), so the runs
   still going from before re-adopt their slots first (lead, 2026-11-07: a
   new lease took pass2's slot 1 in the same second an adopted run came
