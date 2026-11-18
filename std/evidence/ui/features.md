@@ -5,6 +5,9 @@ Every feature std/ui's decisions (0659, 0663, 0664, 0668, 0670, 0672,
 shows it (`std/ui_test.xo:NAME` is the `test "NAME"` there). A feature
 that is promised and not built, or built with no automated test, is an
 open item. Keep this list current in each std/ui change (0691 item 4).
+An item's TEST column names one test; a fourth column, when there is one,
+holds the measurement or the other tests behind it (stdcov reads the first
+three).
 First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 
 ## Views and events (0659 stage 1)
@@ -49,7 +52,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] the view is patched in place, keeping nodes and focus | 0659 | `internal/uiruntime/runtime_test.go:TestMorphKeepsNodes`
 - [x] a new build reloads once the queue drains | 0659 | `internal/uiruntime/runtime_test.go:TestNewBuildReloadsAfterQueue`
 - [x] opening the socket syncs | 0659 | `internal/uiruntime/runtime_test.go:TestSocketOpenSyncs`
-- [x] browser measurement (bundle size, time to resume) | 0659 | `std/evidence/ui/browser.md` (headless Chrome, ui-todo: 104 KB cold, resume 7 ms unthrottled and 866 ms on slow 4G; size guard `cmd/xo:TestUIClientSize`)
+- [x] browser measurement (bundle size, time to resume) | 0659 | `cmd/xo/uiclientsize_test.go:TestUIClientSize` | `std/evidence/ui/browser.md` (headless Chrome, ui-todo: 104 KB cold, resume 7 ms unthrottled and 866 ms on slow 4G; size guard `cmd/xo:TestUIClientSize`)
 
 ## Client in wasm (0659 stage 3, 0663)
 
@@ -70,9 +73,9 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] redact shapes the page and every sync, with no log entries | 0664 | `std/ui_test.xo:redact shapes the page and every sync, and no log entries are sent`
 - [x] with redact, a sync answers same while the view is unchanged | 0664 | `std/ui_test.xo:with redact, a sync answers same while the principal's view did not change`
 - [x] with redact, a live connection hears only of its own view | 0664 | `std/ui_test.xo:with redact, a live connection hears only of changes to its own view`
-- [x] commands: Msgs plan server commands whose results come back as Msgs | 0664 stage 4b, 0692 | "a command runs once for each Msg the host commits, planned from the model before it, and a refused Msg plans none"; "two Hosts on one store run each command once, after a lost race too"
+- [x] commands: Msgs plan server commands whose results come back as Msgs | 0664 stage 4b, 0692 | `std/ui_test.xo:a command runs once for each Msg the host commits, planned from the model before it, and a refused Msg plans none` | "a command runs once for each Msg the host commits, planned from the model before it, and a refused Msg plans none"; "two Hosts on one store run each command once, after a lost race too"
 - [ ] `server` fields never sent to a client | 0659 point 5, 0664 stage 4b | not built (redact blanks fields for now); the last of the std Proven work, task #200: the owner picks std only server state for commands or the compiler modifier (owner 2026-11-17)
-- [x] query subscriptions (partial replication) | 0659 stage 4, 0664 stage 4c, 0694 | `host(subset:)`; std/ui tests "a subset sends each page only the part of the model its query subscribes to (decision 0659 point 5)", "subset applies after redact: a principal's page holds its own part of its query"
+- [x] query subscriptions (partial replication) | 0659 stage 4, 0664 stage 4c, 0694 | `std/ui_test.xo:a subset sends each page only the part of the model its query subscribes to (decision 0659 point 5)` | `host(subset:)`; std/ui tests "a subset sends each page only the part of the model its query subscribes to (decision 0659 point 5)", "subset applies after redact: a principal's page holds its own part of its query"
 
 ## Pages (0668, 0670)
 
@@ -88,8 +91,8 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 
 - [x] tab state: with_url_view renders the page's query | 0672 | `std/ui_test.xo:with_url_view renders the page's query on the page, a sync and a prediction`
 - [x] a sync sends the page's query | 0672 | `internal/uiruntime/runtime_test.go:TestSyncSendsPageQuery`
-- [x] user state across devices (a typed per-user part, views over two scopes) | 0672, 0686 plan step 6 | `with_user`, `on_user`; std/ui "a principal's own state is the same on each of its devices and no one else's", "a principal's act emits shared Msgs as that principal, through allow"; internal/uiruntime TestUserActsSyncApart (2026-11-17)
-- [x] 0672 plan steps 2 to 4: 2/20/200 user measurements, Chrome checks | 0672 | step 2: std/ui "user state wakes only its principal's pages" (200 users: 200 notices, 124 KB against 40,000 and 6.8 MB); step 3: std/ui "a principal's devices converge on one state and no one else sees it, over a lossy network", "user state convergence holds for any seed"; step 4: examples/ui-shop user_app, shop_test "user state: ...", Chrome drive-shop-user.mjs 17/17 with memory, wasm size and filter time (0672 Plan); std/ui "predict folds the principal's pending acts over their state, so an offline page shows them" (2026-11-17)
+- [x] user state across devices (a typed per-user part, views over two scopes) | 0672, 0686 plan step 6 | `std/ui_test.xo:a principal's own state is the same on each of its devices and no one else's (decision 0672)` | `with_user`, `on_user`; std/ui "a principal's own state is the same on each of its devices and no one else's", "a principal's act emits shared Msgs as that principal, through allow"; internal/uiruntime TestUserActsSyncApart (2026-11-17)
+- [x] 0672 plan steps 2 to 4: 2/20/200 user measurements, Chrome checks | 0672 | `std/ui_test.xo:user state wakes only its principal's pages: 2, 20 and 200 users (decision 0672 plan step 2)` | step 2: std/ui "user state wakes only its principal's pages" (200 users: 200 notices, 124 KB against 40,000 and 6.8 MB); step 3: std/ui "a principal's devices converge on one state and no one else sees it, over a lossy network", "user state convergence holds for any seed"; step 4: examples/ui-shop user_app, shop_test "user state: ...", Chrome drive-shop-user.mjs 17/17 with memory, wasm size and filter time (0672 Plan); std/ui "predict folds the principal's pending acts over their state, so an offline page shows them" (2026-11-17)
 
 ## Scopes, stores and buses (0686)
 
@@ -112,7 +115,7 @@ First written 2026-11-16 (task #186, xo-4c) against origin/main e859cd7f0.
 - [x] leases: a hot scope's syncs forwarded to one instance | 0686 item 6 | `std/ui_test.xo:an instance that loses a race takes a lease, and the others forward that scope's syncs to it`
 - [x] polling bus: a Host on a store without a notice service reads it for each held scope and wakes live pages with news | 0686 plan step 5 | std/ui_test.xo:a Host that polls its store hears another instance's append and wakes its live pages (decision 0686)
 - [x] polling on a timer: poll_every wakes a live page within its interval | 0686 plan step 5 | std/ui_test.xo:poll_every wakes a live page within its interval
-- [x] 2/20/200/2,000 user measurements over several instances | 0686 plan step 4 | 0686 "Users over several instances (2026-11-17)": 2 to 2,000 users on 4 instances, room and own scopes, closed and paced, every Msg stored once
+- [x] 2/20/200/2,000 user measurements over several instances | 0686 plan step 4 | `std/ui_test.xo:Scopes on one store converge with syncs routed to any of them (decision 0686)` | 0686 "Users over several instances (2026-11-17)": 2 to 2,000 users on 4 instances, room and own scopes, closed and paced, every Msg stored once
 - [x] real-time rooms and the canvas game measurement | 0686 plan step 7, 0695 | `std/ui_test.xo:a room steps on its tick, sends each player its view and ack, and starts again from its snapshot (decision 0695)`; examples/ui-arena load (decision 0695 Consequences)
 
 ## Live push views (0689)
