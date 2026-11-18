@@ -299,7 +299,10 @@ func main() {
 			continue
 		}
 		r := res[len(res)-1]
-		if len(r.FieldDescriptions) == 0 {
+		// a SELECT line prints its columns even when the server sent no
+		// RowDescription, as pgx stdlib's Rows of no columns does (std/sql's
+		// rows; TestPgFuzz seed 38 case 2618: the reference said "affected 0")
+		if len(r.FieldDescriptions) == 0 && !strings.HasPrefix(line, "SELECT") {
 			fmt.Printf("affected %d\n", r.CommandTag.RowsAffected())
 			continue
 		}

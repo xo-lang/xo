@@ -934,12 +934,19 @@ test "decode refuses a NoticeResponse or ErrorResponse without the zero ending i
 test "decode reads counts and a column number unsigned, as pgproto3's Uint16 (TestPgFuzz seed 37 case 3906)" {
   // RowDescription of 0x8001 fields holding one: pgproto3 fails, short of the second
   expect(decode(Bytes.from_hex("540000001b8001633000000000000000000000150002ffffffff0000") ?? b"").is_err()) == true
-  // DataRow and ParameterDescription of 0xffff, with none present
+  // a DataRow of 0xffff values, with none present
   expect(decode(Bytes.from_hex("4400000006ffff") ?? b"").is_err()) == true
-  expect(decode(Bytes.from_hex("7400000006ffff") ?? b"").is_err()) == true
   // one field whose column is 0x8001 is column 32769
   match decode(Bytes.from_hex("540000001b0001633000000000008001000000150002ffffffff0000") ?? b"") {
     Ok(Backend.RowDesc(fields: fs)) => expect(fs.map(fn(f) { f.column })) == [32769]
     _ => expect("not a RowDesc") == "a RowDesc"
   }
+}
+
+test "decode takes a ParameterDescription's OIDs from its length, as pgproto3 (TestPgFuzz seed 38 case 2618)" {
+  // a count of 0xffff and none present is no parameters
+  expect(decode(Bytes.from_hex("7400000006ffff") ?? b"")) == Ok(Backend.ParamDescription(oids: []))
+  // a count of 1 with 2 OIDs is the 2; a trailing 2 bytes are dropped
+  expect(decode(Bytes.from_hex("740000000e00010000001700000019") ?? b"")) == Ok(Backend.ParamDescription(oids: [23, 25]))
+  expect(decode(Bytes.from_hex("740000000c0005000000170000") ?? b"")) == Ok(Backend.ParamDescription(oids: [23]))
 }

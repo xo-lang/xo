@@ -325,9 +325,12 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
     }
     "n" => Backend.NoData
     "t" => {
-      let n = r.u16()?
+      // pgproto3 ParameterDescription.Decode skips the count (wrong past
+      // 65535 parameters) and takes as many OIDs as the rest holds, 4
+      // bytes each (TestPgFuzz seed 38 case 2618)
+      let _count = r.u16()?
       var oids: List[Int] = []
-      for _ in 0..n { oids.push(r.i32()? & 4294967295) }
+      for _ in 0..(r.b.len() - r.at) / 4 { oids.push(r.i32()? & 4294967295) }
       Backend.ParamDescription(oids: oids)
     }
     "S" => {

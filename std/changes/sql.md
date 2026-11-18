@@ -697,6 +697,19 @@ function still passes; a closure that counts rows in an Atomic or collects notic
 The 2026-11-15 parity change made Xo ignore them as v1.10.1 does; they are a malformed row again, a `Conn`
 error that drops the connection.
 
+## 2026-11-18: fix: a Postgres ParameterDescription's types come from its length
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestPgFuzz seed 38 case 2618 (task #90, linux/arm64 host 2)
+- Go reference: pgx v5 pgproto3 ParameterDescription.Decode skips the 2 byte count (wrong past 65535 parameters) and reads the rest of the body as 4 byte OIDs
+- Test: native/llrt/pgwire's "decode takes a ParameterDescription's OIDs from its length, as pgproto3" on arm64; internal/stdtest TestPgSelectNoColumns
+
+Xo read as many OIDs as the count said, so a count past the body was a malformed message and a short one
+left bytes unread. The fuzz case itself (a SELECT answered with a ParameterDescription and no
+RowDescription) is a result of no columns in both clients now: the reference printed "affected 0" and the
+Xo client an empty types line, so scripts/pgdiff's reference prints a SELECT's columns even when there are none.
+
 ## 2026-11-18: fix: Postgres reads message counts and column numbers unsigned
 
 - Kind: fix

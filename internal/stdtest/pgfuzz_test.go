@@ -383,6 +383,20 @@ func TestPgEmptyError(t *testing.T) {
 	pgfDiff(t, cases, []string{"arm64"}, 0)
 }
 
+// TestPgSelectNoColumns: a SELECT answered with no RowDescription, here
+// a ParameterDescription in its place (TestPgFuzz seed 38 case 2618: the
+// 'T' byte changed to 't'), is a result of no columns in both clients: the
+// reference printed "affected 0" and the Xo client an empty types line.
+func TestPgSelectNoColumns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds pgx and the Xo client")
+	}
+	pd := pgfMsg('t', []byte{0, 4, 0, 0, 0, 23, 0, 0, 0, 25, 0, 0})
+	done := [][]byte{pgfMsg('C', pgfCstr(nil, "SELECT 0")), pgfReady}
+	cases := []pgfCase{{msgs: append([][]byte{pd}, done...)}, {msgs: done}}
+	pgfDiff(t, cases, []string{"arm64"}, 0)
+}
+
 // TestPgDuplicateColumn: a row whose two columns share a name (SELECT 1
 // AS c, 2 AS c) shows each column's own value, as pgx's Values does; the
 // Xo side read both by name and showed the first twice (TestPgFuzz seed 7
