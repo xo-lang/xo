@@ -98,12 +98,69 @@ fn pop_param(var xs: List[Int]) -> Int {
   s
 }
 
+// std/path's last_slash: i starts one below the length and steps down
+// under `i >= 0` (2026-11-17, task #302: path's base, dir and split kept
+// `cmp; b.hs` per byte).
+fn last_of(s: Str, c: UInt8) -> Int {
+  // arm64: -"b\.hs"
+  let b = s.bytes()
+  var i = b.len() - 1
+  while i >= 0 {
+    if b[i] == c {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+// The same over a list, stepping down by two.
+fn sum_odd_back(xs: List[Int]) -> Int {
+  // arm64: -"b\.hs"
+  var s = 0
+  var i = xs.len() - 1
+  while i >= 0 {
+    s += xs[i]
+    i -= 2
+  }
+  s
+}
+
+// i starts at the length, so b[i] reads one past the end on the first
+// step: the check stays.
+fn from_len(s: Str) -> Int {
+  // arm64: "b\.hs"
+  let b = s.bytes()
+  var i = b.len()
+  var t = 0
+  while i >= 0 {
+    t += Int(b[i])
+    i -= 1
+  }
+  t
+}
+
+// A list popped in the loop: i starts below the old length only.
+fn pop_down(xs: List[Int]) -> Int {
+  // arm64: "b\.hs"
+  var ys = xs
+  var s = 0
+  var i = ys.len() - 1
+  while i >= 0 {
+    let _ = ys.pop()
+    s += ys[i]
+    i -= 1
+  }
+  s
+}
+
 fn main(os: Os) {
   let a = os.env.args()
   let s = if a.is_empty() { "xx  abc  " } else { a[0] }
-  os.stdio.println("${trim_end(s, 32)} ${trim_both(s, 32)} ${sum_back([1, 2, a.len()])}")
+  os.stdio.println("${trim_end(s, 32)} ${trim_both(s, 32)} ${sum_back([1, 2, a.len()])} ${last_of(s, 32)} ${sum_odd_back([1, 2, a.len()])}")
   if a.len() > 5 {
     var p = [1]
     os.stdio.println("${below_zero(s)} ${past_end(s)} ${pop_back([1])} ${pop_param(p)}")
+    os.stdio.println("${from_len(s)} ${pop_down([1])}")
   }
 }

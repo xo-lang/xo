@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Perf: a loop index stepping down from below the length (`var i = b.len() - 1; while i >= 0 { b[i]; i -= 1 }`) needs no bounds check on arm64 and x86-64, as in Go (std/path's last_slash, base, dir and split; task #302).
 - Perf: `List.sort` of Strs sorts Int keys made from the strings' bytes with pdqsort, about twice as fast on 2M strings, as fast as Go's slices.Sort on bench/perf/sort (task #302).
 - Feature (std/grpc): `Client.with_idle_keepalive(tasks, clock)` sends the client's keepalive pings with no call open too (grpc-go's PermitWithoutStream true), through std/http's `Client.with_idle_pings`.
 - Perf: `Int.parse` of fewer than 19 digits takes strconv.Atoi's unchecked loop (540M to 370M instructions for 3M parses), and `Str.trim_chars` with an ASCII cutset trims both ends in one pass and one view (task #302).
