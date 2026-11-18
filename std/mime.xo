@@ -78,6 +78,10 @@ pub fn parse_media_type(v: Str) -> MediaType ! MimeErr {
     }
     v1 = rest
   }
+  // most values have no RFC 2231 piece: no entries list to build
+  if cont.is_empty() {
+    return Ok(MediaType{kind: kind, params: params})
+  }
   for (key, pieces) in cont.entries() {
     if let Some(single) = pieces.get(key + "*") {
       if let Some(d) = decode_2231(single) {
@@ -364,6 +368,22 @@ fn consume_value(v: Str) -> (Str, Str) {
     return consume_token(v)
   }
   let b = v.bytes()
+  // a quoted string with no backslash is its bytes as they are: a view of
+  // v, not a copy (Go's loop copies into a builder either way)
+  var j = 1
+  while j < b.len() {
+    let r = b[j]
+    if r == 34 {
+      return (v[1..j], v[j + 1..])
+    }
+    if r == 92 || r == 13 || r == 10 {
+      break
+    }
+    j += 1
+  }
+  if j >= b.len() {
+    return ("", v)
+  }
   var out = BytesBuilder.new()
   var i = 1
   var end = -1

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Perf (std/mime): `parse_media_type` returns a quoted value with no backslash as a view of its input and skips the RFC 2231 pass when no parameter has a `*`: bench/perf/mime parse 0.88 of its time on the Mac.
 - Fix (std/debug): `mem_peak` is never below a `mem_mapped` read before it while other tasks map and free memory; a racing store could lose a larger peak (the debug stress program read 89.9 MB under 90.3 MB).
 - Fix (native runtime): an HTTP server whose task scope was never closed (a stream dropped unread, its handler still running) freed that scope while it still hung in the task tree, and a later task start or end wrote into the freed memory (a fault under `--check=free`, a data race report under `--race`, a rare crash otherwise).
 - Perf (std/toml): `decode` hands the JSON codec its tape straight from the parsed tables, with no JSON text to write and scan again: bench/perf/toml decode 0.88 of its time on the Mac.

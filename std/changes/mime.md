@@ -1,5 +1,20 @@
 # std/mime changes
 
+## 2026-11-18: perf: parse_media_type copies less
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (std/evidence/mime/perf.md: parse 1.179 of Go's mime.ParseMediaType wall on linux/arm64 host 1, 2026-11-15)
+- Go reference: go1.26 mime/mediatype.go ParseMediaType, consumeValue
+- Test: mime module test "quoted values: a view without a backslash, unescaped with one, errors when unterminated or broken by CR or LF"; the go parse_media_type cases
+- Timing: Mac, bench/perf/mime parse 40,000,000 values: 4.27 s to 3.75 s user (3 runs each)
+- Shipped in: not yet released
+
+A quoted parameter value was copied byte by byte into a builder; one with
+no backslash is now a view of the input (a long input's values are still
+copied out, decision 0330). The RFC 2231 pass, which listed the
+continuation map's entries, is skipped when no parameter name has a `*`.
+
 ## 2026-11-16: feature: decode_word_with and decode_header_with (Go's WordDecoder.CharsetReader)
 
 - Kind: feature

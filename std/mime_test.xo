@@ -1501,3 +1501,26 @@ test "decode_header_with and decode_word_with hand other charsets to the reader,
   expect(decode_header_with("=?charset?Q?foo?=", fail)) == Err(MimeErr{msg: "Test error"})
   expect(decode_word_with("=?charset?Q?foo?=", fail)) == Err(MimeErr{msg: "Test error"})
 }
+
+test "quoted values: a view without a backslash, unescaped with one, errors when unterminated or broken by CR or LF" {
+  // consume_value returns a quoted value with no backslash as a view of
+  // the input (2026-11-18)
+  let ok = [
+    ("a/b; x=\"plain value\"", "plain value"),
+    ("a/b; x=\"\"", ""),
+    ("a/b; x=\"q\\\"q \\\\ z\"", "q\"q \\ z"),
+    ("a/b; x=\"\\a\"", "\\a"),
+    ("a/b; x=\"${"v".repeat(300)}\"", "v".repeat(300)),
+  ]
+  for (input, want) in ok {
+    expect(parse_media_type(input).map(fn(t) { t.params.get("x") ?? "-" })) == Ok(want)
+  }
+  for input in ["a/b; x=\"open", "a/b; x=\"cr\rhere\"", "a/b; x=\"lf\nhere\"", "a/b; x=\"esc\\\"open"] {
+    expect(parse_media_type(input).is_err()) == true
+  }
+  // a view of a long value is copied out: the value outlives its input
+  var long = "a/b; x=\"${"w".repeat(400)}\""
+  let t = parse_media_type(long).or_fault("parse")
+  long = ""
+  expect(t.params.get("x")) == Some("w".repeat(400))
+}
