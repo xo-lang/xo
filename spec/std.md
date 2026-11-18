@@ -1,6 +1,6 @@
 # Xo Standard Library and Prelude
 
-Status: draft 0.54 (2026-11-16; the same draft number as `spec/core.md`, decision 0089)
+Status: draft 0.55 (2026-11-18; the same draft number as `spec/core.md`, decision 0089)
 Companion to `spec/core.md`.
 
 Signatures are written in Xo syntax. `[var]` before a receiver means the method
