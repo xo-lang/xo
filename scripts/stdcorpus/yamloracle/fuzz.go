@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"stdcorpus/yamloracle/hostile"
 )
 
 func pick(r *rand.Rand, xs []string) string { return xs[r.Intn(len(xs))] }
@@ -97,6 +100,25 @@ func fuzzCases(seed int64, n int) []string {
 	var out []string
 	for len(out) < n {
 		raw := []byte(fuzzDoc(r))
+		if r.Intn(40) == 0 {
+			// the hostile dictionary (task #352): digit and hex runs past
+			// Int as an int or float, flow sequences nested past the limit
+			// (the deep case, a 200 KB document, is rare)
+			switch k := r.Intn(10); {
+			case k < 5:
+				raw = []byte(pick(r, []string{"n", "f", "s"}) + ": " + hostile.Pick(r, hostile.Digits()) + "\n")
+			case k < 9:
+				raw = []byte("n: 0x" + hostile.Pick(r, hostile.Hex()) + "\n")
+			default:
+				// the dictionary's deepest, which yaml.v3 refuses ("exceeded
+				// max depth of 10000"); a depth it takes (10,001 too: its
+				// count is not the bracket count) prints a node dump of
+				// every level, 50 MB a case, and the committed corpus took
+				// 246 MB
+				d := slices.Max(hostile.Depths())
+				raw = []byte("l: " + hostile.Nest("[", "]", d) + "\n")
+			}
+		}
 		switch r.Intn(10) {
 		case 0:
 			raw = raw[:r.Intn(len(raw)+1)]

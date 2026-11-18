@@ -996,16 +996,21 @@ yourself.
 ### Std maturity evidence (decision 0616)
 
 A fuzz harness (`internal/stdtest/*fuzz_test.go`) puts the hostile
-dictionary in a share of its cases (task #352, 2026-11-18):
-`internal/stdtest/hostilevals_test.go` has `HostileInts`, `HostileUints`,
-`HostileLengths(width)` (top-bit lengths and counts), `HostileDigits` and
-`HostileHex` (runs past Int), `HostileUTF8` and `CutUTF8(s)` (cut inside
-a rune, surrogates, overlong), `Nest(open, close, n)` with
-`HostileDepths`, and `HostilePick(r, xs)`. Use them in place of a
+dictionary in a share of its cases (task #352, 2026-11-18): package
+`internal/hostile` has `Ints`, `Uints`, `Lengths(width)` (top-bit
+lengths and counts), `Digits` and `Hex` (runs past Int), `UTF8` and
+`CutUTF8(s)` (cut inside a rune, surrogates, overlong), `Nest(open,
+close, n)` with `Depths`, and `Pick(r, xs)`. Use them in place of a
 harness's own edge values: about 15 std faults on such input were found
-by reviews after the module was fuzzed. repotest
-TestFuzzHarnessUsesHostile fails on a harness that never calls them;
-harnesses not yet converted are listed in
+by reviews after the module was fuzzed. A harness whose cases come from
+a generator calls them there: `scripts/stdcorpus/NAME*.go` imports
+`internal/hostile`; an oracle module of its own
+(`scripts/stdcorpus/NAMEoracle`) keeps a byte-for-byte copy at
+`hostile/hostile.go` (`cp internal/hostile/hostile.go
+scripts/stdcorpus/NAMEoracle/hostile/`; repotest
+TestHostileCopiesCurrent checks the copies). repotest
+TestFuzzHarnessUsesHostile fails on a harness when neither it nor the
+generator it names calls them; harnesses not yet converted are listed in
 `internal/repotest/testdata/fuzz-hostile-todo.txt` (drop the line when
 converting). The html and websocket harnesses, with the dictionary in
 place of their own values, find 5834fc96c's and 6d6aaf8a4's Int overflows

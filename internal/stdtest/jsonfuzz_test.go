@@ -51,6 +51,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -83,9 +84,9 @@ var jfStrPieces = []string{
 // jfBadStrPieces are escapes JSON does not have, raw bytes it does not
 // allow in a string, and bytes that are not UTF-8 (Go reads those as
 // U+FFFD). A backslash is spelled \x5c here.
-var jfBadStrPieces = []string{
-	"\x5cu12", "\x5cu12g4", "\x5cx41", "\x5c'", "\x5ca", "\t", "\x01", "\x1f", "\x00", "\xff", "\xc3", "\xc0\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80",
-}
+var jfBadStrPieces = append([]string{
+	"\x5cu12", "\x5cu12g4", "\x5cx41", "\x5c'", "\x5ca", "\t", "\x01", "\x1f", "\x00",
+}, append(hostile.UTF8(), hostile.CutUTF8("\u00e9\u65e5\U0001F600")...)...)
 
 var jfKeywords = []string{"true", "false", "null"}
 var jfBadKeywords = []string{"tru", "nul", "True", "NULL", "fals", "nulll", "t"}
@@ -126,6 +127,10 @@ func jfValue(r *rand.Rand, depth int) string {
 	}
 	switch {
 	case k < 2:
+		if r.Intn(16) == 0 {
+			// a run of digits past Int (task #352)
+			return hostile.Pick(r, hostile.Digits())
+		}
 		return jfMix(r, jfNumbers, jfBadNumbers, 8)
 	case k < 4:
 		return jfString(r)
@@ -202,8 +207,9 @@ func jfCases(r *rand.Rand, n int) []jfCase {
 		cases = append(cases, jfCase{raw: raw})
 	}
 	// Go's nesting limit is 10000 levels
-	for _, d := range []int{9999, 10000, 10001} {
-		cases = append(cases, jfCase{raw: []byte(strings.Repeat("[", d) + strings.Repeat("]", d))})
+	// and the hostile depths past it (task #352)
+	for _, d := range append([]int{9999, 10001}, hostile.Depths()...) {
+		cases = append(cases, jfCase{raw: []byte(hostile.Nest("[", "]", d))})
 	}
 	for i := range cases {
 		cases[i].decode, cases[i].compact = jfGo(cases[i].raw)

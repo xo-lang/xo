@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/asn1"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // asn1Tree is the std/asn1 tree Go's encoding/asn1 reads from der, in the
@@ -319,6 +322,40 @@ func asn1Fixed() [][]byte {
 // asn1FuzzSeed is XO_ASN1FUZZ_SEED (default 0, the committed corpus),
 // added to the seed so a fresh run (internal/stdtest TestAsn1Fuzz) makes
 // new cases; XO_ASN1FUZZ_N is the number of random trees (default 1200).
+// asn1Hostile: the hostile dictionary's edges as DER (task #352): SEQUENCEs
+// nested to its depths (up to 10^4; 10^5 makes a 2 MB literal), a long
+// form length of each hostile 64-bit length over a few bytes, the same
+// lengths cut to 1 to 7 length bytes, and INTEGERs at each hostile Int.
+func asn1Hostile(r *rand.Rand) [][]byte {
+	var out [][]byte
+	for _, d := range hostile.Depths() {
+		if d > 10000 {
+			continue
+		}
+		b := []byte{}
+		for k := 0; k < d; k++ {
+			b, _ = asn1.Marshal(asn1.RawValue{Class: 0, Tag: 16, IsCompound: true, Bytes: b})
+		}
+		out = append(out, b)
+		out = append(out, b[:len(b)-1])
+	}
+	for _, n := range hostile.Lengths(64) {
+		b := binary.BigEndian.AppendUint64([]byte{0x30, 0x88}, n)
+		out = append(out, append(b, 2, 1, 5))
+		k := 1 + r.Intn(7)
+		c := []byte{0x04, 0x80 | byte(k)}
+		c = append(c, binary.BigEndian.AppendUint64(nil, n)[8-k:]...)
+		out = append(out, append(c, "xyz"...))
+	}
+	for _, v := range hostile.Ints() {
+		b, _ := asn1.Marshal(big.NewInt(v))
+		out = append(out, b)
+		e, _ := asn1.Marshal(asn1.Enumerated(v))
+		out = append(out, e)
+	}
+	return out
+}
+
 func asn1FuzzSeed() (int64, int) {
 	seed, _ := strconv.ParseInt(os.Getenv("XO_ASN1FUZZ_SEED"), 10, 64)
 	n, err := strconv.Atoi(os.Getenv("XO_ASN1FUZZ_N"))
@@ -344,6 +381,9 @@ func asn1Corpus() string {
 		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xbytes(der), xq(t), xq(e))
 	}
 	for _, b := range asn1Fixed() {
+		add(b)
+	}
+	for _, b := range asn1Hostile(r) {
 		add(b)
 	}
 	for i := 0; i < trees; i++ {

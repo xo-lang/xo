@@ -47,6 +47,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -237,9 +238,9 @@ func wsfChange(r *rand.Rand, c *wsfCase) {
 	case 8:
 		// a hostile length in the 16 or 64-bit form (task #352)
 		if r.Intn(2) == 0 {
-			f = binary.BigEndian.AppendUint16([]byte{0x82, 126}, uint16(HostilePick(r, HostileLengths(16))))
+			f = binary.BigEndian.AppendUint16([]byte{0x82, 126}, uint16(hostile.Pick(r, hostile.Lengths(16))))
 		} else {
-			f = binary.BigEndian.AppendUint64([]byte{0x82, 127}, HostilePick(r, HostileLengths(64)))
+			f = binary.BigEndian.AppendUint64([]byte{0x82, 127}, hostile.Pick(r, hostile.Lengths(64)))
 		}
 		f = append(f, "xxxxx"...)
 		c.note = "hostile length"

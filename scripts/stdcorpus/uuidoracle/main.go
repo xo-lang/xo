@@ -15,6 +15,8 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+
+	"stdcorpus/uuidoracle/hostile"
 )
 
 func xq(s string) string {
@@ -224,6 +226,12 @@ test "v1 and v6 carry the clock's time, the variant and a multicast node, and v6
 // lengths 32, 36, 38 and 45 are reached with every kind of byte at every
 // position (decision 0616's fuzz kind, TestUuidFuzz).
 func fuzzText(r *rand.Rand) string {
+	if r.Intn(8) == 0 {
+		// a hostile run of hex or decimal digits (task #352), bare or in a
+		// form's wrapping
+		run := hostile.Pick(r, append(hostile.Hex(), hostile.Digits()...))
+		return hostile.Pick(r, []string{"", "urn:uuid:", "{"}) + run + hostile.Pick(r, []string{"", "}"})
+	}
 	hex := "0123456789abcdefABCDEF"
 	var b strings.Builder
 	for k := 0; k < 32; k++ {

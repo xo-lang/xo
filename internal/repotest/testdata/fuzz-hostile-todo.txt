@@ -6,7 +6,6 @@ adler32fuzz_test.go
 amqpfuzz_test.go
 amqptestfuzz_test.go
 archivefuzz_test.go
-asn1fuzz_test.go
 backofffuzz_test.go
 base32fuzz_test.go
 base64fuzz_test.go
@@ -42,7 +41,6 @@ idnafuzz_test.go
 imagefuzz_test.go
 jpegencfuzz_test.go
 jpegfuzz_test.go
-jsonfuzz_test.go
 jsonrpcfuzz_test.go
 jwtfuzz_test.go
 logfuzz_test.go
@@ -57,7 +55,6 @@ otlpfuzz_test.go
 otpfuzz_test.go
 pathfuzz_test.go
 pemfuzz_test.go
-pgfuzz_test.go
 pngfuzz_test.go
 protobuffuzz_test.go
 protojsonfuzz_test.go
@@ -79,8 +76,6 @@ udpfuzz_test.go
 uniclassfuzz_test.go
 urlfuzz_test.go
 urltypefuzz_test.go
-uuidfuzz_test.go
 x509fuzz_test.go
 xmlcodecfuzz_test.go
 xmlfuzz_test.go
-yamlfuzz_test.go

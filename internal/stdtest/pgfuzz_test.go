@@ -47,6 +47,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -212,8 +213,23 @@ func pgfChange(r *rand.Rand, c *pgfCase, names []string, kinds []pgfKind) {
 		m := append([]byte(nil), c.msgs[i]...)
 		// the first value's length: past the message, or below -1
 		binary.BigEndian.PutUint32(m[7:], uint32(pgfPick(r, int32(len(m)), 1<<30, -2, -100)))
+		if r.Intn(2) == 0 {
+			// a hostile int32 (task #352): top bit, all ones, int32's max
+			binary.BigEndian.PutUint32(m[7:], uint32(hostile.Pick(r, hostile.Lengths(32))))
+		}
 		c.msgs[i] = m
 		c.note = "value length"
+	case k == 4 && r.Intn(2) == 0:
+		// a RowDescription's or DataRow's count a hostile uint16 (task
+		// #352; pgproto3 reads both with Uint16, 54e535150)
+		i := 0
+		if len(rows) > 0 && r.Intn(2) == 0 {
+			i = rows[r.Intn(len(rows))]
+		}
+		m := append([]byte(nil), c.msgs[i]...)
+		binary.BigEndian.PutUint16(m[5:], uint16(hostile.Pick(r, hostile.Lengths(16))))
+		c.msgs[i] = m
+		c.note = "hostile count"
 	case k == 4:
 		c.msgs[0] = pgfRowDesc(names, kinds, len(kinds)+1+r.Intn(3))
 		c.note = "column count"
@@ -221,6 +237,9 @@ func pgfChange(r *rand.Rand, c *pgfCase, names []string, kinds []pgfKind) {
 		i := r.Intn(len(c.msgs))
 		m := append([]byte(nil), c.msgs[i]...)
 		binary.BigEndian.PutUint32(m[1:], uint32(pgfPick(r, 0, 3, int32(len(m)+50), 1<<30)))
+		if r.Intn(2) == 0 {
+			binary.BigEndian.PutUint32(m[1:], uint32(hostile.Pick(r, hostile.Lengths(32))))
+		}
 		c.msgs[i] = m
 		c.note = "message length"
 	case k == 6:

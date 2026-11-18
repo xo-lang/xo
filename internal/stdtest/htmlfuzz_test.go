@@ -32,6 +32,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // hxAlphabet is what a random text is built from.
@@ -52,9 +54,9 @@ var hxAlphabet = []string{
 // #352): decimal or hexadecimal, past Int or long with leading zeros, with
 // or without its semicolon.
 func hxHostile(r *rand.Rand) string {
-	ref := "&#" + HostilePick(r, HostileDigits())
+	ref := "&#" + hostile.Pick(r, hostile.Digits())
 	if r.Intn(2) == 0 {
-		ref = "&#" + HostilePick(r, []string{"x", "X"}) + HostilePick(r, HostileHex())
+		ref = "&#" + hostile.Pick(r, []string{"x", "X"}) + hostile.Pick(r, hostile.Hex())
 	}
 	if r.Intn(4) != 0 {
 		ref += ";"
