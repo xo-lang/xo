@@ -696,3 +696,14 @@ function still passes; a closure that counts rows in an Atomic or collects notic
 
 The 2026-11-15 parity change made Xo ignore them as v1.10.1 does; they are a malformed row again, a `Conn`
 error that drops the connection.
+
+## 2026-11-18: fix: Postgres refuses a NoticeResponse or ErrorResponse cut before its last zero
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestPgFuzz seed 15 case 4133 (task #90, linux/arm64 host 3)
+- Go reference: pgx v5 pgproto3 ErrorResponse.Decode (NoticeResponse shares it) reads field codes until a zero byte and returns io.EOF when the body ends first
+- Test: native/llrt/pgwire's "decode refuses a NoticeResponse or ErrorResponse without the zero ending its fields" on arm64; TestPgFuzz seed 15
+
+Xo took the end of the body as the end of the fields and kept the notice; such a message is now a malformed
+message error, as pgconn's.

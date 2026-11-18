@@ -231,7 +231,10 @@ fn (r: Rd) rest() -> Bytes { r.b[r.at..] }
 
 fn fields(var r: Rd) -> Map[Str, Str] ! WireErr {
   var out: Map[Str, Str] = {}
-  while r.at < r.b.len() && r.b[r.at] != 0 {
+  // pgproto3 reads field codes until a zero: a body that ends first is EOF
+  // there (TestPgFuzz seed 15 case 4133), so it is refused here too
+  while r.at >= r.b.len() || r.b[r.at] != 0 {
+    if r.at >= r.b.len() { return Err(WireErr.Bad(msg: "fields without their terminating zero")) }
     let code = r.b[r.at..r.at + 1].to_str() ?? "?"
     r.at += 1
     out.put(code, r.cstr()?)

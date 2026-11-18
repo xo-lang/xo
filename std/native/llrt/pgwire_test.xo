@@ -923,3 +923,10 @@ test "read_size: what the next message lacks, 4096 to 1 MiB" {
   expect(read_size(b"D\x00\x01\x86\xa0")) == 99996
   expect(read_size(b"D\x10\x00\x00\x00")) == 1048576
 }
+
+test "decode refuses a NoticeResponse or ErrorResponse without the zero ending its fields (pgproto3: EOF; TestPgFuzz seed 15 case 4133)" {
+  let cut = "534552524f5200564552524f5200433031303030004d61206e6f746963650100"
+  expect(decode(Bytes.from_hex("4e00000024" + cut) ?? b"")) == Err(WireErr.Bad(msg: "fields without their terminating zero"))
+  expect(decode(Bytes.from_hex("4500000024" + cut) ?? b"")) == Err(WireErr.Bad(msg: "fields without their terminating zero"))
+  expect(decode(Bytes.from_hex("4e00000025" + cut + "00") ?? b"").is_ok()) == true
+}
