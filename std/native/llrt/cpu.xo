@@ -1950,9 +1950,10 @@ pub fn chacha_stream4_soft(dst: Int, src: Int, st: Int, n: Int) {
 /// words, word 12 unused, then the four blocks' counters), word k of block
 /// b stored as the 32 bit word 4k + b of the 256 bytes at dst (Go's
 /// layout, a vector register's lanes: no transpose), with only the key
-/// words (4 to 11) added back. The arm64 emitter and LLVM there compute
-/// the four blocks in vector registers (ssa a64chacha.xo
-/// chacha8rand_neon_lines); this is the portable body.
+/// words (4 to 11) added back. The native emitter and LLVM compute the
+/// four blocks in vector registers on arm64 (ssa a64chacha.xo
+/// chacha8rand_neon_lines) and amd64 (ssa x86chacha.xo
+/// chacha8rand_x86_lines); this is the portable body.
 pub fn chacha8_rand4(dst: Int, st: Int) { chacha8_rand4_soft(dst, st) }
 
 fn add32x(x: Int, y: Int) -> Int { x.wrapping_add(y) & 0xFFFFFFFF }

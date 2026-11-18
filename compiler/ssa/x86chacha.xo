@@ -119,3 +119,98 @@ pub fn chacha4_x86_lines(d: Str, s: Str, st: Str, n: Str) -> List[Str] {
   }
   t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jnz 1b", "9:"]
 }
+
+/// The xmm registers chacha8rand_x86_lines writes (chacha4_x86_xmms'
+/// first twelve).
+pub fn chacha8rand_x86_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
+
+/// The general registers chacha8rand_x86_lines writes besides r11.
+pub fn chacha8rand_x86_gprs() -> List[Str] { ["rax", "rcx", "r8", "r9"] }
+
+/// Go's chacha8rand block (decision 0669, cpu.chacha8_rand4) with SSSE3:
+/// blocks 0 and 1, then 2 and 3, in chacha4_x86_lines' horizontal layout
+/// (8 rounds, only the key rows 1 and 2 added back); blocks 0 and 1 go to
+/// the upper half of the 256 bytes at d as rows, then a 4 by 4 transpose
+/// of each row of the four blocks writes Go's vertical layout (word k of
+/// block b at d + 16k + 4b), each output row written after the rows it
+/// overwrites were read. st is the 80 byte input (16 words, word 12
+/// unused, then the four counters).
+pub fn chacha8rand_x86_lines(d: Str, st: Str) -> List[Str] {
+  var t = [
+    "movabsq $361421592464458498, %rax",
+    "movq %rax, %xmm10",
+    "movabsq $940142975169071882, %rax",
+    "movq %rax, %xmm8",
+    "punpcklqdq %xmm8, %xmm10",
+    "movabsq $433757367256023043, %rax",
+    "movq %rax, %xmm11",
+    "movabsq $1012478749960636427, %rax",
+    "movq %rax, %xmm8",
+    "punpcklqdq %xmm8, %xmm11",
+    "movq ${d}, %r8",
+    "movq ${st}, %r9",
+  ]
+  for k in [0, 2] {
+    for (o, b) in [(0, k), (4, k + 1)] {
+      t = t + [
+        "movdqu (%r9), %xmm${o}",
+        "movdqu 16(%r9), %xmm${o + 1}",
+        "movdqu 32(%r9), %xmm${o + 2}",
+        "movdqu 48(%r9), %xmm${o + 3}",
+        "movl ${64 + 4 * b}(%r9), %eax",
+        "pinsrd $0, %eax, %xmm${o + 3}",
+      ]
+    }
+    t = t + ["movl $4, %ecx", "2:"]
+    t = t + x86_chacha_half() + x86_chacha_diag(57, 78, 147) + x86_chacha_half() + x86_chacha_diag(147, 78, 57)
+    t = t + ["subl $1, %ecx", "jnz 2b"]
+    for o in [0, 4] {
+      t = t + ["movdqu 16(%r9), %xmm8", "paddd %xmm8, %xmm${o + 1}", "movdqu 32(%r9), %xmm8", "paddd %xmm8, %xmm${o + 2}"]
+    }
+    if k == 0 {
+      for o in [0, 4] {
+        for r in 0..4 {
+          t.push("movdqu %xmm${o + r}, ${128 + 16 * o + 16 * r}(%r8)")
+        }
+      }
+    }
+  }
+  // blocks 2 and 3's rows in xmm0 to xmm3 and xmm4 to xmm7; 0 and 1's at
+  // d + 128 and d + 192. Row r's output (words 4r to 4r + 3) goes to
+  // d + 64r: rows 2 and 3 overwrite 0 and 1's, so those are loaded first
+  // (into xmm0, 1, 4, 5, free once rows 0 and 1 are out)
+  for r in 0..4 {
+    var a = 10
+    var bb = 11
+    if r < 2 {
+      t = t + ["movdqu ${128 + 16 * r}(%r8), %xmm10", "movdqu ${192 + 16 * r}(%r8), %xmm11"]
+    } else {
+      if r == 2 {
+        t = t + ["movdqu 160(%r8), %xmm0", "movdqu 176(%r8), %xmm1", "movdqu 224(%r8), %xmm4", "movdqu 240(%r8), %xmm5"]
+      }
+      a = r - 2
+      bb = r + 2
+    }
+    let c = r
+    let dd = r + 4
+    t = t + [
+      "movdqa %xmm${a}, %xmm8",
+      "punpckldq %xmm${bb}, %xmm8",
+      "punpckhdq %xmm${bb}, %xmm${a}",
+      "movdqa %xmm${c}, %xmm9",
+      "punpckldq %xmm${dd}, %xmm9",
+      "punpckhdq %xmm${dd}, %xmm${c}",
+      "movdqa %xmm8, %xmm${bb}",
+      "punpcklqdq %xmm9, %xmm8",
+      "punpckhqdq %xmm9, %xmm${bb}",
+      "movdqa %xmm${a}, %xmm${dd}",
+      "punpcklqdq %xmm${c}, %xmm${a}",
+      "punpckhqdq %xmm${c}, %xmm${dd}",
+      "movdqu %xmm8, ${64 * r}(%r8)",
+      "movdqu %xmm${bb}, ${64 * r + 16}(%r8)",
+      "movdqu %xmm${a}, ${64 * r + 32}(%r8)",
+      "movdqu %xmm${dd}, ${64 * r + 48}(%r8)",
+    ]
+  }
+  t
+}

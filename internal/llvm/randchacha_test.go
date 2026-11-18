@@ -27,11 +27,16 @@ func TestRuntimeRandChaCha8(t *testing.T) {
 		t.Skip("no fork on Windows")
 	}
 	dir := filepath.Join("testdata", "rt", "randchacha")
-	for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
+	// the native emitter's x86-64 lowering (ssa x86chacha.xo
+	// chacha8rand_x86_lines, task #87) runs as the amd64 backend
+	for _, be := range []string{xotool.BackendArm64, "amd64", xotool.BackendLLVM} {
 		be := be
 		t.Run(be, func(t *testing.T) {
 			if be == xotool.BackendArm64 && runtime.GOARCH != "arm64" {
 				t.Skip("the arm64 backend runs on arm64 hosts")
+			}
+			if be == "amd64" && runtime.GOARCH != "amd64" {
+				t.Skip("the amd64 backend runs on amd64 hosts")
 			}
 			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be, Env: libcEnv()})
 			if err != nil {

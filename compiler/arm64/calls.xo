@@ -2187,6 +2187,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.chacha8_rand4" if g.x86 => {
+      // SSSE3, two blocks at a time, then a transpose into Go's layout
+      // (ssa.chacha8rand_x86_lines): rax, rcx, r8, r9 and xmm0 to xmm11
+      // clobbered, r11 the emitter's scratch
+      var cl = [XR_AX, XR_CX, 8, 9]
+      for r in ssa.chacha8rand_x86_xmms() {
+        cl.push(FP_BASE + r)
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha8rand_x86_lines("$u0", "$u1").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1)))], fl: IF_X86, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.chacha8_rand4" => {
       // decision 0669: Go's chacha8rand block in vector registers
       // (ssa.chacha8rand_neon_lines), clobbering chacha4's V registers and

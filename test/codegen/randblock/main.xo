@@ -1,0 +1,15 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): the runtime
+// generator's refill (std/native/llrt/rand.xo block, Go's chacha8rand,
+// decision 0669) computes its four ChaCha8 blocks in vector registers on
+// both native targets: NEON on arm64 (ssa a64chacha.xo), SSSE3 on amd64
+// (ssa x86chacha.xo, task #87: the scalar body made std/random's zipf
+// and normal rows 1.8 to 2.3 times Go's on linux/amd64), never a call of
+// the portable chacha8_rand4_soft.
+
+fn main(os: Os) {
+  os.stdio.println("${os.rand.int(0, 10) < 10}")
+}
+
+// func rand.block
+// arm64: "tbl v" "rev32 v" -"chacha8_rand4_soft"
+// amd64: "pshufb" "paddd" "punpckhqdq" -"chacha8_rand4_soft"
