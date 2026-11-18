@@ -381,6 +381,8 @@ fn obj_rl_new_cap(n: Int, esize: Int) -> Int { obj.rl_new_cap(n, esize) }
 
 fn obj_rl_grow_n(l: Int, esize: Int) -> Int { obj.rl_grow_n(l, esize) }
 
+fn obj_rl_grow_to(l: Int, n: Int, esize: Int) -> Int { obj.rl_grow_to(l, n, esize) }
+
 fn obj_rl_free_n(l: Int, esize: Int, drop: Int) { obj.rl_free_n(l, esize, drop) }
 
 fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n(l, esize, dup, drop) }

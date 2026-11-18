@@ -200,12 +200,16 @@ fn (var g: G) push_n(v: Int, run: List[Int]) {
   g.cur = chk
   let c = g.def1(false, "ldr $d0, [$u0, #16]", [lm])
   let _b = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [nk, c], cond: "gt", targets: [grow, room]})
-  // a growth at least doubles a capacity of four or more (obj.xo grow):
-  // one is enough but for a list made with a smaller capacity
+  // one call grows the list until the run fits (obj.xo rl_grow_to): a
+  // growth at least doubles a capacity of four or more, but a list made
+  // with a smaller capacity may need two. A jump back to chk instead made
+  // every run a loop, and a list literal of 220,000 pushes as many loops,
+  // whose per loop block sets in the loop passes took 18 GB (task #329,
+  // backoff fuzz seed 19)
   g.cur = grow
-  let l2 = g.rt("xo_x_obj_rl_grow_n", [rsrc(lm), isrc(g.esize(et))], [false])
+  let l2 = g.rt("xo_x_obj_rl_grow_to", [rsrc(lm), rsrc(nk), isrc(g.esize(et))], [false])
   g.pmove([lm], regs([l2[0]]))
-  let _j1 = g.add(Inst{kind: K_JUMP, targets: [chk]})
+  let _j1 = g.add(Inst{kind: K_JUMP, targets: [room]})
   g.cur = room
   g.inherit(before)
   g.clobber()

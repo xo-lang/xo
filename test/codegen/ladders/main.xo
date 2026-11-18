@@ -1,7 +1,9 @@
 // Codegen patterns (decision 0634, `xo dev codegen`): a release ladder a
 // function repeats verbatim becomes one local subroutine. Each arm of
-// pick's match but the last releases, at its start, the 20 Lists it does
-// not use, the same slots in the same order: one `_ld0` subroutine (with
+// pick's match but the last releases, at its start, the 26 Lists it does
+// not use, the same slots in the same order (26: with 20, the 5 the
+// registers hold left 15 slots, under ladders.xo LADDER_MIN once a push
+// run's growth was no loop, task #329): one `_ld0` subroutine (with
 // a frame record, its slots read 16 bytes further), and each arm calls it;
 // on amd64 the same with `callq` and a pushed rbp.
 fn pick(os: Os, k: Int, seed: Int) -> Int {
@@ -27,13 +29,19 @@ fn pick(os: Os, k: Int, seed: Int) -> Int {
   let a17 = [seed + 17, k]
   let a18 = [seed + 18, k]
   let a19 = [seed + 19, k]
+  let a20 = [seed + 20, k]
+  let a21 = [seed + 21, k]
+  let a22 = [seed + 22, k]
+  let a23 = [seed + 23, k]
+  let a24 = [seed + 24, k]
+  let a25 = [seed + 25, k]
   match k {
     0 => { os.stdio.println("zero ${k}"); 0 }
     1 => { os.stdio.println("one ${k}"); 1 }
     2 => { os.stdio.println("two ${k}"); 2 }
     3 => { os.stdio.println("three ${k}"); 3 }
     4 => { os.stdio.println("four ${k}"); 4 }
-    _ => a0.len() + a1.len() + a2.len() + a3.len() + a4.len() + a5.len() + a6.len() + a7.len() + a8.len() + a9.len() + a10.len() + a11.len() + a12.len() + a13.len() + a14.len() + a15.len() + a16.len() + a17.len() + a18.len() + a19.len()
+    _ => a0.len() + a1.len() + a2.len() + a3.len() + a4.len() + a5.len() + a6.len() + a7.len() + a8.len() + a9.len() + a10.len() + a11.len() + a12.len() + a13.len() + a14.len() + a15.len() + a16.len() + a17.len() + a18.len() + a19.len() + a20.len() + a21.len() + a22.len() + a23.len() + a24.len() + a25.len()
   }
 }
 

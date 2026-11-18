@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix (arm64 and x86-64 compile memory; task #329): a constant holding many list literals no longer takes the compiler past 18 GB: each run of pushes grew its list in a loop, so 220,000 pushes made as many loops for the loop passes; a run now grows with one runtime call (std/backoff fuzz seed 19: 13.1 GB and over 5 minutes on the Mac before, 3.4 GB and 22 s after)
 - Fix (native runtime): tasks waiting on a channel, mutex or `await` inside `task.with_timeout` no longer fault XO-F001 (deadlock) while the deadline is pending; the deadline ends those waits, so they do not count as blocked (spec core 11.4). Four tasks in `with_timeout(1ms)` on a channel faulted on every run (golden deadline_chan_wait); it was the grpc fuzz's intermittent false deadlock.
 - Perf (native Rand on x86-64; task #87): the per-thread ChaCha8 refill runs in SSSE3 vector registers on x86-64, as it does in NEON on arm64 (it was scalar): std/random zipf 101.2 to 79.8 ms and perm 30.8 to 24.5 ms for the bench/perf/random workloads on linux/amd64 (best of 7, a loaded host). Values are unchanged (Go's chacha8rand known answers).
 - Perf (linux/arm64, macOS): the native heap keeps a freed mapping over 16 MiB of a size the program asked for recently, up to its peak use, on every target as on x86-64 (decision 0713): `Str.repeat` to 160 MB, made and dropped ten times, faulted every page in afresh (205,239 page reclaims on the Mac, Go 21,210; task #302).

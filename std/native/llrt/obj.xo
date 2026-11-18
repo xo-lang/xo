@@ -342,6 +342,17 @@ pub fn rl_grow_n(l: Int, esize: Int) -> Int {
   rl_grow_mt(l, esize)
 }
 
+/// The list l grown (rl_grow_n) until it holds at least n elements: a
+/// push run's room in one call, with no loop in the generated code
+/// (compiler/arm64 pushrun.xo push_n, task #329).
+pub fn rl_grow_to(l: Int, n: Int, esize: Int) -> Int {
+  var x = rl_grow_n(l, esize)
+  while rt.mem_load(x, 16, 8) < n {
+    x = rl_grow_n(x, esize)
+  }
+  x
+}
+
 /// rl_grow_n with other threads running (rl_new_mt).
 fn rl_grow_mt(l: Int, esize: Int) -> Int {
   if count(l) == IMMORTAL {
