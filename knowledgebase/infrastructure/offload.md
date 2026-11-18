@@ -831,8 +831,14 @@ in a copy of the module, then a `GOPROXY=off` build of it, per host: the
 fuzz:sql and fuzz:websocket runs before failed on host 2 for want of
 them). A reference that vendors its module (scripts/amqptestdiff/go, go-amqp)
 needs nothing on the host.
-Last verified: 2026-11-16 (hosts 1 to 4: both x/crypto versions, pgx v5.11.0
-and gorilla/websocket v1.5.3 build offline)
+github.com/go-sql-driver/mysql v1.10.1 with filippo.io/edwards25519
+v1.2.0 (scripts/mysqldiff/gomysql, TestMysqlFuzz of fuzz:sql) and
+golang.org/x/net v0.62.0 (scripts/stdcorpus/httpproxyoracle,
+TestHttpproxyFuzz) are on all four hosts since 2026-11-18 (the fuzz:sql
+and fuzz:httpproxy runs before failed or skipped on host 2 for want of
+them: "module lookup disabled by GOPROXY=off").
+Last verified: 2026-11-18 (hosts 1 to 4: both x/crypto versions, pgx v5.11.0,
+gorilla/websocket v1.5.3, the mysql and x/net references build offline)
 
 ## The Windows arm64 VM (owner, 2026-11-09)
 
