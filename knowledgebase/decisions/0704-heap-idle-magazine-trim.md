@@ -1,7 +1,6 @@
 # 0704: a heap record gives back the magazines of size classes it has not used for a period
 
-Status: Proposed (xo-lang-1, 2026-11-17, task #213, lead decision #71): for the owner; implemented only
-once accepted (prototype: branch p0704).
+Status: Accepted (owner 2026-11-17, lead decision #97; proposed by xo-lang-1, task #213)
 
 ## Context
 
@@ -34,6 +33,9 @@ So the trim bounds otlp's growth and costs nothing measurable, but it does not e
 growth is not idle classes' magazines (the prototype gives those back) and needs its own accounting (each
 record's per class list and spare bytes, the central lists and the live blocks at the end of a run) before
 a fix; that is the next experiment, outside this decision.
+
+Landed with the unit test `an age pass gives an idle class's spare magazine to the central list`
+(std/native/llrt/heapos_test.xo), which fails before the change (the spare stays on the record).
 
 ## Decision
 

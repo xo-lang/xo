@@ -72,3 +72,39 @@ test "a write after free ends the program under the free check" {
     rt.mem_store(p, 8, 1, 8)
   }
 }
+
+test "an age pass gives an idle class's spare magazine to the central list" {
+  // decision 0704: the first pass notes the spare (H_IDLE), the next one
+  // that finds the same spare moves it to central, where the sweep and
+  // other records' refills see its blocks
+  if !pages_on() {
+    return
+  }
+  var h = obj.solo_heap()
+  if h == 0 {
+    h = rt.tlocal_get(TLS_HEAP)
+  }
+  if h == 0 || rt.mem_load(h, H_CENTRAL, 8) == 0 || rt.mem_load(h, H_RFLAG, 8) != 0 {
+    return
+  }
+  // a class nothing else here uses: enough frees to fill its list twice,
+  // so a full magazine becomes the spare
+  let n = 3000
+  let c = alloc.class_of(n)
+  var ps: List[Int] = []
+  for _ in 0..3 * (65536 / n) + 8 {
+    ps.push(alloc.alloc(h, n))
+  }
+  // the threaded free (free_mt) makes the spare; alloc.free has none
+  for p in ps {
+    alloc.free_mt(h, p)
+  }
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  let m = rt.mem_load(fl, H_MAG, 8)
+  expect(m != 0)
+  let _a = age(false)
+  expect(rt.mem_load(fl, H_MAG, 8)) == m
+  let _b = age(false)
+  expect(rt.mem_load(fl, H_MAG, 8)) == 0
+  expect(alloc.central_first(h, c)) == m
+}

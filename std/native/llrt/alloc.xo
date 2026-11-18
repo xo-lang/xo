@@ -305,6 +305,29 @@ pub fn central_lock(h: Int, c: Int) { clock(h, rt.mem_load(h, CENTRAL, 8), c) }
 pub fn central_unlock(h: Int, c: Int) { cunlock(h, rt.mem_load(h, CENTRAL, 8), c) }
 pub fn central_first(h: Int, c: Int) -> Int { rt.slot_load(rt.mem_load(h, CENTRAL, 8), c, RELAXED) }
 
+/// Moves record h's spare magazine of prefixed class c (below
+/// PAGE_CLASS) to the central list, where another record's refill takes
+/// it and the sweep (heapos.xo, decision 0676) can give whole free units
+/// back: a record otherwise keeps it until its own allocations of c
+/// take it, and the sweep walks only the sweeping thread's record
+/// (task #213: 18 records each kept up to two magazines a class, and a
+/// 30 minute arm64 stress run's RSS crept from 14 to 24 MB). True when
+/// one moved.
+pub fn spare_to_central(h: Int, c: Int) -> Bool {
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  let m = rt.mem_load(fl, MAG, 8)
+  if m == 0 {
+    return false
+  }
+  rt.mem_store(fl, MAG, 0, 8)
+  let cen = rt.mem_load(h, CENTRAL, 8)
+  clock(h, cen, c)
+  rt.mem_store(m, 8, rt.slot_load(cen, c, RELAXED), 8)
+  rt.slot_store(cen, c, m, RELAXED)
+  cunlock(h, cen, c)
+  true
+}
+
 pub fn cnext(pg: Bool, m: Int) -> Int {
   if pg { rt.mem_load(pword(m, PT_CLINK), 0, 8) } else { rt.mem_load(m, 8, 8) }
 }

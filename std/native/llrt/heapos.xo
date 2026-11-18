@@ -1723,6 +1723,22 @@ pub fn age_from(central: Bool, own: Bool) -> Int {
       k += age_list(rt.mem_load(fl, H_MAG, 8), c, pg, gave)
     }
   }
+  // a prefixed class's spare magazine that no free or refill replaced
+  // since the previous pass (the same address in H_IDLE) goes to central
+  // (decision 0704), so this period's sweep sees its blocks; a busy
+  // class's spare changes every magazine's worth of frees and stays, and
+  // a record that needs it again takes it back by its refill
+  if h != 0 && rt.mem_load(h, H_RFLAG, 8) == 0 && rt.mem_load(h, H_CENTRAL, 8) != 0 {
+    for c in 1..PAGE_CLASS {
+      let m = rt.mem_load(h.wrapping_add(c.wrapping_shl(3)), H_MAG, 8)
+      let iw = h.wrapping_add(H_IDLE).wrapping_add(c.wrapping_shl(3))
+      if m != 0 && rt.mem_load(iw, 0, 8) == m && alloc.spare_to_central(h, c) {
+        rt.mem_store(iw, 0, 0, 8)
+      } else {
+        rt.mem_store(iw, 0, m, 8)
+      }
+    }
+  }
   if central {
     let hc = heaps_head()
     if hc != 0 && rt.mem_load(hc, H_CENTRAL, 8) != 0 {
@@ -2864,7 +2880,10 @@ const H_RNEXT = H_RFLAG + 8
 /// The record's routing words (alloc.xo RTAG, RINBOX).
 const H_RTAG = H_RNEXT + 8
 const H_RINBOX = H_RTAG + 8
-const H_SIZE = H_RINBOX + 8
+/// Decision 0704: each prefixed class's spare magazine as the previous
+/// age pass saw it (classes 1 to PAGE_CLASS - 1; word 0 unused).
+const H_IDLE = H_RINBOX + 8
+const H_SIZE = H_IDLE + 8 * 77
 /// A C library's (decision 0574): 1 while the record's thread has exited,
 /// so a new thread takes it (thread_heap; orphan); the pthread key of the
 /// thread exit hook plus 1 (0 none), which each record copies from the
