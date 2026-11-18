@@ -27,6 +27,7 @@
 use native/llrt/bigmod
 use native/llrt/cpu
 use native/llrt/ct
+use native/llrt/heapblk
 use native/llrt/nistec_g256
 use native/llrt/nistec_gtab
 use native/llrt/raw
@@ -3052,8 +3053,8 @@ fn gtab_make(c: Int) -> Int {
     mul(c, at(t, es * i + el), at(p, ES), zi, mp)
     i -= 1
   }
-  rt.heap_release(pts - 8)
-  rt.heap_release(pre - 8)
+  heapblk.release(pts)
+  heapblk.release(pre)
   t
 }
 

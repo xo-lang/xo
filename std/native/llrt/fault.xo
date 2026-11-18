@@ -16,6 +16,7 @@
 //
 // Nothing here faults.
 use native/llrt/crashfile
+use native/llrt/heapblk
 use native/llrt/layout
 use native/llrt/num
 use native/llrt/obj
@@ -191,10 +192,10 @@ fn drop_trace(c: Int) {
     return
   }
   if rt.mem_load(b, 16, 8) > 0 {
-    rt.heap_release(rt.mem_load(b, 16, 8) - 8)
+    heapblk.release(rt.mem_load(b, 16, 8))
     rt.mem_store(b, 16, 0, 8)
   }
-  rt.heap_release(b - 8)
+  heapblk.release(b)
   rt.mem_store(c, C_FAULT_TRACE, 0, 8)
 }
 

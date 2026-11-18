@@ -39,6 +39,7 @@
 // (freed with it, hserve.xo hc_free) outlives the streams.
 use native/llrt/ctx
 use native/llrt/h2w
+use native/llrt/heapblk
 use native/llrt/hpack
 use native/llrt/netwasi
 use native/llrt/obj
@@ -565,7 +566,7 @@ fn stream_free(st: Int) {
   bfree(st, S_OTRL)
   bfree(st, S_RH)
   bfree(st, S_OUT)
-  rt.heap_release(st - 8)
+  heapblk.release(st)
 }
 
 fn unref(st: Int) {
@@ -810,13 +811,13 @@ fn fields_free(a: Int) {
     for k in 0..2 * n {
       let c = rt.mem_load(a, -8 * (2 + k), 8)
       if c != 0 {
-        rt.heap_release(c - 8)
+        heapblk.release(c)
       }
     }
-    rt.heap_release(a - 8 * (1 + 2 * n) - 8)
+    heapblk.release(a - 8 * (1 + 2 * n))
     return
   }
-  rt.heap_release(a - 8)
+  heapblk.release(a)
 }
 
 /// Answers st from the connection itself (431, 400, OPTIONS *): a whole
@@ -1047,7 +1048,7 @@ pub fn conn_free(c: Int) {
   if q != 0 {
     rt.heap_release(q)
   }
-  rt.heap_release(c - 8)
+  heapblk.release(c)
 }
 
 /// Asks the connection to end (the server stops): GOAWAY, then close

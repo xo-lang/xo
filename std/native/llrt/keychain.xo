@@ -4,6 +4,7 @@
 // call (tlscert.fw: dlopen of Security, which loads CoreFoundation), not
 // linked, so a program that reads no keychain does not load it.
 
+use native/llrt/heapblk
 use native/llrt/raw
 use native/llrt/tlscert
 use native/rt
@@ -84,7 +85,7 @@ fn scope(q: Int, kc: Int, add: Bool) {
   let one = rt.heap_large(8)
   rt.mem_store(one, 0, kc, 8)
   let arr = rt.call_c4(sym("CFArrayCreate"), 0, one, 1, sym("kCFTypeArrayCallBacks"))
-  rt.heap_release(one - 8)
+  heapblk.release(one)
   put(q, gval("kSecMatchSearchList"), arr)
   cf_release(arr)
 }
@@ -110,7 +111,7 @@ pub fn get(service: Str, account: Str, kc: Int) -> (Int, Bytes?) {
   let st = status(rt.call_c2(sym("SecItemCopyMatching"), q, out))
   cf_release(q)
   let r = rt.mem_load(out, 0, 8)
-  rt.heap_release(out - 8)
+  heapblk.release(out)
   if st == ERR_NOT_FOUND {
     return (0, None)
   }
@@ -190,7 +191,7 @@ pub fn open_at(path: Str, password: Str) -> (Int, Int) {
   var st = status(rt.call_c2(f, raw.bytes_addr(c), out))
   raw.alive(c)
   let kc = rt.mem_load(out, 0, 8)
-  rt.heap_release(out - 8)
+  heapblk.release(out)
   if st != 0 {
     cf_release(kc)
     return (st, 0)
@@ -220,7 +221,7 @@ pub fn ui_allowed() -> Bool {
   rt.mem_store(out, 0, 1, 8)
   let st = status(rt.call_c2(f, out, 0))
   let v = rt.mem_load(out, 0, 1)
-  rt.heap_release(out - 8)
+  heapblk.release(out)
   st != 0 || v != 0
 }
 
@@ -248,7 +249,7 @@ pub fn message(st: Int) -> Str {
   if rt.call_c4(sym("CFStringGetCString"), s, buf, 600, CF_UTF8) & 255 != 0 {
     out = raw.str_at(buf, raw.cstr_len(buf))
   }
-  rt.heap_release(buf - 8)
+  heapblk.release(buf)
   cf_release(s)
   out
 }

@@ -8,6 +8,7 @@ use native/llrt/dbgwin
 use native/llrt/dbgmac
 use native/llrt/ctx
 use native/llrt/fsops
+use native/llrt/heapblk
 use native/llrt/heapos
 use native/llrt/hkdf
 use native/llrt/listswap
@@ -150,7 +151,7 @@ fn rt_op(what: Str, a: Bytes) -> Bytes? {
     let n = rt.call_c2(rt.fn_addr("fmt_int"), buf, 12345)
     s = rt.rs_push_byte(s, n)
     s = rt.rs_push_byte(s, rt.mem_load(buf, 0, 1))
-    rt.heap_release(buf - 8)
+    heapblk.release(buf)
     return Some(s.bytes())
   }
   if what == "alive" {
@@ -187,7 +188,7 @@ fn rt_op(what: Str, a: Bytes) -> Bytes? {
     let buf = rt.heap_large(8)
     rt.mem_store(buf, 0, 33909456017848440, 8)
     s = rt.rs_push_byte(s, rt.call_c2(rt.sym_addr("strlen"), buf, 0))
-    rt.heap_release(buf - 8)
+    heapblk.release(buf)
     return Some(s.bytes())
   }
   if what == "auxv" {

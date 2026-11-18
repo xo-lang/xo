@@ -5,6 +5,7 @@
 // verification through the Security framework (crypto/x509's
 // systemVerify), called directly (sys_darwin.xo).
 use native/llrt/fsops
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/process
 use native/llrt/raw
@@ -19,7 +20,7 @@ use native/sys_windows
 /// with release.
 fn block(n: Int) -> Int { rt.heap_large(if n > 0 { n } else { 1 }) }
 
-fn release(b: Int) { rt.heap_release(b - 8) }
+fn release(b: Int) { heapblk.release(b) }
 
 /// The certificates (DER) of the system's ROOT store.
 fn windows_ders() -> List[Bytes] {

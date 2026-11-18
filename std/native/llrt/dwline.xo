@@ -9,6 +9,7 @@
 // at start and never in a signal handler; files are read by plain
 // system calls, not sysio (a test binary's sysio is the test world's,
 // which a fault's report cannot wait on: the traceback hung).
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/raw
 use native/llrt/windows
@@ -365,7 +366,7 @@ pub fn own_header() -> Int {
   if Int(sys_darwin.dladdr(rt.sym_addr("xo_entry"), info)) != 0 {
     mh = ld(info, 8)
   }
-  rt.heap_release(info - 8)
+  heapblk.release(info)
   if mh == 0 { sys_darwin._dyld_get_image_header(0) } else { mh }
 }
 
@@ -385,7 +386,7 @@ fn dsym_sects() -> (Sects, Int, Bool) {
   if Int(sys_darwin.dladdr(mh, info)) != 0 && ld(info, 0) != 0 {
     exe = cstr(ld(info, 0), 4096)
   }
-  rt.heap_release(info - 8)
+  heapblk.release(info)
   if exe.is_empty() {
     return (Sects{}, 0, false)
   }
@@ -587,7 +588,7 @@ fn read_raw(path: Str) -> Bytes {
       TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
     }
   }
-  rt.heap_release(buf - 8)
+  heapblk.release(buf)
   b.freeze()
 }
 
@@ -2387,7 +2388,7 @@ fn probe(a: Int, n: Int) -> Bool {
     }
     TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
-  rt.heap_release(fds - 8)
+  heapblk.release(fds)
   ok
 }
 
@@ -2410,7 +2411,7 @@ fn win_readable(a: Int, n: Int) -> Bool {
       at = rt.mem_load(mbi, 0, 8) + rt.mem_load(mbi, 24, 8)
     }
   }
-  rt.heap_release(mbi - 8)
+  heapblk.release(mbi)
   ok
 }
 

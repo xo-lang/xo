@@ -9,6 +9,7 @@
 // from the C runtime's malloc (rt.heap_large). The event loop's lock
 // (EV_MU) is held around every call of the heap's. Nothing here
 // allocates Xo values or faults.
+use native/llrt/heapblk
 use native/llrt/layout
 use native/llrt/budget
 use native/llrt/concflag
@@ -104,7 +105,7 @@ pub fn timer_push(t: Int) -> Int {
   if n == cap {
     let ncap = if cap == 0 { 64 } else { addw(cap, cap) }
     let old = rt.mem_load(rt.static_word(W_HEAP), 0, 8)
-    let nh = if old == 0 { rt.heap_large(ncap.wrapping_shl(3)) } else { rt.heap_large_resize(subw(old, 8), ncap.wrapping_shl(3)) }
+    let nh = if old == 0 { rt.heap_large(ncap.wrapping_shl(3)) } else { heapblk.resize(old, ncap.wrapping_shl(3)) }
     rt.mem_store(rt.static_word(W_HEAP), 0, nh, 8)
     rt.mem_store(wc, 0, ncap, 8)
   }
@@ -448,7 +449,7 @@ pub fn pd_open(fd: Int, write: Bool) -> Int {
   rt.mem_store(pd, D_FD, fd, 4)
   let r = register(fd, pd, write)
   if r < 0 {
-    rt.heap_release(subw(pd, 8))
+    heapblk.release(pd)
     return r
   }
   pd
@@ -899,7 +900,7 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
   }
   if node != 0 {
     // off the list: a waker or this task took it off under D_MU
-    rt.heap_release(subw(node, 8))
+    heapblk.release(node)
   }
   res
 }
@@ -1087,7 +1088,7 @@ fn pd_timers_free(pd: Int) {
     }
   }
   rt.mem_store(pd, D_TIMERS, 0, 8)
-  rt.heap_release(subw(b, 8))
+  heapblk.release(b)
 }
 
 /// Whether the current task is canceled (and not shielded).
@@ -1157,7 +1158,7 @@ pub fn fire(t: Int, mu: Int) {
     unlk(mu)
     stop.signal()
     lk(mu)
-    rt.heap_release(subw(t, 8))
+    heapblk.release(t)
     return
   }
   if f == FN_SELECT {
@@ -1620,7 +1621,7 @@ pub fn timer_fired(t: Int) -> Bool { fired(t) }
 /// Takes timer t (of timer_park) out of the heap and frees it.
 pub fn timer_end(t: Int) {
   timer_del(t)
-  rt.heap_release(t - 8)
+  heapblk.release(t)
 }
 
 /// The park of context c.
@@ -1830,7 +1831,7 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
     if win {
       dead_win(pd)
     } else {
-      rt.heap_release(subw(pd, 8))
+      heapblk.release(pd)
     }
     pd = next
   }
@@ -2097,7 +2098,7 @@ fn dead_win(pd: Int) {
   }
   unlk(addw(pd, D_MU))
   if !armed {
-    rt.heap_release(subw(pd, 8))
+    heapblk.release(pd)
   }
 }
 
@@ -2208,7 +2209,7 @@ fn afd_done(pd: Int) {
   let dying = rt.mem_load(pd, D_DYING, 4) != 0
   unlk(addw(pd, D_MU))
   if dying {
-    rt.heap_release(subw(pd, 8))
+    heapblk.release(pd)
     return
   }
   if mode != 0 {
@@ -2245,7 +2246,7 @@ pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int) {
       }
       unlk(addw(pd, D_MU))
       if !armed {
-        rt.heap_release(subw(pd, 8))
+        heapblk.release(pd)
       }
       pd = next
     }
@@ -2367,7 +2368,7 @@ fn afd_open(iocp: Int) -> Int {
   let hp = addw(b, 112)
   let st = s32(Int(sys_windows.NtCreateFile(hp, SYNCHRONIZE, oa, iosb, 0, 0, FILE_SHARE_RW, FILE_OPEN, 0, 0, 0)))
   let h = rt.mem_load(hp, 0, 8)
-  rt.heap_release(subw(b, 8))
+  heapblk.release(b)
   if st != 0 {
     return 0
   }
@@ -2430,7 +2431,7 @@ fn open_win(fd: Int) -> Int {
     let nr = rt.heap_large(nc * 8)
     if regs != 0 {
       rt.mem_copy(nr, regs, n * 8)
-      rt.heap_release(subw(regs, 8))
+      heapblk.release(regs)
     }
     regs = nr
     rt.mem_store(e, EV_REGS, regs, 8)
@@ -2479,7 +2480,7 @@ fn poll_main_wsa(e: Int) {
       let next = rt.mem_load(pd, D_NEXT, 8)
       pd_timers_free(pd)
       unregister(e, pd)
-      rt.heap_release(subw(pd, 8))
+      heapblk.release(pd)
       pd = next
     }
     rt.mem_store(dead, 0, 0, 8)
@@ -2499,8 +2500,8 @@ fn poll_main_wsa(e: Int) {
     let nreg = rt.mem_load(e, EV_NREG, 8)
     if cap < addw(nreg, 1) {
       if fds != 0 {
-        rt.heap_release(subw(fds, 8))
-        rt.heap_release(subw(who, 8))
+        heapblk.release(fds)
+        heapblk.release(who)
       }
       cap = addw(nreg, 1) * 2
       fds = rt.heap_large(cap * 16)

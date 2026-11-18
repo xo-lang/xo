@@ -43,6 +43,7 @@
 // allocated.
 use native/llrt/dwline
 use native/llrt/freebsd
+use native/llrt/heapblk
 use native/llrt/heapos
 use native/llrt/heapprof
 use native/llrt/linux
@@ -572,7 +573,7 @@ fn handler(h: Int) {
         st(sa, 0, h)
         rt.mem_store(sa, 136, flags, 4)
         let _r = sys_c.weak_sigaction(SIGPROF, sa, 0)
-        rt.heap_release(sa - 8)
+        heapblk.release(sa)
       } else {
         let _r = linux.sigaction(SIGPROF, h, flags)
       }
@@ -584,7 +585,7 @@ fn handler(h: Int) {
       rt.mem_store(sa, 8, 0, 4)
       rt.mem_store(sa, 12, if h == 1 { 0 } else { 64 | 2 }, 4)
       let _r = sys_darwin.sigaction(SIGPROF, sa, 0)
-      rt.heap_release(sa - 8)
+      heapblk.release(sa)
     }
     TargetOs.FreeBSD => {
       // sigaction(2) 416: the handler, the flags (4 bytes), the mask (16);
@@ -594,7 +595,7 @@ fn handler(h: Int) {
       st(sa, 0, h)
       rt.mem_store(sa, 8, if h == 1 { 0 } else { 64 | 2 }, 4)
       let _r = rt.sys6(416, SIGPROF, sa, 0, 0, 0, 0)
-      rt.heap_release(sa - 8)
+      heapblk.release(sa)
     }
     TargetOs.Windows | TargetOs.Wasi => {}
   }
@@ -630,7 +631,7 @@ fn timer(us: Int) {
     }
     TargetOs.Windows | TargetOs.Wasi => {}
   }
-  rt.heap_release(t - 8)
+  heapblk.release(t)
 }
 
 /// SIGPROF's handler (cabi.xo on_prof): one sample of the interrupted
@@ -1234,7 +1235,7 @@ fn read_file(path: Str) -> Bytes {
       b.write_byte(UInt8(rt.mem_load(buf, i, 1)))
     }
   }
-  rt.heap_release(buf - 8)
+  heapblk.release(buf)
   let _c = linux.close(fd)
   b.freeze()
 }
@@ -1415,7 +1416,7 @@ fn image_of(pc: Int) -> Int {
   if Int(sys_darwin.dladdr(pc, info)) != 0 {
     mh = ld(info, 8)
   }
-  rt.heap_release(info - 8)
+  heapblk.release(info)
   mh
 }
 
@@ -1439,7 +1440,7 @@ fn outside_name(pc: Int) -> Str {
           name = "[${base_name(cstr(ld(info, 0)))}]"
         }
       }
-      rt.heap_release(info - 8)
+      heapblk.release(info)
       name
     }
     TargetOs.Linux => linux_object_name(pc)
@@ -1889,7 +1890,7 @@ fn mac_start(r: Int, hz: Int) {
     ok = Int(sys_darwin.pthread_create(a + 64, a, rt.fn_addr("prof_sampler"), r)) == 0
     let _x = sys_darwin.pthread_attr_destroy(a)
   }
-  rt.heap_release(a - 8)
+  heapblk.release(a)
   if !ok {
     stdio.eprint("xo profile: the sampler thread did not start", true)
   }

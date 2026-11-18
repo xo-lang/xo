@@ -9,6 +9,7 @@
 // are UNTESTED.
 use native/llrt/atexit
 use native/llrt/hconn
+use native/llrt/heapblk
 use native/llrt/netconn
 use native/llrt/netwasi
 use native/llrt/poll
@@ -352,7 +353,7 @@ pub fn roots_system_at(at: Int, only_unset: Bool) -> rthttp.Roots {
       s = mine
     } else {
       tasks.h_release(mine)
-      rt.heap_release(cell - 8)
+      heapblk.release(cell)
       s = rt.slot_load(w, 0, ACQUIRE)
     }
   }
@@ -647,7 +648,7 @@ pub fn roots_free() {
         if a != 0 {
           tasks.h_release(a)
         }
-        rt.heap_release(d.cell - 8)
+        heapblk.release(d.cell)
       }
     }
     tasks.h_release(s)
@@ -1070,7 +1071,7 @@ pub fn free(h: Int) {
   if s != 0 {
     tasks.h_release(s)
   }
-  rt.heap_release(h - 8)
+  heapblk.release(h)
 }
 
 fn would_block(e: Int) -> Bool {

@@ -5,6 +5,7 @@
 // handlers installed for the signals the runtime does not catch itself.
 // The poller hands each pending signal to deliver on its own thread.
 use native/llrt/chan
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/pool
 use native/llrt/poll
@@ -36,7 +37,7 @@ fn install(i: Int, h: Int) {
       rt.mem_store(sa, 8, 0, 4)
       rt.mem_store(sa, 12, if h == SIG_DFL { 0 } else { SA_RESTART_DARWIN }, 4)
       let _r = sys_darwin.sigaction(sig, sa, 0)
-      rt.heap_release(sa - 8)
+      heapblk.release(sa)
     }
     _ => {}
   }
@@ -83,7 +84,7 @@ pub fn subscribe(c: Int, mask: Int) {
   let tab = rt.heap_large((n + 1) * ENT)
   if n > 0 {
     rt.mem_copy(tab, old, n * ENT)
-    rt.heap_release(old - 8)
+    heapblk.release(old)
   }
   rc.inc(c)
   // fed from outside the program's tasks: a receive on it is not a

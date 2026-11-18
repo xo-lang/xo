@@ -10,6 +10,7 @@
 // (gotchas/tsan-fiber-switch-in-callee.md). UNTESTED on Linux and
 // Windows. On windows/amd64 --race the Go flavor of ThreadSanitizer
 // (gorace, decision 0273's Windows addendum).
+use native/llrt/heapblk
 use native/llrt/layout
 use native/llrt/rtstats
 use native/rt
@@ -661,7 +662,7 @@ pub fn thread_start(f: Int, arg: Int, size: Int) -> Bool {
     ok = Int(sys_c.pthread_create(a.wrapping_add(64), a, f, arg)) == 0
     let _x = sys_c.pthread_attr_destroy(a)
   }
-  rt.heap_release(a.wrapping_sub(8))
+  heapblk.release(a)
   ok
 }
 
@@ -685,7 +686,7 @@ pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
     let _j = sys_c.pthread_join(rt.mem_load(ts, i * 8, 8), 0)
     i = i + 1
   }
-  rt.heap_release(a.wrapping_sub(8))
+  heapblk.release(a)
   started == n
 }
 

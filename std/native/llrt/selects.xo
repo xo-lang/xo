@@ -14,6 +14,7 @@ use native/llrt/chan
 use native/llrt/ctx
 use native/llrt/det
 use native/llrt/fault
+use native/llrt/heapblk
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
@@ -268,7 +269,7 @@ fn wait_body(s: Int, lp: Int, ln: Int) -> Int {
       j -= 1
     }
   }
-  rt.heap_release(cs - 8)
+  heapblk.release(cs)
   if unwound {
     st4(x, ctx.C_UNWINDING, 1)
     return -1

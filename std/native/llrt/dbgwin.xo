@@ -32,6 +32,7 @@
 // step alone, 24 single step at its next resume.
 use native/llrt/cabi_dbg
 use native/llrt/dbgtrace
+use native/llrt/heapblk
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/windows
@@ -520,17 +521,17 @@ pub fn close(h: Int) {
   for k in [TT, EV, CTXB] {
     let a = rt.mem_load(h, k, 8)
     if a != 0 {
-      rt.heap_release(a - 8)
+      heapblk.release(a)
     }
   }
-  rt.heap_release(h - 8)
+  heapblk.release(h)
 }
 
 fn stop_tracer(h: Int) {
   let m = rt.mem_load(h, MB, 8)
   if m != 0 {
     dbgtrace.stop(m)
-    rt.heap_release(m - 8)
+    heapblk.release(m)
     rt.mem_store(h, MB, 0, 8)
   }
 }
@@ -591,7 +592,7 @@ fn new_record() -> Int {
   let m = rt.heap_large(dbgtrace.MB_SIZE)
   rt.mem_set(m, 0, dbgtrace.MB_SIZE)
   if !pool.thread_start(rt.fn_addr("dbg_tracer"), m) {
-    rt.heap_release(m - 8)
+    heapblk.release(m)
     close(h)
     return 0
   }
@@ -618,7 +619,7 @@ fn add_thread(h: Int, tid: Int, handle: Int) {
     let nt = rt.heap_large(TE * cap)
     if t != 0 {
       rt.mem_copy(nt, t, TE * n)
-      rt.heap_release(t - 8)
+      heapblk.release(t)
     }
     t = nt
     rt.mem_store(h, TT, t, 8)

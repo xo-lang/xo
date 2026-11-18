@@ -10,6 +10,7 @@
 //
 // Generated code calls the exports (cabi.xo) directly; the C entry
 // points forward for older xo's code.
+use native/llrt/heapblk
 use native/llrt/layout
 use native/llrt/budget
 use native/llrt/ctx
@@ -1051,7 +1052,7 @@ pub fn run_claimed(t: Int, units: Int) {
   if ld(te, 8 * TLS_CTX_SPARE) == 0 && ld(ctx.svc(), ctx.SV_TSAN) == 0 {
     st(te, 8 * TLS_CTX_SPARE, c)
   } else {
-    rt.heap_release(c - 8)
+    heapblk.release(c)
   }
   let s = ld(t, T_SCOPE)
   // what the task did happens before its await and its scope's close

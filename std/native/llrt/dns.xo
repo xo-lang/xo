@@ -54,6 +54,7 @@
 // would stop at dns.
 use native/llrt/ctx
 use native/llrt/darwin
+use native/llrt/heapblk
 use native/llrt/host
 use native/llrt/linux
 use native/llrt/obj
@@ -217,7 +218,7 @@ fn config() -> Config {
       raw.alive_str(host)
       raw.alive(tb)
       if b != 0 {
-        rt.heap_release(b - 8)
+        heapblk.release(b)
       }
       rt.mem_store(rt.static_word(W_CONF), 0, nb, 8)
       b = nb
@@ -313,7 +314,7 @@ fn hosts_text() -> Bytes? {
       rt.mem_copy(nb + HOSTS_HEAD, raw.bytes_addr(tb), tb.len())
       raw.alive(tb)
       if b != 0 {
-        rt.heap_release(b - 8)
+        heapblk.release(b)
       }
       rt.mem_store(rt.static_word(W_HOSTS), 0, nb, 8)
       b = nb

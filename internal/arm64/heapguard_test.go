@@ -87,6 +87,9 @@ func TestCheckFlagPlants(t *testing.T) {
 	for _, c := range []struct{ module, sub, flag, want string }{
 		{"native/llrt/libcmem", "an overrun", "--check=guard", ""},
 		{"native/llrt/heapos", "write after free", "--check=free", "fault: XO_FREE_CHECK: a freed block was written after its free"},
+		// heapblk.release given the prefix instead of the address
+		// rt.heap_large returned (task #354): heapos.bad_release's exit
+		{"native/llrt/heapblk", "a free by the prefix", "--check=free", "status 70"},
 	} {
 		if out, err := run(c.module, c.sub); err != nil {
 			t.Errorf("%s %q without %s: %v\n%s", c.module, c.sub, c.flag, err, out)

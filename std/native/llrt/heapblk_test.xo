@@ -1,0 +1,26 @@
+// Tests of heapblk.xo: `xo test --std-module=native/llrt/heapblk`, run by
+// internal/stdtest; internal/arm64 TestCheckFlagPlants runs the plant
+// with --check=free, where it must fault.
+
+use native/rt
+
+test "a record is resized and freed by the address rt.heap_large returned" {
+  let b = rt.heap_large(40)
+  rt.mem_store(b, 32, 7, 8)
+  let c = resize(b, 400)
+  expect(rt.mem_load(c, 32, 8)) == 7
+  expect(rt.mem_load(c - 8, 0, 8)) == -400
+  release(c)
+}
+
+test "a free by the prefix faults under the free check" {
+  let b = rt.heap_large(40)
+  if checking() {
+    // the plant (task #354): the prefix, 8 bytes before what heap_large
+    // returned, passed where the returned address belongs; the word
+    // before it is no prefix
+    rt.mem_store(b - 16, 0, 40, 8)
+    release(b - 8)
+  }
+  release(b)
+}

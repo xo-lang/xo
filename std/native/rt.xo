@@ -370,6 +370,7 @@ fn prefetch(a: Int)
 ///   100 std/native/llrt/ints.xo: the Str hash's seed (decision 0545), set once by entry.xo start before the program runs (XO_HASH_SEED's digits, else the system generator's), 0 before
 ///   108 std/native/llrt/rand.xo: whether macOS's pthread_atfork child handler is registered (decision 0669)
 ///   109 std/native/llrt/envix.xo: the environment's index (process.xo env_real_at's table of names), 0 until the first lookup and after env_drop
+///   110 std/native/llrt/heapblk.xo: 1 under the free check (XO_FREE_CHECK, heapos.xo free_check_on), when heapblk.release and resize check the prefix (task #354)
 ///   98 std/native/llrt/alloc.xo: XO_HEAPSTATS=waste's table of the size classes' asked and handed bytes (decision 0506's measurement), 0 when off
 fn static_word(k: Int) -> Int uses realtime
 /// A wasi:http component's request (decision 0447): its method, path

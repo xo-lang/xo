@@ -20,6 +20,7 @@
 // Xo; the C keeps the socket and TLS reads and writes and the server's
 // registration. An HTTP/2 stream's response header is here too (hdr_*,
 // for h2srv.xo).
+use native/llrt/heapblk
 use std/archive
 use native/llrt/hclient
 use native/llrt/hpack
@@ -1632,7 +1633,7 @@ pub fn x1_free(x: Int) {
   x_free(xl(x, X_BODY))
   hdr_clear(x)
   x_free(xl(x, X_HDR))
-  rt.heap_release(x - 8)
+  heapblk.release(x)
 }
 
 /// Empties the response header.
@@ -2030,7 +2031,7 @@ fn (var r: Reader) read_one() -> Int {
       let d = rt.heap_large(256)
       let n = http1w.error_answer(d, res, p.status, if res == STATUS { p.reason } else { "" })
       let _s = send(h, d, n)
-      rt.heap_release(d - 8)
+      heapblk.release(d)
       if res == TOO_LARGE {
         hconn.linger_close(h)
       }
@@ -2168,7 +2169,7 @@ fn (var r: Reader) read_one() -> Int {
       let d = rt.heap_large(256)
       let n = http1w.error_answer(d, BODY_TOO_BIG, 413, "")
       let _s = send(h, d, n)
-      rt.heap_release(d - 8)
+      heapblk.release(d)
       hconn.linger_close(h)
       return 0
     }
@@ -2404,7 +2405,7 @@ fn write(h: rthttp.HConn, x: Int, status: Int, body: Int, bn: Int, stream: Int) 
   if !send(h, d, n) {
     r = r | 4
   }
-  rt.heap_release(d - 8)
+  heapblk.release(d)
   r
 }
 

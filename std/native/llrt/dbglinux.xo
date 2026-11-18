@@ -26,6 +26,7 @@
 // and are waited for, as dbgmac.xo suspends them.
 use native/llrt/cabi_dbg
 use native/llrt/dbgtrace
+use native/llrt/heapblk
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
@@ -118,7 +119,7 @@ pub fn launch(path: Str, args: List[Str], out: Str) -> (Int, Str) {
   let devnull = "/dev/null\u{0}"
   let h = new_record()
   if h == 0 {
-    rt.heap_release(argv - 8)
+    heapblk.release(argv)
     return (0, "the debugger's tracer thread could not be started")
   }
   let st = raw.bytes_buf(8)
@@ -135,7 +136,7 @@ pub fn launch(path: Str, args: List[Str], out: Str) -> (Int, Str) {
     child(cpath, argv, cenv, cout, cnull)
   }
   let _z = zpath.len() + zout.len() + devnull.len()
-  rt.heap_release(argv - 8)
+  heapblk.release(argv)
   if pid < 0 {
     close(h)
     return (0, "fork: errno ${-pid}")
@@ -667,13 +668,13 @@ pub fn close(h: Int) {
   let m = rt.mem_load(h, MB, 8)
   if m != 0 {
     dbgtrace.stop(m)
-    rt.heap_release(m - 8)
+    heapblk.release(m)
   }
   let t = rt.mem_load(h, TT, 8)
   if t != 0 {
-    rt.heap_release(t - 8)
+    heapblk.release(t)
   }
-  rt.heap_release(h - 8)
+  heapblk.release(h)
 }
 
 /// Waits for the ended (or killed) program until its leader is reaped,
@@ -721,8 +722,8 @@ fn new_record() -> Int {
   let m = rt.heap_large(dbgtrace.MB_SIZE)
   rt.mem_set(m, 0, dbgtrace.MB_SIZE)
   if !pool.thread_start(rt.fn_addr("dbg_tracer"), m) {
-    rt.heap_release(m - 8)
-    rt.heap_release(h - 8)
+    heapblk.release(m)
+    heapblk.release(h)
     return 0
   }
   rt.mem_store(h, MB, m, 8)
@@ -748,7 +749,7 @@ fn add_thread(h: Int, tid: Int) {
     let nt = rt.heap_large(TE * cap)
     if t != 0 {
       rt.mem_copy(nt, t, TE * n)
-      rt.heap_release(t - 8)
+      heapblk.release(t)
     }
     t = nt
     rt.mem_store(h, TT, t, 8)

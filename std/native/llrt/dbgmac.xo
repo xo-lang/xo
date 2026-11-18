@@ -25,6 +25,7 @@
 // A stop stops the whole program: the other threads are suspended
 // (thread_suspend) while the debugger looks and writes, since a thread
 // running on a page whose protection a trap's write changed would fault.
+use native/llrt/heapblk
 use native/llrt/process
 use native/llrt/raw
 use native/rt
@@ -126,7 +127,7 @@ pub fn launch(path: Str, args: List[Str], out: Str) -> (Int, Str) {
     let _x = sys_darwin.posix_spawn_file_actions_destroy(fa)
   }
   let _zs = zout.len() + devnull.len()
-  rt.heap_release(argv - 8)
+  heapblk.release(argv)
   let _z = zpath.len()
   if e != 0 {
     let _k = buf.len()
@@ -477,7 +478,7 @@ pub fn close(h: Int) {
   // MACH_PORT_RIGHT_RECEIVE 1: the receive right's reference
   let _m = sys_darwin.mach_port_deallocate(me, rt.mem_load(h, PORT, 8))
   let _t = sys_darwin.mach_port_deallocate(me, rt.mem_load(h, TASK, 8))
-  rt.heap_release(h - 8)
+  heapblk.release(h)
 }
 
 /// Rewrites the word at off of thread th's x86_THREAD_STATE64: op 0 sets

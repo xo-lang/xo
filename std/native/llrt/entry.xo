@@ -19,6 +19,7 @@ use native/llrt/crashfile
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/freebsd
+use native/llrt/heapblk
 use native/llrt/heapos
 use native/llrt/ints
 use native/llrt/layout
@@ -188,7 +189,7 @@ pub fn run_main(entry: Int) {
       let g = rt.heap_large(8)
       rt.mem_store(g, 0, W_GUARANTEE, 4)
       let _r = sys_windows.SetThreadStackGuarantee(g)
-      rt.heap_release(g - 8)
+      heapblk.release(g)
     }
     _ => {}
   }
@@ -209,7 +210,7 @@ pub fn run_main_fiber(rec: Int) {
       let g = rt.heap_large(8)
       rt.mem_store(g, 0, W_GUARANTEE, 4)
       let _r = sys_windows.SetThreadStackGuarantee(g)
-      rt.heap_release(g - 8)
+      heapblk.release(g)
     }
     _ => {}
   }
@@ -754,7 +755,7 @@ fn put_int(b: Int, at: Int, v: Int) -> Int {
 
 /// Frees the rt.heap_large block b (heap_release takes its prefix's
 /// address).
-fn release(b: Int) { rt.heap_release(b - 8) }
+fn release(b: Int) { heapblk.release(b) }
 
 /// Writes the first n bytes of b to standard error.
 fn emit(b: Int, n: Int) { stdio.write_all(2, b, n) }

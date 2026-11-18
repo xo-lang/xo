@@ -19,6 +19,7 @@
 // sysio.xo's thread locals (set_err, status, msg).
 use native/llrt/darwin
 use native/llrt/freebsd
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/raw
 use native/llrt/sysio
@@ -77,7 +78,7 @@ pub fn file_free(p: Int) {
   }
   let b = rt.mem_load(p, F_BUF, 8)
   if b != 0 {
-    rt.heap_release(b - 8)
+    heapblk.release(b)
   }
   tasks.free_handle(p)
 }

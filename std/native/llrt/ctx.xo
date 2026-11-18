@@ -19,6 +19,7 @@
 use native/llrt/concflag
 use native/llrt/cpu
 use native/llrt/fault
+use native/llrt/heapblk
 use native/llrt/layout
 use native/llrt/rtstats
 use native/llrt/sanhook
@@ -242,7 +243,7 @@ fn add_root(c: Int) {
     let blk = rt.heap_large(8 * (ROOTS_MAX + 1))
     rt.mem_set(blk, 0, 8 * (ROOTS_MAX + 1))
     if !rt.slot_cas(sv, SV_ROOTS_SLOT, 0, blk, 3) {
-      rt.heap_release(blk - 8)
+      heapblk.release(blk)
     }
     r = rt.slot_load[Int](sv, SV_ROOTS_SLOT, 3)
   }

@@ -6,6 +6,7 @@
 // PIPE_NOWAIT pipes through windows.xo, polled in steps; UNTESTED on
 // windows).
 use native/llrt/darwin
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/poll
 use native/llrt/pool
@@ -96,7 +97,7 @@ fn record(s: Str) {
   if n == rt.mem_load(rt.static_word(W_CAP), 0, 8) {
     let c = if n == 0 { 8 } else { 2 * n }
     let old = rt.mem_load(rt.static_word(W_VEC), 0, 8)
-    let v = if old == 0 { rt.heap_large(8 * c) } else { rt.heap_large_resize(old - 8, 8 * c) }
+    let v = if old == 0 { rt.heap_large(8 * c) } else { heapblk.resize(old, 8 * c) }
     rt.mem_store(rt.static_word(W_VEC), 0, v, 8)
     rt.mem_store(rt.static_word(W_CAP), 0, c, 8)
   }
@@ -114,7 +115,7 @@ pub fn tw_reset() {
   lock()
   let v = rt.mem_load(rt.static_word(W_VEC), 0, 8)
   for i in 0..rt.mem_load(rt.static_word(W_LEN), 0, 8) {
-    rt.heap_release(rt.mem_load(v, 8 * i, 8) - 8)
+    heapblk.release(rt.mem_load(v, 8 * i, 8))
   }
   rt.mem_store(rt.static_word(W_LEN), 0, 0, 8)
   unlock()
@@ -524,7 +525,7 @@ fn launch(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
     msg = cstr(m)
     rt.heap_release(m)
   }
-  rt.heap_release(res - 8)
+  heapblk.release(res)
   rt.heap_release(nd)
   rt.heap_release(argv)
   if envp != 0 {
@@ -627,7 +628,7 @@ fn pipe(l: Int, nb: Int) -> (Int, Int, Int) {
   let a = rt.heap_large(8)
   let r = if l == 2 { darwin.pipe_at(a) } else { linux.pipe2(a, linux.O_CLOEXEC) }
   let fds = [rt.mem_load(a, 0, 4), rt.mem_load(a, 4, 4)]
-  rt.heap_release(a - 8)
+  heapblk.release(a)
   if r < 0 {
     return (-1, -1, -r)
   }
@@ -733,7 +734,7 @@ fn collect(l: Int, fds: List[Int], feed: Int, data: Bytes) -> (List[Str], Bool) 
       break
     }
   }
-  rt.heap_release(b - 8)
+  heapblk.release(b)
   close_fd(l, fin)
   for i in 0..n {
     if pds[i] != 0 {
@@ -820,8 +821,8 @@ fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool, List[Int]) {
   // linux/arm64 build fail (gotchas/arm64-vreg-unset-loop-exit.md)
   let rss = rt.mem_load(ru, 32, 8)
   let usage = [rt.mem_load(ru, 0, 8) * 1000000000 + rt.mem_load(ru, 8, 8) * 1000, rt.mem_load(ru, 16, 8) * 1000000000 + rt.mem_load(ru, 24, 8) * 1000, if l == 2 { rss } else { rss * 1024 }]
-  rt.heap_release(st - 8)
-  rt.heap_release(ru - 8)
+  heapblk.release(st)
+  heapblk.release(ru)
   (code, canceled, usage)
 }
 
@@ -1326,7 +1327,7 @@ pub fn child_free(ch: Int) {
   } else if ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
     let sb = rt.heap_large(8)
     let _w = if l == 2 { darwin.waitpid_at(ld(ch, CH_PID), sb, 1) } else { linux.wait4_at(ld(ch, CH_PID), sb, 1) }
-    rt.heap_release(sb - 8)
+    heapblk.release(sb)
   }
   free_block(ld(ch, CH_AHEAD))
   free_block(ld(ch, CH_MSG))
@@ -1550,7 +1551,7 @@ pub fn child_read(h: rt.ProcChild, err: Bool, max: Int) -> List[Str] {
   } else {
     out = io_fail(l, "read |0", -2 - r)
   }
-  rt.heap_release(b - 8)
+  heapblk.release(b)
   out
 }
 

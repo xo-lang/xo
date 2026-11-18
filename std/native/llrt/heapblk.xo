@@ -1,0 +1,56 @@
+// The runtime's records by the address rt.heap_large returned (task #354,
+// class guard 5 of 2026-11-18): rt.heap_release and rt.heap_large_resize
+// take the block's prefix, 8 bytes before that address, and five fixes
+// (94d73568b, 5d3d1380a, 30c685590, ab1d601c0, 652514dcc) were a caller's
+// `- 8` done wrong or not at all. Callers pass the address they hold and
+// these do the `- 8`; repotest's TestNoHandPrefixFree rejects a hand
+// `rt.heap_release(x - 8)` in std/native. A leaf (rt only),
+// so every runtime module may import it without a cycle.
+use native/rt
+
+/// Gives back the block rt.heap_large (or resize) returned at p.
+pub fn release(p: Int) {
+  if checking() {
+    check(p)
+  }
+  rt.heap_release(p.wrapping_sub(8))
+}
+
+/// The block rt.heap_large returned at p made n bytes (its first bytes
+/// kept): the address after its new prefix, as rt.heap_large's.
+pub fn resize(p: Int, n: Int) -> Int {
+  if checking() {
+    check(p)
+  }
+  rt.heap_large_resize(p.wrapping_sub(8), n)
+}
+
+/// Static word 110 (std/native/rt.xo's table): 1 under the free check.
+const W_CHECK = 110
+
+/// Turns the prefix check on: XO_FREE_CHECK's start (heapos.xo
+/// free_check_on), while one thread runs.
+pub fn check_on() {
+  rt.mem_store(rt.static_word(W_CHECK), 0, 1, 8)
+}
+
+/// Whether the free check runs (`xo test --check=free`, XO_FREE_CHECK=1,
+/// decision 0484): one load and test on every free and resize.
+fn checking() -> Bool {
+  rt.mem_load(rt.static_word(W_CHECK), 0, 8) != 0
+}
+
+/// Under the free check: the word before p is a heap_large prefix (minus
+/// the block's size, so 0 or below and above minus 2^47), else p is no
+/// address rt.heap_large returned and the program ends (status 70) with
+/// heapos.xo bad_release's message, given an address no prefix has (odd).
+fn check(p: Int) {
+  let w = rt.mem_load(p.wrapping_sub(8), 0, 8)
+  if w > 0 || w < MIN_PREFIX {
+    rt.heap_release(p.wrapping_sub(8) | 1)
+  }
+}
+
+/// The lowest prefix: minus the largest block (2^47 bytes, past any
+/// address space a target has).
+const MIN_PREFIX = -0x800000000000

@@ -13,6 +13,7 @@
 //
 // Only the Windows arms of std/native/llrt/sysio.xo call this module; the
 // SSA builders make its platform calls faults on another OS.
+use native/llrt/heapblk
 use native/llrt/obj
 use native/llrt/raw
 use native/rt
@@ -204,7 +205,7 @@ pub fn localtime_tm(tm: Int, secs: Int) -> Int {
     }
   }
   // its prefix's address (rt.heap_release, as anyval.xo's)
-  rt.heap_release(z - 8)
+  heapblk.release(z)
   let local = secs + (if dst { dst_off } else { std_off })
   let days = fdiv(local, 86400)
   let sod = local - days * 86400

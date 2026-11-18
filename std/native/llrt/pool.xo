@@ -27,6 +27,7 @@
 use native/llrt/det
 use native/llrt/cpu
 use native/llrt/freebsd
+use native/llrt/heapblk
 use native/llrt/layout
 use native/llrt/obj
 use native/llrt/linux
@@ -474,7 +475,7 @@ pub fn thread_start(f: Int, arg: Int) -> Bool {
         ok = Int(sys_darwin.pthread_create(a.wrapping_add(64), a, f, arg)) == 0
         let _x = sys_darwin.pthread_attr_destroy(a)
       }
-      rt.heap_release(a.wrapping_sub(8))
+      heapblk.release(a)
       ok
     }
     3 => {
@@ -514,7 +515,7 @@ pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
         let _j = sys_darwin.pthread_join(rt.mem_load(ts, i * 8, 8), 0)
         i = i + 1
       }
-      rt.heap_release(a.wrapping_sub(8))
+      heapblk.release(a)
       started == n
     }
     3 => {
@@ -537,7 +538,7 @@ pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
         let _c = sys_windows.CloseHandle(h)
         i = i + 1
       }
-      rt.heap_release(hs.wrapping_sub(8))
+      heapblk.release(hs)
       started == n
     }
     _ => sanhook.thread_run(f, arg, size, n)
@@ -846,7 +847,7 @@ fn inject_add(p: Int, src: Int, n: Int, x: Int) {
       i = i.wrapping_add(1)
     }
     if buf != 0 {
-      rt.heap_release(buf.wrapping_sub(8))
+      heapblk.release(buf)
     }
     buf = nb
     head = 0
@@ -1740,7 +1741,7 @@ fn async_install() {
       rt.mem_store(sa, 8, 0, 4)
       rt.mem_store(sa, 12, 64 | 2, 4)
       let _r = sys_darwin.sigaction(SIGURG_DARWIN, sa, 0)
-      rt.heap_release(sa - 8)
+      heapblk.release(sa)
     }
     4 => {
       // FreeBSD's struct sigaction: the handler, the flags (4 bytes), the
@@ -1750,7 +1751,7 @@ fn async_install() {
       rt.mem_store(sa, freebsd.SA_HANDLER, h, 8)
       rt.mem_store(sa, freebsd.SA_FLAGS_AT, freebsd.SA_SIGINFO | freebsd.SA_RESTART, 4)
       let _r = freebsd.sigaction(freebsd.SIGURG, sa, 0)
-      rt.heap_release(sa - 8)
+      heapblk.release(sa)
     }
     _ => {}
   }
@@ -2386,7 +2387,7 @@ pub fn trim_all() {
     futex_wait_us(me.wrapping_add(W_TRIM_SEEN), e, 1000)
     waited = waited.wrapping_add(1)
   }
-  rt.heap_release(ws.wrapping_sub(8))
+  heapblk.release(ws)
 }
 /// How long debug.mem_trim waits for the other workers' trims.
 const TRIM_WAIT_MS = 20
@@ -2642,7 +2643,7 @@ fn fiber_unmap(f: Int) {
   }
   rtstats.fiber_counted(-1)
   unmap_stack(rt.mem_load(f, F_MEM, 8), rt.mem_load(f, F_SIZE, 8), rt.mem_load(f, F_HOOKS, 8))
-  rt.heap_release(f.wrapping_sub(8))
+  heapblk.release(f)
 }
 
 /// Unmaps the shared cache's stacks past FIBER_KEEP when no fiber was
@@ -3721,7 +3722,7 @@ fn monitor(p: Int) -> Int {
       r = n
     } else {
       // 1: it could not start; never try again
-      rt.heap_release(n - 8)
+      heapblk.release(n)
       r = 1
     }
     rt.slot_store[Int](wm, 0, r, RELEASE)

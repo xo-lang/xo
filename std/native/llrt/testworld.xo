@@ -24,6 +24,7 @@
 // cabi_tw.xo's exports (xo_x_tw_*).
 use native/llrt/darwin
 use native/llrt/freebsd
+use native/llrt/heapblk
 use native/llrt/ints
 use native/llrt/linux
 use native/llrt/pool
@@ -139,7 +140,7 @@ fn blk_eq(b: Int, p: Int, n: Int) -> Bool { blk_len(b) == n && raw.mem_eq(b + 8,
 
 fn blk_free(b: Int) {
   if b != 0 {
-    rt.heap_release(b - 8)
+    heapblk.release(b)
   }
 }
 
@@ -155,7 +156,7 @@ fn vec_room(v: Int, n: Int, size: Int) {
     c = 2 * c
   }
   let old = rt.mem_load(v, 0, 8)
-  let p = if old == 0 { rt.heap_large(c * size) } else { rt.heap_large_resize(old - 8, c * size) }
+  let p = if old == 0 { rt.heap_large(c * size) } else { heapblk.resize(old, c * size) }
   rt.mem_store(v, 0, p, 8)
   rt.mem_store(v, 16, c, 8)
 }
@@ -198,7 +199,7 @@ fn vec_remove(v: Int, i: Int) {
 fn vec_free(v: Int) {
   let p = rt.mem_load(v, 0, 8)
   if p != 0 {
-    rt.heap_release(p - 8)
+    heapblk.release(p)
   }
   rt.mem_set(v, 0, 24)
 }
@@ -232,7 +233,7 @@ fn st() -> Int {
   if rt.slot_cas(w, 0, 0, n, ACQ_REL) {
     return n
   }
-  rt.heap_release(n - 8)
+  heapblk.release(n)
   rt.slot_load(w, 0, ACQUIRE)
 }
 
@@ -463,7 +464,7 @@ fn read_real_line() -> Str {
     }
     out.write(raw.str_at(b, 1))
   }
-  rt.heap_release(b - 8)
+  heapblk.release(b)
   out.freeze()
 }
 
@@ -518,7 +519,7 @@ pub fn reset_test(seed: Int, prop: Bool, case_seed: Int) {
     for j in 0..2 * rt.mem_load(r, 24, 8) {
       blk_free(rt.mem_load(r, 32 + 8 * j, 8))
     }
-    rt.heap_release(r - 8)
+    heapblk.release(r)
   }
   rt.mem_store(s + S_RECS, 8, 0, 8)
   for i in 0..vec_len(s + S_PROCS) {
@@ -526,7 +527,7 @@ pub fn reset_test(seed: Int, prop: Bool, case_seed: Int) {
     blk_free(rt.mem_load(e, 0, 8))
     blk_free(rt.mem_load(e, 16, 8))
     blk_free(rt.mem_load(e, 24, 8))
-    rt.heap_release(e - 8)
+    heapblk.release(e)
   }
   rt.mem_store(s + S_PROCS, 8, 0, 8)
   for i in 0..vec_len(s + S_KEYS) {
@@ -738,13 +739,13 @@ pub fn gen_free(g: Int) {
   // the record's block only: g itself goes next
   let rec = rt.mem_load(g, G_REC, 8)
   if rec != 0 {
-    rt.heap_release(rec - 8)
+    heapblk.release(rec)
   }
   let r = rt.mem_load(g, G_REPLAY, 8)
   if r != 0 {
-    rt.heap_release(r - 8)
+    heapblk.release(r)
   }
-  rt.heap_release(g - 8)
+  heapblk.release(g)
 }
 
 /// The generator of a property test's case: the harness sets
@@ -1349,7 +1350,7 @@ fn fake_free(e: Int) {
   blk_free(rt.mem_load(e, 8, 8))
   blk_free(rt.mem_load(e, 16, 8))
   drop_kept(rt.mem_load(e, 24, 8))
-  rt.heap_release(e - 8)
+  heapblk.release(e)
 }
 
 /// A FakeNet.handle_tls handler (decision 0544): the handler and its certificate, as kept values.
@@ -1507,7 +1508,7 @@ fn cleanup_fakes(v: Int, d: Int, k0: Int) -> Int {
     blk_free(rt.mem_load(e, 0, 8))
     blk_free(rt.mem_load(e, 8, 8))
     blk_free(rt.mem_load(e, 16, 8))
-    rt.heap_release(e - 8)
+    heapblk.release(e)
   }
   vec_free(v)
   k
@@ -1610,7 +1611,7 @@ fn key_free(r: Int) {
   blk_free(rt.mem_load(r, 16, 8))
   blk_free(rt.mem_load(r, 24, 8))
   blk_free(rt.mem_load(r, 32, 8))
-  rt.heap_release(r - 8)
+  heapblk.release(r)
 }
 
 /// The index of the key of ring, kind and desc, or -1 (under the lock).

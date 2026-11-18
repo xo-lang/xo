@@ -9,6 +9,7 @@
 // registration with the poller, a raw read, the waits, and the terminal
 // calls; on Windows only the registration and the read stay C
 // (xo_stdin.c: a pump thread into a loopback socket, xo_win.c).
+use native/llrt/heapblk
 use native/llrt/obj
 use native/llrt/ctx
 use native/llrt/poll
@@ -88,7 +89,7 @@ fn put(p: Int, n: Int) {
       c = c * 2
     }
     let old = w(rt.static_word(W_BUF))
-    let nb = if old == 0 { rt.heap_large(c) } else { rt.heap_large_resize(old - 8, c) }
+    let nb = if old == 0 { rt.heap_large(c) } else { heapblk.resize(old, c) }
     ws(rt.static_word(W_BUF), nb)
     ws(rt.static_word(W_CAP), c)
     cap = c
@@ -142,7 +143,7 @@ fn fill() -> Bool {
     put(t, n)
     break
   }
-  rt.heap_release(t - 8)
+  heapblk.release(t)
   stopped
 }
 
@@ -271,7 +272,7 @@ fn rec() -> Int {
   if rt.slot_cas[Int](rt.static_word(W_REC), 0, 0, n, ACQ_REL) {
     return n
   }
-  rt.heap_release(n - 8)
+  heapblk.release(n)
   rt.slot_load[Int](rt.static_word(W_REC), 0, ACQUIRE)
 }
 
@@ -369,7 +370,7 @@ fn win_open() -> Int {
   if !pool.thread_start(rt.mem_load(ctx.svc(), ctx.SV_STDIN_PUMP, 8), rec) {
     let _c = sock.close(prog)
     let _d = sock.close(thr)
-    rt.heap_release(rec.wrapping_sub(8))
+    heapblk.release(rec)
     return 0
   }
   poll.pd_new(prog, false)
@@ -383,7 +384,7 @@ fn win_open() -> Int {
 pub fn pump_main(rec: Int) -> Int {
   let h = rt.mem_load(rec, 0, 8)
   let s = rt.mem_load(rec, 8, 8)
-  rt.heap_release(rec.wrapping_sub(8))
+  heapblk.release(rec)
   let buf = rt.heap_large(PUMP_BUF + 8)
   let done = buf.wrapping_add(PUMP_BUF)
   var go = true
@@ -407,7 +408,7 @@ pub fn pump_main(rec: Int) -> Int {
     }
   }
   let _c = sock.close(s)
-  rt.heap_release(buf.wrapping_sub(8))
+  heapblk.release(buf)
   0
 }
 

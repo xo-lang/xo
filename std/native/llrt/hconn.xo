@@ -11,6 +11,7 @@
 // The server's TLS connections are tlssrv.xo's (decision 0202). The
 // Windows arms are UNTESTED on
 // windows: written on macOS and checked by the cross build only.
+use native/llrt/heapblk
 use native/llrt/layout
 use native/llrt/dns
 use native/llrt/netwasi
@@ -731,7 +732,7 @@ pub fn linger_close(h: rthttp.HConn, max: Int = 1048576) {
     }
     total += n
   }
-  rt.heap_release(buf - 8)
+  heapblk.release(buf)
 }
 
 /// http1.xo's X1 record of the connection (0: none yet), and setting it.

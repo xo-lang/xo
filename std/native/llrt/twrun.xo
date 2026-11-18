@@ -17,6 +17,7 @@
 // Generated code reaches it through the native prelude's llrt_test_*
 // (compiler/ssa testmode.xo), http.xo directly, and the C runtime
 // through cabi_tw.xo's exports (xo_x_tw_*).
+use native/llrt/heapblk
 use native/llrt/layout
 use native/llrt/atexit
 use native/llrt/ctx
@@ -161,7 +162,7 @@ fn state() -> Int {
   if rt.slot_cas[Int](w, 0, 0, n, ACQ_REL) {
     return n
   }
-  rt.heap_release(n - 8)
+  heapblk.release(n)
   rt.slot_load[Int](w, 0, ACQUIRE)
 }
 
@@ -241,7 +242,7 @@ fn vec_push(v: Int, x: Int) {
   if n == ld(v, 16) {
     let c = if n == 0 { 8 } else { 2 * n }
     let old = ld(v, 0)
-    let p = if old == 0 { rt.heap_large(8 * c) } else { rt.heap_large_resize(old - 8, 8 * c) }
+    let p = if old == 0 { rt.heap_large(8 * c) } else { heapblk.resize(old, 8 * c) }
     st(v, 0, p)
     st(v, 16, c)
   }
@@ -403,7 +404,7 @@ pub fn main_end(code: Int) -> Int {
   let exited = stop.unroot(n)
   if n != 0 {
     pool.node_unlink(n)
-    rt.heap_release(n - 8)
+    heapblk.release(n)
     st(s, R_MAIN, 0)
   }
   var r = code
@@ -454,7 +455,7 @@ fn blk(s: Str) -> Int {
 
 fn blk_free(b: Int) {
   if b != 0 {
-    rt.heap_release(b - 8)
+    heapblk.release(b)
   }
 }
 
@@ -540,7 +541,7 @@ pub fn ml_caddr(ml: Int) -> Int {
 fn ml_release(ml: Int) {
   blk_free(ld(ml, ML_ADDR))
   blk_free(ld(ml, ML_ALIAS))
-  rt.heap_release(ml - 8)
+  heapblk.release(ml)
 }
 
 /// The listener of ml is freed (netconn.xo listener_free): ml leaves the
@@ -641,8 +642,8 @@ fn pipe_new() -> Int {
 fn pipe_drop(p: Int) {
   st(p, P_REFS, ld(p, P_REFS) - 1)
   if ld(p, P_REFS) == 0 {
-    rt.heap_release(ld(p, P_BUF) - 8)
-    rt.heap_release(p - 8)
+    heapblk.release(ld(p, P_BUF))
+    heapblk.release(p)
   }
 }
 
@@ -675,7 +676,7 @@ fn me_release(me: Int) {
   pipe_drop(ld(me, ME_OUT))
   blk_free(ld(me, ME_LOCAL))
   blk_free(ld(me, ME_PEER))
-  rt.heap_release(me - 8)
+  heapblk.release(me)
 }
 
 /// Resets the raw connections in ml's backlog (closed, freed), the lock
@@ -1068,7 +1069,7 @@ pub fn end() {
   for i in 1..ld(kept, 0) + 1 {
     tasks.h_release(ld(kept, 8 * i))
   }
-  rt.heap_release(kept - 8)
+  heapblk.release(kept)
   cleanup()
 }
 

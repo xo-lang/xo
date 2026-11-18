@@ -11,6 +11,7 @@
 // with bit 0 set, as the rings hold them). A deterministic run has one
 // worker, but the poller, signal threads and the deferred wakes' monitor
 // may push, so the list takes the lock.
+use native/llrt/heapblk
 use native/rt
 
 /// rt.static_word: the record's address, 0 until start (rt.xo's table).
@@ -83,7 +84,7 @@ pub fn add(x: Int) {
     let ncap = if cap == 0 { 64 } else { cap.wrapping_shl(1) }
     // heap_large_resize takes the block's prefix (8 bytes before the
     // address heap_large gave)
-    items = if items == 0 { rt.heap_large(ncap.wrapping_shl(3)) } else { rt.heap_large_resize(items - 8, ncap.wrapping_shl(3)) }
+    items = if items == 0 { rt.heap_large(ncap.wrapping_shl(3)) } else { heapblk.resize(items, ncap.wrapping_shl(3)) }
     cap = ncap
     rt.mem_store(r, DR_ITEMS * 8, items, 8)
     rt.mem_store(r, DR_CAP * 8, cap, 8)

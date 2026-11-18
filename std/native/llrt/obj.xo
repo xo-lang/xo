@@ -24,6 +24,7 @@
 // fault. check_no_alloc does not check it: it calls alloc.xo's and
 // rc.xo's functions, which that check allows no module.
 use native/llrt/alloc
+use native/llrt/heapblk
 use native/llrt/inlstr
 use native/llrt/libcstr
 use native/llrt/rc
@@ -160,7 +161,7 @@ pub fn alloc_obj(n: Int) -> Int {
 /// Frees the runtime object p (xo_free).
 pub fn free_obj(p: Int) {
   if target.arch == TargetArch.Wasm32 {
-    rt.heap_release(p - 8)
+    heapblk.release(p)
     return
   }
   hfree(heap_word(), p)
@@ -1011,7 +1012,7 @@ pub fn rc_defer(h: Int, obj: Int, drop: Int) {
       if q == 0 {
         q = rt.heap_large(mulw(ncap, 16))
       } else {
-        q = rt.heap_large_resize(subw(q, 8), mulw(ncap, 16))
+        q = heapblk.resize(q, mulw(ncap, 16))
       }
       rt.mem_store(h, DEFER_Q, q, 8)
       rt.mem_store(h, DEFER_CAP, ncap, 8)

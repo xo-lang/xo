@@ -9,6 +9,7 @@
 // Go's (a fraction of a CPU still gets 2 workers, so one blocked thread
 // does not stall the rest). Read once at the pool's setup; Xo's pool does
 // not resize, so a limit changed later is not followed (Go rechecks).
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/raw
 use native/rt
@@ -292,6 +293,6 @@ fn read_file(path: Str) -> Str {
     s = s + raw.str_at(b, k)
   }
   let _c = linux.close(fd)
-  rt.heap_release(b - 8)
+  heapblk.release(b)
   s
 }

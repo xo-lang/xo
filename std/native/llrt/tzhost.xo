@@ -9,6 +9,7 @@
 // into TZif data, as Go's time.Local makes it.
 use native/llrt/atexit
 use native/llrt/darwin
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/pool
 use native/llrt/process
@@ -212,7 +213,7 @@ pub fn keep(name: Str, z: List[Int]) -> List[Int] {
   if n == rt.mem_load(rt.static_word(W_CAP), 0, 8) {
     let c = if n == 0 { 16 } else { 2 * n }
     let old = rt.mem_load(rt.static_word(W_VEC), 0, 8)
-    let v = if old == 0 { rt.heap_large(16 * c) } else { rt.heap_large_resize(old - 8, 16 * c) }
+    let v = if old == 0 { rt.heap_large(16 * c) } else { heapblk.resize(old, 16 * c) }
     rt.mem_store(rt.static_word(W_VEC), 0, v, 8)
     rt.mem_store(rt.static_word(W_CAP), 0, c, 8)
   }
@@ -239,11 +240,11 @@ pub fn free() {
     // dropped, then the value's at the end of the iteration
     let z = rt.obj_at[List[Int]](a)
     let _d = rc.dec_shared(a + rt.layout(5))
-    rt.heap_release(rt.mem_load(v, 16 * i, 8) - 8)
+    heapblk.release(rt.mem_load(v, 16 * i, 8))
     let _k = z.len()
   }
   if v != 0 {
-    rt.heap_release(v - 8)
+    heapblk.release(v)
   }
   rt.mem_store(rt.static_word(W_VEC), 0, 0, 8)
   rt.mem_store(rt.static_word(W_LEN), 0, 0, 8)

@@ -14,6 +14,7 @@
 // for those cases.
 use native/llrt/darwin
 use native/llrt/freebsd
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/raw
@@ -635,7 +636,7 @@ pub fn set_err(st: Int, p: Str, m: Str) {
   var b = rt.tlocal_get(TL_FS_MSG)
   if b == 0 || rt.mem_load(b, 0, 8) < need {
     if b != 0 {
-      rt.heap_release(b - 8)
+      heapblk.release(b)
     }
     let c = if need < 240 { 240 } else { need }
     b = rt.heap_large(c + 8)

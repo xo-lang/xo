@@ -6,6 +6,7 @@
 // no TLS server.
 use native/llrt/cabi_h2
 use native/llrt/hconn
+use native/llrt/heapblk
 use native/rt
 
 /// The table, made if no installer did (two racing publish one).
@@ -20,7 +21,7 @@ pub fn table() -> Int {
   if w != n {
     // the block's prefix, as rt.heap_large's result minus 8
     // (gotchas/heap-large-prefix-not-malloc-address.md)
-    rt.heap_release(n - 8)
+    heapblk.release(n)
   }
   w
 }

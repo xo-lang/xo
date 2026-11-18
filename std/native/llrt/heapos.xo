@@ -25,6 +25,7 @@
 // process as the C's xo_oom did (status 70).
 use native/llrt/alloc
 use native/llrt/freebsd
+use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/membudget
 use native/llrt/obj
@@ -3116,6 +3117,7 @@ pub fn free_check_on() {
   let h = heaps_head()
   rt.mem_store(h, H_COUNT, 1, 8)
   check_record(h)
+  heapblk.check_on()
 }
 
 /// Record h's quarantine ring, and its magazine sizes far below any

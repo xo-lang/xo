@@ -8,6 +8,7 @@
 // 918c4cd5 note, gotchas/large-const-list-costs-every-build.md).
 // Tables are rt.heap_large memory: the address the caller gets is the
 // table's first word.
+use native/llrt/heapblk
 use native/rt
 
 const W_P384 = 44
@@ -33,6 +34,6 @@ pub fn publish(l: Int, t: Int) -> Int {
   if rt.slot_cas[Int](w, 0, 0, t, ACQ_REL) {
     return t
   }
-  rt.heap_release(t - 8)
+  heapblk.release(t)
   rt.slot_load[Int](w, 0, ACQUIRE)
 }
