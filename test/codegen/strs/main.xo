@@ -207,6 +207,23 @@ fn joined(a: Str, b: Str, c: Str) -> Str {
   "${a}://${b}/${c}"
 }
 
+// Str.trim_chars's fast paths (an empty text or cutset, one ASCII byte)
+// run without a frame, and the set paths are a tail call: in one frame
+// the ASCII bitmap path's register pressure gave a callee saved register
+// to the text on x86_64, refusing shrink wrapping, so every call saved
+// and restored five (task #302: bench/perf/trimchars one 1.65 of Go's
+// strings.Trim on amd64).
+fn trim_len(hs: List[Str], cs: Str) -> Int {
+  var n = 0
+  for h in hs {
+    n += h.trim_chars(cs).len()
+  }
+  n
+}
+// func scan.trim_chars
+// amd64: -"pushq" "jmp\s+\S*trim__chars__set"
+// arm64: -"stp x29, x30"
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
@@ -214,4 +231,5 @@ fn main(os: Os) {
   let b = "abcde".bytes()
   os.stdio.println("${half_byte(b)} ${half_shift(b)} ${half_unguarded(b)} ${half_none(b, 2)} ${half_elem(hs)}")
   os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)} ${count_ab(hs)} ${uuid_byte(uuid.nil(), b.len())}")
+  os.stdio.println("${trim_len(hs, "B")} ${trim_len(hs, "Bx")}")
 }

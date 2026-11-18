@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-18: perf: Str.trim_chars fast paths without a frame
+
+- Kind: perf
+- Commit: this push
+- Found by: task #302 (std performance to Proven: bench/perf/trimchars one 1.65 of Go's strings.Trim on amd64)
+- Go reference: strings.Trim's one byte path (trimLeftByte, trimRightByte)
+- Test: test/codegen/strs trim_len (scan.trim_chars: no pushq and a tail jmp to trim_chars_set on amd64, no stp x29, x30 on arm64; fails before)
+- Shipped in: not yet released
+
+`Str.trim_chars` with an empty text or cutset, or a cutset of one ASCII
+byte, runs without a stack frame: the paths for longer cutsets moved to
+a function it tail calls. In one function their register pressure gave
+the text a callee saved register on x86_64, which kept shrink wrapping
+from applying, so every call saved and restored five registers.
+
 ## 2026-11-17: perf: List[Str].sort sorts Int keys
 
 - Kind: perf

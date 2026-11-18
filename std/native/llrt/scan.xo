@@ -723,6 +723,17 @@ pub fn trim_chars(s: Str, chars: Str) -> Str {
     }
     return rt.str_view(s, lo, hi)
   }
+  // a tail call: the set paths need more registers than x86_64's caller
+  // saved ones, and in this frame their callee saved register made every
+  // call save five (shrink wrapping refused), the one byte path too
+  // (task #302: bench/perf/trimchars one 1.65 of Go's Trim on amd64)
+  trim_chars_set(s, chars)
+}
+
+/// trim_chars past its fast paths: chars of two or more bytes, or one
+/// byte past ASCII.
+fn trim_chars_set(s: Str, chars: Str) -> Str {
+  let cb = chars.bytes()
   let (lo, hi, ascii) = ascii_set_partial(cb)
   if ascii {
     // both ends in one frame and one view, as the one byte path (task
