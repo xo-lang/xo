@@ -518,6 +518,25 @@ pub fn leak_mode() -> Int {
 }
 
 /// Whether the variable value at v (env_real_at's address) is "" or "0".
+/// Whether XO_FREE_CHECK is "stack": the free check records each free's
+/// stack for its report (heapos.xo free_hold, task #343), about 0.2 us a
+/// free (a million frees of three word lists: 0.034 s checked, 0.24 s
+/// with the stacks, on the Mac, 2026-11-18).
+pub fn free_check_stacks() -> Bool {
+  let v = env_real_at("XO_FREE_CHECK")
+  if v == 0 {
+    return false
+  }
+  // "stack" and its zero
+  let w = [115, 116, 97, 99, 107, 0]
+  for (i, c) in w.indexed() {
+    if rt.mem_load(v, i, 1) != c {
+      return false
+    }
+  }
+  true
+}
+
 fn off_value(v: Int) -> Bool {
   let b = rt.mem_load(v, 0, 1)
   b == 0 || (b == 0x30 && rt.mem_load(v, 1, 1) == 0)

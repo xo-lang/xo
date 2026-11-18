@@ -24,6 +24,7 @@
 // Nothing here allocates Xo values or faults: out of memory ends the
 // process as the C's xo_oom did (status 70).
 use native/llrt/alloc
+use native/llrt/fault
 use native/llrt/freebsd
 use native/llrt/heapblk
 use native/llrt/linux
@@ -34,6 +35,7 @@ use native/llrt/process
 use native/llrt/raw
 use native/llrt/sanhook
 use native/llrt/stdio
+use native/llrt/unwind
 use native/rt
 use native/sys_c
 use native/sys_darwin
@@ -2511,6 +2513,10 @@ const H_FQP = 11008
 /// The ring's slots (a power of two): a freed block stays poisoned and
 /// unused until FQ_N more frees of its thread.
 const FQ_N = 65536
+/// The words of a slot's free stack, after the ring's FQ_N slots in the
+/// same mapping (task #343): the frame count, then the return addresses
+/// of the free's frames (unwind.xo trace), innermost first.
+const FQ_TW = 16
 /// A freed block's every word: as an address it is outside every user
 /// space (a load through it faults), as a count or length it is huge.
 const POISON = -2401053088876216593
@@ -3117,7 +3123,7 @@ pub fn free_check_on() {
   let h = heaps_head()
   rt.mem_store(h, H_COUNT, 1, 8)
   check_record(h)
-  heapblk.check_on()
+  heapblk.check_on(process.free_check_stacks())
 }
 
 /// Record h's quarantine ring, and its magazine sizes far below any
@@ -3125,7 +3131,7 @@ pub fn free_check_on() {
 /// not 0: alloc's pops take a list's length below 0 when free_push did not
 /// count the block).
 fn check_record(h: Int) {
-  rt.mem_store(h, H_FQ, map(FQ_N.wrapping_shl(3)), 8)
+  rt.mem_store(h, H_FQ, map(FQ_N.wrapping_shl(3).wrapping_add(FQ_N.wrapping_mul(FQ_TW).wrapping_shl(3))), 8)
   rt.mem_store(h, H_FQI, 0, 8)
   var c = 1
   while c < NCLASS1 {
@@ -3145,7 +3151,7 @@ fn class_bytes(c: Int) -> Int { alloc.class_size(c) }
 /// page block or a big one is given back at once.
 pub fn free_hold(h: Int) {
   let p = rt.mem_load(h, H_FQP, 8)
-  if (p & 16383) == 0 {
+  if (p & 16383) == 0 || heapblk.reporting() {
     alloc.free_held(h, p)
     return
   }
@@ -3164,15 +3170,27 @@ pub fn free_hold(h: Int) {
   let i = rt.mem_load(h, H_FQI, 8)
   let slot = ring.wrapping_add(i.wrapping_shl(3))
   let q = rt.mem_load(slot, 0, 8)
+  // q's free stack is in the slot's trace words until p's replaces it
+  let t = slot_trace(ring, i)
+  if q != 0 {
+    let off = held_written(q)
+    if off >= 0 {
+      written_after_free(q, off, t)
+    }
+  }
   rt.mem_store(slot, 0, p, 8)
+  if heapblk.stacks_on() {
+    rt.mem_store(t, 0, unwind.trace(t.wrapping_add(8), FQ_TW.wrapping_sub(1)), 8)
+  }
   rt.mem_store(h, H_FQI, i.wrapping_add(1) & FQ_N.wrapping_sub(1), 8)
-  if q == 0 {
-    return
+  if q != 0 {
+    alloc.free_held(h, q)
   }
-  if held_written(q) {
-    written_after_free()
-  }
-  alloc.free_held(h, q)
+}
+
+/// The free stack words of slot i of quarantine ring ring (FQ_TW).
+fn slot_trace(ring: Int, i: Int) -> Int {
+  ring.wrapping_add(FQ_N.wrapping_shl(3)).wrapping_add(i.wrapping_mul(FQ_TW).wrapping_shl(3))
 }
 
 /// Clears the n bytes (a multiple of 8) at p of a record whose part was
@@ -3196,28 +3214,70 @@ pub fn retire(p: Int, n: Int) {
   }
 }
 
-/// Whether held block q (free_hold) is no longer all POISON: written
-/// after its free.
-fn held_written(q: Int) -> Bool {
+/// The offset of the first word of held block q (free_hold) that is no
+/// longer POISON (written after its free), -1 when all still are.
+fn held_written(q: Int) -> Int {
   let n = class_bytes(rt.mem_load(q.wrapping_sub(8), 0, 8))
   var k = 0
   while k < n {
     if rt.mem_load(q, k, 8) != POISON {
-      return true
+      return k
     }
     k = k.wrapping_add(8)
   }
-  false
+  -1
 }
 
-/// "fault: XO_FREE_CHECK: ..." and the end of the process (status 70).
-/// Straight to descriptor 2: stdio.err writes a test binary's standard
-/// error into its test world, which os_exit never prints (2026-11-14:
-/// `xo test --check=free` showed only "the test exited with status 70").
-fn written_after_free() {
-  let m = "fault: XO_FREE_CHECK: a freed block was written after its free (a use after free: a store, or a reference count changed, through a pointer to it)\n"
+/// "fault: XO_FREE_CHECK: ..." and the end of the process (status 70):
+/// block q's address and size, the offset off of its first word written
+/// after the free and the value there, then the stack of the free
+/// (the trace words at t, slot_trace) by function and line through
+/// XO_TRACEBACK's printer (cabi.xo fault_traceback; task #343: #326's
+/// use after free needed a hand made tracer to find the free). Straight
+/// to descriptor 2: stdio.err writes a test binary's standard error into
+/// its test world, which os_exit never prints (2026-11-14: `xo test
+/// --check=free` showed only "the test exited with status 70").
+fn written_after_free(q: Int, off: Int, t: Int) {
+  // the report's own frees go straight back (free_hold); report_on
+  // replaces the word stacks_on reads
+  let stacks = heapblk.stacks_on()
+  heapblk.report_on()
+  let n = class_bytes(rt.mem_load(q.wrapping_sub(8), 0, 8))
+  let v = rt.mem_load(q, off, 8)
+  let m = "fault: XO_FREE_CHECK: a freed block was written after its free (a use after free: a store, or a reference count changed, through a pointer to it)\n  block ${hex(q)} of ${n} bytes: the word at offset ${off} is ${hex(v)} (${v})\n  the block was freed at:\n"
   stdio.write_all(2, raw.data(m), m.len())
+  free_trace(t, stacks)
   process.os_exit(70)
+}
+
+/// Prints the free stack at t (slot_trace) through XO_TRACEBACK's
+/// printer, in the block form fault.xo's trace makes (the count, the
+/// words a frame, two words for the printer, then the return addresses);
+/// a line saying why when there is none (XO_TRACEBACK=0, no frames).
+fn free_trace(t: Int, stacks: Bool) {
+  let n = rt.mem_load(t, 0, 8)
+  if !stacks {
+    let m = "  (run with XO_FREE_CHECK=stack for the free's stack)\n"
+    stdio.write_all(2, raw.data(m), m.len())
+    return
+  }
+  if !fault.print_pcs(t.wrapping_add(8), n) {
+    let m = "  (no frames: XO_TRACEBACK=0, or the unwinder found none)\n"
+    stdio.write_all(2, raw.data(m), m.len())
+  }
+}
+
+/// v as 0x and its hexadecimal digits.
+fn hex(v: Int) -> Str {
+  let ds = "0123456789abcdef"
+  var out = ""
+  var k = 0
+  while k < 16 {
+    let d = (v >> (4 * k)) & 15
+    out = ds[d..d + 1] + out
+    k = k + 1
+  }
+  "0x" + out
 }
 
 /// XO_FREE_CHECK at the program's end (entry.xo finish): every record's
@@ -3232,8 +3292,11 @@ pub fn free_check_end() {
       var i = 0
       while i < FQ_N {
         let q = rt.mem_load(ring, i.wrapping_shl(3), 8)
-        if q != 0 && held_written(q) {
-          written_after_free()
+        if q != 0 {
+          let off = held_written(q)
+          if off >= 0 {
+            written_after_free(q, off, slot_trace(ring, i))
+          }
         }
         i = i.wrapping_add(1)
       }

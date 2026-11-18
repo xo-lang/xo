@@ -25,19 +25,41 @@ pub fn resize(p: Int, n: Int) -> Int {
   rt.heap_large_resize(p.wrapping_sub(8), n)
 }
 
-/// Static word 110 (std/native/rt.xo's table): 1 under the free check.
+/// Static word 110 (std/native/rt.xo's table): 1 under the free check,
+/// 3 with the frees' stacks (XO_FREE_CHECK=stack), 2 once its report
+/// runs (report_on).
 const W_CHECK = 110
 
 /// Turns the prefix check on: XO_FREE_CHECK's start (heapos.xo
-/// free_check_on), while one thread runs.
-pub fn check_on() {
-  rt.mem_store(rt.static_word(W_CHECK), 0, 1, 8)
+/// free_check_on), while one thread runs; stacks: each free's stack is
+/// recorded too (stacks_on).
+pub fn check_on(stacks: Bool) {
+  rt.mem_store(rt.static_word(W_CHECK), 0, if stacks { 3 } else { 1 }, 8)
+}
+
+/// Whether the free check records each free's stack (XO_FREE_CHECK=stack,
+/// task #343).
+pub fn stacks_on() -> Bool {
+  rt.mem_load(rt.static_word(W_CHECK), 0, 8) == 3
 }
 
 /// Whether the free check runs (`xo test --check=free`, XO_FREE_CHECK=1,
 /// decision 0484): one load and test on every free and resize.
 fn checking() -> Bool {
   rt.mem_load(rt.static_word(W_CHECK), 0, 8) != 0
+}
+
+/// The free check's report has begun (heapos.xo written_after_free, task
+/// #343): word W_CHECK is 2, the prefix check stays on, and heapos.xo
+/// free_hold gives blocks back at once, so the report's own frees cannot
+/// report again.
+pub fn report_on() {
+  rt.mem_store(rt.static_word(W_CHECK), 0, 2, 8)
+}
+
+/// Whether the free check's report runs (report_on).
+pub fn reporting() -> Bool {
+  rt.mem_load(rt.static_word(W_CHECK), 0, 8) == 2
 }
 
 /// Under the free check: the word before p is a heap_large prefix (minus

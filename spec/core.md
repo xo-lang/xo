@@ -2880,7 +2880,7 @@ and what a built binary run outside `xo` reads:
 
 | check | variable | what it does | backends |
 |---|---|---|---|
-| `free` | `XO_FREE_CHECK=1` | a freed block is filled with a poison value and held back from reuse (65,536 per thread); a load through it faults, and one written after its free ends the program with status 70 when it leaves the ring or at the end (decision 0484) | arm64, amd64 |
+| `free` | `XO_FREE_CHECK=1` | a freed block is filled with a poison value and held back from reuse (65,536 per thread); a load through it faults, and one written after its free ends the program with status 70 when it leaves the ring or at the end, naming the block, the word written and its value; `XO_FREE_CHECK=stack` adds the stack of the block's free (decision 0484) | arm64, amd64 |
 | `guard` | `XO_HEAP_GUARD=1` at build time | the runtime's records end against an inaccessible page, so an overrun faults at its first access | arm64, amd64 |
 | `leak` | `XO_LEAKCHECK=fail` (`=1` reports only) | when `main` returns, `xo leakcheck: N live of M allocations` on standard error; with `fail`, status 1 if N is not 0 | arm64, amd64, llvm, wasm |
 

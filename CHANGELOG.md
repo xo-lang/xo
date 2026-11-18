@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Feature (native runtime): the free check's write after free report names the block's address and size and the word written (its offset and value), and `XO_FREE_CHECK=stack` records each free's stack and prints the freed block's (task #343).
 - Perf (std/mime): `parse_media_type` returns a quoted value with no backslash as a view of its input and skips the RFC 2231 pass when no parameter has a `*`: bench/perf/mime parse 0.88 of its time on the Mac.
 - Perf (compiler; task #302): `.len()` and `.is_empty()` of a top-level constant whose initializer is a List literal of compile time values are constants, so `xs[i % XS.len()]` divides by a constant (a multiply) and reads no length; a constant whose initializer calls code is still read (its fault is raised on every read, core 3.1).
 - Fix (std/debug): `mem_peak` is never below a `mem_mapped` read before it while other tasks map and free memory; a racing store could lose a larger peak (the debug stress program read 89.9 MB under 90.3 MB).

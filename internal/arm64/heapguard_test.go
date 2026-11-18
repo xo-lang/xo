@@ -76,29 +76,60 @@ func TestCheckFlagPlants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := func(module, sub string, flags ...string) (string, error) {
-		args := append([]string{"test", "--std-module=" + module, "--backend=arm64", "--run=" + sub}, flags...)
+	run := func(module, sub, env string, flags ...string) (string, error) {
+		args := append([]string{"test", "--std-module=" + module, "--backend=arm64", "--run=" + sub, "--count=1"}, flags...)
 		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root)
+		if env != "" {
+			cmd.Env = append(cmd.Env, env)
+		}
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	for _, c := range []struct{ module, sub, flag, want string }{
-		{"native/llrt/libcmem", "an overrun", "--check=guard", ""},
-		{"native/llrt/heapos", "write after free", "--check=free", "fault: XO_FREE_CHECK: a freed block was written after its free"},
+	for _, c := range []struct {
+		module, sub, flag, env string
+		want                   []string
+	}{
+		{"native/llrt/libcmem", "an overrun", "--check=guard", "", nil},
+		// the report names the word written and its value (task #343)
+		{"native/llrt/heapos", "write after free", "--check=free", "", []string{
+			"fault: XO_FREE_CHECK: a freed block was written after its free",
+			"the word at offset 8 is 0x0000000000000001 (1)",
+			"run with XO_FREE_CHECK=stack for the free's stack",
+		}},
+		// and with XO_FREE_CHECK=stack the free's stack, down to the
+		// test that freed the block
+		{"native/llrt/heapos", "write after free", "--check=free", "XO_FREE_CHECK=stack", []string{
+			"the word at offset 8 is 0x0000000000000001 (1)",
+			"the block was freed at:",
+			"obj.free_obj",
+			"heapos_test.xo:",
+		}},
 		// heapblk.release given the prefix instead of the address
 		// rt.heap_large returned (task #354): heapos.bad_release's exit
-		{"native/llrt/heapblk", "a free by the prefix", "--check=free", "status 70"},
+		{"native/llrt/heapblk", "a free by the prefix", "--check=free", "", []string{"status 70"}},
 	} {
-		if out, err := run(c.module, c.sub); err != nil {
-			t.Errorf("%s %q without %s: %v\n%s", c.module, c.sub, c.flag, err, out)
+		if c.env == "" {
+			if out, err := run(c.module, c.sub, ""); err != nil {
+				t.Errorf("%s %q without %s: %v\n%s", c.module, c.sub, c.flag, err, out)
+			}
 		}
-		out, err := run(c.module, c.sub, c.flag)
+		// --check=free sets XO_FREE_CHECK=1 over the caller's value, so
+		// a case with its own XO_FREE_CHECK runs without the flag
+		flags := []string{c.flag}
+		if c.env != "" {
+			flags = nil
+		}
+		out, err := run(c.module, c.sub, c.env, flags...)
 		if err == nil {
 			t.Errorf("%s %q with %s ran to the end:\n%s", c.module, c.sub, c.flag, out)
-		} else if !strings.Contains(out, c.want) {
-			t.Errorf("%s %q with %s: no %q in the output:\n%s", c.module, c.sub, c.flag, c.want, out)
+		} else {
+			for _, w := range c.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("%s %q with %s: no %q in the output:\n%s", c.module, c.sub, c.flag, w, out)
+				}
+			}
 		}
 	}
 }

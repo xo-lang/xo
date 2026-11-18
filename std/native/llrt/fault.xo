@@ -286,6 +286,27 @@ pub fn exit(c: Int) {
   process.os_exit(70)
 }
 
+/// Prints the n return addresses at pcs as XO_TRACEBACK's frames (by
+/// function and .xo line), through its printer: false when the printer is
+/// off (XO_TRACEBACK=0) or n is 0 (heapos.xo's write after free report,
+/// task #343).
+pub fn print_pcs(pcs: Int, n: Int) -> Bool {
+  let f = rt.mem_load(rt.static_word(TB), 0, 8)
+  if f <= 2 || n <= 0 {
+    return false
+  }
+  // a traceback block (TB_HDR): its count, one word a frame, and the two
+  // words of registers the printer reads for locals, none here
+  let b = rt.heap_large(TB_HDR + 8 * n)
+  rt.mem_store(b, 0, n, 8)
+  rt.mem_store(b, 8, 1, 8)
+  rt.mem_store(b, 16, 0, 8)
+  rt.mem_store(b, 24, 0, 8)
+  rt.mem_copy(b + TB_HDR, pcs, 8 * n)
+  let _r = rt.call_c2(f - (f & 1), b, 0)
+  true
+}
+
 /// Copies s to b + o: the offset after it.
 fn put(b: Int, o: Int, s: Str) -> Int { put_at(b, o, raw.data(s), s.len()) }
 
