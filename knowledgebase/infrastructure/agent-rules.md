@@ -89,6 +89,7 @@ Last verified: 2026-11-17.
 | Every bug fix lands with a test that fails before it (a test file in any of the task's pushes, #205; a push changing only a std/evidence/MOD/stress or fuzz program, with docs, is exempt: its run is its test, #216) | CLAUDE.md | `workstream:work.xo` (checks: bug-no-test), `workstream:ingest.xo` (has_test_file, evidence_program_only) | `workstream:test/work_test.sh` (bug-no-test cases), `workstream:xw_test.xo` (a commit's test files) | bug-no-test |
 | Long fuzz sweeps go sharded to a host, never the Mac gate class | CLAUDE.md | `scripts/lead/heavyd/heavy.sh` (exit 67) | `scripts/lead/heavy_fuzz_test.sh` | |
 | Never wait idle while a gate or push runs | CLAUDE.md | `workstream:work.xo` (checks: idle, idle-empty, waiting) | `workstream:test/work_test.sh` | idle, idle-empty, waiting |
+| A scope is never freed while its node is linked or its last unit is still counting itself done (gotchas/orphan-scope-free-races-last-unit.md, #326) | std/native runtime | `internal/llvm/threads_test.go` (xo test --check=free,guard on race_orphan; scope_free invariant, task #348) | `internal/llvm/threads_test.go` (TestFreeCheckOrphanScope) | gotcha:orphan-scope-free-races-last-unit |
 
 ## Retired kinds
 
