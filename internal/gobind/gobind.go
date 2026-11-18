@@ -95,7 +95,10 @@ import (
 // 37 (2026-11-11): a `// go-target: GOOS/GOARCH` line, and a binding made
 // for another platform is stale (Target; tier 69's darwin syscall binding
 // in a linux container).
-const Version = 37
+// 38 (2026-11-18, task #271): a Go function that only reads its []byte
+// parameters gets views of the Bytes (bytesView), and a leaf (goLeaf) is
+// called without GoEnter and GoExit.
+const Version = 38
 
 // Binding is one bound Go package.
 type Binding struct {

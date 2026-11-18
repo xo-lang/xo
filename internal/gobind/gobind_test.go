@@ -314,6 +314,47 @@ func TestOutputBuffers(t *testing.T) {
 	}
 }
 
+// TestBytesViews: a Go function that only reads its []byte parameters
+// gets views of the Bytes (GoBytesView), not copies; one that writes or
+// keeps them still gets a copy (bench/perf/gobridge bytes, 2026-11-18).
+func TestBytesViews(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	_, sb, _ := bindDecl(t, "bytes")
+	ad := string(sb.Adapter)
+	if !strings.Contains(ad, "g0.IndexByte(GoBytesView(a0), byte(a1))") {
+		t.Errorf("bytes.IndexByte copies its Bytes:\n%s", grep(ad, "IndexByte("))
+	}
+	if !strings.Contains(ad, "g0.Equal(GoBytesView(a0), GoBytesView(a1))") {
+		t.Errorf("bytes.Equal copies its Bytes:\n%s", grep(ad, "Equal("))
+	}
+	if strings.Contains(grep(ad, "NewBuffer("), "GoBytesView") {
+		t.Errorf("bytes.NewBuffer (it keeps the slice) gets a view:\n%s", grep(ad, "NewBuffer("))
+	}
+	_, ub, _ := bindDecl(t, "unicode/utf8")
+	uad := string(ub.Adapter)
+	if !strings.Contains(uad, "Valid(GoBytesView(a0))") {
+		t.Errorf("utf8.Valid copies its Bytes:\n%s", grep(uad, "Valid("))
+	}
+	if strings.Contains(grep(uad, "EncodeRune("), "GoBytesView") {
+		t.Errorf("utf8.EncodeRune (it writes the slice) gets a view:\n%s", grep(uad, "EncodeRune("))
+	}
+	// a leaf has no GoEnter/GoExit bracket; strings.Repeat (it panics on
+	// a negative count) keeps it
+	_, stb, _ := bindDecl(t, "strings")
+	sad := string(stb.Adapter)
+	if strings.Contains(sad, "GoExit(tk, \"strings.Index\")") {
+		t.Errorf("strings.Index (a leaf) is bracketed by GoEnter/GoExit")
+	}
+	if !strings.Contains(sad, "GoExit(tk, \"strings.Repeat\")") {
+		t.Errorf("strings.Repeat lost its GoExit (a Go panic would not become a fault)")
+	}
+	if strings.Contains(ad, "GoExit(tk, \"bytes.IndexByte\")") {
+		t.Errorf("bytes.IndexByte (a leaf) is bracketed by GoEnter/GoExit")
+	}
+}
+
 // TestSortSliceSkipped: sort.Slice, SliceStable, Ints, Strings and
 // Float64s sort the Go value of their first parameter in place; from Xo
 // it is a converted copy of a List, so the call sorted nothing (the Windows tester, 2026-10-30: xs

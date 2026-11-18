@@ -15,7 +15,7 @@ use github.com/xo-lang/xo/compiler/hostpath
 use github.com/xo-lang/xo/compiler/parser
 
 /// gobind.Version: bindings of another binder version are stale.
-const GOBIND_VERSION: Int = 37
+const GOBIND_VERSION: Int = 38
 
 /// gobind.Target: the GOOS/GOARCH a binding is made for, goos and goarch
 /// ($GOOS, $GOARCH) when set, else this xo's own. A binding names it

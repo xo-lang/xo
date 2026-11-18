@@ -983,6 +983,52 @@ type fnSpec struct {
 	// ctor marks a package function named New* or Must*: a pointer result
 	// is taken to be non nil (checked, a nil faults) instead of `T?`.
 	ctor bool
+	// view: the function only reads its []byte parameters during the call
+	// (bytesView), so they are passed as views of the Bytes, not copies.
+	view bool
+	// leaf: the function cannot panic, block, start a goroutine, or call
+	// back into Xo (goLeaf), so the adapter calls it with no GoEnter and
+	// no deferred GoExit.
+	leaf bool
+}
+
+// goLeaf lists the Go functions an adapter calls without GoEnter and the
+// deferred GoExit: each only computes from its arguments, so it never
+// panics (no fault to turn a Go panic into), never blocks or wakes a
+// goroutine (no scheduling point for the deterministic scheduler), and
+// never calls back. The bracket cost strings.Index on a 32 byte value
+// about 5 ns of its 7.8 (bench/perf/gobridge str 2.7 times its Go twin,
+// darwin/arm64, 2026-11-18). Every bytesView function is one.
+var goLeaf = map[string]bool{
+	"strings.Compare": true, "strings.Contains": true, "strings.ContainsAny": true,
+	"strings.ContainsRune": true, "strings.Count": true, "strings.EqualFold": true,
+	"strings.HasPrefix": true, "strings.HasSuffix": true, "strings.Index": true,
+	"strings.IndexAny": true, "strings.IndexByte": true, "strings.IndexRune": true,
+	"strings.LastIndex": true, "strings.LastIndexAny": true, "strings.LastIndexByte": true,
+	"strconv.Itoa": true, "strconv.FormatBool": true,
+	"unicode/utf8.RuneCountInString": true, "unicode/utf8.RuneLen": true,
+	"unicode/utf8.ValidRune": true, "unicode/utf8.ValidString": true,
+}
+
+// bytesView lists the Go functions that only read their []byte
+// parameters and keep none of them past the call: an Xo Bytes (a Go
+// string) is passed to them as a view of its bytes (GoBytesView) in
+// place of the copy []byte(s) makes, which cost bytes.IndexByte on a 32
+// byte value 6.5 ns against 3.7 (darwin/arm64, 2026-11-18;
+// bench/perf/gobridge bytes ran 6.4 times its Go twin). A function that
+// writes into a parameter (utf8.EncodeRune), keeps it (bytes.NewBuffer,
+// whose writes after a Truncate reuse it) or calls back into Xo is never
+// listed: the view would change an immutable value.
+var bytesView = map[string]bool{
+	"bytes.Compare": true, "bytes.Contains": true, "bytes.ContainsAny": true,
+	"bytes.ContainsRune": true, "bytes.Count": true, "bytes.Equal": true,
+	"bytes.EqualFold": true, "bytes.HasPrefix": true, "bytes.HasSuffix": true,
+	"bytes.Index": true, "bytes.IndexAny": true, "bytes.IndexByte": true,
+	"bytes.IndexRune": true, "bytes.LastIndex": true, "bytes.LastIndexAny": true,
+	"bytes.LastIndexByte":         true,
+	"unicode/utf8.DecodeLastRune": true, "unicode/utf8.DecodeRune": true,
+	"unicode/utf8.FullRune": true, "unicode/utf8.RuneCount": true,
+	"unicode/utf8.Valid": true,
 }
 
 func (g *gen) paramName(name string, i int, used map[string]bool) string {
@@ -1421,6 +1467,9 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		argNames = append(argNames, an)
 		gps = append(gps, an+" "+c.rt)
 		arg := c.toGo(an)
+		if s.view && c.gt == "[]byte" {
+			arg = "GoBytesView(" + an + ")"
+		}
 		if sig.Variadic() && i == n-1 {
 			arg += "..."
 		}
@@ -1584,7 +1633,9 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		}
 		fmt.Fprintf(&a, "func %s(%s)%s {\n", inner, params, goRet)
 	}
-	fmt.Fprintf(&a, "\tGoEnter(tk)\n\tdefer GoExit(tk, %q)\n", s.display)
+	if !s.leaf {
+		fmt.Fprintf(&a, "\tGoEnter(tk)\n\tdefer GoExit(tk, %q)\n", s.display)
+	}
 	call := s.goCall + "(" + strings.Join(args, ", ") + ")"
 	if len(targs) > 0 {
 		// explicit, so a type parameter only a result names is known
@@ -1993,7 +2044,9 @@ func (g *gen) run() {
 			}
 			sig := o.Type().(*types.Signature)
 			ctor := strings.HasPrefix(name, "New") || strings.HasPrefix(name, "Must")
-			if err := g.bindFunc(fnSpec{xoName: xn, display: display, sig: sig, goCall: g.alias(g.pkg) + "." + name, ctor: ctor}); err != nil {
+			view := bytesView[g.pkg.Path()+"."+name]
+			leaf := view || goLeaf[g.pkg.Path()+"."+name]
+			if err := g.bindFunc(fnSpec{xoName: xn, display: display, sig: sig, goCall: g.alias(g.pkg) + "." + name, ctor: ctor, view: view, leaf: leaf}); err != nil {
 				g.skip(xn, display, err, true)
 				continue
 			}

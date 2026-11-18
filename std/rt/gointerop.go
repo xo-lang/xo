@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unsafe"
 )
 
 // Go interop (decision 0041, prototype 2026-10-08). The adapters written
@@ -231,6 +232,13 @@ func (cb *GoCallback) End(ctk *Task) {
 	if r != nil && !IsUnwind(r) {
 		panic(r)
 	}
+}
+
+// GoBytesView is b's bytes as a []byte without a copy, for a Go function
+// that only reads them during the call (internal/gobind bytesView): the
+// callee must never write to it or keep it.
+func GoBytesView(b Bytes) []byte {
+	return unsafe.Slice(unsafe.StringData(string(b)), len(b))
 }
 
 // GoEnter is called by every adapter before its Go call; it defers

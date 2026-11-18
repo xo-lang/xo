@@ -3938,7 +3938,11 @@ experiment of its work queue item 6. Results and coverage:
   calls. `gen.Generate` adds `rt/xo_gobind_<path>.go` per binding and
   writes the workspace's `require` lines into the build `go.mod` and its
   `go.sum`. Runtime helpers: `std/rt/gointerop.go` (`Go_Error`,
-  `GoEnter`/`GoExit` around each Go call (panic to fault, `thread.inGo`),
+  `GoEnter`/`GoExit` around each Go call (panic to fault, `thread.inGo`;
+  a leaf listed in internal/gobind `goLeaf`, which cannot panic, block or
+  call back, has neither since binding format 38, 2026-11-18),
+  `GoBytesView` (a Bytes passed without a copy to a function in
+  `bytesView`, which only reads it during the call),
   `GoBoundary` for field accessors, `GoCallback` (a call on another
   goroutine is a child task with its own thread, decision 0067),
   `GoContext`, `GoListOf`/`GoSliceOf`/`GoMapOf`/`GoMapToGo` copies,
