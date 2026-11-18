@@ -271,8 +271,29 @@ fn end_trim(b: Bytes, c: UInt8) -> Int {
   j
 }
 
+// A Str ordering is in line on both native targets: no call when the
+// shorter one is empty or both are the same bytes, else memcmp of the
+// shorter length, then the lengths. On x86_64 it was a call of the
+// export, which called memcmp even for two empty zones (2026-11-18:
+// netip.Addr's sort, its derived order comparing zones, 1.35x Go's on the
+// amd64 host).
+fn count_desc(hs: List[Str]) -> Int {
+  // arm64: -"_?xo_x_obj_str_cmp" "memcmp"
+  // amd64: -"_xo_x_obj_str_cmp" "memcmp"
+  var n = 0
+  var i = 1
+  while i < hs.len() {
+    if hs[i] < hs[i - 1] {
+      n += 1
+    }
+    i += 1
+  }
+  n
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
+  os.stdio.println("${count_desc(["b", "a", "", "", "ab", "abc", "abd", "ab", "b", "ba", "B"])} ${count_desc(hs)}")
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
   os.stdio.println("${count_empty(["", "a", ""])} ${joined("http", "h", "p")}")
   let b = "abcde".bytes()
