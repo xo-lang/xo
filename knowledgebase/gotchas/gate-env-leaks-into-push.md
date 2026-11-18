@@ -25,3 +25,11 @@ now also clears `HEAVY_*`, `AB_HOST_*` and `OFFLOAD_ENV`, and
 TestOffloadGateLease runs it once more with a merge lane's settings. A
 lead tool test that reads a variable clears it at its top; adding a
 variable to a script means adding it to the test's clear list.
+
+Again 2026-11-18 (Observed): offload_amd64_excl_test.sh (#370, b7842911d)
+cleared nothing, so under pushq's fast checks HEAVY_LANE made offload.sh
+skip the stand-in heavyd and copy to the stand-in host ("OFF_PW: unbound
+variable"); TestOffloadAmd64Exclusive failed every push while passing when
+run by hand. The test now clears OFFLOAD_ENV, OFF_LANE, OFF_NO_LANE,
+HEAVY_LANE and HEAVY_LANE_ENV at its top. Check a new lead tool test with
+`HEAVY_LANE=arm64 bash scripts/lead/NAME_test.sh` before pushing it.
