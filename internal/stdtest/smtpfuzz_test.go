@@ -26,6 +26,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/smtp"
@@ -382,11 +383,26 @@ func (s *smfServer) take() map[int][]string {
 	return m
 }
 
+// smfHangUp closes conn as a server that is done: a FIN first, then what
+// the client still sends is read and dropped until it closes. A plain
+// Close with the client's next command unread sends a RST instead, and the
+// client's read then fails with "connection reset" or reads EOF depending on
+// whether that command arrived before the close (seed 2 case 1333 on llvm,
+// a cut at the end of the EHLO reply: the client sent AUTH in time).
+func smfHangUp(conn net.Conn) {
+	if tc, ok := conn.(*net.TCPConn); ok {
+		tc.CloseWrite()
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		io.Copy(io.Discard, conn)
+	}
+	conn.Close()
+}
+
 // smfClose ends a reply after which the server closes the connection.
 const smfClose = "\x00close"
 
 func smfSession(conn net.Conn, c smfCase) []string {
-	defer conn.Close()
+	defer smfHangUp(conn)
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	var tr []string
 	left := c.cut
@@ -662,5 +678,44 @@ func TestSmtpReplyBytes(t *testing.T) {
 		if got != want {
 			t.Errorf("case %d:\ngot\n%swant\n%s", i, got, want)
 		}
+	}
+}
+
+// TestSmfHangUpUnreadIsEOF: the client's command is in the server's
+// buffer, unread, when the server hangs up; the client still reads EOF,
+// as when the hang up comes first (TestSmtpFuzz seed 2 case 1333, llvm).
+func TestSmfHangUpUnreadIsEOF(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	sent := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		conn.Write([]byte("250 ok\r\n"))
+		<-sent
+		time.Sleep(50 * time.Millisecond) // the command is in conn's buffer
+		smfHangUp(conn)
+	}()
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+	br := bufio.NewReader(c)
+	if _, err := br.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Write([]byte("AUTH PLAIN AGEAYg==\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	close(sent)
+	if _, err := br.ReadByte(); err != io.EOF {
+		t.Fatalf("read after the hang up: %v, want EOF", err)
 	}
 }
