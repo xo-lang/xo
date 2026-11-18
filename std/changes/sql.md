@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-18: fix: Postgres refuses a CommandComplete with bytes after its tag
+
+- Kind: fix
+- Commit: this push
+- Found by: stdproven fuzz sql (task #152), TestPgFuzz seed 9 case 1119 on host 3
+- Go reference: jackc/pgx v5.11.0 (pgproto3/command_complete.go Decode)
+- Test: std/native/llrt/pgwire_test.xo "decode refuses a CommandComplete with bytes after its tag's NUL ..."
+- Timing: none
+
+A CommandComplete whose tag's NUL is not the body's last byte (`SELECT\x003\x00`) is an error, "CommandComplete
+body is invalid string terminated too early", as pgproto3's; it gave the tag before the NUL and went on.
+
 ## 2026-11-17: feature: MySQL's compressed protocol (compress=true)
 
 - Kind: feature

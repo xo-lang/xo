@@ -287,7 +287,12 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
     }
     "2" => Backend.BindComplete
     "3" => Backend.CloseComplete
-    "C" => Backend.CommandComplete(tag: r.cstr()?)
+    "C" => {
+      // pgproto3: the tag's NUL ends the body, or "string terminated too early"
+      let tag = r.cstr()?
+      if r.at != r.b.len() { return Err(WireErr.Bad(msg: "CommandComplete body is invalid string terminated too early")) }
+      Backend.CommandComplete(tag: tag)
+    }
     "D" => {
       let n = r.i16()?
       var vals: List[Bytes?] = List.with_capacity(n)

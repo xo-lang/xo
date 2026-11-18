@@ -83,6 +83,12 @@ test "decode refuses an unknown message type (pgproto3: unknown message type; wa
   expect(decode(Bytes.from_hex("6400000006abcd") ?? b"")) == Ok(Backend.Other(kind: "d", body: Bytes.from_hex("abcd") ?? b""))
 }
 
+test "decode refuses a CommandComplete with bytes after its tag's NUL (pgproto3: string terminated too early; was the tag)" {
+  // stdproven fuzz sql, TestPgFuzz seed 9 case 1119: "SELECT\x003\x00"
+  expect(decode(Bytes.from_hex("430000000d53454c454354003300") ?? b"")) == Err(WireErr.Bad(msg: "CommandComplete body is invalid string terminated too early"))
+  expect(decode(Bytes.from_hex("430000000d53454c454354203100") ?? b"")) == Ok(Backend.CommandComplete(tag: "SELECT 1"))
+}
+
 test "decode b_rowdesc" {
   let m = Bytes.from_hex("540000001b0001696400000040000001000000170004ffffffff0000") ?? b""
   expect(frame_len(m)) == Ok(Some(m.len()))
