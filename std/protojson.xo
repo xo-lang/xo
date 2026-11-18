@@ -2352,14 +2352,18 @@ fn parse_timestamp(s: Str) -> Bytes ! JsonErr {
   }
   var i = 19
   var nanos = 0
-  if b[i] == 46 {
+  // Go's time.Parse takes a comma or a period before the fraction; protojson
+  // rejects more than 9 digits only after a period (its check looks for the
+  // last '.'), and time.Parse keeps the first 9 of a longer fraction
+  if b[i] == 46 || b[i] == 44 {
+    let comma = b[i] == 44
     let s0 = i + 1
     i += 1
     while i < b.len() && is_digit(Int(b[i])) {
       i += 1
     }
     let nd = i - s0
-    if nd == 0 || nd > 9 {
+    if nd == 0 || (nd > 9 && !comma) {
       return Err(e)
     }
     var v = 0

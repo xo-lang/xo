@@ -1,5 +1,16 @@
 # std/protojson changes
 
+## 2026-11-17: fix: a Timestamp's fraction may follow a comma, as in Go
+
+- Kind: fix
+- Commit: this push
+- Found by: the protojson fuzz harness (TestProtojsonFuzz, darwin/arm64): Go's Unmarshal read "9999-12-31T23:59:59,120Z", Xo's failed it
+- Go reference: google.golang.org/protobuf encoding/protojson well_known_types.go unmarshalTimestamp (time.Parse with RFC3339Nano, which takes ',' or '.')
+- Test: std/protojson_test.xo "a Timestamp's fraction may follow a comma, as Go's time.Parse reads it" (fails before); values from Go's protojson.Unmarshal
+- Shipped in: not yet released
+
+A Timestamp's fractional seconds may follow a comma as well as a period. As in Go, more than 9 digits fail only after a period; after a comma the first 9 are kept.
+
 ## 2026-11-17: fix: a field number over 536870911 fails to decode
 
 - Kind: fix

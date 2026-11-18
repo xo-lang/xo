@@ -63,3 +63,14 @@ fn over_max_reg() -> Registry {
 test "marshal fails a field number over 536870911, as proto.Unmarshal does first" {
   expect(marshal(over_max_reg(), "p.M", b"\xca\xc7\xa3\xe8\x22\x00").is_ok()) == false
 }
+
+// Go's protojson reads a Timestamp with time.Parse(RFC3339Nano), which takes a comma before the
+// fraction too; it rejects more than 9 digits only after a period, and time.Parse keeps the
+// first 9 of a longer fraction (fuzz case, 2026-11-17; values from Go's protojson.Unmarshal)
+test "a Timestamp's fraction may follow a comma, as Go's time.Parse reads it" {
+  expect(parse_timestamp("2000-01-01T00:00:00,5Z") ?? e => fault("${e}")) == ts_wire(946684800, 500000000)
+  expect(parse_timestamp("2000-01-01T00:00:00,123456789123Z") ?? e => fault("${e}")) == ts_wire(946684800, 123456789)
+  expect(parse_timestamp("2000-01-01T00:00:00,5+01:00") ?? e => fault("${e}")) == ts_wire(946681200, 500000000)
+  expect(parse_timestamp("2000-01-01T00:00:00.123456789123Z").is_err()) == true
+  expect(parse_timestamp("2000-01-01T00:00:00,Z").is_err()) == true
+}
