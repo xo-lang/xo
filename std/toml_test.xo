@@ -304,3 +304,42 @@ test "strict: a field omitempty leaves out, or a None, is still known" {
   expect(o.n) == 0
   expect(strict_errs[Omit]("n = 0\nq = 0\n").map(fn(e: StrictErr) -> Str { "${e}" })) == ["toml: line 2: unknown field q"]
 }
+
+/// decode's value or error, as decoding the document's JSON text gives it.
+fn via_json[T: Json](d: Str) -> Str {
+  match to_json(d) {
+    Ok(j) => match json.decode[T](j.bytes()) {
+      Ok(v) => json.encode(v).to_str() ?? ""
+      Err(e) => "value error: ${e}"
+    }
+    Err(e) => "syntax: ${e}"
+  }
+}
+
+fn direct[T: Json](d: Str) -> Str {
+  match decode[T](d) {
+    Ok(v) => json.encode(v).to_str() ?? ""
+    Err(DecodeErr.Value(e)) => "value error: ${e}"
+    Err(e) => "syntax: ${e}"
+  }
+}
+
+test "decode gives what decoding its JSON text gives: escapes, non-ASCII, errors, deep nesting" {
+  // decode hands the JSON codec its tape without the text (2026-11-18)
+  expect(direct[Config](DOC)) == via_json[Config](DOC)
+  let docs = [
+    "host = \"h\\u00e9 \\\"q\\\" \\\\ \\n\\t\"\nport = 1\ntags = [\"\u{e9}t\u{e9}\", 'x\\y', \"\\u0001\"]\n",
+    "\"h\u{e9}\" = 1\nhost = \"a\"\nport = -0\ntags = []\n",
+    "host = 1\nport = 2\ntags = []\n",
+    "host = \"h\"\nport = 2.5\ntags = []\n",
+    "host = \"h\"\nport = 9223372036854775807\ntags = [1]\n",
+    "host = \"h\"\nport = 1\ntags = [\"a\", [\"b\"]]\n",
+    "host = \"h\"\nport = 1\ntags = []\nx = ${"[".repeat(10001)}${"]".repeat(10001)}\n",
+    "host = \"h\"\nport = 1\ntags = []\nx = ${"[".repeat(9999)}${"]".repeat(9999)}\n",
+  ]
+  for d in docs {
+    expect(direct[Server](d)) == via_json[Server](d)
+  }
+  expect(direct[Server](docs[0]).contains("h\u{e9} \\\"q\\\"")) == true
+  expect(direct[Server](docs[6]).starts_with("value error:")) == true
+}

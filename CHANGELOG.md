@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 - Fix (std/debug): `mem_peak` is never below a `mem_mapped` read before it while other tasks map and free memory; a racing store could lose a larger peak (the debug stress program read 89.9 MB under 90.3 MB).
 - Fix (native runtime): an HTTP server whose task scope was never closed (a stream dropped unread, its handler still running) freed that scope while it still hung in the task tree, and a later task start or end wrote into the freed memory (a fault under `--check=free`, a data race report under `--race`, a rare crash otherwise).
+- Perf (std/toml): `decode` hands the JSON codec its tape straight from the parsed tables, with no JSON text to write and scan again: bench/perf/toml decode 0.88 of its time on the Mac.
 - Perf (native compiler): a derived order (`derive Ord`) tests a field's less than only when that field differs, a branch where it was a set, a widen and a compare on every equal field: bench/perf/netip compare on linux/amd64 1.00 to 1.04 of Go before, 1.00 to 1.01 after.
 - Feature (std/http, std/grpc; decision 0718): `Request.gone()` is a channel closed when a server's HTTP/2 request's client is gone (its stream reset, the connection ended, or the stream finished), as Go's `r.Context().Done()`; `grpc.Call.done()` gives it to gRPC handlers. Not yet closed for HTTP/1.1.
 - Fix (std/grpchealth): a Watch whose client canceled is removed at once; it stayed registered until the service's next status change.

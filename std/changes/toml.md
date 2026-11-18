@@ -1,5 +1,21 @@
 # std/toml changes
 
+## 2026-11-18: perf: decode skips the JSON text
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (std/evidence/toml/perf.md: decode 1.165 of go-toml's wall on linux/arm64 host 1, 2026-11-15)
+- Go reference: github.com/pelletier/go-toml/v2's Unmarshal (decodes from its parse tree, no JSON step)
+- Test: toml module test "decode gives what decoding its JSON text gives" (escapes, non-ASCII keys and strings, value errors, nesting past the JSON depth); the module tests
+- Timing: Mac, bench/perf/toml decode 400,000 times: 1.06 s to 0.93 s user (3 runs each)
+- Shipped in: not yet released
+
+decode wrote the parsed document as JSON text, which the JSON codec then
+scanned into its tape (17% of decode). It now writes the tape itself,
+as json.from_value does, from the parsed tables, sized once; a document
+nested past the codec's depth limit takes the text path, for the same
+error.
+
 ## 2026-11-17: feature: strict decode (go-toml's DisallowUnknownFields)
 
 - Kind: feature

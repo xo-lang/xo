@@ -8,6 +8,7 @@ use std/json as js
 use native/llrt/scan
 use native/llrt/raw
 use native/llrt/jsontext
+use native/rtjson
 
 enum TomlVal {
   Text(s: Str)
@@ -1126,14 +1127,101 @@ fn decode[T: Json](text: Str, strict: Bool = false) -> T ! toml.DecodeErr {
   if strict {
     return decode_strict[T](text)
   }
-  let j = match json_bytes(text) {
-    Ok(b) => b
+  var p = TomlParser{s: text, i: 0, line: 1, tables: [], arrays: [], strict: false, ks: 0, ke: 0}
+  match p.document() {
+    Ok(_) => {}
     Err(e) => return Err(toml.DecodeErr.Syntax(err: e))
   }
-  match js.decode[T](j) {
-    Ok(v) => Ok(v)
-    Err(e) => Err(toml.DecodeErr.Value(err: e))
+  // The JSON codec's tape (json.from_value's) written from the tables
+  // directly: no JSON text to write and scan again (2026-11-18: the scan
+  // was 17% of decode). A document nested past the codec's depth takes
+  // the text path, for its error.
+  var src = BytesBuilder.with_capacity(text.len() + 16)
+  // three words a node: the root, a key and a value a table entry, an
+  // element of an array (some tables and arrays are not reached: a few
+  // words more than needed, never a regrowth)
+  var nodes = 1
+  for t in p.tables {
+    nodes += 2 * t.keys.len()
   }
+  for a in p.arrays {
+    nodes += a.elems.len()
+  }
+  var tape = List[Int].with_capacity(3 * nodes)
+  if !p.write_tape(src, tape, TomlVal.Tab(id: 0), 1) {
+    return match js.decode[T](p.json()) {
+      Ok(v) => Ok(v)
+      Err(e) => Err(toml.DecodeErr.Value(err: e))
+    }
+  }
+  match rtjson.json_dec[T](src.freeze(), tape, 0) {
+    Ok(v) => Ok(v)
+    Err(e) => Err(toml.DecodeErr.Value(err: js.DecodeErr{path: jsontext.path_final(e.path), msg: e.msg}))
+  }
+}
+
+/// Appends v's nodes to tape (three words each: kind, a, b, as
+/// json.value_tape) and their text to src; v is at depth (1 for the
+/// root). False past jsontext.MAX_DEPTH.
+fn (p: TomlParser) write_tape(var src: BytesBuilder, var tape: List[Int], v: TomlVal, depth: Int) -> Bool {
+  match v {
+    TomlVal.Text(s) => tape_str(src, tape, s)
+    TomlVal.Num(text) => {
+      let at = src.len()
+      src.write_str(text)
+      tape.push(3)
+      tape.push(at)
+      tape.push(text.len())
+    }
+    TomlVal.Flag(x) => {
+      tape.push(if x { 2 } else { 1 })
+      tape.push(0)
+      tape.push(0)
+    }
+    TomlVal.Tab(id) => {
+      if depth > jsontext.MAX_DEPTH {
+        return false
+      }
+      let t = p.tables[id]
+      let at = tape.len()
+      tape.push(6)
+      tape.push(t.keys.len())
+      tape.push(0)
+      for i in 0..t.keys.len() {
+        tape_str(src, tape, t.keys[i])
+        if !p.write_tape(src, tape, t.vals[i], depth + 1) {
+          return false
+        }
+      }
+      tape[at + 2] = tape.len()
+    }
+    TomlVal.Arr(id) => {
+      if depth > jsontext.MAX_DEPTH {
+        return false
+      }
+      let elems = p.arrays[id].elems
+      let at = tape.len()
+      tape.push(5)
+      tape.push(elems.len())
+      tape.push(0)
+      for i in 0..elems.len() {
+        if !p.write_tape(src, tape, elems[i], depth + 1) {
+          return false
+        }
+      }
+      tape[at + 2] = tape.len()
+    }
+  }
+  true
+}
+
+/// A string node for s, its text in src as it is (jsontext.plain_str_b).
+fn tape_str(var src: BytesBuilder, var tape: List[Int], s: Str) {
+  let at = src.len()
+  src.write_str(s)
+  tape.push(4)
+  tape.push(at)
+  tape.push(jsontext.plain_str_b(s))
 }
 
 // Strict decode (go-toml's DisallowUnknownFields). derive Json names no
