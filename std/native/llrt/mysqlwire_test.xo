@@ -238,3 +238,11 @@ test "read_size: what the next packet lacks, 4096 to 1 MiB" {
   // the largest packet: capped
   expect(read_size(b"\xff\xff\xff\x00")) == 1048576
 }
+
+test "a length of Int's largest past the start is a short packet, not an overflow (task #352)" {
+  var r = reader(b"abcd")
+  expect(r.take(1).is_ok()) == true
+  expect(r.take(9223372036854775807).is_err()) == true
+  expect(r.u(9223372036854775807).is_err()) == true
+  expect(r.take(3).is_ok()) == true
+}

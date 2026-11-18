@@ -112,7 +112,9 @@ pub struct Rd {
 pub fn reader(b: Bytes) -> Rd { Rd{b: b, at: 0} }
 
 fn (r: Rd) need(n: Int) -> () ! WireErr {
-  if n < 0 || r.at + n > r.b.len() {
+  // against what is left: r.at + n overflows for n near Int's largest
+  // (an 8 byte length encoded length, task #352)
+  if n < 0 || n > r.b.len() - r.at {
     return Err(bad("a packet ended early: ${n} bytes wanted at ${r.at} of ${r.b.len()}"))
   }
   Ok(())

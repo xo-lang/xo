@@ -1,5 +1,14 @@
 # std/sql changes
 
+## 2026-11-18: fix: a MySQL length near Int's largest is a short packet, not a fault
+
+- Kind: fix
+- Commit: this commit
+- Found by: review after the hostile dictionary's HTTP Content-Length fault (task #352): the packet reader checked `at + n > len`, which overflows for an 8 byte length encoded n near 2^63
+- Go reference: go-sql-driver/mysql packets.go (a length past the packet is ErrMalformPkt)
+- Test: std/native/llrt/mysqlwire_test.xo "a length of Int's largest past the start is a short packet, not an overflow (task #352)"
+- Shipped in: not yet released
+
 ## 2026-11-18: fix: Postgres refuses a second RowDescription before the statement's CommandComplete
 
 - Kind: fix
