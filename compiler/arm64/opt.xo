@@ -2332,6 +2332,14 @@ fn (var g: G) copy_prop() {
     }
     g.put_insts(b, ins)
   }
+  g.rename_to(same)
+}
+
+/// Renames every read of register d to same[d] (followed to its root),
+/// in every block and in the SSA values' registers (copy_prop's and
+/// hoist_invariants' rewrite; each same[d] is d's value wherever d is
+/// read).
+fn (var g: G) rename_to(same: Map[Int, Int]) {
   if same.is_empty() {
     return
   }
@@ -2441,6 +2449,11 @@ fn (var g: G) hoist_invariants() {
   var ndef: List[Int] = []
   var defb: Map[Int, List[Int]] = {}
   var built = false
+  // the instructions hoisted so far, each with its preheader, its uses
+  // renamed by same; same: the registers read as an earlier hoisted one
+  var done: List[(Int, Inst)] = []
+  var same: Map[Int, Int] = {}
+  var idom: List[Int] = []
   var loops = g.dfs_loops(g.hot[0], preds)
   var sizes: List[Int] = []
   for l in loops {
@@ -2536,10 +2549,141 @@ fn (var g: G) hoist_invariants() {
     for inst in hoisted {
       defb[inst.defs[0]] = [pre]
     }
+    // an instruction an earlier loop hoisted into a preheader dominating
+    // this one, with the same text and uses (their one definitions), is
+    // read in place of this one's (task #302: trim_chars's second loop
+    // made the string's base address again after the first loop's
+    // preheader had)
+    if !done.is_empty() {
+      if idom.is_empty() {
+        idom = g.mir_idoms(blocks, preds)
+      }
+      var kept: List[Inst] = []
+      for inst in hoisted {
+        let us = canon_regs(inst.us, same)
+        var hit = -1
+        for (p0, e) in done {
+          if hit < 0 && p0 != pre && e.text == inst.text && e.us == us && g.fp[e.defs[0]] == g.fp[inst.defs[0]] && single_defs(us, ndef) && dominates(idom, p0, pre) {
+            hit = e.defs[0]
+          }
+        }
+        if hit >= 0 {
+          same[inst.defs[0]] = hit
+        } else {
+          kept.push(inst)
+        }
+      }
+      hoisted = kept
+    }
+    for inst in hoisted {
+      done.push((pre, Inst{kind: inst.kind, text: inst.text, us: canon_regs(inst.us, same), defs: inst.defs}))
+    }
+    if hoisted.is_empty() {
+      continue
+    }
     let ins = g.blocks[pre].insts
     let n = ins.len()
     g.blocks[pre].insts = ins[0..n - 1] + hoisted + [ins[n - 1]]
   }
+  g.rename_to(same)
+}
+
+/// rs with each register renamed by same (one step: same maps to
+/// registers that are not renamed).
+fn canon_regs(rs: List[Int], same: Map[Int, Int]) -> List[Int] {
+  var out: List[Int] = []
+  for r in rs {
+    out.push(same.get(r) ?? r)
+  }
+  out
+}
+
+/// Whether every register of rs (0, the zero register, aside) has one
+/// definition: its value is the same wherever it is read.
+fn single_defs(rs: List[Int], ndef: List[Int]) -> Bool {
+  for r in rs {
+    if r != 0 && (r < 0 || r >= ndef.len() || ndef[r] != 1) {
+      return false
+    }
+  }
+  true
+}
+
+/// The immediate dominator of every MIR block reached from the entry
+/// (blocks[0]), by Cooper, Harvey and Kennedy's iteration over a reverse
+/// postorder; the entry's is itself, an unreached block's -1.
+fn (g: G) mir_idoms(blocks: List[Int], preds: List[List[Int]]) -> List[Int] {
+  let nb = g.blocks.len()
+  var idom: List[Int] = []
+  var num: List[Int] = []
+  for _ in 0..nb {
+    idom.push(-1)
+    num.push(-1)
+  }
+  if blocks.is_empty() {
+    return idom
+  }
+  let entry = blocks[0]
+  // postorder by an explicit stack of (block, next successor)
+  var post: List[Int] = []
+  var seen: List[Bool] = []
+  for _ in 0..nb {
+    seen.push(false)
+  }
+  var stack: List[(Int, Int)] = [(entry, 0)]
+  seen[entry] = true
+  while !stack.is_empty() {
+    let (b, k) = stack[stack.len() - 1]
+    let ss = g.msuccs(b)
+    if k < ss.len() {
+      stack[stack.len() - 1] = (b, k + 1)
+      let t = ss[k]
+      if t >= 0 && t < nb && !seen[t] {
+        seen[t] = true
+        stack.push((t, 0))
+      }
+      continue
+    }
+    let _p = stack.pop()
+    num[b] = post.len()
+    post.push(b)
+  }
+  idom[entry] = entry
+  var changed = true
+  while changed {
+    changed = false
+    var i = post.len() - 2
+    while i >= 0 {
+      let b = post[i]
+      var nd = -1
+      for p in preds[b] {
+        if idom[p] < 0 {
+          continue
+        }
+        if nd < 0 {
+          nd = p
+          continue
+        }
+        var x = p
+        var y = nd
+        while x != y {
+          while num[x] < num[y] {
+            x = idom[x]
+          }
+          while num[y] < num[x] {
+            y = idom[y]
+          }
+        }
+        nd = x
+      }
+      if nd >= 0 && idom[b] != nd {
+        idom[b] = nd
+        changed = true
+      }
+      i -= 1
+    }
+  }
+  idom
 }
 
 const HOIST_MAX = 4

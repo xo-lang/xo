@@ -1005,6 +1005,13 @@ fn (var g: G) bytes_load(ws: List[Int], iv: Int, i: Int, borrowed: Bool) -> Int 
       return g.def1(false, "ldrb $wd0, [$u0, #${c}]", [t])
     }
   }
+  let (k, is_k) = g.const_int(iv)
+  if is_k && k >= 0 && k < 4096 {
+    // a constant index is the displacement: no register made for it
+    // (task #302: trim_chars's cutset byte 0 was `movl $0` and an
+    // indexed load on x86_64)
+    return g.def1(false, "ldrb $wd0, [$u0, #${k}]", [d])
+  }
   g.def1(false, "ldrb $wd0, [$u0, $u1]", [d, i])
 }
 

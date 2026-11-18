@@ -1338,10 +1338,12 @@ fn cse_op(op: Op) -> Bool {
 }
 
 /// The name of a call cse may merge with an identical dominating one
-/// (a length, or an element read with borrow_only's condition), else "".
+/// (a length, or an element read with borrow_only's condition; a byte of
+/// a Bytes, which is immutable, task #302: trim_chars read its cutset's
+/// first byte twice), else "".
 fn cse_call(aux: Aux) -> Str {
   match aux {
-    S(n) => if n is "list.len" | "Str.len" | "bytes.len" | "list.index" { n } else { "" }
+    S(n) => if n is "list.len" | "Str.len" | "bytes.len" | "list.index" | "bytes.index" { n } else { "" }
     None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
   }
 }

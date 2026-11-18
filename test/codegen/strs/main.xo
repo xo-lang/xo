@@ -224,6 +224,40 @@ fn trim_len(hs: List[Str], cs: Str) -> Int {
 // amd64: -"pushq" "jmp\s+\S*trim__chars__set"
 // arm64: -"stp x29, x30"
 
+// A byte of a Bytes read again where an identical read dominates it is
+// the first read's value (ssa cse, bytes.index; Bytes is immutable): one
+// load, as Str.trim_chars's first cutset byte (task #302).
+fn first_twice(b: Bytes) -> Int {
+  // arm64: -"(?s)ldrb.*ldrb"
+  // amd64: -"(?s)movzbl.*movzbl"
+  if b.len() == 0 {
+    return 0
+  }
+  if b[0] < 10 {
+    return 1
+  }
+  Int(b[0]) * 3
+}
+
+// Two loops reading one Bytes: the second reads the base address the
+// first loop's preheader made (hoist_invariants reuses an identical
+// hoisted instruction of a dominating preheader), as Str.trim_chars's
+// two loops (task #302).
+fn two_loops(b: Bytes, c: UInt8) -> Int {
+  // arm64: -"(?s)lsr #32.*lsr #32"
+  // amd64: -"(?s)shrq\s+\$32.*shrq\s+\$32"
+  var i = 0
+  let n = b.len()
+  while i < n && b[i] == c {
+    i += 1
+  }
+  var j = n
+  while j > i && b[j - 1] == c {
+    j -= 1
+  }
+  j - i
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
@@ -231,5 +265,5 @@ fn main(os: Os) {
   let b = "abcde".bytes()
   os.stdio.println("${half_byte(b)} ${half_shift(b)} ${half_unguarded(b)} ${half_none(b, 2)} ${half_elem(hs)}")
   os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)} ${count_ab(hs)} ${uuid_byte(uuid.nil(), b.len())}")
-  os.stdio.println("${trim_len(hs, "B")} ${trim_len(hs, "Bx")}")
+  os.stdio.println("${trim_len(hs, "B")} ${trim_len(hs, "Bx")} ${first_twice(b)} ${two_loops(b, b[0])}")
 }

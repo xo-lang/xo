@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-11-18: perf: Str.trim_chars reads its cutset byte and the text's base once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #302 (bench/perf/trimchars one 1.35, trim 1.21 of Go's strings.Trim on amd64 after the frameless fast path)
+- Go reference: strings.Trim's one byte path (trimLeftByte, trimRightByte)
+- Test: test/codegen/strs first_twice (one byte load) and two_loops (one base address for two loops over a Bytes); both fail before
+- Shipped in: not yet released
+
+`Str.trim_chars`, `trim_start_chars` and `trim_end_chars` read the
+cutset's first byte once, under the one byte test; the compiler now
+merges a second read of a Bytes element with a dominating identical
+read, takes a constant byte index as the load's displacement, and lets
+a loop reuse the base address an earlier loop's preheader computed.
+The trim row of internal/arm64 TestTextCost fell from 751M to 729M
+instructions.
+
 ## 2026-11-18: perf: Str.trim_chars fast paths without a frame
 
 - Kind: perf
