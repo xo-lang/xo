@@ -334,6 +334,69 @@ test "allow_alias with no aliases, and aliases without it, are errors" {
   expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = false;\n  A = 0;\n  B = 1;\n}")) == "ok"
 }
 
+// protoparse fuzz seed 5 on host 3 (task #152): `reserved 128, 188 to -1` accepted
+test "a message's reserved and extension ranges have no sign" {
+  expect(parse_err("syntax = \"proto2\";\nmessage M2 {\n  reserved 128, 188 to -1;\n}")) == "3:24: syntax error: unexpected '-', expecting int literal or \"max\""
+  expect(parse_err("syntax = \"proto2\";\nmessage M2 {\n  reserved -1;\n}")) == "3:12: syntax error: unexpected '-'"
+  expect(parse_err("syntax = \"proto2\";\nmessage M2 {\n  extensions 1 to 5, -3;\n}")) == "3:22: syntax error: unexpected '-', expecting int literal"
+  expect(parse_err("syntax = \"proto2\";\nmessage M2 {\n  extensions -1;\n}")) == "3:14: syntax error: unexpected '-', expecting int literal"
+  expect(parse_err("syntax = \"proto2\";\nmessage M2 {\n  reserved \"a\", -3;\n}")) == "3:17: syntax error: unexpected '-', expecting string literal"
+  expect(parse_err("syntax = \"proto2\";\nmessage M2 {\n  reserved 4, +3;\n}")) == "3:15: syntax error: unexpected '+', expecting int literal"
+  expect(parse_err("syntax = \"proto2\";\nenum E { V = 0; reserved 5 to -1; }")) == "2:26: range, 5 to -1, is invalid: start must be <= end"
+  expect(parse_err("syntax = \"proto2\";\nenum E { V = 0; reserved -5 to -1; }")) == "ok"
+  expect(parse_err("syntax = \"proto2\";\nmessage M2 {\n  reserved 188 to 1;\n}")) == "3:12: range, 188 to 1, is invalid: start must be <= end"
+}
+
+// protoparse fuzz seeds 8, 10 and 12 (task #152): an option value `true.`, a `;` before syntax,
+// `package .p1`, a field number in a reserved range
+test "an option value is one identifier; syntax comes first; a package has no leading dot" {
+  expect(parse_err("syntax = \"proto3\";\noption java_multiple_files = true. ;")) == "2:34: syntax error: expecting ';'"
+  expect(parse_err("syntax = \"proto3\";\noption java_package = foo.bar;")) == "2:26: syntax error: expecting ';'"
+  expect(parse_err("syntax = \"proto3\";\nmessage M { int32 f = 1 [deprecated = true.]; }")) == "2:43: syntax error: unexpected '.', expecting ']'"
+  expect(parse_err("syntax = \"proto3\";\npackage .p1;")) == "2:9: syntax error: unexpected '.'"
+  expect(parse_err("package p;\nsyntax = \"proto3\";")) == "2:1: syntax error: unexpected \"syntax\""
+  expect(parse_err("\n;\nedition = \"2023\";")) == "3:1: syntax error: unexpected \"edition\""
+  expect(parse_err("; syntax = \"proto3\";")) == "1:3: syntax error: unexpected \"syntax\""
+}
+
+test "protocompile's validateMessage: extension ranges in proto3, reserved names, a field's name and number" {
+  expect(parse_err("syntax = \"proto3\";\nmessage M { extensions 4 to 9; }")) == "2:24: message M: extension ranges are not allowed in proto3"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { reserved \"a b\"; }")) == "2:22: message M: reserved name \"a b\" is not a valid identifier"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { reserved \"f\"; optional int32 f = 1; optional int32 g = 1; }")) == "2:42: message M: field f is using a reserved name"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { extensions 5 to 9; optional group G = 6 { } }")) == "2:51: message M: field g is using tag 6 which is in extension range 5 to 9"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { optional int32 g = 1; oneof o { int32 h = 1; } }")) == "2:55: message M: fields g and h both have the same tag 1"
+  expect(parse_err("syntax = \"proto3\";\nmessage M3 {\n  reserved 132, 192 to 196;\n  reserved 1;\n  uint32 f5 = 1;\n}")) == "5:15: message M3: field f5 is using tag 1 which is in reserved range 1 to 1"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { optional int32 f = 1; extend M { optional int32 x = 1; } extensions 100 to max; }")) == "ok"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { message N { optional int32 f = 1; } optional int32 f = 1; }")) == "ok"
+}
+
+// protoparse fuzz seeds 14, 17 and 19 (task #152)
+test "reserved names and numbers do not mix; a label before map; a oneof has a field and no empty statement" {
+  expect(parse_err("syntax = \"proto2\";\nmessage M { reserved 5, \"a\"; }")) == "2:25: syntax error: unexpected string literal, expecting int literal"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { reserved \"a\", 5; }")) == "2:27: syntax error: unexpected int literal, expecting string literal"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { extensions 5, \"a\"; }")) == "2:27: syntax error: unexpected string literal, expecting int literal"
+  expect(parse_err("syntax = \"proto3\";\nmessage M { repeated map<int32, int32> m = 1; }")) == "2:25: syntax error: unexpected '<'"
+  expect(parse_err("syntax = \"proto3\";\nmessage M { oneof o { } }")) == "2:13: oneof must contain at least one field"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { oneof o { option (x) = 1; ; } }")) == "2:39: syntax error: unexpected ';'"
+  expect(parse_err("syntax = \"proto3\";\nmessage M { oneof o { option (x) = 1; int32 a = 1; } reserved \"b\", \"c\"; reserved 3, 4 to 5; }")) == "ok"
+}
+
+// protoparse fuzz seeds 27 and 28 (task #152)
+test "protocompile's validateEnum: an enum has a value, none reserved" {
+  expect(parse_err("syntax = \"proto2\";\nenum E { }")) == "2:1: enum E: enums must define at least one value"
+  expect(parse_err("syntax = \"proto2\";\nenum E { reserved 1 to 3; V = 2; }")) == "2:31: enum E: value V is using number 2 which is in reserved range 1 to 3"
+  expect(parse_err("syntax = \"proto2\";\nenum E { reserved \"V\"; V = 0; }")) == "2:24: enum E: value V is using a reserved name"
+  expect(parse_err("syntax = \"proto2\";\nenum E { reserved \"a b\"; V = 0; }")) == "2:19: enum E: reserved name \"a b\" is not a valid identifier"
+  expect(parse_err("syntax = \"proto3\";\nmessage M { enum E { option allow_alias = true; } }")) == "2:13: enum E: enums must define at least one value"
+  expect(parse_err("syntax = \"proto2\";\nenum E { reserved 1 to 3, 7; reserved \"W\"; V = 4; X = 8; }")) == "ok"
+}
+
+// protoparse fuzz seeds 31 and 37 (task #152)
+test "an extend defines an extension" {
+  expect(parse_err("syntax = \"proto2\";\nmessage M { extensions 5 to 9; }\nextend M {\n  // none\n}")) == "3:1: extend sections must define at least one extension"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { extensions 5 to 9; extend M { } }")) == "2:32: extend sections must define at least one extension"
+}
+
 // protoparse fuzz seed 4 on host 3 (task #152): 3 of 2554 rejected files accepted
 test "allow_alias and message_set_wire_format take true or false" {
   expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = true0x10 ;\n  A = 0;\n  B = 0;\n}")) == "3:24: enum E: expecting bool value for allow_alias option"

@@ -1,5 +1,23 @@
 # std/protoparse changes
 
+## 2026-11-18: fix: protocompile's message and enum checks, range and option syntax
+
+- Kind: fix
+- Commit: this push
+- Found by: task #152 (xw-1's protoparse fuzz against protocompile v0.14.1, seeds 5 to 37 at 5000 files: 1 or 2 of about 2550 rejected files accepted per failing seed)
+- Go reference: protocompile v0.14.1 parser/validate.go validateMessage and validateEnum, parser/proto.y (ranges, option values, syntax, package, oneof, extend)
+- Test: std/protoparse_test.xo "a message's reserved and extension ranges have no sign", "an option value is one identifier; syntax comes first; a package has no leading dot", "protocompile's validateMessage: extension ranges in proto3, reserved names, a field's name and number", "reserved names and numbers do not mix; a label before map; a oneof has a field and no empty statement", "protocompile's validateEnum: an enum has a value, none reserved", "an extend defines an extension" (accepted before)
+- Shipped in: not yet released
+
+parse now rejects what protocompile rejects in these files: a sign in a message's reserved or
+extension range, a range whose end is below its start, names and numbers mixed in one reserved
+statement, a string in extensions, a label before `map<`, an option value `true.` or `foo.bar`,
+any statement (even `;`) before `syntax` or `edition`, `package .p`, an empty oneof or a `;` in
+one, extension ranges in proto3, a reserved name that is not an identifier, a field or enum value
+using a reserved name or number, two fields with one number, a field in an extension range, an
+enum with no value, and an extend with no field. Each error gives protocompile's text at its
+position, with the short scope names parse already used (`message M`, `enum E`).
+
 ## 2026-11-18: fix: allow_alias and message_set_wire_format take true or false; declared names are one identifier; no label in a oneof
 
 - Kind: fix

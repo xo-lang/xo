@@ -420,6 +420,10 @@ pub fn parse(src: Str) -> File ! ParseErr {
   var p = P{ts: tokens(src)?, at: 0, proto2: true}
   var f = File{syntax: "proto2", package: "", imports: [], messages: [], enums: [], services: []}
   while p.at < p.ts.len() {
+    // syntax and edition come first, before any statement, even `;` (protocompile proto.y)
+    if p.at > 0 && (p_is(p, "syntax") || p_is(p, "edition")) {
+      return Err(p_unexpected(p))
+    }
     if p_is(p, "syntax") {
       p.at += 1
       p_expect(p, "=")?
@@ -446,6 +450,11 @@ pub fn parse(src: Str) -> File ! ParseErr {
       p_expect(p, ";")?
     } else if p_is(p, "package") {
       p.at += 1
+      // a package name has no leading `.`
+      if p.at < p.ts.len() && p.ts[p.at].text.starts_with(".") {
+        let t = p.ts[p.at]
+        return Err(ParseErr{line: t.line, col: t.col, msg: "syntax error: unexpected '.'"})
+      }
       f.package = p_type(p)?
       p_expect(p, ";")?
     } else if p_is(p, "import") {
@@ -568,6 +577,10 @@ struct P {
   proto2: Bool
   /// an editions file: no `optional`, `required` or `group`; reserved names are identifiers
   editions: Bool = false
+  /// the message being read: each field's name and number tokens, parallel to its fields
+  fat: List[(Int, Int)] = []
+  /// the last p_ranges_opts call: each reserved name's token
+  names_at: List[Int] = []
 }
 
 fn p_err(p: P, msg: Str) -> ParseErr {
@@ -703,9 +716,12 @@ fn p_skip_stmt(var p: P) ! ParseErr {
 /// `extend NAME { fields }` after `extend`: the fields as a message's, and the messages of its groups
 /// (protoc puts them among the messages of the scope the `extend` is in, where it is).
 fn p_extend(var p: P) -> (Extend, List[Message]) ! ParseErr {
+  let ext_kw = p.at - 1
   let name = p_type(p)?
   p_expect(p, "{")?
   var m = Message{name: name, fields: [], oneofs: [], nested: [], enums: []}
+  // an extend's fields are not the enclosing message's
+  let outer_fat = p.fat
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated `extend` block")) }
     // protoc's grammar has no empty statement in an extend block
@@ -715,7 +731,12 @@ fn p_extend(var p: P) -> (Extend, List[Message]) ! ParseErr {
     }
     m = p_field(p, "", m)?
   }
+  if m.fields.is_empty() {
+    p.at = ext_kw
+    return Err(p_err(p, "extend sections must define at least one extension"))
+  }
   p.at += 1
+  p.fat = outer_fat
   Ok((Extend{extendee: name, fields: m.fields}, m.nested))
 }
 
@@ -814,6 +835,17 @@ fn p_option(var p: P, compact: Bool = false) -> (Str, Bytes) ! ParseErr {
     }
     sb.write(b"}")
     return Ok((name, sb.freeze()))
+  }
+  // an identifier value is one identifier (protocompile proto.y): `true.x` and
+  // `foo.bar` are syntax errors at the `.`
+  if p.at < p.ts.len() && p.ts[p.at].kind == Kind.Ident {
+    let t = p.ts[p.at]
+    if let Some(d) = t.text.find(".") {
+      if d > 0 {
+        let msg = if compact { "syntax error: unexpected '.', expecting ']'" } else { "syntax error: expecting ';'" }
+        return Err(ParseErr{line: t.line, col: t.col + d, msg: msg})
+      }
+    }
   }
   Ok((name, p_constant(p)?))
 }
@@ -928,23 +960,39 @@ fn p_opts(var p: P) -> List[(Str, Bytes)] ! ParseErr {
 }
 
 /// `reserved` or `extensions` ranges (`1, 5 to 9, 20 to max`), or reserved names (`"a", "b"`), up to `;`.
-fn p_ranges(var p: P, max: Int) -> (List[(Int, Int)], List[Str]) ! ParseErr {
-  let (rs, ns, _) = p_ranges_opts(p, max)?
+fn p_ranges(var p: P, max: Int, signed: Bool = false) -> (List[(Int, Int)], List[Str]) ! ParseErr {
+  let (rs, ns, _) = p_ranges_opts(p, max, signed: signed, names: true)?
   Ok((rs, ns))
 }
 
 /// p_ranges, and the statement's `[ ... ]` options.
-fn p_ranges_opts(var p: P, max: Int) -> (List[(Int, Int)], List[Str], List[(Str, Bytes)]) ! ParseErr {
+/// signed: an enum's ranges (a message's have no sign in protoc's grammar); names: `reserved`, not `extensions`.
+fn p_ranges_opts(var p: P, max: Int, signed: Bool = false, names: Bool = false) -> (List[(Int, Int)], List[Str], List[(Str, Bytes)]) ! ParseErr {
   p.at += 1
   var rs: List[(Int, Int)] = []
   var ns: List[Str] = []
+  p.names_at = []
   while true {
-    if p.at < p.ts.len() && p.ts[p.at].kind == Kind.Str {
+    // protoc's grammar for a message's ranges (protocompile proto.y): a sign
+    // is a syntax error, its expecting text by where it stands
+    if !signed && (p_is(p, "-") || p_is(p, "+")) {
+      let first = rs.is_empty() && ns.is_empty()
+      let what = if first { if names { "" } else { "int literal" } } else if !ns.is_empty() { "string literal" } else { "int literal" }
+      return Err(p_unexpected(p, what))
+    }
+    // names and numbers do not mix (protocompile proto.y), and extensions take no names
+    let is_str = p.at < p.ts.len() && p.ts[p.at].kind == Kind.Str
+    if !p.editions && is_str && (!names || !rs.is_empty()) { return Err(p_unexpected(p, "int literal")) }
+    if !p.editions && !is_str && !ns.is_empty() { return Err(p_unexpected(p, "string literal")) }
+    if is_str {
       if p.editions { return Err(p_err(p, "reserved names are identifiers in editions, not strings")) }
+      p.names_at.push(p.at)
       ns.push(p_str(p)?)
     } else if p.editions && p.at < p.ts.len() && p.ts[p.at].kind == Kind.Ident {
+      p.names_at.push(p.at)
       ns.push(p_ident(p)?)
     } else {
+      let a_at = p.at
       let a = p_int(p)?
       var b = a
       if p_is(p, "to") {
@@ -952,9 +1000,19 @@ fn p_ranges_opts(var p: P, max: Int) -> (List[(Int, Int)], List[Str], List[(Str,
         if p_is(p, "max") {
           p.at += 1
           b = max
+        } else if !signed && (p_is(p, "-") || p_is(p, "+")) {
+          return Err(p_unexpected(p, "int literal or \"max\""))
         } else {
           b = p_int(p)?
         }
+      }
+      // protocompile's validate.go: a range's end is not below its start
+      if b < a {
+        let back = p.at
+        p.at = a_at
+        let e = p_err(p, "range, ${a} to ${b}, is invalid: start must be <= end")
+        p.at = back
+        return Err(e)
       }
       rs.push((a, b))
     }
@@ -967,6 +1025,57 @@ fn p_ranges_opts(var p: P, max: Int) -> (List[(Int, Int)], List[Str], List[(Str,
   let opts = p_opts(p)?
   p_expect(p, ";")?
   Ok((rs, ns, opts))
+}
+
+/// protocompile's validateMessage, its field loop: reserved names are identifiers, then each field in order
+/// (a reserved name, a number another field has, a number in a reserved range, then in an extension range).
+fn check_fields(var p: P, scope: Str, m: Message, fat: List[(Int, Int)], rn_at: List[Int]) ! ParseErr {
+  for k in 0..m.reserved_names.len() {
+    if !is_identifier(m.reserved_names[k]) && k < rn_at.len() {
+      p.at = rn_at[k]
+      return Err(p_err(p, "${scope}: reserved name ${m.reserved_names[k].quote()} is not a valid identifier"))
+    }
+  }
+  if fat.len() != m.fields.len() { return Ok(()) }
+  for i in 0..m.fields.len() {
+    let fl = m.fields[i]
+    if m.reserved_names.contains(fl.name) {
+      p.at = fat[i].0
+      return Err(p_err(p, "${scope}: field ${fl.name} is using a reserved name"))
+    }
+    for j in 0..i {
+      if m.fields[j].num == fl.num {
+        p.at = fat[i].1
+        return Err(p_err(p, "${scope}: fields ${m.fields[j].name} and ${fl.name} both have the same tag ${fl.num}"))
+      }
+    }
+    for (a, b) in m.reserved {
+      if a <= fl.num && fl.num <= b {
+        p.at = fat[i].1
+        return Err(p_err(p, "${scope}: field ${fl.name} is using tag ${fl.num} which is in reserved range ${a} to ${b}"))
+      }
+    }
+    for (a, b) in m.extensions {
+      if a <= fl.num && fl.num <= b {
+        p.at = fat[i].1
+        return Err(p_err(p, "${scope}: field ${fl.name} is using tag ${fl.num} which is in extension range ${a} to ${b}"))
+      }
+    }
+  }
+  Ok(())
+}
+
+/// protocompile's isIdentifier: letters, digits and `_`, not starting with a digit.
+fn is_identifier(s: Str) -> Bool {
+  if s.is_empty() { return false }
+  let b = s.bytes()
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    let digit = c >= 48 && c <= 57
+    if i == 0 && digit { return false }
+    if !(digit || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95) { return false }
+  }
+  true
 }
 
 /// The indexes of rs sorted by start, then end (protocompile's tagRanges).
@@ -1020,6 +1129,7 @@ fn check_ext_reserved(var p: P, scope: Str, rs: List[(Int, Int)], rat: List[Int]
 }
 
 fn p_enum(var p: P) -> Enum ! ParseErr {
+  let enum_at = p.at - 1
   let name = p_name(p, "'{'")?
   p_expect(p, "{")?
   var e = Enum{name: name, values: []}
@@ -1029,6 +1139,9 @@ fn p_enum(var p: P) -> Enum ! ParseErr {
   // allow_alias's value token when it is not `true` or `false`
   var alias_bad = -1
   var val_at: List[Int] = []
+  // each value's name token, each reserved name's token
+  var vname_at: List[Int] = []
+  var rn_at: List[Int] = []
   var rsv_at: List[Int] = []
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated enum `${name}`")) }
@@ -1042,15 +1155,17 @@ fn p_enum(var p: P) -> Enum ! ParseErr {
       e.options.push(o)
     } else if p_is(p, "reserved") {
       let at = p.at
-      let (rs, ns) = p_ranges(p, 2147483647)?
+      let (rs, ns) = p_ranges(p, 2147483647, signed: true)?
       for r in rs {
         e.reserved.push(r)
         rsv_at.push(at)
       }
       for n in ns { e.reserved_names.push(n) }
+      for k in p.names_at { rn_at.push(k) }
     } else if p_is(p, ";") {
       p.at += 1
     } else {
+      vname_at.push(p.at)
       let vn = p_name(p, "'='")?
       p_expect(p, "=")?
       val_at.push(p.at)
@@ -1064,6 +1179,10 @@ fn p_enum(var p: P) -> Enum ! ParseErr {
   // protocompile's validateEnum: a proto3 enum's first value is zero,
   // then aliases, then reserved ranges
   let scope = "enum ${name}"
+  if e.values.is_empty() {
+    p.at = enum_at
+    return Err(p_err(p, "${scope}: enums must define at least one value"))
+  }
   if alias_bad >= 0 {
     p.at = alias_bad
     return Err(p_err(p, "${scope}: expecting bool value for allow_alias option"))
@@ -1089,6 +1208,33 @@ fn p_enum(var p: P) -> Enum ! ParseErr {
     return Err(p_err(p, "${scope}: allow_alias is true but no values are aliases"))
   }
   check_overlap(p, scope, "reserved", e.reserved, rsv_at)?
+  // reserved names are identifiers; then each value: a reserved name, a number in a reserved range
+  for k in 0..e.reserved_names.len() {
+    if !is_identifier(e.reserved_names[k]) && k < rn_at.len() {
+      p.at = rn_at[k]
+      return Err(p_err(p, "${scope}: reserved name ${e.reserved_names[k].quote()} is not a valid identifier"))
+    }
+  }
+  for i in 0..e.values.len() {
+    let v = e.values[i]
+    if e.reserved_names.contains(v.name) {
+      p.at = vname_at[i]
+      return Err(p_err(p, "${scope}: value ${v.name} is using a reserved name"))
+    }
+    // the first range by start (then end) that reaches the number, as sort.Search
+    var hit = -1
+    for k in range_order(e.reserved) {
+      let (a, b) = e.reserved[k]
+      if b >= v.num {
+        if a <= v.num { hit = k }
+        break
+      }
+    }
+    if hit >= 0 {
+      p.at = val_at[i]
+      return Err(p_err(p, "${scope}: value ${v.name} is using number ${v.num} which is in reserved range ${e.reserved[hit].0} to ${e.reserved[hit].1}"))
+    }
+  }
   p.at = end + 1
   Ok(e)
 }
@@ -1121,6 +1267,11 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
     }
     // a map field takes no label in proto2 either
     let is_map = p_is(p, "map") && p.at + 1 < p.ts.len() && p.ts[p.at + 1].text == "<"
+    // after a label `map` is a type name, so its `<` is unexpected (protocompile proto.y)
+    if labeled && is_map {
+      p.at += 1
+      return Err(p_unexpected(p))
+    }
     if p.proto2 && !labeled && !is_map {
       return Err(p_err(p, "proto2 field needs `required`, `optional` or `repeated`, found `${p_peek(p)}`"))
     }
@@ -1129,6 +1280,7 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
     if p.editions { return Err(p_err(p, "`group` is not allowed in editions (use features.message_encoding = DELIMITED)")) }
     if !p.proto2 { return Err(p_err(p, "`group` is proto2 only")) }
     p.at += 1
+    let gname_at = p.at
     let gname = p_name(p, "'='")?
     let g0 = if gname.len() > 0 { Int(gname.bytes()[0]) } else { 0 }
     if !(g0 >= 65 && g0 <= 90) {
@@ -1137,10 +1289,12 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
     }
     p_expect(p, "=")?
     if p_is(p, "-") { return Err(p_unexpected(p, "int literal")) }
+    let gn_at = p.at
     let gn = p_int(p)?
     let (opts, dv, jn) = field_opts(p_opts(p)?)
     m.nested.push(p_message_body(p, gname)?)
     m.fields.push(Field{name: gname.to_lower(), num: gn, typ: gname, key: "", repeated: repeated, optional: optional, required: required, oneof: oneof, group: true, default_value: dv, json_name: jn, options: opts})
+    p.fat.push((gname_at, gn_at))
     return Ok(m)
   }
   var key = ""
@@ -1157,10 +1311,12 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
   } else {
     typ = p_type(p)?
   }
+  let name_at = p.at
   let name = p_name(p, "'='")?
   p_expect(p, "=")?
   // a field number has no sign (protoc's grammar)
   if p_is(p, "-") { return Err(p_unexpected(p, "int literal")) }
+  let n_at = p.at
   let n = p_int(p)?
   let (opts, dv, jn) = field_opts(p_opts(p)?)
   p_expect(p, ";")?
@@ -1168,6 +1324,7 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
     m.map_at.push(m.nested.len())
   }
   m.fields.push(Field{name: name, num: n, typ: typ, key: key, repeated: repeated, optional: optional, required: required, oneof: oneof, default_value: dv, json_name: jn, options: opts})
+  p.fat.push((name_at, n_at))
   Ok(m)
 }
 
@@ -1196,6 +1353,10 @@ fn p_message(var p: P) -> Message ! ParseErr {
 fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
   p_expect(p, "{")?
   var m = Message{name: name, fields: [], oneofs: [], nested: [], enums: []}
+  let outer_fat = p.fat
+  p.fat = []
+  // each reserved name's token
+  var rn_at: List[Int] = []
   // each reserved and extensions range's statement (token index)
   var rsv_at: List[Int] = []
   var ext_at: List[Int] = []
@@ -1222,6 +1383,7 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
         rsv_at.push(at)
       }
       for n in ns { m.reserved_names.push(n) }
+      for k in p.names_at { rn_at.push(k) }
     } else if p_is(p, "extensions") {
       let at = p.at
       let (rs, _, opts) = p_ranges_opts(p, 536870911)?
@@ -1236,18 +1398,27 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
       m.extends.push(x)
       for g in groups { m.nested.push(g) }
     } else if p_is(p, "oneof") {
+      let on_at = p.at
       p.at += 1
       let on = p_name(p, "'{'")?
       p_expect(p, "{")?
       m.oneofs.push(on)
       var oo: List[(Str, Bytes)] = []
+      let nf = m.fields.len()
       while !p_is(p, "}") {
         if p.at >= p.ts.len() { return Err(p_err(p, "unterminated oneof `${on}`")) }
         if p_is(p, "option") {
           oo.push(p_option_stmt(p)?)
+        } else if p_is(p, ";") {
+          // a oneof has no empty statement (protocompile proto.y)
+          return Err(p_unexpected(p))
         } else {
           m = p_field(p, on, m)?
         }
+      }
+      if m.fields.len() == nf {
+        p.at = on_at
+        return Err(p_err(p, "oneof must contain at least one field"))
       }
       m.oneof_options.push(oo)
       p.at += 1
@@ -1261,6 +1432,12 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
   // then one against the other
   let end = p.at
   let scope = "message ${name}"
+  let fat = p.fat
+  p.fat = outer_fat
+  if !p.proto2 && !p.editions && m.extensions.len() > 0 {
+    p.at = ext_at[0] + 1
+    return Err(p_err(p, "${scope}: extension ranges are not allowed in proto3"))
+  }
   if msw_bad >= 0 {
     p.at = msw_bad
     return Err(p_err(p, "${scope}: expecting bool value for message_set_wire_format option"))
@@ -1268,6 +1445,7 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
   check_overlap(p, scope, "reserved", m.reserved, rsv_at)?
   check_overlap(p, scope, "extension", m.extensions, ext_at)?
   check_ext_reserved(p, scope, m.reserved, rsv_at, m.extensions, ext_at)?
+  check_fields(p, scope, m, fat, rn_at)?
   p.at = end + 1
   Ok(m)
 }
