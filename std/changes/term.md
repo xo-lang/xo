@@ -1,5 +1,19 @@
 # std/term changes
 
+## 2026-11-18: fix: a byte that is not UTF-8 no longer stalls read_line
+
+- Kind: fix
+- Commit: this push
+- Found by: #152, TestTermFuzz seed 2 (1347 of 2000 sessions differed from golang.org/x/term)
+- Go reference: golang.org/x/term v0.48.0 Terminal.readLine (it keeps the rest bytesToKey returns for utf8.RuneError)
+- Test: corpus term (21 new sessions: 0x80, 0xff, 0xfe, cut 2, 3 and 4 byte runes before ASCII, at 0, 1 and 3 bytes a read); TestTermFuzz
+- Shipped in: not yet released
+
+A byte that cannot start or continue a UTF-8 sequence (0x80, 0xff, a lead
+byte followed by ASCII) stayed at the front of the input, so read_line
+read until the input ended and answered Eof without the line typed after
+it. It is now dropped, as Go's Terminal drops it, and the rest is read on.
+
 ## 2026-11-17: perf: strip copies the text between escapes in runs
 
 - Kind: perf

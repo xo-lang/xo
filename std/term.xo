@@ -772,10 +772,12 @@ fn (var s: TermState) step(pasted0: Bool) -> (Step, Bool) {
   var got: Str? = None
   while got.is_none() {
     let (key, next) = bytes_to_key(rest, at, s.paste)
+    // Go keeps the rest bytesToKey returns even for RuneError: a byte
+    // that is not UTF-8 is dropped, a rune cut short waits for more
+    at = next
     if key == KEY_NONE {
       break
     }
-    at = next
     if !s.paste {
       if key == KEY_CTRL_D && s.line.is_empty() || key == KEY_CTRL_C {
         return (Step.Stop, pasted)

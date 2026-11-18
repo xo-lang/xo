@@ -36,6 +36,10 @@
 //     tree), random paths, directories and glob patterns: Dir.read,
 //     contains and sub, and fs().glob and read_dir, as fs.ReadFile, Sub,
 //     Glob and ReadDir answer;
+//   - term: termoracle (golang.org/x/term's Terminal), random sessions of
+//     keys mixed with runes, bytes that are not UTF-8 and escape sequences
+//     cut short, at random widths and read sizes, with SetSize, Write,
+//     ReadPassword and bracketed paste: the same lines and bytes written;
 //   - prototext: prototextoracle (protobuf-go's encoding/prototext), random
 //     messages of every field kind written as text.
 package stdtest
@@ -91,6 +95,7 @@ func TestProtowktFuzz(t *testing.T)     { corpusFuzz(t, "protowkt", "PROTOWKTFUZ
 func TestPrototextFuzz(t *testing.T)    { corpusFuzz(t, "prototext", "PROTOTEXTFUZZ") }
 func TestMetricsFuzz(t *testing.T)      { corpusFuzz(t, "metricsfuzz", "METRICSFUZZ") }
 func TestEmbedFuzz(t *testing.T)        { corpusFuzz(t, "embedfuzz", "EMBEDFUZZ") }
+func TestTermFuzz(t *testing.T)         { corpusFuzz(t, "term", "TERMFUZZ") }
 
 // Seeds that found a bug in a generator, kept as tests of their own (#116).
 
