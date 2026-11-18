@@ -360,3 +360,20 @@ crypto; within it, a module that misses only the testing axis first.
   rss_kib. TestStressCheckMemoryOnly (linux/arm64, bin/xo) shows a
   program whose resident set grows passes the check run with its leak
   line and fails without the flag.
+- 2026-11-18 (xw-1, task #351, lead's class guard 3, owner OK): a
+  `scale` kind. `stdproven scale [-host H] MODULE` builds
+  std/evidence/MODULE/scale/main.xo on the native backend; the program
+  answers `list` with one line a case (`NAME n=N mem=X [stream]`) and
+  `NAME N one|bytes` with `input=BYTES work_ns=T` (T the work alone, not
+  the input's generation). Each case runs at n and 8n (best of 3) and
+  fails when the work grows over 12x (n log n headroom), when a stream
+  case's 1-byte writes take over 4x its one write, or when the peak
+  resident set (getrusage) grows past X times the input's growth plus
+  4 MiB of page noise; it writes std/evidence/MODULE/scale.md. The
+  fuzz kind flags only a case past 10 s, and every quadratic or
+  count-sized allocation std fixed was found by a reviewer. Lang 3
+  writes each module's scale program (deep JSON, one long CSV line,
+  many duplicate keys, a zip entry that lies about its size).
+  TestScalePlantedQuadraticFails runs scripts/stdproven/testdata/scaleplant,
+  whose planted quadratic case fails at about 60x while its linear and
+  stream cases pass. The coverage generator does not read scale.md yet.

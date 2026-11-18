@@ -205,6 +205,8 @@ func main() {
 		err = stress(os.Args[2:])
 	case "perf":
 		err = perf(os.Args[2:])
+	case "scale":
+		err = scale(os.Args[2:])
 	case "serverperf":
 		err = serverPerf(os.Args[2:])
 	default:
@@ -217,7 +219,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] [-check-minutes M] [-check-only] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] [-check-minutes M] [-check-only] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE | stdproven scale [-host H] MODULE")
 	os.Exit(2)
 }
 

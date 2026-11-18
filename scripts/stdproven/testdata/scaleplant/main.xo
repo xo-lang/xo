@@ -1,0 +1,55 @@
+// The scale kind's own test program (task #351): "linear" sums its input
+// once, "quadratic" is the planted bug (each byte rescans what came
+// before, as json's stream did before 47918b573), "stream" feeds a linear
+// sum one write or 1-byte writes.
+//
+//   main list | main NAME N one|bytes
+
+fn linear(d: Bytes) -> Int {
+  var s = 0
+  for i in 0..d.len() {
+    s = s + Int(d[i])
+  }
+  s
+}
+
+/// One byte into a running sum: a stream decoder's per-write step.
+fn step(s: Int, b: UInt8) -> Int {
+  s + Int(b)
+}
+
+fn quadratic(d: Bytes) -> Int {
+  var s = 0
+  for i in 0..d.len() {
+    for j in 0..i {
+      s = s + (Int(d[j]) ^ i)
+    }
+  }
+  s
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  if args.len() == 1 && args[0] == "list" {
+    os.stdio.println("linear n=200000 mem=4")
+    os.stdio.println("quadratic n=3000 mem=4")
+    os.stdio.println("stream n=200000 mem=4 stream")
+    return
+  }
+  let n = Int.parse(args[1]) ?? 0
+  let d = Bytes.zeroed(n)
+  let clock = os.clock
+  let start = clock.now()
+  var s = 0
+  if args[0] == "quadratic" {
+    s = quadratic(d)
+  } else if args[0] == "stream" && args[2] == "bytes" {
+    for i in 0..n {
+      s = step(s, d[i])
+    }
+  } else {
+    s = linear(d)
+  }
+  let t = clock.now() - start
+  os.stdio.println("input=${n} work_ns=${t.nanos()} sum=${s}")
+}
