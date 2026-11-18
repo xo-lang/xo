@@ -320,9 +320,30 @@ func dnfAnswer(q []byte, cases []dnfCase, tcp bool) []byte {
 		m = append(m, a...)
 	}
 	if c.change != nil {
+		orig := append([]byte(nil), m...)
 		m = c.change(m, qend)
+		if dnfReadsID(m, qend) {
+			// a name that may run into the ID would parse by the ID each
+			// resolver picks at random (seed 133 case 121, 2026-11-17: a
+			// changed byte made a pointer to offset 44 whose name ended
+			// at a pointer to offset 0; Go and Xo agreed on 3 of 8 runs)
+			m = orig
+		}
 	}
 	return m
+}
+
+// dnfReadsID reports whether a reply's records past the question at q hold
+// two bytes that read as a compression pointer to offset 0 or 1, the ID:
+// a name walk reaches the ID only through one (labels go forward), so
+// without one a reply means the same whatever ID the query had.
+func dnfReadsID(m []byte, q int) bool {
+	for i := q; i+1 < len(m); i++ {
+		if m[i] == 0xC0 && m[i+1] < 2 {
+			return true
+		}
+	}
+	return false
 }
 
 func dnfServe(t *testing.T, cases []dnfCase) (string, func()) {
