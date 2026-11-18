@@ -1,6 +1,6 @@
 # 0616: The testing evidence for a Proven std module
 
-Status: Accepted (owner, 2026-11-12); amended by 0708 (evidence may come from linux/amd64). Proposed by Xo Lang 3, 2026-11-12, at the lead's request; the owner set std maturity to Proven as the std track on 2026-11-12).
+Status: Accepted (owner, 2026-11-12); amended by 0708 (evidence may come from linux/amd64) and 0717 (stress mark at minutes 15 to 17, memory bar on 2 of 3 runs). Proposed by Xo Lang 3, 2026-11-12, at the lead's request; the owner set std maturity to Proven as the std track on 2026-11-12).
 
 ## Context
 
@@ -69,7 +69,7 @@ regression case, then a new run.
   samples resident memory every 10 s. Pass: no mismatch, no fault, and
   resident memory after the first 5 minutes grows by under 10% (no leak
   under load; amended 2026-11-17, owner, xw answer 68: the growth is
-  the median of the samples of minutes 5 to 7 against the median of the
+  the median of the samples of minutes 5 to 7 (minutes 15 to 17 and 2 of 3 runs since 0717) against the median of the
   last 3 minutes' samples, the same 10% bar, so one dip or spike does not
   decide: amqp's llvm run failed on a single dip at the mark, 211 MB
   against a 217 to 230 MB plateau; internal/stdtest TestStressRssMedians),
