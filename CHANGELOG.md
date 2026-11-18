@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - Perf: `path.is_match` reads an ASCII byte of a byte class or `?` without a rune decode (bench/perf/path match 1.07 of Go on linux/amd64; task #302).
+- Perf: `--check=guard` (XO_HEAP_GUARD) keeps up to 16 released guarded mappings of 1 MiB or less per thread and gives one to the next record of its exact size, instead of an munmap and an mmap for each large record; many tasks allocating under `--check=all` no longer queue on the process's mmap lock (std/migrate's stress tripped XO-F005 that way; task #309). The overrun check is unchanged.
 - Perf: a loop index stepping down from below the length (`var i = b.len() - 1; while i >= 0 { b[i]; i -= 1 }`) needs no bounds check on arm64 and x86-64, as in Go (std/path's last_slash, base, dir and split; task #302).
 - Perf: `List.sort` of Strs sorts Int keys made from the strings' bytes with pdqsort, about twice as fast on 2M strings, as fast as Go's slices.Sort on bench/perf/sort (task #302).
 - Feature (std/grpc): `Client.with_idle_keepalive(tasks, clock)` sends the client's keepalive pings with no call open too (grpc-go's PermitWithoutStream true), through std/http's `Client.with_idle_pings`.

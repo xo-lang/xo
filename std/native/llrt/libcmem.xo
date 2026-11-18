@@ -281,8 +281,17 @@ pub fn realloc(p: Int, n: Int) -> Int {
 /// rt.tlocal: the thread's cache record (sched.xo lists the table's
 /// words), or 0.
 const TLS_CACHE = 14
-/// A class's free list head at 16 * class, its count at 16 * class + 8.
-const CACHE_SIZE = 288
+/// A class's free list head at 16 * class, its count at 16 * class + 8;
+/// after the classes, guard_large's released mappings (G_HEAD, G_COUNT).
+const CACHE_SIZE = 304
+/// The thread's released guard mappings (XO_HEAP_GUARD=1): a list linked
+/// through each mapping's second word, and its length.
+const G_HEAD = 288
+const G_COUNT = 296
+/// At most G_KEEP mappings of at most G_KEEP_MAX bytes each are kept per
+/// thread (2 MiB with the 128 KiB mapping of a record up to 64 KiB).
+const G_KEEP = 16
+const G_KEEP_MAX = 1048576
 const CACHE_MAX = 64
 const CACHE_BATCH = 32
 
@@ -466,7 +475,10 @@ fn guard_large(n: Int) -> Int {
   let n8 = addw(n, 7) & subw(0, 8)
   var size = addw(addw(n8, 32), pool.GUARD_PAGE - 1) & subw(0, pool.GUARD_PAGE)
   size = addw(size, pool.GUARD_PAGE)
-  let m = pool.guard_map(size)
+  var m = guard_reuse(size)
+  if m == 0 {
+    m = pool.guard_map(size)
+  }
   if m == 0 {
     return 0
   }
@@ -487,11 +499,58 @@ fn guarded(b: Int) -> Bool {
   rt.mem_load(subw(b, 16), 0, 8) == GUARD_MAGIC
 }
 
-/// Unmaps guard_large's block whose prefix is at b.
+/// Gives back guard_large's block whose prefix is at b: its mapping joins
+/// the thread's released ones, its guard page still inaccessible, or is
+/// unmapped when it is over G_KEEP_MAX. Each map, protect and unmap
+/// takes the process's mmap lock for writing: migrate's stress under
+/// --check=all, 64 tasks making and freeing records, waited on it until a
+/// shielded defer passed 5 s (XO-F005, task #309). A use after the free
+/// is the free check's to find (decision 0484), not the guard's.
 fn guard_release(b: Int) {
   let m = rt.mem_load(subw(b, 8), 0, 8)
   rt.mem_store(subw(b, 16), 0, 0, 8)
-  pool.guard_unmap(m, rt.mem_load(m, 0, 8))
+  let size = rt.mem_load(m, 0, 8)
+  let t = if size <= G_KEEP_MAX { cache() } else { 0 }
+  if t == 0 {
+    pool.guard_unmap(m, size)
+    return
+  }
+  rt.mem_store(m, 8, rt.mem_load(t, G_HEAD, 8), 8)
+  rt.mem_store(t, G_HEAD, m, 8)
+  let k = addw(rt.mem_load(t, G_COUNT, 8), 1)
+  if k <= G_KEEP {
+    rt.mem_store(t, G_COUNT, k, 8)
+    return
+  }
+  // one too many: unmap the oldest, the list's last
+  var p = m
+  while rt.mem_load(rt.mem_load(p, 8, 8), 8, 8) != 0 {
+    p = rt.mem_load(p, 8, 8)
+  }
+  let last = rt.mem_load(p, 8, 8)
+  rt.mem_store(p, 8, 0, 8)
+  pool.guard_unmap(last, rt.mem_load(last, 0, 8))
+}
+
+/// A released guard mapping of size bytes the thread keeps (taken off its
+/// list), or 0.
+fn guard_reuse(size: Int) -> Int {
+  let t = rt.tlocal_get(TLS_CACHE)
+  if t == 0 {
+    return 0
+  }
+  var prev = addw(t, subw(G_HEAD, 8))
+  var m = rt.mem_load(t, G_HEAD, 8)
+  while m != 0 {
+    if rt.mem_load(m, 0, 8) == size {
+      rt.mem_store(prev, 8, rt.mem_load(m, 8, 8), 8)
+      rt.mem_store(t, G_COUNT, subw(rt.mem_load(t, G_COUNT, 8), 1), 8)
+      return m
+    }
+    prev = m
+    m = rt.mem_load(m, 8, 8)
+  }
+  0
 }
 
 /// rt.heap_large: a block of n bytes for the runtime's records, its

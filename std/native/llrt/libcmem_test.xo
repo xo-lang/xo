@@ -38,6 +38,22 @@ test "a guarded record ends against its guard" {
   }
 }
 
+test "a released guarded record's mapping is kept for the next record" {
+  if guard_on() {
+    let b = heap_large(296)
+    let m = rt.mem_load(b - 16, 0, 8)
+    let size = rt.mem_load(m, 0, 8)
+    heap_release(b - 8)
+    // still mapped (an unmapped one faults here), and the next record of
+    // its size takes it with no new mapping (task #309)
+    expect(rt.mem_load(m, 0, 8)) == size
+    let c = heap_large(300)
+    expect(rt.mem_load(c - 16, 0, 8)) == m
+    expect(c + 304) == m + size - pool.GUARD_PAGE
+    heap_release(c - 8)
+  }
+}
+
 test "a resize keeps a block whose prefix word is data" {
   // raw.c_resize's blocks: used from their malloc'd address, word 0 data
   // (with XO_HEAP_GUARD=1 the resize once read it as the size)
