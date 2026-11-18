@@ -911,7 +911,10 @@ func TestRaceOrphanScope(t *testing.T) {
 // unlink stored its N_PREV into the freed block. The race reports of
 // TestRaceOrphanScope on host 2 were that write meeting the block's
 // next owner. scope_free now unlinks the nodes first; XO_FREE_CHECK
-// catches the old write on every run.
+// catches the old write on every run. The leak check (task #344): an
+// orphaned scope freed by its last unit left its ended tasks' records
+// live (scope_close releases its task list, scope_free did not), one per
+// dropped stream: 400 live in orphan_test.xo before the fix.
 func TestFreeCheckOrphanScope(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program")
@@ -920,10 +923,10 @@ func TestFreeCheckOrphanScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := testtmp.Guard(exec.Command(xo, "test", "--check=free,guard", "--count=1", "."))
+	cmd := testtmp.Guard(exec.Command(xo, "test", "--check=all", "--count=1", "."))
 	cmd.Dir = filepath.Join("testdata", "race_orphan")
 	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("xo test --check=free,guard: %v\n%s", err, b)
+		t.Fatalf("xo test --check=all: %v\n%s", err, b)
 	}
 }
 

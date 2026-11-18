@@ -888,6 +888,17 @@ pub fn scope_free(s: Int) {
   if ld(s, S_BODY + layout.N_PARENT) != 0 {
     scope_unlink(s)
   }
+  // the tasks a close would release (scope_close's list walk): a scope
+  // freed unclosed (scope_orphan) still lists them, every one ended, and
+  // left them live, one record per dropped stream (task #344); a closed
+  // scope's list is empty
+  var list = ld(s, S_LIST)
+  st(s, S_LIST, 0)
+  while list != 0 {
+    let next = ld(list, T_SNEXT)
+    h_release(list)
+    list = next
+  }
   budget.release(ld(s, S_BUD))
   if ld(s, S_FAIL) != 0 {
     h_release(ld(s, S_FAIL))

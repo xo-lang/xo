@@ -57,3 +57,18 @@ with #326's unconditional unlink).
 
 A runtime record that sits in a shared intrusive list must leave the
 list in its free function, not only on its normal close path.
+
+## Follow-up: the orphan's ended tasks stayed live (2026-11-18, task #344)
+
+`xo test --check=leak` in `testdata/race_orphan` reported 400 live of
+16412 allocations, one per dropped stream. `xo test --profile=heap` with
+`XO_PROF_HEAP_RATE=1` put the live blocks at open_mem's
+`spawn_background`: the task records. `scope_close` releases the
+scope's task list (`S_LIST`); `scope_free`, the orphan's path, did not.
+It now releases them too (a closed scope's list is already empty).
+late_test.xo's other live blocks were handlers still running at the
+test's end; its tests now wait for their handlers. Test: internal/llvm
+TestFreeCheckOrphanScope, now `--check=all` (leak included).
+
+A free function for a record that a close also tears down must release
+everything the close releases; compare the two side by side.

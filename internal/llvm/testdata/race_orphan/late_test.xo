@@ -26,11 +26,16 @@ test "a stream function's capture freed at exit after a task wrote it" {
 
 test "a handler ends after its stream was dropped unclosed" {
   let gate = Chan[Int].new(cap: 1)
+  // each handler's end, so the test ends with none in flight: the leak
+  // check (TestFreeCheckOrphanScope) counts what the ended ones left
+  let ended = Chan[Int].new(cap: 20)
   os.net.handle("GET https://late.test/g", fn(_r: http.Request) -> http.Response {
     http.stream(200, fn(w: http.BodyWriter) -> () ! IoErr {
       w.write("x".bytes())?
       let _g = gate.recv()
-      w.write("y".bytes())
+      let r = w.write("y".bytes())
+      ended.send(1)
+      r
     })
   })
   let c = http.client(os.net)
@@ -45,10 +50,14 @@ test "a handler ends after its stream was dropped unclosed" {
     }
     gate.send(1)
   }
+  for _ in 0..20 {
+    let _e = ended.recv()
+  }
   expect(n) == 20
 }
 
 test "a spinning handler outlives its dropped stream" {
+  let ended = Chan[Int].new(cap: 4)
   os.net.handle("GET https://late.test/p", fn(_r: http.Request) -> http.Response {
     http.stream(200, fn(w: http.BodyWriter) -> () ! IoErr {
       w.write("x".bytes())?
@@ -56,7 +65,9 @@ test "a spinning handler outlives its dropped stream" {
       for i in 0..30000000 {
         k = k.wrapping_add(i * i)
       }
-      w.write(if k == 1 { "z" } else { "y" }.bytes())
+      let r = w.write(if k == 1 { "z" } else { "y" }.bytes())
+      ended.send(1)
+      r
     })
   })
   let c = http.client(os.net)
@@ -69,6 +80,9 @@ test "a spinning handler outlives its dropped stream" {
       }
       Err(_) => {}
     }
+  }
+  for _ in 0..4 {
+    let _e = ended.recv()
   }
   expect(n) == 4
 }
