@@ -1,18 +1,18 @@
 kind: perf
 module: websocket
-result: fail
-commit: 117bb3891
-source: c8b61576b3c98a8b0216221b2096284e461ffba6b5ead05f712a057dc0bcb388
-date: 2026-11-15
-host: linux/arm64 host 1
-command: go run ./scripts/stdproven perf -rounds 9 -host "linux/arm64 host 1" websocket
-measure: 4 cases of 1 twin directories, worst Xo / Go 1.085 over the cases above 5 ms (Proven at or under 1.05), 6s
+result: pass
+commit: 8b0b348a0
+source: e8b70b2694fdfff0e727b692d621c86390c8e89da89dabbee02cd0dbd214296b
+date: 2026-11-18
+host: linux/amd64 host
+command: go run ./scripts/stdproven perf -rounds 9 -host "linux/amd64 host" websocket
+measure: 4 cases of 1 twin directories, worst Xo / Go 0.925 over the cases above 5 ms (Proven at or under 1.05), 18s
 
 Performance against Go (decisions 0461, 0616): scripts/twincheck -time 9 over bench/perf/websocket; medians of wall time, the two programs alternating.
 
 | workload | Go ms | Xo ms | Xo / Go |
 |---|---|---|---|
-| bench/perf/websocket/none (under 5 ms: startup) | 1.0 | 0.9 | 0.868 |
-| bench/perf/websocket/small | 75.9 | 82.4 | 1.085 |
-| bench/perf/websocket/big | 112.3 | 43.2 | 0.384 |
-| bench/perf/websocket/dial | 47.3 | 33.1 | 0.700 |
+| bench/perf/websocket/none (under 5 ms: startup) | 3.2 | 2.2 | 0.696 |
+| bench/perf/websocket/small | 280.8 | 259.7 | 0.925 |
+| bench/perf/websocket/big | 359.6 | 127.2 | 0.354 |
+| bench/perf/websocket/dial | 186.8 | 169.5 | 0.907 |
