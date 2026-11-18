@@ -350,6 +350,30 @@ func TestPgFuzz(t *testing.T) {
 		t.Logf("case %d: %s", i, cases[i].note)
 		return
 	}
+	pgfDiff(t, cases, backends, seed)
+}
+
+// TestPgInvalidName: a column name that is not UTF-8 (`c0\x80`) is
+// U+FFFD in both clients' types lines, as in their Row lines; the
+// reference printed the raw byte (TestPgFuzz seed 3 case 1528, task #152).
+func TestPgInvalidName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds pgx and the Xo client")
+	}
+	one := "1"
+	kinds := []pgfKind{pgfKinds[2]} // int4
+	desc := pgfRowDesc([]string{"c0\x80"}, kinds, 1)
+	done := [][]byte{pgfMsg('C', pgfCstr(nil, "SELECT 1")), pgfReady}
+	cases := []pgfCase{{msgs: append([][]byte{desc, pgfDataRow([]*string{&one})}, done...)}}
+	pgfDiff(t, cases, []string{"arm64"}, 0)
+}
+
+// pgfDiff serves cases to the reference and to the Xo client on each
+// backend and fails on any case whose answers differ (a changed case's
+// refusal by Xo aside).
+func pgfDiff(t *testing.T, cases []pgfCase, backends []string, seed int64) {
+	t.Helper()
+	n := len(cases)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

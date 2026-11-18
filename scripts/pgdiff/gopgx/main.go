@@ -481,7 +481,8 @@ func colTypes(fs []pgconn.FieldDescription) string {
 			mod := f.TypeModifier - 4
 			ps = fmt.Sprintf("%d,%d", (mod>>16)&0xffff, mod&0xffff)
 		}
-		out = append(out, fmt.Sprintf("%s:%s:%s:%s", f.Name, name, length, ps))
+		// Xo's Str holds UTF-8: a name that is not is U+FFFD there, as in the Row line
+		out = append(out, fmt.Sprintf("%s:%s:%s:%s", strings.ToValidUTF8(f.Name, "\uFFFD"), name, length, ps))
 	}
 	return "types " + strings.Join(out, " ")
 }
