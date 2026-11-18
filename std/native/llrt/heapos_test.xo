@@ -28,6 +28,22 @@ test "a block grown past 1 MiB reuses the mapping its last growth made" {
   release(held - 8)
 }
 
+test "a freed block over 64 MiB of a wanted size stays in the cache up to the peak" {
+  // Str.repeat to 160 MB ten times (bench/perf/repeat on linux/amd64):
+  // each dropped result was unmapped, the next one mapped and faulted in
+  let mb = 1048576
+  expect(keeps(0, 0, 160 * mb, 160 * mb, 320 * mb, true))
+  expect(keeps(1, 160 * mb, 160 * mb, 0, 320 * mb, true))
+  // past the peak, or a size nobody asked for: unmapped as before
+  expect(!keeps(2, 320 * mb, 160 * mb, 0, 320 * mb, true))
+  expect(!keeps(0, 0, 160 * mb, 160 * mb, 320 * mb, false))
+  // under CACHE_MAX the rules are 0448's and 0492's
+  expect(keeps(0, 0, mb, 8 * mb, 8 * mb, false))
+  expect(!keeps(0, 0, 4 * mb, 8 * mb, 8 * mb, false))
+  expect(keeps(0, 0, 4 * mb, 8 * mb, 8 * mb, true))
+  expect(!keeps(16, 0, mb, 8 * mb, 8 * mb, true))
+}
+
 test "an age pass marks a free page block and the next gives its pages back" {
   // decision 0533: the first pass that finds a block free marks it PSEEN,
   // the next one advises it (PADVISED), and its free clears both

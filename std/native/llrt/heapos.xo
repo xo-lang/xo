@@ -422,7 +422,7 @@ fn keep(m: Int, size: Int) -> Bool {
   // (coll putget max RSS 8.3 MB with the cache, 5.2 without), while xo's
   // builds, with far more in use, keep the cache's reuse (without any
   // cache their linux/arm64 edit builds ran 1.04 to 1.07x)
-  if k >= CACHE_N || bytes.wrapping_add(size) > CACHE_MAX || (bytes.wrapping_add(size) > (membudget.mapped() >> 2) && !(target.arch == TargetArch.Amd64 && wanted(t, size))) {
+  if !keeps(k, bytes, size, membudget.mapped(), membudget.peak(), target.arch == TargetArch.Amd64 && wanted(t, size)) {
     clock_give()
     return false
   }
@@ -443,6 +443,28 @@ fn keep(m: Int, size: Int) -> Bool {
   }
   clock_give()
   true
+}
+
+/// Whether the cache, holding k mappings of bytes bytes, keeps one more
+/// of size bytes, with mapped bytes in use and peak the most there have
+/// been: at most CACHE_N mappings and CACHE_MAX bytes, and a quarter of
+/// those in use (decision 0448), the quarter waived for a size the
+/// program asked for recently on amd64 (want: decision 0492). Past
+/// CACHE_MAX only a wanted size, while the cache holds no more than the
+/// program's peak: a program that makes and drops blocks over 64 MiB of
+/// one size (Str.repeat to 160 MB, bench/perf/repeat) otherwise mapped
+/// and faulted in every one, 819,423 faults and 1.44 s of system time
+/// against Go's 179,780 and 0.41 s on linux/amd64 (3.2 times Go's wall,
+/// 2026-11-18), where Go's heap keeps them.
+pub fn keeps(k: Int, bytes: Int, size: Int, mapped: Int, peak: Int, want: Bool) -> Bool {
+  let total = bytes.wrapping_add(size)
+  if k >= CACHE_N {
+    return false
+  }
+  if total > CACHE_MAX && !(want && total <= peak) {
+    return false
+  }
+  !(total > (mapped >> 2) && !want)
 }
 
 /// Whether a mapping of size bytes could serve one of the sizes the

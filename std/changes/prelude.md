@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-11-18: perf: Str.repeat of over 64 MiB, made and dropped again, reuses its mapping
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/repeat on linux/amd64: byte1 3.2 of Go's strings.Repeat, 819,422 page faults and 1.16 s of system time against Go's 74,083)
+- Go reference: none (Go's heap keeps the freed spans)
+- Measured: linux/amd64 host, medians of 5: byte1 1249 to 397 ms (Go 393, 1.010 of Go), byte3 1128 to 358 ms (Go 369, 0.970); faults 819,422 to 164,046
+- Test: std/native/llrt heapos_test "a freed block over 64 MiB of a wanted size stays in the cache up to the peak"
+- Shipped in: not yet released
+
+The native heap's cache of freed large mappings kept none over its 64
+MiB budget, so a program that builds and drops a 160 MB string ten times
+mapped and faulted in each one. A mapping of a size the program asked
+for recently is now kept past the budget while the cache holds no more
+than the program's peak use.
+
 ## 2026-11-18: perf: Str.trim_chars reads its cutset byte and the text's base once
 
 - Kind: perf
