@@ -135,6 +135,24 @@ pub fn parse_int(s: Str) -> Int? {
       return None
     }
   }
+  if n - i < 19 {
+    // strconv.Atoi's fast path: fewer than 19 digits cannot overflow, so
+    // no range test and wrapping arithmetic (task #302: bench/perf/strconv
+    // atoi 1.2 of Go on the Mac with the checked loop below)
+    var v = 0
+    while i < n {
+      let c = Int(b[i]).wrapping_sub(48)
+      if c < 0 || c > 9 {
+        return None
+      }
+      v = v.wrapping_mul(10).wrapping_add(c)
+      i += 1
+    }
+    if neg {
+      return Some(0.wrapping_sub(v))
+    }
+    return Some(v)
+  }
   var v = 0
   while i < n {
     let c = Int(b[i]) - 48

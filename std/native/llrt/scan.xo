@@ -725,7 +725,18 @@ pub fn trim_chars(s: Str, chars: Str) -> Str {
   }
   let (lo, hi, ascii) = ascii_set_partial(cb)
   if ascii {
-    return trim_start_ascii(trim_end_ascii(s, lo, hi), lo, hi)
+    // both ends in one frame and one view, as the one byte path (task
+    // #302: two calls and two views were 1.62 of Go's Trim on amd64)
+    let b = s.bytes()
+    var hi2 = b.len()
+    while hi2 > 0 && in_set(lo, hi, Int(b[hi2 - 1])) {
+      hi2 -= 1
+    }
+    var lo2 = 0
+    while lo2 < hi2 && in_set(lo, hi, Int(b[lo2])) {
+      lo2 += 1
+    }
+    return rt.str_view(s, lo2, hi2)
   }
   trim_start_unicode(trim_end_unicode(s, chars, lo, hi), chars, lo, hi)
 }

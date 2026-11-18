@@ -4580,3 +4580,66 @@ test "list_sort: Strs with long shared prefixes, NULs, high bytes and duplicates
   }
   expect(same.sort() == str_sort_ref(same))
 }
+
+// Int.parse (task #302): fewer than 19 digits take strconv.Atoi's fast
+// path without range tests, 19 or more the checked loop.
+test "Int.parse: signs, bad bytes and the 18, 19 and 20 digit edges" {
+  expect(Int.parse("")) == None
+  expect(Int.parse("-")) == None
+  expect(Int.parse("+")) == None
+  expect(Int.parse("+7")) == Some(7)
+  expect(Int.parse("-0")) == Some(0)
+  expect(Int.parse("12a")) == None
+  expect(Int.parse("1/")) == None
+  expect(Int.parse(":1")) == None
+  expect(Int.parse(" 1")) == None
+  expect(Int.parse("999999999999999999")) == Some(999999999999999999)
+  expect(Int.parse("-999999999999999999")) == Some(-999999999999999999)
+  expect(Int.parse("9223372036854775807")) == Some(9223372036854775807)
+  expect(Int.parse("-9223372036854775808")) == Some(Int.min)
+  expect(Int.parse("9223372036854775808")) == None
+  expect(Int.parse("-9223372036854775809")) == None
+  expect(Int.parse("99999999999999999999")) == None
+  expect(Int.parse("000000000000000000042")) == Some(42)
+}
+
+fn itoa_ref(v: Int) -> Str {
+  if v == Int.min {
+    return "-9223372036854775808"
+  }
+  var u = if v < 0 { -v } else { v }
+  var ds: List[Str] = []
+  while true {
+    ds.push(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][u % 10])
+    u = u / 10
+    if u == 0 {
+      break
+    }
+  }
+  var s = if v < 0 { "-" } else { "" }
+  var i = ds.len() - 1
+  while i >= 0 {
+    s = s + ds[i]
+    i -= 1
+  }
+  s
+}
+
+// Int interpolation (task #302): the digit count is the bit length times
+// log10(2) and one compare with a power of ten, so every power of ten and
+// the numbers either side of it, both signs.
+test "Int text: each side of every power of ten, both signs, and the ends" {
+  var p = 1
+  for _ in 0..19 {
+    for v in [p - 1, p, p + 1, -(p - 1), -p, -(p + 1)] {
+      expect("${v}") == itoa_ref(v)
+    }
+    if p > Int.max / 10 {
+      break
+    }
+    p = p * 10
+  }
+  for v in [Int.max, Int.min, Int.min + 1, 0, 7, -7, 1 << 27, 134217727, 134217728] {
+    expect("${v}") == itoa_ref(v)
+  }
+}

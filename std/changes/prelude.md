@@ -17,6 +17,22 @@ It merged indices compared by 8 byte prefixes, reading each string at
 random. Equal strings cannot be told apart, so the order of ties is not
 seen. bench/perf/sort strs on the Mac: 0.962 of Go (1.418 before); 2M
 strings 0.34 s (0.72 s before; Go 0.34 s).
+## 2026-11-17: perf: Int.parse fast path and Str.trim_chars one pass
+
+- Kind: perf
+- Commit: this push
+- Found by: task #302 (std performance to Proven: atoi 1.46 and trim_chars 1.62 of Go on amd64)
+- Go reference: strconv.Atoi's fast path for fewer than 19 digits (strconv/atoi.go); strings.Trim's ASCII set path
+- Test: internal/arm64 TestTextCost (instruction ceilings); std/native/prelude_test.xo "Int.parse: signs, bad bytes and the 18, 19 and 20 digit edges" and "Int text: each side of every power of ten, both signs, and the ends"
+- Shipped in: not yet released
+
+`Int.parse` of fewer than 19 digits accumulates with no overflow test,
+as strconv.Atoi does (no such number overflows), and keeps the checked
+loop for longer ones: 3,000,000 parses on the Mac ran 370M instructions
+where they ran 540M. `Str.trim_chars` with an ASCII cutset trims both
+ends in one frame and returns one view, where it trimmed the end, made a
+view, and trimmed the start of that: 6,000,000 trims ran 774M
+instructions where they ran 801M.
 
 ## 2026-11-17: perf: List[UInt32].filled fills in bulk
 
