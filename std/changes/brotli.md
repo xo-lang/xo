@@ -1,5 +1,20 @@
 # std/brotli changes
 
+## 2026-11-18: perf: decoding inlines the bit reader's fast path
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/brotli text decode about 1.2 of Go)
+- Go reference: andybalholm/brotli bit_reader.go (the inlined fast paths of getBits and dropBits)
+- Measured: host 1 `xo bench --ab` text decode wall 0.909 (0.884 to 0.909); Mac 5000 text decodes 1.72 to 1.51 s, mixed 0.795 to 0.688 s
+- Test: brotli module tests; test/codegen/faultexit (no call to a small padded reader left in its caller)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+peek_bits and drop_bits keep their refill and need_bytes paths in
+fill_bits and drop_bits_more, out of line, and the arm64 inliner now
+takes the rest at each call site (decision 0716).
+
 ## 2026-11-18: perf: quality 10 and 11 encode prices commands once per copy code (task #271)
 
 - Kind: perf

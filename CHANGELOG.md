@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - Fix (std/term): `Terminal.read_line` drops a byte that is not UTF-8 and reads on, as golang.org/x/term does; it read until the input ended and answered Eof.
+- Perf: the arm64 inliner sizes a function with landing pads without the blocks only a fault runs, and inlines a small one at up to 8 call sites (decision 0716); std/brotli decodes text 9% faster on linux/arm64 (host 1 `--ab` 0.909), 12 to 14% on the Mac; xo itself is 2.8% larger.
 - Fix (std/protoparse): `parse` rejects a `required` field in an `extend` block, as protocompile does ("extension NAME: extension fields cannot be 'required'").
 - Fix (std/debug): the `/sched` page reports each runtime counter from its own slot; since 2026-11-17 (unreleased) it read past the counters' record from the 7th counter on (wrong values, a fault under `--check=guard`, a use after free under `--race`).
 - Fix (native runtime): two tasks accepting on one listener at once (or waiting to read one descriptor) both work: the second waiter took the descriptor's one wait slot, so a connection woke only it and the first accept waited forever. Later waiters now queue behind the first and every waiter of a side wakes to look again (golden net_accept_two: 20 of 40 echoes lost before).

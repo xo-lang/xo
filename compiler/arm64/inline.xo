@@ -40,6 +40,12 @@ const INLINE_FIND_INSTRS = 52
 /// takes its tail callee in as before.
 const INLINE_TAIL_MAX = 8
 const INLINE_MAX_BLOCKS = 12
+
+/// The most sites at which a function with landing pads within
+/// INLINE_MAX_INSTRS and INLINE_MAX_BLOCKS is inlined: each copy takes
+/// its fault exit along (std/brotli's peek_bits and drop_bits have 5 and
+/// 7; 2026-11-18).
+const INLINE_PADDED_SITES = 8
 /// A larger function with at most this many call sites, whose copies
 /// stay within the budget (inline.go inlineFewSites).
 const INLINE_FEW_SITES = 2
@@ -432,8 +438,23 @@ fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (M
           // updates a list in place: copied, the verifier no longer
           // proves the list unique (sums_of's pushes in a task scope)
           small[f.name] = true
+        } else if !c.hard && !c.bad && !sums[fi].coldrel && (sites.get(f.name) ?? 0) <= INLINE_PADDED_SITES && c.instrs <= INLINE_MAX_INSTRS && c.blocks <= INLINE_MAX_BLOCKS && !updates_in_place(sums[fi]) {
+          // within the limits of a function without pads, at any site:
+          // its size leaves out the blocks only a fault runs (fn_sum),
+          // so a copy grows the program by its fault exit only
+          // (std/brotli's peek_bits and drop_bits, 20 and 36, were calls
+          // from read_symbol and read_distance; 2026-11-18)
+          small[f.name] = true
         } else if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
           padded[f.name] = true
+          if !c.bad && !sums[fi].coldrel && !updates_in_place(sums[fi]) {
+            // and at a call in a loop, as a function without pads: its
+            // size leaves out the blocks only a fault runs (fn_sum), so
+            // the copies grow the program by their fault exits only
+            // (std/brotli's peek_bits, drop_bits and read_bits were calls
+            // in the decoder's loops, text 1.22 of Go; 2026-11-18)
+            loopy[f.name] = true
+          }
         }
       } else if !c.bad && c.few {
         fewl[f.name] = true

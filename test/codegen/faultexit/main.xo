@@ -1,0 +1,62 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a function with
+// landing pads is sized without the blocks only a fault runs (compiler/
+// arm64 inlsum.xo fault_blocks), so a small one taking a large `var`
+// struct, whose fault exit builds the struct's zero value, is inlined at
+// every site (std/brotli's peek_bits and drop_bits, 2026-11-18). One whose
+// fault exit releases a part of a parameter that is not `var` stays a
+// call (inlsum.xo coldrel; xo's own std/format effect_name did not
+// verify inlined, which the self build's XO_INLINE_STRICT=1 shows).
+
+struct Bits {
+  data: Bytes
+  next: Int = 0
+  acc: Int = 0
+  acc_n: Int = 0
+  a: Str = ""
+  b: Str = ""
+  c: List[Int] = []
+  d: List[Int] = []
+  e: List[Str] = []
+  f: Map[Str, Int] = {}
+}
+
+fn peek(var d: Bits, n: Int) -> Int {
+  if d.acc_n < n {
+    fill(d)
+  }
+  d.acc & ((1 << n) - 1)
+}
+
+fn fill(var d: Bits) {
+  while d.acc_n <= 48 {
+    if d.next < d.data.len() {
+      d.acc = d.acc | (Int(d.data[d.next]) << d.acc_n)
+    }
+    d.acc_n += 8
+    d.next += 1
+  }
+}
+
+fn drop_n(var d: Bits, n: Int) {
+  d.acc = d.acc >> n
+  d.acc_n -= n
+}
+
+// Sites outside loops too.
+fn sym(var d: Bits) -> Int {
+  // arm64: -"bl _?xo_f_peek\n" -"bl _?xo_f_drop__n\n"
+  let x = peek(d, 3)
+  drop_n(d, 3)
+  let y = peek(d, 5)
+  drop_n(d, 5)
+  x * 32 + y
+}
+
+fn main(os: Os) {
+  var d = Bits{data: Bytes.from_list([0x5a, 0xc3, 0x11, 0xfe, 0x42, 0x07, 0x99, 0x10, 0x01])}
+  var t = 0
+  for _ in 0..4 {
+    t = t * 7 + sym(d)
+  }
+  os.stdio.println("${t}")
+}

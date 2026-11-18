@@ -11,7 +11,7 @@
 
 use github.com/xo-lang/xo/compiler/ssa
 
-const INLINE_SUM_VERSION = "xo inline sum v3"
+const INLINE_SUM_VERSION = "xo inline sum v5"
 
 /// See the file comment; inline_walk reads it in the order of the body.
 pub struct FnSum {
@@ -24,6 +24,11 @@ pub struct FnSum {
   /// a value with a landing pad; a list.set or list.take call with one
   pads: Bool = false
   badpad: Bool = false
+  /// a block only a fault runs releases a part of a parameter (a match's
+  /// payload, std/format's effect_name): copied where the argument is a
+  /// borrowed value (a list's element), that move does not verify, so
+  /// the padded rules that leave the fault blocks out of the size skip it
+  coldrel: Bool = false
   /// the calls' names, in the order of the blocks and their values
   calls: List[Str] = []
   /// for each of calls, whether it is a tail call (inline.xo tail_at)
@@ -42,9 +47,30 @@ pub struct FnSum {
 /// The summary of f's body.
 pub fn fn_sum(f: ssa.Func) -> FnSum {
   var s = FnSum{blocks: f.blocks.len(), indirect: f.indirect, catches: f.catches, nres: f.results.len()}
-  for bl in f.blocks {
+  let cold = fault_blocks(f)
+  for (bi, bl) in f.blocks.indexed() {
     if !bl.instrs.is_empty() && f.values[bl.instrs[bl.instrs.len() - 1]].op == ssa.Op.Return {
       s.rets += 1
+    }
+    if cold[bi] {
+      // only a fault runs it: its pads count, its size does not (a
+      // `var` struct parameter's fault exit builds the struct's zero
+      // value, 75 values for std/brotli's Dec, which kept peek_bits, 10
+      // values of its own, out of the inliner; 2026-11-18)
+      s.blocks -= 1
+      for v in bl.instrs {
+        let x = f.values[v]
+        if ssa.pad_of(x.pi) >= 0 && x.op == ssa.Op.Call && (f.name_of(x) is "list.set" | "list.take") && ssa.has_pos(x.lp) {
+          s.badpad = true
+        }
+        if ssa.pad_of(x.pi) >= 0 {
+          s.pads = true
+        }
+        if x.op == ssa.Op.Release && !x.args.is_empty() && param_part(f, f.arg(x.args, 0)) {
+          s.coldrel = true
+        }
+      }
+      continue
     }
     s.adc += adc_pairs(f, bl.instrs)
     var prev = -1
@@ -87,6 +113,77 @@ pub fn fn_sum(f: ssa.Func) -> FnSum {
     }
   }
   s
+}
+
+/// Whether v is a field or payload, at any depth, of one of f's
+/// parameters other than its `var` ones.
+fn param_part(f: ssa.Func, v0: Int) -> Bool {
+  var v = v0
+  for _ in 0..16 {
+    if v < 0 || v >= f.values.len() {
+      return false
+    }
+    let x = f.values[v]
+    if x.op == ssa.Op.Param {
+      // a `var` parameter's argument is the caller's own, which the
+      // copy may release (std/brotli's drop_bits, a Dec)
+      let i = f.blocks[0].params.index_of(v) ?? -1
+      return ssa.block_of(x.tb) == 0 && i >= 0 && !f.var_params.contains(i)
+    }
+    if (x.op != ssa.Op.Field && x.op != ssa.Op.Payload) || x.args.is_empty() {
+      return false
+    }
+    v = f.arg(x.args, 0)
+  }
+  false
+}
+
+/// The blocks only a fault runs: one that calls rt.fault_continue, the
+/// blocks after it, and a block (not the entry) whose every successor is
+/// one of those (a landing's releases before the jump to the fault exit).
+fn fault_blocks(f: ssa.Func) -> List[Bool] {
+  let n = f.blocks.len()
+  var cold: List[Bool] = []
+  var succ: List[List[Int]] = []
+  var work: List[Int] = []
+  for (bi, bl) in f.blocks.indexed() {
+    var c = false
+    for v in bl.instrs {
+      if f.values[v].op == ssa.Op.Call && f.name_of(f.values[v]) == "rt.fault_continue" {
+        c = true
+      }
+    }
+    cold.push(c && bi != 0)
+    if c && bi != 0 {
+      work.push(bi)
+    }
+    var out: List[Int] = []
+    if !bl.instrs.is_empty() {
+      for e in f.values[bl.instrs[bl.instrs.len() - 1]].succs() {
+        out.push(f.edges[e].to)
+      }
+    }
+    succ.push(out)
+  }
+  while let Some(b) = work.pop() {
+    for t in succ[b] {
+      if t != 0 && !cold[t] {
+        cold[t] = true
+        work.push(t)
+      }
+    }
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for b in 1..n {
+      if !cold[b] && !succ[b].is_empty() && succ[b].all(fn(t: Int) -> Bool { cold[t] }) {
+        cold[b] = true
+        changed = true
+      }
+    }
+  }
+  cold
 }
 
 /// Every function's summary: a lazy one's from its cache entry, the
@@ -159,7 +256,7 @@ pub fn encode_sum(s: FnSum) -> Bytes {
   for v in [s.blocks, s.adc, s.consts, s.instrs, s.nres, s.rets] {
     sum_uv(w, v)
   }
-  sum_uv(w, (if s.pads { 1 } else { 0 }) | (if s.badpad { 2 } else { 0 }) | (if s.indirect { 4 } else { 0 }) | (if s.catches { 8 } else { 0 }))
+  sum_uv(w, (if s.pads { 1 } else { 0 }) | (if s.badpad { 2 } else { 0 }) | (if s.indirect { 4 } else { 0 }) | (if s.catches { 8 } else { 0 }) | (if s.coldrel { 16 } else { 0 }))
   for xs in [s.calls, s.names] {
     sum_uv(w, xs.len())
     for x in xs {
@@ -193,6 +290,7 @@ pub fn decode_sum(b: Bytes) -> FnSum? {
   s.badpad = (fl & 2) != 0
   s.indirect = (fl & 4) != 0
   s.catches = (fl & 8) != 0
+  s.coldrel = (fl & 16) != 0
   s.calls = r.strs()
   s.names = r.strs()
   let nt = r.uv()

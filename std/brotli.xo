@@ -390,15 +390,21 @@ fn dec_init(var d: Dec) {
 /// The next n bits (at most 48) without taking them, zeros past the end.
 fn peek_bits(var d: Dec, n: Int) -> Int {
   if d.acc_n < n {
-    while d.acc_n <= 48 {
-      if d.next < d.data.len() {
-        d.acc = d.acc | (Int(d.data[d.next]) << d.acc_n)
-      }
-      d.acc_n += 8
-      d.next += 1
-    }
+    fill_bits(d)
   }
   d.acc & ((1 << n) - 1)
+}
+
+/// Loads whole bytes until more than 48 bits wait (Go's fillBitWindow,
+/// out of line so peek_bits stays small enough to inline).
+fn fill_bits(var d: Dec) {
+  while d.acc_n <= 48 {
+    if d.next < d.data.len() {
+      d.acc = d.acc | (Int(d.data[d.next]) << d.acc_n)
+    }
+    d.acc_n += 8
+    d.next += 1
+  }
 }
 
 /// After bitpos moved by whole bytes: the accumulator starts again there.
@@ -437,8 +443,18 @@ fn need_bytes(var d: Dec, need: Int) -> () ! BrotliErr {
 fn drop_bits(var d: Dec, n: Int) -> () ! BrotliErr {
   let end = d.bitpos + n
   if (end + 7) >> 3 > d.chunk_end {
-    need_bytes(d, (end + 7) >> 3)?
+    return drop_bits_more(d, n)
   }
+  d.bitpos = end
+  d.acc = d.acc >> n
+  d.acc_n -= n
+}
+
+/// drop_bits past the bytes made available so far, out of line so
+/// drop_bits stays small enough to inline.
+fn drop_bits_more(var d: Dec, n: Int) -> () ! BrotliErr {
+  let end = d.bitpos + n
+  need_bytes(d, (end + 7) >> 3)?
   d.bitpos = end
   d.acc = d.acc >> n
   d.acc_n -= n
