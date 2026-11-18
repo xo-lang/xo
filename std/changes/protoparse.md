@@ -1,5 +1,17 @@
 # std/protoparse changes
 
+## 2026-11-18: fix: an extension field cannot be required
+
+- Kind: fix
+- Commit: this push
+- Found by: task #152 (xw-1's protoparse fuzz against protocompile v0.14.1, seed 70 on linux/arm64 host 3: 1 of 2530 rejected files accepted)
+- Go reference: protocompile v0.14.1 parser/validate.go validateField
+- Test: std/protoparse_test.xo "an extension field cannot be required" (accepted before)
+- Shipped in: not yet released
+
+parse rejects a `required` field in an `extend` block, top level or nested, as protocompile does:
+"extension NAME: extension fields cannot be 'required'", at the label.
+
 ## 2026-11-18: fix: protocompile's message and enum checks, range and option syntax
 
 - Kind: fix

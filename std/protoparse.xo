@@ -729,7 +729,14 @@ fn p_extend(var p: P) -> (Extend, List[Message]) ! ParseErr {
     if p_is(p, ";") {
       return Err(p_err(p, "syntax error: unexpected ';'"))
     }
+    let lab = p.at
     m = p_field(p, "", m)?
+    // protocompile's validateField: a proto2 extension is optional or repeated, the error at its label
+    let x = m.fields[m.fields.len() - 1]
+    if x.required {
+      p.at = lab
+      return Err(p_err(p, "extension ${x.name}: extension fields cannot be 'required'"))
+    }
   }
   if m.fields.is_empty() {
     p.at = ext_kw

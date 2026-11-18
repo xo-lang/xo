@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix (std/protoparse): `parse` rejects a `required` field in an `extend` block, as protocompile does ("extension NAME: extension fields cannot be 'required'").
 - Fix (std/debug): the `/sched` page reports each runtime counter from its own slot; since 2026-11-17 (unreleased) it read past the counters' record from the 7th counter on (wrong values, a fault under `--check=guard`, a use after free under `--race`).
 - Fix (native runtime): two tasks accepting on one listener at once (or waiting to read one descriptor) both work: the second waiter took the descriptor's one wait slot, so a connection woke only it and the first accept waited forever. Later waiters now queue behind the first and every waiter of a side wakes to look again (golden net_accept_two: 20 of 40 echoes lost before).
 - Fix (std/sqlite): a deferred transaction's first write beside busy writers no longer fails with SQLITE_BUSY at its busy timeout; it waits its turn at the write gate (task #324).

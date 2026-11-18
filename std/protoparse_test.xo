@@ -397,6 +397,14 @@ test "an extend defines an extension" {
   expect(parse_err("syntax = \"proto2\";\nmessage M { extensions 5 to 9; extend M { } }")) == "2:32: extend sections must define at least one extension"
 }
 
+// protoparse fuzz seed 70 on host 3 (task #152): protocompile's validate rejects a required
+// extension, at its label
+test "an extension field cannot be required" {
+  expect(parse_err("syntax = \"proto2\";\nmessage Foo { extensions 1 to max; }\nextend Foo {\n  required string sss = 100;\n}")) == "4:3: extension sss: extension fields cannot be 'required'"
+  expect(parse_err("syntax = \"proto2\";\nmessage M { extensions 5 to 9; extend M { required int32 x = 5; } }")) == "2:43: extension x: extension fields cannot be 'required'"
+  expect(parse_err("syntax = \"proto2\";\nmessage Foo { extensions 1 to max; }\nextend Foo {\n  optional string sss = 100;\n}")) == "ok"
+}
+
 // protoparse fuzz seed 4 on host 3 (task #152): 3 of 2554 rejected files accepted
 test "allow_alias and message_set_wire_format take true or false" {
   expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = true0x10 ;\n  A = 0;\n  B = 0;\n}")) == "3:24: enum E: expecting bool value for allow_alias option"
