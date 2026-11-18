@@ -29,7 +29,9 @@
 // --targets=windows/arm64` emits, on any host (decision 0569: the
 // windows/arm64 invariants, such as no write of x18, the TEB), and
 // `// arm64@linux: ...` on `--targets=linux/arm64`'s (the inline LSE
-// dispatch of test/codegen/atomics, 2026-11-15). A line
+// dispatch of test/codegen/atomics, 2026-11-15), `// amd64@linux: ...` on
+// `--targets=linux/amd64`'s (the inline unwinding check of
+// test/codegen/withbody, 2026-11-18). A line
 // `// passes: SPEC` in a directory's file builds that directory with
 // XO_PASSES=SPEC, for an optional pass's patterns (`+acc_range`,
 // decision 0577).
@@ -71,7 +73,7 @@ pub fn patterns(file: Str, src: Str) -> List[Pattern] {
       cur = t.trim_prefix("// func ").trim()
       continue
     }
-    for key in ["arm64", "amd64", "llvm", "llvm/arm64", "llvm/amd64", "arm64@windows", "arm64@linux"] {
+    for key in ["arm64", "amd64", "llvm", "llvm/arm64", "llvm/amd64", "arm64@windows", "arm64@linux", "amd64@linux"] {
       let head = "// ${key}: "
       if !t.starts_with(head) {
         continue

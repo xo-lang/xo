@@ -2723,6 +2723,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let base = g.tl_base()
       g.set(v, [g.def1(false, "ldr $d0, [$u0]\ncbz $d0, 1f\nldr $wd0, [$d0, #${CTX_UNWINDING}]\n1:", [base])])
     }
+    "rt.unwinding" if g.x86 && (g.os is "linux" | "freebsd") => {
+      // the same on x86-64 (2026-11-18): x86_tpl has no cbz, so the arm64
+      // template above would not translate; the call through
+      // xo_x_ctx_unwinding was the check after every runtime call of a
+      // labelled metrics Histogram.observe (1.10 of Go on linux/amd64)
+      g.sched_ref = true
+      let base = g.tl_base()
+      g.set(v, [g.x86_def1("movq ($u0), $d0\ntestq $d0, $d0\nje 1f\nmovl ${CTX_UNWINDING}($d0), $wd0\n1:", [base])])
+    }
     "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if (g.os is "linux" | "freebsd") || g.os == "darwin" || g.os == "windows" => {
       // inline on Linux (2026-10-16): the thread pointer plus xo_tlocal's
       // local exec offset, then the slot; xo_tlocal_get's call, its

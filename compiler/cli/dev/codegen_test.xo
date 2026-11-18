@@ -15,6 +15,9 @@ test "patterns" {
   // the native amd64 backend's key, no architecture
   let x = patterns("m.xo", "fn d() {\n  // amd64: \"imulq\" -\"idivq\"\n}\n")
   expect(x.len() == 2 && x[0].backend == "amd64" && x[0].arch.is_empty() && x[1].negate)
+  // linux/amd64's code on any host (the host's is darwin's on a Mac)
+  let xl = patterns("m.xo", "fn e() {\n  // amd64@linux: \"movl\"\n}\n")
+  expect(xl.len() == 1 && xl[0].backend == "amd64" && xl[0].target == "linux/amd64")
 }
 
 test "functions" {
