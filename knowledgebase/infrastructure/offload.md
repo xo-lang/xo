@@ -970,6 +970,8 @@ Perf and serverperf runs (ADR 0712 as amended, 2fcd29484; xw decision
 `OFFLOAD_ENV=offload-arm64b.env`, still exclusive; stdproven-offload.sh
 refuses them on hosts 1, 3 and 4 (3 and 4 are containers on the Mac Studio,
 never quiet). stdcov counts perf evidence from the amd64 host and host 2,
-and host 1 rows (or unlabelled `linux/arm64` ones) dated on or before
-2026-11-17; a row from any other host is listed as missing performance.
+and host 1 rows (or unlabelled `linux/arm64` ones) committed at or before
+ADR 0712's commit (b4def461e, 2026-11-18T01:52:22Z; the evidence file's
+commit time, since its date line is UTC: task #304); a row from any other
+host is listed as missing performance.
 Last verified: 2026-11-17.

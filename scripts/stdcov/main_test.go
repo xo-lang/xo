@@ -207,21 +207,41 @@ func TestFeatAudit(t *testing.T) {
 // as perf's does ("worst Xo / Go N").
 func TestPerfEvidenceHosts(t *testing.T) {
 	const pm = "4 cases of 1 twin directories, worst Xo / Go 1.020 over the cases above 5 ms (Proven at or under 1.05), 3m0s"
-	for _, c := range []struct{ m, host, date, measure, want string }{
-		{"zz-amd64", "linux/amd64 host", "2026-11-18", pm, "Proven"},
-		{"zz-host2", "linux/arm64 host 2", "2026-11-18", pm, "Proven"},
-		{"zz-host1-old", "linux/arm64 host 1", "2026-11-13", pm, "Proven"},
-		{"zz-bare-old", "linux/arm64", "2026-11-14", pm, "Proven"},
-		{"zz-host1-new", "linux/arm64 host 1", "2026-11-18", pm, "Early"},
-		{"zz-bare-new", "linux/arm64", "2026-11-18", pm, "Early"},
-		{"zz-host3", "linux/arm64 host 3", "2026-11-18", pm, "Early"},
-		{"zz-host4", "linux/arm64 host 4", "2026-11-18", pm, "Early"},
-		{"zz-host4-old", "linux/arm64 host 4", "2026-11-13", pm, "Early"},
-		{"zz-mac", "darwin/arm64", "2026-11-18", pm, "Early"},
-		{"zz-serverperf-amd64", "linux/amd64 host", "2026-11-18", "6 workload and backend figures, worst Xo / Go cost 1.040 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", "Proven"},
-		{"zz-serverperf-slow", "linux/amd64 host", "2026-11-18", "6 workload and backend figures, worst Xo / Go cost 1.200 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", "Early"},
+	// commit times: a host 1 row counts when committed at or before ADR
+	// 0712's commit (task #304), whatever its UTC date line says
+	const old, at01, at03, none = 1794571200, 1794963600, 1794970800, 0
+	keep := evCommitted
+	defer func() { evCommitted = keep }()
+	for _, c := range []struct {
+		m, host, date, measure string
+		committed              int64
+		want                   string
+	}{
+		{"zz-amd64", "linux/amd64 host", "2026-11-18", pm, at03, "Proven"},
+		{"zz-amd64-uncommitted", "linux/amd64 host", "2026-11-18", pm, none, "Proven"},
+		{"zz-host2", "linux/arm64 host 2", "2026-11-18", pm, at03, "Proven"},
+		{"zz-host1-old", "linux/arm64 host 1", "2026-11-13", pm, old, "Proven"},
+		{"zz-bare-old", "linux/arm64", "2026-11-14", pm, old, "Proven"},
+		{"zz-host1-0100z", "linux/arm64 host 1", "2026-11-18", pm, at01, "Proven"},
+		{"zz-bare-0100z", "linux/arm64", "2026-11-18", pm, at01, "Proven"},
+		{"zz-host1-0300z", "linux/arm64 host 1", "2026-11-18", pm, at03, "Early"},
+		{"zz-host1-uncommitted", "linux/arm64 host 1", "2026-11-17", pm, none, "Early"},
+		{"zz-bare-0300z", "linux/arm64", "2026-11-18", pm, at03, "Early"},
+		{"zz-host3", "linux/arm64 host 3", "2026-11-18", pm, at03, "Early"},
+		{"zz-host4", "linux/arm64 host 4", "2026-11-18", pm, at03, "Early"},
+		{"zz-host4-old", "linux/arm64 host 4", "2026-11-13", pm, old, "Early"},
+		{"zz-mac", "darwin/arm64", "2026-11-18", pm, at03, "Early"},
+		{"zz-serverperf-amd64", "linux/amd64 host", "2026-11-18", "6 workload and backend figures, worst Xo / Go cost 1.040 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", at03, "Proven"},
+		{"zz-serverperf-slow", "linux/amd64 host", "2026-11-18", "6 workload and backend figures, worst Xo / Go cost 1.200 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", at03, "Early"},
 	} {
-		evCache[c.m] = map[string]evFile{"perf": {hdr: map[string]string{"kind": "perf", "result": "pass", "host": c.host, "date": c.date, "measure": c.measure}, path: "std/evidence/" + c.m + "/perf.md"}}
+		path := "std/evidence/" + c.m + "/perf.md"
+		evCommitted = func(p string) int64 {
+			if p != path {
+				t.Fatalf("%s: commit time asked for %s, want %s", c.m, p, path)
+			}
+			return c.committed
+		}
+		evCache[c.m] = map[string]evFile{"perf": {hdr: map[string]string{"kind": "perf", "result": "pass", "host": c.host, "date": c.date, "measure": c.measure}, path: path}}
 		if got := perf(c.m); got.level != c.want {
 			t.Errorf("%s (%s, %s): perf = %s %q, want %s", c.m, c.host, c.date, got.level, got.text, c.want)
 		}
