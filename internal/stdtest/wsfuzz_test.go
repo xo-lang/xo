@@ -399,7 +399,7 @@ func TestWsFuzz(t *testing.T) {
 			if got[i] == want[i] {
 				continue
 			}
-			if cases[i].badText && wsfEarlyUTF8(got[i], want[i]) {
+			if wsfMayFailEarly(cases[i], got[i], want[i]) {
 				early++
 				continue
 			}
@@ -442,6 +442,16 @@ const wsfUTF8Err = "error websocket: invalid UTF-8 in text frame\n"
 func wsfEarlyUTF8(got, want string) bool {
 	head, ok := strings.CutSuffix(got, wsfUTF8Err)
 	return ok && strings.HasPrefix(want, head) && !strings.Contains(head, "error ")
+}
+
+// wsfMayFailEarly: std/websocket's UTF-8 error may come before gorilla's
+// error in a case made with text that is not UTF-8, and in a changed case,
+// where a changed byte or length can put bytes that are not UTF-8 into a
+// text frame (seed 3 case 4107: a text frame's length went from 0 to 4, so
+// the close frame after it, 88 00, became the first 2 bytes of its payload,
+// and gorilla read on to the end of the stream).
+func wsfMayFailEarly(c wsfCase, got, want string) bool {
+	return (c.badText || c.note != "") && wsfEarlyUTF8(got, want)
 }
 
 // wsfBlocks are the lines after each "== cN" line, by case.
@@ -529,5 +539,19 @@ func TestWsLengthTopBit(t *testing.T) {
 	}
 	if !strings.HasPrefix(got[2], "msg binary 6f6b\n") {
 		t.Errorf("a short payload in the 64-bit form: got %q", got[2])
+	}
+}
+
+// TestWsFuzzEarlyUTF8Changed: a changed case whose text turned out not to
+// be UTF-8 may fail with std/websocket's UTF-8 error first (seed 3 case
+// 4107); a case left as made, with valid text, may not.
+func TestWsFuzzEarlyUTF8Changed(t *testing.T) {
+	got := wsfUTF8Err
+	want := "error websocket: close 1006 (abnormal closure): unexpected EOF\n"
+	if !wsfMayFailEarly(wsfCase{note: "byte"}, got, want) {
+		t.Errorf("a changed byte case: the early UTF-8 error is not allowed")
+	}
+	if wsfMayFailEarly(wsfCase{}, got, want) {
+		t.Errorf("an unchanged case with valid text: the early UTF-8 error is allowed")
 	}
 }
