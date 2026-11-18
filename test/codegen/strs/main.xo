@@ -258,6 +258,19 @@ fn two_loops(b: Bytes, c: UInt8) -> Int {
   j - i
 }
 
+// A loop reading byte j - 1 as j falls: the load takes data - 1 at
+// index j, so `j - 1` is not a second register beside j (Go's movzbl
+// -1(base)(j); Str.trim_chars's end loop, task #302).
+fn end_trim(b: Bytes, c: UInt8) -> Int {
+  // arm64: -"sub x\d+, x\d+, #1\n\s*ldrb"
+  // amd64: -"leaq\s+-1\(%\w+\), %\w+\n\s*movzbl"
+  var j = b.len()
+  while j > 0 && b[j - 1] == c {
+    j -= 1
+  }
+  j
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
@@ -265,5 +278,5 @@ fn main(os: Os) {
   let b = "abcde".bytes()
   os.stdio.println("${half_byte(b)} ${half_shift(b)} ${half_unguarded(b)} ${half_none(b, 2)} ${half_elem(hs)}")
   os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)} ${count_ab(hs)} ${uuid_byte(uuid.nil(), b.len())}")
-  os.stdio.println("${trim_len(hs, "B")} ${trim_len(hs, "Bx")} ${first_twice(b)} ${two_loops(b, b[0])}")
+  os.stdio.println("${trim_len(hs, "B")} ${trim_len(hs, "Bx")} ${first_twice(b)} ${two_loops(b, b[0])} ${end_trim(b, b[4])}")
 }

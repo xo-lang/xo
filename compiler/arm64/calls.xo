@@ -1005,6 +1005,27 @@ fn (var g: G) bytes_load(ws: List[Int], iv: Int, i: Int, borrowed: Bool) -> Int 
       return g.def1(false, "ldrb $wd0, [$u0, #${c}]", [t])
     }
   }
+  if x.op == ssa.Op.Sub {
+    // byte j - c (0 < c < 4096) reads data - c at index j, data - c made
+    // once per block and hoisted from a loop: `j - 1` needs no register,
+    // so a loop's `j -= 1` keeps one (Go's movzbl -1(base)(j); task #302,
+    // trim_chars's end loop)
+    let (c, is_k) = g.const_int(g.f.arg(x.args, 1))
+    let j = g.f.arg(x.args, 0)
+    if is_k && c > 0 && c < 4096 && g.has_val[j] && g.vals[j].len() == 1 && g.vals[j][0] != 0 {
+      let jw = g.vals[j][0]
+      let _mk = g.m_()
+      var t = 0
+      if let Some(y) = g.cm.bases.get((d, c, -18)) {
+        t = y
+      } else {
+        t = g.def1(false, "sub $d0, $u0, #${c}", [d])
+        let _ml = g.m_()
+        g.cm.bases[(d, c, -18)] = t
+      }
+      return g.def1(false, "ldrb $wd0, [$u0, $u1]", [t, jw])
+    }
+  }
   let (k, is_k) = g.const_int(iv)
   if is_k && k >= 0 && k < 4096 {
     // a constant index is the displacement: no register made for it
