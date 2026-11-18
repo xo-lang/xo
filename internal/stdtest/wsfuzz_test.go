@@ -242,6 +242,13 @@ func wsfChange(r *rand.Rand, c *wsfCase) {
 		c.note = "cut"
 		return
 	default:
+		// a flip in a text or continuation frame can leave its payload
+		// not UTF-8 and its length past the bytes sent: std/websocket
+		// fails fast on the UTF-8 (RFC 6455 8.1), gorilla reads to EOF
+		// first (seed 3 case 4107, 2026-11-18)
+		if op := f[0] & 0x0F; op == 0 || op == 1 {
+			c.badText = true
+		}
 		f[r.Intn(len(f))] ^= byte(1 << r.Intn(8))
 		c.note = "byte"
 	}
