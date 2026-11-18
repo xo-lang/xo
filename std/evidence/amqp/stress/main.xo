@@ -82,7 +82,16 @@ fn message_of(t: Int, k: Int) -> amqp.Message {
 fn same(a: amqp.Message, b: amqp.Message) -> Bool {
   let pa = a.properties ?? amqp.Properties{}
   let pb = b.properties ?? amqp.Properties{}
-  pa.message_id == pb.message_id && pa.subject == pb.subject && a.app_properties == b.app_properties && a.body == b.body
+  pa.message_id == pb.message_id && pa.subject == pb.subject && a.app_properties == b.app_properties && body_of(a) == body_of(b)
+}
+
+// a null amqp-value section reads back as no body, as go-amqp's (a nil
+// Value is no section there; std/amqp since 7c5ca7587)
+fn body_of(m: amqp.Message) -> amqp.Body {
+  match m.body {
+    Value(v: amqp.Value.Null) => amqp.Body.Empty
+    b => b
+  }
 }
 
 fn delivery_count(d: amqp.Delivery) -> Int {
