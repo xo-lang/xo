@@ -190,7 +190,7 @@ func formatItems(items []tlItem, t Time, z Time_Zone) string {
 
 // civilGo is c as a Go time.Time (any year Go's Time holds), in a zone
 // named UTC at offset zero, else +hhmm (decision 0614).
-func civilGo(c Time_Civil) time.Time {
+func civilGo(c Time_Civil) (time.Time, string) {
 	off := int(floorDivI(int64(c.F_offset), 1e9))
 	name := "UTC"
 	if off != 0 {
@@ -200,19 +200,36 @@ func civilGo(c Time_Civil) time.Time {
 		}
 		name = fmt.Sprintf("%s%02d%02d", sign, a/3600, a/60%60)
 	}
-	d, ct := c.F_date, c.F_time
-	return time.Date(int(d.F_year), time.Month(d.F_month), int(d.F_day), int(ct.F_hour), int(ct.F_minute), int(ct.F_second), int(ct.F_nanos), time.FixedZone(name, off))
+	// the wall clock within its 400 year cycle (whole weeks, so the
+	// weekday holds) and the cycles' years printed apart, as native's
+	// format_civil_items: Go's Time wraps a year past about 292e9 (b43)
+	q, r, s := civilSplit(c)
+	d := dateOf(r)
+	return time.Date(int(d.F_year), time.Month(d.F_month), int(d.F_day), 0, 0, int(s), int(c.F_time.F_nanos), time.FixedZone(name, off)), civilYearText(q, d.F_year)
+}
+
+// civilYearText is the year a Civil in cycle q prints, "" when Go's own
+// year (d's, in 1970 to 2369) is it.
+func civilYearText(q, y int64) string {
+	if q == 0 {
+		return ""
+	}
+	if v, ok := eraYearOK(q, y); ok {
+		return fmt.Sprintf("%04d", v)
+	}
+	return wideYearText(q, y)
 }
 
 // M_format is `c.format(layout)` (decision 0614).
 func (c Time_Civil) M_format(_ *Task, layout string) string {
-	return formatGo(timeLayout("format", layout), civilGo(c))
+	gt, y := civilGo(c)
+	return formatGoYear(timeLayout("format", layout), gt, y)
 }
 
 // M_unix is `c.unix()`: seconds since the epoch, any year.
 func (c Time_Civil) M_unix(*Task) int64 {
 	q, r, s := civilSplit(c)
-	return q*(eraDays*86400) + (r*86400 + s - floorDivI(int64(c.F_offset), 1e9))
+	return mulAdd(q, r*86400+s-floorDivI(int64(c.F_offset), 1e9), eraDays*86400)
 }
 
 // M_to_time is `c.to_time()`: None outside Time's range (the native
@@ -239,10 +256,14 @@ func (c Time_Civil) M_to_time(*Task) Option[Time] {
 
 // M_format_civil is `l.format_civil(c)`.
 func (l *Time_Layout) M_format_civil(_ *Task, c Time_Civil) string {
-	return formatGo(l.items, civilGo(c))
+	gt, y := civilGo(c)
+	return formatGoYear(l.items, gt, y)
 }
 
-func formatGo(items []tlItem, gt time.Time) string {
+func formatGo(items []tlItem, gt time.Time) string { return formatGoYear(items, gt, "") }
+
+// formatGoYear is formatGo with the year's text given ("" for gt's own).
+func formatGoYear(items []tlItem, gt time.Time, year string) string {
 	abbr, off := gt.Zone()
 	var b strings.Builder
 	two := func(n int) {
@@ -254,7 +275,11 @@ func formatGo(items []tlItem, gt time.Time) string {
 		case "":
 			b.WriteString(it.lit)
 		case "year":
-			fmt.Fprintf(&b, "%04d", gt.Year())
+			if year != "" {
+				b.WriteString(year)
+			} else {
+				fmt.Fprintf(&b, "%04d", gt.Year())
+			}
 		case "month":
 			switch it.arg {
 			case "":

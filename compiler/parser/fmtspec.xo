@@ -221,7 +221,13 @@ pub fn spec_expr(x: Expr, s: FmtSpec, kind: Int) -> Expr {
   let tail = Span{start: c, end: e}        // to_upper, the fill text
   let head = Span{start: xs, end: c1}      // the core call, a text wrap
   let colon = Span{start: c, end: c1}      // Int(x), the literals
-  let colon0 = Span{start: c, end: c}      // the method and argument names
+  let colon0 = Span{start: c, end: c}      // the core method's and the arguments' names
+  // the other method names: a name's record is keyed by its start alone
+  // (check ref_of), so each method's name starts at an offset of its own
+  // (b32: to_str_width and pad_left both at the colon made the Go backend
+  // read pad_left as a value); the `}` and the byte after it are no names'
+  let upper0 = Span{start: e, end: e}
+  let pad0 = Span{start: pos_at(e, 1), end: pos_at(e, 1)}
   var core = x
   var padded = s.width >= 0
   var default_right = true
@@ -248,7 +254,7 @@ pub fn spec_expr(x: Expr, s: FmtSpec, kind: Int) -> Expr {
         }
         core = method(core, "to_str_width", head, colon0, args)
         if s.typ == 88 {
-          core = method(core, "to_upper", tail, colon0, [])
+          core = method(core, "to_upper", tail, upper0, [])
         }
       } else {
         core = text_of(core, head)
@@ -308,7 +314,7 @@ pub fn spec_expr(x: Expr, s: FmtSpec, kind: Int) -> Expr {
   if !s.fill.is_empty() {
     args.push(arg(colon, Expr.StringLit(s: StringLit{span: tail, kind: StringKind.Plain, parts: [StringPart{text: s.fill, expr: None}]})))
   }
-  method(core, pad, whole, colon0, args)
+  method(core, pad, whole, pad0, args)
 }
 
 /// `"${x}"` at span sp: x's Display text.

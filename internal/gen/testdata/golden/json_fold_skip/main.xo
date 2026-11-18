@@ -1,0 +1,24 @@
+// b41 (task #242): `derive Json(match: fold)` with a `-` field before
+// others: each read field decodes its own member (the Go backend indexed
+// the members by declared position and faulted past the skipped one).
+use std/json
+
+struct U {
+  name: Str
+  hidden as "-": Int = 7
+  age: Int
+  gone as "-": Str
+  tags: List[Str] = []
+} derive Json(match: fold)
+
+fn main(os: Os) {
+  match json.decode[U](b"{\"NAME\":\"a\",\"Age\":3,\"TAGS\":[\"x\"],\"hidden\":9}") {
+    Ok(u) => os.stdio.println("${u.name} ${u.hidden} ${u.age} [${u.gone}] ${u.tags}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match json.decode[U](b"{\"name\":\"b\"}") {
+    Ok(u) => os.stdio.println("${u.name} ${u.age}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  os.stdio.println(json.encode(U{name: "c", hidden: 1, age: 2, gone: "g", tags: []}).to_str() ?? "")
+}

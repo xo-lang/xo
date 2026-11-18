@@ -106,15 +106,51 @@ func splitFloor(n, k int64) (int64, int64) {
 
 func normSplit(q, r int64) (int64, int64) {
 	c, rr := splitFloor(r, eraDays)
-	return q + c, rr
+	return AddI(q, c, civilAt), rr
 }
 
-// eraYear is q*400 + y for y in 1970 to 2369, in the native order.
+// civilAt is where a calendar answer past Int faults on the Go backend
+// (native faults in std/native/time.xo; b43, task #242).
+const civilAt = "std/time.xo"
+
+// eraYear is q*400 + y for y in 1970 to 2369, in the native order,
+// faulting as native does when the year does not fit Int.
 func eraYear(q, y int64) int64 {
 	if q < 0 {
-		return (q+6)*400 + (y - 2400)
+		return AddI(MulI(q+6, 400, civilAt), y-2400, civilAt)
 	}
-	return q*400 + y
+	return AddI(MulI(q, 400, civilAt), y, civilAt)
+}
+
+// eraYearOK is eraYear, false when the year does not fit Int.
+func eraYearOK(q, y int64) (v int64, ok bool) {
+	defer func() {
+		if recover() != nil {
+			v, ok = 0, false
+		}
+	}()
+	return eraYear(q, y), true
+}
+
+// wideYearText is the native wide_year_text: q*400 + y in decimal for a
+// year past Int's range.
+func wideYearText(q, y int64) string {
+	if q >= 0 {
+		return fmt.Sprintf("%d%02d", q*4+y/100, y%100)
+	}
+	k := (y + 99) / 100
+	return fmt.Sprintf("-%d%02d", -q*4-k, k*100-y)
+}
+
+// mulAdd is the native mul_add: q*p + r for p > 0, faulting only when the
+// answer does not fit Int.
+func mulAdd(q, r, p int64) int64 {
+	c, rr := splitFloor(r, p)
+	q2 := AddI(q, c, civilAt)
+	if q2 < 0 {
+		return AddI(MulI(q2+1, p, civilAt), rr-p, civilAt)
+	}
+	return AddI(MulI(q2, p, civilAt), rr, civilAt)
 }
 
 func dateOfSplit(q, r int64) Time_Date {
@@ -289,7 +325,7 @@ func (d Time_Date) M_weekday(*Task) Time_Weekday {
 // M_add_days is `d.add_days(n)`.
 func (d Time_Date) M_add_days(_ *Task, n int64) Time_Date {
 	q, r := splitDays(d)
-	return dateOfSplit(q+n/eraDays, r+n%eraDays)
+	return dateOfSplit(AddI(q, n/eraDays, civilAt), r+n%eraDays)
 }
 
 // M_add_months is `d.add_months(n)`: the day is clamped to the
@@ -308,7 +344,7 @@ func (d Time_Date) M_add_months(_ *Task, n int64) Time_Date {
 func (d Time_Date) M_days_until(_ *Task, o Time_Date) int64 {
 	q1, r1 := splitDays(d)
 	q2, r2 := splitDays(o)
-	return (q2-q1)*eraDays + (r2 - r1)
+	return mulAdd(SubI(q2, q1, civilAt), r2-r1, eraDays)
 }
 
 // M_display is "2026-10-09".

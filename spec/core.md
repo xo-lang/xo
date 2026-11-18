@@ -687,8 +687,9 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
   with `Int(x)` for a base, sign or zero padding (`UInt64` is refused
   there, since it may not fit), `Float32` with `Float(x)`; any other
   `Display` value is padded as its text. The spec is the text after the
-  last colon whose rest parses as a whole spec, so `${m[k]:>4}` and
-  `${a ?? b:x}` work. A spec the value's type does not take, and text
+  first colon whose rest parses as a whole spec, so `${m[k]:>4}` and
+  `${a ?? b:x}` work and `${s::>5}` pads with `:` as its fill
+  (`":::hi"`). A spec the value's type does not take, and text
   after a colon that is not a spec (`${x:.}`), is `XO0180` with the
   forms in a note.
 - Raw strings `r"..."` have no escapes and no interpolation. `r#"..."#` may

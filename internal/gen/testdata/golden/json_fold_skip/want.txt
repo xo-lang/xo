@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+a 7 3 [] ["x"]
+err at $: missing field `age`
+{"name":"c","age":2,"tags":[]}
+--- stderr

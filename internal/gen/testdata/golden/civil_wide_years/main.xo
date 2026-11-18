@@ -1,0 +1,23 @@
+// b43 (task #242): a time.Civil past Go's Time years (about 292e9) on the
+// Go backend formats its own year and weekday, and `unix` faults as native
+// does instead of wrapping (std 13.2: methods fault only when the answer
+// does not fit Int).
+use std/time
+
+fn civ(y: Int, m: Int) -> time.Civil {
+  time.Civil{date: time.Date{year: y, month: m, day: 1}, time: time.ClockTime{hour: 1, minute: 2, second: 3, nanos: 0}, offset: 0s, zone: "UTC"}
+}
+
+fn main(os: Os) {
+  for y in [300000000000, -300000000000, 9223372036854775807, -9223372036854775807, 2026] {
+    let c = civ(y, 1)
+    os.stdio.println(c.format("{year}-{month}-{day} {weekday:short} {hour}:{minute}:{second}"))
+  }
+  // month 13 of Int.max: a year past Int, printed from its cycles
+  os.stdio.println(civ(9223372036854775807, 13).format("{year}-{month}-{day}"))
+  let d = time.Date{year: 300000000000, month: 1, day: 1}
+  let n = time.Date{year: -300000000000, month: 1, day: 1}
+  os.stdio.println("${n.days_until(d)} ${d.add_days(-1)}")
+  os.stdio.println("${civ(200000000000, 1).unix()}")
+  os.stdio.println("${civ(300000000000, 1).unix()}")
+}

@@ -1,0 +1,12 @@
+// b32 (task #242): a format spec that lowers to two or three method calls
+// (a sign, base or case, then a width) builds on the Go backend too.
+fn main(os: Os) {
+  let n = 42
+  let f = 3.14159
+  let b: Int8 = -7
+  os.stdio.println("[${n:+5}] [${n:+X}] [${n:8X}] [${f:+8.2f}] [${f:10e}]")
+  os.stdio.println("[${b:+5}] [${b:6x}] [${n:*^+7}] [${n:>+6}]")
+  // the first colon whose rest is a spec starts it: `:` is the fill (core 1.6)
+  let s = "hi"
+  os.stdio.println("[${s::>5}] [${s::^6}]")
+}
