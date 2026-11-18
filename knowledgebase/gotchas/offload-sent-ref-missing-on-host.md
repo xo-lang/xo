@@ -29,3 +29,11 @@ touches `/work/priv`; it was not the prune.)
 
 By hand: `git update-ref -d refs/offload-HOST/sent` in the main checkout
 makes the next bundle a full one. Tests: scripts/lead/offload_gate_test.sh.
+
+Observed again 2026-11-18 (task #350): golden-freecheck.sh passed
+origin/main's sha straight to offload.sh, and host 4's /work/priv had
+never fetched it ("fatal: invalid reference", rc 2, before any golden).
+A script that names a rev on a host checks `offload.sh --has-commit REV`
+and, when it is missing, sends a thin bundle of a local branch (based on
+an ancestor the host holds) for the host side to fetch first, as
+golden-freecheck.sh's ship_rev does.
