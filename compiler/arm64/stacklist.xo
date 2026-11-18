@@ -677,7 +677,7 @@ fn stack_list_violations(f: ssa.Func, m: ssa.Module) -> List[Str] {
 /// no reader needed) has no blocks here and is not looked at.
 pub fn frame_list_audit(m: ssa.Module) -> List[Str] {
   var out: List[Str] = []
-  if m.goarch != "arm64" {
+  if m.goarch != "arm64" && m.goarch != "amd64" {
     return out
   }
   for f in m.funcs {

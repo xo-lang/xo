@@ -889,9 +889,11 @@ fn inline_body(m: ssa.Module, st: InlineState, fi: Int, f0: ssa.Func) -> (ssa.Fu
   // decision 0554 (prototype): every function copies a List parameter a
   // caller built in its frame before keeping it, and a small literal only
   // read, released or passed to module functions is built in the frame
-  // (arm64). Every function, not only one that inlined a call: a callee
-  // that inlines nothing still keeps what it is passed
-  if m.goarch == "arm64" && pass_on(m, "stack_lists") {
+  // (arm64 and amd64: x86's retain and release keep the STACK count as
+  // the immortal one, bit 62 clear). Every function, not only one that
+  // inlined a call: a callee that inlines nothing still keeps what it is
+  // passed
+  if (m.goarch == "arm64" || m.goarch == "amd64") && pass_on(m, "stack_lists") {
     if unstack_params(f, m) {
       ch = true
     }

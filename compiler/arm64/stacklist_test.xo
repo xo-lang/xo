@@ -30,10 +30,12 @@ test "a frame list kept in a struct is reported with the use that keeps it" {
   expect(frame_list_audit(m)) == ["f: v${l} (v${p + 1} struct uses v${p})"]
 }
 
-test "a frame list only released passes, and only arm64 is checked" {
+test "a frame list only released passes, and arm64 and amd64 are checked" {
   let (m, _l, _p) = frame_list_module(false)
   expect(frame_list_audit(m)) == []
   var a = frame_list_module(true).0
   a.goarch = "amd64"
+  expect(frame_list_audit(a).len()) == 1
+  a.goarch = "wasm32"
   expect(frame_list_audit(a)) == []
 }
