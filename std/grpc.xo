@@ -1467,10 +1467,10 @@ fn conn_on(c: Client, base: http.Client, addr: Str) -> http.Client {
 /// Opens r for a call: on the client's connection, or with addresses (decision 0707) on the balancer's choice,
 /// moving on to the next address when one fails to connect (no byte of the call went out), and resolving again
 /// once (at most every 30 s) when every address failed.
-fn open_call(c: Client, r: http.Request) -> http.ClientStream ! Status uses net.dial {
+fn open_call(c: Client, r: http.Request) -> (http.ClientStream, Str) ! Status uses net.dial {
   let m = match c.lb {
     Some(x) => x
-    None => return conn_of(c).open(r).map_err(fn(e) -> Status { open_err(c, e) })
+    None => return conn_of(c).open(r).map(fn(st) -> (http.ClientStream, Str) { (st, plain_peer(c)) }).map_err(fn(e) -> Status { open_err(c, e) })
   }
   let bal = match c.svc {
     Some(cfg) => cfg.balancer ?? c.balancer
@@ -1485,7 +1485,7 @@ fn open_call(c: Client, r: http.Request) -> http.ClientStream ! Status uses net.
       match lb_conn(c, m, a).open(r) {
         Ok(st) => {
           lb_up(m, bal, a)
-          return Ok(st)
+          return Ok((st, a))
         }
         Err(e) => {
           if !(e is http.ClientErr.Connect(_)) {
@@ -1502,6 +1502,22 @@ fn open_call(c: Client, r: http.Request) -> http.ClientStream ! Status uses net.
     again = false
   }
   Err(last ?? status_new(Code.Unavailable, "name resolver error: produced zero addresses"))
+}
+
+/// The server address a client without balancing calls: "unix:PATH" for a unix target, else the base URL's
+/// host:port (its scheme's port when it names none).
+fn plain_peer(c: Client) -> Str {
+  if let Some(path) = unix_path(c.target) {
+    return "unix:${path}"
+  }
+  let tls = c.base.starts_with("https://")
+  var rest = c.base.trim_prefix("https://").trim_prefix("http://")
+  if let Some(i) = rest.find("/") {
+    rest = rest[..i]
+  }
+  let bracket = rest.rfind("]") ?? -1
+  let colon = rest.rfind(":") ?? -1
+  if colon > bracket { rest } else { "${rest}:${if tls { 443 } else { 80 }}" }
 }
 
 /// The http.Client dialing a (made once, kept in the shared state), with conn_of's authority check.
@@ -1782,7 +1798,7 @@ fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], 
     r = r.with_host(auth)
   }
   let st = match open_call(c, r) {
-    Ok(s) => s
+    Ok((s, _)) => s
     Err(e) => return (Err(e), false, None)
   }
   let head = st.head()
@@ -1816,7 +1832,7 @@ fn (c: Client) unary_attempt(method: Str, req: Bytes, metadata0: Map[Str, Str], 
 /// The client side of a streaming call, valid inside `Client.call`.
 pub struct ClientCall {
   pub w: http.PipeWriter
-  pub head: Chan[(http.ClientStream?, Status?)]
+  pub head: Chan[(http.ClientStream?, Status?, Str)]
   pub st: Mutex[CallState]
   pub max: Int
   /// messages are sent gzip compressed (Client.with_gzip)
@@ -1833,6 +1849,8 @@ pub struct CallState {
   /// the response's header and trailer metadata (ClientCall.header, ClientCall.trailer)
   pub header: Map[Str, Str] = {}
   pub trailer: Map[Str, Str] = {}
+  /// the server address the call opened on (ClientCall.peer)
+  pub peer: Str = ""
 }
 
 /// Runs `f` on a streaming call: `f` sends with `send`, ends the request with `close_send` and reads with `recv`.
@@ -1865,15 +1883,15 @@ fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str]
   if auth != "" {
     r = r.with_host(auth)
   }
-  let head = Chan[(http.ClientStream?, Status?)].new(1)
+  let head = Chan[(http.ClientStream?, Status?, Str)].new(1)
   let cc = ClientCall{w: pw, head: head, st: Mutex[CallState].new(CallState{stream: None, failed: None, recv: RecvState{buf: b"", at: 0, done: false}, final: None}), max: c.max_recv, gzip: c.gzip, max_send: c.max_send}
   var result: R? = None
   var failure: Status? = None
   scope s {
     s.spawn(fn() {
       match open_call(c, r) {
-        Ok(st) => head.send((Some(st), None))
-        Err(e) => head.send((None, Some(e)))
+        Ok((st, peer)) => head.send((Some(st), None, peer))
+        Err(e) => head.send((None, Some(e), ""))
       }
     })
     match f(cc) {
@@ -1890,7 +1908,7 @@ fn (c: Client) call_opened[R, fx: Effects](method: Str, metadata0: Map[Str, Str]
     let consumed = cc.st.with(fn(var s) { s.failed.is_some() })
     if open_stream.is_none() && !consumed {
       match head.recv() {
-        Some((Some(x), _)) => {
+        Some((Some(x), _, _)) => {
           open_stream = Some(x)
         }
         _ => {}
@@ -1930,7 +1948,8 @@ fn await_head(c: ClientCall, var s: CallState) -> () ! Status uses sync {
     return Ok(())
   }
   match c.head.recv() {
-    Some((Some(st), _)) => {
+    Some((Some(st), _, peer)) => {
+      s.peer = peer
       // a response that is not gRPC ends the call at its head (grpc-go's operateHeaders, task #115)
       if let Some(e) = head_status(st.head()) {
         st.close()
@@ -1947,7 +1966,7 @@ fn await_head(c: ClientCall, var s: CallState) -> () ! Status uses sync {
       }
       Ok(())
     }
-    Some((None, Some(e))) => {
+    Some((None, Some(e), _)) => {
       s.failed = Some(e)
       Err(e)
     }
@@ -1983,6 +2002,25 @@ pub fn (c: ClientCall) header() -> Map[Str, Str] ! Status {
       return Err(e)
     }
     Ok(s.header)
+  })
+  out
+}
+
+/// The server address the call went to, waiting for the head (grpc-go's `grpc.Peer` call option, its Addr): with
+/// addresses (with_addrs, with_dns, with_resolver) the one the balancer picked and connected to, "host:port" or
+/// "unix:PATH"; else the base URL's host:port (443 or 80 when it names no port), or "unix:PATH" for a unix
+/// target. As grpc-go's, a call that failed to open has none: its status is the error.
+pub fn (c: ClientCall) peer() -> Str ! Status {
+  let out = c.st.with(fn(var s) -> Result[Str, Status] uses sync {
+    if s.stream.is_none() {
+      if let Some(e) = s.failed {
+        return Err(e)
+      }
+    }
+    if let Err(e) = await_head(c, s) {
+      return Err(e)
+    }
+    Ok(s.peer)
   })
   out
 }

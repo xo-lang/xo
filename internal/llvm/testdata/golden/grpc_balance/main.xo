@@ -1,0 +1,71 @@
+// std/grpc's client balancing (decision 0707, task #236) and ClientCall.peer: two servers that answer with their
+// names, a round robin client given both addresses, a resolver client, a DNS client, and the address a call went to.
+use std/grpc
+use std/http
+
+fn named(clock: Clock[clock], name: Str) -> grpc.Server {
+  var srv = grpc.server(clock)
+  srv.unary("/g.G/Who", fn(_call, _req) -> Bytes ! grpc.Status { Ok(name.bytes()) })
+  srv.stream("/g.G/Echo", fn(_call, recv, send) -> () ! grpc.Status {
+    while let Some(m) = recv.next()? {
+      send.send(m)?
+    }
+  }, client_stream: true, server_stream: true)
+  srv
+}
+
+fn who(c: grpc.Client) -> Str {
+  match c.unary("/g.G/Who", b"") {
+    Ok(b) => b.to_str_lossy()
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let la = os.net.listen("127.0.0.1:0").or_fault("listen a")
+  let lb = os.net.listen("127.0.0.1:0").or_fault("listen b")
+  let ha = http.server(la, named(os.clock, "a").router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let hb = http.server(lb, named(os.clock, "b").router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { ha.serve().ignore_err("the program ends the server") })
+    s.spawn_background(fn() { hb.serve().ignore_err("the program ends the server") })
+    let hc = http.client(os.net, timeout: 30s)
+    let rr = grpc.client(hc, "g.example:50051").with_addrs([ha.addr(), hb.addr()]).with_balancer(grpc.Balancer.RoundRobin)
+    var na = 0
+    var nb = 0
+    for _ in 0..6 {
+      match who(rr) {
+        "a" => na += 1
+        "b" => nb += 1
+        other => os.stdio.println(other)
+      }
+    }
+    os.stdio.println("round robin: a ${na}, b ${nb}")
+    let pf = grpc.client(hc, "g.example:50051").with_addrs([ha.addr(), hb.addr()])
+    os.stdio.println("pick first: ${who(pf)} ${who(pf)}")
+    let rs = grpc.client(hc, "g.example:50051").with_resolver(fn() -> List[Str] ! grpc.Status { Ok([hb.addr()]) }, os.clock)
+    os.stdio.println("resolver: ${who(rs)}")
+    let dns = grpc.client(hc, "dns:///g.example:50051").with_dns(os.net, os.clock)
+    os.stdio.println("dns target ${dns.target()}")
+    let peer = grpc.client(hc, "http://${ha.addr()}").call("/g.G/Echo", {}, None, fn(cc) -> Str ! grpc.Status {
+      cc.send(b"hi")?
+      cc.close_send()
+      let p = cc.peer()?
+      while let Some(_) = cc.recv()? {
+      }
+      Ok(p)
+    })
+    match peer {
+      Ok(p) => os.stdio.println("peer is server a: ${p == ha.addr()}")
+      Err(e) => os.stdio.println("peer err ${e}")
+    }
+    let rpeer = rs.call("/g.G/Echo", {}, None, fn(cc) -> Str ! grpc.Status {
+      cc.close_send()
+      cc.peer()
+    })
+    match rpeer {
+      Ok(p) => os.stdio.println("resolver peer is server b: ${p == hb.addr()}")
+      Err(e) => os.stdio.println("resolver peer err ${e}")
+    }
+  }
+}

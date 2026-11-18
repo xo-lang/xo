@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Feature (std/grpc): `ClientCall.peer()` returns the server address a call went to (grpc-go's `grpc.Peer` call option): with `with_addrs`, `with_dns` or `with_resolver` the address the balancer picked, else the base URL's host:port or `unix:PATH`.
 - Performance (native backends): an integer comparison a dominating branch already decided is folded, and a reference counted field read twice is read once, so a loop guarded by `i < n` drops an inlined helper's `i >= n` test (std/toml decode 6.4% fewer instructions on the Mac).
 - Memory (native runtime): a thread's heap gives back the spare magazine of a size class it has not used for an age period to the central list, where other threads reuse it and the sweep returns its pages (decision 0704): a long running server's footprint follows the classes it uses now (std/otlp's 30 minute stress grew 20% before, 10% after).
 - Performance (arm64 and x86-64 backends): a function that calls only instruction-like builtins (byte, list and text reads, Int and Float min, max and abs) is inlined at a call inside a loop up to 160 instructions when it has at most 4 call sites, so std/image's Over compositing no longer calls draw_px per pixel (bench/perf/image over 4.1% fewer instructions on the Mac).

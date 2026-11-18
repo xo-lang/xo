@@ -2,6 +2,16 @@
 
 
 
+## 2026-11-17: feature: ClientCall.peer, the server address a call went to
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (grpc-go's grpc.Peer call option; with balancing, decision 0707, a call's server is the balancer's pick)
+- Go reference: google.golang.org/grpc v1.79.2 rpc_util.go Peer, PeerCallOption
+- Test: std/grpc_test.xo "ClientCall.peer is the address the call went to, as grpc-go's grpc.Peer call option"
+- Timing: none
+- Shipped in: not yet released
+
 ## 2026-11-17: feature: ServerKeepalive max_connection_age and max_connection_age_grace; a stream cut by a closed connection is Unavailable
 
 - Kind: feature

@@ -135,6 +135,7 @@ http_duplex # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has
 grpc_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpcreflect_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpc_hooks # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+grpc_balance # wasip1 # network: WASI preview1 has no sockets
 grpchealth_calls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpc_send_header # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_duplex_h2tls # wasip1 # network: the network

@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+round robin: a 3, b 3
+pick first: a a
+resolver: b
+dns target dns:///g.example:50051
+peer is server a: true
+resolver peer is server b: true
+--- stderr

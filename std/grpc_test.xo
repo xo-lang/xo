@@ -1071,3 +1071,34 @@ test "keepalive_server ends a connection at max_connection_age after its grace, 
     expect(c.unary("/a.A/Ping", b"")) == Ok(b"pong")
   }
 }
+
+test "ClientCall.peer is the address the call went to, as grpc-go's grpc.Peer call option" uses (net, clock) {
+  let dead = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let dead_addr = dead.addr()
+  dead.close()
+  var srv = server(os.clock)
+  srv.stream("/p.P/Who", fn(_c, _r, out) -> () ! Status { out.send(b"x") })
+  let h = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { h.serve().ignore_err("the test ends the server") })
+    let hc = http.client(os.net, timeout: 10s)
+    let peer_of = fn(c: Client) -> Str ! Status {
+      c.call("/p.P/Who", {}, None, fn(cc) -> Str ! Status {
+        cc.send(b"")?
+        cc.close_send()
+        let p = cc.peer()?
+        while cc.recv()?.is_some() {}
+        Ok(p)
+      })
+    }
+    // a balancing client: the address it connected to, past the dead one
+    expect(peer_of(client(hc, "dns:///svc.test:50051").with_addrs([dead_addr, h.addr()]))) == Ok(h.addr())
+    // a base URL: its host and port
+    expect(peer_of(client(hc, "http://${h.addr()}"))) == Ok(h.addr())
+    // a call that never opened has its status, not an address
+    expect(peer_of(client(hc, "svc.test:50051").with_addrs([dead_addr])).map_err(fn(e) -> Code { e.code })) == Err(Code.Unavailable)
+  }
+  expect(plain_peer(client(http.client(os.net), "https://svc.test/x"))) == "svc.test:443"
+  expect(plain_peer(client(http.client(os.net), "http://[::1]"))) == "[::1]:80"
+  expect(plain_peer(client(http.client(os.net), "unix:///tmp/g.sock"))) == "unix:/tmp/g.sock"
+}

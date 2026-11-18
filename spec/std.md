@@ -10988,6 +10988,7 @@ fn (c: ClientCall) close_send()
 fn (c: ClientCall) recv() -> Bytes? ! Status
 fn (c: ClientCall) header() -> Map[Str, Str] ! Status   // the response's header metadata (waits for the head)
 fn (c: ClientCall) trailer() -> Map[Str, Str]           // the trailer metadata, complete once recv ended
+fn (c: ClientCall) peer() -> Str ! Status                // the server address the call went to: the balanced one, else the base's host:port or "unix:PATH" (grpc-go's grpc.Peer)
 // limits (grpc-go's defaults: receive 4 MiB, send math.MaxInt32)
 fn (s: Server) with_max_recv(n: Int) -> Server
 fn (s: Server) with_max_send(n: Int) -> Server
