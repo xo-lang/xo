@@ -1,5 +1,18 @@
 # std/amqp changes
 
+## 2026-11-18: fix: a null message section is skipped, as go-amqp
+
+- Kind: fix
+- Commit: this push
+- Found by: task #152 (xw-1's amqp fuzz against go-amqp v1.4.0, seed 43 on host 3: 1 of 4601 cases differ, `00 53 71 40`)
+- Go reference: go-amqp v1.4.0 message.go Message.Unmarshal, internal/encoding/decode.go Unmarshal (returns at a null)
+- Test: std/amqp_test.xo "a null section leaves the message as it was, as go-amqp (TestAmqpFuzz seed 43, task #152)" (an error before)
+- Shipped in: not yet released
+
+decode_message refused a section whose value is null. A null delivery-annotations, message-annotations,
+application-properties, footer or amqp-value section now leaves the message as it was, and a null data or
+sequence section is an empty one, as go-amqp; a null header or properties section is still an error.
+
 ## 2026-11-17: fix: a null application-properties key is an error, as go-amqp
 
 - Kind: fix (behavior change)

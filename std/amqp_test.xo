@@ -61,6 +61,23 @@ test "an application-properties key is a str or sym, never null, as go-amqp (Tes
   expect(y.app_properties) == Some([("k", Value.Str(v: "x"))])
 }
 
+test "a null section leaves the message as it was, as go-amqp (TestAmqpFuzz seed 43, task #152)" {
+  // go-amqp's encoding.Unmarshal returns at a null before reading the section
+  let m = decode_message(hb("00537140")).or_fault("null delivery-annotations")
+  expect(m.delivery_annotations is None) == true
+  expect(m.body == Body.Empty) == true
+  expect(decode_message(hb("005372400053784000537440")).is_ok()) == true
+  let v = decode_message(hb("005377a1017800537740")).or_fault("null amqp-value")
+  expect(v.body == Body.Value(v: Value.Str(v: "x"))) == true
+  let d = decode_message(hb("00537540")).or_fault("null data")
+  expect(d.body == Body.Data(sections: [b""])) == true
+  let q = decode_message(hb("00537640")).or_fault("null sequence")
+  expect(q.body == Body.Sequence(sections: [[]])) == true
+  // the header and properties read a list: null is an error
+  expect(decode_message(hb("00537040")).is_err()) == true
+  expect(decode_message(hb("00537340")).is_err()) == true
+}
+
 test "lists and maps read their count of elements, booleans any nonzero byte, as go-amqp (TestAmqpFuzz, task #115)" {
   // go-amqp's readListHeader and readMapHeader check the size against the
   // bytes left, then read count elements; readBool takes any byte but 0

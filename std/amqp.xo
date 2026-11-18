@@ -800,6 +800,15 @@ pub fn decode_message(b: Bytes) -> Message ! AmqpErr {
       }
       _ => return Err(dec_err("a message section must be described"))
     }
+    // go-amqp's encoding.Unmarshal returns at a null before it reads the
+    // section: annotations, application-properties, a footer and an
+    // amqp-value leave the message as it was, a data or sequence section is
+    // an empty one; the header and properties read a list, which null is not
+    // (TestAmqpFuzz seed 43, task #152)
+    let null_skip = f == Value.Null && (c == 0x71 || c == 0x72 || c == 0x74 || c == 0x77 || c == 0x78)
+    if null_skip {
+      continue
+    }
     if c == 0x70 {
       if header is Some(..) { return Err(dec_err("a second header section")) }
       let items = match f {
@@ -853,6 +862,7 @@ pub fn decode_message(b: Bytes) -> Message ! AmqpErr {
       kinds = 1
       match f {
         Binary(x) => { data.push(x) }
+        Null => { data.push(b"") }
         _ => return Err(dec_err("a data section must be binary"))
       }
     } else if c == 0x76 {
@@ -860,6 +870,7 @@ pub fn decode_message(b: Bytes) -> Message ! AmqpErr {
       kinds = 2
       match f {
         List(i) => { seq.push(i) }
+        Null => { seq.push([]) }
         _ => return Err(dec_err("a sequence section must be a list"))
       }
     } else if c == 0x77 {
