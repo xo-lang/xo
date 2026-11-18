@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- `xo build --phase-times` says when the whole program is built instead of linking std's store ("std variant: off (XO_SEPCOMP=0 ...)" or "not used (--release)"), and `xo dev size` measures whole-program builds (XO_SEPCOMP=0), what a release ships, so its sizes no longer depend on whether the cache held std's store (task #298).
 - Feature (std/grpc): `Client.with_stats_handler` and `Server.with_stats_handler` give a function every stats event of each call (Begin, headers, each message with its sizes, trailers, End), grpc-go's StatsHandler (decision 0710 stage 1).
 - Feature (std/grpc): `Client.with_message_interceptor(on_send, on_recv)` runs on each message a streaming call sends and receives, to change it or end the call (the rest of grpc-go's stream client interceptors, decision 0709).
 - Fix (std/udp): `udp.listen(net, "")` listens on port 0 of every interface, as Go's net.ListenPacket does (it failed with "missing port in address").

@@ -84,7 +84,7 @@ apt-get update > /dev/null 2>&1
 apt-get install -y --no-install-recommends valgrind > /dev/null 2>&1
 servers=""
 for b in $backends; do
-	if ! (cd /work/srv && XO_MAP_LOG=${XO_MAP_LOG:-} XO_INLINE_STRICT=1 XO_STD=/work/xo/std XO_BIN_CACHE=off PWD=/work/srv /work/xo/bin/xo build --backend=\$b -o /work/srv-\$b . > /work/build-\$b.log 2>&1); then
+	if ! (cd /work/srv && XO_MAP_LOG=${XO_MAP_LOG:-} XO_INLINE_STRICT=1 XO_SEPCOMP=0 XO_STD=/work/xo/std XO_BIN_CACHE=off PWD=/work/srv /work/xo/bin/xo build --backend=\$b -o /work/srv-\$b . > /work/build-\$b.log 2>&1); then
 		echo "callgrind-docker.sh: the \$b server did not build:" >&2
 		tail -5 /work/build-\$b.log >&2
 		exit 1

@@ -237,7 +237,7 @@ func build(xo, dir, backend, t, out string, env []string) error {
 	os.MkdirAll(filepath.Dir(out), 0o755)
 	cmd := exec.Command(xo, "build", "--backend="+backend, "--targets="+t, "-o", out, ".")
 	cmd.Dir = dir
-	cmd.Env = env
+	cmd.Env = wholeProgram(env)
 	o, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, tail(string(o), 1))
@@ -380,4 +380,15 @@ func tail(s string, n int) string {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "identity:", err)
 	os.Exit(2)
+}
+
+// wholeProgram is env with XO_SEPCOMP=0 last: identity compares whole
+// program builds, what a release ships (task #298), never one side
+// linking std's store from the cache and the other not
+// (gotchas/separate-std-changes-code-size.md).
+func wholeProgram(env []string) []string {
+	if env == nil {
+		env = os.Environ()
+	}
+	return append(append([]string(nil), env...), "XO_SEPCOMP=0")
 }

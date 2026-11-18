@@ -78,6 +78,11 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
     return with_env(os, {"XO_SEPCOMP": "0", "XO_SEPCOMP_FACTS": "", "XO_SEPCOMP_FACTS_CONC": "", "XO_SEPCOMP_STORE": "", "XO_SEPCOMP_STORE_CONC": ""})
   }
   if os.env.get("XO_SEPCOMP") != None || (os.env.get("XO_SEPCOMP_DEFAULT") ?? "") == "0" {
+    // the line size and instruction-count tools' builds show (task #298:
+    // they build whole program, what a release ships, decision #115)
+    if o.phases && (os.env.get("XO_SEPCOMP") ?? "") != "1" {
+      os.stdio.eprintln("std variant: off (XO_SEPCOMP=0 or XO_SEPCOMP_DEFAULT=0), the whole program is built")
+    }
     return os
   }
   let host = host_os(os)
@@ -92,6 +97,9 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   // importers built from source (main.xo, check.sep_source)
   let tmode = o.cmd == "test"
   if !(o.cmd is "build" | "run" | "test") || backend != arch || !served || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
+    if o.phases && (o.cmd is "build" | "run" | "test") {
+      os.stdio.eprintln("std variant: not used (${if o.release { "--release" } else if o.race { "--race" } else if backend != arch || !served { "another target or backend" } else { "a cc link, changed passes or a changed std" }}), the whole program is built")
+    }
     return os
   }
   if !(o.targets.is_empty() || o.targets == "${host}/${arch}") {

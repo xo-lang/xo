@@ -219,6 +219,13 @@ fn size_usage() -> Str {
 /// size_cmd is `xo dev size --by-cause`: builds PROG (a directory or a
 /// file, native arm64 or amd64) with XO_SIZE_CAUSES set and reports its code
 /// bytes by cause; --rows reads a saved run, --diff compares two.
+/// The pipeline xo dev size builds with: whole program, what a release
+/// ships (XO_SEPCOMP=0; task #298, lead decision #115). A build that
+/// found std's store would link std separately, about 2.5% less code for
+/// compiler/xo, so the size would depend on the cache
+/// (gotchas/separate-std-changes-code-size.md).
+const SIZE_SEPCOMP = "0"
+
 fn size_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, rand, stdio) {
   var fl = core.new_flags("dev size")
   fl.bool_flag("by-cause", "split the code bytes by cause (decision 0443)")
@@ -286,7 +293,7 @@ fn size_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, 
   }
   bargs.push(fl.args[0])
   let xo = if fl.get_str("xo").is_empty() { h.xo } else { fl.get_str("xo") }
-  let out = os.proc.cmd(xo, bargs).set_env("XO_SIZE_CAUSES", rows_path).output()
+  let out = os.proc.cmd(xo, bargs).set_env("XO_SIZE_CAUSES", rows_path).set_env("XO_SEPCOMP", SIZE_SEPCOMP).output()
   var built = false
   match out {
     Ok(o) => {

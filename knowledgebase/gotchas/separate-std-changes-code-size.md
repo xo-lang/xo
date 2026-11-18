@@ -14,5 +14,9 @@ a new xo identity, XO_SEPCOMP_BG=0) or `XO_BACKEND_CACHE=off` builds the whole p
 program is built". Whether a miss should build std first, so output never depends on cache state,
 is with the owner (task #298, lead decision #111).
 
-Fix: compare sizes and instruction counts only between builds on the same pipeline: both with
-`XO_BACKEND_CACHE=off`, or both with the std line reading "reused" (`--phase-times`).
+Fix: compare sizes and instruction counts on whole-program builds, what a release ships (owner,
+2026-11-17, lead decision #115; both pipelines stay): `XO_SEPCOMP=0` or `--release`. The tools that
+report those numbers set it themselves since 2026-11-17: `xo dev size`, scripts/identity, ab-host's
+program builds (scripts/lead/ab-host-remote.sh) and bench/perf/http/callgrind-docker.sh. A hand run
+sets `XO_SEPCOMP=0`; `--phase-times` then says "std variant: off (...), the whole program is built"
+(or "not used (--release)"; cmd/xo TestStdVariantLineWholeProgram).
