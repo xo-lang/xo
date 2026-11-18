@@ -416,6 +416,32 @@ func TestPgSelectNoColumns(t *testing.T) {
 	pgfDiff(t, cases, []string{"arm64"}, 0)
 }
 
+// TestPgTimePastTime: a timestamp or timestamptz outside Xo's Time
+// (int64 nanoseconds from 1970: about 1677-09-21 to 2262-04-11) is Text in
+// std/sql, the server's text; the reference read any year as At (TestPgFuzz
+// seed 43 case 472: a byte changed 2024 to 2824, sql evidence, 2026-11-18).
+func TestPgTimePastTime(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds pgx and the Xo client")
+	}
+	kinds := []pgfKind{pgfKinds[16], pgfKinds[17]} // timestamp, timestamptz
+	desc := pgfRowDesc([]string{"c0", "c1"}, kinds, 2)
+	msgs := [][]byte{desc}
+	for _, v := range [][2]string{
+		{"2824-01-02 03:04:05", "2824-01-02 03:04:05-08"},
+		{"2262-04-11 00:00:00", "2262-04-11 00:00:00+00"},
+		{"2262-04-12 00:00:00", "2262-04-12 00:00:00+00"},
+		{"1677-09-22 00:00:00", "1677-09-22 00:00:00+00"},
+		{"1677-09-21 00:00:00", "1677-09-21 00:00:00+00"},
+		{"0001-01-01 00:00:00", "9999-12-31 23:59:59.999999+00"},
+	} {
+		a, b := v[0], v[1]
+		msgs = append(msgs, pgfDataRow([]*string{&a, &b}))
+	}
+	msgs = append(msgs, pgfMsg('C', pgfCstr(nil, "SELECT 6")), pgfReady)
+	pgfDiff(t, []pgfCase{{msgs: msgs}}, []string{"arm64"}, 0)
+}
+
 // TestPgDuplicateColumn: a row whose two columns share a name (SELECT 1
 // AS c, 2 AS c) shows each column's own value, as pgx's Values does; the
 // Xo side read both by name and showed the first twice (TestPgFuzz seed 7

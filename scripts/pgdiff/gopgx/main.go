@@ -94,7 +94,12 @@ func iso(s string, utc bool) (time.Time, bool) {
 		}
 	}
 	x, err := time.Parse(time.RFC3339Nano, t)
-	return x, err == nil
+	// Xo's Time is int64 nanoseconds from 1970: a time outside it is
+	// Text in std/sql (spec/std.md 10.9; TestPgTimePastTime)
+	if err != nil || x.Before(time.Unix(0, math.MinInt64)) || x.After(time.Unix(0, math.MaxInt64)) {
+		return time.Time{}, false
+	}
+	return x, true
 }
 
 func val(oid uint32, s string) string {

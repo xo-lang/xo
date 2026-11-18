@@ -4180,8 +4180,8 @@ Results are read in text format and decoded by the column's type:
 | `float4`, `float8` | `Real` | `float` |
 | `bool` | `Flag` | `bool` |
 | `text`, `varchar`, `bpchar`, `name`, `citext` | `Text` | `str` |
-| `timestamptz` | `At` | `time` |
-| `timestamp` | `At`, the wall clock read as UTC | `time` |
+| `timestamptz` | `At` (outside a `Time`, about 1677-09-21 to 2262-04-11: `Text`) | `time` |
+| `timestamp` | `At`, the wall clock read as UTC (outside a `Time`: `Text`) | `time` |
 | `bytea` | `Blob` | `bytes` |
 | `json`, `jsonb` | `JsonText` | `json[T]`, `str` |
 | arrays of the types above (one dimension) | `Array` | `ints`, `strs`, `items` |
