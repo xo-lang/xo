@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Perf: on x86_64 a remainder that cannot fault (its divisor proven or checked not 0) reads idiv's rdx in place of a multiply and a subtract of the quotient, and is a div when neither operand can be negative, as in Go (`i % xs.len()`; task #302).
 - Perf: a second read of a Bytes element that an identical read dominates reuses its value, a constant byte index is the load's displacement, and a loop reuses an invariant an earlier loop's preheader already computed (the base address of a text two loops scan); `Str.trim_chars` reads its cutset byte once (task #302).
 - Fix: on arm64, a program built against the separately compiled std (the default with a std store) is preempted in its loops again; every function now has an unsafe range table, where only functions with unsafe ranges had one, so a long loop held its thread (task #306).
 - Perf: `path.is_match` reads an ASCII byte of a byte class or `?` without a rune decode (bench/perf/path match 1.07 of Go on linux/amd64; task #302).

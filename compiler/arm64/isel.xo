@@ -3846,6 +3846,15 @@ fn (var g: G) div_rem(v: Int) {
   }
   // a - (a / b) * b; arm64's sdiv of the minimum by -1 is the minimum, so
   // `x % -1` is 0 as Xo requires
+  if sdiv == "sdivs" {
+    // x86_64: idiv leaves the remainder in rdx, read in place of a
+    // multiply and a subtract; div when neither operand is negative, as
+    // Go's (task #302: trimchars's `i % TEXTS.len()`, cqto, idivq, imulq,
+    // subq where Go has xorl, divq)
+    let op = if alo >= 0 && blo >= 0 { "urems" } else { "srems" }
+    g.set(v, [g.def1(false, "${op} $d0, $u0, $u1", [a, b])])
+    return
+  }
   let q = g.def1(false, "${sdiv} $d0, $u0, $u1", [a, b])
   g.set(v, [g.def1(false, "msub $d0, $u0, $u1, $u2", [q, b, a])])
 }

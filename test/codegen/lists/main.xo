@@ -21,7 +21,7 @@ fn sum(xs: List[Int]) -> Int {
 // length of 0 faults in the remainder): no bounds check (2026-10-24).
 fn pick(xs: List[Int], n: Int) -> Int {
   // arm64: "sdiv" -"b\.hs"
-  // amd64: "idivq" -"\tjae "
+  // amd64: "\tdivq" -"\tjae " -"imulq"
   var s = 0
   for i in 0..n {
     s += xs[i % xs.len()]

@@ -116,7 +116,7 @@ fn or_not(a: Int, b: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)} ${outside(n)} ${last_not_below([5, 3, 9, n], 0, 4)} ${digit_sum("12${n}".bytes())} ${sign_of("+-".bytes(), n % 2)} ${byte2(n * 65536)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)} ${outside(n)} ${last_not_below([5, 3, 9, n], 0, 4)} ${digit_sum("12${n}".bytes())} ${sign_of("+-".bytes(), n % 2)} ${byte2(n * 65536)} ${rem_len(n + 7, [1, 2, 3])} ${rem_signed(n - 9, n + 2)}")
 }
 
 // `d < 0 || d > 9` of a `d = x - 48` is one unsigned compare (isel
@@ -267,4 +267,25 @@ fn sign_of(b: Bytes, i: Int) -> Int {
 fn byte2(x: Int) -> Int {
   // arm64: "ubfx x[0-9]+, x[0-9]+, #16, #8" -"asr" -"and x"
   (x >> 16) & 255
+}
+
+// A checked remainder by a non-negative divisor of a non-negative Int is
+// a div whose rdx is the result on x86_64, as Go's: no multiply and
+// subtract of the quotient (task #302: bench/perf/trimchars's
+// `i % TEXTS.len()`).
+fn rem_len(i: Int, xs: List[Int]) -> Int {
+  // amd64: "\tdivq " -"imulq" -"cqto"
+  if i < 0 {
+    return 0
+  }
+  i % xs.len()
+}
+
+// A signed one reads idiv's rdx.
+fn rem_signed(a: Int, b: Int) -> Int {
+  // amd64: "\tidivq " "movq %rdx, " -"imulq"
+  if b <= 0 {
+    return 0
+  }
+  a % b
 }

@@ -647,6 +647,18 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       x.lines = x.lines + ["movq ${xop(ops[1], 8)}, %rax", "cqto", "idivq ${xop(ops[2], 8)}", "movq %rax, ${xop(ops[0], 8)}"]
       true
     }
+    "srems" | "urems" => {
+      // the remainder of an idiv (or a div: isel.xo div_rem, neither
+      // operand negative) that cannot trap, from rdx
+      if n != 3 {
+        return false
+      }
+      x.clobbers = x.clobbers + [XR_AX, XR_DX]
+      let ext = if m == "urems" { "xorl %edx, %edx" } else { "cqto" }
+      let dv = if m == "urems" { "divq" } else { "idivq" }
+      x.lines = x.lines + ["movq ${xop(ops[1], 8)}, %rax", ext, "${dv} ${xop(ops[2], 8)}", "movq %rdx, ${xop(ops[0], 8)}"]
+      true
+    }
     "sxtw" => {
       x.lines.push("movslq ${xop(ops[1], 4)}, ${xop(ops[0], 8)}")
       true
