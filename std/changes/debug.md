@@ -1,5 +1,20 @@
 # std/debug changes
 
+## 2026-11-18: fix: /sched reports each runtime counter from its own slot
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1's #152 host 3 evidence round: the debug stress program faulted under --check=all and TSan reported a use after free in debug.sched
+- Go reference: none (runtime introspection)
+- Test: cmd/xo TestCheckGuardDebugSched (fails before: SIGBUS on the guard page after the counts record)
+- Shipped in: not yet released
+
+The 2026-11-17 fix below read counter i at slot 8 * i of the counts
+record (rt.slot_load takes a slot index, not a byte offset), so from
+the 7th counter on /sched read past the record's end: wrong values in a
+plain build, a fault under --check=guard, and a use after free report
+under --race. Each counter now reads its own slot.
+
 ## 2026-11-17: fix: the /sched page under --race reads the scheduler without a data race report
 
 - Kind: fix

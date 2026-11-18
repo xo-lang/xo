@@ -102,6 +102,46 @@ func TestCheckFlag(t *testing.T) {
 	}
 }
 
+// debugSchedProg reads std/debug's /sched page, which lists the runtime's
+// counters from llrt/rtstats.xo's record.
+const debugSchedProg = `use std/debug
+use std/http
+
+fn main(os: Os) {
+  let r = debug.router(os.clock, fn(_) { true })
+  let u = http.Url{scheme: "http", host: "h", port: None, path: "/sched", query: {}}
+  let resp = r.call(http.Request{method: "GET", path: "/sched", url: u, headers: {}, body: b"", remote_ip: ""})
+  os.stdio.println("${resp.status} ${resp.body.to_str_lossy().lines().len()} lines")
+}
+`
+
+// TestCheckGuardDebugSched: std/debug's /sched read counter i at slot
+// 8 * i of the runtime's 424 byte counts record (rt.slot_load takes a
+// slot, not a byte offset; 4b42368b8), past its end from the 7th
+// counter: garbage in a plain build, a use after free under --race, and
+// a fault on the guard page after the record under --check=guard (the
+// debug stress program's --check=all run, task #152, 2026-11-18).
+func TestCheckGuardDebugSched(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	if runtime.GOARCH != "arm64" || runtime.GOOS == "windows" {
+		t.Skip("the native arm64 backend runs on the host")
+	}
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(debugSchedProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"run", "--check=guard", src}, &out, &errOut)
+	// the comment that the counters are off, 37 counters, then the heap,
+	// descriptor and timer lines
+	if code != 0 || !strings.HasPrefix(out.String(), "200 ") {
+		t.Fatalf("xo run --check=guard: exit %d stdout %q stderr %q", code, out.String(), errOut.String())
+	}
+}
+
 // TestCheckFlagTest: xo test --check=leak fails the test that leaves
 // blocks live and passes the others (each test's process is checked).
 func TestCheckFlagTest(t *testing.T) {

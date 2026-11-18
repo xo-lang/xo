@@ -102,7 +102,8 @@ fn sched(req: http.Request) -> http.Response {
   var i = 0
   for name in STAT_NAMES.split(" ") {
     if !name.is_empty() {
-      lines.push("${name} ${rt.slot_load[Int](c, 8 * i, 0)}")
+      // slot i of the record (rt.slot_load takes a slot, not a byte offset)
+      lines.push("${name} ${rt.slot_load[Int](c, i, 0)}")
       i += 1
     }
   }

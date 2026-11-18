@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix (std/debug): the `/sched` page reports each runtime counter from its own slot; since 2026-11-17 (unreleased) it read past the counters' record from the 7th counter on (wrong values, a fault under `--check=guard`, a use after free under `--race`).
 - Memory (native runtime, Linux): an idle program gives back the small blocks other threads freed and the unused rest of each thread's bump run: every age pass hands each thread's free lists and spare magazines to the central lists, gives back a bump tail two passes found unused (no huge page advice for it under XO_THP=dense) and unmaps cached large mappings two passes found unused (decision 0714). TestRuntimeHeapIdleLists: 67 to 83 MB kept after idle before, 7 MB after
 - Perf: on x86_64 a remainder that cannot fault (its divisor proven or checked not 0) reads idiv's rdx in place of a multiply and a subtract of the quotient, and is a div when neither operand can be negative, as in Go (`i % xs.len()`; task #302).
 - Perf: a loop reading byte `j - 1` of a Bytes or Str as `j` falls loads it at index `j` of a base made once outside the loop, so `j - 1` takes no register of its own (`Str.trim_chars` and `trim_end_chars` end loops, one instruction less per byte).
