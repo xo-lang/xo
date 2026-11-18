@@ -151,7 +151,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   HEAVYD_GATE_AGE_MIN: gates go first until the exclusive has waited 20
   minutes, then it waits only for the runs already going (lead,
   2026-11-18, #317: amd64 perf runs waited 29 to 82 min while each x86
-  gate sample started 0 s after the last; TestExclStarveStopsBackfill). After heavyd starts (a restart, an
+  gate sample started 0 s after the last; TestExclStarveStopsBackfill).
+  While the starved exclusive still waits for a no-lane run, a bounded
+  plain lease (a -max, not -long) starts beside it, since the exclusive
+  cannot start before that run ends; long and unbounded plain leases
+  drain (lead, 2026-11-18: pass2 froze 140 minutes, every plain lease
+  held behind an exclusive a 200 minute no-lane fuzz run kept out;
+  TestExclStarveOutlastsHold). After heavyd starts (a restart, an
   install), it grants no lane lease for 15 s (AdoptGrace), so the runs
   still going from before re-adopt their slots first (lead, 2026-11-07: a
   new lease took pass2's slot 1 in the same second an adopted run came
