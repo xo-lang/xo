@@ -1,5 +1,18 @@
 # std/amqp changes
 
+## 2026-11-18: fix: a header of more than 5 fields, properties of more than 13, is an error, as go-amqp
+
+- Kind: fix
+- Commit: this push
+- Found by: task #152 (xw-1's amqp fuzz against go-amqp v1.4.0, seed 68 on host 3: 1 of 4624 cases differ, a header list of count 7 holding 5 fields)
+- Go reference: go-amqp v1.4.0 internal/encoding/decode.go UnmarshalComposite ("invalid field count")
+- Test: std/amqp_test.xo "a header of more than 5 fields, properties of more than 13, is an error, as go-amqp (TestAmqpFuzz seed 68, task #152)" (decoded before)
+- Shipped in: not yet released
+
+decode_message read a header or properties list with more elements than the section has fields,
+dropping the extra ones; a header whose count ran past its own bytes took the next sections as its
+fields. Both are now a Decode error, as go-amqp refuses them.
+
 ## 2026-11-18: fix: a null message section is skipped, as go-amqp
 
 - Kind: fix

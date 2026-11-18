@@ -815,6 +815,8 @@ pub fn decode_message(b: Bytes) -> Message ! AmqpErr {
         List(i) => i
         _ => return Err(dec_err("the header must be a list"))
       }
+      // go-amqp's UnmarshalComposite: no more fields than the type has
+      if items.len() > 5 { return Err(dec_err("invalid field count ${items.len()} for the header")) }
       var pri = 4
       match at(items, 1) {
         Null => {}
@@ -832,6 +834,7 @@ pub fn decode_message(b: Bytes) -> Message ! AmqpErr {
         List(i) => i
         _ => return Err(dec_err("the properties must be a list"))
       }
+      if items.len() > 13 { return Err(dec_err("invalid field count ${items.len()} for the properties")) }
       var ub = b""
       match at(items, 1) {
         Null => {}

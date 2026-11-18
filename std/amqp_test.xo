@@ -78,6 +78,16 @@ test "a null section leaves the message as it was, as go-amqp (TestAmqpFuzz seed
   expect(decode_message(hb("00537340")).is_err()) == true
 }
 
+test "a header of more than 5 fields, properties of more than 13, is an error, as go-amqp (TestAmqpFuzz seed 68, task #152)" {
+  // go-amqp's UnmarshalComposite: "invalid field count"
+  expect(decode_message(hb("005370c006054040404040")).is_ok()) == true
+  expect(decode_message(hb("005370c00706404040404040")).is_err()) == true
+  expect(decode_message(hb("005373c00e0d40404040404040404040404040")).is_ok()) == true
+  expect(decode_message(hb("005373c00f0e4040404040404040404040404040")).is_err()) == true
+  // the fuzz case: a header of count 7 holding 5 fields, then the next two sections
+  expect(decode_message(hb("005370d00000000f000000074150097000001585405203005371d10000000400000000005373d00000002800000007a10469642d3140a106e4b896e7958c404040a3106170706c69636174696f6e2f6a736f6e005375a004626f6479")).is_err()) == true
+}
+
 test "lists and maps read their count of elements, booleans any nonzero byte, as go-amqp (TestAmqpFuzz, task #115)" {
   // go-amqp's readListHeader and readMapHeader check the size against the
   // bytes left, then read count elements; readBool takes any byte but 0
