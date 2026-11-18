@@ -18,6 +18,7 @@ package stdtest
 // their own wording).
 //
 //   XO_GRPCFUZZ_SEED (2), _N (2000), _BACKENDS (arm64,llvm), _SHOW (25: the differing calls printed)
+//   XO_GRPCFUZZ_KEEP=DIR keeps the cases (DIR/cases.jsonl, line K is call K)
 
 import (
 	"bufio"
@@ -328,6 +329,12 @@ func TestGrpcFuzz(t *testing.T) {
 	if err := os.WriteFile(cf, file.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if d := os.Getenv("XO_GRPCFUZZ_KEEP"); d != "" {
+		// the cases, one JSON line each (grpcref cannedserve's input), to replay a call alone
+		if err := os.WriteFile(filepath.Join(d, "cases.jsonl"), file.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ref := filepath.Join(dir, "grpcref")
 	b := exec.Command("go", "build", "-o", ref, ".")
 	b.Dir = filepath.Join(root, "internal", "stdtest", "grpcref")
@@ -361,7 +368,7 @@ func TestGrpcFuzz(t *testing.T) {
 		select {
 		case err := <-done:
 			if err != nil {
-				t.Fatalf("%s: %v\n%s", name, err, myfTail(errb.String(), 20))
+				t.Fatalf("%s: %v after %d of %d calls\n%s\nstdout:\n%s", name, err, len(grfBlocks(out.String())), n, myfTail(errb.String(), 20), myfTail(out.String(), 10))
 			}
 		case <-time.After(10 * time.Minute):
 			cmd.Process.Kill()
