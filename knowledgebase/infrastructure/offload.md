@@ -964,4 +964,9 @@ host gets `-host "linux/amd64 host"` and amd64 for arm64 in `-backends`;
 stdproven's backends default to the host's native backend and llvm.
 `offload.sh --rm` is for ssh hosts only, so a failed run's bundle can stay
 in `xo-ci/off` there (the remote side removes it once fetched).
+Perf and serverperf runs (ADR 0712, xw decision #117) go to the amd64 host
+by default as an exclusive lease (`OFF_EXCLUSIVE=1`, the Go twin in the
+same job), or to host 2, 3 or 4 when `OFFLOAD_ENV` names one, still
+exclusive; stdproven-offload.sh refuses perf on host 1. stdcov counts perf
+evidence from any host.
 Last verified: 2026-11-17.

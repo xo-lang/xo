@@ -197,3 +197,22 @@ func TestFeatAudit(t *testing.T) {
 		}
 	}
 }
+
+// TestPerfEvidenceHosts: perf evidence counts whatever host timed it
+// (ADR 0712, xw decision #117: the amd64 host or an exclusive arm64 host 2
+// to 4), and serverperf's measure line ("worst Xo / Go cost N") counts as
+// perf's does ("worst Xo / Go N").
+func TestPerfEvidenceHosts(t *testing.T) {
+	for _, c := range []struct{ m, host, measure, want string }{
+		{"zz-perf-amd64", "linux/amd64 host", "4 cases of 1 twin directories, worst Xo / Go 1.020 over the cases above 5 ms (Proven at or under 1.05), 3m0s", "Proven"},
+		{"zz-perf-arm64", "linux/arm64 host 3", "4 cases of 1 twin directories, worst Xo / Go 0.910 over the cases above 5 ms (Proven at or under 1.05), 3m0s", "Proven"},
+		{"zz-serverperf-amd64", "linux/amd64 host", "6 workload and backend figures, worst Xo / Go cost 1.040 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", "Proven"},
+		{"zz-serverperf-slow", "linux/amd64 host", "6 workload and backend figures, worst Xo / Go cost 1.200 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", "Early"},
+	} {
+		evCache[c.m] = map[string]evFile{"perf": {hdr: map[string]string{"kind": "perf", "result": "pass", "host": c.host, "date": "2026-11-17", "measure": c.measure}, path: "std/evidence/" + c.m + "/perf.md"}}
+		if got := perf(c.m); got.level != c.want {
+			t.Errorf("%s (%s): perf = %s %q, want %s", c.m, c.host, got.level, got.text, c.want)
+		}
+		delete(evCache, c.m)
+	}
+}

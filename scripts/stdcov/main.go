@@ -883,7 +883,8 @@ func test(m string) mark {
 	return mark{"Solid", what, evp}
 }
 
-var reWorst = regexp.MustCompile(`worst Xo / Go (\d+\.\d+)`)
+// reWorst: perf's "worst Xo / Go N" and serverperf's "worst Xo / Go cost N"
+var reWorst = regexp.MustCompile(`worst Xo / Go (?:cost )?(\d+\.\d+)`)
 
 // perfHelpers: internal modules (tables and helpers other std modules
 // use) whose performance is their users' (lead, 2026-11-15): a helper
