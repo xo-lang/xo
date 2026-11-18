@@ -1,5 +1,18 @@
 # std/time changes
 
+## 2026-11-18: fix: a Civil past Go's years on the Go backend
+
+- Kind: fix
+- Commit: the task #242 b32/b41/b43 push (std/rt/timecivil.go, timefmt.go)
+- Found by: task #242 (owner's v0.51.1 evaluation, b43)
+- Go reference: none (native's std/native/time.xo civil arithmetic, ported)
+- Test: internal/gen TestGolden/civil_wide_years (fails before: wrapped years and weekdays, a wrapped unix)
+
+On `--backend=go`, a `time.Civil` whose year is past Go's Time range
+(about 292e9) formats its own year and weekday, and `unix`,
+`days_until` and `add_days` fault when the answer does not fit `Int`,
+as native does, instead of wrapping.
+
 ## 2026-11-16: feature: time.virtual, a pure Clock
 
 - Kind: feature

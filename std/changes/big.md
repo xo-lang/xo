@@ -1,5 +1,20 @@
 # std/big changes
 
+## 2026-11-18: fix: BigFloat add and sub of far apart exponents on the Go backend
+
+- Kind: fix
+- Commit: this push
+- Found by: task #242 (owner's v0.51.1 evaluation, b48: 25-big corpus)
+- Go reference: math/big float.go uadd and usub (the sticky bit of the rounding)
+- Test: internal/gen TestGolden/bigfloat_far_exps (fails before: a nil pointer fault inside math/big), answers from native's port
+
+On `--backend=go`, BigFloat add and sub called math/big with both
+operands, and math/big shifts the larger mantissa by the exponents'
+distance: about 2^32 bits for exponents at Go's range ends, which took
+minutes or faulted. An operand wholly below the other's lowest bit and
+the result's rounding bit is now passed as one bit just under both,
+which rounds the same at every mode. Native was right.
+
 ## 2026-11-17: perf: BigFloat.mul reads both mantissas from their keys
 
 - Kind: perf

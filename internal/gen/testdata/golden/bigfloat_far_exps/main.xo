@@ -1,0 +1,38 @@
+// b48 (task #242): BigFloat add and sub of operands whose exponents are
+// far apart (up to about 2^32) on the Go backend round as math/big rounds
+// them, at every mode, near and far past the precision, without math/big
+// shifting a mantissa by the exponents' distance (it took minutes and
+// faulted). The answers are native's port of math/big.
+use std/big
+
+fn show(os: Os, tag: Str, z: big.BigFloat) {
+  let (m, e) = z.mant_exp()
+  os.stdio.println("${tag} ${z.acc()} ${e} ${big.float_marshal(m)}")
+}
+
+fn main(os: Os) {
+  let modes = [big.RoundingMode.ToNearestEven, big.RoundingMode.ToNearestAway, big.RoundingMode.ToZero, big.RoundingMode.AwayFromZero, big.RoundingMode.ToNegativeInf, big.RoundingMode.ToPositiveInf]
+  // the threshold: 3 at 64 bits against 2^-k, k across the rounding bit
+  let three = big.float_from_int(3)
+  let odd = big.float_from_int(-9223372036854775807)
+  for (mi, md) in modes.indexed() {
+    for k in [61, 62, 63, 64, 65, 66, 67, 68, 70, 200] {
+      let y = big.float_from_int(1).mul_pow2(-k)
+      show(os, "m${mi} k${k} +", three.with_mode(md).add(y))
+      show(os, "m${mi} k${k} -", three.with_mode(md).sub(y))
+      show(os, "m${mi} k${k} y-", y.with_mode(md).sub(three))
+      show(os, "m${mi} k${k} o+", odd.with_mode(md).add(y, 10))
+      show(os, "m${mi} k${k} o-", odd.with_mode(md).sub(y.neg(), 70))
+    }
+  }
+  // 2^32 apart: Go's exponent range end to end
+  let a = three.mul_pow2(2147483640)
+  for j in [2147483640, 2147483647, 2147483648] {
+    let b = three.mul_pow2(-j)
+    for p in [0, 10, 200] {
+      show(os, "far ${j} ${p} +", a.add(b, p))
+      show(os, "far ${j} ${p} -", a.sub(b, p))
+      show(os, "far ${j} ${p} b-", b.sub(a, p))
+    }
+  }
+}

@@ -162,12 +162,58 @@ func (x Big_BigFloat) M_with_mode(_ *Task, mode Big_RoundingMode) Big_BigFloat {
 
 func (x Big_BigFloat) M_add(_ *Task, y Big_BigFloat, prec int64) Big_BigFloat {
 	defer bigNaN()
-	return floatKey(bigZ(x, prec).Add(floatOf(x), floatOf(y)))
+	z := bigZ(x, prec)
+	a, b := sticky(x, y, z.Prec())
+	return floatKey(z.Add(a, b))
 }
 
 func (x Big_BigFloat) M_sub(_ *Task, y Big_BigFloat, prec int64) Big_BigFloat {
 	defer bigNaN()
-	return floatKey(bigZ(x, prec).Sub(floatOf(x), floatOf(y)))
+	z := bigZ(x, prec)
+	a, b := sticky(x, y, z.Prec())
+	return floatKey(z.Sub(a, b))
+}
+
+// sticky is x and y as *big.Float for an add or sub at precision p (0:
+// the larger operand precision), with an operand wholly below the other's
+// lowest bit and the result's rounding bit replaced by one bit just under
+// both: only its sign and its being nonzero reach the rounding, so the
+// sum rounds the same, and math/big no longer shifts the larger mantissa
+// by the exponents' distance (2^32 bits apart took minutes and faulted;
+// b48, task #242; native's port aligns by the precision, as here).
+func sticky(x, y Big_BigFloat, p uint) (*big.Float, *big.Float) {
+	if x.F_form == 1 && y.F_form == 1 {
+		if p == 0 {
+			p = uint(max(x.F_prec, y.F_prec))
+		}
+		if e, ok := stickyExp(x, y, p); ok {
+			return floatOf(x), stickyBit(y, e)
+		}
+		if e, ok := stickyExp(y, x, p); ok {
+			return stickyBit(x, e), floatOf(y)
+		}
+	}
+	return floatOf(x), floatOf(y)
+}
+
+// stickyExp is the exponent of the stand-in for small when it is wholly
+// below big's lowest bit and the result's rounding bit at precision p.
+func stickyExp(big_, small Big_BigFloat, p uint) (int64, bool) {
+	low := big_.F_exp - max(int64(p), big_.F_prec, big_.F_mant.M_bit_len(nil)) - 2
+	if small.F_exp < low && low > -(1<<31) {
+		return low, true
+	}
+	return 0, false
+}
+
+// stickyBit is 0.5 * 2^e with small's sign, precision and mode.
+func stickyBit(small Big_BigFloat, e int64) *big.Float {
+	z := new(big.Float).SetPrec(uint(small.F_prec)).SetMode(big.RoundingMode(small.F_mode.Tag - 1))
+	z.SetMantExp(big.NewFloat(0.5), int(e))
+	if small.F_neg {
+		z.Neg(z)
+	}
+	return z
 }
 
 func (x Big_BigFloat) M_mul(_ *Task, y Big_BigFloat, prec int64) Big_BigFloat {
