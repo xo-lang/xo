@@ -183,8 +183,9 @@ fn main(os: Os) {
 // ChaCha20-Poly1305's bulk in one loop (cpu.chacha_poly_seal4 and seal8):
 // Poly1305's mulq by r read from its state between the rounds, and the
 // AVX2 kernel's two blocks a ymm register (vperm2i128 gathering a block's
-// rows, vzeroupper after).
-// amd64: "mulq %rbx" "movq 24\(%rdi\), %rax" "vpshufb 272\(%rsi\), %ymm3, %ymm3" "vperm2i128 \$32, %ymm1, %ymm0, %ymm8" "vzeroupper"
+// rows, vzeroupper after), eight blocks a group in all 16 (ymm14 spilled
+// for the rotations by 12 and 7, set 3's rows in ymm12 to ymm15).
+// amd64: "mulq %rbx" "movq 24\(%rdi\), %rax" "vpshufb 336\(%rsi\), %ymm15, %ymm15" "vmovdqu %ymm14, 400\(%rsi\)" "vperm2i128 \$32, %ymm13, %ymm12, %ymm0" "vperm2i128 \$32, %ymm1, %ymm0, %ymm8" "vzeroupper"
 // func chacha.absorb26
 // arm64: -"smulh" -"b\.vs"
 // llvm: -"with.overflow"

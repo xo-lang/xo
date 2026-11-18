@@ -156,3 +156,83 @@ test "dit_set sets Arm's DIT bit and returns the old one, where the CPU has it (
   let _ = dit_set(start)
   expect(target.os != TargetOs.Darwin || target.arch != TargetArch.Arm64 || (hw() & HW_DIT) != 0) == true
 }
+
+/// A seeded xorshift walk of n words.
+fn test_words(seed: Int, n: Int) -> List[Int] {
+  var x = seed
+  var l = List[Int].with_capacity(n)
+  for _ in 0..n {
+    x = x ^ x.wrapping_shl(13)
+    x = x ^ x.shr_logical(7)
+    x = x ^ x.wrapping_shl(17)
+    l.push(x)
+  }
+  l
+}
+
+test "chacha_poly_seal8 and open8 are their bodies (AVX2, 512 byte groups and a 256 byte tail, where the CPU has it)" {
+  if target.arch != TargetArch.Amd64 || (hw() & HW_AVX2) != 0 {
+    for blocks in 0..9 {
+      let n = 256 * blocks
+      for open in [false, true] {
+        // the state (16 words) and the four counters (the last near the
+        // 32 bit wrap), in 448 bytes (chacha.xo's scratch)
+        var st0 = test_words(5 + n, 56)
+        for b in 0..4 {
+          let w = st0[8 + b / 2]
+          let c = (4294967290 + b) & 4294967295
+          st0[8 + b / 2] = if b % 2 == 0 { (w & -4294967296) | c } else { (w & 4294967295) | c.wrapping_shl(32) }
+        }
+        // Poly1305: h0, h1, h2 (below 4), r0 and r1 clamped
+        var p0 = test_words(9 + n, 5)
+        p0[2] = p0[2] & 3
+        p0[3] = p0[3] & 1152921487695413247
+        p0[4] = p0[4] & 1152921487695413244
+        let src = test_words(13 + n, n / 8 + 1)
+        var sts: List[List[Int]] = []
+        var pss: List[List[Int]] = []
+        var dsts: List[List[Int]] = []
+        for k in 0..2 {
+          var st = List[Int].with_capacity(56)
+          for w in st0 {
+            st.push(w)
+          }
+          var ps = List[Int].with_capacity(5)
+          for w in p0 {
+            ps.push(w)
+          }
+          // opening in place: dst is src's copy
+          var d = List[Int].with_capacity(n / 8 + 1)
+          for w in src {
+            d.push(if open { w } else { 0 })
+          }
+          let s = if open { lanes_addr(d) } else { lanes_addr(src) }
+          if k == 0 {
+            if open {
+              chacha_poly_open4_soft(lanes_addr(d), s, lanes_addr(st), n, lanes_addr(ps))
+            } else {
+              chacha_poly_seal4_soft(lanes_addr(d), s, lanes_addr(st), n, lanes_addr(ps))
+            }
+          } else if open {
+            chacha_poly_open8(lanes_addr(d), s, lanes_addr(st), n, lanes_addr(ps))
+          } else {
+            chacha_poly_seal8(lanes_addr(d), s, lanes_addr(st), n, lanes_addr(ps))
+          }
+          sts.push(st)
+          pss.push(ps)
+          dsts.push(d)
+        }
+        for i in 0..n / 8 + 1 {
+          expect(dsts[1][i]) == dsts[0][i]
+        }
+        for i in 0..3 {
+          expect(pss[1][i]) == pss[0][i]
+        }
+        // the counters advanced alike
+        for i in 0..10 {
+          expect(sts[1][i]) == sts[0][i]
+        }
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ the text of every entry is unchanged).
 - Fix (std/grpchealth): a Watch whose client canceled is removed at once; it stayed registered until the service's next status change.
 - Fix (std/grpchealth; #152 fuzz): `list` refuses a HealthListResponse whose service name is not UTF-8, as protobuf-go; it read the name as "".
 - Perf (native compiler, x86-64): a List that does not escape its function lives in the stack frame on x86-64 too, as on arm64 (stack_lists, decision 0554): bench/perf/metrics counter on linux/amd64 1.19 to 1.24 of Go before, 1.04 to 1.05 after; histogram 1.17 to 1.09 to 1.12.
+- Perf (std/crypto): ChaCha20-Poly1305 on x86-64 with AVX2 seals and opens 512 bytes a step (eight blocks in two sets of four), as Go's x/crypto: bench/perf/chacha seal and open on linux/amd64 1.60 of Go before, 1.02 to 1.035 after.
 - Fix (std/sql, Postgres; task #90): a NoticeResponse or ErrorResponse whose fields lack their closing zero byte is a malformed message error, as pgx's pgconn reports it; Xo had kept it (TestPgFuzz seed 15).
 - Fix (format specs; task #242 b33): a sized integer (`Int8`, `UInt8`, `Int32`, `UInt64` and the rest) with only a width is right aligned, as `Int` and Go's fmt are (`${a:4}` of an `Int8` 5 is `   5`; it was `5   `), on every backend; an explicit `<` or `^` still aligns it.
 - Fix (diagnostics; task #242 b34): text after an interpolation's colon that is not a format spec gets XO0180 alone; the lexer's errors from reading the spec as code (XO0155 for `${n:5d junk}`, a number suffix) no longer follow it.

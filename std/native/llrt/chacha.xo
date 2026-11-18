@@ -117,9 +117,9 @@ fn xor_stream(s0: Str, key: Bytes, ctr0: Int, nonce: Bytes, src: Bytes, ps: Int,
   let n = src.len()
   let d = s.len()
   if n >= 256 && room_of(s) >= d + (n & -256) {
-    // the state, the four counters, and 256 bytes of the AVX2 kernel's
-    // scratch (cpu.chacha_poly_seal8)
-    let sb = rt.rs_with_cap(336)
+    // the state, the four counters, and the AVX2 kernels' scratch
+    // (cpu.chacha_poly_seal8, 448 bytes in all)
+    let sb = rt.rs_with_cap(448)
     let st = raw.data(sb)
     for (k, w) in [c0, c1, c2, c3, k0, k1, k2, k3, k4, k5, k6, k7, ctr, n0, n1, n2].indexed() {
       rt.mem_store(st, 4 * k, w, 4)

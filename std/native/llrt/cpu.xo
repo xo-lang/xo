@@ -2302,8 +2302,9 @@ pub fn chacha_poly_seal4_soft(dst: Int, src: Int, st: Int, n: Int, ps: Int) {
   poly_blocks(ps, dst, n, 1)
 }
 
-/// chacha_poly_seal4 with AVX2 (cpu.HW_AVX2), four blocks in one pass of
-/// the rounds; st has 256 bytes of scratch after its 80 (chacha.xo).
+/// chacha_poly_seal4 with AVX2 (cpu.HW_AVX2), eight blocks in one pass of
+/// the rounds (four the last 256 bytes); st has 448 bytes in all
+/// (chacha.xo, ssa.chacha8_scratch_bytes).
 pub fn chacha_poly_seal8(dst: Int, src: Int, st: Int, n: Int, ps: Int) { chacha_poly_seal4_soft(dst, src, st, n, ps) }
 
 /// chacha_poly_open4 with AVX2 (cpu.HW_AVX2).

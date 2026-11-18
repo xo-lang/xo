@@ -1,5 +1,21 @@
 # std/crypto changes
 
+## 2026-11-18: perf: ChaCha20-Poly1305 on x86-64 seals and opens eight blocks a step
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/chacha on linux/amd64: seal and open 1.60 of Go's x/crypto chacha20poly1305)
+- Go reference: golang.org/x/crypto chacha20poly1305 chacha20poly1305_amd64.s (the AVX2 path's 512 byte rounds)
+- Measured: linux/amd64 host, exclusive, 3 rounds of 9 run medians: seal 1.601 to 1.608 of Go before, 1.017 to 1.025 after; open 1.604 to 1.609 before, 1.027 to 1.035 after
+- Test: llrt cpu_test seal8 and open8 against the scalar body; seal and open at 73 lengths equal to Go's x/crypto on linux/amd64; test/codegen/intrinsics pattern for the kernel call
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+With AVX2, a message of 512 bytes or more is sealed or opened eight
+ChaCha20 blocks at a time in two sets of four (rt.chacha_poly_seal8 and
+open8), the Poly1305 sums interleaved, as Go's assembly does; the rest
+runs the four block kernel as before.
+
 ## 2026-11-18: perf: SHA-3 and Keccak on x86-64 permute in one register kernel
 
 - Kind: perf
