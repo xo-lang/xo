@@ -1478,7 +1478,10 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   A failed step's whole log (the stream shows its last 60 lines) is copied back to
   `~/xo-lead/agents/offgate-NAME-STEP.log.gz` (NAME is the worktree and short HEAD), and the run's last lines
   name it; the host keeps its copy in /work/offgate-keep for 3 days (lead, 2026-11-11: a host-only corpus
-  failure scrolled out of the tail and the checkout's logs were deleted). Last verified: 2026-11-11.
+  failure scrolled out of the tail and the checkout's logs were deleted). The NOT PASSED line, the gate log
+  and `offload-gate.sh --wait`'s result name it too ("failed step log(s): PATH"), or name the host path
+  (`HOST:/work/offgate-keep/...`) when the copy back failed (task #327, 2026-11-18: Lang 2 looked for a
+  TestRaceOrphanScope log on host 2; offload_gate_test.sh). Last verified: 2026-11-18.
   Since 2026-11-10 (lead, owner's test-speed plan item 5) the host's gate.sh runs the steps at once, at most 3
   (OFFGATE_CONCURRENT=3 by default; 0 runs them one after another), and the output ends with the host's memory
   peak while the gate ran ("offload-gate: host memory peak N MB in use of T MB"). Each step is slower beside
