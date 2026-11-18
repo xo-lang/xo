@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix: on arm64, a program built against the separately compiled std (the default with a std store) is preempted in its loops again; every function now has an unsafe range table, where only functions with unsafe ranges had one, so a long loop held its thread (task #306).
 - Perf: `path.is_match` reads an ASCII byte of a byte class or `?` without a rune decode (bench/perf/path match 1.07 of Go on linux/amd64; task #302).
 - Perf: `--check=guard` (XO_HEAP_GUARD) keeps up to 16 released guarded mappings of 1 MiB or less per thread and gives one to the next record of its exact size, instead of an munmap and an mmap for each large record; many tasks allocating under `--check=all` no longer queue on the process's mmap lock (std/migrate's stress tripped XO-F005 that way; task #309). The overrun check is unchanged.
 - Perf: a loop index stepping down from below the length (`var i = b.len() - 1; while i >= 0 { b[i]; i -= 1 }`) needs no bounds check on arm64 and x86-64, as in Go (std/path's last_slash, base, dir and split; task #302).

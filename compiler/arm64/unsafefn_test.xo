@@ -1,0 +1,26 @@
+// A std store build's per-function unsafe range tables (apreempt.xo
+// unsafe_fn_tables, task #306).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// async_pc_ok declines a pc in no table, so a function with no unsafe
+/// range needs a table too, to its end label: with tables only for the
+/// functions with ranges, each ending at its last range, a store build's
+/// loops were never preempted (testdata/sched/preempt_regs, 0 preemptions
+/// on darwin/arm64, 2026-11-17).
+test "every function of a std store build has an unsafe range table to its end" {
+  var g = G{m: ssa.Module{}, os: "darwin"}
+  let text = "_a:\n\tmov x0, #1\nLa_du0:\n\tbl _b\nLa_du1:\n\tret\nLa_fe:\n_b:\n\tb _b\nLb_fe:\n"
+  let out = g.unsafe_fn_tables(text)
+  expect(out.contains("_a$ut:\n\t.quad _a\n\t.quad La_fe - _a\n\t.quad 1\n")) == true
+  expect(out.contains("\t.long La_du0 - _a\n\t.long La_du1 - _a\n")) == true
+  expect(out.contains("_b$ut:\n\t.quad _b\n\t.quad Lb_fe - _b\n\t.quad 0\n")) == true
+  expect(out.contains("_b$ui:\n\t.quad _b\n\t.quad _b$ut\n")) == true
+}
+
+test "a function without its end label keeps the table to its last range" {
+  var g = G{m: ssa.Module{}, os: "linux"}
+  let out = g.unsafe_fn_tables("f:\n.Lf_du0:\n\tbl g\n.Lf_du1:\n\tret\nh:\n\tret\n")
+  expect(out.contains("f$ut:\n\t.quad f\n\t.quad .Lf_du1 - f\n\t.quad 1\n")) == true
+  expect(out.contains("h$ut")) == false
+}

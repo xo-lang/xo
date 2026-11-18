@@ -73,15 +73,22 @@ fn (g: G) unsafe_span(mb: Int) -> (Int, Int) {
 }
 
 /// Adds the current function's text: a runtime function's bracketed
-/// whole, its prologue and fault stubs too (asynchronous preemption).
+/// whole, its prologue and fault stubs too (asynchronous preemption),
+/// and every function's end label (`_fe`), where a std store build's
+/// table of it ends (unsafe_fn_tables).
 fn (var g: G) push_fn_text(text: Str) {
-  if g.m.async_preempt && g.f_rt() {
+  if !g.m.async_preempt {
+    g.text.push(text)
+    return
+  }
+  let fe = g.local("${g.lbl_prefix()}_fe")
+  if g.f_rt() {
     let a = g.local("${g.lbl_prefix()}_du${g.du_n}")
     let z = g.local("${g.lbl_prefix()}_du${g.du_n + 1}")
     g.du_n += 2
-    g.text.push("${a}:\n${text}${z}:\n")
+    g.text.push("${a}:\n${text}${z}:\n${fe}:\n")
   } else {
-    g.text.push(text)
+    g.text.push("${text}${fe}:\n")
   }
 }
 
@@ -173,7 +180,7 @@ fn (g: G) unsafe_parts(nss: List[Str]) -> Str {
 const UNSAFE_INDEX_FLAG = 1099511627776
 
 /// A std store build's unsafe range tables (decision 0388): one per
-/// function with ranges, in an atom of its own, its ranges as offsets
+/// function (to its `_fe` end label, push_fn_text), in an atom of its own, its ranges as offsets
 /// from the function's own label (so they hold wherever the link places
 /// the function, and the table goes when the function is stripped), and
 /// an index record (the function, its table) in __DATA,xounsafe, which
@@ -187,6 +194,7 @@ const UNSAFE_INDEX_FLAG = 1099511627776
 fn (var g: G) unsafe_fn_tables(text: Str) -> Str {
   var out: List[Str] = []
   var fname = ""
+  var fend = ""
   var labs: List[Str] = []
   // the range labels since the last instruction
   var pending = 0
@@ -204,6 +212,10 @@ fn (var g: G) unsafe_fn_tables(text: Str) -> Str {
       continue
     }
     if name.starts_with("L") || name.starts_with(".L") {
+      if name.ends_with("_fe") {
+        fend = name
+        continue
+      }
       let at = name.find("_du") ?? -1
       if at >= 0 && at + 3 < name.len() && is_digits(name[at + 3..name.len()]) {
         labs.push(name)
@@ -216,24 +228,31 @@ fn (var g: G) unsafe_fn_tables(text: Str) -> Str {
     // function before's)
     let moves = pending > 0 && du_start(labs[labs.len() - 1])
     let mine = if moves { labs.len() - 1 } else { labs.len() }
-    out.push(g.unsafe_fn_table(fname, labs[0..mine]))
+    out.push(g.unsafe_fn_table(fname, labs[0..mine], fend))
     fname = name
+    fend = ""
     labs = if moves { [name] } else { [] }
     pending = 0
   }
-  out.push(g.unsafe_fn_table(fname, labs))
+  out.push(g.unsafe_fn_table(fname, labs, fend))
   out.join("")
 }
 
-/// One function's table and index record (unsafe_fn_tables), "" for a
-/// function with no unsafe range.
-fn (g: G) unsafe_fn_table(f: Str, ls: List[Str]) -> Str {
-  if f.is_empty() || ls.len() < 2 {
+/// One function's table and index record (unsafe_fn_tables), to its end
+/// label fe: a function with no unsafe range has one too, with no ranges
+/// (task #306: with tables only for the functions with ranges, each
+/// ending at its last range, a pc in any other function was in no table,
+/// so a store build's loops in the program's code or std's were never
+/// preempted: testdata/sched/preempt_regs, 0 preemptions on darwin/arm64).
+/// Without fe (text the emitter did not add), "" for a function with no
+/// unsafe range, else to its last range.
+fn (g: G) unsafe_fn_table(f: Str, ls: List[Str], fe: Str) -> Str {
+  if f.is_empty() || (fe.is_empty() && ls.len() < 2) {
     return ""
   }
   let t = "${f}$ut"
   let ix = "${f}$ui"
-  var o: List[Str] = ["${g.section("rodata")}\t.p2align 3\n${t}:\n\t.quad ${f}\n\t.quad ${ls[ls.len() - 1]} - ${f}\n\t.quad ${ls.len() / 2}\n"]
+  var o: List[Str] = ["${g.section("rodata")}\t.p2align 3\n${t}:\n\t.quad ${f}\n\t.quad ${if fe.is_empty() { ls[ls.len() - 1] } else { fe }} - ${f}\n\t.quad ${ls.len() / 2}\n"]
   var i = 0
   while i + 1 < ls.len() {
     o.push("\t.long ${ls[i]} - ${f}\n\t.long ${ls[i + 1]} - ${f}\n")
