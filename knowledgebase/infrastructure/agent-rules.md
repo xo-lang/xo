@@ -90,6 +90,16 @@ Last verified: 2026-11-17.
 | Long fuzz sweeps go sharded to a host, never the Mac gate class | CLAUDE.md | `scripts/lead/heavyd/heavy.sh` (exit 67) | `scripts/lead/heavy_fuzz_test.sh` | |
 | Never wait idle while a gate or push runs | CLAUDE.md | `workstream:work.xo` (checks: idle, idle-empty, waiting) | `workstream:test/work_test.sh` | idle, idle-empty, waiting |
 
+## Retired kinds
+
+Alert kinds xw no longer raises because their rule was dropped. Their
+past alerts are no rule gap: xw's rule_alerts skips the kinds listed
+here (#335).
+
+| Kind | Retired by |
+|---|---|
+| `done-no-restart` | xw decision 55 (2026-11-17): agents go straight to the next item, no restart after a task; #266 removed the alert |
+
 ## Schedules
 
 | Schedule | Runs | Every (min) | Evidence | Waits on |
