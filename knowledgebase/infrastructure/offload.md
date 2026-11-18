@@ -139,7 +139,9 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   OFF_HOST: amd64 and win), and once it has waited
   HEAVYD_EXCL_STARVE_MIN (20; 0 off), offload.sh starts no new no-lane
   run on that machine (`heavyd nolane ENV` exits 1 with the reason; the
-  run waits, saying so once) and, once the no-lane runs end, the plain
+  run waits, saying so once, with the cancel files that drop it:
+  `~/xo-lead/locks/cancel/PID` or `/NAME`, as for a waiting lease, exit
+  130; task #333, 2026-11-18, offload_nolane_cancel_test.sh) and, once the no-lane runs end, the plain
   leases behind it in its lane drain, until it starts: the hold never runs out while the starve rule
   fires (#321 follow-up, 2026-11-18: at 120 minutes the hold let a plain
   run.sh start beside an exclusive waiting since 02:41) (heavyd
