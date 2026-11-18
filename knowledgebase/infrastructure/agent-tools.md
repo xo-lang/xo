@@ -1933,7 +1933,12 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     (#169, gotchas/gate-env-leaks-into-push.md). Tested by
     scripts/lead/pushq_env_test.sh. Last verified: 2026-11-16.
   - Fire and forget: a down xw never fails heavy.sh, pushq or
-    offload-gate (events spool under ~/xo-lead/xw/spool).
+    offload-gate (events spool under ~/xo-lead/xw/spool). An xw that
+    cannot run at all (missing, not executable, exit 127: l3smtpfin's
+    push.end on 2026-11-18) loses no event either: xwhook.sh writes it
+    to ~/xo-lead/xw/hookspool with its time (`at=`), the next hook with
+    a working xw replays it, and xw raises `hook-spool` to the lead for
+    one waiting over 10 minutes (#337). Last verified: 2026-11-18.
   - board.sh stays for claims and a one-line NOW until it becomes a
     wrapper over xw. Last verified: 2026-11-15.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision
