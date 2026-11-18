@@ -10969,7 +10969,7 @@ fn client(c: http.Client, base: Str) -> Client      // base: http(s)://host:port
 fn (c: Client) target() -> Str                      // grpc-go's ClientConn.Target: as given
 fn (c: Client) canonical_target() -> Str            // CanonicalTarget: dns:/// added to a name without a scheme
 // service config and retries (decision 0705)
-struct ServiceConfig { methods: List[MethodConfig], retry_throttling: RetryThrottling?, balancer: Balancer? }
+struct ServiceConfig { methods: List[MethodConfig], retry_throttling: RetryThrottling?, balancer: Balancer?, health_service: Str? }   // health_service: healthCheckConfig.serviceName
 struct MethodConfig { names: List[MethodName], timeout: Duration?, retry: RetryPolicy?, max_request_bytes: Int?, max_response_bytes: Int? }
 struct MethodName { service: Str, method: Str }   // both empty: every method; method empty: the service's
 struct RetryPolicy { max_attempts: Int, initial_backoff: Duration, max_backoff: Duration, backoff_multiplier: Float, retryable_codes: List[Code] }
@@ -10982,6 +10982,7 @@ fn (c: Client) with_balancer(b: Balancer) -> Client            // PickFirst by d
 fn (c: Client) with_addrs(addrs: List[Str]) -> Client          // manual resolver: "host:port" or "unix:PATH" each
 fn (c: Client) with_dns(n: Net, clock: Clock) -> Client        // the target's host by n.lookup_host (port 443 by default)
 fn (c: Client) with_resolver(f: fn() -> List[Str] ! Status, clock: Clock) -> Client   // WithResolvers
+fn (c: Client) with_health_watch(tasks: task.Group, clock: Clock) -> Client   // client health checking (decision 0711): RoundRobin with health_service, a Health/Watch per address in tasks; calls skip addresses not SERVING
 fn (c: Client) with_max_call_attempts(n: Int) -> Client           // the cap on max_attempts, 5 by default
 fn (c: Client) with_max_retry_buffer(n: Int) -> Client            // MaxRetryRPCBufferSize, 256 KiB
 fn (c: Client) method_config(method: Str) -> MethodConfig?       // GetMethodConfig

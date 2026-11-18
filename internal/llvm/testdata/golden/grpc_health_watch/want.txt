@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+health service: svc
+two not serving: one,one,one,one
+two serving again: 2 of 4 to two
+none serving: failed,failed,failed,failed
+Unavailable: connection active but health check failed. status=NOT_SERVING
+--- stderr

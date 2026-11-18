@@ -1,0 +1,62 @@
+// std/grpc's client health checking (decision 0711, task #236): a round_robin client with a service config's
+// healthCheckConfig watches each server's std/grpchealth service and sends calls only to the ones SERVING.
+use std/grpc
+use std/grpchealth
+use std/http
+
+fn main(os: Os) {
+  let h1 = grpchealth.new()
+  let h2 = grpchealth.new()
+  h1.set_serving_status("svc", grpchealth.ServingStatus.Serving)
+  h2.set_serving_status("svc", grpchealth.ServingStatus.NotServing)
+  var one = grpc.server(os.clock)
+  one.unary("/b.B/Who", fn(_c, _r) -> Bytes ! grpc.Status { Ok(b"one") })
+  h1.register(one)
+  var two = grpc.server(os.clock)
+  two.unary("/b.B/Who", fn(_c, _r) -> Bytes ! grpc.Status { Ok(b"two") })
+  h2.register(two)
+  let s1 = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), one.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let s2 = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), two.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() { s1.serve().ignore_err("the program ends the server") })
+    s.spawn_background(fn() { s2.serve().ignore_err("the program ends the server") })
+    let cfg = grpc.service_config_json("{\"loadBalancingConfig\": [{\"round_robin\": {}}], \"healthCheckConfig\": {\"serviceName\": \"svc\"}}").or_fault("config")
+    os.stdio.println("health service: ${cfg.health_service ?? "none"}")
+    let c = grpc.client(http.client(os.net, timeout: 30s), "dns:///svc.test:50051")
+      .with_addrs([s1.addr(), s2.addr()])
+      .with_service_config(cfg, os.clock, os.rand)
+      .with_health_watch(s.group(), os.clock)
+    // calls of four turns, once they settle (the first watch answers come in after the first call)
+    let turns = fn(want: Str) -> List[Str] {
+      var got: List[Str] = []
+      for _try in 0..400 {
+        got = []
+        for _i in 0..4 {
+          got.push(match c.unary("/b.B/Who", b"") {
+            Ok(b) => b.to_str_lossy()
+            Err(_) => "failed"
+          })
+        }
+        if got.join(",") == want {
+          return got
+        }
+        os.clock.sleep(5ms)
+      }
+      got
+    }
+    os.stdio.println("two not serving: ${turns("one,one,one,one").join(",")}")
+    h2.set_serving_status("svc", grpchealth.ServingStatus.Serving)
+    let back = turns("one,two,one,two")
+    let back2 = if back.join(",") == "one,two,one,two" { back } else { turns("two,one,two,one") }
+    os.stdio.println("two serving again: ${back2.filter(fn(x) -> Bool { x == "two" }).len()} of 4 to two")
+    h1.set_serving_status("svc", grpchealth.ServingStatus.NotServing)
+    h2.set_serving_status("svc", grpchealth.ServingStatus.NotServing)
+    let down = turns("failed,failed,failed,failed")
+    os.stdio.println("none serving: ${down.join(",")}")
+    let r = c.unary("/b.B/Who", b"")
+    os.stdio.println(match r {
+      Ok(_) => "ok"
+      Err(e) => "${e.code}: ${e.message}"
+    })
+  }
+}

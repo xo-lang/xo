@@ -831,6 +831,9 @@ pub struct Client {
   /// shared by copies of the client
   pub stats: List[fn(Stats) -> ()] = []
   pub stats_now: List[fn() -> Time] = []
+  /// with_health_watch's task group and its clock's sleep (decision 0711)
+  pub health_tasks: List[task.Group] = []
+  pub health_sleep: List[fn(Duration) -> ()] = []
   stats_seq: Mutex[Int] = Mutex[Int].new(0)
   /// the target as given to client (Client.target)
   pub target: Str = ""
@@ -1077,8 +1080,8 @@ fn run_invoke(ics: List[fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status], i:
 
 /// grpc-go's keepalive.ClientParameters: after `time` with nothing read on the connection the client sends an HTTP/2
 /// PING, and closes the connection when no ack comes within `timeout` (its calls fail `Unavailable`). A time of 0
-/// sends none; below 10 s it is 10 s, as grpc-go's (keepalive.go's minimum). std/http's client pings an idle
-/// connection too (grpc-go's PermitWithoutStream true).
+/// sends none; below 10 s it is 10 s, as grpc-go's (keepalive.go's minimum). The pings go out only while a call is
+/// open (grpc-go's PermitWithoutStream false, its default).
 pub struct ClientKeepalive {
   pub time: Duration = 0s
   pub timeout: Duration = 20s
@@ -1158,6 +1161,9 @@ pub struct ServiceConfig {
   /// loadBalancingConfig's first policy std/grpc knows, else loadBalancingPolicy's (decision 0707); None leaves
   /// the client's (with_balancer, PickFirst by default)
   pub balancer: Balancer? = None
+  /// healthCheckConfig's serviceName ("" for the server as a whole): a RoundRobin client with with_health_watch
+  /// watches each address's health (decision 0711); None, no healthCheckConfig
+  pub health_service: Str? = None
 } derive Eq
 
 /// How a client with several addresses (with_addrs, with_dns, with_resolver) spreads its calls, as grpc-go's
@@ -1339,6 +1345,17 @@ pub fn service_config_json(text: Str) -> ServiceConfig ! Str {
   } else if let Some(Str(n)) = root.get("loadBalancingPolicy") {
     out.balancer = balancer_named(n)
   }
+  if let Some(hc) = root.get("healthCheckConfig") {
+    match hc {
+      Object(_) => ()
+      _ => return Err("service config: invalid healthCheckConfig: not an object")
+    }
+    out.health_service = Some(match hc.get("serviceName") {
+      Some(Str(n)) => n
+      None => ""
+      Some(_) => return Err("service config: invalid healthCheckConfig: serviceName is not a string")
+    })
+  }
   Ok(out)
 }
 
@@ -1463,6 +1480,119 @@ pub struct LbState {
   elapsed: List[fn() -> Duration] = []
   /// when it last resolved (elapsed's value); None before the first call
   at: Duration? = None
+  /// decision 0711: each watched address's last health reading (false: not SERVING, or the watch failing), and the
+  /// addresses a watch runs for
+  healthy: Map[Str, Bool] = {}
+  watched: Set[Str] = #{}
+}
+
+/// grpc-go's DefaultExponential backoff without its jitter: 1 s, then 1.6 times longer each try, at most 120 s.
+fn health_backoff(tries: Int) -> Duration {
+  var ms = 1000
+  for _i in 0..tries {
+    ms = ms * 16 / 10
+    if ms >= 120000 {
+      return 120s
+    }
+  }
+  Duration.from_nanos(ms * 1000000)
+}
+
+/// The client watching the health of each of its addresses (grpc-go's client health checking, decision 0711): with
+/// a service config's healthCheckConfig and the RoundRobin balancer, the first call starts in tasks one
+/// grpc.health.v1.Health/Watch stream per address (and per address a resolver adds later), and calls go only to
+/// the addresses whose last reading was SERVING, or not read yet; a call when every address reads otherwise is
+/// Unavailable. A server without the Health service (Unimplemented) counts as healthy, as in grpc-go; a watch that
+/// fails starts again after grpc-go's backoff, timed by clock. The watches end with the scope tasks belongs to.
+pub fn (c: Client) with_health_watch(tasks: task.Group, clock: Clock) -> Client uses clock {
+  let sl = pure1(fn(d: Duration) { clock.sleep(d) })
+  c with {health_tasks: [tasks], health_sleep: [fn(d: Duration) { sl(d) }]}
+}
+
+/// Starts the health watches open_call's client needs: for each address none runs for yet.
+fn lb_watch(c: Client, m: Mutex[LbState], service: Str) uses (sync, net.dial) {
+  let fresh = m.with(fn(var st: LbState) -> List[Str] {
+    let out = st.addrs.filter(fn(a) -> Bool { !st.watched.contains(a) })
+    for a in out {
+      st.watched.add(a)
+    }
+    out
+  })
+  for a in fresh {
+    c.health_tasks[0].spawn_background(fn() -> () ! Never uses (sync, net.dial) {
+      health_watch(c, m, a, service)
+    })
+  }
+}
+
+fn set_healthy(m: Mutex[LbState], a: Str, ok: Bool) {
+  m.with(fn(var st: LbState) { st.healthy[a] = ok })
+}
+
+/// One address's health watch (grpc-go's clientHealthCheck): Watch, each answer its reading, again after a backoff
+/// when the stream fails; it ends when the address is gone from the client's list or the server has no Health
+/// service.
+fn health_watch(c: Client, m: Mutex[LbState], a: Str, service: Str) uses (sync, net.dial) {
+  let one = c with {lb: None, http: lb_conn_http(c, m, a), svc: None, health_tasks: [], stats: [], retry_off: true, stream_icpt: [], send_icpt: [], recv_icpt: [], on_finish: []}
+  // grpc-go's health stream is a transport stream: no interceptors, stats or retries
+  var req = BytesBuilder.new()
+  if service != "" {
+    req.write_byte(UInt8(10))
+    req.write(varint_bytes(service.len()))
+    req.write(service.bytes())
+  }
+  let body = req.freeze()
+  var tries = 0
+  while true {
+    if !m.with(fn(var st: LbState) -> Bool { st.addrs.contains(a) }) {
+      m.with(fn(var st: LbState) {
+        st.watched.remove(a)
+        st.healthy.remove(a)
+      })
+      return
+    }
+    if tries > 0 {
+      c.health_sleep[0](health_backoff(tries - 1))
+    }
+    tries += 1
+    // an answer starts the backoff over (grpc-go's tryCnt = 0)
+    let answered = Mutex[Bool].new(false)
+    let r = one.call("/grpc.health.v1.Health/Watch", {}, None, fn(cc) -> () ! Status {
+      cc.send(body)?
+      cc.close_send()
+      while let Some(msg) = cc.recv()? {
+        answered.with(fn(var x: Bool) { x = true })
+        set_healthy(m, a, health_serving(msg))
+      }
+      Ok(())
+    })
+    if answered.with(fn(var x: Bool) -> Bool { x }) {
+      tries = 1
+    }
+    match r {
+      Err(e) if e.code == Code.Unimplemented => {
+        set_healthy(m, a, true)
+        return
+      }
+      _ => set_healthy(m, a, false)
+    }
+  }
+}
+
+/// Whether a HealthCheckResponse's status (field 1) is SERVING (1).
+fn health_serving(msg: Bytes) -> Bool {
+  msg.len() >= 2 && msg[0] == UInt8(8) && msg[1] == UInt8(1)
+}
+
+fn varint_bytes(n0: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  var n = n0
+  while n >= 128 {
+    b.write_byte(UInt8.wrapping_from((n % 128) + 128))
+    n = n / 128
+  }
+  b.write_byte(UInt8.wrapping_from(n))
+  b.freeze()
 }
 
 /// grpc-go's min resolution interval: a resolver runs again after every address failed, at most this often.
@@ -1698,6 +1828,16 @@ fn open_call(c: Client, r: http.Request) -> (http.ClientStream, Str) ! Status us
     Some(cfg) => cfg.balancer ?? c.balancer
     None => c.balancer
   }
+  let watch = if bal == Balancer.RoundRobin && !c.health_tasks.is_empty() { c.svc.and_then(fn(x) -> Str? { x.health_service }) } else { None }
+  if let Some(service) = watch {
+    // the addresses come from the first resolve
+    m.with(fn(var st: LbState) -> () ! Status {
+      if st.at is None {
+        st = lb_resolved(st)?
+      }
+    })?
+    lb_watch(c, m, service)
+  }
   var tried: Set[Str] = #{}
   var again = true
   var last: Status? = None
@@ -1744,6 +1884,11 @@ fn plain_peer(c: Client) -> Str {
 
 /// The http.Client dialing a (made once, kept in the shared state), with conn_of's authority check.
 fn lb_conn(c: Client, m: Mutex[LbState], a: Str) -> http.Client {
+  conn_on(c, lb_conn_http(c, m, a), a)
+}
+
+/// The http.Client dialing a, made once and kept in the shared state.
+fn lb_conn_http(c: Client, m: Mutex[LbState], a: Str) -> http.Client {
   let base = c.http
   let h = m.with(fn(var st: LbState) -> http.Client {
     match st.conns.get(a) {
@@ -1755,17 +1900,23 @@ fn lb_conn(c: Client, m: Mutex[LbState], a: Str) -> http.Client {
       }
     }
   })
-  conn_on(c, h, a)
+  h
 }
 
 /// The addresses a call tries, in turn, leaving out those it tried: PickFirst from its address on; RoundRobin from
 /// its next turn over the addresses whose last connect did not fail (all when every one failed), then those. The
 /// first call resolves.
 fn lb_order(m: Mutex[LbState], bal: Balancer, tried: Set[Str]) -> List[Str] ! Status {
-  m.with(fn(var st: LbState) -> List[Str] ! Status {
+  let unhealthy = m.with(fn(var st: LbState) -> Bool ! Status {
     if st.at is None {
       st = lb_resolved(st)?
     }
+    Ok(bal != Balancer.PickFirst && !st.addrs.is_empty() && st.addrs.all(fn(a) -> Bool { st.healthy.get(a) == Some(false) }))
+  })?
+  if unhealthy {
+    return Err(status_new(Code.Unavailable, "connection active but health check failed. status=NOT_SERVING"))
+  }
+  m.with(fn(var st: LbState) -> List[Str] ! Status {
     let n = st.addrs.len()
     var out: List[Str] = []
     if n == 0 {
@@ -1776,14 +1927,16 @@ fn lb_order(m: Mutex[LbState], bal: Balancer, tried: Set[Str]) -> List[Str] ! St
         out.push(st.addrs[(st.cur + k) % n])
       }
     } else {
-      let ready = st.addrs.filter(fn(a) -> Bool { !st.down.contains(a) })
-      let turn = if ready.is_empty() { st.addrs } else { ready }
+      // decision 0711: an address whose health reads other than SERVING is left out; every one is Unavailable
+      let well = st.addrs.filter(fn(a) -> Bool { st.healthy.get(a) != Some(false) })
+      let ready = well.filter(fn(a) -> Bool { !st.down.contains(a) })
+      let turn = if ready.is_empty() { well } else { ready }
       let start = st.next % turn.len()
       st.next = st.next + 1
       for k in 0..turn.len() {
         out.push(turn[(start + k) % turn.len()])
       }
-      for a in st.addrs {
+      for a in well {
         if !out.contains(a) {
           out.push(a)
         }

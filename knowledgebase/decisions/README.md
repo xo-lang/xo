@@ -699,6 +699,6 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0707](0707-grpc-resolvers-balancing.md): Proposed (xo-4c, 2026-11-17): std/grpc resolvers (with_addrs, with_dns, with_resolver) and balancers PickFirst and RoundRobin, each address its own http.Client through with_dial_addr
 - [0708](0708-proven-evidence-amd64.md): Accepted (owner, 2026-11-17): Proven fuzz, stress, race and perf evidence may each come from linux/amd64 (x86-64 and LLVM backends; perf against Go on the same host); one platform per kind per module
 - [0710](0710-grpc-stats-handler.md): Accepted (xo-4c, 2026-11-17): std/grpc stats handlers, per-message and connection events after grpc-go's stats.Handler (task #236)
-- [0711](0711-grpc-client-health-check.md): Proposed (xo-4c, 2026-11-17): std/grpc client health checking, a Health/Watch stream per address in a task group the program gives (task #236)
+- [0711](0711-grpc-client-health-check.md): Accepted (xo-4c, 2026-11-17): std/grpc client health checking, a Health/Watch stream per address in a task group the program gives (task #236)
 - [0712](0712-proven-perf-without-host1.md): Accepted (owner, 2026-11-17): Proven perf evidence is timed on the amd64 host or host 2 (lane exclusive), never host 1, 3 or 4; host 1 rows that meet 1.05 stay; the M4 IPC gap is a task after Proven
 - [0709](0709-grpc-message-interceptors.md): Accepted (xo-4c, 2026-11-17): std/grpc Client.with_message_interceptor runs on each message a streaming call sends and receives (the rest of grpc-go's StreamClientInterceptor)

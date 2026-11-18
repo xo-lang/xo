@@ -3,6 +3,15 @@
 
 
 
+## 2026-11-17: feature: Client.with_health_watch, grpc-go's client health checking
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (map.txt grpc.ServiceConfig read healthCheckConfig past; decision 0711)
+- Go reference: google.golang.org/grpc v1.79.2 health/client.go clientHealthCheck, clientconn.go startHealthCheck, service_config.go healthCheckConfig
+- Test: std/grpc_test.xo "with_health_watch sends calls only to addresses whose health is SERVING, as grpc-go's"; golden grpc_health_watch (std/grpchealth servers)
+- Timing: none (no health watch: one list check per call)
+- Shipped in: not yet released
 ## 2026-11-17: feature: Client.with_message_interceptor, on each message of a streaming call
 
 - Kind: feature

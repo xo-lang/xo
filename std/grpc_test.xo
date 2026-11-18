@@ -1297,3 +1297,146 @@ test "Server.with_stats_handler sees each call's events in grpc-go's order" uses
     ]
   }
 }
+
+/// A Health/Watch method for a test server: the request's service name to seen, then each status from ch (1
+/// SERVING, 2 NOT_SERVING) as a HealthCheckResponse, until ch closes.
+fn watch_route(var srv: Server, seen: Mutex[List[Str]], ch: Chan[Int]) uses clock {
+  srv.stream("/grpc.health.v1.Health/Watch", fn(_c, recv, send) -> () ! Status {
+    let req = recv.next()? ?? b""
+    seen.with(fn(var l: List[Str]) { l.push(if req.len() > 2 { req[2..].to_str_lossy() } else { "" }) })
+    while let Some(n) = ch.recv() {
+      send.send(Bytes.from_list([UInt8(8), UInt8.wrapping_from(n)]))?
+    }
+  }, client_stream: false, server_stream: true)
+}
+
+// decision 0711: grpc-go's client health checking: a round_robin client with healthCheckConfig leaves out an
+// address whose Watch reads NOT_SERVING, takes it back once it reads SERVING, counts a server without the Health
+// service as healthy, and fails a call when every address is unhealthy
+test "with_health_watch sends calls only to addresses whose health is SERVING, as grpc-go's" uses (net, clock, rand) {
+  expect(service_config_json("{\"healthCheckConfig\": {\"serviceName\": \"svc\"}}").map(fn(c) -> Str? { c.health_service })) == Ok(Some("svc"))
+  expect(service_config_json("{\"healthCheckConfig\": {}}").map(fn(c) -> Str? { c.health_service })) == Ok(Some(""))
+  expect(service_config_json("{}").map(fn(c) -> Str? { c.health_service })) == Ok(None)
+  expect(service_config_json("{\"healthCheckConfig\": 3}").is_err()) == true
+  expect(health_backoff(0)) == 1s
+  expect(health_backoff(1)) == 1600ms
+  expect(health_backoff(20)) == 120s
+  let seen = Mutex[List[Str]].new([])
+  let c1 = Chan[Int].new(4)
+  let c2 = Chan[Int].new(4)
+  var one = server(os.clock)
+  one.unary("/b.B/Who", fn(_c, _r) -> Bytes ! Status { Ok(b"one") })
+  watch_route(one, seen, c1)
+  var two = server(os.clock)
+  two.unary("/b.B/Who", fn(_c, _r) -> Bytes ! Status { Ok(b"two") })
+  watch_route(two, seen, c2)
+  // no Health service: Unimplemented, healthy
+  var three = server(os.clock)
+  three.unary("/b.B/Who", fn(_c, _r) -> Bytes ! Status { Ok(b"three") })
+  let h1 = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), one.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let h2 = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), two.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let h3 = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), three.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  c1.send(1)
+  c2.send(2)
+  scope s {
+    s.spawn_background(fn() { h1.serve().ignore_err("the test ends the server") })
+    s.spawn_background(fn() { h2.serve().ignore_err("the test ends the server") })
+    s.spawn_background(fn() { h3.serve().ignore_err("the test ends the server") })
+    let hc = http.client(os.net, timeout: 10s)
+    let cfg = service_config_json("{\"loadBalancingConfig\": [{\"round_robin\": {}}], \"healthCheckConfig\": {\"serviceName\": \"svc\"}}").or_fault("config")
+    let who = fn(c: Client) -> Str {
+      match c.unary("/b.B/Who", b"", {}) {
+        Ok(b) => b.to_str_lossy()
+        Err(e) => "${e.code} ${e.message}"
+      }
+    }
+    // the calls of n turns, after waiting (bounded) for a turn whose calls all satisfy ok
+    let settle = fn(c: Client, n: Int, ok: fn(List[Str]) -> Bool) -> List[Str] {
+      var got: List[Str] = []
+      for _try in 0..400 {
+        got = []
+        for _i in 0..n {
+          got.push(who(c))
+        }
+        if ok(got) {
+          return got
+        }
+        os.clock.sleep(5ms)
+      }
+      got
+    }
+    let rr = client(hc, "dns:///svc.test:50051").with_addrs([h1.addr(), h2.addr(), h3.addr()]).with_service_config(cfg, os.clock, os.rand).with_health_watch(s.group(), os.clock)
+    let a = settle(rr, 6, fn(l) -> Bool { !l.contains("two") })
+    expect(a.filter(fn(x) -> Bool { x == "one" }).len()) == 3
+    expect(a.filter(fn(x) -> Bool { x == "three" }).len()) == 3
+    expect(seen.with(fn(var l: List[Str]) -> List[Str] { l.sort() })) == ["svc", "svc"]
+    // two reads SERVING: back in turn
+    c2.send(1)
+    let b = settle(rr, 6, fn(l) -> Bool { l.contains("two") })
+    expect(b.filter(fn(x) -> Bool { x == "two" }).len()) == 2
+    // every address unhealthy: Unavailable
+    let c4 = Chan[Int].new(4)
+    var four = server(os.clock)
+    four.unary("/b.B/Who", fn(_c, _r) -> Bytes ! Status { Ok(b"four") })
+    watch_route(four, seen, c4)
+    let h4 = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), four.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+    s.spawn_background(fn() { h4.serve().ignore_err("the test ends the server") })
+    c4.send(2)
+    let bad = client(hc, "dns:///svc.test:50051").with_addrs([h4.addr()]).with_service_config(cfg, os.clock, os.rand).with_health_watch(s.group(), os.clock)
+    expect(settle(bad, 1, fn(l) -> Bool { l[0] != "four" })) == ["Unavailable connection active but health check failed. status=NOT_SERVING"]
+    // pick_first does not health check (grpc-go's pick_first leaves it off)
+    let pf = client(hc, "dns:///svc.test:50051").with_addrs([h4.addr()]).with_health_watch(s.group(), os.clock)
+    expect(who(pf)) == "four"
+    c1.close()
+    c2.close()
+    c4.close()
+  }
+}
+
+// grpc-go's keepalive.ClientParameters PermitWithoutStream false (its default): the client's keepalive PINGs go out
+// while a call is open, none on an idle connection. A proxy between client and server keeps what the client sends.
+test "client keepalive pings only while a call is open, as grpc-go's PermitWithoutStream false" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/k.K/Slow", fn(_c, req) -> Bytes ! Status {
+    os.clock.sleep(400ms)
+    Ok(req)
+  })
+  let hs = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let pl = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let sent = Mutex[Bytes].new(b"")
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    s.spawn_background(fn() {
+      let a = pl.accept().or_fault("accept")
+      let b = os.net.dial(hs.addr()).or_fault("dial")
+      scope p {
+        p.spawn_background(fn() {
+          while let Ok(Some(x)) = b.read(65536) {
+            if a.write(x).is_err() {
+              break
+            }
+          }
+        })
+        while let Ok(Some(x)) = a.read(65536) {
+          sent.with(fn(var all: Bytes) { all = all + x })
+          if b.write(x).is_err() {
+            break
+          }
+        }
+      }
+    })
+    let hc = http.client(os.net, timeout: 30s).with_h2_config(http.H2Config{send_ping_timeout: 50ms, ping_timeout: 5s})
+    let c = client(hc, "http://${pl.addr()}")
+    expect(c.unary("/k.K/Slow", b"a")) == Ok(b"a")
+    let pings = fn() -> Int {
+      let all = sent.with(fn(var x: Bytes) -> Bytes { x })
+      h2_frames(all[24..]).filter(fn(f) -> Bool { f == "ping" }).len()
+    }
+    let during = pings()
+    os.clock.sleep(500ms)
+    let idle = pings() - during
+    expect(during > 0) == true
+    expect(idle) == 0
+    expect(c.unary("/k.K/Slow", b"b")) == Ok(b"b")
+  }
+}
