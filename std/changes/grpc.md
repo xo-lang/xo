@@ -1,5 +1,15 @@
 # std/grpc changes
 
+## 2026-11-17: feature: Client.with_idle_keepalive (grpc-go's PermitWithoutStream true)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #236 (keepalive.ClientParameters was partial: pings only while a call was open)
+- Go reference: google.golang.org/grpc v1.79.2 internal/transport/http2_client.go keepalive (PermitWithoutStream), http2_server.go handlePing (too_many_pings after maxPingStrikes)
+- Test: std/grpc_test.xo "with_idle_keepalive pings with no call open; a server without permit_without_stream ends it too_many_pings and the next call dials again, as grpc-go's"
+- Timing: none (std/http's Client.with_idle_pings task)
+- Shipped in: not yet released
+
 
 
 

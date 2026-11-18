@@ -10957,6 +10957,7 @@ fn (c: Client) with_on_finish(f: fn(Str, Status?) -> ()) -> Client   // grpc-go'
 // keepalive (grpc-go's keepalive package) over std/http's HTTP/2 PING settings, which these replace
 struct ClientKeepalive { time: Duration = 0s, timeout: Duration = 20s }   // time 0: no pings; below 10 s: 10 s
 fn (c: Client) with_keepalive(p: ClientKeepalive) -> Client
+fn (c: Client) with_idle_keepalive(tasks: task.Group, clock: Clock) -> Client uses clock  // PermitWithoutStream true
 struct ServerKeepalive { max_connection_idle: Duration = 0s, time: Duration = 7200s, timeout: Duration = 20s, min_time: Duration = 300s, permit_without_stream: Bool = false, max_connection_age: Duration = 0s, max_connection_age_grace: Duration = 0s }   // min_time, permit_without_stream: grpc-go's EnforcementPolicy (http.H2Config min_ping_interval); max_connection_age and its grace: MaxConnectionAge, MaxConnectionAgeGrace
 fn keepalive_server(h: http.Server, p: ServerKeepalive) -> http.Server
 fn (r: Recv) next() -> Bytes? ! Status

@@ -26,6 +26,7 @@ fn main(os: Os) {
       .with_addrs([s1.addr(), s2.addr()])
       .with_service_config(cfg, os.clock, os.rand)
       .with_health_watch(s.group(), os.clock)
+      .with_idle_keepalive(s.group(), os.clock)
     // calls of four turns, once they settle (the first watch answers come in after the first call)
     let turns = fn(want: Str) -> List[Str] {
       var got: List[Str] = []

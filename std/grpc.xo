@@ -1081,7 +1081,7 @@ fn run_invoke(ics: List[fn(Str, Bytes, CallOpts, Invoker) -> Bytes ! Status], i:
 /// grpc-go's keepalive.ClientParameters: after `time` with nothing read on the connection the client sends an HTTP/2
 /// PING, and closes the connection when no ack comes within `timeout` (its calls fail `Unavailable`). A time of 0
 /// sends none; below 10 s it is 10 s, as grpc-go's (keepalive.go's minimum). The pings go out only while a call is
-/// open (grpc-go's PermitWithoutStream false, its default).
+/// open (grpc-go's PermitWithoutStream false, its default) unless the client has `with_idle_keepalive`.
 pub struct ClientKeepalive {
   pub time: Duration = 0s
   pub timeout: Duration = 20s
@@ -1092,6 +1092,15 @@ pub struct ClientKeepalive {
 pub fn (c: Client) with_keepalive(p: ClientKeepalive) -> Client {
   let t = if p.time == 0s { 0s } else if p.time < 10s { 10s } else { p.time }
   c with {http: c.http.with_h2_config(http.H2Config{send_ping_timeout: t, ping_timeout: p.timeout})}
+}
+
+/// The client's keepalive pings go out with no call open too (grpc-go's keepalive.ClientParameters
+/// PermitWithoutStream true): a task in `tasks` pings each idle connection after its `time` of silence and closes
+/// one whose ack misses `timeout`, so a call does not pick a dead connection (std/http's Client.with_idle_pings).
+/// A server whose policy does not permit pings without a call (grpc-go's default) ends such a connection with
+/// GOAWAY too_many_pings after its third ping, as grpc-go's.
+pub fn (c: Client) with_idle_keepalive(tasks: task.Group, clock: Clock) -> Client uses clock {
+  c with {http: c.http.with_idle_pings(tasks, clock)}
 }
 
 /// grpc-go's keepalive.ServerParameters: a connection with no call for `max_connection_idle` is closed (0 never),

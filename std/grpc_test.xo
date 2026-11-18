@@ -1440,3 +1440,48 @@ test "client keepalive pings only while a call is open, as grpc-go's PermitWitho
     expect(c.unary("/k.K/Slow", b"b")) == Ok(b"b")
   }
 }
+
+test "with_idle_keepalive pings with no call open; a server without permit_without_stream ends it too_many_pings and the next call dials again, as grpc-go's" uses (net, clock) {
+  var srv = server(os.clock)
+  srv.unary("/k.K/Ok", fn(_c, req) -> Bytes ! Status { Ok(req) })
+  let hs = keepalive_server(http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2}), ServerKeepalive{min_time: 10ms})
+  let pl = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let back = Mutex[Bytes].new(b"")
+  let conns = Atomic[Int].new(0)
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the test ends the server") })
+    s.spawn_background(fn() {
+      while let Ok(a) = pl.accept() {
+        let one = conns.add(1) == 1
+        let b = os.net.dial(hs.addr()).or_fault("dial")
+        s.spawn_background(fn() {
+          while let Ok(Some(x)) = b.read(65536) {
+            if one {
+              back.with(fn(var v: Bytes) { v = v + x })
+            }
+            if a.write(x).is_err() {
+              break
+            }
+          }
+        })
+        s.spawn_background(fn() {
+          while let Ok(Some(x)) = a.read(65536) {
+            if b.write(x).is_err() {
+              break
+            }
+          }
+        })
+      }
+    })
+    // grpc-go's 10 s minimum keeps with_keepalive from a 50 ms ping; the
+    // http client's settings give it here
+    let hc = http.client(os.net, timeout: 10s).with_h2_config(http.H2Config{send_ping_timeout: 50ms, ping_timeout: 5s})
+    let c = client(hc, "http://${pl.addr()}").with_idle_keepalive(s.group(), os.clock)
+    expect(c.unary("/k.K/Ok", b"a")) == Ok(b"a")
+    os.clock.sleep(600ms)
+    let fs = h2_frames(back.with(fn(var v: Bytes) -> Bytes { v }))
+    expect(fs.filter(fn(f) { f == "goaway 11 too_many_pings" }).len()) == 1
+    expect(c.unary("/k.K/Ok", b"b")) == Ok(b"b")
+    expect(conns.get()) == 2
+  }
+}

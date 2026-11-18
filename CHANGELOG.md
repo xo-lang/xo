@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - Perf: `List.sort` of Strs sorts Int keys made from the strings' bytes with pdqsort, about twice as fast on 2M strings, as fast as Go's slices.Sort on bench/perf/sort (task #302).
+- Feature (std/grpc): `Client.with_idle_keepalive(tasks, clock)` sends the client's keepalive pings with no call open too (grpc-go's PermitWithoutStream true), through std/http's `Client.with_idle_pings`.
 - `xo build --phase-times` says when the whole program is built instead of linking std's store ("std variant: off (XO_SEPCOMP=0 ...)" or "not used (--release)"), and `xo dev size` measures whole-program builds (XO_SEPCOMP=0), what a release ships, so its sizes no longer depend on whether the cache held std's store (task #298).
 - Feature (std/grpc): `Client.with_health_watch` checks each server's health as grpc-go's client health checking: with a service config's `healthCheckConfig` and the round_robin balancer, a `grpc.health.v1.Health/Watch` stream per address, and calls go only to addresses whose status is SERVING (decision 0711).
 - Feature (std/grpc): `Client.with_stats_handler` and `Server.with_stats_handler` give a function every stats event of each call (Begin, headers, each message with its sizes, trailers, End), grpc-go's StatsHandler (decision 0710 stage 1).
