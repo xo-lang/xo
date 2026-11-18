@@ -475,7 +475,11 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
   }
   if logstate.json() && !testworld.on() {
     // a JSON record outside a test: the values only (no text view)
-    rt.eprintln(go_html(format_json(level, msg, expand_values(fields), from)))
+    let line = match format_json_fields(level, msg, fields, from) {
+      Some(l) => l
+      None => format_json(level, msg, expand_values(fields), from)
+    }
+    rt.eprintln(go_html(line))
     return
   }
   let (fs, vs) = expand(fields)
@@ -550,6 +554,92 @@ fn format_json(level: Int, msg: Str, vs: Map[Str, log.Value], from: Str) -> Str 
     }
   }
   line + "}"
+}
+
+/// format_json of the fields as given, with no Map of values between
+/// (expand_values put every value again, and format_json looked each key
+/// up: 430 of 10,100 instructions a record of bench/perf/log json on
+/// linux/arm64, 2026-11-18); the order is by positions, so the sort
+/// moves Ints, not Strs. None when a field is a group (norm flattens
+/// those: format_json then).
+fn format_json_fields(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str? {
+  var names: List[Str] = List.with_capacity(fields.len() + 4)
+  var vals: List[log.Value] = List.with_capacity(fields.len())
+  // a field's index in vals, or the record's own: -1 level, -2 msg,
+  // -3 time, -4 module
+  var tag: List[Int] = List.with_capacity(fields.len() + 4)
+  var own_level = true
+  var own_msg = true
+  var own_time = true
+  for (k, v) in fields {
+    if k == "module" && from != "" {
+      continue
+    }
+    let val = value_of(v)
+    match val {
+      log.Value.Group(_) => {
+        return None
+      }
+      _ => {}
+    }
+    if k == "level" {
+      own_level = false
+    } else if k == "msg" {
+      own_msg = false
+    } else if k == "time" {
+      own_time = false
+    }
+    tag.push(vals.len())
+    vals.push(val)
+    names.push(k)
+  }
+  if own_level {
+    names.push("level")
+    tag.push(-1)
+  }
+  if own_msg {
+    names.push("msg")
+    tag.push(-2)
+  }
+  if own_time {
+    names.push("time")
+    tag.push(-3)
+  }
+  if from != "" {
+    names.push("module")
+    tag.push(-4)
+  }
+  var ord: List[Int] = List.with_capacity(names.len())
+  for i in 0..names.len() {
+    var j = ord.len()
+    ord.push(i)
+    while j > 0 && names[ord[j - 1]] > names[i] {
+      ord.set(j, ord[j - 1])
+      j -= 1
+    }
+    ord.set(j, i)
+  }
+  // one allocation for a usual record, as format_json
+  var line = rt.rs_with_cap(128 + msg.len()) + "{"
+  for (n, i) in ord.indexed() {
+    if n > 0 {
+      line = line + ","
+    }
+    line = rtjson.json_enc(line, names[i]) + ":"
+    let g = tag[i]
+    if g >= 0 {
+      line = json_value_to(line, vals[g])
+    } else if g == -1 {
+      line = rtjson.json_enc(line, level_name(level))
+    } else if g == -2 {
+      line = rtjson.json_enc(line, msg)
+    } else if g == -3 {
+      line = rtjson.json_enc(line, logstate.now(true))
+    } else {
+      line = rtjson.json_enc(line, from)
+    }
+  }
+  Some(line + "}")
 }
 
 /// k into the sorted keys, by insertion (a record has a handful).

@@ -1,5 +1,16 @@
 # std/log changes
 
+## 2026-11-18: perf: a JSON record writes its fields from the pair list
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/log json 1.10 to 1.12 of Go on linux/amd64)
+- Go reference: log/slog json_handler.go (attributes appended in order, no map)
+- Measured: linux/amd64 exclusive 3 rounds, json 1.108 to 1.120 of Go before, 0.986 to 0.999 after (text unchanged, 0.86); callgrind linux/arm64 10,146 to 8,849 instructions a record
+- Test: log module tests; the 8 log goldens on arm64 (output unchanged; a record with groups keeps the old path)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-17: perf: a JSON record skips the fields' text view
 
 - Kind: perf
