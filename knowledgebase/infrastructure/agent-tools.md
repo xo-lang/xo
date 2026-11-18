@@ -4,6 +4,31 @@ One index of the tools built for agents working on Xo (owner,
 2026-10-18: make sure every agent knows them). Each entry names where
 its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
+## Symptom to first tool (owner, 2026-11-18)
+
+Reach for the row's tool first. Build a hand made diagnostic (a DIAG
+build, ad hoc counters, println) only when the row's tool falls short,
+and say in the report which tool you used and, if none, why; a missing
+tool is an xw task, never a quiet workaround. Each tool's details are in
+the section named, or in toolchain.md.
+
+| Symptom | First tool | Then |
+|---|---|---|
+| Memory grows (RSS creep, a server that only grows) | a running server's timed snapshots, `xo prof http://HOST/debug/heap` (decision 0325), else `XO_PROF=heap` (default rate: RATE=1 overflows the sample table within an hour) snapshots at two `debug.mem_label` times (`XO_PROF_HEAP_AT`), `xo prof`, then `go tool pprof -base early.pprof late.pprof` (`-tagfocus=5MiB` for one size): names the call sites holding the growth | `XO_HEAPSTATS=1` (`=waste`, `=pages`) for the heap by size class at exit; `/proc/PID/smaps` for mappings outside the heap; `XO_THP=off` to rule out huge pages |
+| A leak at exit, a use after free, an overrun | `xo run --check=all .` / `xo test --check=all ./...` (decision 0638) | `xo debug` at the reported site |
+| Too slow | `XO_PROF=cpu` / `xo run --profile=cpu`, callgrind for instruction counts | `xo bench --ab` is the only proof of a speedup (decision 0340); a slow build: `xo build --phase-times` before any hypothesis |
+| Hang or deadlock | `xo debug -p PID --batch -c tasks -c 'task N bt' PROG` (attaches, lists every task and what it waits on, detaches) | `--race` on llvm for a data race; the crash report and `xo dev symbolize` for a fault |
+| Wrong output, miscompile | `xo dev bisect-pass DIR`, `XO_PASSES=-name`, `XO_LOWER=-name` | `reduce-diff.py --crash` to shrink; `xo dev dump ssa --fn=NAME` |
+| Fails on main, worked before | `scripts/bisect.sh` (Testing) | message the lead with good and bad commits |
+| Fails on one host only | "A failure seen on one host only" below: observe on that host first | |
+| Flaky or rare failure | `stdproven stress` / `race` sharded to the offload hosts (Std maturity evidence) | a failing seed or count kept as the regression test |
+
+Environments come from the scripts, not from memory: `pushq.sh WT
+--needs` names the gate's checks, `offload-gate.sh` picks the pass/fail
+host, `heavy.sh --status` shows every lane, and the env files hold each
+host's slots and paths. A run placed by hand (an `OFFLOAD_ENV`, a
+lane's `-max`) says why in its report.
+
 ## Finding code (decision 0261)
 
 - `xo def NAME`, `xo refs NAME`, `xo type FILE:LINE:COL`, `xo doc NAME`

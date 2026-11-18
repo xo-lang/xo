@@ -57,6 +57,10 @@ differs from this file, this file is current.
    match, 2 usage error) before grep (decision 0261); say in your report
    when one falls short. Check compiler edits with
    `go run ./scripts/xocheck DIR`.
+   Diagnose (memory, speed, hangs, wrong output, flakes) with the
+   tool agent-tools.md "Symptom to first tool" names; a hand made
+   diagnostic only when it falls short, said in the report (owner,
+   2026-11-18).
 4. Run every build, test, benchmark, or repro through heavy.sh, even a
    one-off: `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...` for a
    gate or anything under about 2 minutes. Long pass/fail runs go to an
