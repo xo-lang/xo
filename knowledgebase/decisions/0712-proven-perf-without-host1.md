@@ -19,11 +19,15 @@ the M4's hardware counters can explain. The owner (2026-11-17): take host
 ## Decision
 
 - New perf evidence is timed on the linux/amd64 host (0708: a lane
-  exclusive lease, Go's twin on the same host in the same job) or on an
-  arm64 pass/fail host (2, 3 or 4) under an exclusive lease. Not on host 1.
+  exclusive lease, Go's twin on the same host in the same job) or on host 2
+  under a lane exclusive lease (the owner, 2026-11-17: its machine, the M5
+  Pro, runs nothing else). Not on host 1, and never on hosts 3 or 4: they
+  are containers on the Mac Studio, which runs gates and agent builds, so an
+  exclusive lease there does not give a quiet machine. Hosts 3 and 4 stay
+  pass/fail only.
 - A module's perf row from host 1 that already meets the bar (worst Xo/Go
   at most 1.05) stays valid. A row from host 1 that misses the bar is
-  retaken on amd64 (or an exclusive arm64 host 2 to 4); the newer row
+  retaken on amd64 (or host 2, lane exclusive); the newer row
   decides, as 0708 says.
 - Thresholds are unchanged (0616, 0461: at most 1.05 of Go).
 - Why Xo runs fewer instructions per cycle than Go on host 1 is a
@@ -44,5 +48,9 @@ the M4's hardware counters can explain. The owner (2026-11-17): take host
 
 - Keep host 1 and explain the gap first (xctrace): blocks five modules on a
   question of one chip.
-- Time on the Mac: the Mac runs gates and agent work, so its timings are
-  noisy; the offload hosts under an exclusive lease are quieter.
+- Time on the Mac or on hosts 3 and 4 (containers on it): the Mac runs
+  gates and agent work, so its timings are noisy even with the container's
+  lane held.
+- Split the amd64 machine into containers: they share the same CPUs, so
+  they add no parallelism over the lane's 6 slots and no quiet for timing;
+  only per-job isolation (ports, temp dirs, a memory cap), not needed yet.
