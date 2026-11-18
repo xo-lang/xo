@@ -17,7 +17,6 @@ cookiejarfuzz_test.go
 corpusfuzz_test.go
 crc32fuzz_test.go
 crc64fuzz_test.go
-cronfuzz_test.go
 csvfuzz_test.go
 debugfuzz_test.go
 dequefuzz_test.go
@@ -37,7 +36,6 @@ imagefuzz_test.go
 jpegencfuzz_test.go
 jpegfuzz_test.go
 jsonrpcfuzz_test.go
-jwtfuzz_test.go
 logfuzz_test.go
 lzwfuzz_test.go
 mailfuzz_test.go

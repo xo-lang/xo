@@ -318,6 +318,12 @@ fn bits(lo: Int, hi: Int, step: Int) -> Int {
   var i = lo
   while i <= hi {
     b = b | (1 << i)
+    // Go's loop is in uint64, where i + step cannot wrap for an int step;
+    // here a step past what is left ends it (a step near Int's largest
+    // overflowed, task #352)
+    if step > hi - i {
+      break
+    }
     i += step
   }
   b

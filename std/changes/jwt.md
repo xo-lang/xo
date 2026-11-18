@@ -1,5 +1,16 @@
 # std/jwt changes
 
+## 2026-11-18: fix: a NumericDate up to 9.2e18 seconds is a time, as golang-jwt's
+
+- Kind: fix
+- Commit: this push
+- Found by: TestJwtFuzz with the hostile dictionary (task #352), case 456: `"nbf":9007199254740992`
+- Go reference: github.com/golang-jwt/jwt/v5 v5.3.1 types.go NumericDate and validator.go verifyNotBefore (MIT license)
+- Test: std/jwt_test.xo "a NumericDate of 2^53 seconds is a time" and "dates past 2262 do not overflow (b25)" (both failed before)
+- Shipped in: not yet released
+
+`exp`, `nbf` and `iat` past 1e11 seconds (the year 5138) were a Claim error ("out of range"), where golang-jwt reads any date short of Go's time wrapping (2^63 seconds) as a time: a far future `nbf` is not valid yet, a far future `exp` is not expired. The bound is now 9.2e18 seconds, as the oracle's; dates past it stay a Claim error.
+
 ## 2026-11-15: test: go-jose decrypts the tokens std/jwt encrypts
 
 - Kind: test

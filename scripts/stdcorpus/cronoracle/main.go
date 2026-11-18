@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"stdcorpus/cronoracle/hostile"
 )
 
 func xq(s string) string {
@@ -330,6 +332,10 @@ func fuzzSpec(rg *rand.Rand, bounds [][2]int) string {
 	num := func() string {
 		switch rg.Intn(16) {
 		case 0:
+			if rg.Intn(2) == 0 {
+				// a digit run past Int, Int's edges, leading zeros (task #352)
+				return hostile.Pick(rg, hostile.Digits())
+			}
 			return []string{"-1", "60", "24", "32", "13", "7", "0", "99999999999999999999", "1.5", "+5"}[rg.Intn(10)]
 		case 1:
 			return strconv.Itoa(rg.Intn(62))
@@ -356,7 +362,7 @@ func fuzzSpec(rg *rand.Rand, bounds [][2]int) string {
 		case k < 36:
 			step := strconv.Itoa(1 + rg.Intn(hi-lo+1))
 			if rg.Intn(10) == 0 {
-				step = []string{"0", "", "-1", "x"}[rg.Intn(4)]
+				step = []string{"0", "", "-1", "x", hostile.Pick(rg, hostile.Digits())}[rg.Intn(5)]
 			}
 			return []string{"*", num(), rng()}[rg.Intn(3)] + "/" + step
 		case k < 38:

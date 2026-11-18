@@ -1,5 +1,16 @@
 # std/cron changes
 
+## 2026-11-18: fix: a step near Int's largest no longer overflows
+
+- Kind: fix
+- Commit: this push
+- Found by: TestCronFuzz with the hostile dictionary (task #352)
+- Go reference: github.com/robfig/cron/v3 getBits (parser.go), v3.0.1 (Copyright (C) 2012 Rob Figueiredo, MIT license)
+- Test: std/cron_test.xo "a step near Int's largest sets the range's first bit only" (failed before)
+- Shipped in: not yet released
+
+A field like `1-59/9223372036854775807` faulted with an integer overflow (`1 + 9223372036854775807`). robfig's loop runs in uint64, where the sum cannot wrap; std/cron now ends the loop once the step passes what is left of the range, so the field sets only its first bit, as robfig's.
+
 ## 2026-11-16: fix: a field's number is read in Go's strconv.Atoi order
 
 - Kind: fix

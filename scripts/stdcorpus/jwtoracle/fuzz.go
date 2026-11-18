@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
+	"stdcorpus/jwtoracle/hostile"
 	"math/rand"
 	"os"
 	"strings"
@@ -185,6 +186,14 @@ func pick[T any](r *rand.Rand, xs ...T) T { return xs[r.Intn(len(xs))] }
 
 // fuzzTime is a value for exp, nbf or iat, as JSON text.
 func fuzzTime(r *rand.Rand) string {
+	// 1 in 6 a hostile number (task #352): Int's edges, digit runs past
+	// Int, leading zeros and a plus sign (not JSON: malformed)
+	switch r.Intn(12) {
+	case 0:
+		return fmt.Sprint(hostile.Pick(r, hostile.Ints()))
+	case 1:
+		return hostile.Pick(r, hostile.Digits())
+	}
 	return pick(r, "1000", "1500", "1999", "2000", "2001", "1500.5", "1999.999", "0", "-5", "1e3", "2e3", "1e20", `"2000"`, "null", "true", "[2000]", "9223372036854775807", "2000.0")
 }
 

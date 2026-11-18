@@ -26,3 +26,12 @@ test "a field's number is read as Go's strconv.Atoi: a uint64 scan, then the int
     expect(atoi_text(s)) == want
   }
 }
+
+test "a step near Int's largest sets the range's first bit only, as robfig's uint loop (cronfuzz, task #352)" {
+  // i + step past Int's largest from a first bit above 0
+  expect(bits(0, 59, 9223372036854775807)) == 1
+  expect(bits(1, 59, 9223372036854775807)) == 2
+  expect(bits(5, 59, 9223372036854775803)) == 32
+  expect(bits(0, 6, 2)) == 85
+  expect(parse("1-59/9223372036854775807 * * * *").is_ok()) == true
+}

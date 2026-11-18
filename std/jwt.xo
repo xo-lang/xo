@@ -437,16 +437,22 @@ const NS: Int = 1000000000
 /// A NumericDate in whole seconds (rounded down, golang-jwt's
 /// TimePrecision). Kept as seconds: a date past 2262 does not fit a Time's
 /// nanoseconds, and every comparison below is done in seconds (b25).
+/// Every date under 9.2e18 seconds is a time, as golang-jwt's (Go's time
+/// wraps past 2^63 seconds); before's sums stay under Int's largest there
+/// with any leeway a Duration holds. It was 1e11 (year 5138), so a date of
+/// 2^53 was a Claim error where golang-jwt says not valid yet (task #352).
+const DATE_MAX: Int = 9200000000000000000
+
 fn numeric_date(v: json.Value, name: Str) -> Int ! JwtErr {
   match v {
     Int(n) => {
-      if n < -100000000000 || n > 100000000000 {
+      if n <= 0 - DATE_MAX || n >= DATE_MAX {
         return Err(JwtErr.Claim(msg: "${name} is out of range"))
       }
       Ok(n)
     }
     Num(f) => {
-      if !(f > -100000000000.0 && f < 100000000000.0) {
+      if !(f > -9.2e18 && f < 9.2e18) {
         return Err(JwtErr.Claim(msg: "${name} is out of range"))
       }
       Ok(Int(f.floor()))

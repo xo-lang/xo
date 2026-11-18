@@ -73,9 +73,33 @@ test "dates past 2262 do not overflow (b25)" {
     _ => fault("expected Expired")
   }
   // the largest allowed date with a large leeway
-  let edge = sign(os.rand, Alg.HS256, key, Dates{exp: 100000000000, nbf: 0, iat: 0}, None)?
+  let edge = sign(os.rand, Alg.HS256, key, Dates{exp: 9199999999999999999, nbf: 0, iat: 0}, None)?
   big.leeway = Duration.from_secs_int(9000000000)
   let _ = verify_with[Dates](edge, key, big)?
+  big.max_age = Some(Duration.from_secs_int(9000000000))
+  big.check_iat = true
+  let late_iat = sign(os.rand, Alg.HS256, key, Dates{exp: 9199999999999999999, nbf: 0, iat: 9199999999999999999}, None)?
+  match verify_with[Dates](late_iat, key, big) {
+    Err(JwtErr.NotYetValid(_)) => ()
+    _ => fault("expected NotYetValid for an iat at the edge")
+  }
+  // past it: golang-jwt's time wraps, so a Claim error
+  let past = sign(os.rand, Alg.HS256, key, Dates{exp: 9200000000000000000, nbf: 0, iat: 0}, None)?
+  match verify_with[Dates](past, key, big) {
+    Err(JwtErr.Claim(_)) => ()
+    _ => fault("expected Claim past 9.2e18")
+  }
+}
+
+test "a NumericDate of 2^53 seconds is a time, as golang-jwt's (jwtfuzz, task #352)" {
+  let key = Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  let tok = sign(os.rand, Alg.HS256, key, Dates{exp: 9007199254740992, nbf: 9007199254740992, iat: 0}, None)?
+  match verify_with[Dates](tok, key, opts(999)) {
+    Err(JwtErr.NotYetValid(_)) => ()
+    _ => fault("expected NotYetValid, as golang-jwt's token is not valid yet")
+  }
+  let late = sign(os.rand, Alg.HS256, key, Dates{exp: 9007199254740991, nbf: 0, iat: 0}, None)?
+  let _ = verify_with[Dates](late, key, opts(999))?
 }
 
 struct Aud {
