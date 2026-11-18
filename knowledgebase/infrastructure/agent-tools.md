@@ -314,8 +314,10 @@ yourself.
   every 30 minutes of a wait it runs the installed diskguard.sh (Go's build
   cache trimmed by age under 200 GB free, an xw `disk.low` event under 100;
   trims and alerts in notes/lead/diskguard.log; scripts/lead/diskcap.sh,
-  task #303, keeps each pile under a cap: dry run until the owner OKs
-  `--real`). Each loop writes a
+  task #303, keeps each pile under a cap: xw's alert loop runs it
+  `--real` every 2 hours (decision #124, workstream (private commit)) through
+  heavy.sh's bulk class as `diskcap-EPOCH`, from origin/main's copy;
+  idle worktrees are listed to their owners, never removed). Each loop writes a
   heartbeat at every wait (`~/xo-lead/xw/beat/NAME`: due epoch and what
   it waits on), and xw raises `loop-stale` when one is overdue. Stop a
   session's copy before installing (mainwatch2.sh in the lead's session;
