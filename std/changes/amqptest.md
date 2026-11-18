@@ -1,5 +1,17 @@
 # std/amqptest changes
 
+## 2026-11-17: perf: a delivery no longer scans the whole queue for expired locks
+
+- Kind: perf
+- Commit: this push
+- Found by: the stress program (std/evidence/amqptest/stress, linux/amd64, 30 min): sends fell from 274,000 in the first 5 minutes to about 62,000 a 5 minutes as the backlog grew, and the resident set doubled (316 to 650 MB)
+- Go reference: none (a broker's lock bookkeeping; Service Bus releases a message whose peek-lock expired)
+- Test: std/amqptest_test.xo "a delivery does not scan the queue for expired locks" (4,000 locked takes from a queue of 40,000 within 100 ms, and the locks still expire on time; 362 ms before, 15 ms after on the Mac Studio)
+- Timing: the test above
+- Shipped in: not yet released
+
+Each delivery, settle and management operation walked every message of the queue to release expired peek-locks, so a delivery cost O(queue length). A queue now keeps the earliest time a lock can expire and walks its messages only from then.
+
 ## 2026-11-17: fix: a client's sender gets link credit again as it spends it
 
 - Kind: fix

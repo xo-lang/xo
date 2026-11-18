@@ -1424,3 +1424,39 @@ test "settling a message does not copy the queue's message list" uses clock {
   expect(s.queues[0].dead[0].dead_reason) == "r"
   expect(took < 1000ms) == true
 }
+
+// A delivery no longer scans the whole queue for expired locks (stress run, 2026-11-17): take
+// called expire_locks, which walked every message each time, so a delivery cost O(queue length)
+// and the stress consumers fell behind as the backlog grew. 4,000 locked takes from a queue of
+// 40,000 walked 160 M messages before (362 ms on the Mac Studio, 15 ms after); the budget is 100 ms,
+// and the locks still expire on time.
+test "a delivery does not scan the queue for expired locks" uses clock {
+  let n = 40000
+  let k = 4000
+  var s = BrokerState{}
+  var msgs: List[FakeMsg] = []
+  for i in 0..n { msgs.push(FakeMsg{seq: i + 1, m: msg("m${i}")}) }
+  s.queues.push(FakeQueue{name: "q", opts: QueueOptions{lock_ms: 1000, max_delivery_count: 10}, msgs: msgs})
+  let t0 = os.clock.now()
+  for i in 0..k {
+    match take(s, 0, 1, 5000 + i % 500, "", false) {
+      Some(m) => expect(m.seq) == i + 1
+      None => fault("take ${i}: none")
+    }
+  }
+  let took = os.clock.now() - t0
+  expect(s.queues[0].msgs[0].locked_until) == 6000
+  // the first lock (taken at 5000) has expired at 6000: the next take gets message 1 again
+  match take(s, 0, 2, 6000, "", false) {
+    Some(m) => {
+      expect(m.seq) == 1
+      expect(m.delivery_count) == 2
+    }
+    None => fault("no expired lock")
+  }
+  // taken at 5001: still locked; message 501 (taken at 5000) has expired
+  expect(s.queues[0].msgs[1].locked_until) == 6001
+  expect(s.queues[0].msgs[500].locked_until) == 0
+  expect(s.queues[0].msgs[k - 1].locked_until) == 5000 + (k - 1) % 500 + 1000
+  expect(took < 100ms) == true
+}

@@ -59,6 +59,9 @@ pub struct FakeQueue {
   pub sessions: List[FakeSession] = []
   /// a subscription's rules; None is the `$Default` rule alone (every message)
   pub rules: List[FakeRule]? = None
+  /// no message lock expires before this time (ms): expire_locks scans the
+  /// messages only from then, not on every delivery (0: scan next time)
+  pub lock_scan_at: Int = 0
 }
 
 /// A subscription rule's filter (Service Bus's TrueFilter, FalseFilter,
@@ -685,10 +688,15 @@ fn enqueue(var s: BrokerState, qi: Int, m0: amqp.Message, now: Int) -> Int {
 /// the maximum delivery count goes to the dead letter queue, as an abandon past it does (Service
 /// Bus; it was delivered once more instead, TestAmqptestFuzz, 2026-11-16).
 fn expire_locks(var s: BrokerState, qi: Int, now: Int) {
+  // each delivery calls this: scanning the whole queue every time made a delivery O(queue
+  // length), and the stress run's consumers fell behind as its backlog grew (2026-11-17)
+  if s.queues[qi].lock_scan_at > now { return }
   var spent: List[Int] = []
+  var next = Int.max
   var i = 0
   while i < s.queues[qi].msgs.len() {
     let lu = s.queues[qi].msgs[i].locked_until
+    if lu > now && lu < next { next = lu }
     if lu > 0 && lu <= now {
       s.queues[qi].msgs[i].locked_until = 0
       s.queues[qi].msgs[i].lock_token = b""
@@ -698,6 +706,7 @@ fn expire_locks(var s: BrokerState, qi: Int, now: Int) {
     }
     i += 1
   }
+  s.queues[qi].lock_scan_at = next
   let max = s.queues[qi].opts.max_delivery_count
   for seq in spent {
     dead_letter(s, qi, seq, "MaxDeliveryCountExceeded", "Message could not be consumed after ${max} delivery attempts.")
@@ -741,6 +750,7 @@ fn take(var s: BrokerState, qi: Int, conn: Int, now: Int, sess: Str, settle: Boo
       s.queues[qi].msgs[i].lock_token = token_bytes(s.next_lock)
       s.next_lock += 1
       s.queues[qi].msgs[i].locked_until = now + lock_ms
+      if now + lock_ms < s.queues[qi].lock_scan_at { s.queues[qi].lock_scan_at = now + lock_ms }
       s.queues[qi].msgs[i].lock_conn = conn
       notify_timers(s)
       return Some(s.queues[qi].msgs[i])
@@ -1529,6 +1539,7 @@ fn mgmt_op(var s: BrokerState, qi: Int, conn: Int, now: Int, op: Str, req: amqp.
         s.next_lock += 1
         m.locked_until = now + q.opts.lock_ms
         m.lock_conn = conn
+        if m.locked_until < q.lock_scan_at { q.lock_scan_at = m.locked_until }
         put_msg(q, i, m)
         match amqp.encode_message(with_delivery_annotations(m)) {
           Ok(bs) => found.push(amqp.Value.Map(pairs: [pair("message", amqp.Value.Binary(v: bs)), pair("lock-token", amqp.Value.Uuid(bytes: m.lock_token))]))
