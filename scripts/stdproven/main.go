@@ -547,6 +547,10 @@ func (f fuzzRun) loop(st *fuzzState) error {
 		now = time.Now
 	}
 	start := now()
+	// the longest seed round so far: a shard does not start a round that
+	// would end past its minutes (#320: a jsonrpc shard of 55 minutes began
+	// a round near its end and ran 1h25m, past its lease's -max)
+	var longest time.Duration
 	for {
 		done := true
 		for _, h := range f.hs {
@@ -559,9 +563,10 @@ func (f fuzzRun) loop(st *fuzzState) error {
 			st.pass = true
 			break
 		}
-		if f.shard > 0 && el >= f.shard {
+		if f.shard > 0 && (el >= f.shard || el+longest > f.shard) {
 			break
 		}
+		r0 := now()
 		for _, h := range f.hs {
 			if st.ran[h.test] >= f.cases {
 				continue
@@ -592,6 +597,9 @@ func (f fuzzRun) loop(st *fuzzState) error {
 			line := fmt.Sprintf("- %s seed %d: %d cases on %s, %s", h.test, st.seed, seedCases(h, f.batch), f.backends, now().Sub(t0).Round(time.Second))
 			st.log = append(st.log, line)
 			fmt.Println(line)
+		}
+		if d := now().Sub(r0); d > longest {
+			longest = d
 		}
 		st.seed++
 	}

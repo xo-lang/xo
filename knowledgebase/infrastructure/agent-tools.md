@@ -973,7 +973,10 @@ the evidence names one). A fuzz goes in shards so gates start between
 them (lead, 2026-11-16, #98: an 8 hour run outside the lane holds host 2's
 memory gates off): `SP_SHARD_MIN=55 stdproven-offload.sh WT NAME -- fuzz
 -host "linux/arm64 host 2" MODULE` runs `stdproven fuzz -minutes 55`
-shards, each a lease in the host's lane (OFF_MAX_MIN 75); a shard writes
+shards, each a lease in the host's lane (OFF_MAX_MIN 75); a shard starts
+no seed round that its longest round so far would carry past its minutes
+(#320, 2026-11-18: a jsonrpc shard began one near its end and ran 1h25m,
+past the lease's -max); a shard writes
 `result: partial` with `ran:`, `elapsed:` and `shards:` lines, which the
 loop commits in WT for the next shard to resume (same source hash: the
 counts, time, seeds and log carry on), until `result: pass` at 1,000,000

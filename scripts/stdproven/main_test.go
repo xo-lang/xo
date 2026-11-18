@@ -270,6 +270,31 @@ func TestRaceStressOnly(t *testing.T) {
 // its lane; one module's 1M cases took 2.5 h and a batch hit offload.sh's
 // 180 minutes with no evidence): a shard stops at its minutes with result
 // partial, and the next resumes it until the cases or the hours are reached
+// a shard does not start a seed round that would end past its minutes
+// (#320: a 55 minute jsonrpc shard ran 1h25m and heavyd stopped it at its
+// lease's -max): two harnesses of 12 minutes a seed stop after 2 rounds
+// (48 minutes), not 3 (72)
+func TestFuzzShardStopsBeforeLongRound(t *testing.T) {
+	var clock time.Time
+	f := fuzzRun{
+		hs:    []harness{{"TestAFuzz", "XO_AFUZZ"}, {"TestBFuzz", "XO_BFUZZ"}},
+		cases: 1000000, batch: 5000, backends: "arm64,llvm",
+		limit: 8 * time.Hour, shard: 55 * time.Minute,
+		now: func() time.Time { return clock },
+		run: func(h harness, seed, batch int, backends string) ([]byte, error) {
+			clock = clock.Add(12 * time.Minute)
+			return []byte("--- PASS: " + h.test + " (1s)\n"), nil
+		},
+	}
+	st := fuzzResume("", "src1")
+	if err := f.loop(&st); err != nil {
+		t.Fatal(err)
+	}
+	if st.prior > 55*time.Minute || st.seed != st.first+2 || st.pass {
+		t.Errorf("shard ran %s, seeds %d to %d (pass %v); want at most 55m, 2 seeds", st.prior, st.first, st.seed-1, st.pass)
+	}
+}
+
 func TestFuzzShardsMerge(t *testing.T) {
 	var clock time.Time
 	var seeds []int
