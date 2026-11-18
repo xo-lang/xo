@@ -139,8 +139,8 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   OFF_HOST: amd64 and win), and once it has waited
   HEAVYD_EXCL_STARVE_MIN (20; 0 off), offload.sh starts no new no-lane
   run on that machine (`heavyd nolane ENV` exits 1 with the reason; the
-  run waits, saying so once) and the plain leases behind it in its lane
-  drain, until it starts: the hold never runs out while the starve rule
+  run waits, saying so once) and, once the no-lane runs end, the plain
+  leases behind it in its lane drain, until it starts: the hold never runs out while the starve rule
   fires (#321 follow-up, 2026-11-18: at 120 minutes the hold let a plain
   run.sh start beside an exclusive waiting since 02:41) (heavyd
   lanes.go ExclStarve, NoLaneOK, TestExclStarveNoLane,
@@ -152,11 +152,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   minutes, then it waits only for the runs already going (lead,
   2026-11-18, #317: amd64 perf runs waited 29 to 82 min while each x86
   gate sample started 0 s after the last; TestExclStarveStopsBackfill).
-  While the starved exclusive still waits for a no-lane run, a bounded
-  plain lease (a -max, not -long) starts beside it, since the exclusive
-  cannot start before that run ends; long and unbounded plain leases
-  drain (lead, 2026-11-18: pass2 froze 140 minutes, every plain lease
-  held behind an exclusive a 200 minute no-lane fuzz run kept out;
+  While the starved exclusive still waits for a no-lane run, every plain
+  lease (bounded, unbounded or -long) starts beside it, since the
+  exclusive cannot start before that run ends; once it ends the plain
+  leases drain for the exclusive (lead, 2026-11-18: pass2 froze 140
+  minutes, every plain lease, all at offload.sh's default -max=180
+  -long, held behind an exclusive a 200 minute no-lane fuzz run kept
+  out; TestExclStarveNoLane, TestExclStarveDrainsMachine,
   TestExclStarveOutlastsHold). After heavyd starts (a restart, an
   install), it grants no lane lease for 15 s (AdoptGrace), so the runs
   still going from before re-adopt their slots first (lead, 2026-11-07: a
