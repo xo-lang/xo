@@ -1,16 +1,16 @@
 kind: fuzz
 module: backoff
 result: partial
-commit: fa469d872
+commit: f57bbe257
 source: ed36ec73bdcd2752842d9887f3d675a6bdaf916ac7e4d52ab04f8b6a00b4b691
 date: 2026-11-18
 host: linux/arm64 host 4
 command: go run ./scripts/stdproven fuzz -cases 1000000 -hours 8 -batch 5000 -backends arm64,llvm -host "linux/arm64 host 4" backoff
-measure: TestBackoffFuzz 270000 cases per backend, 2 backends (arm64,llvm), 3h20m29s in 1 shards, 0 mismatches
-seeds: 2 to 55
-ran: TestBackoffFuzz=270000
-elapsed: 12028
-shards: 1
+measure: TestBackoffFuzz 560000 cases per backend, 2 backends (arm64,llvm), 6h37m42s in 2 shards, 0 mismatches
+seeds: 2 to 113
+ran: TestBackoffFuzz=560000
+elapsed: 23862
+shards: 2
 
 Long fuzz evidence (decision 0616): every harness that names std/backoff, against Go's package, with fresh seeds of 5000 cases each.
 
@@ -68,3 +68,61 @@ Long fuzz evidence (decision 0616): every harness that names std/backoff, agains
 - TestBackoffFuzz seed 53: 5000 cases on arm64,llvm, 2m58s
 - TestBackoffFuzz seed 54: 5000 cases on arm64,llvm, 3m4s
 - TestBackoffFuzz seed 55: 5000 cases on arm64,llvm, 3m17s
+- TestBackoffFuzz seed 56: 5000 cases on arm64,llvm, 3m14s
+- TestBackoffFuzz seed 57: 5000 cases on arm64,llvm, 3m3s
+- TestBackoffFuzz seed 58: 5000 cases on arm64,llvm, 3m13s
+- TestBackoffFuzz seed 59: 5000 cases on arm64,llvm, 3m11s
+- TestBackoffFuzz seed 60: 5000 cases on arm64,llvm, 3m6s
+- TestBackoffFuzz seed 61: 5000 cases on arm64,llvm, 3m2s
+- TestBackoffFuzz seed 62: 5000 cases on arm64,llvm, 3m11s
+- TestBackoffFuzz seed 63: 5000 cases on arm64,llvm, 3m10s
+- TestBackoffFuzz seed 64: 5000 cases on arm64,llvm, 3m10s
+- TestBackoffFuzz seed 65: 5000 cases on arm64,llvm, 3m9s
+- TestBackoffFuzz seed 66: 5000 cases on arm64,llvm, 3m18s
+- TestBackoffFuzz seed 67: 5000 cases on arm64,llvm, 3m21s
+- TestBackoffFuzz seed 68: 5000 cases on arm64,llvm, 3m31s
+- TestBackoffFuzz seed 69: 5000 cases on arm64,llvm, 3m21s
+- TestBackoffFuzz seed 70: 5000 cases on arm64,llvm, 3m17s
+- TestBackoffFuzz seed 71: 5000 cases on arm64,llvm, 3m18s
+- TestBackoffFuzz seed 72: 5000 cases on arm64,llvm, 3m20s
+- TestBackoffFuzz seed 73: 5000 cases on arm64,llvm, 3m19s
+- TestBackoffFuzz seed 74: 5000 cases on arm64,llvm, 3m30s
+- TestBackoffFuzz seed 75: 5000 cases on arm64,llvm, 3m24s
+- TestBackoffFuzz seed 76: 5000 cases on arm64,llvm, 3m56s
+- TestBackoffFuzz seed 77: 5000 cases on arm64,llvm, 3m51s
+- TestBackoffFuzz seed 78: 5000 cases on arm64,llvm, 3m35s
+- TestBackoffFuzz seed 79: 5000 cases on arm64,llvm, 3m31s
+- TestBackoffFuzz seed 80: 5000 cases on arm64,llvm, 3m25s
+- TestBackoffFuzz seed 81: 5000 cases on arm64,llvm, 3m35s
+- TestBackoffFuzz seed 82: 5000 cases on arm64,llvm, 3m46s
+- TestBackoffFuzz seed 83: 5000 cases on arm64,llvm, 3m37s
+- TestBackoffFuzz seed 84: 5000 cases on arm64,llvm, 3m30s
+- TestBackoffFuzz seed 85: 5000 cases on arm64,llvm, 3m26s
+- TestBackoffFuzz seed 86: 5000 cases on arm64,llvm, 3m29s
+- TestBackoffFuzz seed 87: 5000 cases on arm64,llvm, 3m21s
+- TestBackoffFuzz seed 88: 5000 cases on arm64,llvm, 3m19s
+- TestBackoffFuzz seed 89: 5000 cases on arm64,llvm, 3m14s
+- TestBackoffFuzz seed 90: 5000 cases on arm64,llvm, 3m10s
+- TestBackoffFuzz seed 91: 5000 cases on arm64,llvm, 3m21s
+- TestBackoffFuzz seed 92: 5000 cases on arm64,llvm, 3m20s
+- TestBackoffFuzz seed 93: 5000 cases on arm64,llvm, 3m25s
+- TestBackoffFuzz seed 94: 5000 cases on arm64,llvm, 3m38s
+- TestBackoffFuzz seed 95: 5000 cases on arm64,llvm, 3m18s
+- TestBackoffFuzz seed 96: 5000 cases on arm64,llvm, 3m12s
+- TestBackoffFuzz seed 97: 5000 cases on arm64,llvm, 3m27s
+- TestBackoffFuzz seed 98: 5000 cases on arm64,llvm, 3m22s
+- TestBackoffFuzz seed 99: 5000 cases on arm64,llvm, 3m24s
+- TestBackoffFuzz seed 100: 5000 cases on arm64,llvm, 3m13s
+- TestBackoffFuzz seed 101: 5000 cases on arm64,llvm, 3m17s
+- TestBackoffFuzz seed 102: 5000 cases on arm64,llvm, 3m28s
+- TestBackoffFuzz seed 103: 5000 cases on arm64,llvm, 3m41s
+- TestBackoffFuzz seed 104: 5000 cases on arm64,llvm, 3m44s
+- TestBackoffFuzz seed 105: 5000 cases on arm64,llvm, 3m47s
+- TestBackoffFuzz seed 106: 5000 cases on arm64,llvm, 3m38s
+- TestBackoffFuzz seed 107: 5000 cases on arm64,llvm, 3m33s
+- TestBackoffFuzz seed 108: 5000 cases on arm64,llvm, 3m49s
+- TestBackoffFuzz seed 109: 5000 cases on arm64,llvm, 3m38s
+- TestBackoffFuzz seed 110: 5000 cases on arm64,llvm, 3m21s
+- TestBackoffFuzz seed 111: 5000 cases on arm64,llvm, 3m19s
+- TestBackoffFuzz seed 112: 5000 cases on arm64,llvm, 3m11s
+- TestBackoffFuzz seed 113: 5000 cases on arm64,llvm, 3m16s
