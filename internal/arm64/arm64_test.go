@@ -184,6 +184,19 @@ func stableStderr(s string) string {
 func progArgs(dir string) []string { return fileFields(filepath.Join(dir, "args.txt")) }
 func progEnv(dir string) []string  { return fileFields(filepath.Join(dir, "env.txt")) }
 
+// goldenCheckEnv: the memory checks a golden program runs with,
+// XO_LEAKCHECK=1 always and, when XO_GOLDEN_FREE_CHECK is 1, the free
+// check too (decision 0638's --check=free; task #350, class guard 1): with
+// TestGoldenRunHeapGuard's XO_HEAP_GUARD=1 build that is every golden
+// under --check=free,guard. The program alone gets it, not the xo that
+// builds it.
+func goldenCheckEnv(freeCheck string) []string {
+	if freeCheck == "1" {
+		return []string{"XO_LEAKCHECK=1", "XO_FREE_CHECK=1"}
+	}
+	return []string{"XO_LEAKCHECK=1"}
+}
+
 // progStdin is the standard input of the golden program in dir: its
 // stdin.txt, or nothing.
 func progStdin(dir string) io.Reader {
@@ -282,7 +295,7 @@ func runBinary(t *testing.T, dir, bin string) runResult {
 	t.Helper()
 	cmd := testtmp.Guard(exec.Command(bin, progArgs(dir)...))
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
+	cmd.Env = append(append(os.Environ(), progEnv(dir)...), goldenCheckEnv(os.Getenv("XO_GOLDEN_FREE_CHECK"))...)
 	cmd.Stdin = progStdin(dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

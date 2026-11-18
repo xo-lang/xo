@@ -1832,6 +1832,17 @@ prove_stdfast() {
     else
       bad=1; echo "stdfast $m: FAIL ($logs/stdfast-$m.txt: $(grep -m1 -- '--- FAIL' "$logs/stdfast-$m.txt"))"
     fi
+    # the same tests under --check=free,guard (gatelib gate_stdfast_check,
+    # task #350): a use after free or an overrun the plain run survives
+    # faults here
+    t=$(gate_stdfast_check "$(uname -s | tr A-Z a-z)" "$(uname -m)")
+    if [ -n "$t" ] && [ -f "$logs/stdfast-$m.txt" ] && ! grep -q -- '--- FAIL' "$logs/stdfast-$m.txt"; then
+      if "$XO_CLI" test --since="$sfb" "$t" --std-module="$(gate_stdfast_test_mod "$m")" >"$logs/stdfast-check-$m.txt" 2>&1; then
+        echo "stdfast $m $t: $(tail -1 "$logs/stdfast-check-$m.txt")"
+      else
+        bad=1; echo "stdfast $m $t: FAIL ($logs/stdfast-check-$m.txt: $(grep -m1 -E -- '--- FAIL|^fault: |xo leakcheck' "$logs/stdfast-check-$m.txt"))"
+      fi
+    fi
     # its cost notes against cmd/xo/testdata/vetcost-std-allow.txt
     # (TestVetCostStd's rule, which the tier runs over bench/perf)
     # (std/tzdata holds data, no .xo file: nothing to vet)

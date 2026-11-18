@@ -100,10 +100,26 @@ func TestCheckFlagPlants(t *testing.T) {
 	}
 }
 
+// TestGoldenCheckEnv: XO_GOLDEN_FREE_CHECK=1 adds the free check to a
+// golden program's run (task #350), and the leak check stays on either way.
+func TestGoldenCheckEnv(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"", "XO_LEAKCHECK=1"},
+		{"0", "XO_LEAKCHECK=1"},
+		{"1", "XO_LEAKCHECK=1 XO_FREE_CHECK=1"},
+	} {
+		if got := strings.Join(goldenCheckEnv(c.in), " "); got != c.want {
+			t.Errorf("goldenCheckEnv(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // TestGoldenRunHeapGuard runs golden programs built with
 // XO_HEAP_GUARD=1 (every runtime record against a guard page, the
 // rt.slot_* on a List checked): a correct runtime never reads or writes
-// past a record, so the output is the same. Every golden in the full
+// past a record, so the output is the same. With XO_GOLDEN_FREE_CHECK=1
+// each also runs under the free check (goldenCheckEnv): every golden of
+// the full tier under --check=free,guard is task #350's 8 hour pass. Every golden in the full
 // tier (XO_SELFHOST_TIER=full), else those that use the runtime's
 // records most (tasks, channels, contexts, servers).
 func TestGoldenRunHeapGuard(t *testing.T) {
