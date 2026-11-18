@@ -1,5 +1,20 @@
 # std/protoparse changes
 
+## 2026-11-18: fix: allow_alias and message_set_wire_format take true or false; declared names are one identifier; no label in a oneof
+
+- Kind: fix
+- Commit: this push
+- Found by: task #152 (xw-1's protoparse fuzz against protocompile v0.14.1, seed 4 at 5000 files on host 3: 3 of 2554 rejected files accepted: `option allow_alias = true0x10`, `rpc R11. (M5)`, `repeated f39 = 6` in a oneof)
+- Go reference: protocompile v0.14.1 parser/validate.go validateEnum (allow_alias), parser/result.go (message_set_wire_format), parser/proto.y (names, oneof fields)
+- Test: std/protoparse_test.xo "allow_alias and message_set_wire_format take true or false", "a declared name is one identifier", "a oneof field has no label" (accepted before)
+- Shipped in: not yet released
+
+parse accepted any value for allow_alias (a string, a number, `true0x10`); it now gives protocompile's
+`enum E: expecting bool value for allow_alias option` at the value, and the same for message_set_wire_format.
+A message, enum, value, field, group, oneof, service or rpc name with a `.` is
+`syntax error: unexpected '.', expecting ...` at the dot, and `repeated`, `optional` or `required` in a
+oneof is `syntax error: unexpected "repeated"`.
+
 ## 2026-11-17: fix: a proto3 enum whose first value is not zero is an error
 
 - Kind: fix

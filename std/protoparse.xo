@@ -602,6 +602,23 @@ fn p_ident(var p: P) -> Str ! ParseErr {
   Ok(p.ts[p.at - 1].text)
 }
 
+/// A declared name (message, enum, value, field, oneof, service, rpc): one identifier, where protoc's
+/// grammar has no dotted name (`message M.`: syntax error at the `.`, expecting what follows the name).
+fn p_name(var p: P, expecting: Str) -> Str ! ParseErr {
+  let n = p_ident(p)?
+  if let Some(d) = n.find(".") {
+    let t = p.ts[p.at - 1]
+    return Err(ParseErr{line: t.line, col: t.col + d, msg: "syntax error: unexpected '.', expecting ${expecting}"})
+  }
+  Ok(n)
+}
+
+/// protocompile's check of allow_alias and message_set_wire_format (parser/validate.go, result.go): the
+/// value, the token at `at`, is the identifier `true` or `false` (`"true"`, `1`, `true0x10` are errors).
+fn bool_value_ok(p: P, at: Int) -> Bool {
+  at < p.ts.len() && p.ts[at].kind == Kind.Ident && (p.ts[at].text == "true" || p.ts[at].text == "false")
+}
+
 /// A type name, possibly starting with a dot. Its parts may be apart (`foo . Bar`, a comment or a line
 /// between them), as protoc reads it.
 fn p_type(var p: P) -> Str ! ParseErr {
@@ -1003,12 +1020,14 @@ fn check_ext_reserved(var p: P, scope: Str, rs: List[(Int, Int)], rat: List[Int]
 }
 
 fn p_enum(var p: P) -> Enum ! ParseErr {
-  let name = p_ident(p)?
+  let name = p_name(p, "'{'")?
   p_expect(p, "{")?
   var e = Enum{name: name, values: []}
   // token indexes for the checks at the end: allow_alias's value, each
   // value's number, each reserved range's statement
   var alias_at = -1
+  // allow_alias's value token when it is not `true` or `false`
+  var alias_bad = -1
   var val_at: List[Int] = []
   var rsv_at: List[Int] = []
   while !p_is(p, "}") {
@@ -1017,7 +1036,8 @@ fn p_enum(var p: P) -> Enum ! ParseErr {
       let at = p.at
       let o = p_option_stmt(p)?
       if o.0 == "allow_alias" {
-        alias_at = if o.1 == b"true" { at + 3 } else { -1 }
+        alias_at = if o.1 == b"true" && bool_value_ok(p, at + 3) { at + 3 } else { -1 }
+        if !bool_value_ok(p, at + 3) && alias_bad < 0 { alias_bad = at + 3 }
       }
       e.options.push(o)
     } else if p_is(p, "reserved") {
@@ -1031,7 +1051,7 @@ fn p_enum(var p: P) -> Enum ! ParseErr {
     } else if p_is(p, ";") {
       p.at += 1
     } else {
-      let vn = p_ident(p)?
+      let vn = p_name(p, "'='")?
       p_expect(p, "=")?
       val_at.push(p.at)
       let n = p_int(p)?
@@ -1044,6 +1064,10 @@ fn p_enum(var p: P) -> Enum ! ParseErr {
   // protocompile's validateEnum: a proto3 enum's first value is zero,
   // then aliases, then reserved ranges
   let scope = "enum ${name}"
+  if alias_bad >= 0 {
+    p.at = alias_bad
+    return Err(p_err(p, "${scope}: expecting bool value for allow_alias option"))
+  }
   if !p.proto2 && !p.editions && e.values.len() > 0 && e.values[0].num != 0 {
     p.at = val_at[0]
     return Err(p_err(p, "${scope}: proto3 requires that first value of enum have numeric value zero"))
@@ -1074,6 +1098,10 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
   var optional = false
   var required = false
   var labeled = false
+  // protoc's grammar has no label in a oneof (`syntax error: unexpected "repeated"`)
+  if oneof != "" && (p_is(p, "repeated") || p_is(p, "optional") || p_is(p, "required")) {
+    return Err(p_unexpected(p))
+  }
   if oneof == "" {
     if p_is(p, "repeated") {
       repeated = true
@@ -1101,7 +1129,7 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
     if p.editions { return Err(p_err(p, "`group` is not allowed in editions (use features.message_encoding = DELIMITED)")) }
     if !p.proto2 { return Err(p_err(p, "`group` is proto2 only")) }
     p.at += 1
-    let gname = p_ident(p)?
+    let gname = p_name(p, "'='")?
     let g0 = if gname.len() > 0 { Int(gname.bytes()[0]) } else { 0 }
     if !(g0 >= 65 && g0 <= 90) {
       p.at -= 1
@@ -1129,7 +1157,7 @@ fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
   } else {
     typ = p_type(p)?
   }
-  let name = p_ident(p)?
+  let name = p_name(p, "'='")?
   p_expect(p, "=")?
   // a field number has no sign (protoc's grammar)
   if p_is(p, "-") { return Err(p_unexpected(p, "int literal")) }
@@ -1161,7 +1189,7 @@ fn field_opts(all: List[(Str, Bytes)]) -> (List[(Str, Bytes)], Bytes, Str) {
 }
 
 fn p_message(var p: P) -> Message ! ParseErr {
-  let name = p_ident(p)?
+  let name = p_name(p, "'{'")?
   p_message_body(p, name)
 }
 
@@ -1171,6 +1199,8 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
   // each reserved and extensions range's statement (token index)
   var rsv_at: List[Int] = []
   var ext_at: List[Int] = []
+  // message_set_wire_format's value token when it is not `true` or `false`
+  var msw_bad = -1
   while !p_is(p, "}") {
     if p.at >= p.ts.len() { return Err(p_err(p, "unterminated message `${name}`")) }
     if p_is(p, "message") {
@@ -1180,7 +1210,10 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
       p.at += 1
       m.enums.push(p_enum(p)?)
     } else if p_is(p, "option") {
-      m.options.push(p_option_stmt(p)?)
+      let at = p.at
+      let o = p_option_stmt(p)?
+      if o.0 == "message_set_wire_format" && !bool_value_ok(p, at + 3) && msw_bad < 0 { msw_bad = at + 3 }
+      m.options.push(o)
     } else if p_is(p, "reserved") {
       let at = p.at
       let (rs, ns) = p_ranges(p, 536870911)?
@@ -1204,7 +1237,7 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
       for g in groups { m.nested.push(g) }
     } else if p_is(p, "oneof") {
       p.at += 1
-      let on = p_ident(p)?
+      let on = p_name(p, "'{'")?
       p_expect(p, "{")?
       m.oneofs.push(on)
       var oo: List[(Str, Bytes)] = []
@@ -1228,6 +1261,10 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
   // then one against the other
   let end = p.at
   let scope = "message ${name}"
+  if msw_bad >= 0 {
+    p.at = msw_bad
+    return Err(p_err(p, "${scope}: expecting bool value for message_set_wire_format option"))
+  }
   check_overlap(p, scope, "reserved", m.reserved, rsv_at)?
   check_overlap(p, scope, "extension", m.extensions, ext_at)?
   check_ext_reserved(p, scope, m.reserved, rsv_at, m.extensions, ext_at)?
@@ -1236,7 +1273,7 @@ fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
 }
 
 fn p_service(var p: P) -> Service ! ParseErr {
-  let name = p_ident(p)?
+  let name = p_name(p, "'{'")?
   p_expect(p, "{")?
   var rpcs: List[Rpc] = []
   var sopts: List[(Str, Bytes)] = []
@@ -1248,7 +1285,7 @@ fn p_service(var p: P) -> Service ! ParseErr {
       p.at += 1
     } else {
       p_expect(p, "rpc")?
-      let rn = p_ident(p)?
+      let rn = p_name(p, "'('")?
       p_expect(p, "(")?
       var cs = false
       if p_is(p, "stream") {

@@ -334,6 +334,31 @@ test "allow_alias with no aliases, and aliases without it, are errors" {
   expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = false;\n  A = 0;\n  B = 1;\n}")) == "ok"
 }
 
+// protoparse fuzz seed 4 on host 3 (task #152): 3 of 2554 rejected files accepted
+test "allow_alias and message_set_wire_format take true or false" {
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = true0x10 ;\n  A = 0;\n  B = 0;\n}")) == "3:24: enum E: expecting bool value for allow_alias option"
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = \"true\";\n  A = 0;\n  B = 0;\n}")) == "3:24: enum E: expecting bool value for allow_alias option"
+  expect(parse_err("syntax = \"proto3\";\nenum E {\n  option allow_alias = 1;\n  A = 0;\n}")) == "3:24: enum E: expecting bool value for allow_alias option"
+  expect(parse_err("syntax = \"proto2\";\nmessage M {\n  option message_set_wire_format = 1;\n  extensions 4 to max;\n}")) == "3:36: message M: expecting bool value for message_set_wire_format option"
+  expect(parse_err("syntax = \"proto2\";\nmessage M {\n  option message_set_wire_format = false;\n}")) == "ok"
+}
+
+test "a declared name is one identifier" {
+  expect(parse_err("syntax = \"proto3\";\nmessage M {}\nservice S {\n  rpc R1. (M) returns (M);\n}")) == "4:9: syntax error: unexpected '.', expecting '('"
+  expect(parse_err("syntax = \"proto3\";\nmessage M. { }")) == "2:10: syntax error: unexpected '.', expecting '{'"
+  expect(parse_err("syntax = \"proto3\";\nenum E. { V = 0; }")) == "2:7: syntax error: unexpected '.', expecting '{'"
+  expect(parse_err("syntax = \"proto3\";\nservice S. { }")) == "2:10: syntax error: unexpected '.', expecting '{'"
+  expect(parse_err("syntax = \"proto3\";\nmessage M { oneof o. { int32 f = 1; } }")) == "2:20: syntax error: unexpected '.', expecting '{'"
+  expect(parse_err("syntax = \"proto3\";\nmessage M { int32 f. = 1; }")) == "2:20: syntax error: unexpected '.', expecting '='"
+  expect(parse_err("syntax = \"proto3\";\nmessage M { .p.T f = 1; }\nmessage T {}")) == "ok"
+}
+
+test "a oneof field has no label" {
+  expect(parse_err("syntax = \"proto2\";\nmessage M {\n  oneof o {\n    repeated f = 6;\n  }\n}")) == "4:5: syntax error: unexpected \"repeated\""
+  expect(parse_err("syntax = \"proto2\";\nmessage M { oneof o { optional int32 f = 1; } }")) == "2:23: syntax error: unexpected \"optional\""
+  expect(parse_err("syntax = \"proto2\";\nmessage M { oneof o { required int32 f = 1; } }")) == "2:23: syntax error: unexpected \"required\""
+}
+
 // the error is at the later range in start order (212 to 212 is on line 3)
 test "overlapping reserved ranges are errors, in messages and enums" {
   expect(parse_err("syntax = \"proto3\";\nmessage M {\n  reserved 152, 212 to 212;\n  reserved 143, 203 to 212;\n}")) == "3:3: message M: reserved ranges overlap: 203 to 212 and 212 to 212"
