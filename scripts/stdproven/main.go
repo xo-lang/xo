@@ -156,6 +156,7 @@ var harnesses = map[string][]harness{
 	"protobuf":     {{"TestProtobufFuzz", "XO_PROTOFUZZ"}},
 	"udp":          {{"TestUdpFuzz", "XO_UDPFUZZ"}},
 	"term":         {{"TestTermFuzz", "XO_TERMFUZZ"}},
+	"debug":        {{"TestDebugFuzz", "XO_DEBUGFUZZ"}},
 	"sqlite":       {{"TestSqliteFuzz", "XO_SQLITEFUZZ"}},
 }
 
