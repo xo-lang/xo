@@ -4,3 +4,11 @@ fn main(os: Os) {
   let x = 1.5
   os.stdio.println("${x:.}") // ERROR XO0180 "is not a format spec"
 }
+
+// b34: the spec's text is not lexed as code too, so a letter after a
+// digit is not a second error (XO0155, a number suffix)
+fn more(os: Os) {
+  let n = 5
+  os.stdio.println("${n:5d junk}") // ERROR XO0180 "is not a format spec"
+  os.stdio.println("${n:>5z}") // ERROR XO0180 "is not a format spec"
+}

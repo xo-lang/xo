@@ -1192,7 +1192,17 @@ fn (var p: Parser) parse_interp_spec(sp0: Span) -> (Expr, Bool, FmtSpec?) {
   }
   if !sub.failed() && sub.at(Kind.Colon) && spec is None {
     // text after the colon that is not a spec (decision 0617 A)
-    let tail = p.src[sub.tok.span.start.offset + 1..sp.end.offset].to_str() ?? ""
+    let at = sub.tok.span.start.offset
+    let tail = p.src[at + 1..sp.end.offset].to_str() ?? ""
+    // the lexer read the spec's text as code: its errors there (a number
+    // suffix, a stray rune) only repeat this one (b34)
+    var kept: List[lexer.Diag] = []
+    for d in sub.diags {
+      if d.span.start.offset <= at {
+        kept.push(d)
+      }
+    }
+    sub.diags = kept
     let d = sub.fail(SPEC_BAD, Span{start: sub.tok.span.start, end: sp.end}, "`:${tail}` is not a format spec")
     sub.add_note(d, "a spec is ${SPEC_FORMS} (core 1.6)")
   } else if !sub.failed() && !sub.at(Kind.Eof) {
