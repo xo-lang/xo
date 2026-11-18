@@ -34,6 +34,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	"stdcorpus/protojsonoracle/hostile"
 )
 
 type T = descriptorpb.FieldDescriptorProto_Type
@@ -255,6 +257,9 @@ type gen struct {
 func (g *gen) scalar(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	r := g.r
 	big := []int64{0, 1, -1, 127, -128, 32767, math.MaxInt32, math.MinInt32, math.MaxInt64, math.MinInt64, r.Int63(), -r.Int63()}
+	if r.Intn(4) == 0 {
+		big = hostile.Ints() // task #352: Int's edges, powers of two and their neighbours
+	}
 	switch fd.Kind() {
 	case protoreflect.BoolKind:
 		return protoreflect.ValueOfBool(r.Intn(2) == 0)
@@ -594,6 +599,16 @@ func main() {
 		{"pjt.Wkt", `{"any":{"@type":"pjt.Inner","id":1}}`}, {"pjt.Wkt", `{"any":{"@type":"type.googleapis.com/google.protobuf.Timestamp","value":"2023-11-14T22:13:20Z"}}`}, {"pjt.Wkt", `{"any":{"@type":"type.googleapis.com/google.protobuf.Empty"}}`},
 		{"pjt.Wkt", `{"any":{"@type":"type.googleapis.com/google.protobuf.Value","value":[1,2]}}`}, {"pjt.Wkt", `{"any":{}}`}, {"pjt.Wkt", `{"tss":["2023-11-14T22:13:20Z",null]}`}, {"pjt.Wkt", `{"tss":null}`},
 	}
+	// hostile inputs (task #352): digit runs past Int and at its edges,
+	// bare and quoted, in each integer width; Values nested deep
+	for _, d := range hostile.Digits() {
+		for _, f := range []string{"sInt32", "sUint32", "sInt64", "sUint64"} {
+			cur = append(cur, struct{ name, in string }{"pjt.Scalars", `{"` + f + `":` + d + `}`}, struct{ name, in string }{"pjt.Scalars", `{"` + f + `":"` + d + `"}`})
+		}
+	}
+	for _, n := range hostile.Depths() {
+		cur = append(cur, struct{ name, in string }{"pjt.Wkt", `{"val":` + hostile.Nest("[", "]", n) + `}`})
+	}
 	o.WriteString("/// (message full name, JSON input, wire hex of Go's result, or the text `error`)\nconst UNMARSHAL: List[(Str, Str, Str)] = [\n")
 	emitU := func(name, in string) {
 		d, _ := files.FindDescriptorByName(protoreflect.FullName(name))
@@ -855,7 +870,9 @@ func main() {
 		m.Set(xf("pjt2.e_leaf"), protoreflect.ValueOfMessage(leafOf(5, true, "x")))
 		m.Set(field_(ed, "f"), protoreflect.ValueOfInt32(9))
 	})
-	mk(ed, func(m *dynamicpb.Message) { m.Set(xf("pjt2.e_leaf"), protoreflect.ValueOfMessage(leafOf(0, false, "y"))) })
+	mk(ed, func(m *dynamicpb.Message) {
+		m.Set(xf("pjt2.e_leaf"), protoreflect.ValueOfMessage(leafOf(0, false, "y")))
+	})
 	mk(ed, func(m *dynamicpb.Message) { m.Set(xf("pjt2.e_int"), protoreflect.ValueOfInt32(0)) })
 	o.WriteString("]\n\n")
 	o.WriteString("/// (message full name, indent (empty: Multiline's default), wire hex, Go's Multiline protojson output with its random second space after a name removed)\nconst MULTILINE: List[(Str, Str, Str, Str)] = [\n")
@@ -989,7 +1006,21 @@ func mutate(r *rand.Rand, s string) (string, bool) {
 	}
 	b := []byte(s)
 	i := r.Intn(len(b))
-	switch r.Intn(3) {
+	switch r.Intn(4) {
+	case 3:
+		// a hostile digit run in place of a number (task #352)
+		j := i
+		for j < len(b) && b[j] >= '0' && b[j] <= '9' {
+			j++
+		}
+		if j == i {
+			return s, false
+		}
+		k := i
+		for k > 0 && b[k-1] >= '0' && b[k-1] <= '9' {
+			k--
+		}
+		b = append(append(append([]byte{}, b[:k]...), hostile.Pick(r, hostile.Digits())...), b[j:]...)
 	case 0:
 		if b[i] >= 0x80 {
 			return s, false

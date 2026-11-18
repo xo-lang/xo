@@ -48,6 +48,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -252,7 +253,7 @@ func myfGen(r *rand.Rand) myfCase {
 	}
 	cs.close = true
 	at := r.Intn(len(p))
-	switch m := r.Intn(9); m {
+	switch m := r.Intn(12); m {
 	case 0: // a packet cut
 		if len(p[at]) > 0 {
 			p[at] = p[at][:r.Intn(len(p[at]))]
@@ -306,6 +307,9 @@ func myfGen(r *rand.Rand) myfCase {
 					v := myfValue(r, d)
 					if j == i {
 						v = []byte("12a")
+						if r.Intn(2) == 0 {
+							v = []byte(hostile.Pick(r, hostile.Digits())) // task #352
+						}
 					}
 					rr = append(rr, lenencStr(v)...)
 				}
@@ -317,6 +321,23 @@ func myfGen(r *rand.Rand) myfCase {
 	case 8: // the packets stopped early
 		p = p[:at]
 		cs.note = "stop"
+	case 9: // a hostile column count (task #352) in the 8-byte form; at most
+		// 16 bits, since go-sql-driver makes count fields before reading them
+		// (a count of 2^32 asks Go for hundreds of GB)
+		v := hostile.Pick(r, hostile.Lengths(16))
+		p[0] = binary.LittleEndian.AppendUint64([]byte{0xfe}, v)
+		cs.note = "hostile count"
+	case 10: // a row's first value with a hostile length (task #352)
+		if nrow > 0 {
+			v := hostile.Pick(r, hostile.Lengths(64))
+			p[2+ncol] = append(binary.LittleEndian.AppendUint64([]byte{0xfe}, v), "abc"...)
+		}
+		cs.note = "hostile length"
+	case 11: // a column definition's name with a hostile 3-byte length
+		v := hostile.Pick(r, hostile.Lengths(24))
+		def := append([]byte{}, p[1]...)
+		p[1] = append([]byte{0xfd, byte(v), byte(v >> 8), byte(v >> 16)}, def...)
+		cs.note = "hostile def"
 	}
 	cs.packets = p
 	return cs

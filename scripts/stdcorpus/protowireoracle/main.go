@@ -22,6 +22,8 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protowire"
+
+	"stdcorpus/protowireoracle/hostile"
 )
 
 func fuzzSeed() int64 {
@@ -94,7 +96,7 @@ func num(r *rand.Rand) protowire.Number {
 func varint(r *rand.Rand) uint64 {
 	switch r.Intn(4) {
 	case 0:
-		return []uint64{0, 1, 127, 128, 16383, 16384, math.MaxUint32, 1 << 63, math.MaxUint64, math.MaxInt64}[r.Intn(10)]
+		return hostile.Pick(r, append(hostile.Uints(), 127, 128, 16383, 16384)) // task #352
 	case 1:
 		return r.Uint64() >> uint(r.Intn(64))
 	}
@@ -168,7 +170,8 @@ func change(r *rand.Rand, b []byte) []byte {
 		head = append(head, []byte{0x02, 0x01, 0x80, 0x00}[r.Intn(4)])
 	case 5:
 		head = protowire.AppendTag(head, num(r), protowire.BytesType)
-		head = protowire.AppendVarint(head, []uint64{1000, 1 << 40, math.MaxUint64, math.MaxInt64}[r.Intn(4)])
+		// a bytes length from the hostile dictionary (task #352)
+		head = protowire.AppendVarint(head, hostile.Pick(r, append(hostile.Lengths(64), 1000, 1<<40)))
 	case 6:
 		head = protowire.AppendTag(head, num(r), protowire.EndGroupType)
 	case 7:

@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"stdcorpus/rateoracle/hostile"
 )
 
 // t0 is the fake clock's start, well after a new limiter's last time.
@@ -55,6 +57,9 @@ func main() {
 		if rg.Intn(10) == 0 {
 			burst = rg.Intn(1000)
 		}
+		if rg.Intn(20) == 0 {
+			burst = int(hostile.Pick(rg, hostile.Ints())) // task #352
+		}
 		l := rate.NewLimiter(lim, burst)
 		now := t0
 		var at int64
@@ -75,11 +80,11 @@ func main() {
 				ops = append(ops, "k")
 				ans = append(ans, strconv.FormatInt(int64(math.Float64bits(l.TokensAt(now))), 10))
 			case c < 8:
-				m := rg.Intn(burst + 3)
+				m := countOf(rg, burst)
 				ops = append(ops, fmt.Sprintf("a:%d", m))
 				ans = append(ans, map[bool]string{true: "1", false: "0"}[l.AllowN(now, m)])
 			case c < 10:
-				m := rg.Intn(burst + 3)
+				m := countOf(rg, burst)
 				r := l.ReserveN(now, m)
 				rs = append(rs, r)
 				ops = append(ops, fmt.Sprintf("r:%d", m))
@@ -171,3 +176,13 @@ test "std/rate's Limiter answers as golang.org/x/time/rate's at every time" {
   expect(bad[0..(if bad.len() < 5 { bad.len() } else { 5 })]) == []
 }
 `
+
+// countOf is an allow_n or reserve_n count: up to burst+2, or one in ten
+// a hostile Int (task #352: Int's edges, powers of two and their
+// neighbours).
+func countOf(rg *rand.Rand, burst int) int {
+	if rg.Intn(10) == 0 {
+		return int(hostile.Pick(rg, hostile.Ints()))
+	}
+	return rg.Intn(min(max(burst, 0), 1000) + 3)
+}

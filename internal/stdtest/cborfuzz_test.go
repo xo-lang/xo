@@ -40,6 +40,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type cbCase struct {
@@ -140,6 +142,9 @@ func (g *cbGen) uint() uint64 {
 		return math.MaxUint64 - uint64(g.r.Intn(3))
 	case 6:
 		return uint64(1)<<uint(g.r.Intn(64)) - uint64(g.r.Intn(2))
+	}
+	if g.r.Intn(3) == 0 {
+		return hostile.Pick(g.r, hostile.Uints()) // task #352
 	}
 	return uint64(g.r.Intn(1000))
 }
@@ -382,6 +387,23 @@ func cbCases(t testing.TB, r *rand.Rand, n int) ([]cbCase, bool) {
 		g := &cbGen{r: r}
 		g.item(0)
 		d := g.b
+		switch r.Intn(40) {
+		case 0:
+			// the hostile dictionary (task #352): a byte or text string,
+			// array or map head of a hostile length over a few bytes
+			g.b = nil
+			g.head(byte(2+r.Intn(4)), hostile.Pick(r, hostile.Lengths(64)))
+			d = append(g.b, 0x01, 0x02, 0x03)
+		case 1:
+			// arrays of one nested to a hostile depth (the oracle refuses
+			// past 32 levels), or cut short of the innermost item; at most
+			// 10^4, so the committed corpus stays small
+			k := min(hostile.Pick(r, hostile.Depths()), 10000)
+			d = append(bytes.Repeat([]byte{0x81}, k), 0x00)
+			if r.Intn(2) == 0 {
+				d = d[:k]
+			}
+		}
 		if r.Intn(3) == 0 {
 			d = cbMutate(r, d)
 			if r.Intn(4) == 0 {

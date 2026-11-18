@@ -3957,7 +3957,9 @@ pub fn parse_response(s: Str, eof: Bool, method: Str) -> RespHead {
       if d < 48 || d > 57 || v > (MAX_INT - (Int(d) - 48)) / 10 {
         return resp_fail(BAD, "bad Content-Length " + go_quote(first))
       }
-      v = v * 10 + Int(d) - 48
+      // the digit first: v * 10 + d - 48 overflows at Int's top before
+      // the subtraction (Content-Length 9223372036854775807, task #352)
+      v = v * 10 + (Int(d) - 48)
     }
     clen = v
   }

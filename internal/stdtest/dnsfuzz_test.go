@@ -51,6 +51,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -181,11 +182,13 @@ func dnfGen(r *rand.Rand, i int) dnfCase {
 // could; the change applies to the whole message (qend: where the
 // answers start).
 func dnfChange(r *rand.Rand, c *dnfCase) {
-	k := r.Intn(7)
+	k := r.Intn(9)
 	at := r.Intn(len(c.answers)) // the record changed
 	// every draw is made now: the server answers a query more than once
 	// (retries, TCP after TC, both clients), always the same
 	delta, pick, bit := uint16(1+r.Intn(40)), r.Intn(1<<30), byte(1<<r.Intn(8))
+	// a 16-bit field's hostile value (task #352): 0, the top bit, all ones
+	h16 := uint16(hostile.Pick(r, hostile.Lengths(16)))
 	// where record at starts, from qend
 	off := func(qend int) int {
 		o := qend
@@ -247,6 +250,19 @@ func dnfChange(r *rand.Rand, c *dnfCase) {
 		c.note = "pointer past"
 		c.change = func(m []byte, q int) []byte {
 			binary.BigEndian.PutUint16(m[off(q):], 0xC000|uint16(len(m)+10))
+			return m
+		}
+	case 7:
+		c.note = "rdlength hostile"
+		c.change = func(m []byte, q int) []byte {
+			binary.BigEndian.PutUint16(m[rdlen(m, off(q)):], h16)
+			return m
+		}
+	case 8:
+		c.note = "count hostile"
+		c.change = func(m []byte, q int) []byte {
+			// ANCOUNT, NSCOUNT or ARCOUNT
+			binary.BigEndian.PutUint16(m[6+2*(pick%3):], h16)
 			return m
 		}
 	default:

@@ -1,5 +1,14 @@
 # std/http changes
 
+## 2026-11-18: fix: a Content-Length of Int's largest value no longer faults the client
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestHttpResponseFuzz with the hostile dictionary (task #352): "Content-Length: 9223372036854775807" faulted with "integer overflow: 9223372036854775800 + 55" (the ASCII digit was added before 48 was taken off)
+- Go reference: net/http transfer.go parseContentLength (strconv.ParseUint of 63 bits: 9223372036854775807 is a length, 9223372036854775808 an error)
+- Test: std/native/llrt/http1_test.xo "a Content-Length at Int's top is that length, one past it is an error (Go's ParseUint of 63 bits)"
+- Shipped in: not yet released
+
 ## 2026-11-18: feature: Request.gone closes when an HTTP/2 client is gone
 
 - Kind: feature

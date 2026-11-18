@@ -50,6 +50,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 const tfSuite = "testdata/toml-test"
@@ -314,13 +316,25 @@ func tfMix(r *rand.Rand, good, bad []string, n int) string {
 func tfDoc(r *rand.Rand) string {
 	var b strings.Builder
 	for i, n := 0, 1+r.Intn(8); i < n; i++ {
-		switch r.Intn(10) {
+		switch r.Intn(11) {
 		case 0:
 			b.WriteString("[" + tfMix(r, tfKeys, tfBadKeys, 15) + "]")
 		case 1:
 			b.WriteString("[[" + tfMix(r, tfKeys, tfBadKeys, 15) + "]]")
 		case 2:
 			b.WriteString(tfPick(r, []string{"# comment", "", "  # x = 1", "\t"}))
+		case 3:
+			// a hostile value (task #352): digit and hex runs past Int,
+			// Int's edges, arrays nested deep
+			switch k := r.Intn(20); {
+			case k < 9:
+				b.WriteString("n = " + hostile.Pick(r, hostile.Digits()))
+			case k < 18:
+				b.WriteString("n = 0x" + hostile.Pick(r, hostile.Hex()))
+			default:
+				// at most 10^4 deep: each nested document is in the corpus
+				b.WriteString("n = " + hostile.Nest("[", "]", min(hostile.Pick(r, hostile.Depths()), 10000)))
+			}
 		default:
 			b.WriteString(tfMix(r, tfKeys, tfBadKeys, 15) + tfPick(r, tfSpace) + "=" + tfPick(r, tfSpace) + tfMix(r, tfValues, tfBadValues, 12))
 			if r.Intn(8) == 0 {
@@ -362,6 +376,15 @@ const tfFuzzXo = `/// The invariants every document holds: to_json and decode ag
 fn tf_check(text: Str) -> Str {
   let j = toml.to_json(text)
   let d = toml.decode[Map[Str, json.Value]](text)
+  // decode follows json.decode's rules, so a document nested 10^4 deep
+  // is TOML that decode refuses (Go's encoding/json depth; task #352)
+  let deep = match d {
+    Ok(_) => false
+    Err(e) => e.display().contains("exceeded max depth")
+  }
+  if j.is_ok() && deep {
+    return ""
+  }
   if j.is_ok() != d.is_ok() {
     return "to_json ok ${j.is_ok()} but decode ok ${d.is_ok()}"
   }

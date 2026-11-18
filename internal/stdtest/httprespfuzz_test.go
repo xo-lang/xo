@@ -33,6 +33,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // rfCase is one raw response head, the request method that reads it, and
@@ -94,12 +96,22 @@ func rfCases(r *rand.Rand, n int) []rfCase {
 	cases := make([]rfCase, 0, n)
 	for i := 0; i < n; i++ {
 		var b strings.Builder
+		code := rfCode[r.Intn(len(rfCode))]
+		if r.Intn(20) == 0 {
+			code = hostile.Pick(r, hostile.Digits()) // task #352
+		}
 		fmt.Fprintf(&b, "%s %s %s\r\n",
 			rfVersion[r.Intn(len(rfVersion))],
-			rfCode[r.Intn(len(rfCode))],
+			code,
 			rfReason[r.Intn(len(rfReason))])
 		fields := r.Intn(6)
 		for f := 0; f < fields; f++ {
+			if r.Intn(12) == 0 {
+				// a length past Int, at Int's edge, signed or zero padded
+				// (task #352)
+				fmt.Fprintf(&b, "Content-Length: %s\r\n", hostile.Pick(r, hostile.Digits()))
+				continue
+			}
 			if r.Intn(2) == 0 {
 				b.WriteString(rfSpecial[r.Intn(len(rfSpecial))])
 				continue

@@ -139,3 +139,11 @@ test "a head sent a byte at a time is scanned and parsed a bounded number of tim
   // 63 short prefixes, then one parse per doubling, then the whole head
   expect(parses < 100)
 }
+
+test "a Content-Length at Int's top is that length, one past it is an error (Go's ParseUint of 63 bits)" {
+  let top = parse_response("HTTP/1.1 200 OK\r\nContent-Length: 9223372036854775807\r\n\r\n", false, "GET")
+  expect(top.why) == ""
+  expect(top.clen) == 9223372036854775807
+  let past = parse_response("HTTP/1.1 200 OK\r\nContent-Length: 9223372036854775808\r\n\r\n", false, "GET")
+  expect(past.why) == "bad Content-Length \"9223372036854775808\""
+}

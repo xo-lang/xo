@@ -29,6 +29,7 @@ package stdtest
 import (
 	"bytes"
 	"compress/zlib"
+	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"image"
@@ -40,6 +41,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type pfCase struct {
@@ -184,6 +187,19 @@ func pfBuilt(r *rand.Rand) []byte {
 		il = 2
 	}
 	hdr := []byte{byte(w >> 24), byte(w >> 16), byte(w >> 8), byte(w), byte(h >> 24), byte(h >> 16), byte(h >> 8), byte(h), byte(depth), byte(ct), 0, 0, byte(il)}
+	if r.Intn(16) == 0 {
+		// a hostile 32-bit width or height in IHDR (task #352): the ones
+		// with the top bit set (Go: non-positive dimension) and 0; the rows
+		// stay the small size's. 2^31-1 is left out, since a decoder then
+		// allocates a row of 2 GB before it reads one
+		var hs []uint32
+		for _, v := range hostile.Lengths(32) {
+			if v == 0 || v >= 1<<31 {
+				hs = append(hs, uint32(v))
+			}
+		}
+		binary.BigEndian.PutUint32(hdr[4*r.Intn(2):], hostile.Pick(r, hs))
+	}
 	if r.Intn(30) == 0 {
 		hdr[10+r.Intn(2)] = byte(1 + r.Intn(3))
 	}

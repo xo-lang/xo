@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // timegoLayouts are Go layouts covering every element of Go's layout language (std/timego scans them itself) and
@@ -55,7 +57,29 @@ func timegoMutate(r *rand.Rand, in string) string {
 		return in
 	}
 	const alpha = "0123456789:-+ZTJanuMoeWdy,. "
-	switch r.Intn(4) {
+	switch r.Intn(5) {
+	case 4:
+		// a run of digits for a hostile one (task #352): past Int, Int's
+		// bounds, leading zeros, a far year or a huge fraction
+		var runs [][2]int
+		for i := 0; i < len(b); {
+			j := i
+			for j < len(b) && b[j] >= '0' && b[j] <= '9' {
+				j++
+			}
+			if j > i {
+				runs = append(runs, [2]int{i, j})
+				i = j
+			} else {
+				i++
+			}
+		}
+		if len(runs) > 0 {
+			run := hostile.Pick(r, runs)
+			d := strings.TrimLeft(hostile.Pick(r, hostile.Digits()), "+-")
+			return string(b[:run[0]]) + d + string(b[run[1]:])
+		}
+		b = b[:r.Intn(len(b))]
 	case 0:
 		b[r.Intn(len(b))] = alpha[r.Intn(len(alpha))]
 	case 1:

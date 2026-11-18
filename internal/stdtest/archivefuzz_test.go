@@ -55,6 +55,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/std/rt"
 )
 
@@ -244,6 +245,14 @@ func afTarMutate(r *rand.Rand, b []byte) []byte {
 	case 4: // a size field rewritten
 		if len(b) >= 512 {
 			copy(b[124:], fmt.Sprintf("%011o\x00", r.Intn(4096)))
+			if r.Intn(2) == 0 {
+				// a hostile base-256 size (task #352): Int's edges, the
+				// top bit set, all ones
+				f := b[124:136]
+				clear(f)
+				f[0] = 0x80
+				binary.BigEndian.PutUint64(f[4:], hostile.Pick(r, hostile.Uints()))
+			}
 			afSum(b[:512])
 		}
 	case 5:
@@ -337,6 +346,9 @@ func afZipMutate(r *rand.Rand, b []byte) []byte {
 				put32(c+16, r.Uint32()) // CRC
 			case 2:
 				put32(c+20+4*r.Intn(2), uint32(r.Intn(1<<16))) // sizes
+				if r.Intn(2) == 0 {
+					put32(c+20+4*r.Intn(2), uint32(hostile.Pick(r, hostile.Lengths(32)))) // task #352
+				}
 			case 3:
 				put16(c+28, uint16(r.Intn(300))) // name length
 			default:

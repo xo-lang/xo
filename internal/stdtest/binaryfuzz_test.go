@@ -25,10 +25,11 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // bnPut is a value and Go's puts and varints in hex, space separated.
@@ -52,7 +53,8 @@ func bnValue(r *rand.Rand) int64 {
 		k := uint(r.Intn(64))
 		return int64(uint64(1)<<k) + int64(r.Intn(5)) - 2
 	case 2:
-		return []int64{0, 1, -1, math.MaxInt64, math.MinInt64, math.MaxInt64 - 1, math.MinInt64 + 1, 127, 128, -64, -65, 1 << 63 >> 7}[r.Intn(12)]
+		// the hostile dictionary's Ints (task #352) and varint edges
+		return hostile.Pick(r, append(hostile.Ints(), 127, 128, -64, -65, 1<<63>>7))
 	case 3:
 		return -int64(r.Uint64() >> uint(r.Intn(64)))
 	default:
