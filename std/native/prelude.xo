@@ -3358,107 +3358,137 @@ fn list_sort_in_place_by_desc[T, K: Ord, E, fx: Effects](var xs: List[T], key: f
   }
 }
 
-/// The first seven bytes of s as a big endian number, short strings padded
-/// with zeros: a < b when the prefix of a is less than b's, and equal
-/// prefixes are decided by comparing the strings.
-fn str_prefix7(s: Str) -> Int {
+/// list_sort for Strs (task #302): each string's index sorted as an Int key
+/// whose high bits are kb bytes of the string from byte off (zeros past its
+/// end) and whose low ib bits are the index, by the Ints' pdqsort; a run of
+/// keys with equal bytes is sorted the same way from byte off + kb. So the
+/// sort moves Ints and never counts a string (each move of a Str counted the
+/// string it copied and released the one it replaced) and most compares are
+/// one Int compare, where a merge of indices read each string's prefix at
+/// random (bench/perf/sort strs 1.42 of Go). Equal strings are equal values,
+/// so the order of ties is not seen; the Strs are gathered once.
+fn list_sort_str(xs: List[Str]) -> List[Str] {
+  let n = xs.len()
+  var ib = 1
+  while 1.wrapping_shl(ib) < n {
+    ib += 1
+  }
+  var idx: List[Int] = List.with_capacity(n)
+  for i in 0..n {
+    idx.push(i)
+  }
+  // the strings' common prefix decides nothing: the first keys start after
+  // it (one pass in order; "key" of every bench/perf/sort strs key took 3
+  // of the 5 bytes and left runs of 2,000 to sort again)
+  let b0 = xs[0].bytes()
+  var off = b0.len()
+  var i = 1
+  while i < n && off > 0 {
+    let b = xs[i].bytes()
+    if b.len() < off {
+      off = b.len()
+    }
+    var j = 0
+    while j < off && b[j] == b0[j] {
+      j += 1
+    }
+    off = j
+    i += 1
+  }
+  var keys: List[Int] = List.filled(n, 0)
+  str_sort_range(xs, idx, keys, 0, n, off, ib, (63 - ib) / 8)
+  var out: List[Str] = List.with_capacity(n)
+  for i in 0..n {
+    out.push(xs[idx[i]])
+  }
+  out
+}
+
+/// kb bytes of s from byte off as a big endian number, zeros past its end.
+fn str_key(s: Str, off: Int, kb: Int) -> Int {
   let b = s.bytes()
+  let n = b.len()
   var p = 0
-  var i = 0
-  while i < 7 {
-    p = p * 256 + (if i < b.len() { Int(b[i]) } else { 0 })
+  var i = off
+  let e = off + kb
+  while i < e {
+    p = p * 256 + (if i < n { Int(b[i]) } else { 0 })
     i += 1
   }
   p
 }
 
-/// list_sort for Strs: a stable bottom up merge sort of the indices, ordered
-/// by each string's seven byte prefix and then the strings, so the merges
-/// move Ints and never count a string (each move of a Str counted the string
-/// it copied and released the one it replaced); the Strs are gathered once.
-fn list_sort_str(xs: List[Str]) -> List[Str] {
-  let n = xs.len()
-  var pre: List[Int] = List.with_capacity(n)
-  var a: List[Int] = List.with_capacity(n)
-  for i in 0..n {
-    pre.push(str_prefix7(xs[i]))
-    a.push(i)
-  }
-  var s = 0
-  while s < n {
-    let e = if s + 16 < n { s + 16 } else { n }
-    var i = s + 1
-    while i < e {
-      let x = a[i]
-      let px = pre[x]
+/// idx[lo..hi] sorted by their strings, which all have the same first off
+/// bytes (zeros past a string's end); keys[lo..hi] is scratch.
+fn str_sort_range(xs: List[Str], var idx: List[Int], var keys: List[Int], lo: Int, hi: Int, off: Int, ib: Int, kb: Int) {
+  let m = hi - lo
+  if m <= 12 {
+    var i = lo + 1
+    while i < hi {
+      let x = idx[i]
       var j = i
-      while j > s {
-        let y = a[j - 1]
-        let py = pre[y]
-        if px < py || (px == py && xs[x] < xs[y]) {
-          a[j] = y
-          j -= 1
-        } else {
-          break
-        }
+      while j > lo && xs[x] < xs[idx[j - 1]] {
+        idx[j] = idx[j - 1]
+        j -= 1
       }
-      a[j] = x
+      idx[j] = x
       i += 1
+    }
+    return
+  }
+  // live: some string has bytes from off on; when none has, they differ
+  // only in how many zeros they end with, so the shorter is the lesser
+  var live = false
+  var i = lo
+  while i < hi {
+    if xs[idx[i]].len() > off {
+      live = true
+      break
+    }
+    i += 1
+  }
+  i = lo
+  while i < hi {
+    let x = idx[i]
+    let k = if live { str_key(xs[x], off, kb) } else { xs[x].len() }
+    keys[i] = k.wrapping_shl(ib) | x
+    i += 1
+  }
+  var limit = 0
+  var c = m
+  while c > 0 {
+    limit += 1
+    c = c / 2
+  }
+  if lo > 0 {
+    // pdq_int reads d[a - 1] as no greater than d[a..b] (pdqsort's own
+    // recursion keeps it so); keys[lo - 1] is a dead key of the pass above,
+    // every pass reading keys only from its own run on, and keys are not
+    // negative
+    keys[lo - 1] = -1
+  }
+  pdq_int(keys, lo, hi, limit)
+  let mask = 1.wrapping_shl(ib) - 1
+  i = lo
+  while i < hi {
+    idx[i] = keys[i] & mask
+    i += 1
+  }
+  if !live {
+    return
+  }
+  var s = lo
+  while s < hi {
+    let k = keys[s].shr_logical(ib)
+    var e = s + 1
+    while e < hi && keys[e].shr_logical(ib) == k {
+      e += 1
+    }
+    if e - s > 1 {
+      str_sort_range(xs, idx, keys, s, e, off + kb, ib, kb)
     }
     s = e
   }
-  var b = a
-  var width = 16
-  while width < n {
-    var lo = 0
-    while lo < n {
-      var mid = lo + width
-      if mid > n {
-        mid = n
-      }
-      var hi = mid + width
-      if hi > n {
-        hi = n
-      }
-      var i = lo
-      var j = mid
-      var k = lo
-      while i < mid && j < hi {
-        let x = a[j]
-        let y = a[i]
-        let px = pre[x]
-        let py = pre[y]
-        if px < py || (px == py && xs[x] < xs[y]) {
-          b[k] = x
-          j += 1
-        } else {
-          b[k] = y
-          i += 1
-        }
-        k += 1
-      }
-      while i < mid {
-        b[k] = a[i]
-        i += 1
-        k += 1
-      }
-      while j < hi {
-        b[k] = a[j]
-        j += 1
-        k += 1
-      }
-      lo = hi
-    }
-    let t = a
-    a = b
-    b = t
-    width *= 2
-  }
-  var out: List[Str] = List.with_capacity(n)
-  for i in 0..n {
-    out.push(xs[a[i]])
-  }
-  out
 }
 
 fn list_to_set[T](xs: List[T]) -> Set[T] {

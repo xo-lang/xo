@@ -4539,3 +4539,44 @@ test "win_reserved: the Windows device names a sub Fs denies (GO-2022-1143)" {
     expect("${n}: ${win_reserved(n)}") == "${n}: false"
   }
 }
+
+// list_sort_str (task #302) sorts indices by Int keys of up to 7 bytes at a
+// time and sorts each run of equal keys again from the next bytes: these
+// lists have prefixes longer than a key, NUL bytes that pad like a string's
+// end, bytes past 0x7f, empty strings and duplicates, checked against an
+// insertion sort.
+fn str_sort_ref(xs: List[Str]) -> List[Str] {
+  var r: List[Str] = []
+  for x in xs {
+    r.push(x)
+    var j = r.len() - 1
+    while j > 0 && r[j] < r[j - 1] {
+      let t = r[j]
+      r[j] = r[j - 1]
+      r[j - 1] = t
+      j -= 1
+    }
+  }
+  r
+}
+
+test "list_sort: Strs with long shared prefixes, NULs, high bytes and duplicates" {
+  let tails = ["", "\x00", "\x00\x00", "a", "a\x00", "b", "\u{e9}", "\u{10348}", "zz", "a\x00b"]
+  for pre in ["", "p", "shared prefix longer than any key "] {
+    var xs: List[Str] = []
+    var seed = 11
+    for _ in 0..400 {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      let t = tails[seed % tails.len()]
+      let u = tails[(seed / 16) % tails.len()]
+      xs.push("${pre}${t}${u}")
+    }
+    expect(xs.sort() == str_sort_ref(xs))
+  }
+  var same: List[Str] = []
+  for _ in 0..50 {
+    same.push("x")
+    same.push("")
+  }
+  expect(same.sort() == str_sort_ref(same))
+}

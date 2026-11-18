@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-17: perf: List[Str].sort sorts Int keys
+
+- Kind: perf
+- Commit: this push
+- Found by: task #302 (std performance to Proven; bench/perf/sort strs 1.42 of Go on the Mac)
+- Go reference: slices.Sort (pdqsort); the keys are this port's own
+- Test: std/native/prelude_test.xo "list_sort: Strs with long shared prefixes, NULs, high bytes and duplicates" (against an insertion sort, arm64 and LLVM); internal/arm64 TestListSortStrCost (instruction ceiling: 295M before, 209M after, ceiling 245M)
+- Shipped in: not yet released
+
+`List.sort` of Strs sorts each string's index as one Int key, up to 7
+bytes of the string past the prefix every string shares with the index
+in the low bits, with the Ints' pdqsort, and sorts each run of equal
+keys again from the next bytes; the Strs are gathered once at the end.
+It merged indices compared by 8 byte prefixes, reading each string at
+random. Equal strings cannot be told apart, so the order of ties is not
+seen. bench/perf/sort strs on the Mac: 0.962 of Go (1.418 before); 2M
+strings 0.34 s (0.72 s before; Go 0.34 s).
+
 ## 2026-11-17: perf: List[UInt32].filled fills in bulk
 
 - Kind: perf
