@@ -1,0 +1,33 @@
+// Float.exp's result bits over 3,000 inputs from -746 (past underflow,
+// subnormal results below about -708.4) to 710 (past overflow), the k
+// boundaries of the normal-result fast path (k = -1022, -1021, 1022, 1023)
+// and the specials. Task #87 gave expmulti a fast path that adds k to the
+// exponent field when the result is normal; the result must not change by
+// one bit (the want is xo's ldexp path, 0c56508b1).
+fn main(os: Os) {
+  let io = os.stdio
+  var h = 0
+  var x = -746.0
+  for k in 0..3000 {
+    let b = x.exp().to_bits()
+    h = (h * 31 + (b & 0xFFFFFFFFFFFF)) & 0xFFFFFFFFFFFF
+    if k % 500 == 0 {
+      io.println("${k} ${b}")
+    }
+    x = x + 0.4853
+  }
+  io.println("hash ${h}")
+  let ln2 = 0.6931471805599453
+  for kk in [-1023.0, -1022.0, -1021.0, -1020.0, 1021.0, 1022.0, 1023.0] {
+    for d in [-0.34, -0.2, 0.0, 0.2, 0.34] {
+      let v = (kk + d) * ln2
+      if v < 709.78 {
+        io.println("${kk} ${d} ${v.exp().to_bits()}")
+      }
+    }
+  }
+  for v in [0.0, -0.0, 1.0, -1.0, 1e-9, -1e-9, 3.725290298461914e-09, 709.782712893384, -745.1332191019411, -708.3964185322641, 709.7, Float.inf] {
+    io.println("${v.exp().to_bits()}")
+  }
+  io.println("${(0.0 - Float.inf).exp()} ${Float.nan.exp().is_nan()}")
+}

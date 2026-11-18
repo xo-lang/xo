@@ -195,6 +195,14 @@ fn expmulti(hi: Float, lo: Float, k: Int) -> Float {
   let t = r * r
   let c = r - t * (p1 + t * (p2 + t * (p3 + t * (p4 + t * p5))))
   let y = 1.0 - ((lo - (r * c) / (2.0 - c)) - hi)
+  // y is positive, normal and near 1 (its exponent field BIAS - 1 or
+  // BIAS), so for -1021 <= k <= 1022 the result is normal and ldexp's
+  // answer is k added to the exponent field: the same bits without its
+  // zero, inf, nan and subnormal checks (Go's exp_arm64.s does the same
+  // add; task #87, bench/perf/random zipf)
+  if k >= -1021 && k <= 1022 {
+    return from_bits(bits(y).wrapping_add(k.wrapping_shl(SHIFT)))
+  }
   ldexp(y, k)
 }
 
