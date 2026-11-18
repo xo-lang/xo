@@ -33,3 +33,16 @@ func TestOffloadGateLease(t *testing.T) {
 		}
 	}
 }
+
+// TestOffloadAmd64Exclusive runs scripts/lead/offload_amd64_excl_test.sh:
+// on the amd64 host only a timing (OFF_TIMING=1) takes every slot; any
+// other OFF_EXCLUSIVE=1 job is a 2-slot memory lease (task #370).
+func TestOffloadAmd64Exclusive(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash")
+	}
+	out, err := exec.Command("bash", filepath.Join(root, "scripts", "lead", "offload_amd64_excl_test.sh")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("offload_amd64_excl_test.sh: %v\n%s", err, out)
+	}
+}

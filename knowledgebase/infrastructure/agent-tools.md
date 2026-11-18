@@ -1572,6 +1572,14 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   that measures time or memory sets `OFF_EXCLUSIVE=1` so it runs alone
   (ab-host.sh does), every job stops after `OFF_MAX_MIN` (default 180),
   and each agent keeps at most 2 jobs queued there (chain the rest).
+  On the linux/amd64 host (6 slots) only a timing takes every slot, and
+  says so with `OFF_TIMING=1` beside `OFF_EXCLUSIVE=1` (ab-host.sh, the
+  stdproven perf and serverperf kinds); any other `OFF_EXCLUSIVE=1` job
+  there becomes a 2-slot memory lease (`-mem=2`; `OFF_AMD64_MEM_SLOTS=N`
+  or the job's own `OFF_MEM_SLOTS` another count) and offload.sh prints
+  one line saying so (#370, lead 2026-11-18: every amd64 job asked for
+  the whole host and runs waited 3 to 4.5 h). A script that times on the
+  amd64 host and is not ab-host.sh sets `OFF_TIMING=1`.
   `offload.sh --status` shows the host lanes and their jobs without
   queueing anything (#172; `OFFLOAD_ENV=FILE` for one host).
   An exclusive job on host 1 (lane arm64's host file) over 30 minutes
