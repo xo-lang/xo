@@ -927,3 +927,16 @@ else:
 free the host. The lead creates and removes it (owner, 2026-11-17: host 1
 out of the runs during Lang 2's experiment).
 Last verified: 2026-11-17.
+
+## Host 1 is timing only (owner, 2026-11-17, #296)
+
+offload-gate.sh never runs a gate on host 1 (offload.env, lane arm64): it
+refuses OFFLOAD_ENV=offload.env and any OFF_LANE that matches host 1's
+lane in heavyd-lanes.conf (arm64, arm64*, env:offload.env), and its
+reroutes skip host 1, so heavyd never moves a gate there.
+`OFFGATE_NO_HOST1=0` is the lead's override. Timing runs reach host 1
+through ab-host.sh and `SP_EXCLUSIVE=1` stdproven perf runs (offload.sh
+exclusive leases). Before this, the guard was opt-in (#265), and on
+2026-11-17 a gate rerouted to host 1 as a memory lease held its 3 slots
+for 1h15m while a `--ab` waited and host 3 had free slots.
+Last verified: 2026-11-17.
