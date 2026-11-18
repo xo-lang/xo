@@ -422,7 +422,14 @@ fn keep(m: Int, size: Int) -> Bool {
   // (coll putget max RSS 8.3 MB with the cache, 5.2 without), while xo's
   // builds, with far more in use, keep the cache's reuse (without any
   // cache their linux/arm64 edit builds ran 1.04 to 1.07x)
-  if !keeps(k, bytes, size, membudget.mapped(), membudget.peak(), target.arch == TargetArch.Amd64 && wanted(t, size)) {
+  // a block over 16 MiB that a recent request could use is wanted on
+  // every target (decision 0713): bench/perf/repeat's 160 MiB Strs and
+  // Bytes, made and freed ten times, mapped and faulted in every page
+  // afresh on linux/arm64 and darwin (Mac 205,239 page reclaims, Go
+  // 21,210); keeps still bounds it by the program's peak, and the idle
+  // age pass unmaps it like any other cached mapping (decision 0714)
+  let want = (target.arch == TargetArch.Amd64 || size > CACHE_MAX >> 2) && wanted(t, size)
+  if !keeps(k, bytes, size, membudget.mapped(), membudget.peak(), want) {
     clock_give()
     return false
   }
