@@ -163,7 +163,10 @@ func run(db *sql.DB, k kase) string {
 	return "rows " + strings.Join(out, " ")
 }
 
-func q(s string) string { return strconv.Quote(s) }
+// q is s as an Xo string literal: Go's quoting, and $ escaped, since "${"
+// starts an interpolation in Xo (TestSqliteFuzz seed 148 generated a text
+// argument holding "${" and its test file did not compile, 2026-11-18).
+func q(s string) string { return strings.ReplaceAll(strconv.Quote(s), "$", `\$`) }
 
 // xoArgs spells the arguments for the corpus: i:N, r:BITS (the float's bits
 // as an Int), t:TEXT, b:HEX, n.
@@ -336,7 +339,7 @@ func main() {
 	fmt.Println("use std/sql")
 	fmt.Println("use std/sqlite")
 	fmt.Println()
-	fmt.Println(helpers)
+	fmt.Print(helpers + "\n")
 	fmt.Println("/// (setup statements, query or exec, the statement, its arguments, mattn/go-sqlite3's result)")
 	fmt.Println("const CASES: List[(List[Str], Bool, Str, List[Str], Str)] = [")
 	for _, k := range ks {
