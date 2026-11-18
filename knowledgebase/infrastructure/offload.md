@@ -130,7 +130,18 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   2026-11-10: host 1's exclusive release-vs-go-http.sh waited from 05:41
   while its status named itself as the aged gate and plain steps started;
   heavyd lanes.go ExclHold, TestLaneDecide,
-  TestLaneExclusiveHoldsPlainStream). After heavyd starts (a restart, an
+  TestLaneExclusiveHoldsPlainStream). Runs with no lane (OFF_NO_LANE=1)
+  start outside heavyd, so an exclusive lease waiting for them could wait
+  for good while new ones kept starting (task #321, 2026-11-18: Lang 2's
+  timings waited 2h07m+ on the amd64 machine): an exclusive lease waits
+  for the no-lane runs of every host file on its machine (the same
+  OFF_HOST: amd64 and win), and once it has waited
+  HEAVYD_EXCL_STARVE_MIN (20; 0 off), offload.sh starts no new no-lane
+  run on that machine (`heavyd nolane ENV` exits 1 with the reason; the
+  run waits, saying so once) and the plain leases behind it in its lane
+  drain, until it starts or HEAVYD_EXCL_HOLD_MIN runs out (heavyd
+  lanes.go ExclStarve, NoLaneOK, TestExclStarveNoLane,
+  TestExclStarveDrainsMachine; Last verified: 2026-11-18). After heavyd starts (a restart, an
   install), it grants no lane lease for 15 s (AdoptGrace), so the runs
   still going from before re-adopt their slots first (lead, 2026-11-07: a
   new lease took pass2's slot 1 in the same second an adopted run came
