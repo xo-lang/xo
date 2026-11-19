@@ -1,0 +1,6 @@
+# Go's encoding/binary test tables (go1.26) run through std/binary
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# Uvarint's errors read as Xo's None (n <= 0); the 1000 byte input (a
+# func literal) is skipped.
+encoding/binary varint_test.go tests . varint
+encoding/binary varint_test.go TestBufferTooBigWithOverflow.tests in uvarint

@@ -1,0 +1,70 @@
+// The Xo side of std/binary's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/binary's result as text, as go/main.go prints package binary's.
+// Kinds varint (encode and read back, signed and unsigned) and uvarint
+// (read a byte list): the bytes as decimal lists, a read as VALUE N or
+// none.
+// See scripts/stdproven/gotests.go.
+use std/binary
+use std/base64
+
+fn bytes_text(b: Bytes) -> Str {
+  var out = ""
+  for i in 0..b.len() {
+    if i > 0 {
+      out = out + ","
+    }
+    out = out + "${Int(b[i])}"
+  }
+  out
+}
+
+fn bytes_of(s: Str) -> Bytes {
+  var b = BytesBuilder.with_capacity(16)
+  if !s.is_empty() {
+    for p in s.split(",") {
+      b.write_byte(UInt8(Int.parse(p) ?? 0))
+    }
+  }
+  b.freeze()
+}
+
+fn dec_text(r: (Int, Int)?) -> Str {
+  match r {
+    Some((v, n)) => "${v} ${n}"
+    None => "none"
+  }
+}
+
+/// x's varint and uvarint (as an unsigned word) encodings and each read
+/// back, as Go's TestVarint and TestUvarint check them.
+fn varint_case(s: Str) -> Str {
+  let x = Int.parse(s) ?? 0
+  let v = binary.varint(x)
+  let u = binary.uvarint(x)
+  "${bytes_text(v)} ${dec_text(binary.get_varint(v, 0))} ${bytes_text(u)} ${dec_text(binary.get_uvarint(u, 0))}"
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "varint" => varint_case(inp[0])
+    "uvarint" => dec_text(binary.get_uvarint(bytes_of(inp[0]), 0))
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

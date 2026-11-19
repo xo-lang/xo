@@ -59,3 +59,19 @@ var opt = []pair{
 	{out: "2"},
 	{in: someVar},
 }
+
+var vals = []int64{
+	-1 << 63,
+	-1<<63 + 1,
+	1<<63 - 1,
+	(2 + 3) * 4,
+	'a' + 1,
+	x,
+	7 / 2,
+	^0,
+}
+
+var sums = []struct{ n int }{
+	{1 + 2},
+	{"a" + "b"},
+}

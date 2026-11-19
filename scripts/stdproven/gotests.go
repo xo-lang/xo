@@ -16,7 +16,8 @@ package main
 //     takes an exported constant of the package, or a | of them, as its
 //     name, "Debug|AlignRight", for the adapters to map; a field written
 //     NAME=DEFAULT reads as DEFAULT where a keyed element leaves NAME out,
-//     instead of skipping the element), and the kind the
+//     instead of skipping the element; FIELDS "." reads each element of a
+//     table of values, []int64{...}, as itself), and the kind the
 //     adapters know it by. Blank lines and # comments are skipped.
 //   - go/main.go: the Go adapter, `main CASES`, printing a result line per
 //     case.
@@ -46,6 +47,7 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"os"
@@ -118,7 +120,7 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 				c, ok = u.X.(*ast.CompositeLit)
 			}
 		}
-		if !ok {
+		if !ok && !(len(t.fields) == 1 && t.fields[0] == ".") {
 			skipped++
 			continue
 		}
@@ -126,7 +128,12 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 		for _, field := range t.fields {
 			field, def, hasDef := strings.Cut(field, "=")
 			name, isConst := strings.CutSuffix(field, ":const")
-			e := fieldExpr(c, name, order)
+			var e ast.Expr
+			if name == "." {
+				e = el
+			} else {
+				e = fieldExpr(c, name, order)
+			}
 			if e == nil && hasDef {
 				in = append(in, def)
 				continue
@@ -265,6 +272,9 @@ func fieldExpr(c *ast.CompositeLit, field string, order []string) ast.Expr {
 
 // stringLit is the value of a string literal or a + of them.
 func stringLit(e ast.Expr) (string, bool) {
+	if v, ok := intConst(e); ok {
+		return v.ExactString(), true
+	}
 	switch e := e.(type) {
 	case *ast.BasicLit:
 		switch e.Kind {
@@ -287,15 +297,6 @@ func stringLit(e ast.Expr) (string, bool) {
 			return strconv.Itoa(int(r)), err == nil
 		}
 		return "", false
-	case *ast.UnaryExpr:
-		if e.Op != token.SUB {
-			return "", false
-		}
-		if b, ok := e.X.(*ast.BasicLit); !ok || b.Kind != token.INT {
-			return "", false
-		}
-		n, ok := stringLit(e.X)
-		return "-" + n, ok
 	case *ast.Ident:
 		// time's zones: the adapters read Local as Go's tests set it
 		// (America/Los_Angeles) and UTC
@@ -336,11 +337,59 @@ func stringLit(e ast.Expr) (string, bool) {
 
 // intLit reports whether e is an integer or rune literal, negated or not.
 func intLit(e ast.Expr) bool {
-	if u, ok := e.(*ast.UnaryExpr); ok && u.Op == token.SUB {
-		e = u.X
+	_, ok := intConst(e)
+	return ok
+}
+
+// intConst folds an integer constant expression of literals: integer and
+// rune literals under unary -, + and ^, the binary integer operators, and
+// parentheses (-1<<63 + 1 is -9223372036854775807).
+func intConst(e ast.Expr) (constant.Value, bool) {
+	switch e := e.(type) {
+	case *ast.BasicLit:
+		if e.Kind != token.INT && e.Kind != token.CHAR {
+			return nil, false
+		}
+		v := constant.MakeFromLiteral(e.Value, e.Kind, 0)
+		if e.Kind == token.CHAR {
+			v = constant.ToInt(v)
+		}
+		return v, v.Kind() == constant.Int
+	case *ast.ParenExpr:
+		return intConst(e.X)
+	case *ast.UnaryExpr:
+		x, ok := intConst(e.X)
+		if !ok || (e.Op != token.SUB && e.Op != token.ADD && e.Op != token.XOR) {
+			return nil, false
+		}
+		return constant.UnaryOp(e.Op, x, 0), true
+	case *ast.BinaryExpr:
+		x, ok1 := intConst(e.X)
+		y, ok2 := intConst(e.Y)
+		if !ok1 || !ok2 {
+			return nil, false
+		}
+		switch e.Op {
+		case token.SHL, token.SHR:
+			n, ok := constant.Uint64Val(y)
+			if !ok || n > 1024 {
+				return nil, false
+			}
+			return constant.Shift(x, e.Op, uint(n)), true
+		case token.QUO, token.REM:
+			if constant.Sign(y) == 0 {
+				return nil, false
+			}
+			op := e.Op
+			if op == token.QUO {
+				op = token.QUO_ASSIGN // integer division
+			}
+			return constant.BinaryOp(x, op, y), true
+		case token.ADD, token.SUB, token.MUL, token.AND, token.OR, token.XOR, token.AND_NOT:
+			return constant.BinaryOp(x, e.Op, y), true
+		}
 	}
-	b, ok := e.(*ast.BasicLit)
-	return ok && (b.Kind == token.INT || b.Kind == token.CHAR)
+	return nil, false
 }
 
 // constNames is an exported constant of the table's package, or a | of
