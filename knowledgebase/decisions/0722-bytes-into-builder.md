@@ -74,7 +74,16 @@ shared (another Image value still holds it) copies once, as today.
   objects only by capacity == length, which a frozen with_capacity(n)
   builder also has). Options: a flag bit in the header, or the allocator's
   8 byte prefix. This is the one compiler/runtime piece and goes to Lang 1
-  as a small task.
+  as a small task. Done (task #414, 2026-11-19): `heapos.mapped_obj(o)`
+  reads the allocator's prefix, which is Int.min with MAPPED_MAGIC below
+  it only for a mapped file's object (every heap block's prefix is its
+  class, 1 to 81, or minus its size); false on wasm, Windows, FreeBSD and
+  a sanitizer's, --race or user mode heap, none of which map. Today's
+  read_mapped value is a view at offset 8, so the offset 0 check already
+  copies it; into_builder calls mapped_obj after the count 1 and offset 0
+  checks as a second guard (a literal is never read below), so a later
+  value over a mapping at offset 0 still copies instead of writing a read
+  only page.
 - wasm and the Go backend implement into_builder as the copy (always
   correct); the in-place path is native only at first.
 

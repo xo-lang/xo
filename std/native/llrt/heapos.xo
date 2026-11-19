@@ -388,6 +388,25 @@ const MAPPED_PREFIX: Int = Int.min
 /// The word below it ("XoMapped").
 const MAPPED_MAGIC = 6372397078646121828
 
+/// Whether the heap object at o (a string object a count of 1 shows is
+/// the heap's: not a literal) is a mapped file's (sysio.xo map_file), whose
+/// bytes are read only (decision 0722: Bytes.into_builder copies it, and
+/// takes over any other unique object, though a frozen with_capacity(n)
+/// builder has capacity equal to its length as a mapping's view does).
+/// Every heap block's prefix is its class (1 to 81) or minus its size,
+/// never Int.min; a sanitizer's, --race or user mode heap (no prefix, and
+/// a redzone below the block) never maps, nor does another OS.
+pub fn mapped_obj(o: Int) -> Bool {
+  if target.os != TargetOs.Linux && target.os != TargetOs.Darwin || target.arch == TargetArch.Wasm32 {
+    return false
+  }
+  if sanhook.sanitized() || sanhook.user_mode() || sanhook.gorace() {
+    return false
+  }
+  let b = o.wrapping_sub(8)
+  rt.mem_load(b, 0, 8) == MAPPED_PREFIX && rt.mem_load(b.wrapping_sub(8), 0, 8) == MAPPED_MAGIC
+}
+
 /// Gives back the large block whose prefix is at b: to the cache, or to
 /// the system when the cache is full; a mapped file's object (map_file)
 /// to the system, never the cache.

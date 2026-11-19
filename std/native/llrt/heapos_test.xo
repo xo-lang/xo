@@ -4,6 +4,10 @@
 use native/llrt/alloc
 use native/llrt/linux
 use native/llrt/obj
+use native/llrt/raw
+use native/llrt/sanhook
+use native/llrt/sysio
+use native/llrt/twflags
 use native/rt
 
 test "a block grown past 1 MiB reuses the mapping its last growth made" {
@@ -134,3 +138,33 @@ test "an age pass gives a class's spare magazine and free list to the central li
   }
   expect(seen)
 }
+
+test "mapped_obj tells a mapped file's object from unique heap objects whose capacity is their length" {
+  // decision 0722 (task #414): into_builder takes over a unique object
+  // but must copy a read_mapped one; capacity == length marks neither
+  let n = 4096
+  var bb = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    bb.write_byte(UInt8(i % 251))
+  }
+  let frozen = bb.freeze()
+  expect(!mapped_obj(obj_of(frozen)))
+  let small = raw.bytes_buf(16)
+  expect(!mapped_obj(obj_of(small)))
+  let big = raw.bytes_buf(1048576)
+  expect(!mapped_obj(obj_of(big)))
+  // each value used after its check: the llvm backend drops a value at
+  // its last use, and a big block freed there is unmapped before
+  // mapped_obj reads its prefix (SIGSEGV, 2026-11-19)
+  expect(frozen.len() == n && small.len() == 16 && big.len() == 1048576)
+  let l = sysio.layer()
+  if (l == 1 || l == 2) && !twflags.fake(1) && !sanhook.sanitized() && !sanhook.user_mode() {
+    let m = sysio.fs_read_mapped("/etc/hosts")
+    expect(m.len() == 1 && m[0].len() > 0)
+    expect(mapped_obj(obj_of(m[0])))
+    expect(m[0].len() > 0)
+  }
+}
+
+/// The string object holding b (raw.bytes_addr less the header).
+fn obj_of(b: Bytes) -> Int { raw.bytes_addr(b) - rt.layout(0) }
