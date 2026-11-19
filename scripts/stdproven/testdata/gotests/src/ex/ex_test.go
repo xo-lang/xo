@@ -118,3 +118,18 @@ var nested = []struct {
 }
 
 const name = "n"
+
+type config struct {
+	A, B string
+	On   bool
+}
+
+// cfgs: a :json field holding a named struct literal, every field keyed
+var cfgs = []struct {
+	cfg config
+}{
+	{cfg: config{A: "x", On: true}},
+	{cfg: config{B: "y"}},
+	{cfg: config{"x", "y", false}},
+	{cfg: config{A: someVar}},
+}

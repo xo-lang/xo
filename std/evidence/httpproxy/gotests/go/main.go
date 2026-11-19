@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"golang.org/x/net/http/httpproxy"
 	"net/url"
@@ -30,12 +31,66 @@ func useProxy(no, host string) string {
 	return fmt.Sprint(p != nil)
 }
 
+// forURL is the proxy for a request URL under a Config given as JSON (Go's
+// TestProxyForURL), "" to connect directly. A setting std/httpproxy
+// documents as ignored is blanked first: one ProxyFunc fails on or gives
+// a scheme other than http or https for (socks5://, a value that does not
+// parse), and HTTPProxy under CGI, where Go's ProxyFunc returns an error
+// for http requests and Xo connects directly.
+func forURL(cfgJSON, req string) string {
+	var cfg httpproxy.Config
+	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
+		return "bad cfg " + err.Error()
+	}
+	cfg.HTTPProxy = usable(cfg.HTTPProxy, "http")
+	cfg.HTTPSProxy = usable(cfg.HTTPSProxy, "https")
+	if cfg.CGI {
+		cfg.HTTPProxy = ""
+	}
+	u, err := url.Parse(req)
+	if err != nil {
+		return "bad url"
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		// http.Url holds http and https URLs only; ProxyFunc gives nil
+		return "not http"
+	}
+	p, err := cfg.ProxyFunc()(u)
+	if err != nil {
+		return "err " + err.Error()
+	}
+	if p == nil {
+		return ""
+	}
+	if p.Path == "" {
+		// http.Url's path is "/" for a URL with none
+		p.Path = "/"
+	}
+	return p.String()
+}
+
+// usable is setting, or "" when ProxyFunc rejects it or gives a proxy that
+// is not http or https for a request of scheme to a host no_proxy keeps.
+func usable(setting, scheme string) string {
+	if setting == "" {
+		return ""
+	}
+	cfg := httpproxy.Config{HTTPProxy: setting, HTTPSProxy: setting}
+	p, err := cfg.ProxyFunc()(&url.URL{Scheme: scheme, Host: "example.com"})
+	if err != nil || p == nil || (p.Scheme != "http" && p.Scheme != "https") {
+		return ""
+	}
+	return setting
+}
+
 func run(kind string, in []string) string {
 	switch kind {
 	case "use":
 		return useProxy(noProxy, in[0])
 	case "useall":
 		return useProxy("*", in[0])
+	case "forurl":
+		return forURL(in[0], in[1])
 	}
 	return "unknown kind " + kind
 }

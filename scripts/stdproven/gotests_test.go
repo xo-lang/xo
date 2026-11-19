@@ -43,6 +43,10 @@ func TestGoTableCases(t *testing.T) {
 		// :json reads a slice (of strings, or of structs of them, a field
 		// left out "") as JSON, nil as null; a name in it is skipped
 		{"nested", "set:json,qs:json", []string{`0 ["A=a","B=b"]|[["http://h","A=a"],["ftp://h",""]]`, "1 null|[]"}, 1},
+		// a named struct literal with every field keyed is an object of
+		// its fields, true and false JSON's; one unkeyed, or with a name in
+		// it, is skipped
+		{"cfgs", "cfg:json", []string{`0 {"A":"x","On":true}`, `1 {"B":"y"}`}, 2},
 		// NAME=DEFAULT fills a field a keyed element leaves out or sets
 		// to nil; a field present but not a literal still skips the
 		// element

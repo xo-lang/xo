@@ -28,7 +28,8 @@ package main
 // string literal or a + of them, an integer, an integral float such as
 // 1e9, a rune literal as its code point, a slice of integer or rune
 // literals as its values joined with commas (a FIELDS entry NAME:json reads
-// a slice of strings or of structs of them as JSON), true and false, and time's zone
+// a slice of strings or of structs of them, or a named struct literal with
+// its fields keyed, as JSON: jsonLit), true and false, and time's zone
 // names Local and UTC); an element whose input is
 // anything else is counted as skipped, as is one that is not UTF-8 (an Xo
 // Str is). A case is a line `KIND<TAB>B64<TAB>B64...` (the
@@ -447,9 +448,12 @@ func stringLit(e ast.Expr) (string, bool) {
 }
 
 // jsonLit is a :json field's value as JSON: nil is null, a string literal
-// a string, a slice literal an array of its elements, and a struct
-// literal (an element of a slice of structs) an array of its fields in
-// the struct's order, a field left out "". Anything else is no literal.
+// a string, true and false JSON's, a slice literal an array of its
+// elements, a struct literal (an element of a slice of structs) an array
+// of its fields in the struct's order, a field left out "", and a named
+// struct literal with every field keyed (httpproxy.Config{HTTPProxy: "h"},
+// whose type may be another package's) an object of its keyed fields.
+// Anything else is no literal.
 func jsonLit(f *ast.File, e ast.Expr) (string, bool) {
 	v, ok := jsonVal(f, e, nil)
 	if !ok {
@@ -463,6 +467,9 @@ func jsonLit(f *ast.File, e ast.Expr) (string, bool) {
 func jsonVal(f *ast.File, e ast.Expr, outer ast.Expr) (any, bool) {
 	if isNil(e) {
 		return nil, true
+	}
+	if id, ok := e.(*ast.Ident); ok && (id.Name == "true" || id.Name == "false") {
+		return id.Name == "true", true
 	}
 	c, ok := e.(*ast.CompositeLit)
 	if !ok {
@@ -480,8 +487,11 @@ func jsonVal(f *ast.File, e ast.Expr, outer ast.Expr) (any, bool) {
 		}
 		return out, true
 	}
+	if c.Type != nil {
+		return keyedObject(f, c)
+	}
 	names := structOrder(f, outer)
-	if c.Type != nil || len(names) == 0 {
+	if len(names) == 0 {
 		return nil, false
 	}
 	out := make([]any, len(names))
@@ -496,6 +506,34 @@ func jsonVal(f *ast.File, e ast.Expr, outer ast.Expr) (any, bool) {
 			return nil, false
 		}
 		out[i] = v
+	}
+	return out, true
+}
+
+// keyedObject is a named struct literal as an object of its fields, when
+// every field is keyed (a literal's field order needs its type's
+// declaration, which may be in another package).
+func keyedObject(f *ast.File, c *ast.CompositeLit) (any, bool) {
+	switch c.Type.(type) {
+	case *ast.Ident, *ast.SelectorExpr:
+	default:
+		return nil, false
+	}
+	out := map[string]any{}
+	for _, el := range c.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok {
+			return nil, false
+		}
+		k, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			return nil, false
+		}
+		v, ok := jsonVal(f, kv.Value, nil)
+		if !ok {
+			return nil, false
+		}
+		out[k.Name] = v
 	}
 	return out, true
 }

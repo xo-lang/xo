@@ -1,11 +1,13 @@
 // The Xo side of std/httpproxy's gotests evidence (decision 0720, task #403):
 // main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
 // std/httpproxy's result as text, as go/main.go prints package httpproxy's.
-// Kinds use and useall over Go's x/net httpproxy UseProxyTests.
+// Kinds use and useall over Go's x/net httpproxy UseProxyTests, forurl
+// over its proxyForURLTests.
 // See scripts/stdproven/gotests.go.
 use std/httpproxy
 use std/http
 use std/base64
+use std/json
 
 const NO_PROXY: Str = "foobar.com, .barbaz.net, *.wildcard.io, 192.168.1.1, 192.168.1.2:81, 192.168.1.3:80, 10.0.0.0/30, 2001:db8::52:0:1, [2001:db8::52:0:2]:443, [2001:db8::52:0:3]:80, 2002:db8:a::45/64"
 
@@ -22,10 +24,37 @@ fn use_proxy(no: Str, host: Str) -> Str {
   }
 }
 
+// for_url is the proxy for a request URL under a Config given as JSON
+// (HTTPProxy, HTTPSProxy, NoProxy, CGI; Go's TestProxyForURL), "" to
+// connect directly; "not http" for a request of another scheme, which
+// http.Url cannot hold (Go's ProxyFunc connects one directly)
+fn for_url(cfg_json: Str, req: Str) -> Str {
+  let v = json.parse_value(cfg_json) ?? e => return "bad cfg ${e}"
+  let str_of = fn(k: Str) -> Str {
+    match v.get(k) {
+      Some(json.Value.Str(s)) => s
+      _ => ""
+    }
+  }
+  let cgi = match v.get("CGI") {
+    Some(json.Value.Bool(b)) => b
+    _ => false
+  }
+  let cfg = httpproxy.Config { http_proxy: str_of("HTTPProxy"), https_proxy: str_of("HTTPSProxy"), no_proxy: str_of("NoProxy"), cgi: cgi }
+  match http.parse_url(req) {
+    Ok(u) => match cfg.proxy_func()(u) {
+      Some(p) => p.display()
+      None => ""
+    }
+    Err(_) => if req.starts_with("http://") || req.starts_with("https://") { "bad url" } else { "not http" }
+  }
+}
+
 fn run(kind: Str, inp: List[Str]) -> Str {
   match kind {
     "use" => use_proxy(NO_PROXY, inp[0])
     "useall" => use_proxy("*", inp[0])
+    "forurl" => for_url(inp[0], inp[1])
     _ => "unknown kind ${kind}"
   }
 }

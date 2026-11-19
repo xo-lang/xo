@@ -6,3 +6,7 @@
 # test only).
 golang.org/x/net/http/httpproxy proxy_test.go UseProxyTests host use
 golang.org/x/net/http/httpproxy proxy_test.go UseProxyTests host useall
+# forurl: the proxy for req (http://example.com when left out) under cfg
+# (TestProxyForURL), through ProxyFunc, with the settings std/httpproxy
+# documents as ignored blanked on the Go side (go/main.go forURL).
+golang.org/x/net/http/httpproxy proxy_test.go proxyForURLTests cfg:json,req=http://example.com forurl
