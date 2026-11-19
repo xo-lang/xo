@@ -1527,3 +1527,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [std-speedup-measure-every-case.md](std-speedup-measure-every-case.md): a std speedup --ab on its target case hid a 1.84x gray regression in the same bench; --ab every case the change moves, and rebase before an --ab of a fix (Observed)
 - [clock-read-costs-on-amd64.md](clock-read-costs-on-amd64.md): a vDSO clock read per task run (about 140 ns on linux/amd64, cheap cntvct on arm64) was 20% of a small task; site timing samples every 8th run (Observed)
 - [go-bigfloat-setmantexp-precision.md](go-bigfloat-setmantexp-precision.md): math/big SetMantExp takes its argument's precision (53 from NewFloat); set the precision after it
+- [random-bit-branch-select.md](random-bit-branch-select.md): a branch on a random bit (random.normal) is mispredicted half the time; a broader select_branch slowed predictable tests, so write the source branch free
