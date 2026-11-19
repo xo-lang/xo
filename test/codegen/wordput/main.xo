@@ -1,5 +1,5 @@
 // Codegen patterns (decision 0217, `xo dev codegen`): a BytesBuilder
-// put_be or put_le of 8 bytes (a constant width) is its range check and one
+// put_be or put_le of 8 or 4 bytes (a constant width) is its range check and one
 // store in line, with no call to the native prelude's llrt_rs_put or
 // raw.put (std/image's gray and NRGBA Src draws, 2026-11-19). Faults are
 // unchanged (test golden bytesbuilder_put_word_fault).
@@ -22,6 +22,24 @@ fn fill_le(var b: BytesBuilder, n: Int) {
   }
 }
 
+fn fill_be4(var b: BytesBuilder, n: Int) {
+  // arm64: "rev\s+x" "str\s+w" -"rs__put"
+  var i = 0
+  while i + 4 <= n {
+    b.put_be(i, i, 4)
+    i += 4
+  }
+}
+
+fn fill_le4(var b: BytesBuilder, n: Int) {
+  // arm64: "str\s+w" -"rs__put"
+  var i = 0
+  while i + 4 <= n {
+    b.put_le(i, i, 4)
+    i += 4
+  }
+}
+
 fn main(os: Os) {
   var b = BytesBuilder.new()
   b.write_str("................")
@@ -32,4 +50,13 @@ fn main(os: Os) {
   let x = b.freeze()
   let y = c.freeze()
   os.stdio.println("${x[7]} ${x[15]} ${y[0]} ${y[8]}")
+  var d = BytesBuilder.new()
+  d.write_str("........")
+  fill_be4(d, 8)
+  var e = BytesBuilder.new()
+  e.write_str("........")
+  fill_le4(e, 8)
+  let z = d.freeze()
+  let u = e.freeze()
+  os.stdio.println("${z[3]} ${z[7]} ${u[0]} ${u[4]}")
 }

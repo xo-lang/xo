@@ -3103,6 +3103,12 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let _i = g.plain("str $u2, [$u0, $u1]", [], [d, g.word(g.f.arg(x.args, 1)), g.word(g.f.arg(x.args, 2))])
       g.set(v, ws)
     }
+    "rt.rs_put_u32" => {
+      let ws = g.words(g.f.arg(x.args, 0))
+      let d = g.str_base_heap(ws)
+      let _i = g.plain("str $wu0, [$u1, $u2]", [], [g.word(g.f.arg(x.args, 2)), d, g.word(g.f.arg(x.args, 1))])
+      g.set(v, ws)
+    }
     "rt.rs_set_len" => g.set(v, [g.words(g.f.arg(x.args, 0))[0], g.word(g.f.arg(x.args, 1))])
     "rt.list_swap" => {
       // decision 0374: the two elements trade places as words, with no

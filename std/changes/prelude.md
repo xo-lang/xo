@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-19: perf: BytesBuilder.put_be and put_le of 4 bytes in line
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (std/image's single pixel RGBA stores are put_be of 4; only the width 8 put was in line)
+- Go reference: binary.BigEndian.PutUint32 (inlined by Go)
+- Change: a native put_be or put_le whose width is the constant 4 is its range check and one 32 bit store (rt.rs_put_u32) at the call, on arm64, x86-64 and LLVM; wasm runs $rs_put_u32 (i64.store32). The fault and its text are unchanged
+- Measured: no speedup claimed: bench/perf/image over, xo bench --ab on host 1, 1000 passes, 8 rounds, 24bf1d8a2 against 05c905fae: 0.954 (0.901 to 1.045), within noise (that draw's rows store 8 bytes at a time)
+- Test: test/codegen/wordput fill_be4 and fill_le4 (a 32 bit store, no rs_put call; fail before), internal/llvm/testdata/golden/bytesbuilder_put_u32 (values and the fault; arm64, LLVM and linux/amd64)
+
 ## 2026-11-19: perf: BytesBuilder.put_be and put_le of 8 bytes in line
 
 - Kind: perf

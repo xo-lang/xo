@@ -1702,26 +1702,22 @@ fn draw_rgba_rows_over(dst: Image, src: Image, x0: Int, y0: Int, x1: Int, y1: In
       // a pixel (its six arguments and the loop's registers saved around
       // it) made bench/perf/image over 1.13 of Go on the linux/amd64 host
       while x + 1 < w {
-        var pr = 0
-        for k in 0..2 {
-          let s = si + 4 * k
-          let d = di + 4 * k
-          let sa = Int(spx[s + 3]).wrapping_mul(257)
-          var px = 0
-          if sa == 65535 {
-            px = Int(spx[s]).wrapping_shl(24) | Int(spx[s + 1]).wrapping_shl(16) | Int(spx[s + 2]).wrapping_shl(8) | 255
-          } else {
-            let a = (65535 - sa).wrapping_mul(257)
-            let da = Int(dp[d + 3])
-            let r = (div65535(Int(dp[d]).wrapping_mul(a)).wrapping_add(Int(spx[s]).wrapping_mul(257))) >> 8
-            let g = (div65535(Int(dp[d + 1]).wrapping_mul(a)).wrapping_add(Int(spx[s + 1]).wrapping_mul(257))) >> 8
-            let bl = (div65535(Int(dp[d + 2]).wrapping_mul(a)).wrapping_add(Int(spx[s + 2]).wrapping_mul(257))) >> 8
-            let al = (div65535(da.wrapping_mul(a)).wrapping_add(sa)) >> 8
-            px = (r & 255).wrapping_shl(24) | (g & 255).wrapping_shl(16) | (bl & 255).wrapping_shl(8) | (al & 255)
-          }
-          pr = pr.wrapping_shl(32) | px
-        }
-        b.write_be(pr, 8)
+        // two pixels written out (a loop over them cost its counter, the
+        // index math and their overflow checks), and no opaque shortcut,
+        // as in Go: at sa = 65535, a is 0 and the sum is the source's
+        let sa0 = Int(spx[si + 3]).wrapping_mul(257)
+        let a0 = (65535 - sa0).wrapping_mul(257)
+        let r0 = (div65535(Int(dp[di]).wrapping_mul(a0)).wrapping_add(Int(spx[si]).wrapping_mul(257))) >> 8
+        let g0 = (div65535(Int(dp[di + 1]).wrapping_mul(a0)).wrapping_add(Int(spx[si + 1]).wrapping_mul(257))) >> 8
+        let b0 = (div65535(Int(dp[di + 2]).wrapping_mul(a0)).wrapping_add(Int(spx[si + 2]).wrapping_mul(257))) >> 8
+        let l0 = (div65535(Int(dp[di + 3]).wrapping_mul(a0)).wrapping_add(sa0)) >> 8
+        let sa1 = Int(spx[si + 7]).wrapping_mul(257)
+        let a1 = (65535 - sa1).wrapping_mul(257)
+        let r1 = (div65535(Int(dp[di + 4]).wrapping_mul(a1)).wrapping_add(Int(spx[si + 4]).wrapping_mul(257))) >> 8
+        let g1 = (div65535(Int(dp[di + 5]).wrapping_mul(a1)).wrapping_add(Int(spx[si + 5]).wrapping_mul(257))) >> 8
+        let b1 = (div65535(Int(dp[di + 6]).wrapping_mul(a1)).wrapping_add(Int(spx[si + 6]).wrapping_mul(257))) >> 8
+        let l1 = (div65535(Int(dp[di + 7]).wrapping_mul(a1)).wrapping_add(sa1)) >> 8
+        b.write_be((r0 & 255).wrapping_shl(56) | (g0 & 255).wrapping_shl(48) | (b0 & 255).wrapping_shl(40) | (l0 & 255).wrapping_shl(32) | (r1 & 255).wrapping_shl(24) | (g1 & 255).wrapping_shl(16) | (b1 & 255).wrapping_shl(8) | (l1 & 255), 8)
         si += 8
         di += 8
         x += 2

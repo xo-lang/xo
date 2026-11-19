@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+a1234f8765
+--- stderr
+fault: BytesBuilder.put: width must be 1, 2, 4 or 8 and at..at + width must lie within the builder at main.xo:12

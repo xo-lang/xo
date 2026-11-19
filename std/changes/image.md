@@ -1,5 +1,15 @@
 # std/image changes
 
+## 2026-11-19: perf: RGBA over RGBA rows compute two pixels written out
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (std/evidence/image/perf.md: over 1.069 of Go on the linux/amd64 host, the only case above 1.05); a profile put 96% of the draw in draw_rgba_rows_over's loop over its two pixels
+- Go reference: image/draw drawCopyOver (no opaque shortcut)
+- Change: draw_rgba_rows_over computes both pixels of each 8 byte store written out, not in a loop of two, and drops the opaque shortcut: at alpha 255 the general sum is the source's samples, as in Go
+- Measured: the Mac, bench/perf/image over 300: 18.75G to 15.96G instructions, 0.63 to 0.52 s; xo bench --ab on host 1, over 1000, 6 rounds: 0.884 (0.75 to 1.037), within noise; std/evidence/image/perf.md: over 0.960 of Go (was 1.069), every case below 1
+- Test: std/image_test.xo "draw's RGBA over and NRGBA src rows are draw_px's pixels" (alphas 0 and 255 included); the bench checksum is unchanged
+
 ## 2026-11-19: perf: draw with Op.Src writes the destination's samples in place
 
 - Kind: perf

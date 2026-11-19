@@ -1,0 +1,14 @@
+// A put of 4 bytes (stored in line since 2026-11-19) writes the 4 low
+// bytes of the value, big or little endian, leaves the bytes around it
+// alone, and past len() is the same fault as every width (decision 0399).
+fn main(os: Os) {
+  var b = BytesBuilder.new()
+  b.write_str("abcdefghij")
+  b.put_be(1, 0x7a7a7a7a31323334, 4)
+  b.put_le(6, 0x35363738, 4)
+  os.stdio.println(b.freeze().to_str() ?? "")
+  var c = BytesBuilder.new()
+  c.write_str("abcdef")
+  c.put_le(3, 7, 4)
+  os.stdio.println("not reached")
+}

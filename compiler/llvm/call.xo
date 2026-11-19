@@ -1976,6 +1976,14 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.emit("store i64 ${g.op(g.f.arg(x.args, 2))}, ptr ${p}, align 1")
       g.alias(v, x0)
     }
+    "rt.rs_put_u32" => {
+      let x0 = g.op(g.f.arg(x.args, 0))
+      let (_, d, _) = g.str_parts(x0)
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(g.f.arg(x.args, 1))}")
+      let w = g.def("trunc i64 ${g.op(g.f.arg(x.args, 2))} to i32")
+      g.emit("store i32 ${w}, ptr ${p}, align 1")
+      g.alias(v, x0)
+    }
     "rt.rs_set_len" => {
       let obj = g.def("extractvalue %xo.str ${g.op(g.f.arg(x.args, 0))}, 0")
       g.mk_str(v, obj, g.op(g.f.arg(x.args, 1)))

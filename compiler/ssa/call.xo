@@ -2629,20 +2629,27 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
         let v = b.io_arg(fo, es, 1, it)
         let n = b.io_arg(fo, es, 2, it)
         let (nc, nk) = b.int_const_of(n)
-        if !b.wasm && !b.c.inline_str && nk && nc == 8 {
+        if !b.wasm && !b.c.inline_str && nk && (nc == 8 || nc == 4) {
           // a word put, the check and the store in line: llrt_rs_put (its
           // fault call gives it landing pads, so it is never inlined) and
           // raw.put under it were 80% of std/image's gray draw and 56% of
           // its NRGBA Src draw on the Mac (2026-11-19). A builder's object
           // is unique, its count 1 and not a view (Bytes.into_builder
           // copies any other), and an empty one fails the range check, so
-          // raw.put's count check has nothing left to catch here.
+          // raw.put's count check has nothing left to catch here. A put of
+          // 4 bytes (std/image's RGBA pixel) stores the low 32 bits
+          // (rt.rs_put_u32); its big endian form is the 8 byte swap
+          // shifted down 32.
           b.put_check(cur, at, n, pos)
           var w = v
           if fname == "put_be" {
             w = b.rt("int_wrap", it, [b.cint(7), v, b.cint(0)])
+            if nc == 4 {
+              w = b.add(Op.Shr, it, Aux.None, [w, b.cint(32)])
+            }
           }
-          b.place_set(p, b.rt("rs_put_word", st, [cur, at, w]))
+          let put = if nc == 8 { "rs_put_word" } else { "rs_put_u32" }
+          b.place_set(p, b.rt(put, st, [cur, at, w]))
           return Some(b.unit())
         }
         if b.wasm {
