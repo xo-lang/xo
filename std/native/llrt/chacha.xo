@@ -155,6 +155,8 @@ fn xor_stream(s0: Str, key: Bytes, ctr0: Int, nonce: Bytes, src: Bytes, ps: Int,
       cpu.chacha_poly_seal4(dp, sp, st, i, ps)
     } else if mode == 2 {
       cpu.chacha_poly_open4(dp, sp, st, i, ps)
+    } else if target.arch == TargetArch.Amd64 && (cpu.hw() & cpu.HW_AVX2) != 0 {
+      cpu.chacha_stream8(dp, sp, st, i)
     } else {
       cpu.chacha_stream4(dp, sp, st, i)
     }

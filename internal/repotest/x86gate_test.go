@@ -36,6 +36,7 @@ var x86Needs = map[string]string{
 	"chacha_poly_seal4": "HW_SSSE3",
 	"chacha_poly_open4": "HW_SSSE3",
 	"chacha_poly_seal8": "HW_AVX2",
+	"chacha_stream8":    "HW_AVX2",
 	"chacha_poly_open8": "HW_AVX2",
 	"aes_gcm8_enc10":    "HW_AES",
 	"aes_gcm8_enc12":    "HW_AES",

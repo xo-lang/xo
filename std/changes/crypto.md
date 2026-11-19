@@ -1,5 +1,22 @@
 # std/crypto changes
 
+## 2026-11-19: perf: ChaCha20 alone on x86-64 with AVX2 runs eight blocks at a time, 3.2 times faster
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/chacha xor on linux/amd64: 1.077 of golang.org/x/crypto's chacha20)
+- Go reference: golang.org/x/crypto chacha20poly1305_amd64.s (the AVX2 layout the seal and open kernels already use)
+- Measured: linux/amd64 host, exclusive, the chacha program 5 runs of xor (20,000 16 KiB messages): 320 to 321 ms before, 99 to 100 ms after, Go 297 to 300 ms; xor, seal and open checksums equal
+- Test: cpu tests (chacha_stream8 against chacha_stream4's body over 0 to 2048 bytes, in place and not, counters at the 32 bit wrap) on the linux/amd64 host (AVX2)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+The unauthenticated stream (chacha.xor, the AEAD's 26 bit limb path and
+every ChaCha20 caller without Poly1305) ran the SSSE3 kernel two blocks
+at a time even where AVX2 is present, while seal and open used the AVX2
+kernel. cpu.chacha_stream8 runs that kernel's groups without the
+Poly1305 slots.
+
 ## 2026-11-19: perf: ChaCha20-Poly1305 of up to 64 bytes on x86-64 runs two blocks and allocates only its result, 19% faster
 
 - Kind: perf

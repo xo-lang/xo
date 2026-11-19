@@ -1107,6 +1107,23 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, i64 ${g.op(g.f.arg(x.args, 3))}, ptr ${g.raw_ptr(g.f.arg(x.args, 4))})")
     }
+    "rt.chacha_stream8" => {
+      // amd64 only (ssa call.xo): ssa.chacha_stream8_avx2_lines as inline
+      // asm, its registers clobbered
+      var t: List[Str] = []
+      for l in ssa.chacha_stream8_avx2_lines("@0@", "@1@", "@2@", "@3@") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3"))
+      }
+      var clob = "r,r,r,r"
+      for r in ssa.chacha_stream8_avx2_gprs() {
+        clob = clob + ",~{${r}}"
+      }
+      for r in ssa.chacha8_avx2_xmms() {
+        clob = clob + ",~{xmm${r}},~{ymm${r}}"
+      }
+      clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, i64 ${g.op(g.f.arg(x.args, 3))})")
+    }
     "rt.chacha_blocks2" => {
       // amd64 only (ssa call.xo): ssa.chacha2_x86_lines as inline asm,
       // chacha_stream4's registers clobbered

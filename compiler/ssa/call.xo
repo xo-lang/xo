@@ -303,6 +303,8 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // and with AVX2 (ssa x86chachapoly8.xo)
     "chacha_poly_seal8" => if b.goarch == "amd64" { "chacha_poly_seal8" } else { "" }
     "chacha_poly_open8" => if b.goarch == "amd64" { "chacha_poly_open8" } else { "" }
+    // ChaCha20 alone with AVX2 (ssa chacha_stream8_avx2_lines)
+    "chacha_stream8" => if b.goarch == "amd64" { "chacha_stream8" } else { "" }
     // the generic timer on arm64; elsewhere the body (mono_ns, 1e9 a
     // second)
     "ticks" | "ticks_hz" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }

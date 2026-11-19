@@ -138,7 +138,7 @@ fn avx_poly_slot(end: Str) -> List[Str] {
 /// 16 in all), the state added back, each block's 64 bytes gathered from
 /// its lanes and xored with src's into dst's; a 512 byte group advances
 /// the counters (a 256 byte group is the last).
-fn avx_chacha_poly_group(sets: Int) -> List[Str] {
+fn avx_chacha_poly_group(sets: Int, poly: Bool) -> List[Str] {
   var t: List[Str] = []
   for s in 0..sets {
     let o = 4 * s
@@ -147,7 +147,7 @@ fn avx_chacha_poly_group(sets: Int) -> List[Str] {
   for d in 0..10 {
     t = t + avx_chacha_half(sets) + avx_chacha_diag(sets, 57, 78, 147) + avx_chacha_half(sets) + avx_chacha_diag(sets, 147, 78, 57)
     // 32 slots: 4, 4, then 3; 16: 2 in the first six, then 1
-    let k = if sets == 4 { if d < 2 { 4 } else { 3 } } else { if d < 6 { 2 } else { 1 } }
+    let k = if !poly { 0 } else if sets == 4 { if d < 2 { 4 } else { 3 } } else { if d < 6 { 2 } else { 1 } }
     for _ in 0..k {
       t = t + avx_poly_slot("7") + ["7:"]
     }
@@ -232,7 +232,7 @@ pub fn chacha_poly8_avx2_lines(seal: Bool, d: Str, s: Str, st: Str, n: Str, ps: 
   if !seal {
     t = t + ["leaq 512(%r9), %rax", "movq %rax, 440(%rsi)"]
   }
-  t = t + avx_chacha_poly_group(4)
+  t = t + avx_chacha_poly_group(4, true)
   t = t + ["addq $512, %r8", "addq $512, %r9", "subq $512, %r10"]
   if seal {
     t.push("movq %r8, 440(%rsi)")
@@ -241,7 +241,7 @@ pub fn chacha_poly8_avx2_lines(seal: Bool, d: Str, s: Str, st: Str, n: Str, ps: 
   if !seal {
     t = t + ["leaq 256(%r9), %rax", "movq %rax, 440(%rsi)"]
   }
-  t = t + avx_chacha_poly_group(2)
+  t = t + avx_chacha_poly_group(2, true)
   t = t + ["addq $256, %r8", "addq $256, %r9"]
   if seal {
     t.push("movq %r8, 440(%rsi)")
@@ -263,3 +263,21 @@ pub fn chacha_poly8_avx2_lines(seal: Bool, d: Str, s: Str, st: Str, n: Str, ps: 
     "leaq 128(%rsp), %rsp",
   ]
 }
+
+/// cpu.chacha_stream8: chacha_stream4's contract (dst = src xor the key
+/// stream over n bytes, a multiple of 256, the counters at st advanced)
+/// with AVX2, chacha_poly8_avx2_lines' groups without Poly1305's slots;
+/// st has the AVX2 scratch after it. rax, r8 to r10, rsi and all 16
+/// vector registers written.
+pub fn chacha_stream8_avx2_lines(d: Str, s: Str, st: Str, n: Str) -> List[Str] {
+  var t = ["movq ${d}, %r8", "movq ${s}, %r9", "movq ${n}, %r10", "movq ${st}, %rsi"]
+  t = t + avx_chacha_scratch("%rsi")
+  t = t + ["cmpq $512, %r10", "jb 5f", "1:"]
+  t = t + avx_chacha_poly_group(4, false)
+  t = t + ["addq $512, %r8", "addq $512, %r9", "subq $512, %r10", "cmpq $512, %r10", "jae 1b", "5:", "testq %r10, %r10", "jz 6f"]
+  t = t + avx_chacha_poly_group(2, false)
+  t + ["6:", "vzeroupper"]
+}
+
+/// The general registers chacha_stream8_avx2_lines writes.
+pub fn chacha_stream8_avx2_gprs() -> List[Str] { ["rax", "rsi", "r8", "r9", "r10"] }

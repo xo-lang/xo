@@ -2318,6 +2318,11 @@ pub fn chacha_poly_seal4_soft(dst: Int, src: Int, st: Int, n: Int, ps: Int) {
 /// (chacha.xo, ssa.chacha8_scratch_bytes).
 pub fn chacha_poly_seal8(dst: Int, src: Int, st: Int, n: Int, ps: Int) { chacha_poly_seal4_soft(dst, src, st, n, ps) }
 
+/// chacha_stream4 with AVX2 (cpu.HW_AVX2): eight blocks in one pass of the
+/// rounds (four the last 256 bytes); st has 448 bytes in all (chacha.xo,
+/// ssa.chacha8_scratch_bytes).
+pub fn chacha_stream8(dst: Int, src: Int, st: Int, n: Int) { chacha_stream4_soft(dst, src, st, n) }
+
 /// chacha_poly_open4 with AVX2 (cpu.HW_AVX2).
 pub fn chacha_poly_open8(dst: Int, src: Int, st: Int, n: Int, ps: Int) { chacha_poly_open4_soft(dst, src, st, n, ps) }
 
