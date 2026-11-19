@@ -1,0 +1,30 @@
+// A NUL byte in a dialed host or port fails the dial (Go's "no such
+// host" and "unknown port") (the class of GO-2026-4971). Before the fix
+// getaddrinfo read the name or port as a C string, so the NUL ended it:
+// "localhost\x00.invalid" dialed localhost and "PORT\x00" dialed PORT.
+// The error's text keeps the address only up to the NUL (the net error
+// record is a C string), so the test checks that the dial fails.
+fn main(os: Os) -> () ! {
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = "${l.addr()}"
+  let port = addr[(addr.rfind(":") ?? 0) + 1..]
+  let cases = [
+    ("host localhost NUL .invalid", "localhost\x00.invalid:${port}"),
+    ("host NUL localhost", "\x00localhost:${port}"),
+    ("host 127.0.0.1 NUL", "127.0.0.1\x00:${port}"),
+    ("port NUL after", "127.0.0.1:${port}\x00"),
+    ("port NUL inside", "127.0.0.1:${port}\x001"),
+    ("control", "127.0.0.1:${port}"),
+  ]
+  for (name, a) in cases {
+    let r = match os.net.dial(a) {
+      Ok(c) => {
+        c.close()
+        "connected"
+      }
+      Err(_) => "refused before connecting"
+    }
+    os.stdio.println("${name}: ${r}")
+  }
+  l.close()
+}

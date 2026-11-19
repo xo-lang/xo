@@ -103,6 +103,7 @@ net_accept_two # wasip1 # network: the network (`rt.net_listen`): WASI preview1 
 net_close_flush # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 net_close_stuck # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 net_dial_dual_stack # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+net_dial_nul # wasip1 # network: WASI preview1 has no sockets
 net_echo # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 net_lookup_dial_timeout # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 net_only # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)

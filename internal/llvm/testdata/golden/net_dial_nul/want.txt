@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+host localhost NUL .invalid: refused before connecting
+host NUL localhost: refused before connecting
+host 127.0.0.1 NUL: refused before connecting
+port NUL after: refused before connecting
+port NUL inside: refused before connecting
+control: connected
+--- stderr

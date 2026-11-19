@@ -310,6 +310,15 @@ fn unlink(path: Str) {
 /// sockaddr_in6 zero padded, in the order to try; their count, or a
 /// negative EAI code (gai_text's). A numeric IPv4 host is read in place.
 fn resolve(host: Str, port: Str, family: Int, passive: Bool, out: Int, cap: Int) -> Int {
+  // a NUL would end the name or port getaddrinfo reads (C strings), so
+  // "localhost\x00.example:80" reached localhost: no such host and
+  // unknown port, as Go's resolvers (GO-2026-4971)
+  if host.contains("\x00") {
+    return dns.EAI_NONAME
+  }
+  if port.contains("\x00") {
+    return dns.EAI_SERVICE
+  }
   let hp = raw.data(host)
   let hn = host.len()
   let pp = raw.data(port)

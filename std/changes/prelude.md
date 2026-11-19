@@ -1,5 +1,29 @@
 # prelude changes
 
+## 2026-11-19: security: a NUL byte in a dialed, listened or looked up host or port fails the call (GO-2026-4971 class)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #400), GO-2026-4971 (Go's Windows Dial and LookupPort panic on a NUL byte)
+- Go reference: net lookup.go lookupIPAddr and lookupPortMap (a name or port holding a NUL is "no such host" or "unknown port" before any resolver runs), Go 1.26.11
+- Change: std/native/llrt netconn.resolve (dial, listen, lookup_host and the UDP calls share it) returns EAI_NONAME for a host and EAI_SERVICE for a port that holds a NUL. Before, the system resolver (getaddrinfo on darwin and Windows) read both as C strings, so the NUL ended them: `os.net.dial("localhost\x00.invalid:80")` reached localhost and `"127.0.0.1:80\x00junk"` port 80, past a host or port check the program made on the whole text. Xo did not panic. The error's text keeps the address up to the NUL only (the net error record is a C string), where Go's shows it whole.
+- Measured: not applicable
+- Test: golden net_dial_nul (five NUL addresses against a localhost listener: each connected before, each fails after; llvm and arm64)
+- Affected: Xo 0.54.0 and earlier on darwin and Windows (the getaddrinfo path); Linux and FreeBSD read the port in Xo and rejected a NUL in it, and sent the host to Xo's DNS client
+- Shipped in: not yet released
+
+## 2026-11-19: security: not affected by GO-2026-4602, GO-2026-4970, GO-2026-6604, GO-2026-4981 and GO-2026-5942 (os.Root escapes, cgo CNAME crash, SVCB parse panic)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #400), Go vulnerability database entries fixed after Go 1.26.0
+- Go reference: os root_unix.go and root_windows.go (4602 ReadDir FileInfo, 4970 a trailing slash after a symlink, 6604 Mkdir onto a junction), net cgo_unix.go cgoLookupCNAME (4981), golang.org/x/net/dns/dnsmessage SVCB and HTTPS records (5942)
+- Change: none; Xo was not affected. 4602, 4970 and 6604 are escapes from os.Root, which promises that no path, link or junction leaves its directory. Xo has no such type: `Fs.sub` is a lexical boundary (spec/std.md 3.1, decision 0024) that refuses `..` past its root and absolute or escaping link targets it creates, and links already on disk are followed by the OS as `os.DirFS` follows them. 4981 is a double free in the cgo resolver's CNAME lookup; Xo's lookup_cname asks its own DNS client (std/native/dns.xo) and never calls libc for it. 5942 is a panic parsing SVCB and HTTPS records; Xo's DNS client parses no SVCB or HTTPS record data, skipping unknown types by their length (TestDnsFuzz).
+- Measured: not applicable
+- Test: none new (code review; the paths are covered by the fs sub tests and TestDnsFuzz)
+- Affected: no release
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: Str.trim_chars and its kin test a byte against the cutset without a branch
 
 - Kind: perf

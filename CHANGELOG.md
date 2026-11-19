@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (net; task #400): a NUL byte in a host or port given to `dial`, `listen` or `lookup_host` fails the call; on darwin and Windows the system resolver stopped at the NUL, so `"localhost\x00.invalid:80"` reached localhost (GO-2026-4971 class).
 - Fix (std/tls, std/http; task #384): a TLS 1.3 server and client take a record before the first hello is read up to 18432 bytes, as Go's maxCiphertext (they refused one over 16640 with record_overflow).
 - Security (std/tls; task #384): a TLS 1.2 CBC record is checked with Arm's DIT bit set where the CPU has it (decision 0619); on Apple cores its timing depended on the plaintext without it.
 - Perf (std/crypto; task #271): AES-CBC decryption on x86-64 runs eight blocks at a time with AES-NI, about 5 times faster on the linux/amd64 host.
