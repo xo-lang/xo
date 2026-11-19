@@ -1,0 +1,61 @@
+// x86_r11_reuse: a repeated reload of a stack slot into r11 goes while
+// r11 still holds the slot's word (2026-10-21, nistec.mul4p; task #356,
+// 2026-11-18: a compare reads r11 and a conditional jump falls through).
+
+test "x86_r11_reuse drops a reload after a compare and a conditional jump" {
+  let text = "\tmovq 24(%rsp), %r11\n\tcmpq %r8, %r11\n\tje .L3\n\tmovq 24(%rsp), %r11\n\tcmpq %r8, %r11\n\tsetl %r10b"
+  expect(x86_r11_reuse(text)) == "\tmovq 24(%rsp), %r11\n\tcmpq %r8, %r11\n\tje .L3\n\tcmpq %r8, %r11\n\tsetl %r10b"
+  let t = "\tmovq 8(%rsp), %r11\n\ttestq %r11, %r11\n\tjne .L4\n\tmovq 8(%rsp), %r11\n\taddq %r11, %rax"
+  expect(x86_r11_reuse(t)) == "\tmovq 8(%rsp), %r11\n\ttestq %r11, %r11\n\tjne .L4\n\taddq %r11, %rax"
+  // the fall through block's label, which nothing names
+  let u = "\tmovq 32(%rsp), %r11\n\tmovq (%r11), %r10\n\tcmpq $1, %r10\n\tjne .Lf3_b9\n.Lf3_b5:\n\tmovq 32(%rsp), %r11\n\tmovq 8(%r11), %r10"
+  expect(x86_r11_reuse(u)) == "\tmovq 32(%rsp), %r11\n\tmovq (%r11), %r10\n\tcmpq $1, %r10\n\tjne .Lf3_b9\n.Lf3_b5:\n\tmovq 8(%r11), %r10"
+}
+
+test "x86_r11_reuse keeps the reload after a write, a label, or a jump away" {
+  // r11 written by a two address op
+  let a = "\tmovq 24(%rsp), %r11\n\taddq %r8, %r11\n\tmovq 24(%rsp), %r11"
+  expect(x86_r11_reuse(a)) == a
+  // a label a jump names: another path joins
+  let b = "\tmovq 24(%rsp), %r11\n\tcmpq %r8, %r11\n.L3:\n\tmovq 24(%rsp), %r11\n\tjmp .L3"
+  expect(x86_r11_reuse(b)) == b
+  // a label a jump table names (a longer one too: no prefix match)
+  let g = "\tmovq 24(%rsp), %r11\n.Lf1_b2:\n\tmovq 24(%rsp), %r11\n\t.long .Lf1_b2-.Lf1_jt0"
+  expect(x86_r11_reuse(g)) == g
+  // a label of another form (Mach-O's L, a function's name)
+  let h = "\tmovq 24(%rsp), %r11\nLf1_b2:\n\tmovq 24(%rsp), %r11"
+  expect(x86_r11_reuse(h)) == h
+  // an unconditional or indirect jump
+  let c = "\tmovq 24(%rsp), %r11\n\tjmp .L5\n\tmovq 24(%rsp), %r11"
+  expect(x86_r11_reuse(c)) == c
+  let d = "\tmovq 24(%rsp), %r11\n\tjmpq *%rax\n\tmovq 24(%rsp), %r11"
+  expect(x86_r11_reuse(d)) == d
+  // a compare and exchange writes its operand
+  let e = "\tmovq 24(%rsp), %r11\n\tcmpxchgq %r8, %r11\n\tmovq 24(%rsp), %r11"
+  expect(x86_r11_reuse(e)) == e
+  // the slot written
+  let f = "\tmovq 24(%rsp), %r11\n\tje .L3\n\tmovq %r9, 24(%rsp)\n\tmovq 24(%rsp), %r11"
+  expect(x86_r11_reuse(f)) == f
+}
+
+test "a landing pad only the exception table names is a join (x86_r11_reuse_named, task #356)" {
+  // the pad follows the call site's fall through; the unwinder enters it
+  // with r11 as the callee left it, so its reload stays
+  let t = "\tmovq 24(%rsp), %r11\n\tcmpq $0, %rax\n\tjne .Lf2_b4\n.Lf2_b3:\n\tmovq 24(%rsp), %r11\n\tmovq (%r11), %rax"
+  let lsda = "\t.uleb128 .Lf2_cs0-.Lf2_begin\n\t.uleb128 .Lf2_b3-.Lf2_begin\n"
+  expect(x86_r11_reuse_named(t, lsda)) == t
+  // without the table the label is no join (the text alone names none)
+  expect(x86_r11_reuse(t)) != t
+}
+
+test "x86_r11_reuse: a canonical text's label a jump names is a join (XO_BACKEND_CACHE, task #356)" {
+  // with the back-end cache on, labels carry fcache.xo's prefix token
+  // \x01F\x01; read as a stop byte, every label looked unnamed and the
+  // reload after a joined label went (iface_values on linux/amd64,
+  // 2026-11-19: SIGSEGV in map.put)
+  let t = "\tmovq 192(%rsp), %r11\n\tjb .L\x01F\x01_b464\n.L\x01F\x01_b466:\n\tmovq 192(%rsp), %r11\n\tmovq %r11, 24(%rbx)\n.L\x01F\x01_b464:\n\tmovq 8(%rsp), %r11\n\tjmp .L\x01F\x01_b466"
+  expect(x86_r11_reuse(t)) == t
+  // a canonical label nothing names is still no join
+  let u = "\tmovq 32(%rsp), %r11\n\tjne .L\x01F\x01_b9\n.L\x01F\x01_b5:\n\tmovq 32(%rsp), %r11\n\tmovq 8(%r11), %r10"
+  expect(x86_r11_reuse(u)) == "\tmovq 32(%rsp), %r11\n\tjne .L\x01F\x01_b9\n.L\x01F\x01_b5:\n\tmovq 8(%r11), %r10"
+}

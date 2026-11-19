@@ -439,8 +439,11 @@ fn (var g: G) x86_emit_once() {
     g.lsda(sites, g.func_begin())
   }
   b.push("\n")
+  // the landing pads the table names (g.lsdas, not in the text): the
+  // unwinder enters them with r11 and the slots as the callee left them
+  let named = if pads || !sites.is_empty() { g.lsdas[g.lsdas.len() - 1] } else { "" }
   // ladders.xo (decision 0634): repeated release ladders outlined
-  g.push_fn_text(g.outline_ladders_x86(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join("")), g.x86_rsp_phase())))))))
+  g.push_fn_text(g.outline_ladders_x86(x86_rmw(x86_not_reuse(x86_r11_reuse_named(x86_imul3(x86_copy_runs(x86_reload_peep(b.join("")), g.x86_rsp_phase())), named)))))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of
@@ -2072,8 +2075,24 @@ fn x86_imul3(text: Str) -> Str {
 /// before each of four `mulq N(%r11)`). Debug labels are not boundaries
 /// (x86_lift_dbg: the same code with and without debug information).
 fn x86_r11_reuse(text: Str) -> Str {
+  x86_r11_reuse_named(text, "")
+}
+
+/// x86_r11_reuse with the labels the lines of named (the function's
+/// exception table, emitted apart from its text) name as joins too: a
+/// landing pad no jump in the text names is entered by the unwinder,
+/// with r11 as the callee left it (task #356: the label rule took such
+/// a pad for a fall through, and the xo built by an amd64 xo with it was
+/// killed building xo).
+fn x86_r11_reuse_named(text: Str, named: Str) -> Str {
   let (ls, pre) = x86_lift_dbg(text)
   var out: List[Str] = List.with_capacity(ls.len())
+  var refs = x86_local_label_refs(ls)
+  if !named.is_empty() {
+    for r in x86_local_label_refs(named.split("\n")) {
+      refs.add(r)
+    }
+  }
   var held = ""
   for (i, l) in ls.indexed() {
     let (src, dst, ok) = movq_ops(l)
@@ -2083,6 +2102,9 @@ fn x86_r11_reuse(text: Str) -> Str {
         continue
       }
       held = src
+    } else if l.starts_with(".L") && l.ends_with(":") && !refs.contains(l[0..l.len() - 1]) {
+      // a block's label nothing names: no other path joins here (task
+      // #356: each fall through block has one)
     } else if !x86_keeps_r11_slots(l) {
       held = ""
     }
@@ -2244,10 +2266,38 @@ fn x86_keeps_regs(l: Str, rs: List[Str]) -> Bool {
   true
 }
 
+/// The local labels (`.L...`) that lines other than their definitions
+/// name: a jump's target, a table's entry, a computed address.
+fn x86_local_label_refs(ls: List[Str]) -> Set[Str] {
+  var refs: Set[Str] = #{}
+  for l in ls {
+    if !l.starts_with("\t") {
+      continue
+    }
+    var at = 0
+    while let Some(k) = l[at..l.len()].find(".L") {
+      let st = at + k
+      var e = st + 2
+      // a canonical text's labels (XO_BACKEND_CACHE, fcache.xo) hold the
+      // prefix token \x01F\x01: a byte of the label (task #356)
+      while e < l.len() && (ident_byte(l.bytes()[e]) || l.bytes()[e] == 1) {
+        e += 1
+      }
+      refs.add(l[st..e])
+      at = e
+    }
+  }
+  refs
+}
+
 /// Whether line l leaves r11 and every stack slot as they were and
 /// control on the straight line (x86_r11_reuse): an instruction that
-/// names r11 only as a memory base, writes no stack slot, does not move
-/// rsp, and is no label, jump, call, return, push, or pop.
+/// names r11 only as a memory base or in a compare, writes no stack
+/// slot, does not move rsp, and is no label, unconditional jump, call,
+/// return, push, or pop. A conditional jump keeps them on its fall
+/// through, and its target starts at a label (task #356, 2026-11-18:
+/// netip's derived Ord in list_sort reloaded a spilled field after each
+/// `cmpq %r8, %r11; je`).
 fn x86_keeps_r11_slots(l: Str) -> Bool {
   if l.is_empty() || l.starts_with("\t.") {
     return true
@@ -2258,6 +2308,13 @@ fn x86_keeps_r11_slots(l: Str) -> Bool {
   let body = l[1..l.len()]
   let sp = body.find(" ") ?? body.len()
   let m = body[0..sp]
+  if m is "cmpq" | "cmpl" | "cmpw" | "cmpb" | "testq" | "testl" | "testw" | "testb" {
+    // they write only the flags
+    return true
+  }
+  if m.starts_with("j") && !m.starts_with("jmp") && !body.contains("%") {
+    return true
+  }
   if m.starts_with("j") || m.starts_with("call") || m.starts_with("ret") || m.starts_with("push") || m.starts_with("pop") || m == "leave" || m == "ud2" || m == "syscall" || m.ends_with(":") {
     // (syscall writes rcx and r11 without naming them)
     return false
