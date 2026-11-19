@@ -18,11 +18,13 @@ fn unfused(x: Float, y: Float, z: Float) -> Float {
   x * y + z
 }
 
-// A Float constant is one load from the function's constants on amd64,
-// as Go and LLVM (task #407): it took movabsq and movq into the xmm
-// register before. Recursive, so it is not inlined into main.
+// A Float constant is one load from the function's constants, as Go and
+// LLVM: on amd64 it took movabsq and movq into the xmm register before
+// (task #407), on arm64 movz, up to three movk and fmov (task #87).
+// Recursive, so it is not inlined into main.
 fn horner(x: Float, n: Int) -> Float {
   // amd64: "movsd [^ ]+\(%rip\), %xmm[0-9]+" -"movabsq \$4593671619917905920"
+  // arm64: "ldr d[0-9]+, [^\[ ]+\n" -"fmov d[0-9]+, x[0-9]+"
   if n <= 0 { x } else { horner(((x * 0.125 + 0.25) * x + 0.5) * x, n - 1) }
 }
 

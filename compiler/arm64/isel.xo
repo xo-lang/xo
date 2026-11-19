@@ -463,14 +463,18 @@ fn (var g: G) fimm(bits: Int) -> Int {
     g.kfbits[r] = bits
     return r
   }
-  let t = g.imm(bits)
-  let r = g.konst(g.def1(true, "fmov $d0, $u0", [t]))
+  // arm64: one PC-relative load of the function's constant, as Go and
+  // LLVM (task #87: movz, three movk and fmov took five instructions and a
+  // general register; gomath's log built 13 constants a call)
+  let r = g.new_vreg(true)
+  let _i = g.add(Inst{kind: K_PLAIN, text: "ldr $d0, ${g.fconst_label(bits)}", defs: [r], us: [], fl: 0})
+  g.konst(r)
   g.kfbits[r] = bits
   r
 }
 
-/// x86: the label of the 8 byte constant with bits b, emitted after the
-/// function's stubs (x86_emit_once).
+/// The label of the 8 byte constant with bits b, emitted after the
+/// function's stubs (x86_emit_once, emit_once).
 fn (var g: G) fconst_label(bits: Int) -> Str {
   if let Some(l) = g.fclabels.get(bits) {
     return l

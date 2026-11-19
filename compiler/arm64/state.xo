@@ -461,7 +461,7 @@ struct G {
   ended: Bool = false
   stubs: List[Str] = []
   nstub: Int = 0
-  /// x86: the function's Float constants, each a `.quad` after its stubs
+  /// the function's Float constants, each two `.long` words after its stubs
   /// (fimm), and their labels by bits
   fconsts: List[Str] = []
   fclabels: Map[Int, Str] = {}

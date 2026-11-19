@@ -910,6 +910,13 @@ pub fn encode_op_fix(o: Op, elf: Bool) -> Enc {
     _ => {}
   }
   if o.m == "ldr" && n == 2 {
+    // ldr Dt, label: a load from a literal within 1 MiB (a function's
+    // Float constants, task #87)
+    let (lt, lk) = rk_of(o.ops[0])
+    let (lname, lrel) = sym_of(o.ops[1])
+    if lk == RD && lrel == "" && lname.len() > 0 && lname[0] != '[' {
+      return Enc{w: 0x5c000000 | lt, fx: FX_COND19, name: lname}
+    }
     // [base, sym@TLVPPAGEOFF] (a thread local's TLV descriptor, decision
     // 0212) and [base, sym@GOTPAGEOFF]: not memory operands mem_op takes
     if let Operand.Raw(b: b) = o.ops[1] {

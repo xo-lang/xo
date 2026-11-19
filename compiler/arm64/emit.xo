@@ -474,6 +474,7 @@ fn (var g: G) emit() {
     }
   }
   b.push(g.stubs.join(""))
+  b.push(g.fconsts.join(""))
   b.push(g.leaf_pes.join(""))
   if g.m.debug_info && !g.dl_rows.is_empty() {
     let end = g.local("${g.lbl_prefix()}_dend")
