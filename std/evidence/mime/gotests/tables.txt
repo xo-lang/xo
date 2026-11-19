@@ -1,0 +1,9 @@
+# Go's mime test tables (go1.26) run through std/mime
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# Go's DecodeWord and DecodeHeader with a default WordDecoder (utf-8,
+# iso-8859-1 and us-ascii); bogus media types (Xo returns the error alone,
+# without Go's media type on ErrInvalidMediaParameter). parseMediaTypeTests
+# is built in init and formatTests holds maps, so neither is read.
+mime encodedword_test.go TestDecodeWord.tests src word
+mime encodedword_test.go TestDecodeHeader.tests src header
+mime mediatype_test.go badMediaTypeTests in media
