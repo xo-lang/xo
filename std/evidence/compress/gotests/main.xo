@@ -27,6 +27,15 @@ fn bytes_text(b: Bytes) -> Str {
   out
 }
 
+/// The bytes of a :bytes input: main keeps one that is not UTF-8 as
+/// U+FFFF, "b64:" and its base64.
+fn raw(s: Str) -> Bytes {
+  if s.starts_with("\u{FFFF}b64:") {
+    return base64.decode(s[7..s.len()]) ?? _ => b""
+  }
+  s.bytes()
+}
+
 fn out(r: Result[Bytes, compress.CompressErr]) -> Str {
   match r {
     Ok(b) => "ok ${bytes_text(b)}"
@@ -40,14 +49,14 @@ fn level(n: Int) -> compress.Level {
 
 fn crun(kind: Str, inp: List[Str]) -> Str {
   match kind {
-    "zlib" => out(compress.unzlib(bytes_of(inp[0]), dict: bytes_of(inp[1])))
+    "zlib" => out(compress.unzlib(raw(inp[0]), dict: bytes_of(inp[1])))
     "gunzip" => out(compress.gunzip(bytes_of(inp[0])))
-    "inflate" => out(compress.inflate(inp[0].bytes()))
+    "inflate" => out(compress.inflate(raw(inp[0])))
     "deflate" => "ok ${bytes_text(compress.deflate(bytes_of(inp[0]), level: level(Int.parse(inp[1]) ?? 0)))}"
     "lzw" => {
       let p = inp[0].split(";")
       let order = if p[1] == "MSB" { compress.LzwOrder.MSB } else { compress.LzwOrder.LSB }
-      out(compress.lzw_decode(inp[1].bytes(), order, Int.parse(p[2]) ?? 0))
+      out(compress.lzw_decode(raw(inp[1]), order, Int.parse(p[2]) ?? 0))
     }
     _ => "?"
   }
@@ -70,7 +79,8 @@ fn main(os: Os) ! {
     let f = line.split("\t")
     var inp: List[Str] = []
     for s in f[1..f.len()] {
-      inp.push(base64.decode(s)?.to_str() ?? "")
+      let b = base64.decode(s)?
+      inp.push(b.to_str() ?? "\u{FFFF}b64:${s}")
     }
     os.stdio.println(base64.encode(run(f[0], inp).bytes()))
   }

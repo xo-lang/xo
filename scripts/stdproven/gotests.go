@@ -148,7 +148,8 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 			} else {
 				e = fieldExpr(c, name, order)
 			}
-			if e == nil && hasDef {
+			// a default fills a field left out or nil (zlibTests' dict)
+			if hasDef && (e == nil || isNil(e)) {
 				in = append(in, def)
 				continue
 			}
@@ -328,6 +329,12 @@ func fieldExpr(c *ast.CompositeLit, field string, order []string) ast.Expr {
 }
 
 // stringLit is the value of a string literal or a + of them.
+// isNil reports whether e is the identifier nil.
+func isNil(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == "nil"
+}
+
 func stringLit(e ast.Expr) (string, bool) {
 	if v, ok := intConst(e); ok {
 		return v.ExactString(), true

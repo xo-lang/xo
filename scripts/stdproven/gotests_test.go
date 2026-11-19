@@ -11,7 +11,7 @@ import (
 // local to a test function, numbers and time's zone names, and what is
 // skipped (no literal, not UTF-8, an expression, a float with a fraction),
 // rune, bool and NAME:const inputs, NAME=DEFAULT
-// fields, "." for a table of values, and integer constant expressions
+// fields (left out or nil), "." for a table of values, and integer constant expressions
 // (task #403).
 func TestGoTableCases(t *testing.T) {
 	tests := []struct {
@@ -40,10 +40,11 @@ func TestGoTableCases(t *testing.T) {
 		// a slice of integer or rune literals joins them with commas; a
 		// name in it, or nil, is skipped
 		{"slices", "in", []string{"0 97,65536,-1", "1 "}, 2},
-		// NAME=DEFAULT fills a field a keyed element leaves out; a field
-		// present but not a literal still skips the element
-		{"opt", "in=-,out=0", []string{"0 a|0", "1 -|2"}, 1},
-		{"opt", "in", []string{"0 a"}, 2},
+		// NAME=DEFAULT fills a field a keyed element leaves out or sets
+		// to nil; a field present but not a literal still skips the
+		// element
+		{"opt", "in=-,out=0", []string{"0 a|0", "1 -|2", "3 -|3"}, 1},
+		{"opt", "in", []string{"0 a"}, 3},
 		// FIELDS "." reads a table of values; integer constant
 		// expressions fold (1 + 2 read as "12", a string +, before)
 		{"vals", ".", []string{"0 -9223372036854775808", "1 -9223372036854775807", "2 9223372036854775807", "3 20", "4 98", "6 3", "7 -1"}, 1},

@@ -52,9 +52,9 @@ func crun(kind string, in []string) string {
 		var r io.ReadCloser
 		var err error
 		if d := bytesOf(in[1]); len(d) > 0 {
-			r, err = zlib.NewReaderDict(bytes.NewReader(bytesOf(in[0])), d)
+			r, err = zlib.NewReaderDict(strings.NewReader(in[0]), d)
 		} else {
-			r, err = zlib.NewReader(bytes.NewReader(bytesOf(in[0])))
+			r, err = zlib.NewReader(strings.NewReader(in[0]))
 		}
 		if err != nil {
 			return out(nil, err)

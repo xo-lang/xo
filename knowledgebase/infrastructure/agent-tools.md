@@ -1062,7 +1062,11 @@ writes nothing); seconds a module, on the Mac. A FIELDS entry `NAME:const`
 takes a package constant (or a `|` of them) as its name for the adapters
 to map; a slice of integer or rune literals reads as its values joined
 with commas; `NAME=DEFAULT` reads as DEFAULT where a keyed element
-leaves NAME out (Go's zero value, `Comma=0`) instead of skipping it.
+leaves NAME out or sets it to `nil` (Go's zero value, `Comma=0`;
+zlibTests' `dict=`) instead of skipping it. A `:bytes` input that is not
+UTF-8 reaches an Xo adapter's main as "" unless the main keeps it
+(std/evidence/compress/gotests/main.xo passes it as U+FFFF, `b64:` and
+its base64).
 FIELDS `.` reads each element of a table of values (`[]int64{...}`)
 as itself, and integer constant expressions of literals fold. A
 conversion of a literal (`[]byte("...")`) reads as the literal and

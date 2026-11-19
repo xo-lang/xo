@@ -2,9 +2,10 @@
 # (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
 # zlib, gunzip, inflate and lzw read a whole stream (Go's readers and
 # io.ReadAll): the bytes or the error text; deflate is a Writer at the
-# level, written and closed.
-compress/zlib reader_test.go zlibTests compressed,dict zlib
+# level, written and closed. A :bytes input that is not UTF-8 reaches
+# the Xo adapter as U+FFFF, b64: and its base64 (main.xo).
+compress/zlib reader_test.go zlibTests compressed:bytes,dict= zlib
 compress/gzip gunzip_test.go gunzipTests gzip gunzip
-compress/flate inflate_test.go TestReaderTruncated.vectors input inflate
+compress/flate inflate_test.go TestReaderTruncated.vectors input:bytes inflate
 compress/flate deflate_test.go deflateTests in,level deflate
-compress/lzw reader_test.go lzwTests desc,compressed lzw
+compress/lzw reader_test.go lzwTests desc,compressed:bytes lzw

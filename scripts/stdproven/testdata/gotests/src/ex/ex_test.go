@@ -69,6 +69,7 @@ var opt = []pair{
 	{in: "a"},
 	{out: "2"},
 	{in: someVar},
+	{in: nil, out: "3"},
 }
 
 var vals = []int64{
