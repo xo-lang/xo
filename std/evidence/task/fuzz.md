@@ -1,16 +1,16 @@
 kind: fuzz
 module: task
 result: partial
-commit: 3de3db729
+commit: f547ced7d
 source: ad80318929b903120251a1ccac0703c27d3cdff228b2c975974b31d113840193
 date: 2026-11-19
 host: linux/arm64 host 3
 command: go run ./scripts/stdproven fuzz -cases 1000000 -hours 8 -batch 5000 -backends arm64,llvm -host "linux/arm64 host 3" task
-measure: TestTaskFuzz 700000 cases per backend, 2 backends (arm64,llvm), 2h42m51s in 3 shards, 0 mismatches
-seeds: 2 to 141
-ran: TestTaskFuzz=700000
-elapsed: 9770
-shards: 3
+measure: TestTaskFuzz 925000 cases per backend, 2 backends (arm64,llvm), 3h36m22s in 4 shards, 0 mismatches
+seeds: 2 to 186
+ran: TestTaskFuzz=925000
+elapsed: 12981
+shards: 4
 
 Long fuzz evidence (decision 0616): every harness that names std/task, against Go's package, with fresh seeds of 5000 cases each.
 
@@ -154,3 +154,48 @@ Long fuzz evidence (decision 0616): every harness that names std/task, against G
 - TestTaskFuzz seed 139: 5000 cases on arm64,llvm, 1m7s
 - TestTaskFuzz seed 140: 5000 cases on arm64,llvm, 1m7s
 - TestTaskFuzz seed 141: 5000 cases on arm64,llvm, 1m14s
+- TestTaskFuzz seed 142: 5000 cases on arm64,llvm, 1m21s
+- TestTaskFuzz seed 143: 5000 cases on arm64,llvm, 56s
+- TestTaskFuzz seed 144: 5000 cases on arm64,llvm, 2m2s
+- TestTaskFuzz seed 145: 5000 cases on arm64,llvm, 1m30s
+- TestTaskFuzz seed 146: 5000 cases on arm64,llvm, 1m8s
+- TestTaskFuzz seed 147: 5000 cases on arm64,llvm, 1m19s
+- TestTaskFuzz seed 148: 5000 cases on arm64,llvm, 1m5s
+- TestTaskFuzz seed 149: 5000 cases on arm64,llvm, 1m8s
+- TestTaskFuzz seed 150: 5000 cases on arm64,llvm, 1m4s
+- TestTaskFuzz seed 151: 5000 cases on arm64,llvm, 1m11s
+- TestTaskFuzz seed 152: 5000 cases on arm64,llvm, 1m13s
+- TestTaskFuzz seed 153: 5000 cases on arm64,llvm, 1m7s
+- TestTaskFuzz seed 154: 5000 cases on arm64,llvm, 1m6s
+- TestTaskFuzz seed 155: 5000 cases on arm64,llvm, 1m4s
+- TestTaskFuzz seed 156: 5000 cases on arm64,llvm, 1m6s
+- TestTaskFuzz seed 157: 5000 cases on arm64,llvm, 1m7s
+- TestTaskFuzz seed 158: 5000 cases on arm64,llvm, 1m9s
+- TestTaskFuzz seed 159: 5000 cases on arm64,llvm, 1m7s
+- TestTaskFuzz seed 160: 5000 cases on arm64,llvm, 1m7s
+- TestTaskFuzz seed 161: 5000 cases on arm64,llvm, 1m5s
+- TestTaskFuzz seed 162: 5000 cases on arm64,llvm, 1m14s
+- TestTaskFuzz seed 163: 5000 cases on arm64,llvm, 1m9s
+- TestTaskFuzz seed 164: 5000 cases on arm64,llvm, 1m11s
+- TestTaskFuzz seed 165: 5000 cases on arm64,llvm, 1m29s
+- TestTaskFuzz seed 166: 5000 cases on arm64,llvm, 1m18s
+- TestTaskFuzz seed 167: 5000 cases on arm64,llvm, 1m4s
+- TestTaskFuzz seed 168: 5000 cases on arm64,llvm, 1m16s
+- TestTaskFuzz seed 169: 5000 cases on arm64,llvm, 1m11s
+- TestTaskFuzz seed 170: 5000 cases on arm64,llvm, 1m8s
+- TestTaskFuzz seed 171: 5000 cases on arm64,llvm, 1m9s
+- TestTaskFuzz seed 172: 5000 cases on arm64,llvm, 1m26s
+- TestTaskFuzz seed 173: 5000 cases on arm64,llvm, 1m10s
+- TestTaskFuzz seed 174: 5000 cases on arm64,llvm, 1m11s
+- TestTaskFuzz seed 175: 5000 cases on arm64,llvm, 1m8s
+- TestTaskFuzz seed 176: 5000 cases on arm64,llvm, 1m11s
+- TestTaskFuzz seed 177: 5000 cases on arm64,llvm, 1m5s
+- TestTaskFuzz seed 178: 5000 cases on arm64,llvm, 1m8s
+- TestTaskFuzz seed 179: 5000 cases on arm64,llvm, 1m7s
+- TestTaskFuzz seed 180: 5000 cases on arm64,llvm, 1m7s
+- TestTaskFuzz seed 181: 5000 cases on arm64,llvm, 1m8s
+- TestTaskFuzz seed 182: 5000 cases on arm64,llvm, 1m5s
+- TestTaskFuzz seed 183: 5000 cases on arm64,llvm, 1m4s
+- TestTaskFuzz seed 184: 5000 cases on arm64,llvm, 1m12s
+- TestTaskFuzz seed 185: 5000 cases on arm64,llvm, 1m15s
+- TestTaskFuzz seed 186: 5000 cases on arm64,llvm, 1m13s
