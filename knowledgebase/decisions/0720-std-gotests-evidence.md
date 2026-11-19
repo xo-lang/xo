@@ -29,7 +29,11 @@ A new std evidence kind, `gotests`:
 - `main.xo`: an Xo adapter that calls the module.
 
 The runner reads each table from the pinned Go release's source
-(`go env GOROOT`) with go/ast. An element's inputs must be literals
+(`go env GOROOT`) with go/ast; for a port of a module outside Go's
+release (golang.org/x/net, x/text), `go/go.mod` requires that module at
+the version the port follows, and the runner reads the tables from it
+(`go list` in `go/`, the module cache) and names it in the measure line
+(2026-11-19). An element's inputs must be literals
 (strings, a `+` of strings, integers, integral floats, time's `Local` and
 `UTC`); any other element is counted as skipped. Each case goes to both
 adapters in base64. Each adapter prints its result as text (a result's

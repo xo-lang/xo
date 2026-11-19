@@ -1,0 +1,8 @@
+# Go's x/net httpproxy test tables (golang.org/x/net@v0.62.0, the version go/go.mod requires) run through std/httpproxy
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# use: whether https://HOST:80 is proxied under Go's TestUseProxy
+# no_proxy list; useall: under no_proxy "*" (TestAllNoProxy). Both
+# through ProxyFunc, as BenchmarkProxyForURL (Go's ExportUseProxy is
+# test only).
+golang.org/x/net/http/httpproxy proxy_test.go UseProxyTests host use
+golang.org/x/net/http/httpproxy proxy_test.go UseProxyTests host useall

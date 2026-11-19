@@ -1,0 +1,34 @@
+# Go's x/text unicode/norm test tables (golang.org/x/text@v0.43.0, the version go/go.mod requires) run through std/norm
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# isFORM: IsNormalString under FORM (Go's TestIsNormal and
+# TestIsNormalString tables, each under every form); FORM: String of
+# left+right under FORM (TestAppend's tables but the empty appendTestsNFD, as its runAppendTests
+# bootstraps every other form).
+golang.org/x/text/unicode/norm normalize_test.go isNormalTests input isnfc
+golang.org/x/text/unicode/norm normalize_test.go isNormalTests input isnfd
+golang.org/x/text/unicode/norm normalize_test.go isNormalTests input isnfkc
+golang.org/x/text/unicode/norm normalize_test.go isNormalTests input isnfkd
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFDTests input isnfc
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFDTests input isnfd
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFDTests input isnfkc
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFDTests input isnfkd
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFCTests input isnfc
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFCTests input isnfd
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFCTests input isnfkc
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFCTests input isnfkd
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFKXTests input isnfc
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFKXTests input isnfd
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFKXTests input isnfkc
+golang.org/x/text/unicode/norm normalize_test.go isNormalNFKXTests input isnfkd
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFC left,right nfc
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFC left,right nfd
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFC left,right nfkc
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFC left,right nfkd
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFKC left,right nfc
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFKC left,right nfd
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFKC left,right nfkc
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFKC left,right nfkd
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFKD left,right nfc
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFKD left,right nfd
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFKD left,right nfkc
+golang.org/x/text/unicode/norm normalize_test.go appendTestsNFKD left,right nfkd

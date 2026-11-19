@@ -1,0 +1,37 @@
+# Go's x/net idna test tables (golang.org/x/net@v0.62.0, the version go/go.mod requires) run through std/idna
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# aPROFILE: ToASCII under PROFILE, uPROFILE: ToUnicode, the result or
+# the error's text; every input of Go's TestIDNA and TestPunycode tables
+# through each of the four profiles both ways.
+golang.org/x/net/idna idna_test.go idnaTestCases unicode alookup
+golang.org/x/net/idna idna_test.go idnaTestCases unicode ulookup
+golang.org/x/net/idna idna_test.go idnaTestCases unicode aregistration
+golang.org/x/net/idna idna_test.go idnaTestCases unicode uregistration
+golang.org/x/net/idna idna_test.go idnaTestCases unicode adisplay
+golang.org/x/net/idna idna_test.go idnaTestCases unicode udisplay
+golang.org/x/net/idna idna_test.go idnaTestCases unicode apunycode
+golang.org/x/net/idna idna_test.go idnaTestCases unicode upunycode
+golang.org/x/net/idna idna_test.go idnaTestCases ascii alookup
+golang.org/x/net/idna idna_test.go idnaTestCases ascii ulookup
+golang.org/x/net/idna idna_test.go idnaTestCases ascii aregistration
+golang.org/x/net/idna idna_test.go idnaTestCases ascii uregistration
+golang.org/x/net/idna idna_test.go idnaTestCases ascii adisplay
+golang.org/x/net/idna idna_test.go idnaTestCases ascii udisplay
+golang.org/x/net/idna idna_test.go idnaTestCases ascii apunycode
+golang.org/x/net/idna idna_test.go idnaTestCases ascii upunycode
+golang.org/x/net/idna punycode_test.go punycodeTestCases s alookup
+golang.org/x/net/idna punycode_test.go punycodeTestCases s ulookup
+golang.org/x/net/idna punycode_test.go punycodeTestCases s aregistration
+golang.org/x/net/idna punycode_test.go punycodeTestCases s uregistration
+golang.org/x/net/idna punycode_test.go punycodeTestCases s adisplay
+golang.org/x/net/idna punycode_test.go punycodeTestCases s udisplay
+golang.org/x/net/idna punycode_test.go punycodeTestCases s apunycode
+golang.org/x/net/idna punycode_test.go punycodeTestCases s upunycode
+golang.org/x/net/idna punycode_test.go punycodeTestCases encoded alookup
+golang.org/x/net/idna punycode_test.go punycodeTestCases encoded ulookup
+golang.org/x/net/idna punycode_test.go punycodeTestCases encoded aregistration
+golang.org/x/net/idna punycode_test.go punycodeTestCases encoded uregistration
+golang.org/x/net/idna punycode_test.go punycodeTestCases encoded adisplay
+golang.org/x/net/idna punycode_test.go punycodeTestCases encoded udisplay
+golang.org/x/net/idna punycode_test.go punycodeTestCases encoded apunycode
+golang.org/x/net/idna punycode_test.go punycodeTestCases encoded upunycode

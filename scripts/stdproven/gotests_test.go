@@ -69,3 +69,16 @@ func TestGoTableCases(t *testing.T) {
 		}
 	}
 }
+
+// An adapter whose last results are "" prints empty base64 lines at the
+// end: they are cases, not trailing space (publicsuffix's etld1 errors).
+func TestAdapterLinesTrailingEmpty(t *testing.T) {
+	out := []byte("YQ==\n\n\n")
+	got, err := adapterLines("test", out, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0] != "a" || got[1] != "" || got[2] != "" {
+		t.Fatalf("got %q, want [a  ]", got)
+	}
+}

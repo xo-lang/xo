@@ -1,0 +1,47 @@
+// The Xo side of std/httpproxy's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/httpproxy's result as text, as go/main.go prints package httpproxy's.
+// Kinds use and useall over Go's x/net httpproxy UseProxyTests.
+// See scripts/stdproven/gotests.go.
+use std/httpproxy
+use std/http
+use std/base64
+
+const NO_PROXY: Str = "foobar.com, .barbaz.net, *.wildcard.io, 192.168.1.1, 192.168.1.2:81, 192.168.1.3:80, 10.0.0.0/30, 2001:db8::52:0:1, [2001:db8::52:0:2]:443, [2001:db8::52:0:3]:80, 2002:db8:a::45/64"
+
+// use_proxy is whether https://HOST:80 goes through the proxy (Go's
+// TestUseProxy through the public ProxyFunc, as its BenchmarkProxyForURL)
+fn use_proxy(no: Str, host: Str) -> Str {
+  let cfg = httpproxy.Config { http_proxy: "http://proxy.example.org", https_proxy: "https://proxy.example.org", no_proxy: no }
+  match http.parse_url("https://" + host + ":80") {
+    Ok(u) => match cfg.proxy_func()(u) {
+      Some(_) => "true"
+      None => "false"
+    }
+    Err(_) => "bad url"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "use" => use_proxy(NO_PROXY, inp[0])
+    "useall" => use_proxy("*", inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

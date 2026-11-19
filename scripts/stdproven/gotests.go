@@ -66,6 +66,9 @@ import (
 type goTable struct {
 	pkg, file, name, kind string
 	fields                []string
+	// dir is the package's source when it is not in GOROOT (a
+	// golang.org/x package the Go adapter's go.mod requires)
+	dir string
 }
 
 // goCase is one table element's inputs.
@@ -114,6 +117,9 @@ func fieldName(f string) string {
 // elements' inputs, and how many elements had an input that is no literal.
 func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 	path := filepath.Join(goroot, "src", filepath.FromSlash(t.pkg), t.file)
+	if t.dir != "" {
+		path = filepath.Join(t.dir, t.file)
+	}
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
@@ -586,9 +592,10 @@ func goCasesFile(cases []goCase) []byte {
 
 // adapterLines decodes an adapter's output: one result a case.
 func adapterLines(who string, out []byte, n int) ([]string, error) {
-	text := strings.TrimRight(string(out), "\n")
+	// only the last line's newline: a result of "" is an empty line
+	text := strings.TrimSuffix(string(out), "\n")
 	var lines []string
-	if text != "" {
+	if n > 0 || text != "" {
 		lines = strings.Split(text, "\n")
 	}
 	if len(lines) != n {
@@ -633,6 +640,28 @@ func goTests(args []string) error {
 		return fmt.Errorf("go env GOVERSION: %v", err)
 	}
 	goVersion := strings.TrimSpace(string(gv))
+	// a Go adapter with its own go.mod (go/go.mod) requires the module a
+	// port follows (golang.org/x/net for htmltok): a table's package not
+	// in GOROOT is read from that module, at the version go.mod pins
+	modDir := filepath.Join(dir, "go")
+	_, err = os.Stat(filepath.Join(modDir, "go.mod"))
+	ownMod := err == nil
+	seenMod := map[string]bool{}
+	for i, t := range tables {
+		if _, err := os.Stat(filepath.Join(goroot, "src", filepath.FromSlash(t.pkg))); err == nil || !ownMod {
+			continue
+		}
+		out, err := exec.Command("go", "list", "-C", modDir, "-f", "{{.Dir}}|{{.Module.Path}} {{.Module.Version}}", t.pkg).Output()
+		if err != nil {
+			return fmt.Errorf("go list %s in %s: %v", t.pkg, modDir, err)
+		}
+		d, m, _ := strings.Cut(strings.TrimSpace(string(out)), "|")
+		tables[i].dir = d
+		if !seenMod[m] {
+			seenMod[m] = true
+			goVersion += ", " + m
+		}
+	}
 	var cases []goCase
 	var tableLines []string
 	skipped := 0
@@ -667,7 +696,11 @@ func goTests(args []string) error {
 		return err
 	}
 	gbin := filepath.Join(tmp, "go-adapter")
-	if out, err := exec.Command("go", "build", "-o", gbin, "./"+filepath.ToSlash(filepath.Join(dir, "go"))).CombinedOutput(); err != nil {
+	build := exec.Command("go", "build", "-o", gbin, "./"+filepath.ToSlash(modDir))
+	if ownMod {
+		build = exec.Command("go", "build", "-C", modDir, "-o", gbin, ".")
+	}
+	if out, err := build.CombinedOutput(); err != nil {
 		return fmt.Errorf("go build %s/go: %v\n%s", dir, err, out)
 	}
 	gout, err := exec.Command(gbin, casesPath).Output()

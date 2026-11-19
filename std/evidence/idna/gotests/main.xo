@@ -1,0 +1,44 @@
+// The Xo side of std/idna's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/idna's result as text, as go/main.go prints package idna's.
+// Kinds aPROFILE and uPROFILE over Go's x/net idna tables.
+// See scripts/stdproven/gotests.go.
+use std/idna
+use std/base64
+
+fn show(r: Result[Str, idna.IdnaErr]) -> Str {
+  match r {
+    Ok(s) => "ok ${s}"
+    Err(e) => "error ${e}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "alookup" => show(idna.to_ascii(inp[0], idna.Profile.Lookup))
+    "ulookup" => show(idna.to_unicode(inp[0], idna.Profile.Lookup))
+    "aregistration" => show(idna.to_ascii(inp[0], idna.Profile.Registration))
+    "uregistration" => show(idna.to_unicode(inp[0], idna.Profile.Registration))
+    "adisplay" => show(idna.to_ascii(inp[0], idna.Profile.Display))
+    "udisplay" => show(idna.to_unicode(inp[0], idna.Profile.Display))
+    "apunycode" => show(idna.to_ascii(inp[0], idna.Profile.Punycode))
+    "upunycode" => show(idna.to_unicode(inp[0], idna.Profile.Punycode))
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

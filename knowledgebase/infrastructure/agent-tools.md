@@ -1085,7 +1085,12 @@ value (`.@testdata/pngsuite/{}.png`, std/evidence/png/gotests); a
 missing file is a skipped element. A table named `TestX.range` is the
 literal the first `for ... := range []T{...}` of TestX ranges over
 (`TestX.range2` the second), the form most of math/big's float tests
-use (std/evidence/big/gotests).
+use (std/evidence/big/gotests). A `gotests/go/go.mod` (with its
+go.sum) makes the Go adapter its own module: it requires the module a
+port follows (golang.org/x/net for publicsuffix, httpproxy and idna,
+x/text for norm), tables of a package outside GOROOT are read from that
+module's source, and the measure line names its version. An adapter
+result of "" is an empty line, a case (2026-11-19).
 Last verified: 2026-11-19.
 `go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N]
 [-backends B] [-host LABEL] MODULE` runs every fuzz harness that names

@@ -1,0 +1,37 @@
+// The Xo side of std/norm's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/norm's result as text, as go/main.go prints package norm's.
+// Kinds isFORM and FORM over Go's x/text norm tables.
+// See scripts/stdproven/gotests.go.
+use std/norm
+use std/base64
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "isnfc" => "${norm.is_normalized(inp[0], norm.Form.Nfc)}"
+    "nfc" => norm.normalize(inp[0] + inp[1], norm.Form.Nfc)
+    "isnfd" => "${norm.is_normalized(inp[0], norm.Form.Nfd)}"
+    "nfd" => norm.normalize(inp[0] + inp[1], norm.Form.Nfd)
+    "isnfkc" => "${norm.is_normalized(inp[0], norm.Form.Nfkc)}"
+    "nfkc" => norm.normalize(inp[0] + inp[1], norm.Form.Nfkc)
+    "isnfkd" => "${norm.is_normalized(inp[0], norm.Form.Nfkd)}"
+    "nfkd" => norm.normalize(inp[0] + inp[1], norm.Form.Nfkd)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

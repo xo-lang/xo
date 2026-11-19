@@ -1,0 +1,6 @@
+# Go's x/net publicsuffix test tables (golang.org/x/net@v0.62.0, the version go/go.mod requires) run through std/publicsuffix
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# ps: PublicSuffix's suffix and ICANN flag; etld1: EffectiveTLDPlusOne,
+# "" on an error (Go's TestPublicSuffix and TestEffectiveTLDPlusOne).
+golang.org/x/net/publicsuffix list_test.go publicSuffixTestCases domain ps
+golang.org/x/net/publicsuffix list_test.go eTLDPlusOneTestCases domain etld1
