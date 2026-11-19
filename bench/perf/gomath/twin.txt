@@ -1,0 +1,11 @@
+# twincheck: gomath's workloads (the same names on both sides).
+- - none
+- - erf
+- - erfc
+- - erfinv
+- - erfcinv
+- - gamma
+- - lgamma
+- - next_after
+- - remainder
+- - acosh

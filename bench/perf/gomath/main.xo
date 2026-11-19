@@ -1,0 +1,101 @@
+// Float erf, erfc, erfinv, erfcinv, gamma, lgamma, next_after, remainder
+// and acosh workloads against Go's math package (the twin is twin.go.txt):
+// the arguments sweep each function's domain (tiny, ordinary, large and
+// the branch points of Go's polynomial ranges), so every range of the
+// algorithms runs. Decision 0287: both sides compute Go's portable
+// algorithms, so the checksum (the sum of each result's bits shifted right
+// by 32) is the same line the Go twin prints on linux/amd64. The workload is
+// picked once, outside the loop.
+// Usage: gomath <workload>; prints "<workload> <checksum>".
+
+const N = 2000000
+
+fn arg(i: Int, lo: Float, hi: Float) -> Float {
+  lo + (hi - lo) * Float(i % 10007) / 10007.0
+}
+
+fn erf_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, -6.0, 6.0).erf().to_bits() >> 32 }
+  n
+}
+
+fn erfc_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, -6.0, 28.0).erfc().to_bits() >> 32 }
+  n
+}
+
+fn erfinv_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, -0.9999, 0.9999).erfinv().to_bits() >> 32 }
+  n
+}
+
+fn erfcinv_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, 0.0001, 1.9999).erfcinv().to_bits() >> 32 }
+  n
+}
+
+fn gamma_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, -30.5, 170.0).gamma().to_bits() >> 32 }
+  n
+}
+
+fn lgamma_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    let (l, s) = arg(i, -30.5, 1000.0).lgamma()
+    n += (l.to_bits() >> 32) + s
+  }
+  n
+}
+
+fn next_after_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    let x = arg(i, -1000.0, 1000.0)
+    n += x.next_after(if i % 2 == 0 { Float.inf } else { -Float.inf }).to_bits() >> 32
+  }
+  n
+}
+
+fn remainder_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, -1.0e6, 1.0e6).remainder(arg(i * 7, 0.5, 300.0)).to_bits() >> 32 }
+  n
+}
+
+fn acosh_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, 1.0, 1.0e6).acosh().to_bits() >> 32 }
+  n
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = if args.len() > 0 { args[0] } else { "none" }
+  var n = 0
+  if w == "erf" {
+    n = erf_all()
+  } else if w == "erfc" {
+    n = erfc_all()
+  } else if w == "erfinv" {
+    n = erfinv_all()
+  } else if w == "erfcinv" {
+    n = erfcinv_all()
+  } else if w == "gamma" {
+    n = gamma_all()
+  } else if w == "lgamma" {
+    n = lgamma_all()
+  } else if w == "next_after" {
+    n = next_after_all()
+  } else if w == "remainder" {
+    n = remainder_all()
+  } else if w == "acosh" {
+    n = acosh_all()
+  }
+  os.stdio.println("${w} ${n}")
+}

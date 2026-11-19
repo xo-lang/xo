@@ -1,0 +1,72 @@
+// The Go twin of bench/perf/gomath/main.xo: the same arguments and loop
+// counts through math.Erf, Erfc, Erfinv, Erfcinv, Gamma, Lgamma, Nextafter,
+// Remainder and Acosh, printing the same "<workload> <checksum>" line. It is
+// a .txt so the Go tool does not build it as part of the repository; copy it
+// out and `go build` it.
+package main
+
+import (
+	"fmt"
+	"math"
+	"os"
+)
+
+const n = 2000000
+
+func arg(i int, lo, hi float64) float64 {
+	return lo + (hi-lo)*float64(i%10007)/10007.0
+}
+
+func b(f float64) int { return int(int64(math.Float64bits(f)) >> 32) }
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "erf":
+		for i := 0; i < n; i++ {
+			sum += b(math.Erf(arg(i, -6, 6)))
+		}
+	case "erfc":
+		for i := 0; i < n; i++ {
+			sum += b(math.Erfc(arg(i, -6, 28)))
+		}
+	case "erfinv":
+		for i := 0; i < n; i++ {
+			sum += b(math.Erfinv(arg(i, -0.9999, 0.9999)))
+		}
+	case "erfcinv":
+		for i := 0; i < n; i++ {
+			sum += b(math.Erfcinv(arg(i, 0.0001, 1.9999)))
+		}
+	case "gamma":
+		for i := 0; i < n; i++ {
+			sum += b(math.Gamma(arg(i, -30.5, 170)))
+		}
+	case "lgamma":
+		for i := 0; i < n; i++ {
+			l, s := math.Lgamma(arg(i, -30.5, 1000))
+			sum += b(l) + s
+		}
+	case "next_after":
+		for i := 0; i < n; i++ {
+			y := math.Inf(1)
+			if i%2 != 0 {
+				y = math.Inf(-1)
+			}
+			sum += b(math.Nextafter(arg(i, -1000, 1000), y))
+		}
+	case "remainder":
+		for i := 0; i < n; i++ {
+			sum += b(math.Remainder(arg(i, -1e6, 1e6), arg(i*7, 0.5, 300)))
+		}
+	case "acosh":
+		for i := 0; i < n; i++ {
+			sum += b(math.Acosh(arg(i, 1, 1e6)))
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}
