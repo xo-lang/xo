@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (compiler, linux/amd64 and darwin/amd64; task #407): a Float constant is one `movsd` load from the function's constants, as Go and LLVM do, instead of `movabsq` into a general register and `movq` into the xmm register. `xo bench --ab` on the linux/amd64 host: bench/perf/gomath gamma 0.963 of the time (better), erfinv 0.512.
 - Perf (std/crypto; task #271): ChaCha20 without Poly1305 on x86-64 with AVX2 runs eight blocks at a time, about 3.2 times faster on the linux/amd64 host.
 - Perf (compiler, linux/amd64 and darwin/amd64; task #407): Floats live across a call stay in xmm registers, saved before the call and loaded after it, instead of a stack slot for their whole range (x86-64 has no callee saved xmm register), and an int to Float conversion no longer waits for its register's last writer. `xo bench --ab` on the linux/amd64 host: bench/perf/gomath remainder 0.979 of the time (better), erf 0.965; acosh runs in about 28 ms (was 85 to 102, best of 7).
 - Perf (std/crypto; task #271): ChaCha20-Poly1305 seal and open of messages up to 192 bytes on x86-64 allocate only the result and run the 64 byte case as two ChaCha20 blocks, about 19% faster on the linux/amd64 host.

@@ -18,6 +18,14 @@ fn unfused(x: Float, y: Float, z: Float) -> Float {
   x * y + z
 }
 
+// A Float constant is one load from the function's constants on amd64,
+// as Go and LLVM (task #407): it took movabsq and movq into the xmm
+// register before. Recursive, so it is not inlined into main.
+fn horner(x: Float, n: Int) -> Float {
+  // amd64: "movsd [^ ]+\(%rip\), %xmm[0-9]+" -"movabsq \$4593671619917905920"
+  if n <= 0 { x } else { horner(((x * 0.125 + 0.25) * x + 0.5) * x, n - 1) }
+}
+
 fn main(os: Os) {
   // cvtsi2sd writes only the low lane of its xmm destination, so it waits
   // for the register's last writer: the destination is zeroed first, as
@@ -28,7 +36,7 @@ fn main(os: Os) {
   for i in 0..100 {
     t = t + Float(i) / 3.0
   }
-  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)} ${t}")
+  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)} ${t} ${horner(0.75, 3)}")
 }
 
 // Float.fma's body uses FMA3 when the CPU has it (decision 0385 stage 3).
