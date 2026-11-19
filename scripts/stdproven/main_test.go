@@ -97,7 +97,7 @@ func TestPreludeHash(t *testing.T) {
 // TestPerfOwner: a bench/perf directory is the longest std module's its
 // name starts with, or the one perfOwners names.
 func TestPerfOwner(t *testing.T) {
-	for dir, want := range map[string]string{"html": "html", "htmlparse": "htmlparse", "htmltok": "htmltok", "jsontoken": "json", "timeformat-cache": "time", "url": "url", "aesgcm": "crypto", "ed25519": "crypto", "sort": "prelude", "strsplit": "prelude", "bytessearch": "prelude"} {
+	for dir, want := range map[string]string{"html": "html", "htmlparse": "htmlparse", "htmltok": "htmltok", "jsontoken": "json", "timeformat-cache": "time", "url": "url", "aesgcm": "crypto", "ed25519": "crypto", "sort": "prelude", "strsplit": "prelude", "gomath": "prelude", "bytessearch": "prelude"} {
 		if got := perfOwner(dir); got != want {
 			t.Errorf("perfOwner(%q) = %q, want %q", dir, got, want)
 		}

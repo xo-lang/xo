@@ -24,8 +24,21 @@
 //   main [MINUTES (30)] [TASKS (16)]
 
 /// The test file with TASKS and LONG filled in.
-fn test_file(tasks: Int, long: Int) -> Str {
-  TEST.replace("@TEST@", "test").replace("@TASKS@", "${tasks}").replace("@LONG@", "${long}")
+fn rss_kib(os: Os) -> Int {
+  // stdproven sets XO_STRESS_CHECK=1 for the --check=all run, whose leak
+  // report judges memory there: the resident set is not sampled
+  if (os.env.get("XO_STRESS_CHECK") ?? "") == "1" { return 0 }
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn test_file(tasks: Int, long: Int, mem: Bool) -> Str {
+  TEST.replace("@TEST@", "test").replace("@TASKS@", "${tasks}").replace("@LONG@", "${long}").replace("@MEM@", "${mem}")
 }
 
 /// Runs the test file in dir with xo: its wall time in milliseconds.
@@ -50,8 +63,11 @@ fn main(os: Os) ! {
   let dir = "${temp_dir(os.env)}/xo-testing-stress-${os.proc.pid()}"
   os.fs.create_dir_all(dir)?
   let file = "${dir}/fakes_test.xo"
+  // the memory check runs where rss_kib reads a resident set: not under
+  // XO_STRESS_CHECK (the leak report judges memory there)
+  let mem = rss_kib(os) > 0
   var long = 1020
-  os.fs.write(file, test_file(tasks, long).bytes())?
+  os.fs.write(file, test_file(tasks, long, mem).bytes())?
   // the first run builds the test: the second times 1020 rounds
   let r1 = run(os, xo, dir, "first", 10)
   let r2 = if r1.is_ok() { run(os, xo, dir, "timing", 10) } else { r1 }
@@ -60,7 +76,7 @@ fn main(os: Os) ! {
   if r.is_ok() && minutes > 0 {
     long = Int(Float(1020) * Float(minutes * 60000) / Float(if ms > 0 { ms } else { 1 }))
     long = (long / 30 + 1) * 30
-    os.fs.write(file, test_file(tasks, long).bytes())?
+    os.fs.write(file, test_file(tasks, long, mem).bytes())?
     let r3 = run(os, xo, dir, "long", minutes * 2 + 10)
     ms = r3.ok() ?? 0
     r = r3.map(fn(_m: Int) {})
@@ -76,6 +92,7 @@ const TEST: Str = r#"// std/testing stress round, written by std/evidence/testin
 const TASKS: Int = @TASKS@
 const ROUNDS: Int = 400
 const LONG: Int = @LONG@
+const MEM: Bool = @MEM@
 
 /// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
 fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
@@ -224,7 +241,7 @@ fn median(xs: List[Int], from: Int, to: Int) -> Int {
   let mark = median(rss, 15, 18)
   let last = median(rss, 27, 30)
   let mb = fn(b: Int) -> Int { b / 1048576 }
-  if last - mark > mark / 10 && last - mark > 4 * 1048576 {
+  if MEM && last - mark > mark / 10 && last - mark > 4 * 1048576 {
     fault("MEMORY ${mb(mark)} MB half way, ${mb(last)} MB at the end")
   }
   expect(ops) >= LONG * TASKS * 3
