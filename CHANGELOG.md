@@ -9,6 +9,9 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (std/tls; task #384): a TLS 1.2 CBC record's MAC is computed and read in constant time whatever its padding (Lucky13); a CBC record's check timed the padding length before, as Go's does. Affected: 0.51.1 and earlier.
+- Security (std/tls; task #384, GO-2026-4337): a server that requires a client certificate no longer resumes a session ticket sealed by a configuration without client authentication (the client skipped the certificate). Affected: 0.51.1 and earlier.
+- Fix (std/tls, std/http; task #384): a TLS 1.3 server takes a client Certificate message of up to 262144 bytes, as Go; it refused one over 65536.
 - Security (std/tls, std/http; task #384, GO-2026-4340): a TLS 1.3 server refuses a ClientHello record that carries another handshake message after the ClientHello (unexpected_message, as Go), which it read as if under the client's handshake keys. Affected: 0.51.1 and earlier.
 - Security (std/tls, std/http; task #384, GO-2025-4008): a server's "unsupported application protocols" error quotes the client's ALPN names as Go's %q (control and invalid bytes escaped); the names were put into the error text unescaped, so a client could write newlines into server logs. Affected: 0.51.1 and earlier.
 - Perf: Poly1305 (std/crypto, ChaCha20-Poly1305) adds its carries with one adc on x86-64: 0.74 of the time before, below Go's.

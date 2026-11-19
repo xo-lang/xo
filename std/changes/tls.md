@@ -1,5 +1,54 @@
 # std/tls changes
 
+## 2026-11-18: security: TLS 1.2 CBC records are checked in constant time (Lucky13)
+
+- Kind: security
+- Commit: this commit
+- Found by: the std/tls review's constant time check (task #384, decision 0616 section 3)
+- Go reference: crypto/tls conn.go halfConn.decrypt and tls10MAC (Go's own protection is partial); BoringSSL EVP_tls_cbc_digest_record
+- Test: std/native/llrt/tls12_test.xo "the constant time CBC MAC and its read match mac_cbc" and the CBC dudect test
+- Shipped in: not yet released
+
+A TLS 1.2 connection with a CBC suite (ECDHE_*_AES_*_CBC_SHA) hashed
+the record's MAC with one SHA-1 block more or fewer depending on the
+padding's length, and read the received MAC at an offset set by the
+padding, as Go does. dudect saw the padding length (|t| 4.8 at 100000
+measurements on arm64, 11.1 on LLVM). The MAC is now hashed over every
+block a valid padding allows, the state kept by masks at the block the
+message ends in, and the received MAC read by masks over the last 276
+bytes: every pair of padding and MAC classes now stays below |t| 4.5.
+Records with a CBC suite cost more to open (about the bytes of 5 extra
+blocks per record).
+
+## 2026-11-18: security: session tickets no longer skip a required client certificate
+
+- Kind: security
+- Commit: this commit
+- Found by: the std/tls CVE sweep (task #384, decision 0616)
+- Go reference: GO-2026-4337 (crypto/tls checkForResumption, needClientCerts && !sessionHasClientCerts)
+- Test: std/native/llrt/tls13srv_test.xo and tls12srv_test.xo "resumes only where no client certificate is required"
+- Shipped in: not yet released
+
+A server whose client_auth is RequireAnyClientCert or
+RequireAndVerifyClientCert resumed a session from a ticket sealed with
+the same keys by a configuration without client authentication (one from
+get_config_for_client, or one before client_auth was set), so the client
+connected without a certificate. Tickets carry no client certificates, so
+such a server now runs the full handshake, as Go does.
+
+## 2026-11-18: fix: a TLS 1.3 server takes a client Certificate message up to 262144 bytes, as Go
+
+- Kind: fix
+- Commit: this commit
+- Found by: xo-lang-3 (task #384, checking GO-2023-2045's limits for decision 0616's review)
+- Go reference: crypto/tls conn.go readHandshake (maxHandshakeCertificateMsg), quic.go QUICConn.HandleData (maxHandshake after the handshake)
+- Test: std/native/llrt tls13srv_test.xo (a client Certificate may be 262144 bytes, other messages 65536)
+- Shipped in: not yet released
+
+The TLS 1.3 server held every handshake message to 65536 bytes, so a client certificate chain between 64 and 256 KiB
+failed with "exceeds maximum of 65536 bytes" where Go accepts it (the TLS 1.2 server and both clients already had
+Go's Certificate limit). QUIC messages after the handshake keep the 65536 limit of every type, as Go.
+
 ## 2026-11-18: security: a TLS 1.3 server refuses handshake bytes after the ClientHello in its record before it changes read keys
 
 - Kind: security

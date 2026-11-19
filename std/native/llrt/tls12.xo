@@ -508,6 +508,77 @@ fn mac_cbc(k: Keys, hdr3: Bytes, n: Int, data: Bytes, extra: Bytes) -> Bytes {
   res
 }
 
+/// mac_cbc of dec[0..n] in a time that depends on dec's length only (n
+/// comes from the padding, so it is secret; Lucky13, AlFardan and
+/// Paterson 2013): the blocks every possible n shares hashed as usual,
+/// then each block a message could end in built with masks (its data,
+/// 0x80, zeros, and in the block n ends in the bit length) and hashed,
+/// keeping the state after the block n ends in (BoringSSL's
+/// EVP_tls_cbc_digest_record). n is from 0 to dec.len() - 21.
+fn mac_cbc_ct(k: Keys, hdr3: Bytes, n: Int, dec: Bytes) -> Bytes {
+  let m = sha1.hmac(k.mac)
+  let s = asn1.cat([u64(k.seq), hdr3, u16(n), dec])
+  // the message after the inner pad: 13 header bytes, then n
+  let l = 13 + n
+  let low = dec.len() - 20 - 256
+  let min_l = 13 + (if low > 0 { low } else { 0 })
+  let max_l = 13 + dec.len() - 21
+  let first = min_l.shr_logical(6)
+  var h = m.inner
+  h.write(s[0..64 * first])
+  let (st0, _held, _total) = h.parts()
+  var st = st0
+  var out = [st[0], st[1], st[2], st[3], st[4]]
+  // the block holding the bit length, and the length (after the pad)
+  let end = (l + 8).shr_logical(6)
+  let bits = (64 + l).wrapping_shl(3)
+  let last = (max_l + 8).shr_logical(6)
+  var j = first
+  while j <= last {
+    let em = ct.mask_eq(j, end)
+    var blk = rt.rs_with_cap(64)
+    for b in 0..64 {
+      let pos = 64 * j + b
+      let raw = if pos < s.len() { Int(s[pos]) } else { 0 }
+      var v = (raw & ct.mask_lt(pos, l)) | (0x80 & ct.mask_eq(pos, l))
+      if b >= 56 {
+        v = v | (bits.shr_logical(8 * (63 - b)) & 255 & em)
+      }
+      blk = rt.rs_push_byte(blk, v)
+    }
+    sha1.compress_block(st, blk.bytes())
+    for w in 0..5 {
+      out[w] = ct.pick(em, st[w], out[w])
+    }
+    j += 1
+  }
+  var d = rt.rs_with_cap(20)
+  for w in 0..5 {
+    for i in 0..4 {
+      d = rt.rs_push_byte(d, out[w].shr_logical(8 * (3 - i)) & 255)
+    }
+  }
+  m.outer(d.bytes())
+}
+
+/// The 20 bytes of dec at n in a time that depends on dec's length only:
+/// every byte where they can be read, each kept by a mask.
+fn mac_at(dec: Bytes, n: Int) -> Bytes {
+  let lo0 = dec.len() - 20 - 256
+  let lo = if lo0 > 0 { lo0 } else { 0 }
+  var r = rt.rs_with_cap(20)
+  for j in 0..20 {
+    var acc = 0
+    var p = lo
+    while p < dec.len() {
+      acc = acc | (Int(dec[p]) & ct.mask_eq(p, n + j))
+      p += 1
+    }
+    r = rt.rs_push_byte(r, acc & 255)
+  }
+  r.bytes()
+}
+
 /// A record's body: the explicit IV, then data, its MAC, and the padding
 /// (each byte the padding's length less one) encrypted.
 fn seal_cbc(k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
@@ -553,7 +624,8 @@ pub fn extract_padding(p: Bytes) -> (Int, Int) {
 /// that is not whole blocks or too short is bad_record_mac; otherwise
 /// decrypted, the padding read in constant time, and the MAC computed
 /// over a constant amount of data; bad padding and a bad MAC are the
-/// same failure.
+/// same failure. The MAC is computed and read in constant time
+/// (mac_cbc_ct, mac_at), which Go's leaves to its extra hashing.
 fn open_cbc(k: Keys, hdr: Bytes, body: Bytes) -> Inner {
   // an explicit IV, then at least the MAC and a padding byte, whole blocks
   if body.len() % 16 != 0 || body.len() < 16 + 32 {
@@ -566,8 +638,8 @@ fn open_cbc(k: Keys, hdr: Bytes, body: Bytes) -> Inner {
   let (remove, good) = extract_padding(dec)
   var n = dec.len() - 20 - remove
   n = ct.pick(ct.mask_bit(n.shr_logical(63)), 0, n)
-  let remote = dec[n..n + 20]
-  let local = mac_cbc(k, hdr[0..3], n, dec[0..n], dec[n + 20..dec.len()])
+  let remote = mac_at(dec, n)
+  let local = mac_cbc_ct(k, hdr[0..3], n, dec)
   let ok = (if ct.bytes_equal(local, remote) { 1 } else { 0 }) & good
   if ok != 1 {
     return Inner{ct: -1, data: b""}

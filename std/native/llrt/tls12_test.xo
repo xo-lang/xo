@@ -1,7 +1,10 @@
 // Tests of tls12.xo's record protection: `xo test
 // --std-module=native/llrt/tls12`, run by internal/stdtest.
 
+use native/llrt/asn1
 use native/llrt/raw
+use native/rt
+use std/testing
 use native/llrt/x509cert as x509
 
 fn pattern(n: Int) -> Bytes {
@@ -61,4 +64,231 @@ test "a peer RSA key over 8192 bits is too large for TLS, 8192 is not (Go's chec
   expect(big.err) == ""
   expect(x509.rsa_too_large(ok.cert)) == false
   expect(x509.rsa_too_large(big.cert)) == true
+}
+
+// ---------------------------------------------------------------------------
+// The timing of a CBC record's check (decision 0616 checklist item 3, the
+// std/tls review; Lucky13, AlFardan and Paterson 2013): open_cbc, Go's
+// halfConn.decrypt for CBC, on records of one length (1024 bytes after
+// the header) whose padding and MAC differ: good padding of 1 byte or of
+// 256, a bad MAC, or bad padding. Dudect's method, as rsa_test.xo (its
+// notes on the pool layout and the clock's step apply): the classes in
+// alternating runs of 4 records (a 4 KB run each), measured interleaved
+// in a random order, Welch's t-test on the times and on the times below
+// percentiles of a warm-up sample. Pass: every |t| < 4.5, and the early
+// exit control over the same records must exceed it. `xo test --real`,
+// XO_DUDECT measurements a pair (default 20000; 10^6 for the evidence),
+// XO_DUDECT_OUT the file for the result lines.
+
+const CBC_LEN: Int = 1024
+
+struct CbcDud {
+  x: Int
+}
+
+fn (var d: CbcDud) next() -> Int {
+  var x = d.x
+  x = x ^ x.wrapping_shl(13)
+  x = x ^ x.shr_logical(7)
+  x = x ^ x.wrapping_shl(17)
+  d.x = x
+  x
+}
+
+struct CbcStat {
+  n: List[Int]
+  mean: List[Float]
+  m2: List[Float]
+}
+
+fn (var s: CbcStat) add(c: Int, x: Float) {
+  s.n[c] += 1
+  let d = x - s.mean[c]
+  s.mean[c] += d / Float(s.n[c])
+  s.m2[c] += d * (x - s.mean[c])
+}
+
+fn (s: CbcStat) t() -> Float {
+  if s.n[0] < 2 || s.n[1] < 2 {
+    return 0.0
+  }
+  let v0 = s.m2[0] / Float(s.n[0] - 1)
+  let v1 = s.m2[1] / Float(s.n[1] - 1)
+  let se = (v0 / Float(s.n[0]) + v1 / Float(s.n[1])).sqrt()
+  if se == 0.0 {
+    return if s.mean[0] == s.mean[1] { 0.0 } else { 1.0e9 }
+  }
+  (s.mean[0] - s.mean[1]) / se
+}
+
+fn cbc_keys() -> Keys {
+  direction(ECDHE_ECDSA_AES128_CBC_SHA, [pattern(16), pattern(16), b"", b"", pattern(20), pattern(20)], true, b"")
+}
+
+/// A record body of class name: "ok1" (1 byte of padding), "ok256" (256),
+/// "badmac" (1, the MAC's last byte flipped), "badpad" (256, one padding
+/// byte wrong); the data differs per record i.
+fn cbc_record(k: Keys, name: Str, i: Int) -> Bytes {
+  let pad = if name == "ok1" || name == "badmac" { 1 } else { 256 }
+  let plain_len = CBC_LEN - 16
+  let n = plain_len - 20 - pad
+  var data = BytesBuilder.new()
+  for j in 0..n {
+    data.write_byte(UInt8((i * 131 + j * 7) & 255))
+  }
+  let d = data.freeze()
+  var mac = mac_cbc(k, b"\x17\x03\x03", n, d, b"")
+  if name == "badmac" {
+    mac = asn1.cat([mac[0..19], u8(Int(mac[19]) ^ 1)])
+  }
+  var padding = fill(pad - 1, pad)
+  if name == "badpad" {
+    padding = asn1.cat([padding[0..100], u8(0), padding[101..pad]])
+  }
+  let iv = pattern(16)
+  let c = k.cbc ?? fault("cbc")
+  cat2(iv, c.cbc_encrypt(iv, asn1.cat([d, mac, padding])))
+}
+
+fn cbc_leaky(a: Bytes, b: Bytes) -> Int {
+  for i in 0..a.len() {
+    if a[i] != b[i] {
+      return 0
+    }
+  }
+  -1
+}
+
+fn cbc_dudect(os: testing.TestOs, a: Str, b: Str, n: Int) -> Float {
+  let clock = os.clock
+  var d = CbcDud{x: 0x2545F4914F6CDD1D}
+  let k = cbc_keys()
+  let hdr = asn1.cat([b"\x17\x03\x03", u16(CBC_LEN)])
+  let control = cbc_record(k, "ok1", 0)
+  var recs: List[Bytes] = []
+  for s in 0..128 {
+    // runs of 4: slots 0-3 class a, 4-7 class b, ...
+    let name = if (s / 4) & 1 == 0 { a } else { b }
+    let r = if name == "control_early" { asn1.cat([u8(Int(control[0]) ^ 1), control[1..CBC_LEN]]) } else if name == "control_late" { asn1.cat([control[0..CBC_LEN - 1], u8(Int(control[CBC_LEN - 1]) ^ 1)]) } else { cbc_record(k, name, s) }
+    recs.push(r)
+  }
+  var pool = rt.rs_with_cap(128 * CBC_LEN)
+  for r in recs {
+    pool = rt.rs_append_bytes(pool, r, 0, r.len(), 0)
+  }
+  let all = pool.bytes()
+  let ctrl = a.starts_with("control")
+  let warm = 5000
+  var sample: List[Float] = []
+  let pcts = [1.0, 0.99, 0.95, 0.9, 0.75, 0.5]
+  var thr: List[Float] = []
+  var stats: List[CbcStat] = []
+  for _ in pcts {
+    stats.push(CbcStat{n: [0, 0], mean: [0.0, 0.0], m2: [0.0, 0.0]})
+  }
+  var sink = 0
+  for i in 0..warm + n {
+    let r = d.next()
+    let c = r & 1
+    let j = r.shr_logical(8) & 63
+    let slot = (j / 4) * 8 + c * 4 + j % 4
+    let body = all[slot * CBC_LEN..slot * CBC_LEN + CBC_LEN]
+    let t0 = clock.now()
+    if ctrl {
+      for _ in 0..8 {
+        sink = sink ^ cbc_leaky(body, control)
+      }
+    } else {
+      let x = open_cbc(k, hdr, body)
+      sink = sink ^ x.ct
+    }
+    let dt = Float(clock.since(t0).nanos())
+    if i < warm {
+      sample.push(dt)
+      if i == warm - 1 {
+        let s = sample.sort()
+        for p in pcts {
+          thr.push(if p >= 1.0 { 1.0e18 } else { s[Int(p * Float(warm))] })
+        }
+      }
+      continue
+    }
+    for q in 0..pcts.len() {
+      if dt < thr[q] {
+        stats[q].add(c, dt)
+      }
+    }
+  }
+  var worst = 0.0
+  for q in 0..pcts.len() {
+    let t = stats[q].t()
+    if t.is_nan() {
+      return 1.0e9
+    }
+    if t.abs() > worst {
+      worst = t.abs()
+    }
+  }
+  if sink == 0x7fffffff {
+    fault("sink")
+  }
+  worst
+}
+
+test "the constant time CBC MAC and its read match mac_cbc and a slice for every length the padding allows" {
+  let k = cbc_keys()
+  for size in [32, 48, 64, 80, 128, 272, 288, 300, 304, 1024] {
+    let dec = pattern(size)
+    var n = size - 20 - 256
+    if n < 0 {
+      n = 0
+    }
+    while n <= size - 21 {
+      expect((size, n, mac_cbc_ct(k, b"\x17\x03\x03", n, dec))) == (size, n, mac_cbc(k, b"\x17\x03\x03", n, dec[0..n], b""))
+      expect((size, n, mac_at(dec, n))) == (size, n, dec[n..n + 20])
+      n += 1
+    }
+  }
+}
+
+test "the CBC timing classes are what they say: ok opens, badmac and badpad do not" {
+  let k = cbc_keys()
+  let hdr = asn1.cat([b"\x17\x03\x03", u16(CBC_LEN)])
+  for (name, ct) in [("ok1", 23), ("ok256", 23), ("badmac", -1), ("badpad", -1)] {
+    for i in 0..4 {
+      let b = cbc_record(k, name, i)
+      expect(b.len()) == CBC_LEN
+      expect((name, open_cbc(k, hdr, b).ct)) == (name, ct)
+    }
+  }
+}
+
+test "dudect: a CBC record's check takes the same time whatever its padding and MAC, and the early exit control is seen" uses clock, env, fs {
+  let n = Int.parse(os.env.get("XO_DUDECT") ?? "") ?? 20000
+  var bad: List[Str] = []
+  var lines: List[Str] = []
+  for (a, b, leak) in [
+    ("ok1", "ok256", false),
+    ("ok1", "badmac", false),
+    ("ok256", "badpad", false),
+    ("badmac", "badpad", false),
+    ("ok1", "badpad", false),
+    ("ok1", "ok1", false),
+    ("badpad", "badpad", false),
+    ("control_early", "control_late", true),
+  ] {
+    let t = cbc_dudect(os, a, b, n)
+    let ok = if leak { t >= 4.5 } else { t < 4.5 }
+    lines.push("${a} vs ${b}: ${n} measurements, max |t| ${t}, ${if ok { "pass" } else { "FAIL" }}${if leak { " (control: must exceed 4.5)" } else { "" }}")
+    if !ok {
+      bad.push("${a} vs ${b}")
+    }
+  }
+  let out = os.env.get("XO_DUDECT_OUT") ?? ""
+  if !out.is_empty() {
+    os.fs.write(out, (lines.join("\n") + "\n").bytes())?
+  }
+  if !bad.is_empty() {
+    fault("${bad.len()} pairs failed:\n${lines.join("\n")}")
+  }
 }

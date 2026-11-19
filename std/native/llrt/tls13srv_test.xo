@@ -4,8 +4,10 @@
 
 use native/llrt/asn1
 use native/llrt/tls13
+use native/llrt/tlscache
 use native/llrt/tlsech
 use native/llrt/tlsrec
+use native/llrt/tlsticket
 use native/llrt/x509cert as x509
 use native/llrt/x25519
 
@@ -295,4 +297,93 @@ test "a handshake message in the ClientHello's record past the ClientHello is re
   let body = asn1.cat([first[5..first.len()], tls13.message(20, tls13.zeros(32))])
   feed(s, asn1.cat([b"\x16\x03\x01", tls13.u16(body.len()), body]))
   expect((s.alert, s.err)) == (ALERT_UNEXPECTED_MESSAGE, "tls: handshake buffer not empty before setting read traffic secret")
+}
+
+/// The server's error after these handshake bytes (no record layer).
+fn hs_err(vers: Bool, quic_done: Bool, data: Bytes) -> Str {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  var cf = conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed"))
+  cf.quic = quic_done
+  var s = server(cf)
+  s.vers = vers
+  if quic_done {
+    s.state = DONE
+  }
+  hs_bytes(s, data)
+  s.err
+}
+
+test "a client Certificate may be 262144 bytes, other messages 65536, and every QUIC message after the handshake 65536 (Go's maxHandshakeCertificateMsg; GO-2023-2045)" {
+  let big = "tls: handshake message of length 262145 bytes exceeds maximum of 262144 bytes"
+  // a Certificate after the ClientHello waits for its 70000 bytes
+  expect(hs_err(true, false, b"\x0b\x01\x11\x70")) == ""
+  expect(hs_err(true, false, b"\x0b\x04\x00\x01")) == big
+  // other types, and a Certificate before the version is known
+  expect(hs_err(true, false, b"\x0f\x01\x00\x01")) == "tls: handshake message of length 65537 bytes exceeds maximum of 65536 bytes"
+  expect(hs_err(false, false, b"\x0b\x01\x00\x01")) == "tls: handshake message of length 65537 bytes exceeds maximum of 65536 bytes"
+  // QUIC after the handshake (Go's QUICConn.HandleData)
+  expect(hs_err(true, true, b"\x0b\x01\x00\x01")) == "tls: handshake message of length 65537 bytes exceeds maximum of 65536 bytes"
+  // an incomplete message is kept, not read (GO-2023-2044)
+  expect(hs_err(true, true, b"\x04\x00\x00")) == ""
+}
+
+test "a ticket resumes only where no client certificate is required: tickets carry none (Go's checkForResumption needClientCerts; GO-2026-4337)" {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  let k = tlsticket.key(b"ticket seed", 1800000000)
+  var cf = conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed"))
+  cf.ticket_keys = [k]
+  cf.now = 1800000000
+  var a = server(cf)
+  a.suite = tlsrec.SUITE_AES_128_GCM_SHA256
+  let st = tlsticket.state(0x0304, a.suite, cf.now, tls13.zeros(32), false, 0)
+  let id = tlsticket.seal(k, st, tls13.zeros(16))
+  let hash = tlsrec.suite_hash(a.suite)
+  for (mode, ok) in [(AUTH_NONE, true), (AUTH_REQUEST, true), (AUTH_VERIFY_IF_GIVEN, true), (AUTH_REQUIRE_ANY, false), (AUTH_REQUIRE_AND_VERIFY, false)] {
+    var c2 = cf
+    c2.client_auth = mode
+    expect((mode, session(server(c2), id, hash).is_some())) == (mode, ok)
+  }
+}
+
+fn has_ext(hello: Bytes, t: Int) -> Bool {
+  let exts = tlsech.raw_exts(hello) ?? fault("hello")
+  for (x, _) in exts {
+    if x == t {
+      return true
+    }
+  }
+  false
+}
+
+fn contains(b: Bytes, sub: Bytes) -> Bool {
+  var i = 0
+  while i + sub.len() <= b.len() {
+    if b[i..i + sub.len()] == sub {
+      return true
+    }
+    i += 1
+  }
+  false
+}
+
+test "with ECH the outer hello offers no PSK identity, only the encrypted inner one (GO-2026-5856)" {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  let p = x509.parse(der)
+  let ticket = b"resumption-ticket-identity-0123456789"
+  let k = tlsech.zeros(31) + b"\x33"
+  let cfg = ech_config(9, k, "public.test")
+  for ech in [false, true] {
+    var ccf = tls13.conf("x.test", [p.cert], 1800000000)
+    ccf.tickets = true
+    ccf.session = Some(tlscache.Session{version: 0x0304, suite: tlsrec.SUITE_AES_128_GCM_SHA256, created: 1800000000, use_by: 1800003600, secret: tls13.zeros(32), ticket: ticket})
+    if ech {
+      ccf.ech_list = Some(tls13.vec16(cfg))
+    }
+    var c = tls13.client(ccf)
+    expect(c.err) == ""
+    let rec = tls13.take(c)
+    let hello = rec[5..rec.len()]
+    // without ECH the PSK is offered in the clear, as the check needs
+    expect((ech, has_ext(hello, 41), contains(rec, ticket))) == (ech, !ech, !ech)
+  }
 }

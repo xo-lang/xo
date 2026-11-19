@@ -3,6 +3,9 @@
 
 use native/llrt/asn1
 use native/llrt/tls12
+use native/llrt/tls13
+use native/llrt/tlsticket
+use native/llrt/x509cert as x509
 
 test "RSA-key-exchange AES-GCM suites are known to Go but not AES-GCM preferred (Go's aesgcmCiphers)" {
   expect(aes_preferred([0x009c, 0xc02b])) == false
@@ -32,4 +35,24 @@ test "an ALPN mismatch quotes the client's protocols as Go's %q, control and inv
   var s = server(sc)
   feed(s, swap_once(tls12.take(c), b"a~b", b"a\xffb"))
   expect(s.err) == "tls: client requested unsupported application protocols ([\"a\\r\\nb\" \"q\\\"z\" \"a\\xffb\"])"
+}
+
+test "a TLS 1.2 ticket resumes only where no client certificate is required: tickets carry none (Go's checkForResumption needClientCerts; GO-2026-4337)" {
+  let k = tlsticket.key(b"ticket seed", 1800000000)
+  let suite = tls12.ECDHE_ECDSA_AES128_GCM
+  let id = tlsticket.seal(k, tlsticket.state(0x0303, suite, 1800000000, tls13.zeros(48), true, 0x001d), tls13.zeros(16))
+  var h = parse_hello(b"")
+  h.has_ticket = true
+  h.ticket = id
+  h.suites = [suite]
+  h.ems = true
+  for (mode, ok) in [(AUTH_NONE, true), (1, true), (AUTH_VERIFY_IF_GIVEN, true), (AUTH_REQUIRE_ANY, false), (AUTH_REQUIRE_AND_VERIFY, false)] {
+    var cf = conf([], b"")
+    cf.key_alg = x509.KEY_P256
+    cf.ticket_keys = [k]
+    cf.now = 1800000000
+    cf.client_auth = mode
+    var s = server(cf)
+    expect((mode, resumable(s, h, true, true).is_some())) == (mode, ok)
+  }
 }

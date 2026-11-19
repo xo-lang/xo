@@ -1121,6 +1121,13 @@ fn resumable(var s: Server, h: Hello, ecdhe_ok: Bool, ec_key: Bool) -> tlsticket
   if cf.ticket_keys.is_empty() || !h.has_ticket {
     return None
   }
+  // Go's needClientCerts && !sessionHasClientCerts: a ticket carries no
+  // client certificates, so a configuration that requires one never
+  // resumes (else a ticket from a configuration sharing the keys, or
+  // from before client_auth was set, skips it; GO-2026-4337)
+  if cf.client_auth == AUTH_REQUIRE_ANY || cf.client_auth == AUTH_REQUIRE_AND_VERIFY {
+    return None
+  }
   let plain = match tlsticket.open(h.ticket, cf.ticket_keys) {
     Some(p) => p
     None => return None

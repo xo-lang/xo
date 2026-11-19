@@ -136,6 +136,10 @@ fn compress_blocks(var st: List[Int], b: Bytes, i: Int, n: Int) {
   }
 }
 
+/// One 64 byte block b into the state st (std/tls's constant time CBC
+/// MAC builds its last blocks itself).
+pub fn compress_block(var st: List[Int], b: Bytes) { compress(st, b, 0) }
+
 /// Hashes data after what was written.
 pub fn (var h: Hasher) write(data: Bytes) {
   let n = data.len()
@@ -284,6 +288,15 @@ pub fn (m: Mac) sum() -> Bytes {
   var o = new()
   o.write(m.opad)
   o.write(m.inner.sum())
+  o.sum()
+}
+
+/// The MAC from the inner hash's digest (the outer hash of the padded
+/// key and inner).
+pub fn (m: Mac) outer(inner: Bytes) -> Bytes {
+  var o = new()
+  o.write(m.opad)
+  o.write(inner)
   o.sum()
 }
 

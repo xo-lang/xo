@@ -103,6 +103,8 @@ const ALERT_NO_APPLICATION_PROTOCOL: Int = 120
 
 // Go's limit on a handshake message (maxHandshake)
 const MAX_HANDSHAKE: Int = 65536
+/// Go's maxHandshakeCertificateMsg: a Certificate's limit.
+const MAX_CERTIFICATE_MSG: Int = 262144
 
 /// A server's settings: the certificate chain (DER, the leaf first) and
 /// the leaf's private key (RSA: PKCS #1 or PKCS #8 DER; ECDSA: the
@@ -588,8 +590,12 @@ fn hs_bytes(var s: Server, data: Bytes) {
   while s.state != FAILED && s.state != HANDOFF && s.hs.len() >= 4 {
     let t = Int(s.hs[0])
     let n = tls13.u24_at(s.hs, 1)
-    if n > MAX_HANDSHAKE {
-      fail(s, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${MAX_HANDSHAKE} bytes")
+    // Go's readHandshake: a Certificate after the version is known may
+    // be maxHandshakeCertificateMsg; QUIC after the handshake is
+    // QUICConn.HandleData's maxHandshake for every type
+    let most = if t == HS_CERTIFICATE && s.vers && !(s.conf.quic && s.state == DONE) { MAX_CERTIFICATE_MSG } else { MAX_HANDSHAKE }
+    if n > most {
+      fail(s, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${most} bytes")
       return
     }
     if s.hs.len() < 4 + n {
@@ -1610,6 +1616,13 @@ fn session(s: Server, id: Bytes, hash: Int) -> tlsticket.State? {
     return None
   }
   if !tlsrec.suite_ok(st.suite) || tlsrec.suite_hash(st.suite) != hash {
+    return None
+  }
+  // Go's needClientCerts && !sessionHasClientCerts: a ticket carries no
+  // client certificates (none is issued after client authentication), so
+  // a configuration that requires one never resumes; a ticket from
+  // another configuration with the same keys would skip it (GO-2026-4337)
+  if s.conf.client_auth == AUTH_REQUIRE_ANY || s.conf.client_auth == AUTH_REQUIRE_AND_VERIFY {
     return None
   }
   Some(st)
