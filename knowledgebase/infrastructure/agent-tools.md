@@ -1372,6 +1372,9 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   `--ab` only: callgrind serializes threads, so spin loops look free and
   fiber switches are misattributed. For a codegen only change report
   the callgrind count and confirm with one `--ab` run.
+  Run xo itself (or any long program) under callgrind with
+  `XO_PREEMPT=0`: callgrind asserts on the runtime's preemption signal
+  (gotchas/callgrind-asserts-on-preempt-signal.md, 2026-11-18).
 - Two builds or two settings, a verdict with an interval: `xo bench --ab
   A [B] [--env-b=K=V] [--max-load=X] -- ARGS` (decision 0340,
   toolchain.md "A/B measurement"): interleaved rounds, median, spread, a
@@ -1626,7 +1629,13 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   pushq rebase. Squashing with `git reset --soft origin/main` after main
   moved folds main's newer commits into yours as reverts, and pushq
   refuses it ("the push undoes main's last change to ..."; 4 refusals
-  from 16:00 to 19:00 on 2026-11-06, lead bottleneck review).
+  from 16:00 to 19:00 on 2026-11-06, lead bottleneck review). Since
+  2026-11-18 (#360) pushq also reads the worktree's reflog before its
+  rebase (scripts/lead/straycheck.sh): after such a squash, any path the
+  push changes that the branch never touched before the squash refuses
+  it ("a squash onto a moved origin/main"), even a file main changed
+  twice, which the whole-file check misses. `git log -g` names the old
+  merge base to squash onto instead.
   When the rebase brings commits into a compiler/ directory the push
   also changes, pushq type-checks those directories of the rebased tree
   (`go run ./scripts/xocheck DIRS`, about 2 s; lead, 2026-10-31: a field

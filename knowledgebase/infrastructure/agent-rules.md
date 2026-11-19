@@ -118,3 +118,5 @@ alert carrying its last `SCHED-TRAP: ` line.
 | ctier | launchd org.xolang.ctier: the full tier on main | 120 | `beat:ctier` | |
 | heavyd | launchd org.xolang.heavyd (KeepAlive) | 10 | `log:heavyd.log` | |
 | golden-freecheck | xw schedule (`~/xo-lead/xw-schedule.conf`): `agents/golden-freecheck.sh`, every arm64 golden (full tier) under `XO_GOLDEN_FREE_CHECK=1` on host 4 (task #350) | 480 | `log:xw/sched/golden-freecheck.out` | |
+| irman | hourly.sh starts scripts/lead/irman.sh (main's llvm IR manifests to the arm64 hosts) unless `notes/irman/stop` exists: retired 2026-11-18 (#275: 0 of 5 llvm gates served in 24 h), re-measure when the full suites return | | | |
+| gatesteps-canary | xw schedule: `agents/gatesteps-canary.sh`, each gate step of gate-needs.txt (plus selfbuild, stdfast) on a planted bad input at origin/main on host 4; a step that passes its plant is the trap (task #360) | 10080 | `log:xw/sched/gatesteps-canary.out` | |

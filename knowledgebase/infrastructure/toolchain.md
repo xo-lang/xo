@@ -2269,7 +2269,13 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   sets it; the log's selection line says "shared by irman.sh"; it defers to
   waiting leases at most 3 times in a row, reloads itself when install.sh
   replaces it, and stops through `~/xo-lead/notes/irman/stop`, never a
-  kill; Last verified: 2026-11-15). Each gate's selection time
+  kill; Last verified: 2026-11-15). Retired 2026-11-18 (#275, lead): in
+  the 24 h after 251eaa332 it made 8 manifests and served none of 5 llvm
+  gates (their bases were 6 and 17 commits past its manifests, across IR
+  input changes), so its stop file is in place and hourly.sh no longer
+  starts it; gates still share the base manifests they build (`ir_share`,
+  "shared by a gate"). Re-measure when the full suites return (std
+  Proven); restart by deleting the stop file. Each gate's selection time
   and golden count are in its times.tsv (see "Gate test areas").
 - **Gate test areas** (owner's test-time plan, lead, 2026-11-14):
   `scripts/gate-areas.txt` lists the slow top-level tests of
