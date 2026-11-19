@@ -37,6 +37,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // cfCase is one text, the options it is read with, and Go's answers.
@@ -74,6 +76,15 @@ func cfText(r *rand.Rand, sep, comment rune) string {
 				f := cfPick(r, cfFields)
 				if r.Intn(10) == 0 {
 					f = cfPick(r, cfBadFields)
+				}
+				switch r.Intn(40) {
+				case 0:
+					// the hostile dictionary (task #352): a long run of
+					// quotes (1 to 100 escaped quotes in a quoted field; the
+					// corpus is checked in)
+					f = "\"" + strings.Repeat("\"\"", hostile.Pick(r, hostile.Depths())/1000) + "\""
+				case 1:
+					f = hostile.Pick(r, hostile.Digits())
 				}
 				f = strings.ReplaceAll(f, ",", string(sep))
 				b.WriteString(f)

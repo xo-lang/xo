@@ -17,7 +17,6 @@ cookiejarfuzz_test.go
 corpusfuzz_test.go
 crc32fuzz_test.go
 crc64fuzz_test.go
-csvfuzz_test.go
 debugfuzz_test.go
 dequefuzz_test.go
 fnvfuzz_test.go
@@ -38,7 +37,6 @@ jsonrpcfuzz_test.go
 logfuzz_test.go
 lzwfuzz_test.go
 mailfuzz_test.go
-mimefuzz_test.go
 multipartfuzz_test.go
 normfuzz_test.go
 otlpfuzz_test.go

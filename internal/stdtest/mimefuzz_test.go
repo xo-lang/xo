@@ -38,10 +38,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/std/rt"
 )
 
@@ -98,6 +100,14 @@ func mfHeader(r *rand.Rand) string {
 		if len(s) > 0 {
 			s[r.Intn(len(s))] = "; =\"'*%\\ /"[r.Intn(10)]
 		}
+	case 2:
+		// the hostile dictionary (task #352): an RFC 2231 continuation
+		// index past Int or at its edges, after a first section
+		idx := hostile.Pick(r, hostile.Digits())
+		if r.Intn(2) == 0 {
+			idx = strconv.FormatInt(hostile.Pick(r, hostile.Ints()), 10)
+		}
+		s = append(s, "; t*0=a; t*"+idx+"=b"...)
 	}
 	return string(s)
 }
