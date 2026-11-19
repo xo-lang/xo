@@ -93,9 +93,27 @@ fn x86_chacha_pair(k: Int, st: Str) -> List[Str] {
 /// otherwise n bytes (a multiple of 256), the counters at st advanced by
 /// 4 for each group (rt.chacha_stream4).
 pub fn chacha4_x86_lines(d: Str, s: Str, st: Str, n: Str) -> List[Str] {
+  var t = x86_chacha_setup(d, s)
+  if n.is_empty() {
+    return t + x86_chacha_pair(0, st) + x86_chacha_pair(2, st)
+  }
+  t = t + ["movq ${n}, %r10", "testq %r10, %r10", "jz 9f", "1:"]
+  t = t + x86_chacha_pair(0, st) + x86_chacha_pair(2, st)
+  for b in 0..4 {
+    t = t + ["movl ${64 + 4 * b}(${st}), %eax", "addl $4, %eax", "movl %eax, ${64 + 4 * b}(${st})"]
+  }
+  t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jnz 1b", "9:"]
+}
+
+/// rt.chacha_blocks2: chacha4_x86_lines' first pair only (blocks 0 and 1,
+/// 128 bytes), its registers a subset of chacha4_x86_lines'.
+pub fn chacha2_x86_lines(d: Str, s: Str, st: Str) -> List[Str] { x86_chacha_setup(d, s) + x86_chacha_pair(0, st) }
+
+/// pshufb's rotation tables in xmm10 and xmm11, dst in r8 and src in r9.
+fn x86_chacha_setup(d: Str, s: Str) -> List[Str] {
   // pshufb's tables: each 32 bit lane's bytes 2, 3, 0, 1 (left by 16)
   // and 3, 0, 1, 2 (left by 8)
-  var t = [
+  [
     "movabsq $361421592464458498, %rax",
     "movq %rax, %xmm10",
     "movabsq $940142975169071882, %rax",
@@ -109,15 +127,6 @@ pub fn chacha4_x86_lines(d: Str, s: Str, st: Str, n: Str) -> List[Str] {
     "movq ${d}, %r8",
     "movq ${s}, %r9",
   ]
-  if n.is_empty() {
-    return t + x86_chacha_pair(0, st) + x86_chacha_pair(2, st)
-  }
-  t = t + ["movq ${n}, %r10", "testq %r10, %r10", "jz 9f", "1:"]
-  t = t + x86_chacha_pair(0, st) + x86_chacha_pair(2, st)
-  for b in 0..4 {
-    t = t + ["movl ${64 + 4 * b}(${st}), %eax", "addl $4, %eax", "movl %eax, ${64 + 4 * b}(${st})"]
-  }
-  t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jnz 1b", "9:"]
 }
 
 /// The xmm registers chacha8rand_x86_lines writes (chacha4_x86_xmms'

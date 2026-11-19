@@ -1945,6 +1945,15 @@ pub fn ghash8_soft(y: Int, hp: Int, d: Int) {
 /// portable body.
 pub fn chacha_blocks4(dst: Int, src: Int, st: Int) { chacha_blocks4_soft(dst, src, st) }
 
+/// chacha_blocks4's first two blocks: 128 bytes at dst and src, the
+/// counters st's words 16 and 17 (a 64 byte AEAD's key block and data
+/// block in one call). amd64 with SSSE3 runs one pair of
+/// ssa.chacha4_x86_lines' rows; elsewhere this body.
+pub fn chacha_blocks2(dst: Int, src: Int, st: Int) {
+  chacha_block_xor(dst, src, st, 0)
+  chacha_block_xor(dst.wrapping_add(64), src.wrapping_add(64), st, 1)
+}
+
 /// chacha_blocks4 over n bytes (a multiple of 256) at dst and src, the
 /// four counters at st advanced by 4 for each 256 (modulo 2^32). The
 /// arm64 emitter and LLVM there run one NEON loop, which overlaps a

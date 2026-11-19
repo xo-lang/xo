@@ -1,0 +1,60 @@
+// ChaCha20-Poly1305's 192 byte path (small4 and small_tag, amd64 with
+// SSSE3) against the 26 bit limb path (seal26, open26) at every length it
+// takes, with several additional data lengths and an unaligned sealed
+// message. Elsewhere seal and open take the other paths and the test
+// checks those the same way.
+
+fn pattern(n: Int, seed: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  var x = (seed * 7919 + 1) & 2147483647
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) & 2147483647
+    b.write_byte(UInt8(x.shr_logical(16) & 255))
+  }
+  b.freeze()
+}
+
+/// b with byte i xor m.
+fn flip(b: Bytes, i: Int, m: Int) -> Bytes {
+  var o = BytesBuilder.with_capacity(b.len())
+  o.write(b[0..i])
+  o.write_byte(UInt8((Int(b[i]) ^ m) & 255))
+  o.write(b[i + 1..b.len()])
+  o.freeze()
+}
+
+/// Whether open failed.
+fn shut(r: Bytes?) -> Bool {
+  match r {
+    Some(_) => false
+    None => true
+  }
+}
+
+test "seal and open up to 200 bytes match seal26 and open26" {
+  let key = pattern(32, 1)
+  let nonce = pattern(12, 2)
+  for alen in [0, 1, 15, 16, 17, 40] {
+    let aad = pattern(alen, 3 + alen)
+    for n in 0..201 {
+      let pt = pattern(n, 7 + n)
+      let s = seal(key, nonce, pt, aad)
+      expect(s) == seal26(key, nonce, pt, aad)
+      expect(open(key, nonce, s, aad) ?? b"x") == pt
+      // a sealed message at an odd address
+      var sb = BytesBuilder.with_capacity(s.len() + 1)
+      sb.write_byte(0)
+      sb.write(s)
+      let shifted = sb.freeze()[1..s.len() + 1]
+      expect(open(key, nonce, shifted, aad) ?? b"x") == pt
+      // a changed tag, ciphertext or additional data does not open
+      expect(shut(open(key, nonce, flip(s, n + n % 16, 1), aad))) == true
+      if n > 0 {
+        expect(shut(open(key, nonce, flip(s, n - 1, 128), aad))) == true
+      }
+      if alen > 0 {
+        expect(shut(open(key, nonce, s, flip(aad, alen - 1, 2)))) == true
+      }
+    }
+  }
+}

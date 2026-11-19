@@ -399,6 +399,12 @@ fn absorb_tail(p: Poly, m: Bytes, off: Int, pad1: Bool) -> Poly {
 /// 2^130), then h mod 2^128 plus s (the key's second half), with no
 /// branch on h.
 fn poly_finish(p: Poly, key: Bytes) -> Bytes {
+  let (o0, o1) = poly_words(p, rt.bytes_word(key, 16), rt.bytes_word(key, 24))
+  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), o0, 8), o1, 8).bytes()
+}
+
+/// poly_finish's tag as two little endian words, s = s0 + s1 2^64.
+fn poly_words(p: Poly, s0: Int, s1: Int) -> (Int, Int) {
   let g0 = cpu.adc(p.h0, 5, 0)
   let c0 = cpu.adc_carry(p.h0, 5, 0)
   let g1 = cpu.adc(p.h1, 0, c0)
@@ -408,11 +414,9 @@ fn poly_finish(p: Poly, key: Bytes) -> Bytes {
   let keep = ct.barrier(0 - (shr(g2, 2) & 1))
   let h0 = ct.pick(keep, g0, p.h0)
   let h1 = ct.pick(keep, g1, p.h1)
-  let s0 = rt.bytes_word(key, 16)
-  let s1 = rt.bytes_word(key, 24)
   let o0 = cpu.adc(h0, s0, 0)
   let o1 = cpu.adc(h1, s1, cpu.adc_carry(h0, s0, 0))
-  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), o0, 8), o1, 8).bytes()
+  (o0, o1)
 }
 
 /// The Poly1305 tag of msg under the one time key (32 bytes: r, then s).
@@ -664,29 +668,34 @@ fn poly26_finish(p: Poly26, key: Bytes) -> Bytes {
 // ---------------------------------------------------------------------------
 // The AEAD (RFC 8439 2.8)
 
-/// On amd64 with SSSE3 and src at most 192 bytes: one vector call
-/// (cpu.chacha_stream4) for the whole message, as Go's sealSSE128 and
-/// openSSE128, not two scalar blocks. Its four lanes run counters 1, 2,
-/// 3 and 0, so the result holds src's xor at 0 (its length set) and the
-/// Poly1305 key block (counter 0) at 192 of its room; the key is read
-/// out (small_key) before anything is appended.
+/// On amd64 with SSSE3 and src at most 192 bytes: one vector call for
+/// the whole message, as Go's sealSSE128 and openSSE128, not scalar
+/// blocks: cpu.chacha_stream4's four lanes, or for 64 bytes and under
+/// cpu.chacha_blocks2's two. The lanes run counters 1, 2, ... and then 0,
+/// so the result holds src's xor at 0 (its length set) and the Poly1305
+/// key block (counter 0) at small_at(n) of its room; the key is read out
+/// (small_key) before anything is appended.
 fn small4(key: Bytes, nonce: Bytes, src: Bytes) -> Str {
   let n = src.len()
-  // src padded to 256 bytes, then the state and the lane counters
-  let sc = rt.rs_append_bytes(rt.rs_with_cap(256 + 80), src, 0, n, 0)
-  let sp = raw.data(sc)
+  let lanes = if n <= 64 { 2 } else { 4 }
+  let pad = 64 * lanes
+  // src padded to pad bytes, then the state and the lane counters, xored
+  // in place (one allocation, the result's: the tag appended after n
+  // fits in its room)
+  let out = rt.rs_append_bytes(rt.rs_with_cap(pad + 80), src, 0, n, 0)
+  let sp = raw.data(out)
   // the padding zeroed a word at a time from n's word (its bytes past n
-  // cleared there), so nothing past 256 is touched
+  // cleared there), so nothing past pad is touched
   var z = n & -8
   if z < n {
     rt.mem_store(sp, z, rt.mem_load(sp, z, 8) & (shl(1, 8 * (n - z)) - 1), 8)
     z += 8
   }
-  while z < 256 {
+  while z < pad {
     rt.mem_store(sp, z, 0, 8)
     z += 8
   }
-  let st = sp.wrapping_add(256)
+  let st = sp.wrapping_add(pad)
   rt.mem_store(st, 0, 0x3320646e61707865, 8)
   rt.mem_store(st, 8, 0x6b20657479622d32, 8)
   for k in 0..4 {
@@ -694,45 +703,72 @@ fn small4(key: Bytes, nonce: Bytes, src: Bytes) -> Str {
     rt.mem_store(st, 16 + 8 * k, w, 8)
   }
   rt.mem_store(st, 48, 0, 4)
-  rt.mem_store(st, 52, le32(nonce, 0), 4)
-  rt.mem_store(st, 56, le32(nonce, 4), 4)
+  rt.mem_store(st, 52, rt.bytes_word(nonce, 0), 8)
   rt.mem_store(st, 60, le32(nonce, 8), 4)
-  for b in 0..4 {
-    rt.mem_store(st, 64 + 4 * b, (b + 1) & 3, 4)
+  // the lanes' counters 1, 2, ... and 0 last
+  for b in 0..lanes {
+    rt.mem_store(st, 64 + 4 * b, if b + 1 < lanes { b + 1 } else { 0 }, 4)
   }
-  let out = rt.rs_with_cap(256)
-  cpu.chacha_stream4(raw.data(out), sp, st, 256)
-  keep_str(sc)
+  if lanes == 2 {
+    cpu.chacha_blocks2(sp, sp, st)
+  } else {
+    cpu.chacha_stream4(sp, sp, st, 256)
+  }
   rt.rs_set_len(out, n)
 }
 
-/// The Poly1305 key small4 left at 192 of s's room.
-fn small_key(s: Str) -> Bytes {
-  let a = raw.data(s).wrapping_add(192)
-  var k = rt.rs_with_cap(32)
-  for w in 0..4 {
-    k = rt.rs_push_word(k, rt.mem_load(a, 8 * w, 8), 8)
+/// Where small4 leaves the Poly1305 key for a message of n bytes: its
+/// last lane's block.
+fn small_at(n: Int) -> Int { if n <= 64 { 64 } else { 192 } }
+
+/// The AEAD tag (two little endian words) of the n ciphertext bytes at
+/// m and additional data aad, under the Poly1305 key at k (small4's, read
+/// before anything is written): no allocation. The full blocks are
+/// hashed where they are, the rest padded and the lengths in the
+/// thread's scratch at PAD (one or two blocks).
+fn small_tag(k: Int, aad: Bytes, m: Int, n: Int) -> (Int, Int) {
+  let s0 = rt.mem_load(k, 16, 8)
+  let s1 = rt.mem_load(k, 24, 8)
+  var p = Poly{h0: 0, h1: 0, h2: 0, r0: rt.mem_load(k, 0, 8) & 0x0FFFFFFC0FFFFFFF, r1: rt.mem_load(k, 8, 8) & 0x0FFFFFFC0FFFFFFC}
+  if aad.len() > 0 {
+    p = absorb_tail(p, aad, 0, false)
   }
-  keep_str(s)
-  k.bytes()
+  let full = n & -16
+  if full > 0 {
+    p = absorb_at(p, m, full, shl(1, 24))
+  }
+  let b = obj.scratch().wrapping_add(PAD)
+  for w in 0..4 {
+    rt.mem_store(b, 8 * w, 0, 8)
+  }
+  let r = n - full
+  rt.mem_copy(b, m.wrapping_add(full), r)
+  let l = if r > 0 { 16 } else { 0 }
+  rt.mem_store(b, l, aad.len(), 8)
+  rt.mem_store(b, l + 8, n, 8)
+  poly_words(absorb_at(p, b, l + 16, shl(1, 24)), s0, s1)
 }
 
-/// Whether small4 runs for a message of n bytes: more than one block
-/// (the vector call costs about two scalar blocks, so at 64 bytes and
-/// under the key block and one data block are cheaper; amd64 host,
-/// 2026-11-18: 64 bytes 145 ms against 123 for 200,000 seals and opens,
-/// 128 bytes 151 against 166, 192 bytes 157 against 210).
-fn small_ok(n: Int) -> Bool { target.arch == TargetArch.Amd64 && n > 64 && n <= 192 && (cpu.hw() & cpu.HW_SSSE3) != 0 }
+/// Whether small4 runs for a message of n bytes: at most 192 (three
+/// data blocks and the key block). Up to 64 bytes it takes two lanes
+/// (cpu.chacha_blocks2), since chacha_stream4's four cost about two
+/// scalar blocks (amd64 host, 2026-11-18: 64 bytes 145 ms against 123
+/// scalar for 200,000 seals and opens, 128 bytes 151 against 166, 192
+/// bytes 157 against 210).
+fn small_ok(n: Int) -> Bool { target.arch == TargetArch.Amd64 && n <= 192 && (cpu.hw() & cpu.HW_SSSE3) != 0 }
 
 /// The ciphertext of plaintext pt under key (32 bytes) and nonce (12
 /// bytes) with its 16 byte tag after it (cipher.AEAD's Seal).
 fn seal64(key: Bytes, nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes {
   if small_ok(pt.len()) {
+    // the tag written after the ciphertext, in small4's room
+    let n = pt.len()
     let c = small4(key, nonce, pt)
-    let otk = small_key(c)
-    let p1 = absorb_tail(absorb_tail(poly_new(otk), aad, 0, false), c.bytes(), 0, false)
-    let t = poly_finish(absorb_words(p1, aad.len(), pt.len(), shl(1, 24)), otk)
-    return rt.rs_append_bytes(c, t, 0, 16, 0).bytes()
+    let a = raw.data(c)
+    let (t0, t1) = small_tag(a.wrapping_add(small_at(n)), aad, a, n)
+    rt.mem_store(a, n, t0, 8)
+    rt.mem_store(a, n + 8, t1, 8)
+    return rt.rs_set_len(c, n + 16).bytes()
   }
   // the additional data hashed first, then the ciphertext as it is made
   // (its 256 byte multiple in the same loop, cpu.chacha_poly_seal4), the
@@ -756,16 +792,19 @@ fn open64(key: Bytes, nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? {
     return None
   }
   let body = sealed[0..n]
-  let want = rt.rs_append_bytes(rt.rs_with_cap(16), sealed, n, n + 16, 0).bytes()
   if small_ok(n) {
+    // the tag of the ciphertext where it is, compared a word at a time
     let pt = small4(key, nonce, body)
-    let otk = small_key(pt)
-    let p1 = absorb_tail(absorb_tail(poly_new(otk), aad, 0, false), body, 0, false)
-    if !ct.bytes_equal(poly_finish(absorb_words(p1, aad.len(), n, shl(1, 24)), otk), want) {
+    let a = raw.bytes_addr(sealed)
+    let (t0, t1) = small_tag(raw.data(pt).wrapping_add(small_at(n)), aad, a, n)
+    let d = (t0 ^ rt.mem_load(a, n, 8)) | (t1 ^ rt.mem_load(a, n + 8, 8))
+    raw.alive(sealed)
+    if ct.mask_nonzero(d) != 0 {
       return None
     }
     return pt.bytes()
   }
+  let want = rt.rs_append_bytes(rt.rs_with_cap(16), sealed, n, n + 16, 0).bytes()
   // the ciphertext hashed as it is decrypted (its 256 byte multiple in
   // one loop, cpu.chacha_poly_open4), the plaintext dropped when the tag
   // does not match

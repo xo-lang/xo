@@ -289,6 +289,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // amd64 (ssa x86chacha.xo, 2026-10-27)
     "chacha_blocks4" => if b.goarch == "arm64" || b.goarch == "amd64" { "chacha_blocks4" } else { "" }
     "chacha_stream4" => if b.goarch == "arm64" || b.goarch == "amd64" { "chacha_stream4" } else { "" }
+    // two blocks (one pair of x86chacha.xo's rows): amd64 only, where a
+    // 64 byte AEAD record's two blocks cost half of chacha_blocks4
+    "chacha_blocks2" => if b.goarch == "amd64" { "chacha_blocks2" } else { "" }
     // decision 0669: Go's chacha8rand block, NEON on arm64, SSSE3 on
     // amd64 (ssa x86chacha.xo, task #87), LLVM's vectors on both; wasm
     // runs the body

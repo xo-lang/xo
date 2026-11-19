@@ -1,5 +1,23 @@
 # std/crypto changes
 
+## 2026-11-19: perf: ChaCha20-Poly1305 of up to 64 bytes on x86-64 runs two blocks and allocates only its result, 19% faster
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/aead chacha_small on linux/amd64: 1.473 of golang.org/x/crypto's chacha20poly1305)
+- Go reference: golang.org/x/crypto chacha20poly1305 (chacha20poly1305_amd64.s, openSSE128/sealSSE128: the key block and the data blocks in one pass)
+- Measured: linux/amd64 host, exclusive, the aead program 5 runs: chacha_small 110 to 111 ms before, 89 to 91 ms after, Go 83 to 89 ms; output checksums equal
+- Test: llrt chacha tests (seal and open of 0 to 200 bytes with six additional data lengths and an unaligned message against the 26 bit limb path, changed tags, ciphertexts and data refused) and cpu tests (chacha_blocks2 against chacha_blocks4's body) on the linux/amd64 host
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+A message of up to 64 bytes ran four ChaCha20 blocks (two of them
+unused) into a second buffer, then hashed through Poly1305 states made
+per call and a separate tag. It now runs the key block and the data
+block as one SSSE3 pair (cpu.chacha_blocks2) in the result's own room,
+hashes the full blocks where they are and the tail and lengths in the
+thread's scratch, and writes or compares the tag a word at a time.
+
 ## 2026-11-19: perf: AES-CBC decryption on x86-64 runs eight blocks at a time
 
 - Kind: perf

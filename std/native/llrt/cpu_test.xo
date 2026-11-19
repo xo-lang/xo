@@ -236,3 +236,34 @@ test "chacha_poly_seal8 and open8 are their bodies (AVX2, 512 byte groups and a 
     }
   }
 }
+
+test "chacha_blocks2 is chacha_blocks4's first two blocks (SSSE3 on amd64), in place and not" {
+  for seed in 0..6 {
+    // the state and four counters (80 bytes), the second counter at the
+    // 32 bit wrap on odd seeds
+    var st = test_words(21 + seed, 10)
+    if seed % 2 == 1 {
+      st[8] = (st[8] & 4294967295) | 4294967295.wrapping_shl(32)
+    }
+    let src = test_words(31 + seed, 32)
+    for inplace in [false, true] {
+      var want = List[Int].with_capacity(32)
+      var got = List[Int].with_capacity(32)
+      for w in src {
+        want.push(if inplace { w } else { 0 })
+        got.push(if inplace { w } else { 0 })
+      }
+      let s = if inplace { lanes_addr(got) } else { lanes_addr(src) }
+      let sw = if inplace { lanes_addr(want) } else { lanes_addr(src) }
+      chacha_blocks4_soft(lanes_addr(want), sw, lanes_addr(st))
+      chacha_blocks2(lanes_addr(got), s, lanes_addr(st))
+      // 128 bytes written, the rest untouched
+      for i in 0..16 {
+        expect(got[i]) == want[i]
+      }
+      for i in 16..32 {
+        expect(got[i]) == (if inplace { src[i] } else { 0 })
+      }
+    }
+  }
+}

@@ -32,6 +32,7 @@ var x86Needs = map[string]string{
 	"fma_hw":            "HW_FMA",
 	"chacha_blocks4":    "HW_SSSE3",
 	"chacha_stream4":    "HW_SSSE3",
+	"chacha_blocks2":    "HW_SSSE3",
 	"chacha_poly_seal4": "HW_SSSE3",
 	"chacha_poly_open4": "HW_SSSE3",
 	"chacha_poly_seal8": "HW_AVX2",
