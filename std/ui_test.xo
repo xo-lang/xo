@@ -146,6 +146,25 @@ test "a duplicate or out of order Msg is applied once, in order" {
   expect(s.model().todos.get("x")?.stars) == 1
 }
 
+test "with_server: serve runs after update for each Msg the server applies, never in predict (task #200)" {
+  let calls = Atomic[Int].new(0)
+  let app = todo_app().with_server(fn(m: Model, e: Msg) -> Model uses sync {
+    calls.add(1)
+    match e {
+      Msg.Star(id: _) => Model{todos: m.todos, seats: m.seats + 100, holders: m.holders}
+      _ => m
+    }
+  })
+  let out = predict(app, ClientIn{model: app.init, pending: [Msg.Add(id: "x", title: "a"), Msg.Star(id: "x")]})
+  expect(calls.get()) == 0
+  expect(out.html.len() > 0) == true
+  var s = server(app)
+  s.receive(Up{client: "a", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "a")}, Envelope{seq: 2, msg: Msg.Star(id: "x")}]})
+  expect(calls.get()) == 2
+  expect(s.model().seats) == app.init.seats + 100
+  expect(s.model().todos.get("x")?.stars) == 1
+}
+
 test "the server overturns a prediction it rejects" {
   let app = todo_app()
   var s = server(app)
@@ -2397,4 +2416,57 @@ test "a room steps on its tick, sends each player its view and ack, and starts a
     c.close().or_fault("close c")
     g.cancel()
   }
+}
+
+// ---- server fields (task #200, decision 0719) ----
+
+struct Vault {
+  label: Str
+  server secret: Str = ""
+  server hits: Int = 0
+} derive Eq, Json, Debug
+
+enum VMsg {
+  Relabel(label: Str)
+} derive Eq, Json, Debug
+
+fn vault_update(v: Vault, m: VMsg) -> Vault {
+  var n = v
+  match m {
+    Relabel(label) => { n.label = label }
+  }
+  n
+}
+
+fn vault_view(v: Vault) -> Html {
+  el("p", [on("click", VMsg.Relabel(label: "b"))], [text(v.label)])
+}
+
+test "server fields never reach a page, a sync or its model; the server keeps them (task #200)" {
+  let plain = app(Vault{label: "a"}, vault_update, vault_view)
+  let app = plain.with_server(fn(v: Vault, e: VMsg) -> Vault uses server {
+    var n = v
+    n.secret = "s3cr3t-key"
+    n.hits = v.hits + 1
+    n
+  })
+  let p = page(plain, Vault{label: "a"}, 1)
+  expect(p.contains("s3cr3t")) == false
+  let h = host(app)
+  var r = http.router()
+  h.mount(r)
+  let up = json.encode_str(Up[VMsg]{client: "c", ver: 0, msgs: [Envelope{seq: 1, msg: VMsg.Relabel(label: "b")}]})
+  let resp = r.call(http.new_request("POST", "/_xo/sync?model=1", headers: {"Content-Type": "application/json"}, body: up.bytes()))
+  expect(resp.status) == 200
+  let body = resp.text() ?? ""
+  expect(body.contains("\"label\":\"b\"")) == true
+  expect(body.contains("s3cr3t")) == false
+  expect(body.contains("\"hits\"")) == false
+  let got = r.call(http.new_request("GET", "/")).text() ?? ""
+  expect(got.contains("s3cr3t")) == false
+  expect(got.contains("\"hits\"")) == false
+  // the server's model keeps them
+  expect(h.model().secret) == "s3cr3t-key"
+  expect(h.model().hits) == 1
+  expect(h.model().label) == "b"
 }

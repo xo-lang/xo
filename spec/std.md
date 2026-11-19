@@ -12159,6 +12159,7 @@ pub fn app[M, E](init: M, update: fn(M, E) -> M, view: fn(M) -> Html) -> App[M, 
 fn (a: App[M, E]) confirming(confirm: fn(E) -> Bool) -> App[M, E]
 fn (a: App[M, E]) with_url_view(view: fn(M, url.Values) -> Html) -> App[M, E]   // tab state: the view reads the page's query
 fn (a: App[M, E]) with_user[U: Json, UA: Json](init: U, update: fn(M, U, UA) -> (U, List[E]), view: fn(M, U, url.Values) -> Html) -> App[M, E]   // user state (needs auth)
+fn (a: App[M, E, ()]) with_server[sx: Effects](serve: fn(M, E) -> M uses sx) -> App[M, E, sx]   // server fields: runs on the server only
 
 pub enum Html { Text(s: Str), El(tag: Str, attrs: List[Attr], kids: List[Html]) }
 pub struct Attr { pub name: Str, pub value: Str }
@@ -12485,6 +12486,19 @@ pub fn room_view(last: Bytes, frame: Bytes) -> (Int, Int, Bytes)?
   the page's `location.search` without the "?") and each prediction
   (`ClientIn.query`) render with that query; a query that does not parse
   reads as empty, and an App without `url_view` ignores it.
+- Server fields (decision 0659 point 5, decision 0719; task #200). A
+  model field marked `server` never reaches a client: pages, syncs,
+  live pushes, replayed Msgs, event attributes and predict carry the
+  public encoding (`json.encode(v, public: true)`, every server field
+  left out at every depth; a client decodes it with the defaults), and
+  the store keeps the full encoding. update and view are pure, so they
+  cannot read or write a server field; `with_server(serve)` runs
+  `serve(model, msg)` after update for each Msg the server applies
+  (receive, apply, compaction and replay alike), never in a client or
+  predict, and it may read and write server fields. `App`, `Server`,
+  `Scope` and `Host` carry serve's effects as their last effect
+  argument (`sx`, `()` without with_server); spellings that leave every
+  effect argument out still compile (core 6.2).
 - User state (decision 0672, Proposed; prototype). `with_user(init,
   update, view)` gives each principal a `U` of its own (a draft, a cart,
   settings), the same on every device it signs in on and never shown to

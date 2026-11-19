@@ -1,5 +1,15 @@
 # std/ui changes
 
+## 2026-11-18: feature: server fields and App.with_server
+
+- Kind: feature
+- Commit: this push
+- Found by: task #200 (decision 0659 point 5; owner chose the compiler modifier, xw #160)
+- Go reference: none
+- Test: std/ui "with_server: serve runs after update for each Msg the server applies, never in predict (task #200)"; server field redaction tests (after #369)
+- Timing: none (one more closure call per applied Msg with with_server; none without)
+- Shipped in: not yet released
+
 ## 2026-11-17: perf: pg_bus sends NOTIFYs from a task, batched
 
 - Kind: perf
