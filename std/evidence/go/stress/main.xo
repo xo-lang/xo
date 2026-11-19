@@ -98,6 +98,9 @@ fn main(os: Os) ! {
   let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
   os.stdio.println("go stress: ${checks} checks by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
   if !ok {
+    // the series shows a steady climb (a leak) from the Go collector's
+    // swings between cycles
+    os.stdio.println("rss after the mark, MB every 10 s: ${rss_after.map(fn(k) { "${k / 1024}" }).join(" ")}")
     return Err("memory grew ${growth}%")
   }
 }
