@@ -1,0 +1,18 @@
+# Go's asn1 test tables (go1.26) run through std/asn1
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# Each content is wrapped in DER (its universal tag, primitive, and
+# its length) and read: Go's Unmarshal into the Go type the test's
+# parser makes (bool, int64, int32, *big.Int, BitString,
+# ObjectIdentifier, time.Time, string), asn1.parse's Value on the Xo
+# side, with the error texts; a time compares as its instant and ok or
+# err (std/asn1's time errors are its own: asn1: invalid UTCTime "...").
+encoding/asn1 asn1_test.go boolTestData in bool
+encoding/asn1 asn1_test.go int64TestData in int64
+encoding/asn1 asn1_test.go int32TestData in int32
+encoding/asn1 asn1_test.go bigIntTests in bigint
+encoding/asn1 asn1_test.go bitStringTestData in bitstring
+encoding/asn1 asn1_test.go bitStringRightAlignTests in,inlen rightalign
+encoding/asn1 asn1_test.go objectIdentifierTestData in oid
+encoding/asn1 asn1_test.go utcTestData in utc
+encoding/asn1 asn1_test.go generalizedTimeTestData in gen
+encoding/asn1 asn1_test.go bmpStringTests encodedHex bmp
