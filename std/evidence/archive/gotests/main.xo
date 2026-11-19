@@ -1,0 +1,57 @@
+// The Xo side of std/archive's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/archive's result as text, as go/main.go prints package archive's.
+// Kinds tar and zip read one archive whole.
+// See scripts/stdproven/gotests.go.
+use std/archive
+use std/base64
+
+/// The bytes of a :bytes input: main keeps one that is not UTF-8 as
+/// U+FFFF, "b64:" and its base64.
+fn raw(s: Str) -> Bytes {
+  if s.starts_with("\u{FFFF}b64:") {
+    return base64.decode(s[7..s.len()]) ?? _ => b""
+  }
+  s.bytes()
+}
+
+fn arun(kind: Str, inp: List[Str]) -> Str {
+  if inp[0].ends_with(".base64") || inp[0].ends_with(".bz2") {
+    return "skip"
+  }
+  let r = if kind == "tar" { archive.untar(raw(inp[1])) } else { archive.unzip(raw(inp[1])) }
+  match r {
+    Ok(es) => {
+      var parts: List[Str] = []
+      for e in es {
+        parts.push("${e.path}:${e.data.len()}:${e.is_dir}")
+      }
+      "ok ${parts.join("|")}"
+    }
+    Err(_) => "err"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "tar" | "zip" => arun(kind, inp)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      let b = base64.decode(s)?
+      inp.push(b.to_str() ?? "\u{FFFF}b64:${s}")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

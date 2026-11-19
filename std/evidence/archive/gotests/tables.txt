@@ -1,0 +1,12 @@
+# Go's archive test tables (go1.26) run through std/archive
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# tar (untar; tar.Reader keeping files and directories) and zip (unzip;
+# zip.Reader, every file opened and read) over each test's archive in
+# testdata: path:size:dir of each entry, or err (the texts differ:
+# archive: against archive/tar:); as untar and unzip, Go's side refuses
+# a link, a device or any kind but a file or a directory, and skips a
+# global PAX header. The archives Go's tests decode first
+# (.base64, .bz2) read as skip. A :bytes input that is not UTF-8
+# reaches the Xo adapter as U+FFFF, b64: and its base64 (main.xo).
+archive/tar reader_test.go TestReader.vectors file,file@{} tar
+archive/zip reader_test.go tests Name,Name@testdata/{} zip
