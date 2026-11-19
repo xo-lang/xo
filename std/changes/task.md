@@ -18,6 +18,23 @@ a 1 us item. `xo bench --ab` bench/perf/task map: wall 0.305 (0.303 to
 0.462) on host 1 (linux/arm64). The tasks are long enough now to run on
 other threads, where the per item tasks ran inline on the spawner.
 
+## 2026-11-19: perf: a done Once.get is one load, with no lock
+
+- Kind: perf
+- Commit: this push
+- Found by: perf row bench/perf/task once (task #419: 11.7 of Go's sync.OnceValues on the linux/amd64 host after the read lock change)
+- Go reference: sync.OnceValues (a done flag read atomically, then the stored values)
+- Test: golden once_published (counted values read by 8 tasks while the first get runs, a caller's copy changed, a failed Once never published); internal/arm64 TestOnceGetFast ceiling 0.9G instructions (0.44G now, 2.97G before)
+
+A done Once keeps its value in a list of one (the box) and publishes the
+box's address in an Atomic (Once.done) after the first get stores it; a
+later get loads the address and reads the value through the new
+uncounted rt.obj_peek, taking no lock (native and wasm targets; the Go
+backend keeps the read lock). bench/perf/task once on linux/amd64:
+30.3 to 2.35 ms (Go 2.58); `xo bench --ab` on linux/arm64 B/A 0.176
+(0.163 to 0.182). A Once's Debug text gains `done: <redacted>` (the
+field is a Secret, so no address shows).
+
 ## 2026-11-19: perf: a done Once.get copies out only its value
 
 - Kind: perf

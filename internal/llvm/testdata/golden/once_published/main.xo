@@ -1,0 +1,54 @@
+// task.Once's published fast path (std/task.xo Once.done, task #419): a
+// done Once's value read lock free through the address of its box, for
+// counted values (Str, List, a struct of them) read by many tasks while
+// the first get runs and after; a value kept after its Once is gone; a
+// list from get changed by its caller leaves the Once's copy alone; a
+// failed Once is never published and keeps failing; Debug shows no
+// address (done is a Secret), the same text on every backend.
+use std/task
+
+struct Conf {
+  name: Str
+  tags: List[Str]
+}
+
+fn main(os: Os) uses (stdio, clock) {
+  let o = task.once[Conf, Never]()
+  let reads = scope s {
+    var ts = []
+    for i in 0..8 {
+      ts.push(s.spawn(fn() {
+        var n = 0
+        for _ in 0..20000 {
+          let c = o.get(fn() {
+            os.clock.sleep(2ms)
+            Conf{name: "cfg-${i % 1}", tags: ["a", "b-${i % 1}"]}
+          })
+          n += c.name.len() + c.tags.len()
+        }
+        n
+      }))
+    }
+    var all = 0
+    for t in ts {
+      all += t.await
+    }
+    all
+  }
+  os.stdio.println("reads ${reads} ${o.get(fn() { Conf{name: "x", tags: []} }).debug()}")
+  os.stdio.println("debug ${o:?}")
+  var kept: List[Str] = []
+  for round in 0..3 {
+    let l = task.once[List[Str], Never]()
+    var mine = l.get(fn() { ["r${round}", "s"] })
+    mine.push("mine")
+    let again = l.get(fn() { [] })
+    os.stdio.println("copy ${mine.debug()} once ${again.debug()}")
+    kept = again
+  }
+  os.stdio.println("kept ${kept.debug()}")
+  let bad = task.once[Str, Str]()
+  for _ in 0..3 {
+    os.stdio.println("bad ${bad.get(fn() -> Str ! Str { Err("down") }).debug()}")
+  }
+}

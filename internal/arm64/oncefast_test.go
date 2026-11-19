@@ -31,8 +31,10 @@ fn main(os: Os) {
 // the Mutex's read lock (with_read), which copies the value out and
 // writes nothing back, not under the write lock. On the Mac (2026-11-17,
 // a whole program build) 10,000,000 gets took 6.71G instructions
-// before and 2.97G after. darwin only (/usr/bin/time's
-// instruction count).
+// before and 2.97G after. Task #419 (2026-11-19): a done Once publishes
+// its value's box (Once.done) and get reads it with one load and no lock,
+// 0.44G; the ceiling, 0.9G, fails if get takes any lock again. darwin
+// only (/usr/bin/time's instruction count).
 func TestOnceGetFast(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program")
@@ -72,8 +74,8 @@ func TestOnceGetFast(t *testing.T) {
 	n, _ := strconv.ParseInt(m[1], 10, 64)
 	t.Logf("%d instructions", n)
 	if n > onceMaxInsn {
-		t.Errorf("%d instructions for 10,000,000 gets of a done Once, over the %d ceiling: get takes the write lock again", n, onceMaxInsn)
+		t.Errorf("%d instructions for 10,000,000 gets of a done Once, over the %d ceiling: get takes a lock again (Once.done unpublished?)", n, onceMaxInsn)
 	}
 }
 
-const onceMaxInsn = 4_000_000_000
+const onceMaxInsn = 900_000_000

@@ -1,0 +1,9 @@
+// std/task's native part (decision 0597 part 2): a done Once's value
+// read with one load (task #419, decision #183), declared bodyless in
+// std/task.xo. The Go backend's twins are in std/rt/task.go.
+
+use native/rt
+
+fn once_addr[T](box: List[T]) -> Int { rt.obj_addr(box) }
+
+fn once_at[T](a: Int) -> T { rt.obj_peek[List[T]](a)[0] }

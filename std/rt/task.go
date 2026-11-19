@@ -320,3 +320,12 @@ func wakeTask(tk *Task) {
 		s.wake(th)
 	}
 }
+
+// Task_once_addr is std/task's once_addr on the Go backend: 0, so a done
+// Once is read under its read lock (the native fast path keeps the box's
+// address in an Int, which Go's collector would not see).
+func Task_once_addr[T any](_ *Task, box List[T]) int64 { return 0 }
+
+// Task_once_at is std/task's once_at, never reached on the Go backend
+// (Task_once_addr publishes no address).
+func Task_once_at[T any](_ *Task, a int64) T { panic("task: once_at without a published Once") }

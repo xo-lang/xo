@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+reads 1120000 Conf{name: "cfg-0", tags: ["a", "b-0"]}
+debug Once{st: <mutex>, done: <redacted>}
+copy ["r0", "s", "mine"] once ["r0", "s"]
+copy ["r1", "s", "mine"] once ["r1", "s"]
+copy ["r2", "s", "mine"] once ["r2", "s"]
+kept ["r2", "s"]
+bad Err("down")
+bad Err("down")
+bad Err("down")
+--- stderr

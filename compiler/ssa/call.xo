@@ -2026,6 +2026,14 @@ fn (var b: Builder) raw_generic(name: Str, t: Int, es: List[Expr?]) -> (Int, Boo
     let a = b.value_as(es[0] ?? fault("arg"), it)
     return (b.rt("obj_at", t, [a]), true)
   }
+  if name == "obj_peek" {
+    if !(k is Kind.List | Kind.Handle) {
+      b.unsupported("`rt.obj_peek` of a `${b.m.types[t].name}` (a List or handle)")
+      return (b.undef(t), true)
+    }
+    let a = b.value_as(es[0] ?? fault("arg"), it)
+    return (b.rt("obj_peek", t, [a]), true)
+  }
   (-1, false)
 }
 

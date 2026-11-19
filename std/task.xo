@@ -227,12 +227,42 @@ fn (s: Semaphore) give() {
 /// If the running caller is cancelled before f finishes, the next waiter
 /// runs f instead. A failed result is shared too.
 pub struct Once[T, E] {
-  st: Mutex[Option[Result[T, Isolated[E]]]]
+  /// None until f has run; a value is kept in a list of one (the box),
+  /// which never changes or moves once set
+  st: Mutex[Option[Result[List[T], Isolated[E]]]]
+  /// 0, or the address of the box of a done Once (once_addr): a get then
+  /// reads the value with one load and no lock (decision #183 of task
+  /// #419: the read lock was 12 times Go's sync.Once); st keeps the box
+  /// alive as long as the Once, which a get holds. A Secret so that Debug
+  /// prints `<redacted>`, not an address that differs from run to run.
+  done: Secret[Atomic[Int]]
 }
 
-pub fn once[T, E]() -> Once[T, E] { Once{st: Mutex[Option[Result[T, Isolated[E]]]].new(None)} }
+pub fn once[T, E]() -> Once[T, E] { Once{st: Mutex[Option[Result[List[T], Isolated[E]]]].new(None), done: Secret.new(Atomic[Int].new(0))} }
+
+/// The address of box's object, for Once.done (decision 0597 part 2:
+/// native rt.obj_addr in std/native/task_native.xo; 0 on the Go backend,
+/// whose collector keeps no address in an Int, so its gets take the read
+/// lock as before).
+fn once_addr[T](box: List[T]) -> Int
+
+/// The value in the box at address a (once_addr) of a done Once, which
+/// the caller holds (native only: the Go backend never publishes one).
+fn once_at[T](a: Int) -> T
 
 pub fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx {
+  // a done Once whose box is published is one load (the box was set and
+  // shared before its address, which the atomic orders)
+  let a = o.done.reveal().get()
+  if a != 0 {
+    return once_at(a)
+  }
+  o.get_slow(f)
+}
+
+/// get when no box is published yet (kept out of get, so get's load and
+/// test inline at the caller without this body's frame).
+fn (o: Once[T, E]) get_slow[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx {
   // a done Once is read under the read lock, which neither writes the
   // value back nor waits on other readers (task #103: 20,000,000 gets
   // 0.44 to 0.13 s on the Mac), and only its value comes out: a copy of
@@ -241,7 +271,7 @@ pub fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses 
   // take the write lock, where one runs f and the rest wait for its result
   let seen = o.st.with_read(fn(st) -> T? {
     match st {
-      Some(Ok(v)) => Some(v)
+      Some(Ok(box)) => Some(box[0])
       _ => None
     }
   })
@@ -249,18 +279,25 @@ pub fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses 
     return v
   }
   // xo:allow XO0804 seen is only a hint: the write lock rechecks st and runs f only when it is None
-  let r = o.st.with(fn(var st) -> Result[T, Isolated[E]] {
+  let r = o.st.with(fn(var st) -> Result[List[T], Isolated[E]] {
     match st {
       Some(done) => done
       None => {
-        let fresh = isolate(f)
+        let fresh = match isolate(f) {
+          Ok(v) => Ok([v])
+          Err(e) => Err(e)
+        }
         st = Some(fresh)
         fresh
       }
     }
   })
   let out: Result[T, E] = match r {
-    Ok(v) => Ok(v)
+    Ok(box) => {
+      // published after the with: the box is st's, shared by its release
+      o.done.reveal().set(once_addr(box))
+      Ok(box[0])
+    }
     Err(Isolated.Failed(e)) => Err(e)
     Err(Isolated.Faulted(info)) => rt.fault_raise(info.msg, info.location)
   }

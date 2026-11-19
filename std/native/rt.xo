@@ -585,6 +585,10 @@ fn obj_addr[T](x: T) -> Int
 /// once more (the reference counting of the result releases it, so the
 /// object's count is unchanged once the value is dead; decision 0207).
 fn obj_at[T](a: Int) -> T
+/// rt.obj_at with no count: a borrowed root (ssa rc.xo), counted only
+/// where the caller keeps it, so the object must stay alive while the
+/// caller reads it (a done task.Once's box, which the Once holds).
+fn obj_peek[T](a: Int) -> T
 /// Swaps the elements at i and j of xs's own array as words, with no
 /// count and no release: a permutation of a list's elements leaves each
 /// one referenced exactly as often, so nothing is counted (lowered
