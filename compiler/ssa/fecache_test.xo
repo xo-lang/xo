@@ -143,3 +143,17 @@ test "an entry that made a thunk replays with the one there only when it is the 
   expect(thunk_replay_ok("twice.value", 7, sig, "twice.value", 7, "")) == true
   expect(thunk_replay_ok("twice.value", 8, sig, "twice.value", 7, "")) == false
 }
+
+test "verify names the generic instances the checks call by key (entry_instances, task #353)" {
+  // http.dispatch's list_sort[Str] was `#2` in http_h2c after http_client
+  // built: a replay renames it by its key, so verify compares by the key
+  var ca: Map[Str, Str] = {"prelude.list_sort[Str]": "generic k"}
+  var cb: Map[Str, Str] = {"prelude.list_sort[Str]#2": "generic k"}
+  expect(numbered_checks(checks_part(["prelude.list_sort[Str]", "f.fn1"]), ca)) == numbered_checks(checks_part(["prelude.list_sort[Str]#2", "f.fn3"]), cb)
+  // the instances do not shift the closures' numbers
+  expect(ca.get("f.fn1")) == Some("closure#0")
+  // another key differs
+  var cx: Map[Str, Str] = {"g[Int]": "generic k1"}
+  var cy: Map[Str, Str] = {"g[Int]": "generic k2"}
+  expect(numbered_checks(checks_part(["g[Int]"]), cx) == numbered_checks(checks_part(["g[Int]"]), cy)) == false
+}

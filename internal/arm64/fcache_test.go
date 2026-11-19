@@ -4136,3 +4136,45 @@ func TestFrontCacheSpecSameNameInstances(t *testing.T) {
 		t.Error("the build replaying the workers' entries differs from the build without workers")
 	}
 }
+
+// TestFrontCacheVerifyAcrossPrograms: two programs built in turn with one
+// cache, the second under XO_BACKEND_CACHE=verify, record the bodies they
+// share as the same entries (task #353, 2026-11-18). A flag a declare
+// sets while a body records (a signature naming a concurrency type sets
+// need_conc) is the body's, though declare runs with the log off:
+// http.stream_request declared such a callee itself in http_duplex_h2tls
+// but found it made in http_client_proxy, and the flag bits differed. A
+// generic instance a body calls is compared by its key: http.dispatch's
+// list_sort[Str] was `#2` in http_h2c after http_client, which a replay
+// renames, but verify compared the names.
+func TestFrontCacheVerifyAcrossPrograms(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, seq := range [][]string{{"http_client_proxy", "http_duplex_h2tls"}, {"http_client", "http_h2c"}} {
+		t.Run(seq[1], func(t *testing.T) {
+			t.Parallel()
+			work, err := testtmp.Dir("xo-feverify-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(work)
+			for _, g := range seq {
+				cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, g, progExe), "."))
+				cmd.Dir = filepath.Join("..", "llvm", "testdata", "golden", g)
+				cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=verify")
+				if log, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s: %v\n%s", g, err, log)
+				}
+			}
+		})
+	}
+}

@@ -65,7 +65,10 @@
 #            output (about 3 GB) is removed after
 #   warmseq  std goldens built through caches other programs filled, with
 #            the default cache settings (internal/arm64
-#            TestWarmBuildSequence, gate subset): run after the steps
+#            TestWarmBuildSequence, gate subset; and TestFrontCacheVerify-
+#            AcrossPrograms, two pairs under XO_BACKEND_CACHE=verify, whose
+#            read-set check names a body's read its entry does not record,
+#            task #353, about 25 s): run after the steps
 #            named when the branch changes compiler/ (warmseq_change);
 #            XO_WARMSEQ=modules or all for wider sets
 #   chkcache the module check cache's auto mode against a cold check
@@ -1523,7 +1526,7 @@ run_step_body() {
   chkcache)
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
   warmseq)
-    full warmseq ./internal/arm64 -run '^TestWarmBuildSequence$' ;;
+    full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$' ;;
   stdwasm)
     # every std test module under `xo test --backend=wasm` (decision 0610),
     # Node's WASI as the runner: a module passes when its summary line is
@@ -1568,7 +1571,7 @@ after_steps() {
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
   fi
   if [ "$warmseq_ran" = 0 ] && [ "${XO_GATE_WARMSEQ:-1}" != 0 ] && warmseq_change; then
-    full warmseq ./internal/arm64 -run '^TestWarmBuildSequence$'
+    full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$'
   fi
   if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
     full scale ./internal/arm64 -run '^TestSwitch65535Arms$'

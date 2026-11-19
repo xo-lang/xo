@@ -933,6 +933,12 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   if phases {
     os.stdio.eprintln("cache fe ${b.fe.hits}/${b.fe.hits + b.fe.misses} bodies")
   }
+  if !b.fe.unrecorded.is_empty() {
+    for m in b.fe.unrecorded[0..b.fe.unrecorded.len().min(40)] {
+      os.stdio.eprintln("fe verify: unrecorded read: ${m}")
+    }
+    fail(os, "XO_BACKEND_CACHE=verify: ${b.fe.unrecorded.len()} reads of function bodies are not in their front end cache entries (the key and the commit's checks miss them), the first ${b.fe.unrecorded[0]}")
+  }
   if !b.fe.mismatches.is_empty() {
     let mode = if b.fe.spec_verify { "XO_FE_SPEC_VERIFY=1" } else { "XO_BACKEND_CACHE=verify" }
     if b.fe.spec_verify {

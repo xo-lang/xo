@@ -49,6 +49,9 @@ pub struct FeCache {
   pub body_entries: Map[Int, Bytes] = {}
   pub misses: Int = 0
   pub mismatches: List[Str] = []
+  /// under verify, the reads of a body its entry does not list
+  /// (fe_readset_check), "FUNC: type NAME" or "FUNC: function NAME"
+  pub unrecorded: List[Str] = []
   /// the build starts with unwinding checks (Builder.conc): the last
   /// build of the program needed them (xo bcache.xo's hint)
   pub start_conc: Bool = false
@@ -355,6 +358,120 @@ fn name_made(x: SType) -> Bool {
   match x.kind {
     Kind.List | Kind.Box | Kind.Tuple | Kind.Func | Kind.Struct | Kind.Enum => true
     _ => false
+  }
+}
+
+/// Under XO_BACKEND_CACHE=verify (class guard 4, task #353): every type
+/// and function the body names that was there before it (an index below
+/// r.nt or r.nf) is one its entry lists as read (tread, pre_t, fread, the
+/// Map helpers), or a part of one, or of the signatures of the function
+/// and of the functions it calls or made (there once they are declared);
+/// a function declare made is none (its checker object is in the key).
+/// One it does not list is an input the entry's checks miss: a replay
+/// where nothing made it breaks or builds other code, which goldens found
+/// only when a pair of programs differed (eda2208a3's slot_ft, 26473e932's
+/// closure types). Each goes to FeCache.unrecorded, which fails the build.
+fn (var b: Builder) fe_readset_check(r: FeRec, fi: Int, body: Func, tread: Map[Int, Bool], pre_t: Map[Int, Bool], fread: Map[Int, Bool], helper: Map[Int, Bool]) {
+  var st: List[Int] = []
+  for (t, _) in tread {
+    st.push(t)
+  }
+  for (t, _) in pre_t {
+    st.push(t)
+  }
+  var sigs: List[Int] = [fi]
+  for v in body.values {
+    if v.op is Op.Call | Op.FuncAddr | Op.Closure {
+      if let Aux.S(n) = body.aux(v) {
+        let w = b.m.func_at.get(n) ?? -1
+        if w >= 0 && b.decl_f.contains(w) {
+          sigs.push(w)
+        }
+      }
+    }
+  }
+  for (i, _) in fread {
+    sigs.push(i)
+  }
+  for (i, _) in helper {
+    sigs.push(i)
+  }
+  for (k, x) in b.m.fe_ev {
+    if k == 3 {
+      sigs.push(x)
+    }
+  }
+  for i in sigs {
+    let f = b.m.funcs[i]
+    for t in f.results {
+      st.push(t)
+    }
+    for t in f.captures {
+      st.push(t)
+    }
+    for v in f.values {
+      if v.op == Op.Param {
+        st.push(ty_of(v.tb))
+      }
+    }
+  }
+  // a type made while the body ran but by no event of its own (a declare,
+  // which the commit replays whole): its parts are the declare's
+  var logged: Map[Int, Bool] = {}
+  for (k, x) in b.m.fe_ev {
+    if k == 1 {
+      logged[x] = true
+    }
+  }
+  for t in r.nt..b.m.types.len() {
+    if !logged.contains(t) {
+      st.push(t)
+    }
+  }
+  var ok: Map[Int, Bool] = {}
+  while let Some(t) = st.pop() {
+    if t < 0 || ok.contains(t) || (t >= r.nt && logged.contains(t)) {
+      continue
+    }
+    ok[t] = true
+    for c in type_parts(b.m.types[t]) {
+      st.push(c)
+    }
+  }
+  // a constant (event 6) or a function value's thunk (event 7) the body
+  // named: the commit builds or finds it by name
+  var cids: Map[Int, Bool] = {}
+  var thunk: Map[Int, Bool] = {}
+  for (k, x) in b.m.fe_ev {
+    if k == 6 {
+      cids[x] = true
+    } else if k == 7 {
+      thunk[x] = true
+    }
+  }
+  var miss: Map[Str, Bool] = {}
+  for v in body.values {
+    let t = ty_of(v.tb)
+    // a scalar (Int, Str, Float32) is found by its name in every build
+    if t >= 0 && t < r.nt && !ok.contains(t) && !(b.m.types[t].kind is Kind.Unit | Kind.Int | Kind.Float | Kind.Bool | Kind.Str) {
+      miss["type ${b.m.types[t].name}"] = true
+    }
+    if v.op is Op.Call | Op.FuncAddr | Op.Closure {
+      if let Aux.S(n) = body.aux(v) {
+        let w = b.m.func_at.get(n) ?? -1
+        let named_const = cids.contains(b.consts.get(n) ?? -1)
+        if w >= 0 && w < r.nf && w != fi && !named_const && !thunk.contains(w) && !b.decl_f.contains(w) && !fread.contains(w) && !helper.contains(w) {
+          miss["function ${n}"] = true
+        }
+      }
+    }
+  }
+  var ms: List[Str] = []
+  for (m, _) in miss {
+    ms.push(m)
+  }
+  for m in ms.sort() {
+    b.fe.unrecorded.push("${b.m.funcs[fi].name}: ${m}")
   }
 }
 
@@ -688,6 +805,9 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   for (n, _) in absent {
     reads.push("a ${n}")
   }
+  if b.fe.verify {
+    b.fe_readset_check(r, fi, body, tread, pre_t, fread, helper)
+  }
   e.uv(reads.len())
   for k in reads.sort() {
     e.str(k)
@@ -925,8 +1045,12 @@ fn (b: Builder) fe_same_numbered(a: Bytes, e: Bytes) -> Bool {
       // the unwinding checks name the closures they call too: numbered
       // with the body's, one map, so a check naming another closure than
       // the body's still differs (a replay renames both, fe_replay)
-      let nx = b.numbered_tail(xp, xb)
-      nx != None && nx == b.numbered_tail(yp, yb)
+      // and the generic instances they call by key: an instance's name
+      // is `#n` when another of its name was made first (replay renames
+      // by the key); http.dispatch's list_sort[Str] was `#2` in http_h2c
+      // after http_client (task #353, 2026-11-18)
+      let nx = b.numbered_tail(xp, xb, entry_instances(a))
+      nx != None && nx == b.numbered_tail(yp, yb, entry_instances(e))
     }
     _ => false
   }
@@ -997,6 +1121,51 @@ fn fe_func_diff(a: Func, e: Func) -> Str {
 
 /// An entry's version and flags (what fe_same compares of its head) and
 /// its tail; None when it does not decode.
+/// The generic instances an entry calls (fe_greads), each name to
+/// "generic KEY", seeding numbered_tail's map; empty when the entry
+/// does not decode (then the tails are compared as named).
+fn entry_instances(d: Bytes) -> Map[Str, Str] {
+  var m: Map[Str, Str] = {}
+  var r = EntryR{d: d}
+  let _v = r.str()
+  let _own = r.str()
+  let _recorder = r.str()
+  let _line = r.uv()
+  let _pinned = r.bool()
+  let _t = r.bytes()
+  let nr = r.uv()
+  if !r.ok || nr > d.len() {
+    return {}
+  }
+  for _ in 0..nr {
+    let _k = r.str()
+  }
+  let ng = r.uv()
+  if !r.ok || ng > d.len() {
+    return {}
+  }
+  for _ in 0..ng {
+    let k = r.str()
+    let n = r.str()
+    m[n] = "generic ${k}"
+  }
+  if !r.ok {
+    return {}
+  }
+  m
+}
+
+/// How many closures clos numbers (its other names are instances).
+fn closures_in(clos: Map[Str, Str]) -> Int {
+  var n = 0
+  for (_, v) in clos {
+    if v.starts_with("closure#") {
+      n += 1
+    }
+  }
+  n
+}
+
 fn entry_head_tail(d: Bytes) -> Option[(Str, Bytes)] {
   var r = EntryR{d: d}
   let v = r.str()
@@ -1018,8 +1187,8 @@ fn entry_head_tail(d: Bytes) -> Option[(Str, Bytes)] {
 /// checks were compared as recorded, so a body whose closure is called
 /// where an unwinding check is kept (time.civil_instant's cl, fn2 in one
 /// program and fn4 in another) failed verify though a replay renames it.
-fn (b: Builder) numbered_tail(p: Bytes, d: Bytes) -> Option[Bytes] {
-  var clos: Map[Str, Str] = {}
+fn (b: Builder) numbered_tail(p: Bytes, d: Bytes, inst: Map[Str, Str]) -> Option[Bytes] {
+  var clos = inst
   let nb = b.numbered_body(d, clos)?
   let np = numbered_checks(p, clos)?
   var w = EntryW{b: BytesBuilder.new()}
@@ -1042,9 +1211,9 @@ fn numbered_checks(p: Bytes, var clos: Map[Str, Str]) -> Option[Bytes] {
   for _ in 0..nc {
     w.uv(r.uv())
     let c = r.str()
-    if closure_name(c) {
+    if closure_name(c) || clos.contains(c) {
       if !clos.contains(c) {
-        clos[c] = "closure#${clos.len()}"
+        clos[c] = "closure#${closures_in(clos)}"
       }
       w.str(clos.get(c) ?? c)
     } else {
@@ -1067,9 +1236,9 @@ fn (b: Builder) numbered_body(d: Bytes, var clos: Map[Str, Str]) -> Option[Bytes
   for i in 0..f.values.len() {
     if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind | Op.CodeOf {
       if let S(s) = f.aux(f.values[i]) {
-        if closure_name(s) {
+        if closure_name(s) || clos.contains(s) {
           if !clos.contains(s) {
-            clos[s] = "closure#${clos.len()}"
+            clos[s] = "closure#${closures_in(clos)}"
           }
           f.values[i].aux = f.pack(Aux.S(s: clos.get(s) ?? s))
         } else if s == "rt.const_once" && f.values[i].args.len() == 3 {

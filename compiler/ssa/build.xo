@@ -188,6 +188,10 @@ pub struct Builder {
   /// The instances of functions that are not generic, by function object
   /// (the fast path of declare).
   plain: Map[Int, Int] = {}
+  /// the functions declare made (b.funcs' values): from a checker object,
+  /// so the front end cache's key holds what makes them (its interface
+  /// closure), and a body's call of one is no read (fe_readset_check)
+  decl_f: Map[Int, Bool] = {}
   thunks: Map[Str, Int] = {}
   /// A thunk's function object, by the thunk (a recorded body's event 7).
   thunk_of: Map[Int, Int] = {}
@@ -3503,7 +3507,12 @@ fn (var b: Builder) set_flag(k: Int) {
   } else {
     b.uses_net = true
   }
-  if b.m.fe_log {
+  // a declare the body makes runs with the log off (declare), and a flag
+  // its signature sets is the body's too: the entry of a body that
+  // declared a function first otherwise differed from one recorded after
+  // another body had (http.stream_request's need_conc after
+  // http_client_proxy against http_duplex_h2tls, task #353, 2026-11-18)
+  if b.m.fe_log || b.fe_rec {
     b.fe_flagbits = b.fe_flagbits | k
   }
 }
@@ -3642,6 +3651,7 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
     b.unsupported(skipped)
   }
   b.funcs[key] = f
+  b.decl_f[f] = true
   if targs.is_empty() {
     b.plain[fo] = f
   }
