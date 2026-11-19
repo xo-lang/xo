@@ -1453,7 +1453,16 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   layout still parses (code-signing.md "Windows").
 - `scripts/cache-churn.sh [--dir DIR] [--since UNIX] [--live-min N]` (2026-10-24, decision 0365's churn measurement): the back-end cache's store churn by hour and for the last 24 hours and the whole period, from DIR/store-log and DIR/prune-log: GB stored, GB pruned, distinct ids, GB stored by retired ids (an id with no store in the last N minutes, default 60) and their share. Read only; `--since` defaults to 2026-10-24 about 20:45 local. Run it on the cache's machine, e.g. Sunday morning for the owner's review.
 
-## Waiting (lead, 2026-11-15)
+## Waiting (lead, 2026-11-15; waits retired 2026-11-18, decision #165)
+
+Since 2026-11-18 an agent does not wait at all: start the job (a
+heavy.sh run, `pushq.sh WT --gated`, `offload-gate.sh WT STEPS`), go on
+with the next item, and act on the xw message its end brings (xw
+delivers job, gate and push ends to the agent's session; 1769 of 1822 in
+the 24 h before the switch, 0 failed). ccguard blocks a command that only
+waits (`heavy.sh`, `pushq.sh` or `offload-gate.sh --wait`, or a sleep),
+in the background too. `xw notify [--since 1d]` counts the deliveries by
+outcome. The waits below stay for scripts and the lead's tools.
 
 Never poll a job with repeated status or log reads: over 24 hours of
 transcripts about 30% of every agent's Bash calls were such polls, and
