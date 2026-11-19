@@ -664,9 +664,76 @@ fn poly26_finish(p: Poly26, key: Bytes) -> Bytes {
 // ---------------------------------------------------------------------------
 // The AEAD (RFC 8439 2.8)
 
+/// On amd64 with SSSE3 and src at most 192 bytes: one vector call
+/// (cpu.chacha_stream4) for the whole message, as Go's sealSSE128 and
+/// openSSE128, not two scalar blocks. Its four lanes run counters 1, 2,
+/// 3 and 0, so the result holds src's xor at 0 (its length set) and the
+/// Poly1305 key block (counter 0) at 192 of its room; the key is read
+/// out (small_key) before anything is appended.
+fn small4(key: Bytes, nonce: Bytes, src: Bytes) -> Str {
+  let n = src.len()
+  // src padded to 256 bytes, then the state and the lane counters
+  let sc = rt.rs_append_bytes(rt.rs_with_cap(256 + 80), src, 0, n, 0)
+  let sp = raw.data(sc)
+  // the padding zeroed a word at a time from n's word (its bytes past n
+  // cleared there), so nothing past 256 is touched
+  var z = n & -8
+  if z < n {
+    rt.mem_store(sp, z, rt.mem_load(sp, z, 8) & (shl(1, 8 * (n - z)) - 1), 8)
+    z += 8
+  }
+  while z < 256 {
+    rt.mem_store(sp, z, 0, 8)
+    z += 8
+  }
+  let st = sp.wrapping_add(256)
+  rt.mem_store(st, 0, 0x3320646e61707865, 8)
+  rt.mem_store(st, 8, 0x6b20657479622d32, 8)
+  for k in 0..4 {
+    let w = rt.bytes_word(key, 8 * k)
+    rt.mem_store(st, 16 + 8 * k, w, 8)
+  }
+  rt.mem_store(st, 48, 0, 4)
+  rt.mem_store(st, 52, le32(nonce, 0), 4)
+  rt.mem_store(st, 56, le32(nonce, 4), 4)
+  rt.mem_store(st, 60, le32(nonce, 8), 4)
+  for b in 0..4 {
+    rt.mem_store(st, 64 + 4 * b, (b + 1) & 3, 4)
+  }
+  let out = rt.rs_with_cap(256)
+  cpu.chacha_stream4(raw.data(out), sp, st, 256)
+  keep_str(sc)
+  rt.rs_set_len(out, n)
+}
+
+/// The Poly1305 key small4 left at 192 of s's room.
+fn small_key(s: Str) -> Bytes {
+  let a = raw.data(s).wrapping_add(192)
+  var k = rt.rs_with_cap(32)
+  for w in 0..4 {
+    k = rt.rs_push_word(k, rt.mem_load(a, 8 * w, 8), 8)
+  }
+  keep_str(s)
+  k.bytes()
+}
+
+/// Whether small4 runs for a message of n bytes: more than one block
+/// (the vector call costs about two scalar blocks, so at 64 bytes and
+/// under the key block and one data block are cheaper; amd64 host,
+/// 2026-11-18: 64 bytes 145 ms against 123 for 200,000 seals and opens,
+/// 128 bytes 151 against 166, 192 bytes 157 against 210).
+fn small_ok(n: Int) -> Bool { target.arch == TargetArch.Amd64 && n > 64 && n <= 192 && (cpu.hw() & cpu.HW_SSSE3) != 0 }
+
 /// The ciphertext of plaintext pt under key (32 bytes) and nonce (12
 /// bytes) with its 16 byte tag after it (cipher.AEAD's Seal).
 fn seal64(key: Bytes, nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes {
+  if small_ok(pt.len()) {
+    let c = small4(key, nonce, pt)
+    let otk = small_key(c)
+    let p1 = absorb_tail(absorb_tail(poly_new(otk), aad, 0, false), c.bytes(), 0, false)
+    let t = poly_finish(absorb_words(p1, aad.len(), pt.len(), shl(1, 24)), otk)
+    return rt.rs_append_bytes(c, t, 0, 16, 0).bytes()
+  }
   // the additional data hashed first, then the ciphertext as it is made
   // (its 256 byte multiple in the same loop, cpu.chacha_poly_seal4), the
   // rest and the lengths after
@@ -690,6 +757,15 @@ fn open64(key: Bytes, nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? {
   }
   let body = sealed[0..n]
   let want = rt.rs_append_bytes(rt.rs_with_cap(16), sealed, n, n + 16, 0).bytes()
+  if small_ok(n) {
+    let pt = small4(key, nonce, body)
+    let otk = small_key(pt)
+    let p1 = absorb_tail(absorb_tail(poly_new(otk), aad, 0, false), body, 0, false)
+    if !ct.bytes_equal(poly_finish(absorb_words(p1, aad.len(), n, shl(1, 24)), otk), want) {
+      return None
+    }
+    return pt.bytes()
+  }
   // the ciphertext hashed as it is decrypted (its 256 byte multiple in
   // one loop, cpu.chacha_poly_open4), the plaintext dropped when the tag
   // does not match

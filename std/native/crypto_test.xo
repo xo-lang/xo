@@ -3268,3 +3268,37 @@ test "with_data_independent_timing sets DIT for f, nests, and restores it after 
   expect(with_data_independent_timing(fn() { 5 })) == 5
   expect(cpu.dit_set(before)) == 1
 }
+
+// Every length 0 to 200: on amd64 with SSSE3 those up to 192 bytes take
+// chacha.xo's one call small4 path (key block in the fourth lane), the
+// rest the stream; the SHA-256 of the sealed messages is x/crypto
+// v0.58.0's chacha20poly1305 over the same inputs.
+test "ChaCha20-Poly1305 seals and opens every length to 200 as Go's" {
+  var kb = BytesBuilder.with_capacity(32)
+  for i in 0..32 {
+    kb.write_byte(UInt8((i * 7 + 3) & 255))
+  }
+  let k = aead_key(crypto.Aead.ChaCha20Poly1305, kb.freeze()) ?? e => fault(e.msg)
+  let aad = b"small4 header"
+  var all = BytesBuilder.new()
+  for n in 0..201 {
+    var nb = BytesBuilder.with_capacity(12)
+    for i in 0..12 {
+      nb.write_byte(UInt8((n + i) & 255))
+    }
+    let nonce = nb.freeze()
+    var pb = BytesBuilder.with_capacity(n)
+    for j in 0..n {
+      pb.write_byte(UInt8((j * 31 + 5) & 255))
+    }
+    let pt = pb.freeze()
+    let sealed = k.seal(nonce, pt, aad)
+    all.write(sealed)
+    expect(k.open(nonce, sealed, aad).ok()) == Some(pt)
+    var bad = BytesBuilder.new()
+    bad.write(sealed[0..sealed.len() - 1])
+    bad.write_byte(sealed[sealed.len() - 1] ^ 1)
+    expect(k.open(nonce, bad.freeze(), aad).ok()) == None
+  }
+  expect(digest(crypto.Hash.Sha256, all.freeze()).to_hex()) == "51da9b9c7dcf1240520fef63bd32272875d886e1feac3f6a222de9230e9a95f8"
+}

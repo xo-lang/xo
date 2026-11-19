@@ -1,5 +1,24 @@
 # std/crypto changes
 
+## 2026-11-18: perf: ChaCha20-Poly1305 on x86-64 seals and opens 65 to 192 bytes in one vector call
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/aead on linux/amd64: chacha_small 1.498 of Go's x/crypto chacha20poly1305)
+- Go reference: golang.org/x/crypto chacha20poly1305 chacha20poly1305_amd64.s (sealSSE128 and openSSE128: the key block and the message's blocks in one SSE computation)
+- Measured: linux/amd64 host, exclusive, 3 interleaved rounds of 200,000 seals and opens: 96 bytes 161 to 148 ms (Go 81), 128 bytes 166 to 151 (Go 86), 160 bytes 205 to 154 (Go 92), 192 bytes 210 to 157 (Go 103); 64 and 256 bytes unchanged (122 and 149; Go 78 and 112)
+- Test: crypto module test "seals and opens every length to 200 as Go's" (the SHA-256 of 201 sealed messages equal to x/crypto v0.58.0's, each opened, a changed tag refused), run on the linux/amd64 host
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+With SSSE3, a message of 65 to 192 bytes runs the four block kernel
+(cpu.chacha_stream4) once, its lanes at counters 1, 2, 3 and 0, so the
+Poly1305 key block comes from the same call; before, the key block and
+each data block were scalar. At 64 bytes and under the vector call costs
+more than the two scalar blocks, so those keep the scalar path; the
+64 byte gap to Go is the scalar block and Poly1305 (next: a one block
+SSE kernel).
+
 ## 2026-11-18: perf: ChaCha20-Poly1305 on x86-64 seals and opens eight blocks a step
 
 - Kind: perf

@@ -56,6 +56,7 @@ var x86GateHelpers = map[string]string{
 	"aesgcm.xo:sub_word_hw":    "schedule calls it only under aes, its hw & HW_AES",
 	"aesgcm.xo:gcm_bulk":       "every caller checks g.fused() (HW_AES and HW_CLMUL), seal_fused's callers seal_into and seal_into_aad too",
 	"sha256.xo:block512_hw_at": "its one caller, digest.xo sha512_at, checks HW_SHA512",
+	"chacha.xo:small4":         "its callers seal64 and open64 call it only when small_ok (HW_SSSE3)",
 }
 
 var x86Call = regexp.MustCompile(`\bcpu\.([a-z0-9_]+)\(`)
