@@ -27,6 +27,8 @@ import (
 	"regexp/syntax"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type rxCase struct {
@@ -65,7 +67,15 @@ func rxPiece(r *rand.Rand, depth int) string {
 		}
 	}
 	if r.Intn(3) == 0 {
-		s += []string{"*", "+", "?", "{2}", "{1,3}", "{0,}", "*?", "+?", "??", "{2,4}?"}[r.Intn(10)]
+		q := []string{"*", "+", "?", "{2}", "{1,3}", "{0,}", "*?", "+?", "??", "{2,4}?"}[r.Intn(10)]
+		if q == "{2}" && len(s)%4 == 1 {
+			// the hostile dictionary (task #352): repeat counts past
+			// 1000 and past Int, chosen by the length so the cases after
+			// it stay as they were
+			ds := hostile.Digits()
+			q = "{" + strings.TrimPrefix(ds[len(s)%len(ds)], "+") + "}"
+		}
+		s += q
 	}
 	return s
 }

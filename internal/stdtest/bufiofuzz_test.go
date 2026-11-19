@@ -29,6 +29,8 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type bfChunks struct {
@@ -75,6 +77,13 @@ func bfCases(r *rand.Rand, n int) []bfCase {
 		data := make([]byte, size)
 		for k := range data {
 			data[k] = alphabet[r.Intn(len(alphabet))]
+		}
+		if size%13 == 7 {
+			// the hostile dictionary (task #352): UTF-8 cut inside a
+			// rune at the front, chosen by the size so the cases after
+			// it stay as they were
+			cuts := hostile.CutUTF8("é日😀")
+			copy(data, cuts[size%len(cuts)])
 		}
 		sizes := make([]int, 1+r.Intn(4))
 		for k := range sizes {

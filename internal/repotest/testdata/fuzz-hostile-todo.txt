@@ -8,7 +8,6 @@ amqptestfuzz_test.go
 base32fuzz_test.go
 bcryptfuzz_test.go
 bigfuzz_test.go
-bufiofuzz_test.go
 clifuzz_test.go
 compressfuzz_test.go
 cookiejarfuzz_test.go
@@ -37,7 +36,6 @@ otlpfuzz_test.go
 otpfuzz_test.go
 pathfuzz_test.go
 protobuffuzz_test.go
-regexpfuzz_test.go
 rsafuzz_test.go
 templatefuzz_test.go
 tlsfuzz_test.go
