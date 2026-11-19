@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-19: perf: an AES-GCM key builds its GHASH tables in one list, a quarter faster to make
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/aead gcm_key on linux/arm64 host 2: 1.322 of Go's crypto/cipher NewGCM)
+- Go reference: crypto/internal/fips140/aes/gcm (the key's product table, one fixed array in the GCM value)
+- Measured: `xo bench --ab` on linux/arm64 host 1, 4 rounds: gcm_key (100,000 keys, one empty seal each) wall 50.2 to 34.8 ms, 0.695 (95%: 0.679 to 0.719), max RSS 0.971; the Mac, 5 runs: 40 ms before, 30 after; checksums equal. A profile had 36% of gcm_key in allocation: the 48 word table grew by a concatenation a power (eight new lists and copies); it is one list made with room for all 48
+- Test: crypto tests (the GCM vectors, seal and open, every key size)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: SHA-3 and SHAKE on x86-64 absorb whole blocks in the Keccak kernel, 1.4 times faster
 
 - Kind: perf

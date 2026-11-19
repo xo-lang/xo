@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (std/crypto; task #271): making an AES-GCM key allocates its GHASH table once, about a quarter faster per key (bench/perf/aead gcm_key: `xo bench --ab` on linux/arm64 host 1, 0.695 of the time).
 - Perf (compiler, arm64 native backend; task #87): a Float constant is one `ldr d, label` load from the function's constants, as Go and LLVM do, instead of `movz`, up to three `movk` and `fmov` through a general register. Callgrind instructions on linux/arm64: bench/perf/gomath erf -36.9%, gamma -16.7%, bench/perf/random zipf -30.2%, normal -1.4%; `xo bench --ab` on host 1: zipf 0.953 (0.936 to 0.961), gamma 0.978 (0.966 to 0.996), both under 65 ms a run.
 - Fix (std/image; task #271): `Image.draw` with `Op.Over` of an RGBA source whose color sample exceeds its alpha stores each sample's low 8 bits, as Go does; the excess carried into the neighbouring sample.
 - Perf (std/image; task #271): RGBA Over and NRGBA Src draws into RGBA compute their pixels in the row loop, about 7% and 11% faster on the linux/amd64 host.
