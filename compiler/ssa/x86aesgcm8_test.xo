@@ -1,0 +1,30 @@
+// aes_gcm8_x86_lines: the counter blocks come from the stack frame, not
+// built with vector instructions in the loop.
+
+test "the GCM loop builds no counter block in a vector register" {
+  for seal in [false, true] {
+    for nr in [10, 12, 14] {
+      let t = aes_gcm8_x86_lines(nr, seal, "%rdi", "%rsi", "%rdx", "%rcx", "%r11", "%rbx", "%r12")
+      var inloop = false
+      var depth = 0
+      for l in t {
+        if l == "1:" {
+          inloop = true
+        }
+        if l == "jnz 1b" {
+          inloop = false
+        }
+        if inloop {
+          expect(l.starts_with("pinsrd")) == false
+        }
+        if l == "leaq -256(%rsp), %rsp" {
+          depth += 1
+        }
+        if l == "leaq 256(%rsp), %rsp" {
+          depth -= 1
+        }
+      }
+      expect(depth) == 0
+    }
+  }
+}

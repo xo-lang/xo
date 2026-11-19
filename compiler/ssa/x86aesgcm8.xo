@@ -19,10 +19,14 @@
 // memory: xmm0 to xmm7 the blocks; xmm8, xmm9, xmm10 the sums of x0 p0,
 // x1 p1 and Karatsuba's middle products; xmm11 a round key, then a
 // product (T0); xmm12 a block being hashed (T1); xmm13 its halves xored
-// (T2); xmm14 the counter block (its last 32 bits replaced per block);
-// xmm15 pshufb's mask (each 8 bytes reversed). rcx counts the blocks
-// (32 bits, GCM's inc32), rax a counter word byte swapped, r8 dst, r9
-// src, r10 the bytes left. Sealing hashes the previous 128 bytes'
+// (T2); xmm15 pshufb's mask (each 8 bytes reversed). rcx counts the
+// blocks (32 bits, GCM's inc32), rax a counter word byte swapped, r8 dst,
+// r9 src, r10 the bytes left. The next eight counter blocks, already
+// xored with round key 0, wait in 128 bytes below the stack pointer
+// (moved down 256, past System V's red zone): each step loads them, then
+// writes the following eight's counter words with scalar instructions,
+// as Go's gcmAesDec does (a vector pinsrd per block in the loop took
+// open1 on a Zen 5 from 43 to 46 ms, Go 43; 2026-11-19). Sealing hashes the previous 128 bytes'
 // ciphertext (at r8 - 128, final there) during the next 128 bytes'
 // rounds, as Go does, and the last 128 after the loop; opening hashes
 // the 128 bytes of ciphertext it is decrypting during their own rounds
@@ -36,16 +40,6 @@ pub fn aes_gcm8_x86_gprs() -> List[Str] { ["rax", "rcx", "r8", "r9", "r10"] }
 /// The xmm registers aes_gcm8_x86_lines writes, xmm14 and xmm15 (the
 /// native emitter's scratch) among them.
 pub fn aes_gcm8_x86_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
-
-/// The counter blocks: xmm0 to xmm7 from xmm14 with the next eight
-/// counters.
-fn x86_gcm8_ctrs() -> List[Str] {
-  var t: List[Str] = []
-  for s in 0..8 {
-    t = t + ["movdqa %xmm14, %xmm${s}", "movl %ecx, %eax", "bswapl %eax", "pinsrd $3, %eax, %xmm${s}", "addl $1, %ecx"]
-  }
-  t
-}
 
 /// Round r's key into xmm11 and the eight blocks through it (r 0: the
 /// key added; nr: the last round).
@@ -122,8 +116,16 @@ fn x86_gcm8_reduce(y: Str) -> List[Str] {
 /// j + 1, the reduction after the eighth (every key size has more
 /// rounds), then the key stream xored into src's bytes and stored at dst.
 fn x86_gcm8_step(nr: Int, rk: Str, base: Str, off: Int, y: Str, hp: Str) -> List[Str] {
-  var t = x86_gcm8_ctrs()
-  for r in 0..nr + 1 {
+  var t: List[Str] = []
+  for s in 0..8 {
+    t.push("movdqu ${16 * s}(%rsp), %xmm${s}")
+  }
+  // the next 128 bytes' counter words, in scalar registers and memory
+  // (Go's gcmAesDec: no vector instruction for them)
+  for s in 0..8 {
+    t = t + ["movl %ecx, %eax", "bswapl %eax", "xorl 12(${rk}), %eax", "movl %eax, ${16 * s + 12}(%rsp)", "addl $1, %ecx"]
+  }
+  for r in 1..nr + 1 {
     t = t + x86_gcm8_round(r, nr, rk)
     if !base.is_empty() && r >= 1 && r <= 8 {
       t = t + x86_gcm8_hash(r - 1, base, off, y, hp)
@@ -160,7 +162,13 @@ pub fn aes_gcm8_x86_lines(nr: Int, seal: Bool, dst: Str, src: Str, rk: Str, iv: 
     "movabsq $579005069656919567, %rax",
     "movq %rax, %xmm13",
     "punpcklqdq %xmm13, %xmm15",
+    // the eight counter blocks xored with round key 0 at 0 to 127(%rsp),
+    // past the red zone
+    "leaq -256(%rsp), %rsp",
   ]
+  for s in 0..8 {
+    t = t + ["movdqa %xmm14, %xmm0", "movl %ecx, %eax", "bswapl %eax", "pinsrd $3, %eax, %xmm0", "addl $1, %ecx", "movdqu (${rk}), %xmm11", "pxor %xmm11, %xmm0", "movdqu %xmm0, ${16 * s}(%rsp)"]
+  }
   if seal {
     // the first 128 bytes with nothing to hash, then each next one with
     // the previous one's ciphertext, then the last one's
@@ -171,9 +179,9 @@ pub fn aes_gcm8_x86_lines(nr: Int, seal: Bool, dst: Str, src: Str, rk: Str, iv: 
     for j in 0..8 {
       t = t + x86_gcm8_hash(j, "%r8", -128, y, hp)
     }
-    return t + x86_gcm8_reduce(y) + ["9:"]
+    return t + x86_gcm8_reduce(y) + ["leaq 256(%rsp), %rsp", "9:"]
   }
   t = t + ["1:"]
   t = t + x86_gcm8_step(nr, rk, "%r9", 0, y, hp)
-  t + ["addq $128, %r8", "addq $128, %r9", "subq $128, %r10", "jnz 1b", "9:"]
+  t + ["addq $128, %r8", "addq $128, %r9", "subq $128, %r10", "jnz 1b", "leaq 256(%rsp), %rsp", "9:"]
 }

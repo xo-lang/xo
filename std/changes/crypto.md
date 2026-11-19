@@ -11,6 +11,17 @@
 - Affected: none (no behavior change)
 - Shipped in: not yet released
 
+## 2026-11-19: perf: AES-GCM on x86-64 builds its counter blocks with scalar instructions, 7% faster on one block messages
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/aesgcm open1 on linux/amd64: 1.072 of Go's crypto/aes)
+- Go reference: crypto/internal/fips140/aes/gcm/gcm_amd64.s gcmAesDec (the next eight counter blocks, xored with round key 0, kept on the stack and their counter words written with scalar instructions)
+- Measured: linux/amd64 host, exclusive, 5 runs each: open1 46 ms before, 43 after, Go 42 to 44; seal1 46 before, 43 to 44 after, Go 44; aead gcm_small 50 to 51 before and after, Go 51 to 55; seal, open, seal1, open1 and gcm_small outputs equal to Go's
+- Test: compiler/ssa x86aesgcm8_test (no pinsrd in the loop, the frame released on every path); internal/llvm golden cpu_prims on the linux/amd64 host
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: ChaCha20 alone on x86-64 with AVX2 runs eight blocks at a time, 3.2 times faster
 
 - Kind: perf
