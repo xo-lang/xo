@@ -1,0 +1,22 @@
+// call_saves (task #381): a value saved around calls takes a caller
+// saved register whose occupancy already has the save calls' points.
+
+test "insert_merged keeps a register's ranges disjoint over save call points" {
+  // x14 busy at two save calls, then a value saved around both
+  var occ: List[List[Int]] = [[rng(285, 285), rng(905, 905)]]
+  insert_merged(occ, 0, [rng(278, 987), rng(1212, 1223)])
+  expect(occ[0]) == [rng(278, 987), rng(1212, 1223)]
+  // a later value inside the first: the register is taken (insert_ranges
+  // alone left [278,987], [285,285], [905,905], and the search by ends
+  // missed it, brotli's histogram_combine)
+  expect(overlaps_sorted(occ[0], [rng(542, 611)])) == true
+  expect(overlaps_sorted(occ[0], [rng(990, 1000)])) == false
+}
+
+test "save_regs leaves one caller saved register for a spilled operand" {
+  let c = gp_caller()
+  let s = save_regs(c)
+  expect(s.len()) == c.len() - 1
+  expect(s.contains(c[c.len() - 1])) == false
+  expect(save_regs([9]).len()) == 0
+}

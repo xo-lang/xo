@@ -131,6 +131,7 @@ pub fn passes() -> List[Str] {
     "place_latches",
     "mark_tails",
     "cold_saves",
+    "call_saves",
     "arg_slots",
     "slot_group",
     "shrink_split",

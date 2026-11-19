@@ -354,8 +354,26 @@ fn (var g: G) regalloc() {
   for _ in 0..g.order.len() {
     pad_done.push(false)
   }
+  // the values a call's landing pad reads (call_saves: a value saved
+  // around a call is in its slot, not its register, when the unwinder
+  // enters the pad)
+  var pad_live = new_bits(n)
+  var call_pad_done: List[Bool] = List.with_capacity(g.order.len())
+  for _ in 0..g.order.len() {
+    call_pad_done.push(false)
+  }
   for b in g.order {
     for inst in g.blocks[b].insts {
+      if inst.pad >= 0 && inst.kind == K_CALL {
+        let pk = idx[g.pad_of(inst.pad)]
+        if pk >= 0 && !call_pad_done[pk] {
+          call_pad_done[pk] = true
+          for v32 in live_in[pk] {
+            let v = Int(v32)
+            pad_live[v / BW] = pad_live[v / BW] | bit_mask(v)
+          }
+        }
+      }
       if inst.pad < 0 || inst.kind == K_CALL {
         continue
       }
@@ -402,6 +420,18 @@ fn (var g: G) regalloc() {
   // instruction with ten spilled operands no scratch register
   // (xo.slice[List[x509.Cert]], 2026-10-21)
   let cold_saves = pass_on(g.m, "cold_saves")
+  // the other calls a value that would spill everywhere may cross in a
+  // caller saved register, stored before each and loaded after it
+  // (call_saves, task #381: update_nodes's loop counters and list bases
+  // in stack slots, 9 of a line's 26 instructions sp loads, because a
+  // call further down its loop made them callee saved and ten were not
+  // enough), when those calls weigh less than its uses; not a tail
+  // call, one that does not return, or a system call, and a call with a
+  // landing pad only for a value the pad does not read (the unwinder
+  // enters it with the callee saved registers alone, pad_live).
+  // Position, block, index, the block's weight, and whether it has a pad
+  let call_saves = pass_on(g.m, "call_saves")
+  var save_calls: List[(Int, Int, Int, Float, Bool)] = []
   // the instructions that write registers besides their definitions:
   // position and registers
   var clobs: List[(Int, List[Int], Bool)] = []
@@ -430,6 +460,8 @@ fn (var g: G) regalloc() {
       if inst.kind == K_CALL {
         if cold_saves && inst.has(IF_COLD_CALL) && !inst.has(IF_TAIL) && !inst.has(IF_NORET) && !inst.has(IF_SVC) {
           cold_calls.push((at + 1, b, j))
+        } else if call_saves && !inst.has(IF_TAIL) && !inst.has(IF_NORET) && !inst.has(IF_SVC) {
+          save_calls.push((at + 1, b, j, wt, inst.pad >= 0))
         } else {
           calls.push(at + 1)
         }
@@ -795,10 +827,48 @@ fn (var g: G) regalloc() {
         push_rng(occ, r, rng(c, c))
       }
     }
+    // the save calls sorted by position, each (position << 20) | its
+    // index in save_calls: a value's ranges find the calls they cover by
+    // binary search, not a walk of every call per value (build_http's
+    // self build lost 5.6% of its instructions to those walks, cgcheck
+    // 2026-11-19)
+    var sc_keys: List[Int] = List.with_capacity(save_calls.len())
+    for i in 0..save_calls.len() {
+      let (c, _, _, _, _) = save_calls[i]
+      sc_keys.push((c << 20) | i)
+    }
+    sc_keys = sc_keys.sort()
+    // occ2: occ less the save calls' general registers, the registers a
+    // value saved around them may take (a save call clobbers the floating
+    // point ones in both)
+    var occ2: List[List[Int]] = []
+    if !save_calls.is_empty() {
+      for r in 0..64 {
+        occ2.push(occ[r])
+      }
+    }
+    for (c, _, _, _, _) in save_calls {
+      for r in g.gp_caller_t() {
+        push_rng(occ, r, rng(c, c))
+      }
+      for r in g.fp_caller_t() {
+        push_rng(occ, r, rng(c, c))
+        push_rng(occ2, r, rng(c, c))
+      }
+    }
     for r in 0..64 {
       if occ[r].len() > 1 {
         occ[r] = merge_ranges(occ[r])
       }
+      if r < occ2.len() && occ2[r].len() > 1 {
+        occ2[r] = merge_ranges(occ2[r])
+      }
+    }
+    // per register, its save slot around the save calls (one for every
+    // call: it holds the value only during one)
+    var save_slot: List[Int] = []
+    for _ in 0..64 {
+      save_slot.push(-1)
     }
     g.loc = []
     for _ in 0..n {
@@ -914,6 +984,43 @@ fn (var g: G) regalloc() {
         chosen = r
         break
       }
+      if chosen < 0 && !save_calls.is_empty() && !fp && !nc && !wide {
+        // the save calls the value crosses, each a store and a load,
+        // against its uses' and definitions' loads and stores in a slot
+        var cost = 0.0
+        let pl = bits_has(pad_live, v)
+        var stop = false
+        for rr in ranges[v] {
+          var p = first_key_at(sc_keys, rng_s(rr))
+          while !stop && p < sc_keys.len() && (sc_keys[p] >> 20) <= rng_e(rr) {
+            let (_, _, _, cw, padded) = save_calls[sc_keys[p] & 0xfffff]
+            if padded && pl {
+              cost = weight[v] // read by a landing pad: not saved around
+              stop = true
+            } else {
+              cost = cost + 2.0 * cw
+            }
+            p += 1
+          }
+          if stop {
+            break
+          }
+        }
+        if cost > 0.0 && cost < weight[v] {
+          for r in save_regs(gp_c) {
+            if !overlaps_sorted(occ2[r], ranges[v]) && !barred[v].contains(r) {
+              chosen = r
+              break
+            }
+          }
+          if chosen >= 0 {
+            g.loc[v] = Loc{reg: chosen, slot: 0}
+            insert_merged(occ, chosen, ranges[v])
+            insert_ranges(occ2, chosen, ranges[v])
+            continue
+          }
+        }
+      }
       if chosen < 0 && argslots && g.base == 0 && !fp {
         // the stack word the value is copied to or from, when no value
         // live at the same time holds it and no call in its range lets
@@ -1015,6 +1122,9 @@ fn (var g: G) regalloc() {
         ncallee += 1
       }
       insert_ranges(occ, chosen, ranges[v])
+      if !occ2.is_empty() {
+        insert_ranges(occ2, chosen, ranges[v])
+      }
     }
     // each cold call's saves: the values in caller saved registers live
     // across it, a slot each
@@ -1033,6 +1143,39 @@ fn (var g: G) regalloc() {
           sv.push((r, g.slots))
           g.slots += 1
         }
+      }
+      g.blocks[cb].insts[cj].csave = sv
+    }
+    // each save call's registers, in the order of the values that hold
+    // them (the slots come out as a walk of every value per call gave)
+    var sc_regs: List[List[Int]] = List.with_capacity(save_calls.len())
+    for _ in 0..save_calls.len() {
+      sc_regs.push([])
+    }
+    if !save_calls.is_empty() {
+      for v in order {
+        let r = g.loc[v].reg
+        if r < 0 || r >= FP_BASE || g.is_callee_t(r) {
+          continue
+        }
+        for rr in ranges[v] {
+          var p = first_key_at(sc_keys, rng_s(rr))
+          while p < sc_keys.len() && (sc_keys[p] >> 20) <= rng_e(rr) {
+            let i = sc_keys[p] & 0xfffff
+            if !sc_regs[i].contains(r) {
+              push_int(sc_regs, i, r)
+            }
+            p += 1
+          }
+        }
+      }
+    }
+    for i in 0..save_calls.len() {
+      let (_, cb, cj, _, _) = save_calls[i]
+      var sv: List[(Int, Int)] = []
+      for r in sc_regs[i] {
+        sv.push((r, g.slots))
+        g.slots += 1
       }
       g.blocks[cb].insts[cj].csave = sv
     }
@@ -1151,6 +1294,26 @@ fn merge_ranges(rs: List[Int]) -> List[Int] {
 /// stay apart: merge_sorted joined them and rebuilt the whole list per
 /// assignment, quadratic in the ranges a register or slot holds
 /// (bench/results/xo1-speed-2026-10-13.md).
+/// insert_ranges for a value saved around calls (call_saves): lists[i]
+/// has the save calls' points inside the value's ranges, so the result
+/// is merged to stay disjoint. overlaps_sorted searches by the ranges'
+/// ends, and overlapping ones let a later value take the register inside
+/// this one (task #381: brotli's histogram_combine kept best_idx2 and a
+/// list address in x14 at once).
+fn insert_merged(var lists: List[List[Int]], i: Int, rs: List[Int]) {
+  insert_ranges(lists, i, rs)
+  lists[i] = merge_ranges(lists[i])
+}
+
+/// The caller saved registers a value saved around calls may take: all
+/// but the last, so one stays for an instruction's third spilled operand
+/// (emit.xo scratch_reg reloads it into a register free there; with
+/// saved values in every caller saved register, xo.mlog.vals's madd had
+/// none, task #381).
+fn save_regs(gp_c: List[Int]) -> List[Int] {
+  if gp_c.len() < 2 { [] } else { gp_c[0..gp_c.len() - 1] }
+}
+
 fn insert_ranges(var lists: List[List[Int]], i: Int, rs: List[Int]) {
   let n = lists[i].len()
   if rs.len() > 1 && n > 0 {
@@ -1207,6 +1370,22 @@ fn put_at(var l: List[Int], k: Int, x: Int) -> Int {
 /// Whether a range of rs (sorted and disjoint) holds position c; as
 /// overlaps_sorted(rs, [rng(c, c)]) without the list (a list per check
 /// was 1.8% of the aiplatform/v1 test build's allocations).
+/// The first index of keys (sorted, each (position << 20) | index) whose
+/// position is at least at
+fn first_key_at(keys: List[Int], at: Int) -> Int {
+  var lo = 0
+  var hi = keys.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if (keys[mid] >> 20) < at {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo
+}
+
 fn covers(rs: List[Int], c: Int) -> Bool {
   var lo = 0
   var hi = rs.len()
