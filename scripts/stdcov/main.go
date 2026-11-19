@@ -754,7 +754,7 @@ func evidence(m string) map[string]evFile {
 		return out
 	}
 	cur, have := "", false
-	for _, k := range []string{"race", "stress", "fuzz", "review", "perf"} {
+	for _, k := range []string{"race", "stress", "fuzz", "review", "perf", "gotests"} {
 		data, err := os.ReadFile(filepath.Join(d, k+".md"))
 		if err != nil {
 			continue
@@ -845,12 +845,49 @@ func ev(m string) map[string]evFile {
 
 var corpus = map[string]bool{}
 
-func test(m string) mark {
-	e := ev(m)
+// gotestsRequired: whether every module needs gotests evidence (decision
+// 0720, Go's test tables run through Go and the module) for a Proven
+// testing mark. Off: the lead decides (0720 Consequences). Until then a
+// module with a std/evidence/MODULE/gotests.md needs it to pass and be
+// fresh, as a review.md is needed once it exists: a failed run is a
+// known mismatch with Go.
+var gotestsRequired = false
+
+// testNeed: the evidence kinds a Proven testing mark needs (decision 0616).
+func testNeed(m string) []string {
 	need := []string{"race", "stress", "fuzz"}
-	if _, err := os.Stat(filepath.Join(repo, "std/evidence", m, "review.md")); evidenceReview[m] || err == nil {
+	has := func(k string) bool {
+		_, err := os.Stat(filepath.Join(repo, "std/evidence", m, k+".md"))
+		return err == nil
+	}
+	if evidenceReview[m] || has("review") {
 		need = append(need, "review")
 	}
+	if gotestsRequired || has("gotests") {
+		need = append(need, "gotests")
+	}
+	return need
+}
+
+// reCases: gotests' measure ("307 cases from 10 tables of Go's tests ...")
+var reCases = regexp.MustCompile(`^\d+ cases from \d+ tables?`)
+
+// gotestsNote: "; Go test tables: 307 cases from 10 tables" for a module
+// with gotests evidence that counts, else "".
+func gotestsNote(m string) string {
+	g, ok := ev(m)["gotests"]
+	if !ok {
+		return ""
+	}
+	if c := reCases.FindString(g.hdr["measure"]); c != "" {
+		return "; Go test tables: " + c
+	}
+	return "; Go test tables"
+}
+
+func test(m string) mark {
+	e := ev(m)
+	need := testNeed(m)
 	all := true
 	for _, k := range need {
 		if _, ok := e[k]; !ok {
@@ -858,18 +895,24 @@ func test(m string) mark {
 		}
 	}
 	if all {
-		return mark{"Proven", fmt.Sprintf("Proven evidence (%s; decision 0616): %s", strings.Join(need, ", "), e["fuzz"].hdr["measure"]),
+		return mark{"Proven", fmt.Sprintf("Proven evidence (%s; decision 0616): %s%s", strings.Join(need, ", "), e["fuzz"].hdr["measure"], gotestsNote(m)),
 			"std/evidence/" + m}
 	}
 	hasCorpus := corpus[m]
 	gd, diff := godiff[m]
 	if !hasCorpus && !diff {
+		if n := gotestsNote(m); n != "" {
+			// Go's own test tables run through Go and the module
+			// (decision 0720): a Go differential
+			return mark{"Solid", strings.TrimPrefix(n, "; "), "std/evidence/" + m + "/gotests.md"}
+		}
 		return mark{"Early", "own tests only", ""}
 	}
 	evp, what := gd.path, gd.text
 	if hasCorpus {
 		evp, what = "internal/stdtest/testdata/corpus/"+m, "Go's tests ported"
 	}
+	what += gotestsNote(m)
 	if parsers[m] {
 		if fz := fuzz[m]; len(fz) > 0 {
 			names := make([]string, len(fz))
@@ -1125,10 +1168,7 @@ func missing(m string, f, t, p mark) map[string][]string {
 	}
 	if t.level != "Proven" {
 		e := ev(m)
-		need := []string{"race", "stress", "fuzz"}
-		if _, err := os.Stat(filepath.Join(repo, "std/evidence", m, "review.md")); evidenceReview[m] || err == nil {
-			need = append(need, "review")
-		}
+		need := testNeed(m)
 		var xs []string
 		for _, k := range need {
 			if _, ok := e[k]; !ok {

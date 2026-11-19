@@ -253,3 +253,51 @@ func TestPerfEvidenceHosts(t *testing.T) {
 		delete(evCache, c.m)
 	}
 }
+
+// TestGotestsEvidence: decision 0720's gotests kind. A module with a
+// gotests.md needs it to pass (a failed run is a mismatch with Go) for a
+// Proven testing mark, as a review.md is needed once it exists; one
+// without needs none while gotestsRequired is off; a counted run's cases
+// show in the mark, and lift a module with no other Go differential from
+// Early to Solid.
+func TestGotestsEvidence(t *testing.T) {
+	old, oldCache, oldCorpus, oldDiff, oldParsers := repo, evCache, corpus, godiff, parsers
+	defer func() { repo, evCache, corpus, godiff, parsers = old, oldCache, oldCorpus, oldDiff, oldParsers }()
+	repo = t.TempDir()
+	corpus, godiff, parsers = map[string]bool{}, map[string]evText{}, map[string]bool{}
+	for _, m := range []string{"zzg", "zzf", "zze"} {
+		p := filepath.Join(repo, "std/evidence", m)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "gotests.md"), []byte("kind: gotests\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := func() map[string]evFile {
+		return map[string]evFile{
+			"race":   {map[string]string{}, ""},
+			"stress": {map[string]string{}, ""},
+			"fuzz":   {map[string]string{"measure": "fz"}, ""},
+		}
+	}
+	gt := evFile{map[string]string{"measure": "307 cases from 10 tables of Go's tests (go1.26.11), 2 backends (arm64,llvm), 0 mismatches with Go"}, ""}
+	zzg := base()
+	zzg["gotests"] = gt
+	evCache = map[string]map[string]evFile{"zzg": zzg, "zzf": base(), "zzn": base(), "zze": {"gotests": gt}}
+	for _, c := range []struct{ mod, level, text string }{
+		{"zzg", "Proven", "Proven evidence (race, stress, fuzz, gotests; decision 0616): fz; Go test tables: 307 cases from 10 tables"},
+		{"zzn", "Proven", "Proven evidence (race, stress, fuzz; decision 0616): fz"},
+		{"zze", "Solid", "Go test tables: 307 cases from 10 tables"},
+	} {
+		if g := test(c.mod); g.level != c.level || g.text != c.text {
+			t.Errorf("test(%s) = %s %q, want %s %q", c.mod, g.level, g.text, c.level, c.text)
+		}
+	}
+	if g := test("zzf"); g.level == "Proven" {
+		t.Errorf("test(zzf) = Proven with a gotests.md that does not count")
+	}
+	if got := missing("zzf", mark{level: "Proven"}, mark{level: "Solid"}, mark{level: "Proven"})["testing"]; !reflect.DeepEqual(got, []string{"gotests evidence"}) {
+		t.Errorf("missing(zzf) testing = %v, want [gotests evidence]", got)
+	}
+}

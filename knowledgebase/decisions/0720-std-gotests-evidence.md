@@ -60,8 +60,14 @@ with one line per table.
   86e417086, time's run has 1 (dateTests[6], 02:30 in a spring forward
   gap: Go gives 01:30 PST).
 - Cost: seconds per module; the adapters are built once per backend.
-- Wiring the kind into scripts/stdcov (which marks need it) is xw-1's,
-  with the lead deciding whether it becomes required for Proven.
+- scripts/stdcov reads it (2026-11-19, xw-1): a module with a
+  gotests.md needs it to pass and be fresh for a Proven testing mark (a
+  failed run is a known mismatch with Go), as a review.md is needed once
+  it exists; a module without one needs none. A counted run's cases show
+  in the testing mark ("Go test tables: N cases from T tables"), and lift
+  a module with no ported Go tests and no Go differential from Early to
+  Solid. Whether every module needs it for Proven is the lead's call:
+  `gotestsRequired` in scripts/stdcov/main.go (TestGotestsEvidence).
 - Only literal inputs are read; tables of Time values, of functions or of
   computed inputs need an adapter kind that builds them from literals, or
   stay uncovered.
