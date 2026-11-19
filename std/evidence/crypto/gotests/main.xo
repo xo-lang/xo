@@ -1,0 +1,58 @@
+// The Xo side of std/crypto's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/crypto's result as text, as go/main.go prints package crypto's.
+// One kind per hash over Go's crypto golden tables.
+// See scripts/stdproven/gotests.go.
+use std/crypto
+use std/base64
+
+fn hexs(b: Bytes) -> Str {
+  let d = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+  var out = ""
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    out = out + d[c / 16] + d[c % 16]
+  }
+  out
+}
+
+/// The hex digest of inp, then of inp written as two halves.
+fn hsum(kind: Str, inp: Bytes) -> Str {
+  let h = match kind {
+    "md5" => crypto.Hash.Md5
+    "sha1" => crypto.Hash.Sha1
+    "sha224" => crypto.Hash.Sha224
+    "sha256" => crypto.Hash.Sha256
+    "sha384" => crypto.Hash.Sha384
+    "sha512" => crypto.Hash.Sha512
+    "sha512_224" => crypto.Hash.Sha512_224
+    _ => crypto.Hash.Sha512_256
+  }
+  var x = crypto.hasher(h)
+  x.write(inp[0..inp.len() / 2])
+  x.write(inp[inp.len() / 2..])
+  "${hexs(crypto.digest(h, inp))} ${hexs(x.sum())}"
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "md5" | "sha1" | "sha224" | "sha256" | "sha384" | "sha512" | "sha512_224" | "sha512_256" => hsum(kind, inp[0].bytes())
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

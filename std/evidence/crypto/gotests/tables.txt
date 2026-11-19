@@ -1,0 +1,12 @@
+# Go's crypto test tables (go1.26) run through std/crypto
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# Each kind is a hash: the hex digest of in, whole and written as two
+# halves, from Go's golden tables.
+crypto/md5 md5_test.go golden in md5
+crypto/sha1 sha1_test.go golden in sha1
+crypto/sha256 sha256_test.go golden in sha256
+crypto/sha256 sha256_test.go golden224 in sha224
+crypto/sha512 sha512_test.go golden224 in sha512_224
+crypto/sha512 sha512_test.go golden256 in sha512_256
+crypto/sha512 sha512_test.go golden384 in sha384
+crypto/sha512 sha512_test.go golden512 in sha512
