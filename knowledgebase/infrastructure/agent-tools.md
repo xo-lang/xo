@@ -1066,7 +1066,10 @@ leaves NAME out (Go's zero value, `Comma=0`) instead of skipping it.
 FIELDS `.` reads each element of a table of values (`[]int64{...}`)
 as itself, and integer constant expressions of literals fold. A
 conversion of a literal (`[]byte("...")`) reads as the literal and
-`strings.Repeat(LIT, N)` as its text; a `NAME:bytes` field keeps text
+`strings.Repeat(LIT, N)` as its text, and a call of one literal to a
+function named `must...` or `Must...` (`mustIP("::1")`,
+`netip.MustParsePrefix(...)`) as the literal, which the adapters parse
+(std/evidence/netip/gotests); a `NAME:bytes` field keeps text
 that is not UTF-8 (other fields skip it), for an adapter that reads
 that input as Bytes (std/evidence/gif/gotests). `NAME@PATTERN` reads
 the bytes of the file PATTERN names beside the _test.go file, `{}` the

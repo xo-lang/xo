@@ -44,7 +44,7 @@ func TestGoTableCases(t *testing.T) {
 		// expressions fold (1 + 2 read as "12", a string +, before)
 		{"vals", ".", []string{"0 -9223372036854775808", "1 -9223372036854775807", "2 9223372036854775807", "3 20", "4 98", "6 3", "7 -1"}, 1},
 		{"sums", "n", []string{"0 3", "1 ab"}, 0},
-		{"calls", "in", []string{"0 ababab", "1 xy"}, 3},
+		{"calls", "in", []string{"0 ababab", "1 xy", "5 p", "6 q"}, 4},
 	}
 	for _, tt := range tests {
 		tab := goTable{pkg: "ex", file: "ex_test.go", name: tt.name, fields: strings.Split(tt.fields, ","), kind: "k"}

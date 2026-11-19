@@ -1,0 +1,82 @@
+// The Xo side of std/netip's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/netip's result as text, as go/main.go prints package netip's.
+// Kinds addr, addrport, prefix, corpus, props and contains: netip's
+// parsers and Addr and Prefix methods against Go's.
+// See scripts/stdproven/gotests.go.
+use std/netip
+use std/base64
+
+fn addr(s: Str) -> Str {
+  match netip.parse_addr(s) {
+    Ok(a) => a.display()
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn addr_port(s: Str) -> Str {
+  match netip.parse_addr_port(s) {
+    Ok(a) => a.display()
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn prefix(s: Str) -> Str {
+  match netip.parse_prefix(s) {
+    Ok(p) => "${p.display()} masked ${p.masked().display()} single ${p.is_single_ip()}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn or_none(a: netip.Addr?) -> Str {
+  match a {
+    Some(x) => x.display()
+    None => "none"
+  }
+}
+
+fn props(s: Str) -> Str {
+  match netip.parse_addr(s) {
+    Ok(a) => "lb=${a.is_loopback()} pv=${a.is_private()} un=${a.is_unspecified()} ll=${a.is_link_local_unicast()} mc=${a.is_multicast()} 4=${a.is_4()} 6=${a.is_6()} 4in6=${a.is_4in6()} unmap=${a.unmap().display()} next=${or_none(a.next())} prev=${or_none(a.prev())}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn contains(p: Str, a: Str) -> Str {
+  let pp = match netip.parse_prefix(p) {
+    Ok(x) => x
+    Err(e) => return "err ${e.display()}"
+  }
+  match netip.parse_addr(a) {
+    Ok(aa) => "${pp.contains(aa)}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "addr" => addr(inp[0])
+    "addrport" => addr_port(inp[0])
+    "prefix" => prefix(inp[0])
+    "corpus" => "${addr(inp[0])} / ${addr_port(inp[0])} / ${prefix(inp[0])}"
+    "props" => props(inp[0])
+    "contains" => contains(inp[0], inp[1])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

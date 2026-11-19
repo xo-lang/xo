@@ -1,0 +1,17 @@
+# Go's netip test tables (go1.26) run through std/netip
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# An Addr or Prefix field built with mustIP, mustPrefix or
+# MustParse* reads as its text, which both adapters parse; one built
+# otherwise (Addr{}, AddrFrom4, a local alias as TestPrefixOverlaps'
+# pfx, TestIPProperties' variables) is skipped.
+net/netip fuzz_test.go corpus . corpus
+net/netip netip_pkg_test.go nextPrevTests ip props
+net/netip netip_pkg_test.go nextPrevTests next props
+net/netip netip_pkg_test.go TestPrefixContains.tests ipp,ip contains
+net/netip netip_pkg_test.go TestParseIPError.tests ip addr
+net/netip netip_pkg_test.go TestParseAddrPort.tests in addrport
+net/netip netip_test.go TestParsePrefixError.tests prefix prefix
+net/netip netip_test.go TestPrefixMasked.tests prefix prefix
+net/netip netip_test.go TestPrefixMasked.tests masked prefix
+net/netip netip_test.go TestIs4AndIs6.tests ip props
+net/netip netip_test.go TestIs4In6.tests ip props

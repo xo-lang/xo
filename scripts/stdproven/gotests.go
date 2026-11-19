@@ -347,6 +347,11 @@ func stringLit(e ast.Expr) (string, bool) {
 				}
 			}
 		}
+		// a must function of one literal (mustIP("1.2.3.4"),
+		// netip.MustParseAddr("::1")) is the literal: the adapters parse it
+		if len(e.Args) == 1 && !e.Ellipsis.IsValid() && mustCall(e.Fun) {
+			return stringLit(e.Args[0])
+		}
 		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && len(e.Args) == 2 {
 			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "strings" && sel.Sel.Name == "Repeat" {
 				s, ok1 := stringLit(e.Args[0])
@@ -629,4 +634,17 @@ func plural(n int, word string) string {
 		return "1 " + word
 	}
 	return fmt.Sprintf("%d %ss", n, word)
+}
+
+// mustCall reports whether fun names a function whose name starts with
+// must or Must (a test's parse-or-panic helper).
+func mustCall(fun ast.Expr) bool {
+	name := ""
+	switch f := fun.(type) {
+	case *ast.Ident:
+		name = f.Name
+	case *ast.SelectorExpr:
+		name = f.Sel.Name
+	}
+	return strings.HasPrefix(name, "must") || strings.HasPrefix(name, "Must")
 }

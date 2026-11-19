@@ -82,6 +82,13 @@ var calls = []struct{ in string }{
 	{strings.Repeat("x", n)},
 	{strings.Repeat("x", 1<<30)},
 	{strings.ToUpper("x")},
+	{mustParse("p")},
+	{netip.MustParseAddr("q")},
+	{mustTwo("a", "b")},
 }
+
+func mustParse(s string) string { return s }
+
+func mustTwo(a, b string) string { return a + b }
 
 var files = []string{"a", "missing"}
