@@ -163,6 +163,9 @@ const PC_KEEP = 56
 /// Whether h is a busy keep-alive connection (hconn.quick).
 pub fn hc_quick(h: rthttp.HConn) -> Bool { hconn.quick(h) }
 
+/// hconn.answered.
+pub fn hc_answered(h: rthttp.HConn) -> Bool { hconn.answered(h) }
+
 /// hconn.note_request.
 pub fn hc_note_request(h: rthttp.HConn) { hconn.note_request(h) }
 

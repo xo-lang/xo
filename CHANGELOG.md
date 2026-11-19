@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Security (net; task #400): a NUL byte in a host or port given to `dial`, `listen` or `lookup_host` fails the call; on darwin and Windows the system resolver stopped at the NUL, so `"localhost\x00.invalid:80"` reached localhost (GO-2026-4971 class).
+- Security (std/http; task #398): the HTTP/2 client checks the server's SETTINGS values as Go 1.26.11 does (GO-2026-4918: a bad length, ENABLE_PUSH over 1, MAX_FRAME_SIZE out of range or a window past 2^31-1 fails the connection), and a plain server closes a connection that sends nothing once its read header timeout passes (GO-2026-6089 class; before, a server with only `with_read_header_timeout` held it open).
 - Fix (std/tls, std/http; task #384): a TLS 1.3 server and client take a record before the first hello is read up to 18432 bytes, as Go's maxCiphertext (they refused one over 16640 with record_overflow).
 - Security (std/tls; task #384): a TLS 1.2 CBC record is checked with Arm's DIT bit set where the CPU has it (decision 0619); on Apple cores its timing depended on the plaintext without it.
 - Perf (std/crypto; task #271): AES-CBC decryption on x86-64 runs eight blocks at a time with AES-NI, about 5 times faster on the linux/amd64 host.

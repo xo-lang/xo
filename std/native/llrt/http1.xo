@@ -1742,20 +1742,23 @@ fn fill(h: rthttp.HConn, x: Int) -> Int {
     x_room(x, X_BUF, 4096)
   }
   let idle = xl(x, X_OFF) == xl(x, X_N)
-  let r = hconn.recv_until(h, xl(x, X_BUF) + xl(x, X_N), xl(x, X_CAP) - xl(x, X_N), idle, read_deadline(x, idle))
+  let r = hconn.recv_until(h, xl(x, X_BUF) + xl(x, X_N), xl(x, X_CAP) - xl(x, X_N), idle, read_deadline(x, idle, !hconn.answered(h)))
   if r > 0 {
     xs(x, X_N, xl(x, X_N) + r)
   }
   r
 }
 
-/// The deadline of a read (std.md 4.4): waiting for a request's first
-/// byte, the idle timeout (else the read timeout); after it, the sooner
-/// of the request's read deadline and its head deadline (0: none). The
-/// request's deadline starts at its first byte (X_DEADLINE, cleared by
-/// read_one when the head is complete and set again for the body).
-fn read_deadline(x: Int, idle: Bool) -> Int {
-  if idle {
+/// The deadline of a read (std.md 4.4): waiting for a kept alive
+/// connection's next request, the idle timeout (else the read timeout);
+/// else the sooner of the request's read deadline and its head deadline
+/// (0: none). A later request's deadlines start at its first byte, the
+/// first request's at its first read, as net/http's conn.serve sets them
+/// from accept (GO-2026-6089: a client that connects and sends nothing
+/// is closed after them). X_DEADLINE is cleared by read_one when the head
+/// is complete and set again for the body.
+fn read_deadline(x: Int, idle: Bool, first: Bool) -> Int {
+  if idle && !first {
     xs(x, X_DEADLINE, 0)
     let d = if xl(x, X_IDLE_NS) > 0 { xl(x, X_IDLE_NS) } else { xl(x, X_READ_NS) }
     return if d > 0 { hconn.deadline(d) } else { 0 }
@@ -2959,14 +2962,28 @@ fn (var x: H2X) frame(r: rthttp.CResp, f: Str) -> (Bool, Str) {
   }
   if ty == H2T_SETTINGS {
     if (flags & H2F_ACK) == 0 {
+      if len % 6 != 0 {
+        x.broken = true
+        return (false, "connection error: FRAME_SIZE_ERROR")
+      }
       var i = 0
       while i + 6 <= len {
         let id = (Int(b[9 + i]) << 8) | Int(b[10 + i])
         let v = be32_at(b, 11 + i)
-        if id == 4 && v <= 0x7FFFFFFF {
+        // Go's Setting.Valid, which its transport checks since the fix
+        // for GO-2026-4918 (a MAX_FRAME_SIZE of 0 looped there)
+        if ((id == 2 || id == 8) && v > 1) || (id == 5 && (v < 16384 || v > 16777215)) {
+          x.broken = true
+          return (false, "connection error: PROTOCOL_ERROR")
+        }
+        if id == 4 && v > 0x7FFFFFFF {
+          x.broken = true
+          return (false, "connection error: FLOW_CONTROL_ERROR")
+        }
+        if id == 4 {
           x.swin += v - x.st.peer_win
           x.st.peer_win = v
-        } else if id == 5 && v >= 16384 && v < 16777216 {
+        } else if id == 5 {
           x.st.peer_frame = v
         } else if id == 1 {
           // for the encoder, before the next request's block

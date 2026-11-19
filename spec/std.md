@@ -2236,7 +2236,10 @@ enum HttpErr { Io(msg: Str), Canceled }
   complete when the read or head timeout passes closes without a reply
   (net/http's conn.serve treats a timeout as a common read error); the
   idle timeout (the read timeout when 0) closes a kept alive connection
-  waiting for its next request. The header cap has net/http's 4096 bytes
+  waiting for its next request. Until its first response a connection
+  waits for a request at most the smaller of the read and header
+  timeouts (net/http starts both at accept), so one that sends nothing
+  closes after them. The header cap has net/http's 4096 bytes
   of slack over `with_max_header_bytes`. A TLS connection's record reads
   take the same deadlines, and its handshake the smaller of the read and
   header timeouts (net/http's handshake deadline), so a client that

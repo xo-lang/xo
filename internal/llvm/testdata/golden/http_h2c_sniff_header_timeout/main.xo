@@ -1,0 +1,53 @@
+// A plain server with UnencryptedHttp2 reads the first bytes of each
+// connection to see whether they are the HTTP/2 preface; that read waits
+// at most the read header timeout (GO-2026-6089, Go 1.26.11's
+// serverHandshake for unencrypted HTTP/2). A raw client sends part of the
+// preface, then nothing, and the server closes the connection once the
+// timeout (300 ms) passes, with HTTP/1.1 on the port or without it. A
+// connection that sends nothing is closed after it too, as net/http
+// applies the read header timeout to the first request from accept (Xo
+// waited with no deadline before 2026-11-19). The client gives up after
+// 3 s, so a server that keeps the connection open shows as "open".
+use std/http
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /", fn(_req) { http.text(200, "hi") })
+  for (name, protos) in [
+    ("HTTP/1.1 only", #{http.Protocol.Http1}),
+    ("HTTP/1.1 and h2c", #{http.Protocol.Http1, http.Protocol.UnencryptedHttp2}),
+    ("h2c only", #{http.Protocol.UnencryptedHttp2}),
+  ] {
+    let l = os.net.listen("127.0.0.1:0")?
+    let srv = http.server(l, r).with_protocols(protos).with_read_header_timeout(300ms)
+    let addr = srv.addr()
+    scope s {
+      s.spawn_background(fn() {
+        match srv.serve() {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("serve failed: ${e}")
+        }
+      })
+      for sent in ["", "PRI * HTTP"] {
+        let conn = os.net.dial(addr)?
+        conn.write(sent.bytes())?
+        let t0 = os.clock.now()
+        conn.set_read_deadline(os.clock, Some(t0 + 3s))
+        var how = "open after 3 s"
+        while true {
+          match conn.read(4096) {
+            Ok(Some(_)) => ()
+            Ok(None) => {
+              how = "closed"
+              break
+            }
+            Err(_) => break
+          }
+        }
+        conn.close()
+        let took = os.clock.since(t0)
+        os.stdio.println("${name}, ${sent.len()} bytes sent: ${how}, after the timeout ${took >= 250ms}")
+      }
+    }
+  }
+}

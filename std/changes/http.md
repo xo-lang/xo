@@ -1,5 +1,43 @@
 # std/http changes
 
+## 2026-11-19: security: the HTTP/2 client checks the server's SETTINGS values (GO-2026-4918)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #398), a Go vulnerability database entry fixed after Go 1.26.0
+- Go reference: net/http/internal/http2 frame.go Setting.Valid and transport.go processSettings (Go 1.26.11, the fix for GO-2026-4918)
+- Change: a SETTINGS frame whose length is not a multiple of 6 is FRAME_SIZE_ERROR; ENABLE_PUSH or ENABLE_CONNECT_PROTOCOL over 1, or MAX_FRAME_SIZE outside 16384 to 16777215, is PROTOCOL_ERROR; INITIAL_WINDOW_SIZE over 2^31-1 is FLOW_CONTROL_ERROR. Each fails the connection, and the request gets `protocol error: ... connection error: CODE`, as Go's. Before, the client took any value (a MAX_FRAME_SIZE of 0 or a window past 2^31-1 then drove its writes)
+- Measured: not applicable
+- Test: golden http_h2_client_bad_settings (arm64, LLVM): eight SETTINGS frames from a raw server; every bad one printed "status 200" before the change
+- Affected: Xo 0.54.0 and earlier, native backends: the HTTP/2 client (https with h2, and h2c prior knowledge)
+- Shipped in: not yet released
+- Remote trigger: a server the client connects to
+
+## 2026-11-19: security: a plain server closes a connection that sends nothing after its read header timeout (GO-2026-6089)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #398): the GO-2026-6089 guard for h2c's preface read found the wider case
+- Go reference: net/http server.go conn.serve and readRequest (Go 1.26.11: ReadHeaderTimeout and ReadTimeout run from accept for the first request) and serverHandshake for unencrypted HTTP/2 (the fix for GO-2026-6089)
+- Change: until a connection's first response, its wait for a request is the smaller positive of the read and read header timeouts, not the idle timeout (which falls back to the read timeout). Before, a server with only `with_read_header_timeout` kept a connection that sent no byte open with no deadline (HTTP/1.1, and HTTP/1.1 with h2c); the h2c preface read already took the header timeout
+- Measured: not applicable
+- Test: golden http_h2c_sniff_header_timeout (arm64, LLVM): six cases, HTTP/1.1, HTTP/1.1 with h2c and h2c only, each with 0 bytes and part of the preface; the two 0 byte cases with HTTP/1.1 were "open after 3 s" before the change
+- Affected: Xo 0.54.0 and earlier, native backends: `http.server` with a read header timeout and no read or idle timeout
+- Shipped in: not yet released
+- Remote trigger: any client (connections held open: a denial of service)
+
+## 2026-11-19: security: not affected by GO-2026-6612, GO-2026-6617 and GO-2026-6859 (h2 flow control refund, HPACK encoder race, MaxBytesReader header race)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #398), Go vulnerability database entries fixed after Go 1.26.0
+- Go reference: net/http/internal/http2 server.go closeStream and noteBodyRead (6612), processSetting's encoder table size (6617), server.go MaxBytesReader's Connection: close (6859), Go 1.26.11
+- Change: none; Xo was not affected. 6612: h2srv's drop_unread empties a reset stream's buffer under the connection lock as it gives the window back, so body_next, also under the lock, has nothing left to refund. 6617: SETTINGS_HEADER_TABLE_SIZE is queued in H2Conn.sizes and applied by the connection's one encoder before its next block (H2Conn.encode); no other task holds the encoder. 6859: a body over the limit sets a flag on the connection's record and the 413 is a new Response value; a handler's headers are values, never a map the server writes
+- Measured: not applicable
+- Test: none new (code review; the paths are covered by TestH2Diff and the http goldens)
+- Affected: no release
+- Shipped in: not yet released
+
 ## 2026-11-18: fix: a Content-Length of Int's largest value no longer faults the client
 
 - Kind: fix

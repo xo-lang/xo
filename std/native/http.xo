@@ -3530,6 +3530,17 @@ fn handshake_deadline(lim: http1.Limits) -> Int {
   if d > 0 { hconn.deadline(d) } else { 0 }
 }
 
+/// How long an idle connection waits for its next request before it
+/// closes (0: no limit): the idle timeout (else the read timeout) once a
+/// response was sent, else the smaller positive of the read and head
+/// timeouts (net/http applies both to the first request from accept).
+fn park_ns(hc: rthttp.HConn, lim: http1.Limits) -> Int {
+  if hserve.hc_answered(hc) {
+    return if lim.idle_ns > 0 { lim.idle_ns } else { lim.read_ns }
+  }
+  if lim.head_ns > 0 && (lim.read_ns == 0 || lim.head_ns < lim.read_ns) { lim.head_ns } else { lim.read_ns }
+}
+
 /// Serves the requests of one connection until it closes.
 fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> Bool, lim: http1.Limits) {
   var parked = false
@@ -3575,7 +3586,7 @@ fn serve_h1(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router)
   // a handle_stream route reads its body itself (decision 0310)
   var rd = if r.streamed { http1.reader_streaming(hc, fn(m: Str, p: Str) -> Bool { route_streams(r, m, p) }) } else { http1.reader(hc) }
   while true {
-    if rd.buffered() == 0 && !hserve.hc_quick(hc) && hserve.hc_park(hc, fn() { serve_conn_resume(hc, r, serve_h2, lim) }, if lim.idle_ns > 0 { lim.idle_ns } else { lim.read_ns }) {
+    if rd.buffered() == 0 && !hserve.hc_quick(hc) && hserve.hc_park(hc, fn() { serve_conn_resume(hc, r, serve_h2, lim) }, park_ns(hc, lim)) {
       return true
     }
     match rd.read() {

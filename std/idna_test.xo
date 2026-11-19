@@ -34,6 +34,17 @@ test "a label of 64,000 distinct runes encodes in n log n" {
   expect(a.len()) == 188462
 }
 
+test "a punycode label that decodes to ASCII only is an invalid label (GO-2026-5026)" {
+  // x/net's fix (CL 767220): ToUnicode("xn--example-.com") gave
+  // "example.com" with no error before it
+  for p in [Profile.Lookup, Profile.Display, Profile.Registration] {
+    expect(to_unicode("xn--example-.com", p) ?? e => "error ${e.display()}") == "error idna: invalid label \"example-\""
+    expect(to_ascii("xn--example-.com", p) ?? e => "error ${e.display()}") == "error idna: invalid label \"example-\""
+  }
+  // a label with a non-ASCII rune still decodes
+  expect(to_unicode("xn--caf-dma.com") ?? e => "error ${e.display()}") == "café.com"
+}
+
 test "a punycode label decodes to at most 1024 runes, as x/net's" {
   // x/net v0.60.0: 1024 runes round trip, 1025 are an invalid label
   let at = "é".repeat(1024)

@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+HTTP/1.1 only, 0 bytes sent: closed, after the timeout true
+HTTP/1.1 only, 10 bytes sent: closed, after the timeout true
+HTTP/1.1 and h2c, 0 bytes sent: closed, after the timeout true
+HTTP/1.1 and h2c, 10 bytes sent: closed, after the timeout true
+h2c only, 0 bytes sent: closed, after the timeout true
+h2c only, 10 bytes sent: closed, after the timeout true
+--- stderr

@@ -485,6 +485,10 @@ const QUICK_GAP_NS = 2000000
 /// not asked then).
 pub fn quick(h: rthttp.HConn) -> Bool { ld(rec(h), HC_QUICK) != 0 }
 
+/// Whether a response on h ended (note_done): false while its first
+/// request is still to come.
+pub fn answered(h: rthttp.HConn) -> Bool { ld(rec(h), HC_TEND) != 0 }
+
 /// A request head arrived on h: the gap since the last response decides
 /// quick.
 pub fn note_request(h: rthttp.HConn) {

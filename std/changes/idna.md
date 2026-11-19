@@ -1,5 +1,17 @@
 # std/idna changes
 
+## 2026-11-19: security: not affected by GO-2026-5026 (a punycode label that decodes to ASCII)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #398), a Go vulnerability database entry fixed after Go 1.26.0
+- Go reference: golang.org/x/net/idna idna10.0.0.go process (the fix for GO-2026-5026: an xn-- label whose decoding is all ASCII is invalid)
+- Change: none; Xo was not affected (std/idna.xo rejects such a label already)
+- Measured: not applicable
+- Test: std/idna_test.xo "a punycode label that decodes to ASCII only is an invalid label (GO-2026-5026)" (a guard: it fails with the check removed)
+- Affected: no release
+- Shipped in: not yet released
+
 ## 2026-11-14: perf: the rune table's block index covers the whole BMP
 
 - Kind: perf

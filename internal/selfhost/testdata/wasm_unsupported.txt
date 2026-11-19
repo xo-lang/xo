@@ -21,6 +21,8 @@ cmd_inherit # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 worl
 conn_close_write # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 copy_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 grpc_creds # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_h2_client_bad_settings # wasip1 # network: WASI preview1 has no sockets
+http_h2c_sniff_header_timeout # wasip1 # network: WASI preview1 has no sockets
 http_set_header # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 log_sinks # wasip1 # network: the network (`rt.net_status`, log.conn_sink's connection): WASI preview1 has no sockets
 metrics_client_trace # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
