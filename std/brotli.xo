@@ -1459,22 +1459,25 @@ const ENC_REVERSE_LUT: List[Int] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 1
 /// (write_bits.go). Each write stores eight bytes, as Go's PutUint64 does:
 /// the byte at ix keeps its low bits, the seven after it are overwritten.
 struct BitBuf {
-  b: List[UInt8]
+  b: BytesBuilder
   ix: Int
 }
 
 fn write_bits(var w: BitBuf, n: Int, bits: Int) {
+  // one checked 8 byte store, as Go's binary.LittleEndian.PutUint64
+  // (BytesBuilder.put_le of 8 is in line; eight indexed byte stores, each
+  // with its own bounds check, made this the second hottest function of
+  // bench/perf/brotli enc1, 2026-11-19)
   let p = w.ix >> 3
-  let v = Int(w.b[p]) | bits.wrapping_shl(w.ix & 7)
-  var k = 0
-  while k < 8 {
-    w.b[p + k] = UInt8(v.shr_logical(8 * k) & 255)
-    k += 1
-  }
+  let v = Int(w.b.at(p)) | bits.wrapping_shl(w.ix & 7)
+  w.b.put_le(p, v, 8)
   w.ix += n
 }
 
 fn zero_bytes(n: Int) -> List[UInt8] { List[UInt8].filled(n, 0) }
+
+/// A BitBuf's n zero bytes.
+fn zero_builder(n: Int) -> BytesBuilder { Bytes.zeroed(n).into_builder() }
 
 /// The 8 and 4 byte little endian words of b at i.
 fn ld64(b: Bytes, i: Int) -> Int { internal.le_word(b, i) }
@@ -2487,7 +2490,7 @@ fn store_meta_block_header1(len: Int, uncompressed: Bool, var w: BitBuf) {
 }
 
 /// updateBits: n bits of bits over the stream at bit pos.
-fn update_bits(n0: Int, bits0: Int, pos0: Int, var b: List[UInt8]) {
+fn update_bits(n0: Int, bits0: Int, pos0: Int, var b: BytesBuilder) {
   var n = n0
   var bits = bits0
   var pos = pos0
@@ -2497,9 +2500,9 @@ fn update_bits(n0: Int, bits0: Int, pos0: Int, var b: List[UInt8]) {
     let changed = if n < 8 - unchanged { n } else { 8 - unchanged }
     let total = unchanged + changed
     let mask = (((1 << total) - 1) ^ 255) | ((1 << unchanged) - 1)
-    let keep = Int(b[byte_pos]) & mask
+    let keep = Int(b.at(byte_pos)) & mask
     let put = bits & ((1 << changed) - 1)
-    b[byte_pos] = UInt8(((put << unchanged) | keep) & 255)
+    b.put_le(byte_pos, (put << unchanged) | keep, 1)
     n -= changed
     bits = bits >> changed
     pos += changed
@@ -2508,7 +2511,7 @@ fn update_bits(n0: Int, bits0: Int, pos0: Int, var b: List[UInt8]) {
 
 fn rewind_bit_position(new_ix: Int, var w: BitBuf) {
   let bitpos = new_ix & 7
-  w.b[new_ix >> 3] = UInt8(Int(w.b[new_ix >> 3]) & ((1 << bitpos) - 1))
+  w.b.put_le(new_ix >> 3, Int(w.b.at(new_ix >> 3)) & ((1 << bitpos) - 1), 1)
   w.ix = new_ix
 }
 
@@ -2540,12 +2543,9 @@ fn emit_uncompressed_here(input: Bytes, begin: Int, end: Int, var w: BitBuf) {
   let len = end - begin
   store_meta_block_header1(len, true, w)
   w.ix = (w.ix + 7) & -8
-  let p = w.ix >> 3
-  for k in 0..len {
-    w.b[p + k] = input[begin + k]
-  }
+  w.b.put(w.ix >> 3, input[begin..end])
   w.ix += len << 3
-  w.b[w.ix >> 3] = 0
+  w.b.put_le(w.ix >> 3, 0, 1)
 }
 
 fn hash5(input: Bytes, at: Int, shift: Int) -> Int {
@@ -2620,10 +2620,10 @@ fn compress_fragment_fast_impl(input: Bytes, at: Int, input_size0: Int, is_last:
   var literal_ratio = literal_prefix_code(input, inp, block_size, lit_depth, lit_bits, w)
   var i = 0
   while i + 7 < fe.cmd_code.ix {
-    write_bits(w, 8, Int(fe.cmd_code.b[i >> 3]))
+    write_bits(w, 8, Int(fe.cmd_code.b.at(i >> 3)))
     i += 8
   }
-  write_bits(w, fe.cmd_code.ix & 7, Int(fe.cmd_code.b[fe.cmd_code.ix >> 3]))
+  write_bits(w, fe.cmd_code.ix & 7, Int(fe.cmd_code.b.at(fe.cmd_code.ix >> 3)))
   // the labels of Go's gotos: 0 emit_commands, 1 emit_remainder, 2 next_block
   var state = 0
   var ip = 0
@@ -2782,7 +2782,7 @@ fn compress_fragment_fast_impl(input: Bytes, at: Int, input_size0: Int, is_last:
     break
   }
   if !is_last {
-    fe.cmd_code = BitBuf{b: zero_bytes(512), ix: 0}
+    fe.cmd_code = BitBuf{b: zero_builder(512), ix: 0}
     command_prefix_code1(cmd_histo, fe.cmd_depth, fe.cmd_bits, fe.cmd_code)
   }
 }
@@ -2845,9 +2845,9 @@ const ENC_Q0_CMD_CODE: List[Int] = [0xff, 0x77, 0xd5, 0xbf, 0xe7, 0xde, 0xea, 0x
 /// block of 1 << lgwin bytes as it comes), then Close (an empty last
 /// block), as andybalholm's NewWriterOptions, Write and Close.
 fn fast_new() -> FastEnc {
-  var code = zero_bytes(512)
+  var code = zero_builder(512)
   for (i, x) in ENC_Q0_CMD_CODE.indexed() {
-    code[i] = UInt8(x)
+    code.put_le(i, x, 1)
   }
   FastEnc{cmd_depth: ENC_Q0_CMD_DEPTH, cmd_bits: ENC_Q0_CMD_BITS, cmd_code: BitBuf{b: code, ix: 448}}
 }
@@ -2873,13 +2873,12 @@ fn stream_fast(var s: Compressor, data: Bytes, op: Int) {
       }
       let max_out = 2 * block + 503
       var w = s.e.w
-      s.e.w = BitBuf{b: [], ix: 0}
+      s.e.w = BitBuf{b: BytesBuilder.new(), ix: 0}
       if w.b.len() < max_out {
-        w.b = zero_bytes(max_out)
+        w.b = zero_builder(max_out)
       }
       w.ix = s.e.last_bytes_bits
-      w.b[0] = UInt8(s.e.last_bytes & 255)
-      w.b[1] = UInt8((s.e.last_bytes >> 8) & 255)
+      w.b.put_le(0, s.e.last_bytes, 2)
       let tsize = hash_table_size(s.quality, block)
       // one zeroed allocation (Go's getHashTable clears its table), not
       // tsize pushes that grew and copied it (2026-11-18, bench/perf/brotli
@@ -2892,8 +2891,10 @@ fn stream_fast(var s: Compressor, data: Bytes, op: Int) {
       }
       pos += block
       avail -= block
-      s.e.out.write_list(w.b, 0, w.ix >> 3)
-      s.e.last_bytes = Int(w.b[w.ix >> 3])
+      let wb = w.b.freeze()
+      s.e.out.write(wb[0..w.ix >> 3])
+      s.e.last_bytes = Int(wb[w.ix >> 3])
+      w.b = wb.into_builder()
       s.e.last_bytes_bits = w.ix & 7
       s.e.w = w
       if force_flush {
@@ -6706,7 +6707,7 @@ fn store_compressed_header(is_final: Bool, len: Int, var w: BitBuf) {
 
 fn jump_to_byte(var w: BitBuf) {
   w.ix = (w.ix + 7) & -8
-  w.b[w.ix >> 3] = 0
+  w.b.put_le(w.ix >> 3, 0, 1)
 }
 
 fn store_uncompressed_mb(is_final: Bool, buf: List[UInt8], position: Int, mask: Int, len0: Int, var w: BitBuf) {
@@ -6720,7 +6721,7 @@ fn store_uncompressed_mb(is_final: Bool, buf: List[UInt8], position: Int, mask: 
     let len1 = mask + 1 - masked
     let p = w.ix >> 3
     for k in 0..len1 {
-      w.b[p + k] = buf[masked + k]
+      w.b.put_le(p + k, Int(buf[masked + k]), 1)
     }
     w.ix += len1 << 3
     len -= len1
@@ -6728,10 +6729,10 @@ fn store_uncompressed_mb(is_final: Bool, buf: List[UInt8], position: Int, mask: 
   }
   let p = w.ix >> 3
   for k in 0..len {
-    w.b[p + k] = buf[masked + k]
+    w.b.put_le(p + k, Int(buf[masked + k]), 1)
   }
   w.ix += len << 3
-  w.b[w.ix >> 3] = 0
+  w.b.put_le(w.ix >> 3, 0, 1)
   if is_final {
     write_bits(w, 1, 1)
     write_bits(w, 1, 1)
@@ -6951,7 +6952,7 @@ fn write_meta_block(var e: Enc, bytes: Int, is_last: Bool, var w: BitBuf) {
     store_uncompressed_mb(is_last, e.rb.buf, e.last_flush_pos, e.rb.mask, bytes, w)
     return
   }
-  let last_bytes = (Int(w.b[1]) << 8) | Int(w.b[0])
+  let last_bytes = w.b.get_le(0, 2)
   let last_bits = w.ix
   if e.quality <= 2 {
     store_meta_block_fast(e, e.last_flush_pos, bytes, is_last, w)
@@ -6966,8 +6967,7 @@ fn write_meta_block(var e: Enc, bytes: Int, is_last: Bool, var w: BitBuf) {
     for i in 0..4 {
       e.dist_cache[i] = e.saved_dist_cache[i]
     }
-    w.b[0] = UInt8(last_bytes & 255)
-    w.b[1] = UInt8(last_bytes >> 8)
+    w.b.put_le(0, last_bytes, 2)
     w.ix = last_bits
     store_uncompressed_mb(is_last, e.rb.buf, e.last_flush_pos, e.rb.mask, bytes, w)
   }
@@ -7046,15 +7046,14 @@ fn encode_data(var e: Enc, is_last: Bool, force_flush: Bool) -> Bool {
   }
   let mb_size = e.input_pos - e.last_flush_pos
   var w = e.w
-  e.w = BitBuf{b: [], ix: 0}
+  e.w = BitBuf{b: BytesBuilder.new(), ix: 0}
   if w.b.len() < 2 * mb_size + 503 {
-    w.b = zero_bytes(2 * mb_size + 503)
+    w.b = zero_builder(2 * mb_size + 503)
   }
   w.ix = e.last_bytes_bits
-  w.b[0] = UInt8(e.last_bytes & 255)
-  w.b[1] = UInt8(e.last_bytes >> 8)
+  w.b.put_le(0, e.last_bytes, 2)
   write_meta_block(e, mb_size, is_last, w)
-  e.last_bytes = Int(w.b[w.ix >> 3])
+  e.last_bytes = Int(w.b.at(w.ix >> 3))
   e.last_bytes_bits = w.ix & 7
   e.last_flush_pos = e.input_pos
   e.last_processed_pos = e.input_pos
@@ -7069,7 +7068,9 @@ fn encode_data(var e: Enc, is_last: Bool, force_flush: Bool) -> Bool {
   for i in 0..4 {
     e.saved_dist_cache[i] = e.dist_cache[i]
   }
-  e.out.write_list(w.b, 0, w.ix >> 3)
+  let wb = w.b.freeze()
+  e.out.write(wb[0..w.ix >> 3])
+  w.b = wb.into_builder()
   e.w = w
   true
 }
@@ -7157,7 +7158,7 @@ fn enc_new(quality: Int, window: Int) -> Enc {
     h_lookahead: 8, h_num_last: 0, h_block_bits: 0, h_num: [], h_mask64: 0, h_num_banks: 1, h_bank_bits: 0, h_max_hops: 0,
     h_addr: [], h_head: [], h_tiny: [], h_delta: [], h_next: [], h_free: [], h_window_mask: 0, h_invalid: 0, h_forest: [],
     dict_lookups: 0, dict_matches: 0, npostfix: 0, ndirect: 0, dist_alphabet: 16 + (24 << 1), dist_max: (1 << 26) - 4,
-    last_block_emitted: false, finished: false, w: BitBuf{b: [], ix: 0}, out: BytesBuilder.new()}
+    last_block_emitted: false, finished: false, w: BitBuf{b: BytesBuilder.new(), ix: 0}, out: BytesBuilder.new()}
 }
 
 // Quality 4 and up: block splits (metablock.go's greedy builder and the

@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: the encoder's bit writer stores 8 bytes at once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (enc1 profile on the Mac: write_bits 28% flat; its eight indexed byte stores each kept a bounds check, which an up front range check did not remove)
+- Go reference: andybalholm/brotli write_bits.go (binary.LittleEndian.PutUint64, one store)
+- Measured: `xo bench --ab` on linux/arm64 host 1 (22400a562 against this change, 6 rounds each): bench/perf/brotli enc1 0.767 (95% 0.759 to 0.781, 26.4 to 20.2 ms, "too short"), enc6 0.993 (noise), enc11 1.008 (within noise); max RSS enc1 0.948
+- Test: brotli module tests (encoder round trips; the bench output unchanged in twincheck)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: the encoder reads an 8-byte word with one load
 
 - Kind: perf
