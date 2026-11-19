@@ -154,6 +154,9 @@ fn error_value(e: RpcError) -> json.Value {
 /// error's code must be an integer; its message may be absent or null
 /// ("").
 ///
+/// Text nesting objects and arrays past MAX_DEPTH is a PARSE_ERROR, as the
+/// SDK's.
+///
 /// Where it departs from the Go SDK's DecodeMessage (each by the
 /// specification, internal/stdtest TestJsonrpcFuzz models them): text
 /// after the message is a PARSE_ERROR (the SDK's stream decoder ignores
@@ -163,10 +166,54 @@ fn error_value(e: RpcError) -> json.Value {
 /// leaves it out); and encode leaves the result out of a response with an
 /// error (the SDK writes both when both came in).
 pub fn decode(text: Str) -> Message ! RpcError {
+  if too_deep(text) {
+    return Err(error_of(PARSE_ERROR))
+  }
   match json.parse_value(text) {
     Ok(v) => decode_value(v)
     Err(_) => Err(error_of(PARSE_ERROR))
   }
+}
+
+/// The SDK's nesting bound (internal/json defaultMaxDepth): a message
+/// whose objects and arrays nest deeper is not decoded.
+pub const MAX_DEPTH: Int = 1000
+
+/// Whether text's objects and arrays nest past MAX_DEPTH, the go-sdk's
+/// checkMaxDepth (internal/json/json.go): one pass counting `{` and `[`
+/// against `}` and `]` outside strings, before any parse (task #352: 1000
+/// nested params decoded here, the SDK refuses them).
+fn too_deep(text: Str) -> Bool {
+  let b = text.bytes()
+  var depth = 0
+  var in_str = false
+  var esc = false
+  var i = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    i += 1
+    if in_str {
+      if esc {
+        esc = false
+      } else if c == 0x5C {
+        esc = true
+      } else if c == 0x22 {
+        in_str = false
+      }
+      continue
+    }
+    if c == 0x22 {
+      in_str = true
+    } else if c == 0x7B || c == 0x5B {
+      depth += 1
+      if depth > MAX_DEPTH {
+        return true
+      }
+    } else if (c == 0x7D || c == 0x5D) && depth > 0 {
+      depth -= 1
+    }
+  }
+  false
 }
 
 /// decode of a parsed value.
@@ -208,8 +255,8 @@ pub fn decode_value(v: json.Value) -> Message ! RpcError {
   if let Some(x) = idv {
     id = match x {
       json.Value.Null => None
-      json.Value.Int(n) => Some(Id.Int(n))
-      json.Value.Num(f) => Some(Id.Int(Int(f)))
+      json.Value.Int(n) => Some(Id.Int(sdk_id(Float(n))))
+      json.Value.Num(f) => Some(Id.Int(sdk_id(f)))
       json.Value.Str(s) => Some(Id.Str(s))
       _ => return Err(error_of(INVALID_REQUEST))
     }
@@ -259,6 +306,9 @@ fn decode_error(v: json.Value) -> RpcError ! RpcError {
 /// request is an INVALID_REQUEST with a null id. Responses among the
 /// input are not answered. None when there is nothing to send.
 pub fn answer[fx: Effects](text: Str, handle: fn(Request) -> json.Value ! RpcError uses fx) -> Str? uses fx {
+  if too_deep(text) {
+    return Some(encode(Message.Resp(Response{id: None, error: Some(error_of(PARSE_ERROR))})))
+  }
   let v = match json.parse_value(text) {
     Ok(v) => v
     Err(_) => return Some(encode(Message.Resp(Response{id: None, error: Some(error_of(PARSE_ERROR))})))
@@ -559,10 +609,24 @@ fn key(id: Id) -> Str {
   }
 }
 
+/// A number id as the go-sdk reads it: a float64 converted with int64(v)
+/// (internal/jsonrpc2/messages.go), so an id past 2^53 rounds to the
+/// nearest Float and one past Int's range is Int's bound, as Go's
+/// conversion on arm64 (it faulted, task #352).
+fn sdk_id(f: Float) -> Int {
+  if f >= 9223372036854775807.0 {
+    return Int.max
+  }
+  if f <= -9223372036854775808.0 {
+    return Int.min
+  }
+  Int(f)
+}
+
 fn id_of(v: json.Value?) -> Id? {
   match v {
-    Some(json.Value.Int(n)) => Some(Id.Int(n))
-    Some(json.Value.Num(f)) => Some(Id.Int(Int(f)))
+    Some(json.Value.Int(n)) => Some(Id.Int(sdk_id(Float(n))))
+    Some(json.Value.Num(f)) => Some(Id.Int(sdk_id(f)))
     Some(json.Value.Str(s)) => Some(Id.Str(s))
     _ => None
   }

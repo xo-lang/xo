@@ -31,6 +31,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type lzCase struct {
@@ -114,7 +116,53 @@ func lzDecode(s []byte, msb bool, width int) ([]byte, error) {
 
 // lzCases makes n cases with data up to maxLen bytes (9000 reaches the
 // table reset; the committed corpus keeps to 1500, the lzw corpus has resets).
-func lzCases(r *rand.Rand, n, maxLen int) []lzCase {
+// lzHostile is the k-th hostile case (task #352): a literal width from
+// the hostile Ints (Go's range error), or a run at a hostile depth, a
+// period of two and a count of every byte, which fill the 12 bit code
+// table and reset it many times. Built without a draw, so the random
+// stream is unchanged.
+func lzHostile(k int) lzCase {
+	var c lzCase
+	c.msb = k%2 == 0
+	is := hostile.Ints()
+	switch k % 4 {
+	case 0, 2:
+		c.width = int(is[(k/4)%len(is)])
+		c.data = []byte("abc")
+	default:
+		c.width = 8
+		d := hostile.Depths()[(k/4)%len(hostile.Depths())]
+		switch (k / 4) % 3 {
+		case 0:
+			c.data = bytes.Repeat([]byte{'a'}, d)
+		case 1:
+			c.data = bytes.Repeat([]byte{0, 0xff}, d/2)
+		default:
+			c.data = make([]byte, d)
+			for i := range c.data {
+				c.data[i] = byte(i)
+			}
+		}
+	}
+	enc, err := lzEncode(c.data, c.msb, c.width)
+	if err != nil {
+		c.encErr = err.Error()
+	} else {
+		c.encOK, c.enc = true, enc
+	}
+	c.stream = append([]byte{}, enc...)
+	c.changed = "none"
+	dec, err := lzDecode(c.stream, c.msb, c.width)
+	if err != nil {
+		c.decErr = err.Error()
+	} else {
+		c.decOK, c.dec = true, dec
+	}
+	return c
+}
+
+// lzCases: with hostile, every fortieth case is lzHostile's.
+func lzCases(r *rand.Rand, n, maxLen int, hostileOn bool) []lzCase {
 	var cases []lzCase
 	for len(cases) < n {
 		var c lzCase
@@ -156,6 +204,9 @@ func lzCases(r *rand.Rand, n, maxLen int) []lzCase {
 			c.decErr = err.Error()
 		} else {
 			c.decOK, c.dec = true, dec
+		}
+		if hostileOn && len(cases)%40 == 39 {
+			c = lzHostile(len(cases) / 40)
 		}
 		cases = append(cases, c)
 	}
@@ -250,7 +301,7 @@ const lzCorpus = "testdata/corpus/lzwfuzz/lzwfuzz_test.xo"
 
 // TestLzwFuzzCorpusCurrent: the committed corpus is what seed 1 writes.
 func TestLzwFuzzCorpusCurrent(t *testing.T) {
-	cases := lzCases(rand.New(rand.NewSource(1)), 300, 1500)
+	cases := lzCases(rand.New(rand.NewSource(1)), 300, 1500, false)
 	lzCoverage(t, cases, false)
 	text := lzXoFile(1, cases)
 	if os.Getenv("XO_LZWFUZZ_WRITE") == "1" {
@@ -278,7 +329,7 @@ func TestLzwFuzz(t *testing.T) {
 	}
 	seed := int64(envInt(t, "XO_LZWFUZZ_SEED", 2))
 	n := envInt(t, "XO_LZWFUZZ_N", 2000)
-	cases := lzCases(rand.New(rand.NewSource(seed)), n, 9000)
+	cases := lzCases(rand.New(rand.NewSource(seed)), n, 9000, seed != 1)
 	lzCoverage(t, cases, true)
 	runFuzzDir(t, "lzwfuzz_test.xo", lzXoFile(seed, cases), envBackends("XO_LZWFUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
 }

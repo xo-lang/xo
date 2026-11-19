@@ -1,5 +1,20 @@
 # std/regexp changes
 
+## 2026-11-18: fix: a pattern past Go's size or rune limits is "expression too large"
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestUniclassFuzz's hostile cases (task #352: a class nested 100,000 deep compiled here and was too large in Go)
+- Go reference: regexp/syntax/parse.go (checkLimits, checkSize, calcSize; maxSize 3355443, maxRunes 33554432), go1.26
+- Test: std/regexp module test "Go's size and rune limits" (fails before: every case compiled); TestUniclassFuzz seeds 2 and 3 pass
+- Shipped in: not yet released
+
+The parser now counts runes on every push and, once the repeat count could
+pass Go's maxSize, the program size of each node, as Go's parser does, and
+fails at the same point with ErrLarge's text. The thresholds match Go's:
+`^(?:` nested 8,485 deep around `\p{L}` compiles and 8,486 does not;
+`a{1000}` repeated 3,355 times compiles and 3,356 does not.
+
 ## 2026-11-17: perf: the backtracker allocates one buffer a search and pushes its ALT job inline
 
 - Kind: perf

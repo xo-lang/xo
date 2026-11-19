@@ -43,7 +43,7 @@ pub fn compile(pattern: Str) -> Regex ! RegexErr {
   // a node a pattern byte is the usual most: the lists made that long
   // once (2026-10-28: their growth was a sixth of compile's time)
   let c = pattern.len() + 4
-  var p = Parser{flags: PERL, ops: List.with_capacity(c), nflags: List.with_capacity(c), runes: List.with_capacity(c), mins: List.with_capacity(c), maxs: List.with_capacity(c), caps: List.with_capacity(c), names: List.with_capacity(c), subs: List.with_capacity(c), stack: List.with_capacity(c), num_cap: 0, whole: pattern}
+  var p = Parser{flags: PERL, ops: List.with_capacity(c), nflags: List.with_capacity(c), runes: List.with_capacity(c), mins: List.with_capacity(c), maxs: List.with_capacity(c), caps: List.with_capacity(c), names: List.with_capacity(c), subs: List.with_capacity(c), stack: List.with_capacity(c), num_cap: 0, whole: pattern, num_runes: 0, repeats: 0, size_on: false, sizes: [], limit: ""}
   let root = match p.parse(pattern) {
     Ok(r) => r
     Err(e) => return Err(RegexErr{pattern: pattern, msg: "${e.code}: `${e.expr}`"})
@@ -387,6 +387,111 @@ struct Parser {
   stack: List[Int]
   num_cap: Int
   whole: Str
+  // Go's limits (parse.go checkLimits): the runes pushed, the product of
+  // the repeats seen, each node's compiled size once tracked (-1 unknown),
+  // and the first limit passed ("" none), which parse returns
+  num_runes: Int
+  repeats: Int
+  size_on: Bool
+  sizes: List[Int]
+  limit: Str
+}
+
+/// maxSize: 128 MB of 40 byte Insts (parse.go).
+const MAX_SIZE: Int = 3355443
+
+/// maxRunes: 128 MB of 4 byte runes (parse.go).
+const MAX_RUNES: Int = 33554432
+
+/// checkLimits: the runes pushed and the compiled size against Go's
+/// limits; the first one passed is kept in p.limit (Go panics with
+/// ErrLarge). The height is checked once, at the end of parse.
+fn (var p: Parser) check_limits(re: Int) {
+  if p.limit != "" {
+    return
+  }
+  if p.num_runes > MAX_RUNES {
+    p.limit = "expression too large"
+    return
+  }
+  p.check_size(re)
+}
+
+/// checkSize: sizes are tracked only once the nodes made times the
+/// product of the repeats seen could pass MAX_SIZE.
+fn (var p: Parser) check_size(re: Int) {
+  if !p.size_on {
+    if p.repeats == 0 {
+      p.repeats = 1
+    }
+    if p.ops[re] == OP_REPEAT {
+      var n = p.maxs[re]
+      if n == -1 {
+        n = p.mins[re]
+      }
+      if n <= 0 {
+        n = 1
+      }
+      if n > MAX_SIZE / p.repeats {
+        p.repeats = MAX_SIZE
+      } else {
+        p.repeats *= n
+      }
+    }
+    if p.ops.len() < MAX_SIZE / p.repeats {
+      return
+    }
+    p.size_on = true
+    p.sizes = List.with_capacity(p.ops.len())
+    for _ in 0..p.ops.len() {
+      p.sizes.push(-1)
+    }
+    for x in p.stack.clone() {
+      p.check_size(x)
+    }
+  }
+  if p.calc_size(re, true) > MAX_SIZE {
+    p.limit = "expression too large"
+  }
+}
+
+/// calcSize: re's compiled size in Insts, as Go counts it.
+fn (var p: Parser) calc_size(re: Int, force: Bool) -> Int {
+  if !force && p.sizes[re] >= 0 {
+    return p.sizes[re]
+  }
+  let op = p.ops[re]
+  var size = 0
+  if op == OP_LITERAL {
+    size = p.runes[re].len()
+  } else if op == OP_CAPTURE || op == OP_STAR {
+    // star can be 1+ or 2+; 2 pessimistically
+    size = 2 + p.calc_size(p.subs[re][0], false)
+  } else if op == OP_PLUS || op == OP_QUEST {
+    size = 1 + p.calc_size(p.subs[re][0], false)
+  } else if op == OP_CONCAT || op == OP_ALTERNATE {
+    for sub in p.subs[re] {
+      size += p.calc_size(sub, false)
+    }
+    if op == OP_ALTERNATE && p.subs[re].len() > 1 {
+      size += p.subs[re].len() - 1
+    }
+  } else if op == OP_REPEAT {
+    let sub = p.calc_size(p.subs[re][0], false)
+    let mn = p.mins[re]
+    let mx = p.maxs[re]
+    if mx == -1 {
+      size = if mn == 0 { 2 + sub } else { 1 + mn * sub }
+    } else {
+      // x{2,5} = xx(x(x(x)?)?)?
+      size = mx * sub + (mx - mn)
+    }
+  }
+  if size < 1 {
+    size = 1
+  }
+  p.sizes[re] = size
+  size
 }
 
 fn (var p: Parser) node(op: Int) -> Int {
@@ -398,12 +503,16 @@ fn (var p: Parser) node(op: Int) -> Int {
   p.caps.push(0)
   p.names.push("")
   p.subs.push([])
+  if p.size_on {
+    p.sizes.push(-1)
+  }
   p.ops.len() - 1
 }
 
 /// push (with maybeConcat): a one-rune class becomes a literal, and the
 /// literal on top of the stack joins the one below it.
 fn (var p: Parser) push(n: Int) -> Int {
+  p.num_runes += p.runes[n].len()
   if p.ops[n] == OP_CHAR_CLASS {
     let r = p.runes[n]
     if r.len() == 2 && r[0] == r[1] {
@@ -415,6 +524,7 @@ fn (var p: Parser) push(n: Int) -> Int {
       p.runes[n] = [r[0]]
       p.nflags[n] = fl
       p.stack.push(n)
+      p.check_limits(n)
       return n
     }
     // a case-insensitive rune like [Aa] or [Δδ]
@@ -427,6 +537,7 @@ fn (var p: Parser) push(n: Int) -> Int {
       p.runes[n] = [r[0]]
       p.nflags[n] = fl
       p.stack.push(n)
+      p.check_limits(n)
       return n
     }
   }
@@ -435,6 +546,7 @@ fn (var p: Parser) push(n: Int) -> Int {
     p.maybe_concat(-1, 0)
   }
   p.stack.push(n)
+  p.check_limits(n)
   n
 }
 
@@ -1206,6 +1318,10 @@ fn (var p: Parser) repeat(op: Int, min: Int, max: Int, s: Str, before: Int, afte
   p.nflags[re] = flags
   p.subs[re] = [sub]
   p.stack[n - 1] = re
+  p.check_limits(re)
+  if p.limit != "" {
+    return Err(perr(p.limit, p.whole))
+  }
   if op == OP_REPEAT && (min >= 2 || max >= 2) && !p.repeat_is_valid(re, 1000) {
     return Err(perr("invalid repeat count", sl(s, before, after)))
   }
@@ -1535,7 +1651,9 @@ fn (var p: Parser) factor(sub0: List[Int]) -> List[Int] {
       var run: List[Int] = []
       var j = start
       while j < i {
-        run.push(p.remove_leading_string(sub0[j], str.len()))
+        let r = p.remove_leading_string(sub0[j], str.len())
+        p.check_limits(r)
+        run.push(r)
         j += 1
       }
       let suffix = p.collapse(run, OP_ALTERNATE)
@@ -1573,7 +1691,9 @@ fn (var p: Parser) factor(sub0: List[Int]) -> List[Int] {
       var run: List[Int] = []
       var j = start
       while j < i {
-        run.push(p.remove_leading_regexp(sub1[j]))
+        let r = p.remove_leading_regexp(sub1[j])
+        p.check_limits(r)
+        run.push(r)
         j += 1
       }
       let suffix = p.collapse(run, OP_ALTERNATE)
@@ -1904,12 +2024,18 @@ fn (var p: Parser) parse(s: Str) -> Int ! PErr {
       i = t
     }
     last = rep
+    if p.limit != "" {
+      return Err(perr(p.limit, s))
+    }
   }
   p.concat()
   if p.swap_vertical_bar() {
     p.pop()
   }
   p.alternate()
+  if p.limit != "" {
+    return Err(perr(p.limit, s))
+  }
   if p.stack.len() != 1 {
     return Err(perr("missing closing )", s))
   }

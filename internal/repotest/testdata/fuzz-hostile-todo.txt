@@ -8,17 +8,13 @@ clifuzz_test.go
 compressfuzz_test.go
 corpusfuzz_test.go
 debugfuzz_test.go
-giffuzz_test.go
 grpcfuzz_test.go
 hpkefuzz_test.go
 jpegencfuzz_test.go
 jpegfuzz_test.go
-jsonrpcfuzz_test.go
-lzwfuzz_test.go
 otlpfuzz_test.go
 rsafuzz_test.go
 tlsfuzz_test.go
 tracefuzz_test.go
 udpfuzz_test.go
-uniclassfuzz_test.go
 x509fuzz_test.go

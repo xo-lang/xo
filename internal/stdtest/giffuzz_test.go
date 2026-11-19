@@ -28,6 +28,8 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // gfCase is one input, how it was made, and Go's three summaries.
@@ -209,7 +211,61 @@ func gfFixed() []gfCase {
 	return cs
 }
 
-func gfCases(r *rand.Rand, n int) []gfCase {
+// gfHostile is the k-th hostile GIF (task #352): a 2 by 2 frame written by
+// Go, then its screen width and height, its frame's left and top, or its
+// frame's width and height set to a hostile 16 bit length (0xffff, the top
+// bit). Frame bounds past a small screen are an error before any pixels
+// are allocated, so no case makes a 4 GB frame. Built without a draw, so
+// the random stream is unchanged.
+func gfHostile(k int) gfCase {
+	m := image.NewPaletted(image.Rect(0, 0, 2, 2), color.Palette{color.Black, color.White})
+	m.Pix = []byte{0, 1, 1, 0}
+	var b bytes.Buffer
+	if err := gif.EncodeAll(&b, &gif.GIF{Image: []*image.Paletted{m}, Delay: []int{0}}); err != nil {
+		panic(err)
+	}
+	d := b.Bytes()
+	ls := hostile.Lengths(16)
+	v := uint16(ls[(k/3)%len(ls)])
+	put := func(i int) { d[i], d[i+1] = byte(v), byte(v>>8) }
+	// the image descriptor: after the header, the global palette and any
+	// extension blocks
+	at := 13
+	if d[10]&0x80 != 0 {
+		at += 3 << (d[10]&7 + 1)
+	}
+	for d[at] == 0x21 {
+		at += 2
+		for d[at] != 0 {
+			at += int(d[at]) + 1
+		}
+		at++
+	}
+	if d[at] != 0x2c {
+		panic("gfHostile: no image descriptor")
+	}
+	var how string
+	switch k % 3 {
+	case 0:
+		put(6)
+		put(8)
+		how = fmt.Sprintf("hostile screen %d", v)
+	case 1:
+		put(at + 1)
+		put(at + 3)
+		how = fmt.Sprintf("hostile frame offset %d", v)
+	default:
+		put(at + 5)
+		put(at + 7)
+		how = fmt.Sprintf("hostile frame size %d", v)
+	}
+	c := gfCase{data: d, how: how}
+	c.all, c.first, c.conf = gfSummaries(d)
+	return c
+}
+
+// gfCases: with hostileOn, every twenty-fifth case is gfHostile's.
+func gfCases(r *rand.Rand, n int, hostileOn bool) []gfCase {
 	cs := make([]gfCase, 0, n)
 	for len(cs) < n {
 		d := gfStream(r)
@@ -219,6 +275,10 @@ func gfCases(r *rand.Rand, n int) []gfCase {
 		how := "as written"
 		if r.Intn(4) != 0 {
 			d, how = gfMutate(r, d)
+		}
+		if hostileOn && len(cs)%25 == 24 {
+			cs = append(cs, gfHostile(len(cs)/25))
+			continue
 		}
 		c := gfCase{data: d, how: how}
 		c.all, c.first, c.conf = gfSummaries(d)
@@ -330,7 +390,7 @@ const gfCorpus = "testdata/corpus/giffuzz/giffuzz_test.xo"
 
 // TestGifFuzzCorpusCurrent: the committed corpus is what seed 1 writes.
 func TestGifFuzzCorpusCurrent(t *testing.T) {
-	cases := append(gfFixed(), gfCases(rand.New(rand.NewSource(1)), 300)...)
+	cases := append(gfFixed(), gfCases(rand.New(rand.NewSource(1)), 300, false)...)
 	gfCoverage(t, cases)
 	bxCorpusCurrent(t, gfCorpus, "XO_GIFFUZZ_WRITE", gfXoFile(1, cases))
 }
@@ -342,6 +402,6 @@ func TestGifFuzz(t *testing.T) {
 	}
 	seed := int64(envInt(t, "XO_GIFFUZZ_SEED", 2))
 	n := envInt(t, "XO_GIFFUZZ_N", 1000)
-	cases := gfCases(rand.New(rand.NewSource(seed)), n)
+	cases := gfCases(rand.New(rand.NewSource(seed)), n, seed != 1)
 	runFuzzDir(t, "giffuzz_test.xo", gfXoFile(seed, cases), envBackends("XO_GIFFUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
 }

@@ -18882,3 +18882,18 @@ test "a backslash before a non-ASCII rune is Go's invalid escape, in a class and
     }
   }
 }
+
+test "Go's size and rune limits: a pattern past them is expression too large, one just under compiles (uniclassfuzz, task #352)" {
+  // Go counts a class's runes each time it is pushed: \p{L} in 8485
+  // groups is under maxRunes, in 8486 over; a{1000} 3,355 times is under
+  // maxSize, 3,356 times over; [\p{L}0] passes maxRunes by 26,000
+  let nest = fn(d: Int) -> Str { "^" + "(?:".repeat(d) + "\\p{L}" + ")".repeat(d) + "$" }
+  var got: List[Str] = []
+  for (name, pattern) in [("nest 8485", nest(8485)), ("nest 8486", nest(8486)), ("nest 100000", nest(100000)), ("a{1000} x3355", "a{1000}".repeat(3355)), ("a{1000} x3356", "a{1000}".repeat(3356)), ("class x20000", "[\\p{L}0]".repeat(20000)), ("class x26000", "[\\p{L}0]".repeat(26000))] {
+    match compile(pattern) {
+      Ok(_) => got.push("${name} ok")
+      Err(e) => got.push("${name} ${if e.msg.starts_with("expression too large: `") { "too large" } else { e.msg[0..40] }}")
+    }
+  }
+  expect(got) == ["nest 8485 ok", "nest 8486 too large", "nest 100000 too large", "a{1000} x3355 ok", "a{1000} x3356 too large", "class x20000 ok", "class x26000 too large"]
+}

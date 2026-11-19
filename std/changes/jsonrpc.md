@@ -1,5 +1,21 @@
 # std/jsonrpc changes
 
+## 2026-11-18: fix: a number id past Int's range no longer faults, and a message nested past 1000 levels is a parse error
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestJsonrpcFuzz's hostile cases (task #352), seeds 2 and 3
+- Go reference: github.com/modelcontextprotocol/go-sdk v1.8.0 (internal/jsonrpc2/messages.go reads a number id as float64 and converts it with int64(v); internal/json checkMaxDepth refuses nesting past defaultMaxDepth, 1000)
+- Test: std/jsonrpc module tests "a number id is read as the go-sdk reads it" and "objects and arrays nested past the go-sdk's 1000 levels" (both fail before: a fault `1e+19 is out of range for Int`, and 1000 nested params decoded); TestJsonrpcFuzz seeds 2 and 3 pass
+- Shipped in: not yet released
+
+decode and Conn faulted on a number id such as 1e19 (`Int(f)` out of range). An id
+is now read as the SDK reads it: through a Float, so an id past 2^53 rounds to the
+nearest Float and one past Int's range is Int.max or Int.min (Go's int64 conversion
+on arm64), 1.5 is 1. decode and answer now refuse a message whose objects and
+arrays nest more than MAX_DEPTH (1000, the message itself counting as one) with
+PARSE_ERROR, before parsing, as the SDK does.
+
 ## 2026-11-17: fix: a cancelled call no longer cuts its request short, which deadlocked the connection
 
 - Kind: fix

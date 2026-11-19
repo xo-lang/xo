@@ -24,10 +24,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -235,6 +237,29 @@ func jrfBuild(t *testing.T, work, backend string) string {
 	return bin
 }
 
+// jrfHostile is the k-th hostile message (task #352), chosen by the case
+// index so the random stream is unchanged: an id or an error code from the
+// hostile Ints and digit runs past Int, params nested to a hostile depth
+// (encoding/json stops at 10000), or a method a long run.
+func jrfHostile(k int) string {
+	var ns []string
+	for _, v := range hostile.Ints() {
+		ns = append(ns, strconv.FormatInt(v, 10))
+	}
+	ns = append(ns, hostile.Digits()...)
+	n := ns[(k/4)%len(ns)]
+	d := hostile.Depths()[(k/4)%len(hostile.Depths())]
+	switch k % 4 {
+	case 0:
+		return `{"jsonrpc":"2.0","id":` + n + `,"method":"m"}`
+	case 1:
+		return `{"jsonrpc":"2.0","id":1,"error":{"code":` + n + `,"message":"m"}}`
+	case 2:
+		return `{"jsonrpc":"2.0","id":1,"method":"m","params":` + hostile.Nest("[", "]", d) + `}`
+	}
+	return `{"jsonrpc":"2.0","method":"` + strings.Repeat("m", d) + `"}`
+}
+
 func TestJsonrpcFuzz(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the jsonrpc fuzz builds the Xo client")
@@ -247,6 +272,9 @@ func TestJsonrpcFuzz(t *testing.T) {
 	texts := make([]string, n)
 	for i := range lines {
 		text, canon := jrfGen(r)
+		if i%40 == 39 {
+			text, canon = jrfHostile(i/40), false
+		}
 		mode := "d"
 		if canon {
 			mode = "e"

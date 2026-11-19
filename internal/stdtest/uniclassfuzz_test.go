@@ -29,6 +29,8 @@ import (
 	"sync"
 	"testing"
 	"unicode"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // ucNames is the names class_of knows, from std/uniclass.xo.
@@ -139,7 +141,29 @@ func ucCaseOf(pattern string, rs []rune) ucCase {
 	return ucCase{pattern, rs, b.String()}
 }
 
-func ucCases(t *testing.T, r *rand.Rand, n int) []ucCase {
+// ucHostile is the k-th hostile pattern (task #352): a class inside
+// groups nested to a hostile depth (Go's regexp rejects nesting past
+// 1000), a class name a long run of letters, or a digit run past Int as
+// the name. Chosen by k, so the random stream is unchanged.
+func ucHostile(k int) string {
+	ds := hostile.Depths()
+	switch k % 4 {
+	case 0, 1:
+		d := ds[(k/4)%len(ds)]
+		n := hostile.Nest("(?:", ")", d)
+		return "^" + n[:len(n)-d] + `\p{L}` + n[len(n)-d:] + "$"
+	case 2:
+		return `^\p{` + strings.Repeat("L", ds[(k/4)%len(ds)]) + `}$`
+	}
+	dg := hostile.Digits()
+	return `^\p{` + dg[(k/4)%len(dg)] + `}$`
+}
+
+// ucHostileRunes are the runes each hostile pattern is matched against.
+var ucHostileRunes = []rune{'a', 'A', '1', ' ', 0xe9, 0x3b1, 0x65e5, 0x1f600, 0x10ffff}
+
+// ucCases: with hostileOn, every thirtieth case is ucHostile's.
+func ucCases(t *testing.T, r *rand.Rand, n int, hostileOn bool) []ucCase {
 	names, err := ucNames()
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +194,11 @@ func ucCases(t *testing.T, r *rand.Rand, n int) []ucCase {
 		default:
 			p = `^\p{` + name + `}$`
 		}
-		cs = append(cs, ucCaseOf(p, ucRunes(r, ucTable(base))))
+		rs := ucRunes(r, ucTable(base))
+		if hostileOn && len(cs)%30 == 29 {
+			p, rs = ucHostile(len(cs)/30), ucHostileRunes
+		}
+		cs = append(cs, ucCaseOf(p, rs))
 	}
 	return cs
 }
@@ -255,7 +283,7 @@ const ucCorpus = "testdata/corpus/uniclassfuzz/uniclassfuzz_test.xo"
 
 // TestUniclassFuzzCorpusCurrent: the committed corpus is what seed 1 writes.
 func TestUniclassFuzzCorpusCurrent(t *testing.T) {
-	cases := ucCases(t, rand.New(rand.NewSource(1)), 400)
+	cases := ucCases(t, rand.New(rand.NewSource(1)), 400, false)
 	ucCoverage(t, cases)
 	bxCorpusCurrent(t, ucCorpus, "XO_UNICLASSFUZZ_WRITE", ucXoFile(1, cases))
 }
@@ -267,6 +295,6 @@ func TestUniclassFuzz(t *testing.T) {
 	}
 	seed := int64(envInt(t, "XO_UNICLASSFUZZ_SEED", 2))
 	n := envInt(t, "XO_UNICLASSFUZZ_N", 2000)
-	cases := ucCases(t, rand.New(rand.NewSource(seed)), n)
+	cases := ucCases(t, rand.New(rand.NewSource(seed)), n, seed != 1)
 	runFuzzDir(t, "uniclassfuzz_test.xo", ucXoFile(seed, cases), envBackends("XO_UNICLASSFUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
 }

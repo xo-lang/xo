@@ -1,4 +1,6 @@
 // std/jsonrpc module tests (the corpus is internal/stdtest/testdata/corpus/jsonrpc).
+use std/json
+
 test "an error's code must be an integer, and a null message is no message (TestJsonrpcFuzz, task #115)" {
   // the specification: code MUST be an integer; the Go SDK's int64 field
   // refuses 1.5 (and 2.0, 1e3), where decode truncated it
@@ -11,4 +13,37 @@ test "an error's code must be an integer, and a null message is no message (Test
     Ok(Message.Resp(r)) => expect(r.error.map(fn(e) { "${e.code}/${e.message}" })) == Some("-32000/")
     _ => expect("decoded") == "a response"
   }
+}
+
+test "a number id is read as the go-sdk reads it: through a Float, Int's bound past its range (no fault; TestJsonrpcFuzz's hostile ids, task #352)" {
+  var got: List[Str] = []
+  for id in ["1e19", "-1e19", "99999999999999999999", "9223372036854775807", "9007199254740993", "-9223372036854775808", "1.5", "7"] {
+    match decode("{\"jsonrpc\":\"2.0\",\"id\":${id},\"method\":\"m\"}") {
+      Ok(Message.Req(r)) => got.push(match r.id {
+        Some(Id.Int(n)) => "${n}"
+        _ => "other"
+      })
+      Ok(_) => got.push("resp")
+      Err(e) => got.push("err ${e.code}")
+    }
+  }
+  expect(got) == ["9223372036854775807", "-9223372036854775808", "9223372036854775807", "9223372036854775807", "9007199254740992", "-9223372036854775808", "1", "7"]
+}
+
+test "objects and arrays nested past the go-sdk's 1000 levels (the message itself is one) are a parse error (TestJsonrpcFuzz's hostile params, task #352)" {
+  var got: List[Str] = []
+  for d in [999, 1000, 100000] {
+    let text = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"m\",\"params\":${"[".repeat(d)}${"]".repeat(d)}}"
+    got.push(match decode(text) {
+      Ok(_) => "${d} ok"
+      Err(e) => "${d} ${e.code}"
+    })
+  }
+  let s = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"m\",\"params\":[\"${"[{".repeat(2000)}\\\"\"]}"
+  got.push(match decode(s) {
+    Ok(_) => "in a string ok"
+    Err(e) => "in a string ${e.code}"
+  })
+  got.push(answer("[${"[".repeat(1000)}${"]".repeat(1000)}]", fn(r: Request) -> json.Value ! RpcError { Ok(json.Value.Null) }) ?? "none")
+  expect(got) == ["999 ok", "1000 -32700", "100000 -32700", "in a string ok", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}"]
 }
