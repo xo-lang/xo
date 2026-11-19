@@ -93,6 +93,12 @@ fn main(os: Os) {
 // arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+, ror #63"
 // amd64: "rorq \$63, |rolq \$1, "
 
+// GHASH's reduction: each constant shift is its eor's shifted register
+// operand, as rotations (task #87, 2026-11-19: an lsr or lsl, then an
+// eor, before); the shifts by one of the 256 bit product are extr.
+// func aesgcm.reduce
+// arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+, lsr #7" "eor x[0-9]+, x[0-9]+, x[0-9]+, lsl #57" "extr " -"lsr x[0-9]+, x[0-9]+, #7"
+
 // The final subtraction's borrows: f - g as f + ~g with a carry in of 1,
 // one subtract with borrow chain (2026-10-19), then the masked add back.
 // func nistec.sub4

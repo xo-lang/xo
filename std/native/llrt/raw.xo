@@ -120,6 +120,23 @@ pub fn zero_ints(n: Int) -> List[Int] {
   xs
 }
 
+/// A list of n Ints (n > 0) whose elements are not set: the caller
+/// stores every one (through its address) before any is read. Int
+/// elements hold no references, so the words left in the allocation are
+/// harmless until then. For tables written whole (AES-GCM's round keys and
+/// GHASH powers, task #87: zero_ints' mem_set was a tenth of a key).
+pub fn ints_unset(n: Int) -> List[Int] {
+  let xs = List[Int].with_capacity(n)
+  let a = rt.obj_addr(xs)
+  // the length word: 8 bytes on the native targets, 4 on wasm
+  if rt.layout(6) == 8 {
+    rt.mem_store(a, rt.layout(3), n, 8)
+  } else {
+    rt.mem_store(a, rt.layout(3), n, 4)
+  }
+  xs
+}
+
 /// Appends length bytes of out starting dist bytes before its end, as a
 /// byte at a time copy would (deflate's back-reference: when dist <
 /// length the copy repeats the last dist bytes). Natively by mem_copy in

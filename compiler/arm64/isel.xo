@@ -1428,22 +1428,32 @@ fn (g: G) logic_ror() -> Bool {
 }
 
 /// For an operand c of a 64 bit logical operation that is a rotation of
-/// y right by a constant k (rt.int_wrap 5) read only there: (y, k), else
-/// (-1, 0).
-fn (g: G) rot_operand(c: Int) -> (Int, Int) {
+/// y right by a constant k (rt.int_wrap 5) read only there: (y, k, "ror"),
+/// else (-1, 0, ""). With shifts, also y shifted left or right (logical)
+/// by a constant k from 1 to 63 (rt.int_wrap 3 and 4, wrapping_shl and
+/// shr_logical): (y, k, "lsl") or (y, k, "lsr"), the shifted register
+/// operand's other kinds (GHASH's reduction, a shift and an eor a term
+/// before, task #87).
+fn (g: G) rot_operand(c: Int, shifts: Bool) -> (Int, Int, Str) {
   if !g.logic_ror() {
-    return (-1, 0)
+    return (-1, 0, "")
   }
   let x = g.f.values[c]
   if x.op != ssa.Op.Call || !g.f.name_is(x, "rt.int_wrap") || x.args.len() != 3 || g.nuses[c] != 1 {
-    return (-1, 0)
+    return (-1, 0, "")
   }
   let (op, ok) = g.const_int(g.f.arg(x.args, 0))
   let (k, kc) = g.const_int(g.f.arg(x.args, 2))
-  if !ok || op != 5 || !kc || k & 63 == 0 {
-    return (-1, 0)
+  if !ok || !kc {
+    return (-1, 0, "")
   }
-  (g.f.arg(x.args, 1), k & 63)
+  if op == 5 && k & 63 != 0 {
+    return (g.f.arg(x.args, 1), k & 63, "ror")
+  }
+  if shifts && (op == 3 || op == 4) && k > 0 && k < 64 {
+    return (g.f.arg(x.args, 1), k, if op == 3 { "lsl" } else { "lsr" })
+  }
+  (-1, 0, "")
 }
 
 fn (var g: G) instr1(v: Int) {
@@ -1545,9 +1555,9 @@ fn (var g: G) instr1(v: Int) {
           }
           let a = g.word(g.f.arg(x.args, 1 - j))
           // ~(y rotated): the rotation the operand's shift too
-          let (y, k) = g.rot_operand(g.f.arg(cx.args, 0))
+          let (y, k, sh) = g.rot_operand(g.f.arg(cx.args, 0), true)
           if k > 0 {
-            g.set(v, [g.def1(false, "${inv} $d0, $u0, $u1, ror #${k}", [a, g.word(y)])])
+            g.set(v, [g.def1(false, "${inv} $d0, $u0, $u1, ${sh} #${k}", [a, g.word(y)])])
             return
           }
           let b = g.word(g.f.arg(cx.args, 0))
@@ -1559,7 +1569,7 @@ fn (var g: G) instr1(v: Int) {
       // ror (Keccak's D = C ^ rot(C, 1) and rho, 2026-10-17: a ror each);
       // the ror, with no other use, is then dead
       for j in [1, 0] {
-        let (y, k) = g.rot_operand(g.f.arg(x.args, j))
+        let (y, k, _sh) = g.rot_operand(g.f.arg(x.args, j), false)
         if k > 0 {
           let a = g.word(g.f.arg(x.args, 1 - j))
           g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1, ror #${k}", [a, g.word(y)])])
@@ -1568,6 +1578,16 @@ fn (var g: G) instr1(v: Int) {
       }
       if x.op != ssa.Op.And && g.funnel(v) {
         return
+      }
+      // an operand shifted by a constant, read only here: the shifted
+      // register operand (after funnel: one extr beats a shift and an orr)
+      for j in [1, 0] {
+        let (y, k, sh) = g.rot_operand(g.f.arg(x.args, j), true)
+        if k > 0 {
+          let a = g.word(g.f.arg(x.args, 1 - j))
+          g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1, ${sh} #${k}", [a, g.word(y)])])
+          return
+        }
       }
       let a = g.word(g.f.arg(x.args, 0))
       let b = g.word(g.f.arg(x.args, 1))

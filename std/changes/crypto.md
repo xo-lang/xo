@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-19: perf: an AES-GCM key stores its round keys and GHASH table unzeroed, another tenth faster to make
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (bench/perf/aead gcm_key after task #271: the key schedule and new_gcm were 23% of a key in callgrind, zero_ints' mem_set and the List stores' index checks a tenth)
+- Go reference: crypto/internal/fips140/aes (expandKeyAsm, the GCM product table)
+- Change: std/native/llrt aesgcm builds the round keys and the GHASH table in lists made with raw.ints_unset (no zeroing) and stores every word through the list's address; new_gcm calls mul_hw directly; the arm64 backend folds a shift into a rotate's operand (lsl/lsr of an orr or eor)
+- Measured: callgrind (linux/arm64, XO_THREADS=1): gcm_key 422.5M to 349.6M instructions (-17.25%), bench/perf/aesgcm key -15.94%, mapops -1.35%, strconv_itoa -1.76%; `xo bench --ab` on linux/arm64 host 1, 4 rounds: gcm_key wall 33.81 to 30.52 ms, 0.903 (95%: 0.891 to 0.908; a run is too short for xo bench's verdict)
+- Test: crypto tests (34, native and LLVM; the GCM vectors, every key size), test/codegen/intrinsics (aesgcm.reduce), the cgcheck row gcm_key
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: an AES-GCM key builds its GHASH tables in one list, a quarter faster to make
 
 - Kind: perf

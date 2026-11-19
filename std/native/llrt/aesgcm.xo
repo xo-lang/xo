@@ -273,12 +273,15 @@ fn rot_word(x: Int) -> Int { (shl(x, 24) | shr(x, 8)) & 0xFFFFFFFF }
 /// loop pushed every word to a list and read it back nk words later
 /// (2026-10-29: that loop was 36% of an AES-GCM key's setup).
 fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
-  var rk = raw.zero_ints(2 * (nr + 1))
+  // every word stored once, through the table's address: no zeroing
+  // first, no index checks (task #87: a fifth of an AES-GCM key)
+  let rk = raw.ints_unset(2 * (nr + 1))
+  let p = addr(rk)
   // the key's words two at a time (16 bytes or more: the caller checks)
   let k0 = rt.bytes_word(key, 0)
   let k1 = rt.bytes_word(key, 8)
-  rk[0] = k0
-  rk[1] = k1
+  rt.mem_store(p, 0, k0, 8)
+  rt.mem_store(p, 8, k1, 8)
   var w0 = k0 & 0xFFFFFFFF
   var w1 = shr(k0, 32)
   var w2 = k1 & 0xFFFFFFFF
@@ -290,8 +293,8 @@ fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
       w1 = w1 ^ w0
       w2 = w2 ^ w1
       w3 = w3 ^ w2
-      rk[2 * r] = w0 | shl(w1, 32)
-      rk[2 * r + 1] = w2 | shl(w3, 32)
+      rt.mem_store(p, 8 * (2 * r), w0 | shl(w1, 32), 8)
+      rt.mem_store(p, 8 * (2 * r + 1), w2 | shl(w3, 32), 8)
       rcon = if rcon < 0x80 { shl(rcon, 1) } else { 0x1B }
     }
   } else if nk == 6 {
@@ -299,7 +302,7 @@ fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
     // only (52 words)
     var w4 = le32(key, 16)
     var w5 = le32(key, 20)
-    rk[2] = w4 | shl(w5, 32)
+    rt.mem_store(p, 16, w4 | shl(w5, 32), 8)
     for g in 1..9 {
       w0 = w0 ^ sub_word_hw(rot_word(w5)) ^ rcon
       w1 = w1 ^ w0
@@ -307,10 +310,10 @@ fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
       w3 = w3 ^ w2
       w4 = w4 ^ w3
       w5 = w5 ^ w4
-      rk[3 * g] = w0 | shl(w1, 32)
-      rk[3 * g + 1] = w2 | shl(w3, 32)
+      rt.mem_store(p, 8 * (3 * g), w0 | shl(w1, 32), 8)
+      rt.mem_store(p, 8 * (3 * g + 1), w2 | shl(w3, 32), 8)
       if g < 8 {
-        rk[3 * g + 2] = w4 | shl(w5, 32)
+        rt.mem_store(p, 8 * (3 * g + 2), w4 | shl(w5, 32), 8)
       }
       rcon = shl(rcon, 1)
     }
@@ -321,22 +324,22 @@ fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
     var w5 = le32(key, 20)
     var w6 = le32(key, 24)
     var w7 = le32(key, 28)
-    rk[2] = w4 | shl(w5, 32)
-    rk[3] = w6 | shl(w7, 32)
+    rt.mem_store(p, 16, w4 | shl(w5, 32), 8)
+    rt.mem_store(p, 24, w6 | shl(w7, 32), 8)
     for g in 1..8 {
       w0 = w0 ^ sub_word_hw(rot_word(w7)) ^ rcon
       w1 = w1 ^ w0
       w2 = w2 ^ w1
       w3 = w3 ^ w2
-      rk[4 * g] = w0 | shl(w1, 32)
-      rk[4 * g + 1] = w2 | shl(w3, 32)
+      rt.mem_store(p, 8 * (4 * g), w0 | shl(w1, 32), 8)
+      rt.mem_store(p, 8 * (4 * g + 1), w2 | shl(w3, 32), 8)
       if g < 7 {
         w4 = w4 ^ sub_word_hw(w3)
         w5 = w5 ^ w4
         w6 = w6 ^ w5
         w7 = w7 ^ w6
-        rk[4 * g + 2] = w4 | shl(w5, 32)
-        rk[4 * g + 3] = w6 | shl(w7, 32)
+        rt.mem_store(p, 8 * (4 * g + 2), w4 | shl(w5, 32), 8)
+        rt.mem_store(p, 8 * (4 * g + 3), w6 | shl(w7, 32), 8)
       }
       rcon = shl(rcon, 1)
     }
@@ -1089,31 +1092,37 @@ pub fn new_gcm(key: Bytes) -> Gcm {
   // fewer (amd64's were 0 too until its gcm8 kernel, 2026-10-27: the
   // tags of 128 bytes or more were wrong while the kernel's own test,
   // with its own table, passed)
-  let (q1, q0) = g.mul(h1, h0)
-  let (r1, r0) = g.mul(q1, q0)
-  let (t1, t0) = g.mul(r1, r0)
+  // mul_hw itself: past the return above the CPU multiplies carry-less
+  // (mul saved its software path's registers before choosing, task #87)
+  let (q1, q0) = g.mul_hw(h1, h0)
+  let (r1, r0) = g.mul_hw(q1, q0)
+  let (t1, t0) = g.mul_hw(r1, r0)
   let arm = target.arch == TargetArch.Arm64 || target.arch == TargetArch.Amd64
-  let (u1, u0) = if arm { g.mul(t1, t0) } else { (0, 0) }
-  let (v1, v0) = if arm { g.mul(u1, u0) } else { (0, 0) }
-  let (w1, w0) = if arm { g.mul(v1, v0) } else { (0, 0) }
-  let (z1, z0) = if arm { g.mul(w1, w0) } else { (0, 0) }
-  // one list of room for both tables (a key a connection: growing it by
-  // a concatenation a power was 8 lists and copies, aead gcm_key 1.32 of
-  // Go on linux/arm64, 2026-11-19)
-  var hk = List[Int].with_capacity(48)
-  for (p0, p1) in [(z0, z1), (w0, w1), (v0, v1), (u0, u1), (t0, t1), (r0, r1), (q0, q1), (h0, h1)] {
-    hk.push(p0)
-    hk.push(p1)
-    hk.push(p0 ^ p1)
-  }
-  if cpu.gcm8_xinv() {
-    // arm64's and amd64's eight block kernels read the eight powers times x^-1, from
-    // HK8X (Go's table form, so its reduction needs no shift by one)
-    for i in 0..8 {
-      let (p1, p0) = cpu.ghash8_xinv(hk[3 * i + 1], hk[3 * i])
-      hk.push(p0)
-      hk.push(p1)
-      hk.push(p0 ^ p1)
+  let (u1, u0) = if arm { g.mul_hw(t1, t0) } else { (0, 0) }
+  let (v1, v0) = if arm { g.mul_hw(u1, u0) } else { (0, 0) }
+  let (w1, w0) = if arm { g.mul_hw(v1, v0) } else { (0, 0) }
+  let (z1, z0) = if arm { g.mul_hw(w1, w0) } else { (0, 0) }
+  let xinv = cpu.gcm8_xinv()
+  // one list for both tables, its words stored through its address
+  // (a key a connection: a concatenation a power was 8 lists and copies,
+  // task #271; the pushes' checks and zero_ints' mem_set were a tenth
+  // of a key after it, task #87, 2026-11-19)
+  let hk = raw.ints_unset(if xinv { 48 } else { 24 })
+  let hp = addr(hk)
+  let pw = [z0, z1, w0, w1, v0, v1, u0, u1, t0, t1, r0, r1, q0, q1, h0, h1]
+  for i in 0..8 {
+    let p0 = pw[2 * i]
+    let p1 = pw[2 * i + 1]
+    rt.mem_store(hp, 8 * (3 * i), p0, 8)
+    rt.mem_store(hp, 8 * (3 * i + 1), p1, 8)
+    rt.mem_store(hp, 8 * (3 * i + 2), p0 ^ p1, 8)
+    if xinv {
+      // arm64's and amd64's eight block kernels read the eight powers times x^-1, from
+      // HK8X (Go's table form, so its reduction needs no shift by one)
+      let (x1, x0) = cpu.ghash8_xinv(p1, p0)
+      rt.mem_store(hp, 8 * (24 + 3 * i), x0, 8)
+      rt.mem_store(hp, 8 * (25 + 3 * i), x1, 8)
+      rt.mem_store(hp, 8 * (26 + 3 * i), x0 ^ x1, 8)
     }
   }
   g with {hk: hk}
