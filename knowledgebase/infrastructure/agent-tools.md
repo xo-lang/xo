@@ -315,6 +315,16 @@ yourself.
     or XO0915 note that cmd/xo/testdata/vetcost-std-allow.txt does not
     list fails: TestVetCostStd's rule, gatelib `gate_vetcost_new`), plus
     TestStdChecks and stdgen -check;
+  - any std change (std/**/*.xo, std/rt/*.go) that removes a string
+    literal some golden's want.txt still expects: `staleref`, those
+    goldens on each backend that runs them (llvm `TestGolden/NAME` and
+    arm64 `TestGoldenRun/NAME` for internal/llvm goldens, gen
+    `TestGolden/NAME` for internal/gen's; task #435, gatelib
+    `gate_stale_goldens`, `GATE_STALE_WHY=1` names the string). Only
+    pieces of two or more words count (cut at `${...}`, `%v` and
+    escapes) that no added line keeps; a sweep of 150 std commits on
+    main (2026-11-19) flagged one, 164195274, whose native_sql and
+    sql_decode goldens it left stale;
   - a closure change (compiler/, std/native, llrt, closure std
     modules): `selfbuild` and `seedbuild`, plus the one or two proving
     tests you name;

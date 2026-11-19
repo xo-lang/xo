@@ -1806,6 +1806,29 @@ prove_harness() {
   [ "$failed" = 0 ] && ran="$ran harness"
   [ "$f0" = 1 ] && failed=1
 }
+# a std change that removes a string some golden's want.txt expects
+# (#435, gatelib.sh gate_stale_goldens): exactly those goldens, on each
+# backend that runs them (llvm TestGolden and arm64 TestGoldenRun for
+# internal/llvm's goldens, gen TestGolden for internal/gen's); gotests
+# fails a name that did not pass (skipped or misspelled)
+prove_staleref() {
+  local f0=$failed hits pkg names
+  failed=0
+  hits=$(GATE_DIFF_BASE=$base GATE_STALE_WHY=1 gate_stale_goldens 2>"$logs/staleref-why.txt" | grep '^\./')
+  for pkg in $(echo "$hits" | cut -d' ' -f1 | sort -u); do
+    names=$(echo "$hits" | awk -v p="$pkg" '$1 == p { print $2 }' | paste -sd'|' -)
+    if gotests "$pkg" "$names" -timeout 60m >"$logs/staleref-${pkg##*/}.txt" 2>&1; then
+      echo "staleref $pkg: ok ($names)"
+    else
+      failed=1
+      echo "staleref $pkg: FAIL ($logs/staleref-${pkg##*/}.txt; why: $logs/staleref-why.txt)"
+      grep -E '^(    )?--- FAIL|^gotests:' "$logs/staleref-${pkg##*/}.txt" | head -10
+    fi
+  done
+  [ -n "$hits" ] || echo "staleref: no golden expects a removed std string"
+  [ "$failed" = 0 ] && ran="$ran staleref"
+  [ "$f0" = 1 ] && failed=1
+}
 # prove_stdfast: the std fast lane (owner, 2026-11-15, CLAUDE.md "Std
 # Proven push"): for each std module off compiler/xo's closure the change
 # touches (gatelib gate_stdfast_mods), `xo test --std-module=NAME`, its
@@ -2018,7 +2041,8 @@ ch=$({ git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } |
 # cross with XO_GATE_CROSS=0) and every one named
 req=""
 if [ "${XO_GATE_PUSHQ:-1}" != 0 ]; then
-  req=$(echo "$ch" | gate_required_steps)
+  # from the gate's base (XO_GATE_BASE), as staleref's literals are
+  req=$(echo "$ch" | GATE_DIFF_BASE=$base gate_required_steps)
   [ "${XO_GATE_CROSS:-1}" = 0 ] && req=$(echo " $req " | sed 's/ cross / /')
 fi
 # std's own checks (TestStdChecks: every native and runtime body checked
