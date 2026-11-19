@@ -1,0 +1,29 @@
+// XO-F005 (core 3.5): deferred code that runs longer than 5 seconds
+// faults when it ends. Since 2026-11-19 (task #419) the shield's clock
+// is cpu.coarse_ticks, Linux's CLOCK_MONOTONIC_COARSE off arm64, where it
+// was mono_ns; the limit still holds on that clock, and a short defer
+// stays quiet. The fault's text carries the time, so only its parts are
+// shown.
+use std/task
+
+fn held(c: Clock, d: Duration) -> Int uses clock {
+  defer c.sleep(d)
+  1
+}
+
+fn show(stdio: Stdio, label: Str, r: Result[Int, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => {
+      let f005 = info.msg.starts_with("XO-F005: a shielded defer ran for ")
+      let tail = info.msg.ends_with(", longer than 5s")
+      stdio.println("${label}: fault XO-F005 ${f005}, limit ${tail}")
+    }
+    Err(_) => stdio.println("${label}: failed")
+  }
+}
+
+fn main(os: Os) {
+  show(os.stdio, "short", task.isolate(fn() -> Int ! () { held(os.clock, 20ms) }))
+  show(os.stdio, "long", task.isolate(fn() -> Int ! () { held(os.clock, 5200ms) }))
+}

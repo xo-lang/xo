@@ -42,6 +42,7 @@ pub const O_CLOEXEC: Int = 524288
 
 pub const CLOCK_REALTIME: Int = 0
 pub const CLOCK_MONOTONIC: Int = 1
+pub const CLOCK_MONOTONIC_COARSE: Int = 6
 
 const AT_SYMLINK_NOFOLLOW: Int = 256
 const AT_EMPTY_PATH: Int = 4096

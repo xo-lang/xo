@@ -325,6 +325,25 @@ pub fn mono_ns() -> Int {
   clock_read(false, rt.tlocal_addr().wrapping_add(TLS_CLOCK_AT))
 }
 
+/// A coarse monotonic clock in nanoseconds, for limits of seconds (the
+/// shield's 5 s, ctx.shield_begin): on Linux CLOCK_MONOTONIC_COARSE through
+/// the vDSO, the kernel's last tick time (a few milliseconds behind) read
+/// without the TSC or a hypervisor clock page; elsewhere, and without the
+/// vDSO, mono_ns. Two shield clock reads were three quarters of
+/// bench/perf/task sem on linux/amd64 (task #419, 2026-11-19).
+pub fn coarse_ns() -> Int {
+  if target.os == TargetOs.Linux {
+    let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
+    if f > 0 {
+      let a = rt.tlocal_addr().wrapping_add(TLS_CLOCK_AT)
+      if rt.call_c2(f, linux.CLOCK_MONOTONIC_COARSE, a) >= 0 {
+        return rt.mem_load(a, 0, 8).wrapping_mul(1000000000).wrapping_add(rt.mem_load(a, 8, 8))
+      }
+    }
+  }
+  mono_ns()
+}
+
 /// The wall clock (real) or the monotonic clock in nanoseconds, with 16
 /// bytes of scratch at a for the timespec or the counter, or a negative
 /// errno from Linux's clock_gettime; chooses the clock of the build at

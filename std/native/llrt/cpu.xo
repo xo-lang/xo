@@ -2494,6 +2494,15 @@ pub fn ticks() -> Int {
   sysio.mono_ns()
 }
 
+/// ticks for limits of seconds: ticks on arm64 (one instruction), else
+/// sysio.coarse_ns (Linux's coarse clock; 1e9 a second, as ticks_hz).
+pub fn coarse_ticks() -> Int {
+  if target.arch == TargetArch.Arm64 {
+    return ticks()
+  }
+  sysio.coarse_ns()
+}
+
 /// ticks a second: cntfrq_el0 on arm64, else 1e9 (ticks are mono_ns).
 pub fn ticks_hz() -> Int {
   1000000000

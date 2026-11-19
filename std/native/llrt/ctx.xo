@@ -267,13 +267,14 @@ pub fn roots() -> Int {
 /// Starts deferred code (xo_shield_begin): it is shielded from
 /// cancellation, and on the unwind path the unwinding flag is clear while
 /// it runs. The token shield_end takes: the start time and the flag. The
-/// time is cpu.ticks (cntvct_el0 on arm64, one instruction): a defer's 5 s
-/// limit needs no finer clock, and the two mono_ns calls were 90% of
-/// std/task's Semaphore.with on the Mac (bench/perf/task sem 2.85 of Go,
-/// Lang 2's #88 levers, 2026-11-16).
+/// time is cpu.coarse_ticks (cntvct_el0 on arm64, one instruction; Linux's
+/// coarse clock elsewhere): a defer's 5 s limit needs no finer clock, and
+/// the two mono_ns calls were 90% of std/task's Semaphore.with on the Mac
+/// (bench/perf/task sem 2.85 of Go, Lang 2's #88 levers, 2026-11-16) and
+/// three quarters of it on linux/amd64 (97 to 24 ms, task #419).
 pub fn shield_begin() -> Int {
   let c = cur()
-  let tok = cpu.ticks().wrapping_shl(1) | (rt.mem_load(c, C_UNWINDING, 4) & 1)
+  let tok = cpu.coarse_ticks().wrapping_shl(1) | (rt.mem_load(c, C_UNWINDING, 4) & 1)
   rt.mem_store(c, C_UNWINDING, 0, 4)
   rt.mem_store(c, C_SHIELD, rt.mem_load(c, C_SHIELD, 4) + 1, 4)
   tok
@@ -287,7 +288,7 @@ pub fn shield_end(tok: Int, lp: Int, ln: Int) {
   let c = cur()
   rt.mem_store(c, C_SHIELD, rt.mem_load(c, C_SHIELD, 4) - 1, 4)
   rt.mem_store(c, C_UNWINDING, tok & 1, 4)
-  let el = cpu.ticks() - tok / 2
+  let el = cpu.coarse_ticks() - tok / 2
   if el > 5 * cpu.ticks_hz() {
     let m = text.append_duration("XO-F005: a shielded defer ran for ", cpu.ticks_ns(el)) + ", longer than 5s"
     fault.raise_str_at(m, lp, ln)

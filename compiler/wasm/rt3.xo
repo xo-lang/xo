@@ -127,6 +127,8 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
   let closed_n = 24
   let negcap = g.litp("negative channel capacity ")
   let reent = g.litp("XO-F004: Mutex.")
+  let f005a = g.litp("XO-F005: a shielded defer ran for ")
+  let f005b = g.litp(", longer than 5s")
   let reent2 = g.litp(" called re-entrantly in one task; the mutex is already held from ")
   let w_with = g.raw("with".bytes())
   let w_read = g.raw("with_read".bytes())
@@ -263,9 +265,15 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       i32.store
       call $wake)
 
+    ;; a shield's token: the start time ($mono ns) times 2, plus the
+    ;; unwinding flag it hides (llrt ctx.xo's shield_begin)
     (func $shield_begin (result i64) (local $t i64)
+      call $mono
+      i64.const 1
+      i64.shl
       global.get $unw
       i64.extend_i32_u
+      i64.or
       local.set $t
       i32.const 0
       global.set $unw
@@ -276,7 +284,9 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       call $timers
       local.get $t)
 
-    (func $shield_end (param $t i64) (param $lo i32) (param $ln i32)
+    ;; deferred code that ran longer than 5 s faults (XO-F005) at the ln
+    ;; bytes of the Str lo, as llrt's shield_end
+    (func $shield_end (param $t i64) (param $lo i32) (param $ln i32) (local $el i64)
       global.get $shield
       i32.const 1
       i32.sub
@@ -285,7 +295,31 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       i32.wrap_i64
       i32.const 1
       i32.and
-      global.set $unw)
+      global.set $unw
+      call $mono
+      local.get $t
+      i64.const 1
+      i64.shr_u
+      i64.sub
+      local.tee $el
+      i64.const 5000000000
+      i64.gt_s
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${f005a}
+        call $sapp
+        local.get $el
+        call $rs_append_duration
+        ${f005b}
+        call $sapp
+        local.get $lo
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+      end)
 
     (func $shield_abort (param $t i64)
       global.get $shield
