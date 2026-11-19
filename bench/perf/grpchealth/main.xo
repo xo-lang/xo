@@ -1,0 +1,53 @@
+// std/grpchealth against google.golang.org/grpc/health: a health server of SERVICES services (s0 to s49, the even
+// ones Serving, the odd ones NotServing) and a client in one program over loopback h2c. `check` makes 20,000 Check
+// calls, each for the next service in turn; `list` makes 2,000 List calls, each answered with every service; `none`
+// starts the server and checks one service once. Usage: `<program> none|check|list`. Prints `<workload> <checksum>`
+// (the sum of the status numbers answered, plus the services listed); the twin (twin.go.txt) prints the same.
+use std/grpc
+use std/grpchealth
+use std/http
+
+const SERVICES: Int = 50
+
+fn run(w: Str, c: grpc.Client) -> Int ! grpc.Status uses net.dial {
+  var sum = grpchealth.check(c, "s0")?.number()
+  if w == "check" {
+    for k in 0..20000 {
+      sum += grpchealth.check(c, "s${k % SERVICES}")?.number()
+    }
+  } else if w == "list" {
+    for _ in 0..2000 {
+      let m = grpchealth.list(c)?
+      sum += m.len()
+      for (_, st) in m {
+        sum += st.number()
+      }
+    }
+  }
+  Ok(sum)
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "check"
+  var srv = grpc.server(os.clock)
+  let h = grpchealth.new()
+  for i in 0..SERVICES {
+    h.set_serving_status("s${i}", if i % 2 == 0 { grpchealth.ServingStatus.Serving } else { grpchealth.ServingStatus.NotServing })
+  }
+  h.register(srv)
+  let l = os.net.listen("127.0.0.1:0").ok() ?? fault("listen")
+  let hs = http.server(l, srv.router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  scope s {
+    s.spawn_background(fn() {
+      match hs.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let hc = http.client(os.net, timeout: 60s)
+    match run(w, grpc.client(hc, "http://${hs.addr()}")) {
+      Ok(sum) => os.stdio.println("${w} ${sum}")
+      Err(e) => os.stdio.println("${w} failed: ${e.display()}")
+    }
+  }
+}

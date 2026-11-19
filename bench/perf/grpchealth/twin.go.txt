@@ -1,0 +1,74 @@
+// The Go twin of main.xo: grpc-go's health server with the same 50 services and
+// statuses, and its generated client making the same Check and List calls over
+// loopback.
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	hpb "google.golang.org/grpc/health/grpc_health_v1"
+)
+
+const services = 50
+
+func main() {
+	w := "check"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	s := grpc.NewServer()
+	h := health.NewServer()
+	for i := 0; i < services; i++ {
+		st := hpb.HealthCheckResponse_SERVING
+		if i%2 == 1 {
+			st = hpb.HealthCheckResponse_NOT_SERVING
+		}
+		h.SetServingStatus(fmt.Sprintf("s%d", i), st)
+	}
+	hpb.RegisterHealthServer(s, h)
+	go s.Serve(l)
+	cc, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		panic(err)
+	}
+	c := hpb.NewHealthClient(cc)
+	ctx := context.Background()
+	check := func(name string) int {
+		r, err := c.Check(ctx, &hpb.HealthCheckRequest{Service: name})
+		if err != nil {
+			panic(err)
+		}
+		return int(r.Status)
+	}
+	sum := check("s0")
+	switch w {
+	case "check":
+		for k := 0; k < 20000; k++ {
+			sum += check(fmt.Sprintf("s%d", k%services))
+		}
+	case "list":
+		for k := 0; k < 2000; k++ {
+			r, err := c.List(ctx, &hpb.HealthListRequest{})
+			if err != nil {
+				panic(err)
+			}
+			sum += len(r.Statuses)
+			for _, st := range r.Statuses {
+				sum += int(st.Status)
+			}
+		}
+	}
+	fmt.Println(w, sum)
+	cc.Close()
+	s.Stop()
+}
