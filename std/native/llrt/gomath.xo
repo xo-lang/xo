@@ -1874,35 +1874,29 @@ pub fn lgamma(x0: Float) -> (Float, Int) {
       }
     }
     if i == 0 {
-      let a = LGAM_A
       let z = y * y
-      let p1 = a[0] + z * (a[2] + z * (a[4] + z * (a[6] + z * (a[8] + z * a[10]))))
-      let p2 = z * (a[1] + z * (a[3] + z * (a[5] + z * (a[7] + z * (a[9] + z * a[11])))))
+      let p1 = LGAM_A[0] + z * (LGAM_A[2] + z * (LGAM_A[4] + z * (LGAM_A[6] + z * (LGAM_A[8] + z * LGAM_A[10]))))
+      let p2 = z * (LGAM_A[1] + z * (LGAM_A[3] + z * (LGAM_A[5] + z * (LGAM_A[7] + z * (LGAM_A[9] + z * LGAM_A[11])))))
       let p = y * p1 + p2
       lg = lg + (p - 0.5 * y)
     } else if i == 1 {
-      let t = LGAM_T
       let z = y * y
       let w = z * y
-      let p1 = t[0] + w * (t[3] + w * (t[6] + w * (t[9] + w * t[12])))
-      let p2 = t[1] + w * (t[4] + w * (t[7] + w * (t[10] + w * t[13])))
-      let p3 = t[2] + w * (t[5] + w * (t[8] + w * (t[11] + w * t[14])))
+      let p1 = LGAM_T[0] + w * (LGAM_T[3] + w * (LGAM_T[6] + w * (LGAM_T[9] + w * LGAM_T[12])))
+      let p2 = LGAM_T[1] + w * (LGAM_T[4] + w * (LGAM_T[7] + w * (LGAM_T[10] + w * LGAM_T[13])))
+      let p3 = LGAM_T[2] + w * (LGAM_T[5] + w * (LGAM_T[8] + w * (LGAM_T[11] + w * LGAM_T[14])))
       let p = z * p1 - (tt - w * (p2 + y * p3))
       lg = lg + (tf + p)
     } else {
-      let u = LGAM_U
-      let v = LGAM_V
-      let p1 = y * (u[0] + y * (u[1] + y * (u[2] + y * (u[3] + y * (u[4] + y * u[5])))))
-      let p2 = 1.0 + y * (v[1] + y * (v[2] + y * (v[3] + y * (v[4] + y * v[5]))))
+      let p1 = y * (LGAM_U[0] + y * (LGAM_U[1] + y * (LGAM_U[2] + y * (LGAM_U[3] + y * (LGAM_U[4] + y * LGAM_U[5])))))
+      let p2 = 1.0 + y * (LGAM_V[1] + y * (LGAM_V[2] + y * (LGAM_V[3] + y * (LGAM_V[4] + y * LGAM_V[5]))))
       lg = lg + (-0.5 * y + p1 / p2)
     }
   } else if x < 8.0 {
-    let s = LGAM_S
-    let r = LGAM_R
     let i = Int(x)
     let y = x - Float(i)
-    let p = y * (s[0] + y * (s[1] + y * (s[2] + y * (s[3] + y * (s[4] + y * (s[5] + y * s[6]))))))
-    let q = 1.0 + y * (r[1] + y * (r[2] + y * (r[3] + y * (r[4] + y * (r[5] + y * r[6])))))
+    let p = y * (LGAM_S[0] + y * (LGAM_S[1] + y * (LGAM_S[2] + y * (LGAM_S[3] + y * (LGAM_S[4] + y * (LGAM_S[5] + y * LGAM_S[6]))))))
+    let q = 1.0 + y * (LGAM_R[1] + y * (LGAM_R[2] + y * (LGAM_R[3] + y * (LGAM_R[4] + y * (LGAM_R[5] + y * LGAM_R[6])))))
     lg = 0.5 * y + p / q
     var z = 1.0
     if i >= 7 {
@@ -1922,11 +1916,10 @@ pub fn lgamma(x0: Float) -> (Float, Int) {
       lg = lg + log(z)
     }
   } else if x < two58 {
-    let w0 = LGAM_W
     let t = log(x)
     let z = 1.0 / x
     let y = z * z
-    let w = w0[0] + z * (w0[1] + y * (w0[2] + y * (w0[3] + y * (w0[4] + y * (w0[5] + y * w0[6])))))
+    let w = LGAM_W[0] + z * (LGAM_W[1] + y * (LGAM_W[2] + y * (LGAM_W[3] + y * (LGAM_W[4] + y * (LGAM_W[5] + y * LGAM_W[6])))))
     lg = (x - 0.5) * (t - 1.0) + w
   } else {
     lg = x * (log(x) - 1.0)

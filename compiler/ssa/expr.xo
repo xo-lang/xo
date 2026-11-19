@@ -386,6 +386,9 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
       if let RangeExpr(lo: lo, hi: hi, inclusive: inclusive, ..) = index {
         return b.slice(span, x, lo, hi, inclusive)
       }
+      if let Some(v) = b.const_elem(x, index, b.nat_of(e)) {
+        return v
+      }
       let l = b.expr(x)
       let lt = b.vty(l)
       let xct = b.nat_check(x)
@@ -1069,6 +1072,45 @@ fn (var b: Builder) ident(e: Expr, x: Ident) -> Int {
   b.unsupported("the name `${check.text(x.name)}` here")
   b.undef(b.nat_of(e))
 }
+
+/// A read of a list constant at a constant index, `LGAM_A[3]`, as the
+/// element itself when every element is a compile-time scalar (task
+/// #410): the constant's read (its slot's two acquiring loads and a
+/// branch, then its box's list.index) and the element's bounds-checked
+/// load were 12.7% of gamma's samples. None for any other read, which
+/// lowers as before: an index out of range still faults at run time.
+/// Lists of more than CONST_ELEM_MAX elements are left alone, since each
+/// such read checks the whole initializer.
+fn (var b: Builder) const_elem(x: Expr, index: Expr, t: Int) -> Int? {
+  if b.m.heap(t) && b.tkind(t) != Kind.Str {
+    return None
+  }
+  let id = match x {
+    Ident(xi) => if b.c.var_of(b.s.file, xi) >= 0 { None } else { Some(xi) }
+    SelectorExpr(sel: sel, ..) => Some(sel)
+    _ => None
+  }
+  let r = b.c.ref_of(b.s.file, id?)
+  if r < 0 || b.c.objs[r].kind != check.ObjKind.Const || b.c.objs[r].decl_file < 0 {
+    return None
+  }
+  let k = b.c.const_int(b.s.file, index, 0)?
+  let f = b.c.objs[r].decl_file
+  let value = if let Some(ConstDecl(d)) = b.c.top_decl(f, b.c.objs[r].decl_idx) { d.value } else { return None }
+  let es = if let ListLit(elems: es, rest: rest, ..) = value { if rest { return None } else { es } } else { return None }
+  if k < 0 || k >= es.len() || es.len() > CONST_ELEM_MAX || !b.c.is_compile_time(f, value) {
+    return None
+  }
+  if t == b.int_t() {
+    if let Some(n) = b.c.const_int(f, es[k], 0) {
+      return Some(b.add(Op.Const, t, Aux.I(n: n), []))
+    }
+  }
+  Some(b.foreign_value(es[k], f, t, b.s.sub))
+}
+
+/// See const_elem.
+const CONST_ELEM_MAX = 1024
 
 fn (var b: Builder) variant_name(vr: check.VRef) -> Str {
   check.text(b.c.objs[vr.en].variants[vr.variant].name)

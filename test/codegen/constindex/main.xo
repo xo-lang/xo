@@ -1,0 +1,49 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a constant's List
+// literal of compile time scalars read at a constant index is the element
+// itself (task #410, std/native/llrt gomath's polynomial tables): no read
+// of the constant's slot (its acquiring loads) and no bounds check.
+
+const COEF: List[Float] = [0.5, -1.25, 3.0, 4.5e-3]
+const SMALL: List[Int] = [7, -9, 11, 13]
+const BYTES: List[UInt8] = [1, 2, 250]
+// an index naming a constant is written LAST + 0: a lone upper case
+// name in brackets parses as type arguments
+// (gotchas/index-by-upper-case-constant.md)
+const LAST = 3
+
+fn width(n: Int) -> Int { n * 2 }
+
+// Its initializer calls code, which may fault, and every read raises the
+// fault again (core 3.1): it is read from the built List.
+const WIDTHS = [width(1), width(2), width(3)]
+
+fn poly(x: Float) -> Float {
+  // arm64: -"ldar" -"\tbl " -"brk"
+  // amd64: -"call"
+  ((COEF[3] * x + COEF[2]) * x + COEF[1]) * x + COEF[0]
+}
+
+fn small() -> Int {
+  // arm64: "mov x0, #13" -"ldar" -"\tbl "
+  // amd64: "movl \$13, %eax" -"call"
+  SMALL[LAST + 0]
+}
+
+fn byte() -> Int {
+  // arm64: "mov [wx]0, #250" -"ldar" -"\tbl "
+  Int(BYTES[1 + 1])
+}
+
+fn neg() -> Int {
+  // arm64: -"ldar" -"\tbl "
+  SMALL[1] * 2
+}
+
+fn built() -> Int {
+  // arm64: "ldar"
+  WIDTHS[1]
+}
+
+fn main(os: Os) {
+  os.stdio.println("${poly(2.0)} ${small()} ${byte()} ${neg()} ${built()}")
+}

@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-19: perf: Float.lgamma's coefficient reads are folded to constants
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/gomath (task #407): lgamma on native amd64 at 454 ms against LLVM's 327 and Go's 311 (task #410: each read of a const List went through the constant's first use check and a bounds checked load)
+- Go reference: math lgamma.go (_lgamA to _lgamW are arrays indexed by constants), Go 1.26
+- Change: the compiler folds a read of a list constant of compile time scalars at a constant index to the element (task #410); std/native/llrt gomath lgamma reads LGAM_A to LGAM_W directly instead of through local copies
+- Measured: xo bench --ab on the linux/amd64 host, bench/perf/gomath lgamma 20 (native amd64): wall 723.7 to 536.6 ms, B/A 0.741 (95% 0.739 to 0.748), 4 rounds; native arm64 unchanged (its backend already threaded the first use check)
+- Test: test/codegen/constindex (no acquiring load, call or bounds check on a folded read); bench/perf/gomath lgamma's sum unchanged on native and LLVM
+- Affected: Xo 0.54.0 and earlier (speed only)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: Float.gamma reads its polynomial coefficients as constants, not from const Lists
 
 - Kind: perf
