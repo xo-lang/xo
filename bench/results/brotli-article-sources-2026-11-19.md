@@ -185,7 +185,8 @@ the reason, not the outcome, for this program).
 Go 1.26.11 with andybalholm/brotli v1.2.2 (bench/perf/brotli/twin.go.txt as
 main.go), `go build -gcflags='github.com/andybalholm/brotli=-m'`: writeBits
 and findMatchLengthWithLimit are both "can inline"; writeBits is inlined at
-151 call sites and findMatchLengthWithLimit at 21, among them
+151 call sites (of 196 calls in the module's sources, `grep -hE '\bwriteBits\(' *.go`
+less comments and the definition, v1.2.2) and findMatchLengthWithLimit at 21, among them
 compress_fragment_two_pass.go:334 and :401 (createCommands, quality 1)
 and :655 to :772 (storeCommands). Xo's write_bits is inlined nowhere
 ("no (pads)": its callers have landing pads).
