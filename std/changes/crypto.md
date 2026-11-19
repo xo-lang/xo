@@ -19,6 +19,17 @@ more than the two scalar blocks, so those keep the scalar path; the
 64 byte gap to Go is the scalar block and Poly1305 (next: a one block
 SSE kernel).
 
+## 2026-11-18: perf: Poly1305 adds its carries with one adc on x86-64
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/chacha poly on linux/amd64: 1.253 of Go's x/crypto poly1305)
+- Go reference: golang.org/x/crypto internal/poly1305 sum_amd64.s (ADCQ for each carry into a sum)
+- Measured: linux/amd64 host, ab-host --ab 4 rounds: chacha poly 83.97 to 61.93 ms (0.738, Go 66.9), aead chacha_small 127.3 to 123.3 ms (0.968); the loop went from 108 to 86 instructions, no setb left
+- Test: std/native crypto tests (Poly1305 RFC 8439 vectors and the ChaCha20-Poly1305 lengths to 200 against Go's x/crypto); a pure rewrite of sums as cpu.adc, same results
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: ChaCha20-Poly1305 on x86-64 seals and opens eight blocks a step
 
 - Kind: perf

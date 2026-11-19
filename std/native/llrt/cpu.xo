@@ -2241,7 +2241,7 @@ pub fn poly_blocks(ps: Int, d: Int, n: Int, hb: Int) {
     let c0 = adc_carry(h0, w0, 0)
     let a1 = adc(h1, w1, c0)
     let c1 = adc_carry(h1, w1, c0)
-    let a2 = h2.wrapping_add(c1).wrapping_add(hb)
+    let a2 = adc(h2, hb, c1)
     // h *= r: a2 is under 8 and r's top four bits clear, so a2 r0 and
     // a2 r1 fit a word
     let l00 = a0.wrapping_mul(r0)
@@ -2257,31 +2257,31 @@ pub fn poly_blocks(ps: Int, d: Int, n: Int, hb: Int) {
     // m1 = a1 r0 + a0 r1, m2 = a2 r0 + a1 r1 (128 bits each)
     let m1l = adc(l10, l01, 0)
     let m1c = adc_carry(l10, l01, 0)
-    let m1h = h10.wrapping_add(h01).wrapping_add(m1c)
+    let m1h = adc(h10, h01, m1c)
     let m2l = adc(l20, l11, 0)
     let m2c = adc_carry(l20, l11, 0)
-    let m2h = h11.wrapping_add(m2c)
+    let m2h = adc(h11, 0, m2c)
     // t = m0 + m1 2^64 + m2 2^128 + m3 2^192
     let t0 = l00
     let t1 = adc(m1l, h00, 0)
     let e1 = adc_carry(m1l, h00, 0)
     let t2 = adc(m2l, m1h, e1)
     let e2 = adc_carry(m2l, m1h, e1)
-    let t3 = l21.wrapping_add(m2h).wrapping_add(e2)
+    let t3 = adc(l21, m2h, e2)
     // reduce: the bits from 130 up, cc, times 5 = cc 4 + cc, added back
     let cl = t2 & -4
     let g0 = adc(t0, cl, 0)
     let k0 = adc_carry(t0, cl, 0)
     let g1 = adc(t1, t3, k0)
     let k1 = adc_carry(t1, t3, k0)
-    let g2 = (t2 & 3).wrapping_add(k1)
+    let g2 = adc(t2 & 3, 0, k1)
     let sl = cl.shr_logical(2) | t3.wrapping_shl(62)
     let sh = t3.shr_logical(2)
     h0 = adc(g0, sl, 0)
     let j0 = adc_carry(g0, sl, 0)
     h1 = adc(g1, sh, j0)
     let j1 = adc_carry(g1, sh, j0)
-    h2 = g2.wrapping_add(j1)
+    h2 = adc(g2, 0, j1)
     o = o.wrapping_add(16)
   }
   rt.mem_store(ps, 0, h0, 8)

@@ -8,6 +8,8 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+
+- Perf: Poly1305 (std/crypto, ChaCha20-Poly1305) adds its carries with one adc on x86-64: 0.74 of the time before, below Go's.
 - Fix (std/cookiejar; task #352): a cookie's Max-Age past Int's nanoseconds wraps as Go's `time.Duration(MaxAge) * time.Second` (MaxInt - 1 seconds is -2s, so the cookie is deleted), and an expiry past 2262 stops at Time's end; it faulted with an integer overflow on the native backends.
 - Perf (std/crypto; task #271): ChaCha20-Poly1305 on x86-64 seals and opens a 65 to 192 byte message in one vector call (key block included), 8 to 25% faster.
 - Fix (std/template; task #352): a number literal in UInt64's range past Int (`18446744073709551615`, `0xFFFFFFFFFFFFFFFF`, octal, binary) parses as Go's and fails where an int is wanted (`overflows int`); it was a parse error on the native backends.
