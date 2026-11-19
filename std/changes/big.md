@@ -1,5 +1,33 @@
 # std/big changes
 
+## 2026-11-19: perf: parse of a power-of-two base is linear
+
+- Kind: perf, security (denial of service)
+- Commit: this push
+- Found by: task #241 (owner's v0.51.1 evaluation, b46: 800,000 hex digits took 2.6 s)
+- Go reference: math/big natconv.go nat.scan (bases 2, 4 and 16 packed into words)
+- Test: std/big_test.xo "a power-of-two base parses in linear time" (16,000,000 hex digits; times out at 60 s before, the module's 5 tests take 1.1 s after) and "power-of-two bases round trip"
+
+Native `parse` in base 2, 4, 8, 16 or 32 multiplied the number so far by
+each group of digits, quadratic in the length. It now checks the digits
+and separators as before, then packs each digit's bits into words from
+the last digit, linear in the length. Bases 8 and 32 are linear too,
+where math/big is still quadratic. The Go backend calls math/big.
+
+## 2026-11-19: fix: parse_float reports exponent overflow before trailing text
+
+- Kind: fix
+- Commit: this push
+- Found by: task #241 (owner's v0.51.1 evaluation, b47)
+- Go reference: math/big floatconv.go Float.scan and Float.Parse
+- Test: std/big_test.xo "parse_float reports exponent overflow before trailing text" (fails before: "expected end of string, found 'p'")
+
+Native `parse_float("1e812830353317p5")` reported the trailing "p5"; Go's
+scan checks the exponent range first, so the error is "exponent
+overflow". A zero mantissa is not range checked, as in Go, so
+"0e812830353317p5" still reports the trailing text. The Go backend
+calls math/big.
+
 ## 2026-11-19: fix: BigFloat add and sub of far apart exponents keep Go's precision (Go backend)
 
 - Kind: fix

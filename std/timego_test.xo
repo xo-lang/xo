@@ -77,3 +77,23 @@ test "the layout constants are Go's" {
   expect(format(t, z, DATE_TIME)) == "2026-11-06 14:05:09"
   expect(format(t, z, TIME_ONLY)) == "14:05:09"
 }
+
+test "Civil.format years -1 to -999 and offsets under a minute match Go (b45 of the owner's v0.51.1 evaluation)" {
+  let at = fn(y: Int, off: Int) -> time.Civil {
+    time.Civil{date: time.Date{year: y, month: 3, day: 4}, time: time.ClockTime{hour: 5, minute: 6, second: 7, nanos: 0}, offset: Duration.from_nanos(off * 1000000000), zone: ""}
+  }
+  // Go's time.Format "2006-01-02" for each year
+  expect(at(-1, 0).format("{year}-{month}-{day}")) == "-0001-03-04"
+  expect(at(-99, 0).format("{year}")) == "-0099"
+  expect(at(-999, 0).format("{year}")) == "-0999"
+  expect(at(-1000, 0).format("{year}")) == "-1000"
+  expect(at(-12345, 0).format("{year}")) == "-12345"
+  expect(at(7, 0).format("{year}")) == "0007"
+  // Go's "-0700" for each offset in seconds
+  expect(at(2026, -59).format("{zone}")) == "+0000"
+  expect(at(2026, -1).format("{zone}")) == "+0000"
+  expect(at(2026, -60).format("{zone}")) == "-0001"
+  expect(at(2026, -3600).format("{zone}")) == "-0100"
+  expect(at(2026, 59).format("{zone}")) == "+0000"
+  expect(at(2026, 60).format("{zone}")) == "+0001"
+}

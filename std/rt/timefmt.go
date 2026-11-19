@@ -194,11 +194,12 @@ func civilGo(c Time_Civil) (time.Time, string) {
 	off := int(floorDivI(int64(c.F_offset), 1e9))
 	name := "UTC"
 	if off != 0 {
-		a, sign := off, "+"
-		if off < 0 {
-			a, sign = -off, "-"
+		// whole minutes, so -59 to -1 s is +0000, as Go's -0700 (b45)
+		m, sign := off/60, "+"
+		if m < 0 {
+			m, sign = -m, "-"
 		}
-		name = fmt.Sprintf("%s%02d%02d", sign, a/3600, a/60%60)
+		name = fmt.Sprintf("%s%02d%02d", sign, m/60, m%60)
 	}
 	// the wall clock within its 400 year cycle (whole weeks, so the
 	// weekday holds) and the cycles' years printed apart, as native's
@@ -215,6 +216,10 @@ func civilYearText(q, y int64) string {
 		return ""
 	}
 	if v, ok := eraYearOK(q, y); ok {
+		if v < 0 {
+			// Go's appendInt: "-" and four digits (b45; %04d gave "-001")
+			return "-" + fmt.Sprintf("%04s", strconv.FormatInt(v, 10)[1:])
+		}
 		return fmt.Sprintf("%04d", v)
 	}
 	return wideYearText(q, y)

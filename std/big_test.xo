@@ -33,3 +33,46 @@ test "Rat and Float decode as Go's UnmarshalText reads them" {
   expect(dec("{\"r\":\"1\",\"f\":\"abc\"}")) == "err math/big: cannot unmarshal \"abc\" into a *big.Float (number has no digits)"
   expect(dec("{\"r\":\"1\",\"f\":\"0x1p-3\"}")) == "1 0.125 64"
 }
+
+test "a power-of-two base parses in linear time (b46 of the owner's v0.51.1 evaluation)" {
+  // 16,000,000 hex digits, as math/big packs them into words: each group
+  // of digits was multiplied into the whole number (800,000 digits took
+  // 2.6 s on an Intel Mac, 4,000,000 over 60 s)
+  let n = 16000000
+  let h = parse("f".repeat(n), 16).or_fault("hex")
+  expect(h.bit_len()) == 4 * n
+  expect(h.add(from_int(1)).bit_len()) == 4 * n + 1
+}
+
+test "power-of-two bases round trip with partial words, prefixes and separators" {
+  let hex = "123456789abcdef0fedcba9876543210".repeat(31) + "abc"
+  expect(parse(hex, 16).or_fault("hex").text(16)) == hex
+  let oct = "1234567012".repeat(97) + "76"
+  expect(parse(oct, 8).or_fault("oct").text(8)) == oct
+  let b32 = "v0123456789abcdefghijklmnopqrstu".repeat(13) + "q"
+  expect(parse(b32, 32).or_fault("b32").text(32)) == b32
+  let b4 = "3210123".repeat(41)
+  expect(parse(b4, 4).or_fault("b4").text(4)) == b4
+  let bin = "1011".repeat(67) + "1"
+  expect(parse(bin, 2).or_fault("bin").text(2)) == bin
+  expect(parse("-0x00ff_ff", 0).or_fault("prefixed").text(10)) == "-65535"
+  expect(parse("0b1_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0001", 0).or_fault("b").text(16)) == "1000000000000001"
+  expect(parse("0o777", 0).or_fault("o").text(10)) == "511"
+  expect(parse("000000000000000000000000000000000000000000000000000000000000000000000000ff", 16).or_fault("zeros").text(10)) == "255"
+  expect(parse("0", 2).or_fault("zero").text(10)) == "0"
+  expect(parse("12", 2).is_err()) == true
+}
+
+test "parse_float reports exponent overflow before trailing text, as Go (b47 of the owner's v0.51.1 evaluation)" {
+  let msg = fn(s: Str) -> Str {
+    match parse_float(s, 0, 0) {
+      Ok(_) => "ok"
+      Err(e) => e.msg
+    }
+  }
+  expect(msg("1e812830353317p5")) == "exponent overflow"
+  expect(msg("1e812830353317")) == "exponent overflow"
+  expect(msg("1e5x")) == "expected end of string, found 'x'"
+  expect(msg("0e812830353317p5")) == "expected end of string, found 'p'"
+  expect(msg("1.5p3")) == "ok"
+}

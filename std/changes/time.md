@@ -1,5 +1,18 @@
 # std/time changes
 
+## 2026-11-19: fix: Civil.format of years -1 to -999 and of offsets under a minute
+
+- Kind: fix
+- Commit: this push
+- Found by: task #241 (owner's v0.51.1 evaluation, b45)
+- Go reference: time/format.go appendInt (the year) and the "-0700" zone (whole minutes)
+- Test: std/timego_test.xo "Civil.format years -1 to -999 and offsets under a minute match Go" (fails before: "-001", "-0000")
+
+`{year}` of a year from -1 to -999 had three digits (`-001`); as Go's
+appendInt it is "-" and four digits (`-0001`). `{zone}` of an unnamed
+offset from -59 to -1 seconds was `-0000`; it counts whole minutes, as
+Go's `-0700` and Xo's `{offset}`, so it is `+0000`. Both backends.
+
 ## 2026-11-18: fix: a Civil past Go's years on the Go backend
 
 - Kind: fix

@@ -444,7 +444,8 @@ receiver unchanged then. A multi-key order chains `then`:
 is count descending, then name ascending. `sort_by_desc(key)` orders by key
 from greatest to least, stable, without negating the key (so `Int.min` and
 `Str` keys work). `a.cmp(b)` is `Less` when `a < b`, `Greater` when `b < a`,
-else `Equal` (a NaN compares Equal); `cmp` is a method name, so a type's own
+else `Equal`, in Xo's order for a Float (decision 0053): a NaN is
+`Greater` than every other value and `Equal` to every NaN; `cmp` is a method name, so a type's own
 `cmp` shadows it as any method does.
 
 `sort` of a `List[Int]` runs Go's pattern-defeating quicksort (the
@@ -5291,7 +5292,10 @@ fn (c: Civil) format(layout: Str) -> Str         // format's text for any year; 
 
 A `Date`, `ClockTime` or `Civil` may hold any fields (a struct literal,
 or a JSON body through `derive Json`): the methods normalize them (month
-13 is January of the next year, hour 25 the next day's 01). `weekday`,
+13 is January of the next year, hour 25 the next day's 01), with two
+exceptions: `Date.display` prints the fields as given (`2026-13-40`),
+and `add_months` normalizes the month and clamps the day to the new
+month (day 40 of January plus one month is February 28 or 29). `weekday`,
 `display`, `to_time` and `format` never fault on a field's size;
 `add_days`, `add_months`, `days_until` and `unix` fault only when their
 answer does not fit `Int` (a year past `Int`'s range, more days or
@@ -7479,8 +7483,10 @@ fn (var d: Decompressor) finish() -> Bytes ! CompressErr      // the rest; moves
 
 ## 33. std/big
 
-Status: implemented on every backend (decision 0311, 2026-10-21), stage
-1: schoolbook multiplication and division natively. Go's math/big Int as
+Status: implemented on every backend (decision 0311, 2026-10-21).
+Natively, multiplication is Karatsuba and division recursive
+(Burnikel-Ziegler) from 40 words, as Go's thresholds, and parsing a
+power-of-two base is linear. Go's math/big Int as
 an immutable value: the Go backend calls math/big, and the native
 backends port its nat arithmetic (std/native/big.xo). Every operation
 gives Go's result. Variable time: not for secrets. Pure, but for

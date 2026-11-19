@@ -1280,8 +1280,10 @@ fn civil_zone_text(off: Int) -> Str {
   if off == 0 {
     return "UTC"
   }
-  let a = if off < 0 { -off } else { off }
-  "${if off < 0 { "-" } else { "+" }}${pad(a / 3600, 2)}${pad(a / 60 % 60, 2)}"
+  // whole minutes, so -59 to -1 s is +0000, as Go's -0700 and {offset}
+  // (b45 of the owner's v0.51.1 evaluation)
+  let m = (if off < 0 { -off } else { off }) / 60
+  "${if off < 0 && m > 0 { "-" } else { "+" }}${pad(m / 60, 2)}${pad(m % 60, 2)}"
 }
 
 /// The wall clock of c (as if in UTC) as (q, r, s): q * ERA_DAYS + r
@@ -1715,8 +1717,9 @@ fn put_name(var out: BytesBuilder, names: Str, i: Int) {
 const TWO_DIGITS: Str = "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"
 
 
-/// n in decimal, zero padded to w digits (a negative n is "-" and the
-/// digits of -n padded to w - 1), as pad.
+/// n in decimal, zero padded to w digits; a negative n is "-" and the
+/// digits of -n padded to w, as Go's appendInt (b45 of the owner's
+/// v0.51.1 evaluation: year -1 is "-0001", it was "-001").
 fn put_num(var out: BytesBuilder, n: Int, w: Int) {
   if w == 2 && n >= 0 && n < 100 {
     // both digit bytes in one little endian store
@@ -1733,10 +1736,10 @@ fn put_num(var out: BytesBuilder, n: Int, w: Int) {
     out.write_byte(45)
     if n == Int.min {
       // its negation does not fit (a Civil's year may be any Int)
-      out.write_str(pad_abs(n, w - 1))
+      out.write_str(pad_abs(n, w))
       return
     }
-    put_num(out, -n, w - 1)
+    put_num(out, -n, w)
     return
   }
   var div = 1

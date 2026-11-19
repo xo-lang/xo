@@ -2,9 +2,9 @@
 // natural numbers held as List[Int] limbs, the lowest first, each an
 // unsigned 64 bit word, with no zero limb on top (nat.go's norm). The
 // algorithms are Go's where the result depends on them (parsing, Exp's
-// signs, ModInverse, the primality test) and schoolbook arithmetic
-// elsewhere (stage 1: the results are the same, the speed is not Go's for
-// operands of thousands of bits). Variable time: not for secrets.
+// signs, ModInverse, the primality test); multiplication is Karatsuba
+// and division recursive from 40 words, as Go's thresholds. Variable
+// time: not for secrets.
 use std/big
 use std/json
 use native/llrt/bigmod
@@ -1796,6 +1796,18 @@ fn parse(s: Str, base: Int) -> big.BigInt ! big.BigErr {
     bn = next
     nd += 1
   }
+  // a power-of-two base (2, 4, 8, 16, 32) packs its digits' bits into
+  // words from the low end after the scan below, linear in the digits, as
+  // math/big does for 2, 4 and 16; the multiply-add per group was
+  // quadratic (b46 of the owner's v0.51.1 evaluation: 800,000 hex digits
+  // 2.6 s). kbits is the bits per digit, 0 for another base.
+  var kbits = 0
+  if (bv & (bv - 1)) == 0 {
+    while (1 << kbits) < bv {
+      kbits += 1
+    }
+  }
+  let start = i
   var z: List[Int] = []
   var di = 0
   var dn = 0
@@ -1824,6 +1836,10 @@ fn parse(s: Str, base: Int) -> big.BigInt ! big.BigErr {
     }
     prev = 48
     count += 1
+    if kbits > 0 {
+      i += 1
+      continue
+    }
     di = di * bv + d
     dpow = dpow * bv
     dn += 1
@@ -1844,7 +1860,40 @@ fn parse(s: Str, base: Int) -> big.BigInt ! big.BigErr {
   if count == 0 && prefix != 48 {
     return bad
   }
+  if kbits > 0 {
+    z = pack_digits(b, start, kbits)
+  }
   Ok(make(neg, z))
+}
+
+/// The words of the digits in b[start..] of base 2^kbits (each checked by
+/// parse; a `_` between them skipped), lowest word first: the bits of
+/// each digit from the last go in at the next bit, a digit that crosses a
+/// word boundary split between the two words.
+fn pack_digits(b: Bytes, start: Int, kbits: Int) -> List[Int] {
+  var z: List[Int] = []
+  var w = 0
+  var at = 0
+  var j = b.len()
+  while j > start {
+    j -= 1
+    let ch = Int(b[j])
+    if ch == 95 {
+      continue
+    }
+    let d = if ch <= 57 { ch - 48 } else if ch >= 97 { ch - 97 + 10 } else { ch - 65 + 10 }
+    w = w | d.wrapping_shl(at)
+    at += kbits
+    if at >= 64 {
+      z.push(w)
+      at -= 64
+      w = if at > 0 { d.shr_logical(kbits - at) } else { 0 }
+    }
+  }
+  if at > 0 {
+    z.push(w)
+  }
+  z
 }
 
 // ---------------------------------------------------------------------------
@@ -3186,10 +3235,15 @@ fn parse_float(s: Str, base: Int, prec: Int, mode: big.RoundingMode) -> big.BigF
       return Err(perr("'_' must separate successive digits"))
     }
   }
-  if i < n {
-    return Err(perr("expected end of string, found ${quote_byte(Int(b[i]))}"))
-  }
+  // as Go's Parse, the scan's exponent overflow is reported before text
+  // left after the number (b47 of the owner's v0.51.1 evaluation:
+  // "1e812830353317p5" is Go's "exponent overflow"); a zero is not
+  // range checked
+  let trailing: Str? = if i < n { Some("expected end of string, found ${quote_byte(Int(b[i]))}") } else { None }
   if z.is_empty() {
+    if let Some(m) = trailing {
+      return Err(perr(m))
+    }
     return Ok(f_special(pp, mode, exact(), F_ZERO, neg))
   }
   var exp2 = nat_bit_len(z)
@@ -3213,6 +3267,9 @@ fn parse_float(s: Str, base: Int, prec: Int, mode: big.RoundingMode) -> big.BigF
   exp2 = exp2.wrapping_add(exp)
   if exp2 < MIN_EXP || exp2 > MAX_EXP {
     return Err(perr("exponent overflow"))
+  }
+  if let Some(m) = trailing {
+    return Err(perr(m))
   }
   if exp5 == 0 {
     return Ok(f_round(neg, z, exp2, 0, pp, mode))
