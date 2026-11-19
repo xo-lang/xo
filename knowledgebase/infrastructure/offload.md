@@ -182,6 +182,29 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   OK only) lifts that, and amd64 then still takes only OFF_MAX_MIN of 45
   or less (TestScenarioTimingLaneCap, stdproven_offload_test.sh). Exclusive leases and leases back after a
   heavyd restart are not capped. Last verified: 2026-11-18.
+  Half timings (task #347, 2026-11-19): a timing on the amd64 host
+  (OFF_TIMING=1 with OFF_EXCLUSIVE=1) asks heavyd for `-half`. On a lane
+  named in HEAVYD_HALF_LANES (default none; the lead sets `amd64` once
+  heavyd runs it) heavyd gives it the lower or upper half of the lane's
+  slots (1-3 or 4-6) and owns the lane against every other lease but one
+  more half timing, so two timings run at once and no plain, memory or
+  whole-lane lease starts beside either; a whole-lane timing waiting
+  ahead keeps a later half timing behind it. The job takes only its
+  slots' host locks and runs under `taskset` on its half of the CPUs
+  (OFF_LANE_CPUS: 0-13 or 14-27; the halves are 7 whole cores each, no
+  SMT pair split, and share the one 32 MiB L3). OFF_TIMING_WHOLE=1 asks
+  for the whole host as before (a timing that reports absolute times
+  rather than B/A, or one that uses more than half of the CPUs); on a
+  lane not in HEAVYD_HALF_LANES `-half` is a whole-lane exclusive.
+  Evidence: two pinned null --ab runs, one per half, changed each other
+  by at most 0.99% with three cache-resident workloads (null7: chacha
+  seal and open, netip) and 1.29% with brotli enc11 and a 576 MB triad
+  (null8), the paired spread at most 1.3x the solo one; beside a
+  pass/fail job a timing drifts 20 to 30% (notes/xw-1/347/verdict.md).
+  Both --ab sides already run from a tmpfs copy (#382): null6 found a cp
+  copy of a binary on ext4 ran about 9% slower than the tar copy, and
+  tmpfs removed it (TestHalfLanes, offload_wsl_job_test.sh). Last
+  verified: 2026-11-19.
   A stdproven perf or serverperf timing on host 2 offers heavyd a move
   to the amd64 lane after SP_MOVE_MIN (5) minutes in pass2's queue (ADR
   0712 takes either host), relabelled there (`-host`, `-backends`) so
