@@ -71,6 +71,10 @@ fn (var g: Gen) call(v: Int) {
     g.alias(v, "false")
     return
   }
+  if name == ssa.ADDR_KEEP {
+    // decision 0460's marker, kept with addr_keep_drop off: no code
+    return
+  }
   if name.starts_with("rt.") {
     g.rt_call(v)
     return

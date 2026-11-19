@@ -1,0 +1,43 @@
+// addr_keep (decision 0460): a value whose raw address is used later
+// stays alive to that use through a marker call (rt.addr_keep), which
+// addr_keep_drop removes once the releases are placed. With
+// addr_keep_drop off the markers reach the backend, which emits nothing
+// for them (they faulted the native backends' call lowering, 2026-11-19).
+fn joined(parts: List[Str]) -> Str {
+  var b = StrBuilder.new()
+  for (i, p) in parts.indexed() {
+    if i > 0 {
+      b.write(",")
+    }
+    b.write(p)
+  }
+  b.freeze()
+}
+
+fn count_in(s: Str, sub: Str) -> Int {
+  var n = 0
+  var t = s
+  while let Some(i) = t.find(sub) {
+    n += 1
+    t = t[i + sub.len()..]
+  }
+  n
+}
+
+fn main(os: Os) {
+  var parts: List[Str] = []
+  for i in 0..40 {
+    parts.push("item${i * 7 % 13}")
+  }
+  let s = joined(parts)
+  os.stdio.println("${s.len()}")
+  os.stdio.println("${count_in(s, "item1")}")
+  let bs = s.bytes()
+  var sum = 0
+  for x in bs {
+    sum = (sum * 31 + Int(x)) % 1000003
+  }
+  os.stdio.println("${sum}")
+  os.stdio.println("${s.split(",").len()}")
+  os.stdio.println("${s.replace("item", "#").len()}")
+}

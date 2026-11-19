@@ -51,6 +51,10 @@ fn (var g: Gen) call(v: Int) {
     return
   }
   match name {
+    "rt.addr_keep" => {
+      // decision 0460's marker (ssa.ADDR_KEEP), kept with addr_keep_drop
+      // off: no code
+    }
     "rt.landing" => {
       // a check only a fault takes: the fault tests jump to the landing
       // block themselves

@@ -3898,8 +3898,9 @@ fn addr_call(name: Str) -> Bool {
   name is "raw.data" | "raw.bytes_addr" | "rt.obj_addr"
 }
 
-/// The marker keep_addr_values inserts and drop_addr_keeps removes.
-const ADDR_KEEP = "rt.addr_keep"
+/// The marker keep_addr_values inserts and drop_addr_keeps removes. With
+/// addr_keep_drop off it reaches the backends, which emit nothing for it.
+pub const ADDR_KEEP = "rt.addr_keep"
 
 /// Decision 0460: a value whose raw address (raw.data, raw.bytes_addr,
 /// rt.obj_addr, or an add or sub of one) is used later stays alive up to

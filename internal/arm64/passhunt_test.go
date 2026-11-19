@@ -42,6 +42,7 @@ var passHuntTargets = map[string][]string{
 	"pass_uniq_spec":         {"uniq_var_params", "specialize_args", "devirtualize", "inplace_elems"},
 	"pass_view_join":         {"view_lens", "copy_prop"},
 	"pass_view_len":          {"view_lens", "copy_prop"},
+	"pass_addr_keep":         {"addr_keep_drop", "addr_keep"},
 	"pass_x86_words":         {},
 	"pass_x86_mulpair":       {},
 	"pass_x86_consts":        {},
