@@ -406,6 +406,11 @@ const HTML_CASES: List[(Str, Str, Str)] = [
   ("meta content url with whitespace before equals", "<meta http-equiv=\"refresh\" content=\"0;url ={{\"javascript:alert(1)\"}}\">", "<meta http-equiv=\"refresh\" content=\"0;url =#ZgotmplZ\">"),
   ("meta content url with tab before equals", "<meta http-equiv=\"refresh\" content=\"0;url\t={{\"javascript:alert(1)\"}}\">", "<meta http-equiv=\"refresh\" content=\"0;url\t=#ZgotmplZ\">"),
   ("scriptTypeEmpty", "<script type=\"\">{{.H}}</script>", "<script type=\"\">\"\\u003cHello\\u003e\"</script>"),
+  // go1.26.11's additions (GO-2026-4980, GO-2026-4982)
+  ("scriptTypeSpace", "<script type=\" \">{{.H}}</script>", "<script type=\" \">\"\\u003cHello\\u003e\"</script>"),
+  ("scriptTypeTab", "<script type=\"\t\">{{.H}}</script>", "<script type=\"\t\">\"\\u003cHello\\u003e\"</script>"),
+  ("meta content url with space after equals", "<meta http-equiv=\"refresh\" content=\"0;url= {{\"javascript:alert(1)\"}}\">", "<meta http-equiv=\"refresh\" content=\"0;url= #ZgotmplZ\">"),
+  ("meta content url with whitespace both sides of equals", "<meta http-equiv=\"refresh\" content=\"0;url \t= {{\"javascript:alert(1)\"}}\">", "<meta http-equiv=\"refresh\" content=\"0;url \t= #ZgotmplZ\">"),
 ]
 
 test "html mode: Go's TestEscape cases over DATA (W trusted html)" {
@@ -484,6 +489,10 @@ const ERROR_CASES: List[(Str, Str)] = [
   ("Hello, {{html . | print}}!", "predefined escaper \"html\" disallowed in template"),
   ("<div class={{. | html}}>Hello<div>", "predefined escaper \"html\" disallowed in template"),
   ("Hello, {{. | urlquery | html}}!", "predefined escaper \"urlquery\" disallowed in template"),
+  // go1.26.11's additions (GO-2026-4865: a JS template literal's context across branches)
+  ("<script>var a = `{{if .X}}`{{end}}", "{{if}} branches end in different contexts"),
+  ("<script>var a = `{{if .X}}a{{else}}`{{end}}", "{{if}} branches end in different contexts"),
+  ("<script>var a = `{{if .X}}a{{else}}b{{end}}`</script>", ""),
 ]
 
 test "html mode: Go's TestErrors (the error text contains Go's)" {

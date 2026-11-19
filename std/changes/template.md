@@ -1,5 +1,17 @@
 # std/template changes
 
+## 2026-11-19: security: GO-2026-4603, GO-2026-4865, GO-2026-4980, GO-2026-4982, GO-2026-6091, GO-2026-6599 and GO-2026-6600 are fixed in the html mode (native)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #399), Go vulnerability database entries fixed after Go 1.26.0
+- Go reference: html/template (go1.26.11), the escape_test.go rows added between go1.26.1 and go1.26.11
+- Change: none in the code; the 2026-11-13 security entry below fixed these (meta refresh URLs and whitespace around `=`, `<script type>` of spaces, JS template literal brace depth across branches, regexp context after braces, consecutive `${`, yield). This push adds the rest of Go's new rows: TestEscape's scriptTypeSpace, scriptTypeTab and the two meta refresh rows with whitespace after `=`, and TestErrors' three template literal branch cases
+- Measured: not applicable
+- Test: std/native/template_test.xo "html mode: Go's TestEscape cases over DATA" and "html mode: Go's TestErrors" (the new rows pass)
+- Affected: Xo 0.50.1 and earlier, native backends (the Go backend follows its Go toolchain)
+- Shipped in: 0.51.0
+
 ## 2026-11-18: fix: a number literal in UInt64's range past Int parses, as Go's ParseUint reads it (native)
 
 - Kind: fix
