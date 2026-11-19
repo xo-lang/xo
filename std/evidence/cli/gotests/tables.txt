@@ -1,0 +1,5 @@
+# Go's flag test tables (go1.26) run through std/cli
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# flagHandle (a flag named h or help that overrides the help) is left out:
+# std/cli reserves -h and --help (spec/std.md 14), a declaration fault.
+flag flag_test.go TestExitCode.tests flag exit

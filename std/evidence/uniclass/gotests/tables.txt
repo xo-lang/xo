@@ -1,0 +1,6 @@
+# Go's unicode test tables (go1.26) run through std/uniclass
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# inPropTest's names are properties (Dash, White_Space), which Go's regexp
+# does not take as \p classes: those cases check std/regexp refuses them too.
+unicode script_test.go inCategoryTest rune,script class
+unicode script_test.go inPropTest rune,script class

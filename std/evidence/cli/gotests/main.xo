@@ -1,0 +1,43 @@
+// The Xo side of std/cli's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/cli's result as text, as go/main.go prints package flag's.
+// Kind exit: parse one argument on a command with no flags
+// (single_dash_long, as Go's flag reads -name); "ok" or the error's exit
+// status.
+// See scripts/stdproven/gotests.go.
+use std/cli
+use std/base64
+
+/// The outcome of parsing the one argument a on a command with no flags,
+/// as Go's TestExitCode runs flag.FlagSet.Parse: "ok", or the exit
+/// status of the error.
+fn exit_code(a: Str, env: Env) -> Str uses env {
+  let cmd = cli.command("test", "", single_dash_long: true)
+  match cli.parse(cmd, [a], env) {
+    Ok(_) => "ok"
+    Err(e) => "exit ${e.exit_code()}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str], env: Env) -> Str uses env {
+  match kind {
+    "exit" => exit_code(inp[0], env)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp, os.env).bytes()))
+  }
+}

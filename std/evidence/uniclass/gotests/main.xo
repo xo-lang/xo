@@ -1,0 +1,50 @@
+// The Xo side of std/uniclass's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/uniclass's result as text, as go/main.go prints package unicode's.
+// Kind class: whether std/regexp's \p{NAME} (std/uniclass's tables)
+// matches the code point; "match", "no", or "err" when NAME is not a
+// class std/regexp knows, as Go's regexp.
+// See scripts/stdproven/gotests.go.
+use std/regexp
+use std/base64
+
+/// Whether \p{name} (std/regexp, through std/uniclass's tables) matches
+/// the text of code point cp, as Go's string(rune(cp)): U+FFFD for a
+/// surrogate or a value past U+10FFFF. "match", "no", or "err" when the
+/// class does not compile.
+fn in_class(cp: Str, name: Str) -> Str {
+  var c = Int.parse(cp) ?? -1
+  if c < 0 || c > 0x10FFFF || (c >= 0xD800 && c < 0xE000) {
+    c = 0xFFFD
+  }
+  var b = BytesBuilder.with_capacity(4)
+  b.write_rune(Rune(c))
+  let s = b.freeze().to_str() ?? ""
+  match regexp.compile("\\p{${name}}") {
+    Ok(re) => if re.is_match(s) { "match" } else { "no" }
+    Err(_) => "err"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "class" => in_class(inp[0], inp[1])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
