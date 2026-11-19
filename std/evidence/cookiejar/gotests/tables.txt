@@ -1,0 +1,12 @@
+# Go's cookiejar test tables (go1.26) run through std/cookiejar
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# jar: a fresh jar with no public suffix list, fromURL's Set-Cookie
+# lines stored, each query's cookies (Go's TestBasics and the others
+# without testPSL, the package's own; updateAndDeleteTests' steps each
+# on a fresh jar).
+net/http/cookiejar jar_test.go basicsTests fromURL,setCookies:json,queries:json jar
+net/http/cookiejar jar_test.go updateAndDeleteTests fromURL,setCookies:json,queries:json jar
+net/http/cookiejar jar_test.go chromiumBasicsTests fromURL,setCookies:json,queries:json jar
+net/http/cookiejar jar_test.go chromiumDomainTests fromURL,setCookies:json,queries:json jar
+net/http/cookiejar jar_test.go chromiumDeletionTests fromURL,setCookies:json,queries:json jar
+net/http/cookiejar jar_test.go domainHandlingTests fromURL,setCookies:json,queries:json jar

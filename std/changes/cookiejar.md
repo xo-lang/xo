@@ -1,5 +1,15 @@
 # std/cookiejar changes
 
+## 2026-11-19: fix: a host that is not ASCII is keyed by its punycode, as Go's
+
+- Kind: fix
+- Commit: this push
+- Found by: task #403 (gotests: Go's domainHandlingTests 3 to 6 through the jar)
+- Go reference: net/http/cookiejar jar.go canonicalHost and punycode.go toASCII and encode, go1.26.11
+- Test: std/cookiejar_test.xo "a cookie from an IDN host is kept under its punycode" and "a punycode Domain from an IDN host covers both spellings" (both failed before: `www.bücher.test` was ignored), punycodeTestCases' vectors
+- Timing: none (ASCII hosts, the common case, take the same check as before)
+- Shipped in: not yet released
+
 ## 2026-11-18: fix: a Max-Age past Int's nanoseconds wraps as Go's, with no fault
 
 - Kind: fix

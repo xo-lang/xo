@@ -40,6 +40,9 @@ func TestGoTableCases(t *testing.T) {
 		// a slice of integer or rune literals joins them with commas; a
 		// name in it, or nil, is skipped
 		{"slices", "in", []string{"0 97,65536,-1", "1 "}, 2},
+		// :json reads a slice (of strings, or of structs of them, a field
+		// left out "") as JSON, nil as null; a name in it is skipped
+		{"nested", "set:json,qs:json", []string{`0 ["A=a","B=b"]|[["http://h","A=a"],["ftp://h",""]]`, "1 null|[]"}, 1},
 		// NAME=DEFAULT fills a field a keyed element leaves out or sets
 		// to nil; a field present but not a literal still skips the
 		// element

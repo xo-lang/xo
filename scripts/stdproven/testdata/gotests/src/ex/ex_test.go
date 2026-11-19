@@ -104,3 +104,17 @@ func mustParse(s string) string { return s }
 func mustTwo(a, b string) string { return a + b }
 
 var files = []string{"a", "missing"}
+
+type q struct{ to, want string }
+
+// nested: a :json field, a slice of strings or of string structs
+var nested = []struct {
+	set []string
+	qs  []q
+}{
+	{[]string{"A=a", "B=b"}, []q{{"http://h", "A=a"}, {to: "ftp://h"}}},
+	{nil, []q{}},
+	{[]string{name}, nil},
+}
+
+const name = "n"

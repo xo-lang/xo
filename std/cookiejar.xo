@@ -72,7 +72,8 @@ pub fn new_with(psl: Bool = true) -> Jar {
 /// scheme other than http and https, one that has a bad Domain attribute
 /// (not the host or a parent of it, or an IP host with a Domain) is
 /// ignored, a Max-Age below 0 or an Expires not after now deletes. A host
-/// that is not ASCII is ignored (no IDNA yet).
+/// that is not ASCII is keyed by its punycode (`www.bücher.test` is
+/// `www.xn--bcher-kva.test`), as Go's is.
 pub fn (j: Jar) set_cookies(url: http.Url, cookies: List[http.Cookie], now: Time) {
   if cookies.is_empty() {
     return
@@ -241,10 +242,116 @@ fn canonical_host(host0: Str, has_port: Bool) -> Str? {
     host = host[1..host.len() - 1]
   }
   host = host.trim_suffix(".")
-  if !is_ascii(host) {
-    return None
+  let encoded = to_ascii(host)?
+  Some(encoded.to_lower())
+}
+
+/// toASCII (Go's cookiejar punycode.go): each label that is not ASCII
+/// punycode encoded with the "xn--" prefix, as written (no IDNA mapping);
+/// None for a label too long to encode.
+fn to_ascii(s: Str) -> Str? {
+  if is_ascii(s) {
+    return Some(s)
   }
-  Some(host.to_lower())
+  var labels: List[Str] = []
+  for label in s.split(".") {
+    if is_ascii(label) {
+      labels.push(label)
+    } else {
+      labels.push(puny_encode("xn--", label)?)
+    }
+  }
+  Some(labels.join("."))
+}
+
+/// Go's cookiejar encode (RFC 3492 punycode): prefix, the label's ASCII
+/// runes, a "-" when there are any, then the deltas of the others; None
+/// where Go's int32 delta overflows.
+fn puny_encode(prefix: Str, s: Str) -> Str? {
+  let max32 = 0x7fffffff
+  var runes: List[Int] = []
+  var out: List[UInt8] = []
+  for c in prefix.bytes() {
+    out.push(c)
+  }
+  var b = 0
+  var remaining = 0
+  for r in s.runes() {
+    let c = Int(r)
+    runes.push(c)
+    if c < 0x80 {
+      b += 1
+      out.push(UInt8(c))
+    } else {
+      remaining += 1
+    }
+  }
+  var h = b
+  if b > 0 {
+    out.push(UInt8(45))
+  }
+  var delta = 0
+  var n = 128
+  var bias = 72
+  while remaining != 0 {
+    var m = max32
+    for r in runes {
+      if m > r && r >= n {
+        m = r
+      }
+    }
+    delta += (m - n) * (h + 1)
+    if delta > max32 {
+      return None
+    }
+    n = m
+    for r in runes {
+      if r < n {
+        delta += 1
+        if delta > max32 {
+          return None
+        }
+        continue
+      }
+      if r > n {
+        continue
+      }
+      var q = delta
+      var k = 36
+      while true {
+        let t = if k - bias < 1 { 1 } else if k - bias > 26 { 26 } else { k - bias }
+        if q < t {
+          break
+        }
+        out.push(puny_digit(t + (q - t) % (36 - t)))
+        q = (q - t) / (36 - t)
+        k += 36
+      }
+      out.push(puny_digit(q))
+      bias = puny_adapt(delta, h + 1, h == b)
+      delta = 0
+      h += 1
+      remaining -= 1
+    }
+    delta += 1
+    n += 1
+  }
+  Bytes.from_list(out).to_str()
+}
+
+fn puny_digit(d: Int) -> UInt8 {
+  if d < 26 { UInt8(d + 97) } else { UInt8(d - 26 + 48) }
+}
+
+fn puny_adapt(delta0: Int, num_points: Int, first: Bool) -> Int {
+  var delta = if first { delta0 / 700 } else { delta0 / 2 }
+  delta += delta / num_points
+  var k = 0
+  while delta > (35 * 26) / 2 {
+    delta /= 35
+    k += 36
+  }
+  k + 36 * delta / (delta + 38)
 }
 
 /// jarKey: the registrable domain with the public suffix list (psl),

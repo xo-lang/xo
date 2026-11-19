@@ -1,0 +1,75 @@
+// The Xo side of std/cookiejar's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/cookiejar's result as text, as go/main.go prints package cookiejar's.
+// Kind jar over Go's cookiejar jarTest tables.
+// See scripts/stdproven/gotests.go.
+use std/cookiejar
+use std/http
+use std/json
+use std/base64
+
+/// A fresh jar with no public suffix list (new(), Go's New(nil); the
+/// tables' testPSL is Go's package's own), the Set-Cookie lines from
+/// from stored, then each query's cookies as Go's test writes them.
+fn jrun(clock: Clock, from: Str, sets: Str, qs: Str) -> Str uses clock {
+  let lines = match json.decode_str[List[Str]](sets) {
+    Ok(l) => l
+    Err(_) => []
+  }
+  let queries = match json.decode_str[List[List[Str]]](qs) {
+    Ok(q) => q
+    Err(_) => []
+  }
+  let jar = cookiejar.new()
+  let u = match http.parse_url(from) {
+    Ok(u) => u
+    Err(_) => return "err url"
+  }
+  var cs: List[http.Cookie] = []
+  for l in lines {
+    if let Ok(c) = http.parse_set_cookie(l) {
+      cs.push(c)
+    }
+  }
+  jar.set_cookies(u, cs, clock.now())
+  var out: List[Str] = []
+  for q in queries {
+    match http.parse_url(q[0]) {
+      Ok(qu) => {
+        var s: List[Str] = []
+        for c in jar.cookies(qu, clock.now()) {
+          let v = if c.quoted || c.value.contains(" ") || c.value.contains(",") { "\"${c.value}\"" } else { c.value }
+          s.push("${c.name}=${v}")
+        }
+        out.push(s.join(" "))
+      }
+      // http.Url is http and https only; Go's jar gives such a URL
+      // (ftp://) no cookies
+      Err(_) => out.push(if q[0].starts_with("http") { "err url" } else { "" })
+    }
+  }
+  out.join("|")
+}
+
+fn run(clock: Clock, kind: Str, inp: List[Str]) -> Str uses clock {
+  match kind {
+    "jar" => jrun(clock, inp[0], inp[1], inp[2])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(os.clock, f[0], inp).bytes()))
+  }
+}

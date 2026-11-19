@@ -27,7 +27,8 @@ package main
 // GOROOT) with go/ast and takes its input fields' literals as text (a
 // string literal or a + of them, an integer, an integral float such as
 // 1e9, a rune literal as its code point, a slice of integer or rune
-// literals as its values joined with commas, true and false, and time's zone
+// literals as its values joined with commas (a FIELDS entry NAME:json reads
+// a slice of strings or of structs of them as JSON), true and false, and time's zone
 // names Local and UTC); an element whose input is
 // anything else is counted as skipped, as is one that is not UTF-8 (an Xo
 // Str is). A case is a line `KIND<TAB>B64<TAB>B64...` (the
@@ -44,6 +45,7 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -97,11 +99,12 @@ func readGoTables(path string) ([]goTable, error) {
 	return ts, nil
 }
 
-// fieldName is a FIELDS entry's name, without =DEFAULT, :bytes, :const
+// fieldName is a FIELDS entry's name, without =DEFAULT, :bytes, :json, :const
 // or @PATTERN.
 func fieldName(f string) string {
 	f, _, _ = strings.Cut(f, "=")
 	f = strings.TrimSuffix(f, ":bytes")
+	f = strings.TrimSuffix(f, ":json")
 	f = strings.TrimSuffix(f, ":const")
 	f, _, _ = strings.Cut(f, "@")
 	return f
@@ -139,6 +142,7 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 			field, def, hasDef := strings.Cut(field, "=")
 			name, isBytes := strings.CutSuffix(field, ":bytes")
 			name, isConst := strings.CutSuffix(name, ":const")
+			name, isJSON := strings.CutSuffix(name, ":json")
 			// NAME@PATTERN: the input is the bytes of the file at
 			// PATTERN (beside the _test.go file) with {} the value
 			name, pattern, isFile := strings.Cut(name, "@")
@@ -154,6 +158,9 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 				continue
 			}
 			s, ok := stringLit(e)
+			if isJSON {
+				s, ok = jsonLit(f, e)
+			}
 			if !ok && isConst {
 				s, ok = constNames(e)
 			}
@@ -431,6 +438,60 @@ func stringLit(e ast.Expr) (string, bool) {
 		return strings.Join(vals, ","), true
 	}
 	return "", false
+}
+
+// jsonLit is a :json field's value as JSON: nil is null, a string literal
+// a string, a slice literal an array of its elements, and a struct
+// literal (an element of a slice of structs) an array of its fields in
+// the struct's order, a field left out "". Anything else is no literal.
+func jsonLit(f *ast.File, e ast.Expr) (string, bool) {
+	v, ok := jsonVal(f, e, nil)
+	if !ok {
+		return "", false
+	}
+	b, err := json.Marshal(v)
+	return string(b), err == nil
+}
+
+// jsonVal is e's JSON value; outer is the slice type e is an element of.
+func jsonVal(f *ast.File, e ast.Expr, outer ast.Expr) (any, bool) {
+	if isNil(e) {
+		return nil, true
+	}
+	c, ok := e.(*ast.CompositeLit)
+	if !ok {
+		s, ok := stringLit(e)
+		return s, ok
+	}
+	if at, ok := c.Type.(*ast.ArrayType); ok {
+		out := []any{}
+		for _, el := range c.Elts {
+			v, ok := jsonVal(f, el, at)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, v)
+		}
+		return out, true
+	}
+	names := structOrder(f, outer)
+	if c.Type != nil || len(names) == 0 {
+		return nil, false
+	}
+	out := make([]any, len(names))
+	for i, n := range names {
+		fe := fieldExpr(c, n, names)
+		if fe == nil {
+			out[i] = ""
+			continue
+		}
+		v, ok := jsonVal(f, fe, nil)
+		if !ok {
+			return nil, false
+		}
+		out[i] = v
+	}
+	return out, true
 }
 
 // intLit reports whether e is an integer or rune literal, negated or not.

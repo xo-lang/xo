@@ -1075,7 +1075,11 @@ function named `must...` or `Must...` (`mustIP("::1")`,
 `netip.MustParsePrefix(...)`) as the literal, which the adapters parse
 (std/evidence/netip/gotests); a `NAME:bytes` field keeps text
 that is not UTF-8 (other fields skip it), for an adapter that reads
-that input as Bytes (std/evidence/gif/gotests). `NAME@PATTERN` reads
+that input as Bytes (std/evidence/gif/gotests). A `NAME:json` field
+reads a slice of strings, or of structs of them, as JSON (nil `null`,
+a struct as the array of its fields, one left out ""), for nested
+tables such as cookiejar's jarTest (`setCookies:json,queries:json`,
+std/evidence/cookiejar/gotests). `NAME@PATTERN` reads
 the bytes of the file PATTERN names beside the _test.go file, `{}` the
 value (`.@testdata/pngsuite/{}.png`, std/evidence/png/gotests); a
 missing file is a skipped element. A table named `TestX.range` is the

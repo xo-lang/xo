@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fixed (std/cookiejar): a host that is not ASCII is keyed by its punycode as Go does: a cookie set by `http://www.bücher.test` is sent to it and to `www.xn--bcher-kva.test` (it was ignored).
 - Fixed (std/timego): `MST` in a layout writes the zone's abbreviation (`PST`), as Go does, not its name (`America/Los_Angeles`); `parse` reads `PDT` in February with the zone's PDT offset and `GMT-8` with the wall clock as the instant, as Go's ParseInLocation does.
 - Fixed (std/template): `call` of a piped non-function names the value as Go does: `{{1 | call}}` fails with "non-function <int Value> of type int", not "non-function 1".
 - Perf (std/random; task #87): `random.normal` computes the draw's sign and magnitude without a branch (a random bit, mispredicted half the time); values unchanged. bench/perf/random normal 0.782 (0.774 to 0.798) of the time (`xo bench --ab`, host 1), linux/amd64 1.76x to 1.38x of Go.

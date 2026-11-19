@@ -1,0 +1,56 @@
+// Go's net/http/cookiejar tests where they need no testPSL: the hosts of
+// TestDomainHandling with an IDN (go1.26.11 jar_test.go) and
+// punycode_test.go's vectors, with Go's expected results.
+
+use std/http
+
+fn t0() -> Time { Time.UNIX_EPOCH + Duration.from_secs(1357041600.0) }
+
+fn names(j: Jar, url: Str) -> Str {
+  let u = http.parse_url(url).ok() ?? fault("url")
+  var out: List[Str] = []
+  for c in j.cookies(u, t0()) {
+    out.push("${c.name}=${c.value}")
+  }
+  out.join(" ")
+}
+
+fn set1(from: Str, line: Str) -> Jar {
+  let j = new()
+  let u = http.parse_url(from).ok() ?? fault("url")
+  j.set_cookies(u, [http.parse_set_cookie(line).ok() ?? fault("cookie")], t0())
+  j
+}
+
+test "a cookie from an IDN host is kept under its punycode (domainHandlingTests 3 and 4)" {
+  for from in ["http://www.bücher.test", "http://www.xn--bcher-kva.test"] {
+    let j = set1(from, "a=1")
+    expect(names(j, "http://www.bücher.test")) == "a=1"
+    expect(names(j, "http://www.xn--bcher-kva.test")) == "a=1"
+    expect(names(j, "http://bücher.test")) == ""
+    expect(names(j, "http://bar.xn--bcher-kva.test")) == ""
+  }
+}
+
+test "a punycode Domain from an IDN host covers both spellings (domainHandlingTests 5 and 6)" {
+  for from in ["http://www.bücher.test", "http://www.xn--bcher-kva.test"] {
+    let j = set1(from, "a=1; domain=xn--bcher-kva.test")
+    for q in ["http://www.bücher.test", "http://bücher.test", "http://xn--bcher-kva.test", "http://bar.bücher.test"] {
+      expect(names(j, q)) == "a=1"
+    }
+    expect(names(j, "http://bar.xn--bcher-kva.tst")) == ""
+  }
+}
+
+test "punycode encodes a label as Go's cookiejar does (punycodeTestCases)" {
+  let cases = [
+    ("", ""), ("-", "--"), ("-a", "-a-"), ("a", "a-"), ("a-b", "a-b-"), ("books", "books-"),
+    ("bücher", "bcher-kva"), ("Hello世界", "Hello-ck1hg65u"), ("ü", "tda"), ("üý", "tdac"),
+    ("\u{4ED6}\u{4EEC}\u{4E3A}\u{4EC0}\u{4E48}\u{4E0D}\u{8BF4}\u{4E2D}\u{6587}", "ihqwcrb4cv8a8dqg056pqjye"),
+    ("Pro\u{010D}prost\u{011B}nemluv\u{00ED}\u{010D}esky", "Proprostnemluvesky-uyb24dma41a"),
+  ]
+  for (s, want) in cases {
+    expect(puny_encode("", s)) == Some(want)
+  }
+  expect(to_ascii("www.bücher.test")) == Some("www.xn--bcher-kva.test")
+}
