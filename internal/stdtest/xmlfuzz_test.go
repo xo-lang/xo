@@ -37,6 +37,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // xfCase is one document and Go's three answers for it.
@@ -131,6 +133,23 @@ func xfCases(r *rand.Rand, n int) []xfCase {
 			if len(raw) > 0 {
 				mutate := "<>/=\"'&;!?[]- a:"
 				raw[r.Intn(len(raw))] = mutate[r.Intn(len(mutate))]
+			}
+		case 2:
+			// the hostile dictionary (task #352), chosen by the case's
+			// index so the cases after it stay as they were: a character
+			// reference past Int or at its edges, or nesting 1 to 100
+			// deep
+			k := len(cases)
+			if k%2 == 0 {
+				ds, hs := hostile.Digits(), hostile.Hex()
+				ref := "&#" + ds[k/2%len(ds)] + ";"
+				if k%4 == 0 {
+					ref = "&#x" + hs[k/4%len(hs)] + ";"
+				}
+				raw = []byte("<r>" + ref + "</r>")
+			} else {
+				dp := hostile.Depths()
+				raw = []byte(hostile.Nest("<a>", "</a>", dp[k/2%len(dp)]/1000))
 			}
 		}
 		if !utf8.Valid(raw) {

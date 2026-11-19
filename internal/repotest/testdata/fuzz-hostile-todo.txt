@@ -50,4 +50,3 @@ urlfuzz_test.go
 urltypefuzz_test.go
 x509fuzz_test.go
 xmlcodecfuzz_test.go
-xmlfuzz_test.go
