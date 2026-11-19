@@ -1,0 +1,20 @@
+# Go's github.com/pelletier/go-toml/v2 test tables (v2.4.3, the version go/go.mod requires) run through std/toml
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# doc: the document as JSON with sorted keys (go-toml's Unmarshal into a
+# map[string]interface{} and json.Marshal of it; Xo's to_json), "error"
+# for one that is not TOML. The documents of go-toml's decode tests.
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestUnmarshal_Integers.examples input doc
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestUnmarshal_Floats.examples input doc
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestUnmarshal.examples input doc
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestUnmarshalDecodeErrors.examples data doc
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestLocalDateTime.examples input doc
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestUnmarshal_RecursiveTable.examples input doc
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestUnmarshal_RecursiveTableArray.examples input doc
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestUnmarshal_Nil.examples input doc
+github.com/pelletier/go-toml/v2 unmarshaler_test.go TestDecoderStrict.examples input doc
+github.com/pelletier/go-toml/v2 errors_test.go TestDecodeError_Position.examples doc doc
+github.com/pelletier/go-toml/v2 errors_test.go TestDecodeError_PositionAfterComments.examples doc doc
+github.com/pelletier/go-toml/v2 errors_test.go TestDecodeErrorRedefinition.examples doc doc
+github.com/pelletier/go-toml/v2 unmarshaler_astgeneric_test.go TestUnmarshalInvalidDateTimeIntoTyped.cases doc doc
+github.com/pelletier/go-toml/v2 unmarshaler_astgeneric_test.go TestUnmarshalTypeMismatchErrors.cases doc doc
+github.com/pelletier/go-toml/v2 unmarshaler_astgeneric_test.go TestUnmarshalRedefinitionIntoStruct.cases doc doc

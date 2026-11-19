@@ -1,4 +1,4 @@
-// std/toml (std.md 19, decision 0164): a TOML 1.0 configuration decoded
+// std/toml (std.md 19, decision 0164): a TOML 1.1 configuration decoded
 // into typed structs by the JSON rules, the document as JSON, and syntax
 // and type errors with their lines.
 use std/toml
@@ -72,7 +72,7 @@ fn main(os: Os) ! {
     "s = \"unclosed",
     "n = 01",
     "x = inf",
-    "k = {a = 1,}",
+    "k = {, a = 1}",
     "a.b = 1\na = 2",
     "[[t]]\n[t]",
   ]

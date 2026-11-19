@@ -1,0 +1,65 @@
+// The Xo side of std/toml's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/toml's result as text, as go/main.go prints package toml's.
+// Kind doc over go-toml v2's decode tables.
+// See scripts/stdproven/gotests.go.
+use std/toml
+use std/base64
+use std/json
+
+// canon is v with every object's keys sorted, as Go's json.Marshal writes
+// a map
+fn canon(v: json.Value) -> json.Value {
+  match v {
+    json.Value.List(items) => {
+      var out: List[json.Value] = []
+      for it in items {
+        out.push(canon(it))
+      }
+      json.Value.List(out)
+    }
+    json.Value.Object(fields) => {
+      var out: List[(Str, json.Value)] = []
+      for kv in fields.sort_by(fn(p: (Str, json.Value)) -> Str { p.0 }) {
+        out.push((kv.0, canon(kv.1)))
+      }
+      json.Value.Object(out)
+    }
+    _ => v
+  }
+}
+
+// doc is the document as JSON with sorted keys, "error" for one that is
+// not TOML
+fn doc(text: Str) -> Str {
+  match toml.to_json(text) {
+    Ok(s) => match json.parse_value(s) {
+      Ok(v) => canon(v).encode()
+      Err(e) => "bad json ${e}"
+    }
+    Err(_) => "error"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "doc" => doc(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

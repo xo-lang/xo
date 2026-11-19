@@ -1,5 +1,5 @@
 // std/toml module tests (decision 0616 section 2: the race evidence runs
-// these under --race). After the TOML 1.0 spec's examples and
+// these under --race). After the TOML 1.1 spec's examples and
 // pelletier/go-toml/v2's marshaler_test.go and unmarshaler_test.go: keys
 // (bare, quoted, dotted), strings (basic, literal, multi-line), numbers,
 // dates, arrays, tables and arrays of tables, the errors a bad document
@@ -342,4 +342,22 @@ test "decode gives what decoding its JSON text gives: escapes, non-ASCII, errors
   }
   expect(direct[Server](docs[0]).contains("h\u{e9} \\\"q\\\"")) == true
   expect(direct[Server](docs[6]).starts_with("value error:")) == true
+}
+
+fn tj(doc: Str) -> Str {
+  match to_json(doc) {
+    Ok(s) => s
+    Err(e) => "err: ${e}"
+  }
+}
+
+test "TOML 1.1: optional seconds, \\e and \\xHH escapes, inline tables over lines (go-toml v2.4.3)" {
+  expect(tj("t = 13:37\nd = 1979-05-27T07:32Z\nl = 1979-05-27 07:32")) == "{\"t\":\"13:37:00\",\"d\":\"1979-05-27T07:32:00Z\",\"l\":\"1979-05-27T07:32:00\"}"
+  expect(tj("s = \"\\e[0m\\x41\\xe9\"")) == "{\"s\":\"\\u001b[0mA\u{e9}\"}"
+  expect(tj("a = {\n  x = 1, # one\n  y = 2,\n}")) == "{\"a\":{\"x\":1,\"y\":2}}"
+  expect(tj("a = \"\\x4\"")) == "err: toml: line 1: bad unicode escape \\x4\""
+  expect(tj("a = 07:32.5")) == "err: toml: line 1: bad value \"07:32.5\""
+  expect(tj("a = {, x = 1}")) == "err: toml: line 1: expected a key, found ','"
+  expect(tj("a = {x = 1,,}")) == "err: toml: line 1: expected a key, found ','"
+  expect(tj("\u{3bc} = 1").starts_with("err: ")) == true
 }

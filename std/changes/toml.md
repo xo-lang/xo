@@ -1,5 +1,20 @@
 # std/toml changes
 
+## 2026-11-19: feature: TOML 1.1, as go-toml v2.4.3 reads it
+
+- Kind: feature
+- Commit: this push
+- Found by: task #403's gotests (std/evidence/toml/gotests: go-toml's unmarshaler_test.go tables gave 14 mismatches)
+- Go reference: github.com/pelletier/go-toml/v2 v2.4.3 (unmarshaler_test.go, errors_test.go)
+- Test: std/rt TestTomlToJSON and TestTomlErrors; toml module test "TOML 1.1"; the toml-test v1.5.0 TOML 1.1.0 corpus
+- Timing: none
+- Shipped in: not yet released
+
+Times may leave out the seconds (`07:32` is `07:32:00`, in local times
+and date-times too), basic strings take `\e` and `\xHH`, and an inline
+table may span lines, hold comments, and end with a comma. These were
+errors before (TOML 1.0). Bare keys stay ASCII, as in go-toml.
+
 ## 2026-11-19: fix: decode refuses nesting past 10,000 levels on the Go backend
 
 - Kind: fix

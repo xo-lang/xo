@@ -6135,7 +6135,7 @@ struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool,
 
 ## 19. std/toml
 
-Status: implemented on every backend (decision 0164): a TOML 1.0 parser
+Status: implemented on every backend (decision 0164): a TOML 1.1 parser
 in `std/rt/toml.go` and the same parser in `std/native/toml.xo`, with
 the same JSON text and errors (golden `toml_basic`).
 
@@ -6209,13 +6209,16 @@ fn load(fs: Fs) -> Config ! Error uses fs.read {
   has it, or replacing its value with a string changes what T decodes,
   so a map takes every key and a field `omitempty` leaves out is known.
 - `inf` and `nan` are errors (JSON has no form for them).
-- All of TOML 1.0 is read: comments, bare, quoted, and dotted keys,
+- All of TOML 1.1 is read (as go-toml v2.4.3 reads it, the reference;
+  TOML 1.0 until 2026-11-19): comments, bare, quoted, and dotted keys,
   basic and literal strings and their multi-line forms (a line ending
   backslash trims the whitespace after it), `[table]` and `[[array of
-  tables]]` headers, inline tables, and arrays over several lines with
-  comments and a trailing comma. Defining a key or a table twice, adding
+  tables]]` headers, inline tables and arrays over several lines with
+  comments and a trailing comma, the `\e` and `\xHH` escapes, and times
+  without seconds (`07:32` is `07:32:00`). Bare keys stay ASCII, as in
+  go-toml. Defining a key or a table twice, adding
   to an inline table, and mixing a table with an array of tables are
-  errors with their line. Conformance: toml-test v1.5.0's TOML 1.0.0
+  errors with their line. Conformance: toml-test v1.5.0's TOML 1.1.0
   documents (internal/stdtest/testdata/toml-test) and an invariant fuzz
   run on every backend (internal/stdtest/tomlfuzz_test.go).
 - `to_json` gives the JSON text, for code that wants to read a document

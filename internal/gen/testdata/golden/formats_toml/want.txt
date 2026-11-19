@@ -12,7 +12,7 @@ toml: line 3: table "t" is already defined
 toml: line 1: string not closed
 toml: line 1: bad value "01"
 toml: line 1: inf cannot be decoded: JSON has no form for inf and nan
-toml: line 1: trailing comma in an inline table
+toml: line 1: expected a key, found ','
 toml: line 2: key "a" is already defined
 toml: line 2: table "t" is already an array of tables
 type error: at $.host: expected string

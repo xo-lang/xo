@@ -1,5 +1,5 @@
 // std/toml (std.md 19, decision 0164) on every backend: the JSON
-// form and the errors of the TOML 1.0 cases of std/rt/toml_test.go,
+// form and the errors of the TOML 1.1 cases of std/rt/toml_test.go,
 // generated from that file, and a typed decode. The native parser
 // (std/native/toml.xo) must give the same text.
 use std/toml

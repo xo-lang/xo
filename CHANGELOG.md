@@ -11,6 +11,7 @@ the text of every entry is unchanged).
 
 - Added (std/cbor): `cbor.diagnose(data)`, fxamacker's Diagnose: the diagnostic notation read from the bytes, so indefinite lengths keep their marks (`[_ 1, 2]`, `(_ h'01', h'02')`, `''_`).
 - Fixed (std/yaml): `parse` of an alias inside its own anchor (`a: &a\n  b: *a`) no longer overflows the stack (the alias's `alias` is None, as a Node cannot contain itself); `to_json` of a sequence or mapping key ends with yaml.v3's `invalid map key: ...`; `encode_node` names the unexpected event (`but got document end`, not `but got 4`). Found by Go's yaml.v3 tables (task #403).
+- Added (std/toml): TOML 1.1 documents, as go-toml v2.4.3 reads them: times without seconds (`07:32` is `07:32:00`), the `\e` and `\xHH` string escapes, and inline tables over several lines with comments and a trailing comma; these were errors before. Bare keys stay ASCII.
 - Fixed (std/cookiejar): a host that is not ASCII is keyed by its punycode as Go does: a cookie set by `http://www.bücher.test` is sent to it and to `www.xn--bcher-kva.test` (it was ignored).
 - Fixed (std/timego): `MST` in a layout writes the zone's abbreviation (`PST`), as Go does, not its name (`America/Los_Angeles`); `parse` reads `PDT` in February with the zone's PDT offset and `GMT-8` with the wall clock as the instant, as Go's ParseInLocation does.
 - Fixed (std/template): `call` of a piped non-function names the value as Go does: `{{1 | call}}` fails with "non-function <int Value> of type int", not "non-function 1".

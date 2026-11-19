@@ -81,7 +81,6 @@ invalid/datetime/month-under.toml
 invalid/datetime/no-leads.toml
 invalid/datetime/no-leads-month.toml
 invalid/datetime/no-leads-with-milli.toml
-invalid/datetime/no-secs.toml
 invalid/datetime/no-t.toml
 invalid/datetime/offset-overflow-hour.toml
 invalid/datetime/offset-overflow-minute.toml
@@ -146,10 +145,6 @@ invalid/inline-table/duplicate-key-4.toml
 invalid/inline-table/empty-1.toml
 invalid/inline-table/empty-2.toml
 invalid/inline-table/empty-3.toml
-invalid/inline-table/linebreak-1.toml
-invalid/inline-table/linebreak-2.toml
-invalid/inline-table/linebreak-3.toml
-invalid/inline-table/linebreak-4.toml
 invalid/inline-table/no-close-1.toml
 invalid/inline-table/no-close-2.toml
 invalid/inline-table/no-comma-1.toml
@@ -164,7 +159,6 @@ invalid/inline-table/overwrite-07.toml
 invalid/inline-table/overwrite-08.toml
 invalid/inline-table/overwrite-09.toml
 invalid/inline-table/overwrite-10.toml
-invalid/inline-table/trailing-comma.toml
 invalid/integer/capital-bin.toml
 invalid/integer/capital-hex.toml
 invalid/integer/capital-oct.toml
@@ -229,7 +223,6 @@ invalid/key/quoted-unclosed-1.toml
 invalid/key/quoted-unclosed-2.toml
 invalid/key/single-open-bracket.toml
 invalid/key/space.toml
-invalid/key/special-character.toml
 invalid/key/start-bracket.toml
 invalid/key/start-dot.toml
 invalid/key/two-equals-1.toml
@@ -262,14 +255,12 @@ invalid/local-datetime/month-over.toml
 invalid/local-datetime/month-under.toml
 invalid/local-datetime/no-leads.toml
 invalid/local-datetime/no-leads-with-milli.toml
-invalid/local-datetime/no-secs.toml
 invalid/local-datetime/no-t.toml
 invalid/local-datetime/second-over.toml
 invalid/local-datetime/time-no-leads.toml
 invalid/local-datetime/y10k.toml
 invalid/local-time/hour-over.toml
 invalid/local-time/minute-over.toml
-invalid/local-time/no-secs.toml
 invalid/local-time/second-over.toml
 invalid/local-time/time-no-leads.toml
 invalid/local-time/time-no-leads-2.toml
@@ -300,7 +291,6 @@ invalid/string/bad-uni-esc-4.toml
 invalid/string/bad-uni-esc-5.toml
 invalid/string/bad-uni-esc-6.toml
 invalid/string/bad-uni-esc-7.toml
-invalid/string/basic-byte-escapes.toml
 invalid/string/basic-multiline-out-of-range-unicode-escape-1.toml
 invalid/string/basic-multiline-out-of-range-unicode-escape-2.toml
 invalid/string/basic-multiline-quotes.toml
@@ -441,6 +431,8 @@ valid/datetime/local-time.json
 valid/datetime/local-time.toml
 valid/datetime/milliseconds.json
 valid/datetime/milliseconds.toml
+valid/datetime/no-seconds.json
+valid/datetime/no-seconds.toml
 valid/datetime/timezone.json
 valid/datetime/timezone.toml
 valid/empty-file.json
@@ -497,6 +489,8 @@ valid/inline-table/multiline.json
 valid/inline-table/multiline.toml
 valid/inline-table/nest.json
 valid/inline-table/nest.toml
+valid/inline-table/newline.json
+valid/inline-table/newline.toml
 valid/inline-table/spaces.json
 valid/inline-table/spaces.toml
 valid/integer/float64-max.json
@@ -551,6 +545,8 @@ valid/key/special-word.json
 valid/key/special-word.toml
 valid/key/start.json
 valid/key/start.toml
+valid/key/unicode.json
+valid/key/unicode.toml
 valid/key/zero.json
 valid/key/zero.toml
 valid/newline-crlf.json
@@ -663,12 +659,16 @@ valid/string/empty.json
 valid/string/empty.toml
 valid/string/ends-in-whitespace-escape.json
 valid/string/ends-in-whitespace-escape.toml
+valid/string/escape-esc.json
+valid/string/escape-esc.toml
 valid/string/escape-tricky.json
 valid/string/escape-tricky.toml
 valid/string/escaped-escape.json
 valid/string/escaped-escape.toml
 valid/string/escapes.json
 valid/string/escapes.toml
+valid/string/hex-escape.json
+valid/string/hex-escape.toml
 valid/string/multiline.json
 valid/string/multiline.toml
 valid/string/multiline-empty.json

@@ -2,7 +2,7 @@ package rt
 
 import "testing"
 
-// TestTomlToJSON pins the JSON form of TOML 1.0 documents (std.md 19,
+// TestTomlToJSON pins the JSON form of TOML 1.1 documents (std.md 19,
 // decision 0164): keys, strings, numbers, dates, tables, and arrays.
 func TestTomlToJSON(t *testing.T) {
 	cases := []struct{ in, want string }{
@@ -29,6 +29,11 @@ func TestTomlToJSON(t *testing.T) {
 			`{"d1":"1979-05-27T07:32:00Z","d2":"1979-05-27T07:32:00.999-07:00","d3":"1979-05-27T00:32:00Z","d4":"1979-05-27T07:32:00","d5":"1979-05-27","d6":"07:32:00.5"}`},
 		{"a = 1 # comment\r\nb = 2\r\n", `{"a":1,"b":2}`},
 		{"[a]\nb.c = 1\n[a.b.d]\ne = 2", `{"a":{"b":{"c":1,"d":{"e":2}}}}`},
+		// TOML 1.1: seconds optional, \e and \xHH, inline tables over
+		// lines with comments and a trailing comma.
+		{"t = 13:37\nd = 1979-05-27T07:32Z\nl = 1979-05-27 07:32", `{"t":"13:37:00","d":"1979-05-27T07:32:00Z","l":"1979-05-27T07:32:00"}`},
+		{`s = "\e[0m\x41\xe9"`, `{"s":"\u001b[0mAé"}`},
+		{"a = {\n  x = 1, # one\n  y = 2,\n}", `{"a":{"x":1,"y":2}}`},
 	}
 	for _, c := range cases {
 		r := Toml_to_json(nil, c.in)
@@ -63,7 +68,11 @@ func TestTomlErrors(t *testing.T) {
 		{"a = 00:00:61", `toml: line 1: bad value "00:00:61"`},
 		{"a = 1985-06-18T17:04:07+12:61", `toml: line 1: bad value "1985-06-18T17:04:07+12:61"`},
 		{"a = nan", "toml: line 1: nan cannot be decoded: JSON has no form for inf and nan"},
-		{`a = "\x41"`, `toml: line 1: unknown escape \x`},
+		{`a = "\q"`, `toml: line 1: unknown escape \q`},
+		{`a = "\x4"`, `toml: line 1: bad unicode escape \x4"`},
+		{"a = 07:32.5", `toml: line 1: bad value "07:32.5"`},
+		{"a = {, x = 1}", "toml: line 1: expected a key, found ','"},
+		{"a = {x = 1,,}", "toml: line 1: expected a key, found ','"},
 		{`a = "\uD800"`, `toml: line 1: bad unicode escape \uD800`},
 		{"a = \"x\ny\"", "toml: line 1: string not closed"},
 		{"a = '''x", "toml: line 1: multi-line string not closed"},

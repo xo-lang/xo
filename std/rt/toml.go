@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// std/toml (std.md 19, decision 0164): a TOML 1.0 parser whose document
+// std/toml (std.md 19, decision 0164): a TOML 1.1 parser whose document
 // is decoded with the JSON rules (std.md 5). Native builds report it as
 // XO1201 (planned).
 
@@ -245,10 +245,17 @@ func (p *tomlParser) escape(b *strings.Builder) {
 		b.WriteByte('"')
 	case '\\':
 		b.WriteByte('\\')
-	case 'u', 'U':
+	case 'e':
+		// TOML 1.1: \e is U+001B
+		b.WriteByte(0x1b)
+	case 'u', 'U', 'x':
+		// \uXXXX, \UXXXXXXXX, and TOML 1.1's \xHH (a code point to U+00FF)
 		n := 4
-		if c == 'U' {
+		switch c {
+		case 'U':
 			n = 8
+		case 'x':
+			n = 2
 		}
 		if p.i+n > len(p.s) {
 			p.fail("bad unicode escape")
@@ -564,43 +571,56 @@ func tomlDateTime(tok string) (any, bool) {
 		}
 		return m >= 1 && m <= 12 && d >= 1 && d <= days
 	}
-	isTime := func(s string) bool {
-		if len(s) < 8 || !(isDec(s[0]) && isDec(s[1]) && s[2] == ':' && isDec(s[3]) && isDec(s[4]) && s[5] == ':' && isDec(s[6]) && isDec(s[7])) {
-			return false
+	// timeText is s as RFC 3339 text with its seconds: TOML 1.1 lets them
+	// be left out (07:32 is 07:32:00, as go-toml v2.4.3 reads it); a
+	// fraction needs them.
+	timeText := func(s string) (string, bool) {
+		if len(s) < 5 || !(isDec(s[0]) && isDec(s[1]) && s[2] == ':' && isDec(s[3]) && isDec(s[4])) {
+			return "", false
 		}
-		if num(s) > 23 || num(s[3:]) > 59 || num(s[6:]) > 59 {
-			return false
+		if num(s) > 23 || num(s[3:]) > 59 {
+			return "", false
 		}
-		rest := s[8:]
-		if strings.HasPrefix(rest, ".") {
-			j := 1
-			for j < len(rest) && isDec(rest[j]) {
-				j++
+		hms, rest := s[:5]+":00", s[5:]
+		if strings.HasPrefix(rest, ":") {
+			if len(rest) < 3 || !isDec(rest[1]) || !isDec(rest[2]) || num(rest[1:]) > 59 {
+				return "", false
 			}
-			if j == 1 {
-				return false
+			hms, rest = s[:8], rest[3:]
+			if strings.HasPrefix(rest, ".") {
+				j := 1
+				for j < len(rest) && isDec(rest[j]) {
+					j++
+				}
+				if j == 1 {
+					return "", false
+				}
+				hms, rest = hms+rest[:j], rest[j:]
 			}
-			rest = rest[j:]
 		}
 		switch {
 		case rest == "", rest == "Z", rest == "z":
-			return true
+			return hms + rest, true
 		case len(rest) == 6 && (rest[0] == '+' || rest[0] == '-') && isDec(rest[1]) && isDec(rest[2]) && rest[3] == ':' && isDec(rest[4]) && isDec(rest[5]):
-			return num(rest[1:]) <= 23 && num(rest[4:]) <= 59
+			if num(rest[1:]) <= 23 && num(rest[4:]) <= 59 {
+				return hms + rest, true
+			}
 		}
-		return false
+		return "", false
 	}
-	switch {
-	case isDate(tok):
+	if isDate(tok) {
 		return tok, true
-	case len(tok) > 11 && isDate(tok[:10]) && (tok[10] == 'T' || tok[10] == 't' || tok[10] == ' ') && isTime(tok[11:]):
-		t := tok[11:]
-		if strings.HasSuffix(t, "z") {
-			t = strings.TrimSuffix(t, "z") + "Z"
+	}
+	if len(tok) > 11 && isDate(tok[:10]) && (tok[10] == 'T' || tok[10] == 't' || tok[10] == ' ') {
+		if t, ok := timeText(tok[11:]); ok {
+			if strings.HasSuffix(t, "z") {
+				t = strings.TrimSuffix(t, "z") + "Z"
+			}
+			return tok[:10] + "T" + t, true
 		}
-		return tok[:10] + "T" + t, true
-	case isTime(tok) && !strings.ContainsAny(tok[8:], "Zz+-"):
-		return tok, true
+	}
+	if t, ok := timeText(tok); ok && !strings.ContainsAny(t[8:], "Zz+-") {
+		return t, true
 	}
 	return nil, false
 }
@@ -634,7 +654,9 @@ func (p *tomlParser) array() any {
 func (p *tomlParser) inlineTable() any {
 	p.i++ // {
 	t := newTomlTable()
-	p.ws()
+	// TOML 1.1: newlines and comments between the entries, and a comma
+	// after the last
+	p.blank()
 	if p.peek() == '}' {
 		p.i++
 		t.inline = true
@@ -651,13 +673,15 @@ func (p *tomlParser) inlineTable() any {
 		v := p.value()
 		p.ks, p.ke = ks, ke
 		p.assign(t, k, v)
-		p.ws()
+		p.blank()
 		switch p.peek() {
 		case ',':
 			p.i++
-			p.ws()
+			p.blank()
 			if p.peek() == '}' {
-				p.fail("trailing comma in an inline table")
+				p.i++
+				t.inline = true
+				return t
 			}
 		case '}':
 			p.i++
