@@ -9,6 +9,7 @@
 // folds exactly (Pi/2, 4/Pi, 1/Ln10, ...) are written as their float64
 // values. uint64 arithmetic is Int with the word methods.
 use native/rt
+use native/llrt/libcmath
 
 const UVNAN: Int = 0x7FF8000000000001
 const UVINF: Int = 0x7FF0000000000000
@@ -1012,30 +1013,12 @@ pub fn hypot(p0: Float, q0: Float) -> Float {
   p * (1.0 + q * q).sqrt()
 }
 
-pub fn mod(x: Float, y0: Float) -> Float {
-  if y0 == 0.0 || is_inf(x, 0) || is_nan(x) || is_nan(y0) {
-    return nan()
-  }
-  let y = abs(y0)
-  let (yfr, yexp) = frexp(y)
-  var r = x
-  if x < 0.0 {
-    r = -x
-  }
-  while r >= y {
-    let (rfr_0, rexp_0) = frexp(r)
-    var rfr = rfr_0
-    var rexp = rexp_0
-    if rfr < yfr {
-      rexp -= 1
-    }
-    r = r - ldexp(y, rexp - yexp)
-  }
-  if x < 0.0 {
-    r = -r
-  }
-  r
-}
+/// Go's Mod: x - n*y for n the integer part of x / y, exactly. The
+/// exact answer is unique, so libcmath.fmod's integer bit loop
+/// gives Go's bits for every input, NaN cases and signed zeros included;
+/// Go's loop (a frexp and an ldexp each step) was 1.8 times LLVM's on
+/// native amd64, where neither call inlines (task #407, 2026-11-19).
+pub fn mod(x: Float, y: Float) -> Float { libcmath.fmod(x, y) }
 
 // Fused multiply-add (decision 0385): Go's math/fma.go (Copyright 2019
 // The Go Authors, BSD-style license), line by line. Unsigned 64 bit

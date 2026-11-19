@@ -12,6 +12,18 @@
 - Affected: Xo 0.54.0 and earlier (speed only)
 - Shipped in: not yet released
 
+## 2026-11-19: perf: Float.mod and Float.remainder use an exact integer loop
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/gomath (task #407): remainder at 1.307 times Go; on native amd64 Go's Mod loop called frexp and ldexp, neither inlined, every step (261 ms against LLVM's 136)
+- Go reference: math mod.go and remainder.go, Go 1.26
+- Change: std/native/llrt gomath mod is musl's fmod bit loop (libcmath.fmod, already in llrt for `%` without a C library); the exact x - n*y is unique, so every result keeps Go's bits, NaN cases and signed zeros included
+- Measured: xo bench --ab on the linux/amd64 host, bench/perf/gomath remainder 5 (native amd64): wall 1108 to 529.3 ms, B/A 0.478 (95% 0.468 to 0.486), 4 rounds; Mac native arm64 769 to 377 ms
+- Test: internal/stdtest corpus gomath (2,220 mod and 2,121 remainder rows of Go's bits) on native and LLVM; bench/perf/gomath remainder's sum unchanged
+- Affected: Xo 0.54.0 and earlier (speed only)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: Float.gamma reads its polynomial coefficients as constants, not from const Lists
 
 - Kind: perf
