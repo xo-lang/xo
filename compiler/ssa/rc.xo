@@ -3162,12 +3162,24 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
 /// The uniqueness analysis of f: retained leaves, then the block
 /// parameters, optimistic and falsified to a fixpoint (unique).
 fn (var r: Rc) unique(f: Func) -> Uniq {
+  r.unique_in(f, [])
+}
+
+/// unique with only the retains in the blocks `only` marks (every
+/// block's when it is empty): verify.xo's check of an update, where a
+/// retain in a block that cannot reach the update has not run when the
+/// update does (task #380: an inlined callee's retain of a list after
+/// the loop that pushes to it).
+fn (var r: Rc) unique_in(f: Func, only: List[Bool]) -> Uniq {
   var u = Uniq{}
   var facts = false
-  for bl in f.blocks {
+  for (bi, bl) in f.blocks.indexed() {
     for v in bl.instrs {
       let x = f.values[v]
       if x.op == Op.Retain {
+        if !only.is_empty() && !only[bi] {
+          continue
+        }
         for l in r.leaves(f, f.arg(x.args, 0)) {
           u.retained[leaf_key(l)] = true
         }

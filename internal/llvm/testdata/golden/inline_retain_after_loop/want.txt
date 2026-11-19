@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+enc 3280
+--- stderr

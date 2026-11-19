@@ -1,0 +1,40 @@
+// Task #380: a callee inlined after a loop retains the list the loop
+// pushes to in place (json.encode_str of it). The inlined module's
+// verifier counted that retain at every update of the list, wherever it
+// was, so XO_INLINE_STRICT=1 failed the build ("updates v47, which is
+// neither a reuse result nor provably unique") and a plain build fell
+// back to no inlining; a retain in a block that cannot reach the update
+// has not run when it does (ssa/verify.xo uniq_here).
+use std/json
+
+struct User {
+  id: Int
+  tags: List[Str]
+} derive Json
+
+fn enc(us: List[User]) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    h = h + json.encode_str(us).len()
+  }
+  h
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "enc"
+  var us: List[User] = []
+  var i = 0
+  for v in [5, 7, 9] {
+    let x = v
+    if i < 1000 {
+      us.push(User{id: x, tags: ["a", "b${i}"]})
+    }
+    i += 1
+  }
+  let sum = match w {
+    "none" => -1
+    "enc" => enc(us)
+    _ => -1
+  }
+  os.stdio.println("${w} ${sum}")
+}

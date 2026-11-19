@@ -916,6 +916,31 @@ fn (var r: Rc) carried_alive(f: Func, p: Leaf) -> Bool {
   false
 }
 
+/// Whether List leaf l is provably unique at an update in block at,
+/// counting only the retains in blocks that can reach at (unique_in): a
+/// retain no path takes to the update has not run when it does (task
+/// #380: bench/perf/json's main, with a callee inlined after its loop
+/// that retains the list the loop pushes to).
+fn (var r: Rc) uniq_here(f: Func, at: Int, l: Leaf) -> Bool {
+  var reach: List[Bool] = []
+  for _ in 0..f.blocks.len() {
+    reach.push(false)
+  }
+  reach[at] = true
+  var work = [at]
+  while !work.is_empty() {
+    let b = work.pop() ?? 0
+    for e in f.blocks[b].preds {
+      let from = f.edges[e].from
+      if from >= 0 && !reach[from] {
+        reach[from] = true
+        work.push(from)
+      }
+    }
+  }
+  r.uniq(f, r.unique_in(f, reach), l)
+}
+
 /// The balance of ownership of f after reference counting (verifyRC).
 fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
   var errs: List[Str] = []
@@ -986,7 +1011,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
           if r.cur[i] != 1 {
             errs.push("${bp}v${v} updates ${leaf_text(l)} held ${r.cur[i]} times, want once")
           }
-          if f.values[a].op != Op.Reuse && !r.uniq(f, u, l) {
+          if f.values[a].op != Op.Reuse && !r.uniq(f, u, l) && !r.uniq_here(f, b, l) {
             errs.push("${bp}v${v} updates ${leaf_text(l)}, which is neither a reuse result nor provably unique")
           }
         }
