@@ -15,6 +15,28 @@ fn main(os: Os) {
   if mode == "grace" {
     os.proc.set_grace(300ms)
   }
+  if mode == "busy" {
+    // a CPU loop never sees the cancellation: the runtime exits 1 s after
+    // it (decision 0723)
+    os.proc.set_grace(300ms)
+    os.stdio.println("ready")
+    // the line goes out while main blocks; the loop itself never does
+    os.clock.sleep(20ms)
+    // the end is a value the compiler cannot know (0: never in practice),
+    // so the loop cannot be folded away
+    let stop_at = (os.env.get("BUSY_STOP") ?? "").len() - 1
+    var i = 0
+    var n = 1
+    while true {
+      i = i.wrapping_add(1)
+      n = n.wrapping_mul(6364136223846793005).wrapping_add(i)
+      if n == stop_at {
+        break
+      }
+    }
+    os.stdio.println("not reached ${n}")
+    return
+  }
   defer os.stdio.println("cleanup ran")
   scope s {
     s.spawn_background(fn() {

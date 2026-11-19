@@ -3421,9 +3421,14 @@ sticky cancellation:
    (default 30s, set with `os.proc.set_grace(d)`), or on a second signal,
    `main`'s root scope is cancelled as in 7.2: blocking calls unwind and
    `defer` blocks run. A third signal exits immediately with status 130.
+   On the native targets, a program whose `main` is still running 1
+   second after the cancel (code that never blocks, such as a CPU loop,
+   does not see it) exits with status 130, its output flushed (decision
+   0723).
 
-A program that ignores phase 1 behaves as before, only 30 seconds later; a
-program that wants the old behavior calls `os.proc.set_grace(0s)`.
+A program that ignores phase 1 behaves as before, only 30 seconds later
+(31 seconds at most); a program that wants the old behavior calls
+`os.proc.set_grace(0s)`.
 
 ```
 fn reader(os: Os, queue: Chan[Str]) -> () ! IoErr {

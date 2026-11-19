@@ -231,6 +231,31 @@ func TestNativeSignalGrace(t *testing.T) {
 	}
 }
 
+// TestNativeSignalBusyExits: a program in a CPU loop, which never sees
+// its context's cancellation, exits with status 130 EXIT_AFTER (1 s)
+// after the grace period's end (decision 0723, task #416; it ran on
+// before).
+func TestNativeSignalBusyExits(t *testing.T) {
+	t.Parallel() // testdata/signal builds once per backend (signalBinary)
+	for _, bk := range nativeBackends() {
+		t.Run(bk, func(t *testing.T) {
+			t.Parallel()
+			c := startNative(t, bk, "MODE=busy")
+			c.expect("ready")
+			start := time.Now()
+			c.signal()
+			code, rest := c.wait()
+			el := time.Since(start)
+			if code != 130 || rest != "" {
+				t.Fatalf("exit %d, output %q", code, rest)
+			}
+			if el < time.Second || el > 10*time.Second {
+				t.Errorf("exited after %s, want about 1.3s", el)
+			}
+		})
+	}
+}
+
 // TestNativeSignalThirdExits: a program stuck in shielded cleanup exits
 // with status 130 at the third signal.
 func TestNativeSignalThirdExits(t *testing.T) {

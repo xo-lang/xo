@@ -3,7 +3,9 @@
 // (task.stop_requested, task.stopping's channel closes, the grace timer
 // starts), the grace period's end or a second signal cancels main's root
 // context, and a third exits with status 130 (in a test binary,
-// testing.run_main returns 130 instead). The signal handlers (on_signal,
+// testing.run_main returns 130 instead). A program still running
+// EXIT_AFTER after its root was canceled exits with status 130 too
+// (decision 0723, task #416: a CPU loop never sees the cancellation). The signal handlers (on_signal,
 // on_console) and the entry stay C (xo_rt.c): a handler only counts the
 // signal and wakes the poller, whose thread calls signal here (their
 // installation and the entry's work around main are entry.xo's).
@@ -35,7 +37,7 @@ const W_REC = 60
 /// was requested (monotonic ns), the grace period, the next run_main's
 /// grace period and whether one was set, the grace timer (a poll.xo timer record,
 /// 64 bytes, from heap_large), task.stopping's channel (or 0), and main's
-/// root node (or 0).
+/// root node (or 0), and the exit timer (as the grace timer).
 const R_MU = 0
 const R_SIGNALS = 8
 const R_REQUESTED = 16
@@ -48,7 +50,8 @@ const R_NEXT_GRACE = 64
 const R_TIMER = 72
 const R_STOPPING = 80
 const R_ROOT = 88
-const R_SIZE = 96
+const R_EXIT_TIMER = 96
+const R_SIZE = 104
 
 /// The C's services record: words 88 on are the entry's (entry.xo).
 /// Words 0 to 80 are unused since decision 0233 step 2 (2026-10-15):
@@ -67,6 +70,10 @@ const T_SIZE = 64
 
 /// The grace period by default: 30 s.
 pub const DEFAULT_GRACE = 30000000000
+
+/// How long main may run after its root context was canceled before the
+/// process exits with status 130 (decision 0723): 1 s (owner, 2026-11-19).
+pub const EXIT_AFTER = 1000000000
 
 /// The test world's real process effect (xo_rt.c TW_REAL_PROC).
 const REAL_PROC = 64
@@ -106,6 +113,10 @@ pub fn init() {
   rt.mem_set(t, 0, T_SIZE)
   rt.mem_store(t, T_IDX, -1, 8)
   rt.mem_store(r, R_TIMER, t, 8)
+  let e = rt.heap_large(T_SIZE)
+  rt.mem_set(e, 0, T_SIZE)
+  rt.mem_store(e, T_IDX, -1, 8)
+  rt.mem_store(r, R_EXIT_TIMER, e, 8)
   rt.mem_store(rt.static_word(W_REC), 0, r, 8)
 }
 
@@ -144,6 +155,31 @@ pub fn cancel() {
   }
 }
 
+/// Arms the exit timer for d ns from now in a real process (the lock
+/// held): code that never checks its context (a CPU loop) cannot end the
+/// process after the cancel, where a program without the two phases
+/// would have been ended by the signal (decision 0723). Armed with the
+/// grace timer and at the second signal, not by cancel: the grace
+/// timer's function runs with the timers' lock held.
+fn arm_exit(d: Int) {
+  if twflags.fake(REAL_PROC) {
+    return
+  }
+  let t = get(R_EXIT_TIMER)
+  let _d = rt.call_c2(rt.fn_addr("poll_timer_del"), t, 0)
+  rt.mem_store(t, T_WHEN, deadline(d), 8)
+  rt.mem_store(t, T_FN, rt.fn_addr("stop_exit"), 8)
+  rt.mem_store(t, T_PARK, 0, 8)
+  let _a = rt.call_c2(rt.fn_addr("poll_timer_add"), t, 0)
+}
+
+/// The exit timer's end: main is still running EXIT_AFTER after its root
+/// was canceled, so the process exits as at a third signal.
+pub fn exit_late() {
+  stdio.flush()
+  process.os_exit(130)
+}
+
 /// The timers' clock (poll.xo now, which this module sits below): the
 /// test world's virtual one while it runs, else the monotonic one.
 fn now() -> Int {
@@ -173,9 +209,11 @@ fn arm_grace() {
   }
   let left = get(R_GRACE) - (now() - get(R_STOP_AT))
   if left <= 0 {
+    arm_exit(EXIT_AFTER)
     cancel()
     return
   }
+  arm_exit(if left > Int.max - EXIT_AFTER { Int.max } else { left + EXIT_AFTER })
   rt.mem_store(t, T_WHEN, deadline(left), 8)
   rt.mem_store(t, T_FN, rt.fn_addr("stop_cancel"), 8)
   rt.mem_store(t, T_PARK, 0, 8)
@@ -197,6 +235,9 @@ pub fn signal() {
     }
     arm_grace()
   } else if n == 2 {
+    if !canceled() {
+      arm_exit(EXIT_AFTER)
+    }
     cancel()
   } else if twflags.fake(REAL_PROC) {
     // a test's run_main returns 130 once main has unwound

@@ -804,6 +804,8 @@ fn on_console(kind: Int) -> Int { poll.on_console(kind) }
 
 fn stop_cancel() { stop.cancel() }
 
+fn stop_exit() { stop.exit_late() }
+
 fn stop_requested() -> Int { if stop.requested() { 1 } else { 0 } }
 
 fn stop_stopping(drop: Int) -> Int { stop.stopping(drop) }
