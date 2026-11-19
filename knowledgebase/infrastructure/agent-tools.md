@@ -2120,7 +2120,9 @@ checks a run before it starts and prints each check with its fix:
 2. Docker answers (no open DOCKER-DEAD alert);
 3. host free disk (warn under 30 GB, a batch refused under 15 GB);
 4. main's open failures; 5. tier leases on the evidence lanes;
-6. this agent's open offload runs against OFF_MAX_QUEUED;
+6. this agent's open offload runs against OFF_MAX_QUEUED (a run whose
+   offload.sh pid is gone counts as ended, #385, 2026-11-18: killed runs
+   log no offload.end);
 7. the Mac's load and free memory for a run on hosts 3 or 4 (containers on
    the Mac) or the Mac itself, against the gate threshold (load 48, 55%).
 
