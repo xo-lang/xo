@@ -1,5 +1,19 @@
 # std/toml changes
 
+## 2026-11-19: fix: decode refuses nesting past 10,000 levels on the Go backend
+
+- Kind: fix
+- Commit: this push
+- Found by: TestStdCorpora/go/tomlfuzz on main after task #352's hostile inputs (1ef3a2398)
+- Go reference: encoding/json's scanner (maxNestingDepth 10000)
+- Test: std/rt TestTomlDecodeDepth
+- Timing: none
+- Shipped in: not yet released
+
+decode follows json.decode's rules, so a document nested past 10,000
+tables or arrays is a value error ("exceeded max depth"). The native
+backends gave it; the Go backend decoded such a document with no limit.
+
 ## 2026-11-18: perf: decode skips the JSON text
 
 - Kind: perf

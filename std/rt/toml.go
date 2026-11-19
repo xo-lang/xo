@@ -937,6 +937,16 @@ func Toml_decode[T any](tk *Task, text string, strict bool) Result[T, Toml_Decod
 	if msg != "" {
 		return Err[T](Toml_DecodeErr{Tag: 1, P: Toml_DecodeErr_Syntax{F_err: Toml_TomlErr{F_msg: msg}}})
 	}
+	// decode follows json.decode's rules: a document nested past
+	// encoding/json's depth is the error its JSON text gives, as the
+	// native backend's text path (std/native/toml.xo decode)
+	if tomlTooDeep(tree, 1) {
+		var b strings.Builder
+		tomlJSON(&b, tree)
+		if _, perr := jsonParse([]byte(b.String())); perr != nil {
+			return Err[T](Toml_DecodeErr{Tag: 2, P: Toml_DecodeErr_Value{F_err: *perr}})
+		}
+	}
 	var v T
 	if e := JsonDec(tk, &v, tree, JsonRoot); e != nil {
 		return Err[T](Toml_DecodeErr{Tag: 2, P: Toml_DecodeErr_Value{F_err: *e}})
@@ -947,6 +957,32 @@ func Toml_decode[T any](tk *Task, text string, strict bool) Result[T, Toml_Decod
 		}
 	}
 	return Ok[T, Toml_DecodeErr](v)
+}
+
+// tomlTooDeep is whether a table or array in v, at depth (1 for the
+// document), lies past the JSON scanner's nesting limit.
+func tomlTooDeep(v any, depth int) bool {
+	switch x := v.(type) {
+	case *jsonObj:
+		if depth > jsMaxNestingDepth {
+			return true
+		}
+		for _, k := range x.keys {
+			if tomlTooDeep(x.vals[k], depth+1) {
+				return true
+			}
+		}
+	case []any:
+		if depth > jsMaxNestingDepth {
+			return true
+		}
+		for _, e := range x {
+			if tomlTooDeep(e, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Strict decode, as std/native/toml.xo's: a key the decoded value's JSON
