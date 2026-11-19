@@ -673,7 +673,11 @@ fn (var g: G) data_off(l: Int, c: Int) -> Int {
 fn (var g: G) load_elem(a: ElemAt, et: Int, as_int: Bool) -> List[Int] {
   let nw = g.narrow_w(et)
   if nw > 0 && g.kind(et) == ssa.Kind.Float {
-    let f = g.def1(true, "ldr $wd0, ${at_operand(a, 0, 0)}\nfcvt $d0, $wd0", at_regs(a))
+    // the single kept for the Float32 operations that read the element
+    // (f32w, task #430; the widen goes when only they do)
+    let s = g.def1(true, "ldr $wd0, ${at_operand(a, 0, 0)}", at_regs(a))
+    let f = g.def1(true, "fcvt $d0, $wu0", [s])
+    g.f32w[f] = s
     let _mi = g.m_()
     g.cm.loaded[f] = at_mem(a, 0, g.cm.epoch)
     if as_int {
@@ -737,7 +741,9 @@ fn (var g: G) store_elem(a: ElemAt, et: Int, ws: List[Int], dead: List[Bool] = [
   let _mi = g.m_()
   let nw = g.narrow_w(et)
   if nw > 0 && g.kind(et) == ssa.Kind.Float {
-    let sv = g.def1(true, "fcvt $wd0, $u0", [ws[0]])
+    // the single the value was made or loaded in (f32w), else its double
+    // narrowed here (exact: a Float32 value is a float32)
+    let sv = g.f32w.get(ws[0]) ?? g.def1(true, "fcvt $wd0, $u0", [ws[0]])
     g.store("str $wu0, ${at_operand(a, 0, 1)}", [sv] + at_regs(a))
     return
   }
@@ -2709,7 +2715,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let cv = if g.f.name_is(x, "rt.i64_to_f32") { "scvtf" } else { "ucvtf" }
       let s = g.def1(true, "${cv} $wd0, $u0", [g.word(g.f.arg(x.args, 0))])
       g.f32s[v] = s
-      g.set(v, [g.def1(true, "fcvt $d0, $wu0", [s])])
+      let d = g.def1(true, "fcvt $d0, $wu0", [s])
+      g.f32w[d] = s
+      g.set(v, [d])
     }
     "rt.float_bits" => g.set(v, [g.def1(false, "fmov $d0, $u0", [g.word(g.f.arg(x.args, 0))])])
     "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(g.f.arg(x.args, 0))])])

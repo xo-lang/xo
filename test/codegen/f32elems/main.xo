@@ -1,0 +1,34 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a Float32 element
+// load keeps its single-precision register for the Float32 operations and
+// stores that read it (task #430, 2026-11-19). Before, each load widened
+// to double (`ldr s; fcvt d, s`) and each operation or store narrowed it
+// back (`fcvt s, d`); the results are the same bits either way
+// (decision 0361), checked by the golden f32_elem_ops.
+
+fn dot(a: List[Float32], b: List[Float32]) -> Float32 {
+  // arm64: "fmul s" "fadd s" -"ldr s[0-9]+, \[[^\n]*\n\tfcvt d" -"fcvt s[0-9]+, d[0-9]+\n\tf(mul|add) s"
+  var s: Float32 = 0.0
+  for i in 0..a.len() {
+    s = s + a[i] * b[i]
+  }
+  s
+}
+
+fn scale(var a: List[Float32], k: Float32) -> List[Float32] {
+  // arm64: "str s" -"fcvt s[0-9]+, d[0-9]+\n\tstr s"
+  for i in 0..a.len() {
+    a[i] = a[i] * k + 1.5
+  }
+  a
+}
+
+fn main(os: Os) {
+  var a: List[Float32] = []
+  var b: List[Float32] = []
+  for i in 0..100 {
+    a.push(Float32(i) * 0.25)
+    b.push(Float32(100 - i) / 7.0)
+  }
+  let k: Float32 = if os.env.args().len() > 5 { 2.0 } else { 1.25 }
+  os.stdio.println("${dot(a, b)} ${scale(a, k)[7]}")
+}

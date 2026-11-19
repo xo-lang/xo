@@ -551,6 +551,13 @@ struct G {
   /// the single-precision register of a Float32 value a single-precision
   /// operation made (decision 0361; f32_op)
   f32s: Map[Int, Int] = {}
+  /// the single-precision register of a Float32 value, by the double
+  /// register widened from it: an element load (load_elem), a
+  /// single-precision operation or conversion, a loop header's parameter
+  /// (task #430); f32_single and store_elem read it instead of narrowing
+  /// the double again. The single is defined where the double is, so it
+  /// dominates every read of the double
+  f32w: Map[Int, Int] = {}
   mem_bytes: Int = 0
   /// the homes in the frame (byref.xo plan_held): address register,
   /// byte offset of the frame's memory
@@ -729,6 +736,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.sret_field_of = {}
   g.areas = {}
   g.f32s = {}
+  g.f32w = {}
   g.mem_bytes = 0
   g.frame_homes = []
   g.lazy_res = {}

@@ -942,7 +942,9 @@ fn (var g: G) isel() {
           // the loop carried Float32 (an accumulator) in single
           // precision too: the edges move its single form
           // (f32_param_move), and its Float32 operations read it
-          g.f32s[p] = g.new_vreg(true)
+          let sp = g.new_vreg(true)
+          g.f32s[p] = sp
+          g.f32w[g.vals[p][0]] = sp
         }
         // the list's length travels with it (see opt.xo), and so does
         // the length of a List field of a struct or tuple (2026-10-28: a
@@ -3604,7 +3606,9 @@ fn (var g: G) f32_op(r: Int, v: Int) {
   let b = g.f32_single(g.f.arg(x.args, 1))
   let s = g.def1(true, "${ins} $wd0, $wu0, $wu1", [a, b])
   g.f32s[r] = s
-  g.set(r, [g.def1(true, "fcvt $d0, $wu0", [s])])
+  let d = g.def1(true, "fcvt $d0, $wu0", [s])
+  g.f32w[d] = s
+  g.set(r, [d])
 }
 
 /// Whether t is Float32.
@@ -3645,7 +3649,11 @@ fn (var g: G) f32_single(a: Int) -> Int {
   if let Some(s) = g.f32s.get(a) {
     return s
   }
-  g.def1(true, "fcvt $wd0, $u0", [g.word(a)])
+  let w = g.word(a)
+  if let Some(s) = g.f32w.get(w) {
+    return s
+  }
+  g.def1(true, "fcvt $wd0, $u0", [w])
 }
 
 fn (var g: G) add_sub(v: Int) {

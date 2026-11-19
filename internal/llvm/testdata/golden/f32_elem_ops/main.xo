@@ -1,0 +1,101 @@
+// Float32 + - * / on List[Float32] elements, bit for bit (task #430: an
+// element load keeps its single-precision register for the operations
+// and stores that read it, with no widen and narrow between): every pair
+// of edge values read from two lists, the results stored into a list, a
+// dot product, a scale in place, and a chain on one element; a NaN
+// counts by its flag only (a default NaN's sign is the architecture's).
+
+fn hex(n: Int) -> Str {
+  let digits = "0123456789abcdef"
+  var s = ""
+  for k in 0..16 {
+    let d = n.shr_logical(60 - 4 * k) & 15
+    s = s + digits[d..d + 1]
+  }
+  s
+}
+
+fn vals() -> List[Float32] {
+  let z: Float32 = 0.0
+  let one: Float32 = 1.0
+  [
+    z, -z, one, -one, 0.1, 3.0, 1.0e-45, -1.0e-45, 1.1754944e-38, 3.4028235e38, -3.4028235e38,
+    one / z, -one / z, z / z,
+    Float32(Float.from_bits(0x7FFC000000000000)), Float32(Float.from_bits(-1970324836974592)),
+    16777217.0, 0.33333334, 1.0e20, 1.0e-20,
+  ]
+}
+
+fn bits(x: Float32) -> Int {
+  if Float(x).is_nan() { 1 } else { Float(x).to_bits() }
+}
+
+fn pairs(a: List[Float32], b: List[Float32], op: Int) -> List[Float32] {
+  var out: List[Float32] = []
+  for i in 0..a.len() {
+    for j in 0..b.len() {
+      let r = match op {
+        0 => a[i] + b[j]
+        1 => a[i] - b[j]
+        2 => a[i] * b[j]
+        _ => a[i] / b[j]
+      }
+      out.push(r)
+    }
+  }
+  out
+}
+
+fn dot(a: List[Float32], b: List[Float32]) -> Float32 {
+  var s: Float32 = 0.0
+  for i in 0..a.len() {
+    s = s + a[i] * b[i]
+  }
+  s
+}
+
+fn scale(var a: List[Float32], k: Float32, c: Float32) -> List[Float32] {
+  for i in 0..a.len() {
+    a[i] = a[i] * k + c
+  }
+  a
+}
+
+fn chain(a: List[Float32], i: Int, j: Int) -> Float32 {
+  (a[i] + a[j]) / (a[i] - a[j] + 3.0) * a[i]
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let v = vals()
+  var w: List[Float32] = []
+  for x in v {
+    w.push(x)
+  }
+  for op in 0..4 {
+    let out = pairs(v, w, op)
+    var h = 1469598103934665603
+    for r in out {
+      h = (h ^ bits(r)).wrapping_mul(1099511628211)
+    }
+    io.println("op ${op} ${out.len()} ${hex(h)}")
+  }
+  var a: List[Float32] = []
+  var b: List[Float32] = []
+  for i in 0..1000 {
+    a.push(Float32(i) * 0.1)
+    b.push(1.0 / Float32(i + 1))
+  }
+  let d = dot(a, b)
+  io.println("dot ${hex(bits(d))} ${d}")
+  let s = scale(a, 1.0009765, 0.33333334)
+  var h = 1469598103934665603
+  for r in s {
+    h = (h ^ bits(r)).wrapping_mul(1099511628211)
+  }
+  io.println("scale ${hex(h)} ${s[999]}")
+  for (i, j) in [(4, 5), (6, 7), (9, 2), (16, 17), (18, 19), (11, 0)] {
+    let c = chain(v, i, j)
+    io.println("chain ${i} ${j} ${hex(bits(c))} ${c}")
+  }
+}
