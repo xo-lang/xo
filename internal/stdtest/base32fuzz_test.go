@@ -24,13 +24,21 @@ package stdtest
 import (
 	"encoding/base32"
 	"math/rand"
+	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // b32Encodings are std/base32's VARIANTS in order.
 var b32Encodings = []*base32.Encoding{base32.StdEncoding, base32.HexEncoding, base32.StdEncoding.WithPadding(base32.NoPadding), base32.HexEncoding.WithPadding(base32.NoPadding)}
 
-func b32Cases(r *rand.Rand, n int) []bxCase {
+// b32Cases: with long, every fiftieth case decodes a text at one of the
+// hostile dictionary's depths (task #352): a run of the alphabet's first
+// symbol, a run of padding, or a valid encoding then newlines, chosen by
+// the case's index so the random stream, and the seed 1 corpus, are
+// unchanged.
+func b32Cases(r *rand.Rand, n int, long bool) []bxCase {
 	const std = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 	const hexa = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
 	cs := make([]bxCase, 0, n)
@@ -44,6 +52,11 @@ func b32Cases(r *rand.Rand, n int) []bxCase {
 			alphabet, other = hexa, "abvwWXYZ+/-_"
 		}
 		c.text = baseText(r, c.enc, alphabet, other, e.EncodeToString(bxShort(r)), v == 0 || v == 1)
+		if long && len(cs)%50 == 49 {
+			i := len(cs) / 50
+			depth := hostile.Depths()[i%len(hostile.Depths())]
+			c.text = []string{strings.Repeat(alphabet[:1], depth), strings.Repeat("=", depth), c.enc + strings.Repeat("\n", depth)}[(i/3)%3]
+		}
 		c.want = bxAnswer(e.DecodeString(c.text))
 		cs = append(cs, c)
 	}
@@ -93,7 +106,7 @@ const b32Corpus = "testdata/corpus/base32fuzz/base32fuzz_test.xo"
 
 // TestBase32FuzzCorpusCurrent: the committed corpus is what seed 1 writes.
 func TestBase32FuzzCorpusCurrent(t *testing.T) {
-	cases := b32Cases(rand.New(rand.NewSource(1)), 500)
+	cases := b32Cases(rand.New(rand.NewSource(1)), 500, false)
 	bxCoverage(t, cases)
 	bxCorpusCurrent(t, b32Corpus, "XO_BASE32FUZZ_WRITE", bxXoFile("base32", "encoding/base32", b32CheckXo, 1, cases))
 }
@@ -105,6 +118,6 @@ func TestBase32Fuzz(t *testing.T) {
 	}
 	seed := int64(envInt(t, "XO_BASE32FUZZ_SEED", 2))
 	n := envInt(t, "XO_BASE32FUZZ_N", 2000)
-	cases := b32Cases(rand.New(rand.NewSource(seed)), n)
+	cases := b32Cases(rand.New(rand.NewSource(seed)), n, seed != 1)
 	runFuzzDir(t, "base32fuzz_test.xo", bxXoFile("base32", "encoding/base32", b32CheckXo, seed, cases), envBackends("XO_BASE32FUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
 }

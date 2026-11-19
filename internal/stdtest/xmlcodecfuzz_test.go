@@ -1,11 +1,13 @@
 // A fresh seed fuzz run for std/xmlcodec, the helpers `derive Xml`
 // generates calls, against Go's encoding/xml (task #108, decision 0616's
-// fuzz kind). The cases are two corpus generators' (scripts/stdcorpus):
-// xmlcodec.go's seeded random documents (parse_root, attr_of, direct_text
-// and the number and bool readers) and pieces (the encoder's open_path,
-// leaf, chardata and comment), and xmlderive.go's seeded random documents
-// decoded into a struct that derives Xml as Go's Unmarshal, then encoded as
-// Marshal and MarshalIndent. XO_XMLCODECFUZZ_SEED is added to both
+// fuzz kind). The cases are two corpus generators':
+// scripts/stdcorpus/xmlcodec.go's seeded random documents (parse_root,
+// attr_of, direct_text and the number and bool readers) and pieces (the
+// encoder's open_path, leaf, chardata and comment), and
+// scripts/stdcorpus/xmlderive.go's seeded random documents decoded into a
+// struct that derives Xml as Go's Unmarshal, then encoded as Marshal and
+// MarshalIndent; a fresh seed adds the hostile dictionary's numbers and
+// deep nesting to both (task #352). XO_XMLCODECFUZZ_SEED is added to both
 // generators' seeds and XO_XMLCODECFUZZ_N cases (default 2000) are split
 // over them; seed 0 is the committed testdata/corpus/xmlcodec and xml,
 // which TestStdCorpora runs. TestXmlcodecFuzz runs XO_XMLCODECFUZZ_SEED

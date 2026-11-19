@@ -16,6 +16,12 @@ var hostileCall = regexp.MustCompile(`\bhostile\.(Ints|Uints|Lengths|Digits|Hex|
 // from.
 var oracleDir = regexp.MustCompile(`"scripts", "stdcorpus", "(\w+)"|stdcorpus/(\w+)`)
 
+// oracleMode is a mode of an internal/stdtest oracle module that serves
+// several harnesses ("internal/stdtest/grpcref's healthfuzz mode"): only
+// that mode's files (grpcref/healthfuzz*.go) count, so converting one
+// harness's mode does not pass the others.
+var oracleMode = regexp.MustCompile(`internal/stdtest/(\w+)'s\s+(?://\s*)?(\w+)\s+(?://\s*)?mode`)
+
 // usesHostile: the harness src calls the dictionary, or the oracle it
 // names does (a scripts/stdcorpus module's files outside its copy in
 // hostile/, or scripts/stdcorpus/NAME*.go).
@@ -30,14 +36,28 @@ func usesHostile(t *testing.T, src []byte) bool {
 		files, _ := filepath.Glob(filepath.Join(root, "scripts", "stdcorpus", dir, "*.go"))
 		more, _ := filepath.Glob(filepath.Join(root, "scripts", "stdcorpus", dir+"*.go"))
 		files = append(files, more...)
-		for _, f := range files {
-			data, err := os.ReadFile(f)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if hostileCall.Match(data) {
-				return true
-			}
+		if hostileFiles(t, files) {
+			return true
+		}
+	}
+	for _, m := range oracleMode.FindAllSubmatch(src, -1) {
+		files, _ := filepath.Glob(filepath.Join(root, "internal", "stdtest", string(m[1]), string(m[2])+"*.go"))
+		if hostileFiles(t, files) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostileFiles: one of files calls the dictionary.
+func hostileFiles(t *testing.T, files []string) bool {
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hostileCall.Match(data) {
+			return true
 		}
 	}
 	return false

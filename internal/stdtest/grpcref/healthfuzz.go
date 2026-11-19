@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"grpcref/hostile"
+
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -25,6 +27,9 @@ func healthFuzz(seed int64, n int) {
 	b.WriteString("\n/// (bytes hex, Go read it, service)\nconst REQUESTS: List[(Str, Bool, Str)] = [\n")
 	for i := 0; i < n; i++ {
 		raw := mutate(r, hfRequest(r), func() []byte { return hfRequest(r) })
+		if i%16 == 15 {
+			raw = hfHostileRequest(i / 16)
+		}
 		var m healthpb.HealthCheckRequest
 		err := proto.Unmarshal(raw, &m)
 		fmt.Fprintf(&b, "  (%q, %v, %s),\n", hex.EncodeToString(raw), err == nil, xoStr(m.GetService()))
@@ -32,6 +37,9 @@ func healthFuzz(seed int64, n int) {
 	b.WriteString("]\n\n/// (bytes hex, Go read it, status number)\nconst RESPONSES: List[(Str, Bool, Int)] = [\n")
 	for i := 0; i < n; i++ {
 		raw := mutate(r, hfResponse(r), func() []byte { return hfResponse(r) })
+		if i%16 == 15 {
+			raw = hfHostileResponse(i / 16)
+		}
 		var m healthpb.HealthCheckResponse
 		err := proto.Unmarshal(raw, &m)
 		fmt.Fprintf(&b, "  (%q, %v, %d),\n", hex.EncodeToString(raw), err == nil, int(m.GetStatus()))
@@ -39,6 +47,9 @@ func healthFuzz(seed int64, n int) {
 	b.WriteString("]\n\n/// (bytes hex, Go read it, the statuses as sorted \"name=number\" joined by \",\")\nconst LISTS: List[(Str, Bool, Str)] = [\n")
 	for i := 0; i < n; i++ {
 		raw := mutate(r, hfList(r), func() []byte { return hfList(r) })
+		if i%16 == 15 {
+			raw = hfHostileList(i / 16)
+		}
 		var m healthpb.HealthListResponse
 		err := proto.Unmarshal(raw, &m)
 		var ks []string
@@ -50,6 +61,62 @@ func healthFuzz(seed int64, n int) {
 	}
 	b.WriteString("]\n")
 	os.Stdout.WriteString(b.String())
+}
+
+// hfHostileText is the k-th hostile service name (task #352): UTF-8 that is
+// not, a rune cut short, a long run, a digit run past Int. Chosen by the
+// case's index, so the random stream is unchanged.
+func hfHostileText(k int) string {
+	var pool []string
+	pool = append(pool, hostile.UTF8()...)
+	pool = append(pool, hostile.CutUTF8("grpc.日本")...)
+	for _, d := range hostile.Depths() {
+		pool = append(pool, strings.Repeat("s", d))
+	}
+	pool = append(pool, hostile.Digits()...)
+	return pool[k%len(pool)]
+}
+
+// hfHostileLen is a length field claiming one of the hostile lengths,
+// followed by two bytes (task #352: a top-bit length must be an error, not a
+// wrap).
+func hfHostileLen(b []byte, num, k int) []byte {
+	ls := append(hostile.Lengths(64), hostile.Lengths(32)...)
+	b = append(b, byte(num<<3|2))
+	b = appendVarint(b, ls[k%len(ls)])
+	return append(b, "ab"...)
+}
+
+func hfHostileRequest(k int) []byte {
+	if k%3 == 2 {
+		return hfHostileLen(nil, 1, k/3)
+	}
+	return hfStr(nil, 1, hfHostileText(k))
+}
+
+func hfHostileResponse(k int) []byte {
+	is := hostile.Ints()
+	if k%3 == 2 {
+		return hfHostileLen([]byte{1 << 3, 1}, 9, k/3)
+	}
+	return appendVarint([]byte{1 << 3}, uint64(is[k%len(is)]))
+}
+
+func hfHostileList(k int) []byte {
+	is := hostile.Ints()
+	var e []byte
+	if k%3 == 2 {
+		e = hfHostileLen(e, 1, k/3)
+	} else {
+		e = hfStr(e, 1, hfHostileText(k))
+	}
+	v := appendVarint([]byte{1 << 3}, uint64(is[k%len(is)]))
+	e = append(e, 2<<3|2)
+	e = appendVarint(e, uint64(len(v)))
+	e = append(e, v...)
+	b := []byte{1<<3 | 2}
+	b = appendVarint(b, uint64(len(e)))
+	return append(b, e...)
 }
 
 func hfStr(b []byte, num int, s string) []byte {

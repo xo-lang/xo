@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"grpcref/hostile"
+
 	rpb "google.golang.org/grpc/reflection/grpc_reflection_v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -24,6 +26,9 @@ func reflectFuzz(seed int64, n int) {
 	b.WriteString("\n/// (bytes hex, Go read it, host, kind, text, number)\nconst REQUESTS: List[(Str, Bool, Str, Int, Str, Int)] = [\n")
 	for i := 0; i < n; i++ {
 		raw := mutate(r, rfRequest(r), func() []byte { return rfRequest(r) })
+		if i%16 == 15 {
+			raw = rfHostileRequest(i / 16)
+		}
 		var m rpb.ServerReflectionRequest
 		err := proto.Unmarshal(raw, &m)
 		kind, text, num := 0, "", 0
@@ -46,6 +51,9 @@ func reflectFuzz(seed int64, n int) {
 	b.WriteString("]\n\n/// (bytes hex, Go read it, kind, the answer as text)\nconst RESPONSES: List[(Str, Bool, Int, Str)] = [\n")
 	for i := 0; i < n; i++ {
 		raw := mutate(r, rfResponse(r), func() []byte { return rfResponse(r) })
+		if i%16 == 15 {
+			raw = rfHostileResponse(i / 16)
+		}
 		var m rpb.ServerReflectionResponse
 		err := proto.Unmarshal(raw, &m)
 		kind, text := 0, ""
@@ -111,6 +119,54 @@ func rfText(r *rand.Rand) string {
 		return string(b)
 	}
 	return pool[r.Intn(len(pool))]
+}
+
+// rfHostileRequest is the k-th hostile request (task #352), chosen by the
+// case's index so the random stream is unchanged: an extension number from
+// the hostile Ints written as its full varint (an int32 field reads its low
+// 32 bits), a hostile host name, or a field claiming a hostile length.
+func rfHostileRequest(k int) []byte {
+	is := hostile.Ints()
+	switch k % 3 {
+	case 0:
+		var e []byte
+		e = append(e, 1<<3|2, 1, 'T', 2<<3)
+		e = appendVarint(e, uint64(is[(k/3)%len(is)]))
+		b := []byte{5<<3 | 2}
+		b = appendVarint(b, uint64(len(e)))
+		return append(b, e...)
+	case 1:
+		return rawRequest(&rpb.ServerReflectionRequest{Host: hfHostileText(k / 3), MessageRequest: &rpb.ServerReflectionRequest_FileByFilename{FileByFilename: hfHostileText(k/3 + 1)}})
+	}
+	return hfHostileLen(nil, 3, k/3)
+}
+
+// rfHostileResponse is the k-th hostile response (task #352): an error code
+// or extension numbers from the hostile Ints as full varints, or a file
+// descriptor claiming a hostile length.
+func rfHostileResponse(k int) []byte {
+	is := hostile.Ints()
+	b := []byte{1<<3 | 2, 1, 'h'}
+	var e []byte
+	switch k % 3 {
+	case 0:
+		e = append(e, 1<<3)
+		e = appendVarint(e, uint64(is[(k/3)%len(is)]))
+		e = append(e, 2<<3|2, 1, 'x')
+		b = append(b, 7<<3|2)
+	case 1:
+		e = append(e, 1<<3|2, 1, 'B')
+		for j := 0; j < 3; j++ {
+			e = append(e, 2<<3)
+			e = appendVarint(e, uint64(is[(k/3+j)%len(is)]))
+		}
+		b = append(b, 5<<3|2)
+	default:
+		e = hfHostileLen(nil, 1, k/3)
+		b = append(b, 4<<3|2)
+	}
+	b = appendVarint(b, uint64(len(e)))
+	return append(b, e...)
 }
 
 func rfRequest(r *rand.Rand) []byte {

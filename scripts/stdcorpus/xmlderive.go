@@ -7,6 +7,8 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // The Go types of the derive Xml corpus (decision 0315): xmlDeriveXo's
@@ -82,6 +84,18 @@ func showBasic(v XBasic) string {
 	return fmt.Sprintf("B{id=%d title=%s score=%s ok=%t note=%s tags=[%s] count=%d lang=%s inner=%s items=[%s] opt=%s skip=%s text=%s}",
 		v.ID, strconv.Quote(v.Title), xoFloat(v.Score), v.Ok, note, strings.Join(tags, ","), v.Count,
 		strconv.Quote(v.Lang), showInner(v.Inner), strings.Join(items, ","), opt, strconv.Quote(v.Skip), strconv.Quote(v.Text))
+}
+
+// xmlDeriveHostileDoc is the k-th XBasic document whose id, count and
+// score hold hostile numbers: Int's bounds and past them, digit runs.
+func xmlDeriveHostileDoc(k int) string {
+	var ns []string
+	for _, v := range hostile.Ints() {
+		ns = append(ns, strconv.FormatInt(v, 10))
+	}
+	ns = append(ns, hostile.Digits()...)
+	n := func(j int) string { return ns[(k+j)%len(ns)] }
+	return "<XBasic id=\"" + n(0) + "\"><count>" + n(1) + "</count><score>" + n(2) + "</score><title>t</title></XBasic>"
 }
 
 func pick(r *rand.Rand, xs ...string) string { return xs[r.Intn(len(xs))] }
@@ -253,9 +267,17 @@ func xmlDeriveCorpus(o *strings.Builder) {
 		n = 1500
 	}
 	r := rand.New(rand.NewSource(15 + seed))
+	hk := 0
 	o.WriteString("\n/// (document, Go's Unmarshal into XBasic as `ok VALUE` or `err TEXT`, its Marshal, its MarshalIndent two spaces)\nconst DERIVE_DOCS: List[(Str, Str, Str, Str)] = [\n")
 	for i := 0; i < n; i++ {
 		d := xmlDeriveDoc(r)
+		if seed != 0 && i%20 == 19 {
+			// task #352: every twentieth document of a fresh seed gets
+			// its Int and Float fields from the hostile dictionary,
+			// picked by a counter so the random stream is unchanged
+			d = xmlDeriveHostileDoc(hk)
+			hk++
+		}
 		u, m, mi := xmlDeriveCase(d)
 		// Go decodes while it reads, so a value error before a later
 		// syntax error wins there; std reads the document first, and the

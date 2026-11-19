@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // The xmlcodec corpus (std/xmlcodec, decisions 0315 and 0312): the helpers
@@ -438,6 +440,41 @@ func xmlcodecFuzz() (int64, int) {
 	return seed, n
 }
 
+// xcHostileTexts are the hostile dictionary's numbers as int_of, float_of
+// and bool_of read them (task #352): Int's bounds and the values past them,
+// digit runs past Int, hexadecimal runs. Fresh seeds only, so the committed
+// corpus (seed 0) is unchanged.
+func xcHostileTexts() []string {
+	var ts []string
+	for _, v := range hostile.Ints() {
+		ts = append(ts, strconv.FormatInt(v, 10))
+	}
+	for _, v := range hostile.Uints() {
+		ts = append(ts, strconv.FormatUint(v, 10))
+	}
+	ts = append(ts, hostile.Digits()...)
+	for _, h := range hostile.Hex() {
+		ts = append(ts, "0x"+h)
+	}
+	return ts
+}
+
+// xcHostileDocs are documents with hostile parts for parse_root (task
+// #352): nesting a thousand deep (deeper ones make the two-space indented
+// encoding quadratic in size), attribute and text values from the digit
+// runs, and an attribute value a long run.
+func xcHostileDocs() []string {
+	d := hostile.Depths()[0]
+	ds := []string{
+		"<r>" + hostile.Nest("<a>", "</a>", d) + "</r>",
+		"<r id=\"" + strings.Repeat("9", hostile.Depths()[1]) + "\"/>",
+	}
+	for _, s := range hostile.Digits() {
+		ds = append(ds, "<r id=\""+s+"\" x=\""+s+"\">"+s+"</r>")
+	}
+	return ds
+}
+
 func xmlcodecCorpus() string {
 	seed, n := xmlcodecFuzz()
 	nd, nr := 500, 600
@@ -452,6 +489,9 @@ func xmlcodecCorpus() string {
 	docs := append([]string{}, xcFixedDocs...)
 	for i := 0; i < nd; i++ {
 		docs = append(docs, xmlDoc(r))
+	}
+	if seed != 0 {
+		docs = append(docs, xcHostileDocs()...)
 	}
 	for _, d := range docs {
 		root, attrs, direct, parsed := xcRoot(d)
@@ -470,7 +510,11 @@ func xmlcodecCorpus() string {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xoFloat(f), xq(strconv.FormatFloat(f, 'g', -1, 64)))
 	}
 	o.WriteString("]\n\n/// (text, int_of, float_of and bool_of of it)\nconst PARSE_TEXTS: List[(Str, Str, Str, Str)] = [\n")
-	for _, s := range xcStrings {
+	texts := xcStrings
+	if seed != 0 {
+		texts = append(append([]string{}, xcStrings...), xcHostileTexts()...)
+	}
+	for _, s := range texts {
 		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xq(textOf(s)), xq(xcInt(s)), xq(xcFloat(s)), xq(xcBool(s)))
 	}
 	o.WriteString("]\n")
