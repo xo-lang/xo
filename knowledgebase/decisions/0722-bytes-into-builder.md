@@ -1,7 +1,7 @@
 # 0722: Bytes.into_builder takes over a uniquely owned Bytes without a copy
 
-Status: Proposed (xo-lang-2, 2026-11-19, under task #271; the lead puts it
-to the owner through xw decide)
+Status: Accepted (owner, 2026-11-19, through the Lead: "Accept ADR");
+proposed by xo-lang-2 the same day under task #271
 
 ## Context
 
