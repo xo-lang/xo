@@ -1106,7 +1106,7 @@ func (m *Map[K, V]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 	// dropped, as Go's decoder reads every member
 	for _, r := range obj.reps {
 		var v V
-		if err := JsonDec(tk, &v, r.v, path.Key("."+r.k)); err != nil {
+		if err := JsonDec(tk, &v, r.v, path.Key(JsonKeySeg(r.k))); err != nil {
 			return err
 		}
 	}

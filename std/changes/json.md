@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-11-19: fix: a duplicate key's replaced value has the quoted path on the Go backend
+
+- Kind: fix
+- Commit: this push
+- Found by: TestJSONTextDiff on main after decision 0725 (task #241 b42)
+- Go reference: none (Xo's error paths)
+- Test: std/rt TestJsonDupKeyPath
+- Timing: none
+
+On the Go backend, the value a duplicate Map key replaced (it decodes
+first, as Go's decoder reads every member) still named the key in an
+error path as `$.KEY`, raw; it is `$["KEY"]` now, as the kept value's
+and the native backends'.
+
 ## 2026-11-19: fix: -0 into a sized unsigned field is refused natively
 
 - Kind: fix
