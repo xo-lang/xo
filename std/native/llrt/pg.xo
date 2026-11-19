@@ -602,8 +602,19 @@ fn param_of(v: sql.SqlValue) -> pgwire.Param {
 
 /// A timestamp's text in ISO DateStyle ("2026-10-20 15:04:05.123456+00",
 /// TimeZone UTC) as RFC 3339; utc adds Z to a timestamp without a zone.
+/// s with a comma before its fraction of a second as a period: Go's
+/// time.Parse, as pgx reads a timestamp, takes either (TestPgFuzz seed 127
+/// case 3956, task #152); Time.parse_rfc3339 takes only the period.
+pub fn frac_comma(s: Str) -> Str {
+  let b = s.bytes()
+  if b.len() > 20 && b[19] == 44 && b[20] >= 48 && b[20] <= 57 {
+    return s[0..19] + "." + s[20..]
+  }
+  s
+}
+
 fn iso_to_rfc3339(s: Str, utc: Bool) -> Str {
-  var t = s.replace(" ", "T")
+  var t = frac_comma(s).replace(" ", "T")
   if utc {
     return t + "Z"
   }

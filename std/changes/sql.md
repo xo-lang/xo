@@ -1,5 +1,18 @@
 # std/sql changes
 
+## 2026-11-19: fix: Postgres reads a timestamp with a comma before its fraction as a time
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestPgFuzz seed 127 case 3956 (sql fuzz evidence, task #152; arm64 and LLVM alike)
+- Go reference: pgx v5 pgtype Timestamp and Timestamptz parse text with Go's time.Parse, which takes a comma or a period before the fraction of a second
+- Test: TestPgFracComma (internal/stdtest; fails before)
+- Timing: none
+
+A timestamp or timestamptz column (and a time range's bounds) whose text has a comma before the
+fraction of a second (`2024-01-02 03:04:05,123456`) is an At, as pgx reads it; it was Text. A comma
+with no digit after it is still Text. Postgres itself writes a period.
+
 ## 2026-11-19: feature: Row.civil reads a timestamp of any year
 
 - Kind: feature

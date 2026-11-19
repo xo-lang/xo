@@ -5661,7 +5661,7 @@ fn pg_int_text(s: Str) -> Int? { Int.parse(s) }
 /// A timestamp or timestamptz's ISO text (pg's iso_to_rfc3339): no
 /// offset after the time reads as UTC.
 fn pg_timestamp(s: Str) -> Time? {
-  var t = s.replace(" ", "T")
+  var t = pg.frac_comma(s).replace(" ", "T")
   let b = t.bytes()
   var i = b.len() - 1
   while i > 10 && b[i] != 43 && b[i] != 45 {

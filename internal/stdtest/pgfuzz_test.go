@@ -442,6 +442,30 @@ func TestPgTimePastTime(t *testing.T) {
 	pgfDiff(t, []pgfCase{{msgs: msgs}}, []string{"arm64"}, 0)
 }
 
+// TestPgFracComma: a timestamp or timestamptz with a comma before its
+// fraction of a second is At, as pgx reads it (Go's time.Parse takes a
+// comma or a period); std/sql gave Text (TestPgFuzz seed 127 case 3956: a
+// byte changed '.' to ',', task #152). A comma with no digit after it is
+// Text in both.
+func TestPgFracComma(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds pgx and the Xo client")
+	}
+	kinds := []pgfKind{pgfKinds[16], pgfKinds[17]} // timestamp, timestamptz
+	desc := pgfRowDesc([]string{"c0", "c1"}, kinds, 2)
+	msgs := [][]byte{desc}
+	for _, v := range [][2]string{
+		{"2024-01-02 03:04:05,123456", "2024-01-02 03:04:05,5+05:30"},
+		{"2024-01-02 03:04:05,1", "1969-12-31 23:59:59,999999+00"},
+		{"2024-01-02 03:04:05,", "2024-01-02 03:04:05,+00"},
+	} {
+		a, b := v[0], v[1]
+		msgs = append(msgs, pgfDataRow([]*string{&a, &b}))
+	}
+	msgs = append(msgs, pgfMsg('C', pgfCstr(nil, "SELECT 3")), pgfReady)
+	pgfDiff(t, []pgfCase{{msgs: msgs}}, []string{"arm64"}, 0)
+}
+
 // TestPgDuplicateColumn: a row whose two columns share a name (SELECT 1
 // AS c, 2 AS c) shows each column's own value, as pgx's Values does; the
 // Xo side read both by name and showed the first twice (TestPgFuzz seed 7
