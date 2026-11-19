@@ -412,7 +412,12 @@ fn new_entry(c: http.Cookie, now: Time, def_path: Str, host: Str, psl: Bool) -> 
     return Some((e, true))
   }
   if c.max_age > 0 {
-    e.expires = now + Duration.from_secs_int(c.max_age)
+    // Go's time.Duration(MaxAge) * time.Second, which wraps (MaxInt - 1
+    // seconds is -2s); a Max-Age past Int's nanoseconds was a fault (task
+    // #352). Go's Time holds int64 seconds, so now plus any Duration is in
+    // range; Time is int64 nanoseconds, so the sum saturates at its end
+    let d = c.max_age.wrapping_mul(1_000_000_000)
+    e.expires = Time.from_unix_nanos(now.unix_nanos().saturating_add(d))
     e.persistent = true
   } else {
     match c.expires {

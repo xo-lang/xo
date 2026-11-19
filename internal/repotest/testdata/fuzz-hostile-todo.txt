@@ -9,7 +9,6 @@ base32fuzz_test.go
 bcryptfuzz_test.go
 clifuzz_test.go
 compressfuzz_test.go
-cookiejarfuzz_test.go
 corpusfuzz_test.go
 crc32fuzz_test.go
 crc64fuzz_test.go

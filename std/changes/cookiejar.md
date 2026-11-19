@@ -1,5 +1,17 @@
 # std/cookiejar changes
 
+## 2026-11-18: fix: a Max-Age past Int's nanoseconds wraps as Go's, with no fault
+
+- Kind: fix
+- Commit: this push
+- Found by: task #352 (the cookiejar fuzz harness given the hostile dictionary's Int edges in Max-Age)
+- Go reference: net/http/cookiejar jar.go newEntry (`now.Add(time.Duration(c.MaxAge) * time.Second)`), go1.26.1
+- Test: internal/stdtest corpus cookiejar's "a Max-Age past Int's seconds wraps as Go's Duration does, with no fault" (faulted before; the saturation case kept no cookie before), TestCookiejarFuzz seeds 1 to 5
+- Timing: none (one multiply and one add a cookie set)
+- Shipped in: not yet released
+
+`set_cookies` with a Max-Age of 9223372036854775806 faulted (`integer overflow: 9223372036854775806 * 1000000000 does not fit Int`). The seconds now become nanoseconds with wrapping arithmetic, as Go's Duration multiply, so that Max-Age is -2s and the cookie is deleted, as Go's jar does. Go's Time holds int64 seconds, so now plus any Duration is in range; a Time is int64 nanoseconds (decision 0364), so an expiry past 2262 (a Max-Age of 9e9 seconds) stops at Time's end instead of wrapping into the 1700s.
+
 ## 2026-11-12: feature: new_with, the public suffix list; a Jar is an http.CookieStore
 
 - Kind: feature

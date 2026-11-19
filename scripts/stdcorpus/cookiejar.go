@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // The std/cookiejar corpus: seeded sequences of SetCookies and Cookies calls
@@ -90,6 +92,26 @@ func cookiejarCorpus() string {
 						c.MaxAge = -1
 					case 1:
 						c.MaxAge = 3600
+						if seed != 0 && len(cs)%2 == 1 {
+							// a fresh seed puts the hostile dictionary's
+							// positive Int edges (task #352) in Max-Age, where
+							// Go's expiry, now plus MaxAge seconds as a
+							// Duration, overflows; chosen by the cookie's
+							// place so the cases after it stay as they were.
+							// Only edges whose wrapped Duration the clock
+							// cannot change: none or less (deleted) or past
+							// a day (2^62+1 seconds wraps to 1s, which Go's
+							// real clock keeps through a script and the
+							// virtual one does not). Seed 0, the committed
+							// corpus, stays as it was
+							var ps []int64
+							for _, v := range hostile.Ints() {
+								if d := time.Duration(v) * time.Second; v > 3600 && (d <= 0 || d > 24*time.Hour) {
+									ps = append(ps, v)
+								}
+							}
+							c.MaxAge = int(ps[(sc+len(enc))%len(ps)])
+						}
 					case 2:
 						c.Expires = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 						exp = "past"
@@ -320,6 +342,17 @@ test "Max-Age and Expires pass with the time given" {
   expect(show(j.cookies(u, Time.from_unix(1700000200)))) == "s=3"
   j.set_cookies(u, [http.Cookie{name: "s", value: "x", max_age: -1}], Time.from_unix(1700000201))
   expect(show(j.cookies(u, Time.from_unix(1700000202)))) == ""
+}
+
+test "a Max-Age past Int's seconds wraps as Go's Duration does, with no fault" {
+  // Go's time.Duration(MaxAge) * time.Second wraps: MaxInt - 1 seconds is
+  // -2s, so the cookie has expired; 2^53 seconds is far in the future.
+  // 9e9 seconds (285 years) is past Time's end (2262), where Go's Time
+  // (int64 seconds) still holds it: the expiry stops at Time's end
+  let j = cookiejar.new()
+  let u = url_of("http", "example.com", "/")
+  j.set_cookies(u, [http.Cookie{name: "w", value: "1", max_age: 9223372036854775806}, http.Cookie{name: "f", value: "2", max_age: 9007199254740992}, http.Cookie{name: "g", value: "3", max_age: 9000000000}], now(0))
+  expect(show(j.cookies(u, now(1)))) == "f=2,g=3"
 }
 
 test "clear forgets every cookie, and a copy of a jar shares its cookies" {

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix (std/cookiejar; task #352): a cookie's Max-Age past Int's nanoseconds wraps as Go's `time.Duration(MaxAge) * time.Second` (MaxInt - 1 seconds is -2s, so the cookie is deleted), and an expiry past 2262 stops at Time's end; it faulted with an integer overflow on the native backends.
 - Fix (std/sql; task #90): a MySQL VECTOR column's type name is "VECTOR", as go-sql-driver's DatabaseTypeName; it was empty.
 - Fix (xo bench --ab; task #378): on Linux A and B run from copies written the same way into one new /dev/shm directory, so a pair whose files were written differently (a tar extract against a cp copy ran 9.3% slower on ext4) no longer reads as a change; `--in-place` runs them where they are. The default is 4 rounds, so a run without `--rounds` no longer prints the odd count note.
 - Fix (std/sql, Postgres; task #152): FunctionCallResponse, CopyInResponse, CopyOutResponse, CopyBothResponse, CopyDone and NegotiateProtocolVersion bodies are checked as pgx's pgproto3 checks them, and ParseComplete, BindComplete, CloseComplete, EmptyQueryResponse, NoData, PortalSuspended, ReadyForQuery and BackendKeyData refuse a body of the wrong length; such a message is a malformed message error where Xo kept it (TestPgFuzz seed 28).
