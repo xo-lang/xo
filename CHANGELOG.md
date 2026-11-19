@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Feature (std prelude; decision 0722): `Bytes.into_builder()` turns a Bytes no other value holds into a BytesBuilder without a copy (a shared Bytes, a slice or a mapped file is copied; the Go backend always copies), and BytesBuilder gains `at(i)`, `get_le(at, n)` and `get_be(at, n)` to read back what it holds
 - Perf (compiler; task #410): reading a list constant of compile time scalars at a constant index (`TABLE[3]`) compiles to the element itself, with no first use check or bounds check; Float.lgamma is about a quarter faster on native amd64 (bench/perf/gomath lgamma: `xo bench --ab` on the linux/amd64 host, 0.741 of the time)
 - Perf (std prelude; task #407): Float.mod and Float.remainder use an exact integer loop with the same results, about twice as fast on native amd64 (bench/perf/gomath remainder: `xo bench --ab` on the linux/amd64 host, 0.478 of the time)
 - Perf (std/crypto; task #87): making an AES-GCM key skips zeroing its tables and their index checks, 17% fewer instructions per key on top of task #271 (bench/perf/aead gcm_key: callgrind, and `xo bench --ab` on linux/arm64 host 1 at 0.903 of the time)

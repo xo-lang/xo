@@ -87,6 +87,34 @@ shared (another Image value still holds it) copies once, as today.
 - wasm and the Go backend implement into_builder as the copy (always
   correct); the in-place path is native only at first.
 
+## Implementation (xo-lang-2, 2026-11-19)
+
+- Native (arm64, LLVM, wasm): `bytes_into_builder` in std/native/prelude.xo
+  is `rt.rs_append(b, "")`, an append of no bytes. obj.reserve returns the
+  object itself when its count is 1, its capacity is enough and the value
+  is not a view (`an >> 32 == 0`); a shared object or a view is copied.
+  A read_mapped Bytes is a view at offset 8 (0402 draft 3), so it copies
+  without a check of its own; heapos.mapped_obj (task #414) is the second
+  guard for a later offset 0 value over a mapping. No compiler change.
+- The Go backend's Bytes_into_builder always copies (a Go string cannot
+  be written).
+- A field read retains: `img.pix.into_builder()` with img still holding
+  pix copies unless the method's receiver is img itself (`var img`). A
+  caller hands the buffer over first (`let p = img.pix`, `img.pix = b""`).
+- BytesBuilder.get_le and get_be take an inlinable path for 4 and 8 bytes
+  in range (one load); the general case and the fault are out of line.
+- Test: internal/llvm/testdata/golden/bytes_into_builder (reads, a shared
+  Bytes and a slice left alone, the range fault), on arm64, LLVM, Go and wasm.
+- std/image does not draw in place yet. Measured with `xo bench --ab` on
+  linux/arm64 host 1 (4 rounds, bench/perf/image, 20 passes; origin/main
+  2d2ce312e against the in-place draw at 2281adee0): over 1.178 of the time,
+  copy 1.94, max RSS 0.69 on both. The copy rows lost their bulk copy
+  (`b.write(spx[..])` became 8-byte put_be words: BytesBuilder has no copy
+  of a Bytes at an offset), and the over rows read dst through get_be,
+  which costs more than base's Bytes index reads. Next: a
+  `BytesBuilder.put(at, data: Bytes)` copy (an addition to this decision)
+  and the over loop's arm64 code compared with base's, then measure again.
+
 ## Alternatives
 
 - `Image.draw` writing through raw (std/native/llrt): image is portable std

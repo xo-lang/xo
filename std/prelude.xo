@@ -711,6 +711,17 @@ fn (b: Bytes) to_hex() -> Str
 fn (b: Bytes) hex_dump() -> Str
 /// An explicit copy of b in a buffer of its own (see Str.clone).
 fn (b: Bytes) clone() -> Bytes
+/// A BytesBuilder that starts with b's bytes, to overwrite them with
+/// put_le and put_be or append to them (decision 0722). It takes b's
+/// buffer without a copy when nothing else holds it and b is not a slice
+/// of a larger Bytes or mapped from a file (Fs.read_mapped); otherwise
+/// the bytes are copied, as `BytesBuilder.with_capacity(b.len())` then
+/// `write(b)`. The result is the same either way. A field read leaves the
+/// struct holding the buffer too, so hand it over first: `let p = img.pix`,
+/// `img.pix = b""`, `var w = p.into_builder()`, writes through w, then
+/// `img.pix = w.freeze()` (in a `var img` method, `img.pix.into_builder()`
+/// is enough).
+fn (b: Bytes) into_builder() -> BytesBuilder
 /// b in the standard base64 encoding with padding (Go's
 /// base64.StdEncoding.EncodeToString).
 fn (b: Bytes) to_base64() -> Str
@@ -1411,6 +1422,17 @@ fn (var b: BytesBuilder) write_be(v: Int, n: Int)
 fn (var b: BytesBuilder) write_list(l: List[UInt8], from: Int, to: Int)
 /// The number of bytes written.
 fn (b: BytesBuilder) len() -> Int
+/// The byte at i (Go's `b[i]` on a []byte being filled); a fault when i
+/// is outside len() (decision 0722).
+fn (b: BytesBuilder) at(i: Int) -> UInt8
+/// The n (1 to 8) bytes at..at + n as an Int, lowest first (Go's
+/// binary.LittleEndian.Uint32 on the bytes put_le stores); a fault for
+/// another n or a range outside len() (decision 0722).
+fn (b: BytesBuilder) get_le(at: Int, n: Int) -> Int
+/// The n (1 to 8) bytes at..at + n as an Int, highest first (Go's
+/// binary.BigEndian.Uint32); a fault for another n or a range outside
+/// len() (decision 0722).
+fn (b: BytesBuilder) get_be(at: Int, n: Int) -> Int
 /// What has been written as Bytes, without a copy; it moves b.
 /// @moves
 fn (b: BytesBuilder) freeze() -> Bytes

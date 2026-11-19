@@ -816,6 +816,85 @@ fn bytes_clone(b: Bytes) -> Bytes {
   c
 }
 
+/// Bytes.into_builder (decision 0722): b's object itself when b holds it
+/// alone, else a copy. rt.rs_append of nothing reserves b's own length
+/// (obj.reserve): a string object with count 1, no view offset and room
+/// for its length comes back as is; a view (a slice, or a mapped file,
+/// which read_mapped returns as a view at offset 8, decision 0402), a
+/// shared object or an inline one is copied into a new object. The
+/// builder's writers (put_le, put_be, the appends) then store into it.
+fn bytes_into_builder(b: Bytes) -> BytesBuilder {
+  rt.cast[Str, BytesBuilder](rt.rs_append(rt.cast[Bytes, Str](b), ""))
+}
+
+/// BytesBuilder.at (decision 0722): a check and a load, small enough to
+/// inline (the fault and its message out of line in builder_at_fail).
+fn bytesbuilder_at(b: BytesBuilder, i: Int, at: rt.Loc) -> UInt8 {
+  let s = rt.cast[BytesBuilder, Str](b)
+  if i < 0 || i >= s.len() {
+    builder_at_fail(i, s.len(), at)
+  }
+  UInt8.wrapping_from(rt.mem_load(raw.data(s), i, 1))
+}
+
+fn builder_at_fail(i: Int, n: Int, at: rt.Loc) {
+  rt.fault_at("index ${i} out of range for BytesBuilder of length ${n}", at)
+}
+
+/// BytesBuilder.get_le and get_be (decision 0722): the n (1 to 8) bytes
+/// at k, lowest first or highest first. Widths 4 and 8 in range are one
+/// load (and a byte swap) here, which inlines and folds a constant n (a
+/// call to builder_get per pixel was std/image's draw at 1.23 of the
+/// copying draw, 2026-11-19); the rest go to builder_get.
+fn bytesbuilder_get_le(b: BytesBuilder, k: Int, n: Int, at: rt.Loc) -> Int {
+  let s = rt.cast[BytesBuilder, Str](b)
+  if n == 4 && k >= 0 && k <= s.len() - 4 {
+    return rt.mem_load(raw.data(s), k, 4)
+  }
+  if n == 8 && k >= 0 && k <= s.len() - 8 {
+    return rt.mem_load(raw.data(s), k, 8)
+  }
+  builder_get(s, k, n, false, at)
+}
+
+fn bytesbuilder_get_be(b: BytesBuilder, k: Int, n: Int, at: rt.Loc) -> Int {
+  let s = rt.cast[BytesBuilder, Str](b)
+  if n == 4 && k >= 0 && k <= s.len() - 4 {
+    return rt.mem_load(raw.data(s), k, 4).swap_bytes().shr_logical(32)
+  }
+  if n == 8 && k >= 0 && k <= s.len() - 8 {
+    return rt.mem_load(raw.data(s), k, 8).swap_bytes()
+  }
+  builder_get(s, k, n, true, at)
+}
+
+fn builder_get(s: Str, k: Int, n: Int, be: Bool, at: rt.Loc) -> Int {
+  if n < 1 || n > 8 || k < 0 || k > s.len() - n {
+    rt.fault_at("BytesBuilder.get_le and get_be: width must be 1 to 8 and at..at + width must lie within the builder", at)
+  }
+  let d = raw.data(s)
+  var w = 0
+  if n == 8 {
+    w = rt.mem_load(d, k, 8)
+  } else if n == 4 {
+    w = rt.mem_load(d, k, 4)
+  } else if n == 2 {
+    w = rt.mem_load(d, k, 2)
+  } else if n == 1 {
+    w = rt.mem_load(d, k, 1)
+  } else {
+    var i = n - 1
+    while i >= 0 {
+      w = w.wrapping_shl(8) | rt.mem_load(d, k + i, 1)
+      i -= 1
+    }
+  }
+  if be {
+    w = w.swap_bytes().shr_logical(64 - 8 * n)
+  }
+  w
+}
+
 fn list_join(xs: List[Str], sep: Str) -> Str { raw.str_join(xs, sep) }
 
 fn str_quote(s: Str) -> Str { unicode.quote(s.bytes()) }

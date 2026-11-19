@@ -108,7 +108,7 @@ func TestOutsideBytesValidated(t *testing.T) {
 		"std/native/llrt/scan.xo":    1, // text_of: validates
 		"std/native/big.xo":          1, // bigint_text: ASCII digits and '-' it wrote itself
 		"std/native/internal.xo":     1, // uuid_text_words: 36 ASCII bytes it wrote itself (hex digits and dashes)
-		"std/native/prelude.xo":      1, // bytebuffer_read_until: an unchecked view of Bytes, cast back to Bytes in the same expression (no Str escapes)
+		"std/native/prelude.xo":      2, // bytebuffer_read_until: an unchecked view of Bytes, cast back to Bytes in the same expression (no Str escapes); bytes_into_builder: the Bytes's own buffer handed to rs_append and cast to BytesBuilder (decision 0722; no Str escapes)
 	}
 	files, _ := filepath.Glob(filepath.Join(root, "std/native/*.xo"))
 	more, _ := filepath.Glob(filepath.Join(root, "std/native/llrt/*.xo"))

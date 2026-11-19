@@ -196,6 +196,7 @@ var (
 	_ func(*Task, Bytes) string                                                                            = Bytes_to_hex
 	_ func(*Task, Bytes) string                                                                            = Bytes_hex_dump
 	_ func(*Task, Bytes) Bytes                                                                             = Bytes_clone
+	_ func(*Task, Bytes) BytesBuilder                                                                      = Bytes_into_builder
 	_ func(*Task, Bytes) string                                                                            = Bytes_to_base64
 	_ func(*Task, string) Option[Bytes]                                                                    = Bytes_from_hex
 	_ func(*Task, string) Option[Bytes]                                                                    = Bytes_from_base64
@@ -294,6 +295,9 @@ var (
 	_ func(*BytesBuilder, *Task, int64, int64)                                                             = (*BytesBuilder).M_write_be
 	_ func(*BytesBuilder, *Task, List[uint8], int64, int64)                                                = (*BytesBuilder).M_write_list
 	_ func(*BytesBuilder, *Task) int64                                                                     = (*BytesBuilder).M_len
+	_ func(*BytesBuilder, *Task, int64) uint8                                                              = (*BytesBuilder).M_at
+	_ func(*BytesBuilder, *Task, int64, int64) int64                                                       = (*BytesBuilder).M_get_le
+	_ func(*BytesBuilder, *Task, int64, int64) int64                                                       = (*BytesBuilder).M_get_be
 	_ func(*BytesBuilder, *Task) Bytes                                                                     = (*BytesBuilder).M_freeze
 	_ func(*Task, List[Tuple2[string, string]]) Replacer                                                   = Replacer_new
 	_ func(*Replacer, *Task, string) string                                                                = (*Replacer).M_replace

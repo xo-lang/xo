@@ -316,6 +316,7 @@ fn (b: Bytes) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Byt
 fn (b: Bytes) equal_fold(other: Bytes) -> Bool  // bytes.EqualFold, Unicode simple case folding
 fn (b: Bytes) repeat(n: Int) -> Bytes        // bytes.Repeat; empty for 0, a fault below 0
 fn (b: Bytes) clone() -> Bytes               // an explicit copy in a buffer of its own
+fn (b: Bytes) into_builder() -> BytesBuilder // decision 0722: a builder starting with b's bytes, b's buffer when nothing else holds it (2.7)
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]  // each byte with its offset, as List.indexed
 fn (static: Bytes) zeroed(n: Int) -> Bytes   // n zero bytes (make([]byte, n)); a fault for n < 0
 fn (static: Bytes) from_list(l: List[UInt8]) -> Bytes // l's elements, copied once (decision 0667)
@@ -651,6 +652,8 @@ fn ([var] b: BytesBuilder) write_rune(r: Rune) // its UTF-8 encoding
 fn ([var] b: BytesBuilder) put_le(at: Int, v: Int, n: Int) // overwrite n (1, 2, 4, 8) bytes in place; put_be too
 fn ([var] b: BytesBuilder) write_list(l: List[UInt8], from: Int, to: Int) // l[from..to] in one copy (decision 0667); a fault outside l
 fn (b: BytesBuilder) len() -> Int            // also on StrBuilder
+fn (b: BytesBuilder) at(i: Int) -> UInt8      // decision 0722: the byte at i; a fault outside 0..len()
+fn (b: BytesBuilder) get_le(at: Int, n: Int) -> Int // decision 0722: the n (1 to 8) bytes at at, as put_le stores them; get_be too
 fn (b: BytesBuilder) freeze() -> Bytes       // moves b
 Replacer.new(pairs: List[(Str, Str)]) -> Replacer // decision 0594: Go's strings.NewReplacer
 fn (r: Replacer) replace(s: Str) -> Str      // one pass: at each position the first pair whose old starts there; s itself when nothing changes
@@ -689,6 +692,23 @@ range of `l`; otherwise `write_list` faults at the caller's line.
 first (`put_le`) or highest first (`put_be`), the rest of `v` dropped. `n` is
 1, 2, 4 or 8 and the range must lie within `len()`; any other `n`, or a range
 outside, is a fault. The length does not change and nothing is copied.
+`get_le` and `get_be` read them back: the `n` bytes `at..at + n` (n is 1 to
+8) as an Int, lowest first or highest first, the high bytes zero; `at(i)` is
+one byte. Any other `n`, or a range outside `len()`, is a fault at the
+caller's line.
+
+`Bytes.into_builder()` (decision 0722) gives a BytesBuilder that starts with
+the bytes of `b`, to overwrite them with `put_le` and `put_be` or append to
+them. When nothing else holds `b`'s buffer and `b` is the whole buffer (not
+a slice of a larger Bytes, not mapped from a file by `Fs.read_mapped`), the
+builder takes the buffer without a copy; otherwise the bytes are copied, as
+`BytesBuilder.with_capacity(b.len())` then `write(b)`. The result is the same
+either way. The shape is `let p = img.pix`, `img.pix = b""`,
+`var w = p.into_builder()`, the writes, then `img.pix = w.freeze()`: a field
+read leaves the struct holding the buffer too unless the field is replaced
+first (or the method's receiver is the struct itself, `var w =
+img.pix.into_builder()` in a `var img` method). The Go backend always
+copies.
 `write_le` and `write_be` (decision 0561) append the low `n` bytes of `v`
 instead (Go's `binary.LittleEndian.AppendUint64` cut to `n`), lowest or
 highest first; `n` is 0 to 8, any other is a fault.
@@ -7723,7 +7743,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-631 declarations.
+635 declarations.
 
 ### Range
 
@@ -8016,6 +8036,7 @@ fn (b: Bytes) to_valid_utf8(replacement: Str) -> Str
 fn (b: Bytes) to_hex() -> Str
 fn (b: Bytes) hex_dump() -> Str
 fn (b: Bytes) clone() -> Bytes
+fn (b: Bytes) into_builder() -> BytesBuilder
 fn (b: Bytes) to_base64() -> Str
 fn (static: Bytes) from_hex(s: Str) -> Bytes?
 fn (static: Bytes) from_base64(s: Str) -> Bytes?
@@ -8327,6 +8348,9 @@ fn (var b: BytesBuilder) write_le(v: Int, n: Int)
 fn (var b: BytesBuilder) write_be(v: Int, n: Int)
 fn (var b: BytesBuilder) write_list(l: List[UInt8], from: Int, to: Int)
 fn (b: BytesBuilder) len() -> Int
+fn (b: BytesBuilder) at(i: Int) -> UInt8
+fn (b: BytesBuilder) get_le(at: Int, n: Int) -> Int
+fn (b: BytesBuilder) get_be(at: Int, n: Int) -> Int
 fn (b: BytesBuilder) freeze() -> Bytes
 ```
 

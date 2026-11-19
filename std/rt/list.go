@@ -1332,6 +1332,42 @@ func (b BytesBuilder) M_len(*Task) int64 { return int64(len(b.b)) }
 // M_freeze is `b.freeze()`.
 func (b BytesBuilder) M_freeze(*Task) Bytes { return Bytes(b.b) }
 
+// Bytes_into_builder is `b.into_builder()` (decision 0722): a Go string
+// cannot be written, so the bytes are always copied.
+func Bytes_into_builder(_ *Task, b Bytes) BytesBuilder {
+	return BytesBuilder{b: []byte(b)}
+}
+
+// M_at is `b.at(i)` (decision 0722).
+func (b *BytesBuilder) M_at(_ *Task, i int64) uint8 {
+	if i < 0 || i >= int64(len(b.b)) {
+		FaultHere("index %d out of range for BytesBuilder of length %d", i, len(b.b))
+	}
+	return b.b[i]
+}
+
+// M_get_le is `b.get_le(at, n)`: the n (1 to 8) bytes at at, lowest first
+// (decision 0722).
+func (b *BytesBuilder) M_get_le(_ *Task, at, n int64) int64 { return b.get(at, n, false) }
+
+// M_get_be is `b.get_be(at, n)`: highest first.
+func (b *BytesBuilder) M_get_be(_ *Task, at, n int64) int64 { return b.get(at, n, true) }
+
+func (b *BytesBuilder) get(at, n int64, be bool) int64 {
+	if n < 1 || n > 8 || at < 0 || at > int64(len(b.b))-n {
+		FaultHere("BytesBuilder.get_le and get_be: width must be 1 to 8 and at..at + width must lie within the builder")
+	}
+	var w uint64
+	for i := int64(0); i < n; i++ {
+		if be {
+			w = w<<8 | uint64(b.b[at+i])
+		} else {
+			w |= uint64(b.b[at+i]) << (8 * uint(i))
+		}
+	}
+	return int64(w)
+}
+
 // XoDebug implements Debug.
 func (b BytesBuilder) XoDebug(sb *strings.Builder) {
 	sb.WriteString("BytesBuilder(b")

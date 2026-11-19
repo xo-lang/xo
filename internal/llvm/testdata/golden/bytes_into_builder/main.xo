@@ -1,0 +1,42 @@
+// Bytes.into_builder and BytesBuilder.at, get_le and get_be (decision
+// 0722): the reads see what was written, a builder taken from a shared
+// Bytes or a slice leaves the original's bytes alone, and an append after
+// into_builder grows the bytes.
+fn main(os: Os) {
+  var bb = BytesBuilder.with_capacity(16)
+  bb.write_le(0x0807060504030201, 8)
+  bb.write_be(0x0a0b0c, 3)
+  let a = bb.freeze()
+  var w = a.into_builder()
+  os.stdio.println("${w.len()}")
+  os.stdio.println("${w.at(0)}")
+  os.stdio.println("${w.at(10)}")
+  os.stdio.println("${w.get_le(0, 4)}")
+  os.stdio.println("${w.get_be(0, 2)}")
+  os.stdio.println("${w.get_le(8, 3)}")
+  os.stdio.println("${w.get_be(8, 3)}")
+  os.stdio.println("${w.get_le(1, 7)}")
+  w.put_le(0, 255, 1)
+  let c = w.freeze()
+  os.stdio.println("${c[0]}")
+  // a shared Bytes is copied: the original keeps its bytes
+  let d = c
+  var w2 = d.into_builder()
+  w2.put_le(0, 7, 1)
+  let e = w2.freeze()
+  os.stdio.println("${c[0]} ${e[0]}")
+  // a view is copied
+  let v = c[2..6]
+  var w3 = v.into_builder()
+  w3.put_le(0, 9, 1)
+  let f = w3.freeze()
+  os.stdio.println("${c[2]} ${f[0]} ${f.len()}")
+  // a unique Bytes taken over, then appended to
+  var w4 = f.into_builder()
+  w4.write_byte(5)
+  let g = w4.freeze()
+  os.stdio.println("${g.len()} ${g[0]} ${g[4]}")
+  // the reads check their range
+  let r = BytesBuilder.new().get_le(0, 1)
+  os.stdio.println("unreached ${r}")
+}

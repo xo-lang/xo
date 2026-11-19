@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-11-19: feature: Bytes.into_builder and BytesBuilder.at, get_le and get_be
+
+- Kind: feature
+- Commit: this push
+- Found by: task #271 (std/image's draw copied the whole destination on every call to change its pixels)
+- Go reference: a Go []byte is written in place; binary.LittleEndian and BigEndian Uint16, Uint32, Uint64 for the reads
+- Change: `b.into_builder()` gives a BytesBuilder starting with b's bytes, taking b's buffer without a copy when nothing else holds it and b is not a slice or a mapped file (else a copy); `BytesBuilder.at(i)`, `get_le(at, n)` and `get_be(at, n)` read what put_le and put_be wrote (decision 0722)
+- Measured: 2,000 into_builder, put_le and freeze rounds on a 3 MB Bytes: 0 ms against 528 ms for with_capacity plus write (arm64; 492 ms on LLVM), the Mac
+- Test: internal/llvm/testdata/golden/bytes_into_builder (reads, a shared Bytes and a slice left alone, an append after, the range fault)
+- Affected: new API
+
 ## 2026-11-19: perf: Float.frexp, Float.ldexp and pow take a bit fast path for normal values
 
 - Kind: perf
