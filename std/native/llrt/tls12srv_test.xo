@@ -37,6 +37,26 @@ test "an ALPN mismatch quotes the client's protocols as Go's %q, control and inv
   expect(s.err) == "tls: client requested unsupported application protocols ([\"a\\r\\nb\" \"q\\\"z\" \"a\\xffb\"])"
 }
 
+test "with TLS 1.2 session tickets off (no ticket_keys) no ticket resumes, whatever key sealed it (GO-2021-0154)" {
+  let suite = tls12.ECDHE_ECDSA_AES128_GCM
+  for seed in [tls13.zeros(32), b"", b"ticket seed"] {
+    let k = tlsticket.key(seed, 1800000000)
+    var h = parse_hello(b"")
+    h.has_ticket = true
+    h.ticket = tlsticket.seal(k, tlsticket.state(0x0303, suite, 1800000000, tls13.zeros(48), true, 0x001d), tls13.zeros(16))
+    h.suites = [suite]
+    h.ems = true
+    var cf = conf([], b"")
+    cf.key_alg = x509.KEY_P256
+    cf.now = 1800000000
+    var off = server(cf)
+    expect((seed, resumable(off, h, true, true).is_some())) == (seed, false)
+    cf.ticket_keys = [k]
+    var on = server(cf)
+    expect((seed, resumable(on, h, true, true).is_some())) == (seed, true)
+  }
+}
+
 test "a TLS 1.2 ticket resumes only where no client certificate is required: tickets carry none (Go's checkForResumption needClientCerts; GO-2026-4337)" {
   let k = tlsticket.key(b"ticket seed", 1800000000)
   let suite = tls12.ECDHE_ECDSA_AES128_GCM

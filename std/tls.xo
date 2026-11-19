@@ -7,8 +7,13 @@ use std/x509
 
 /// How the server's certificate is checked (std.md 27).
 enum Verify {
+  /// the chain against the roots and the server's name (the default)
   Full
+  /// INSECURE: the chain but not the name, so any certificate the roots
+  /// issued for any host is accepted
   ChainOnly
+  /// INSECURE: nothing (Go's InsecureSkipVerify); refused without a
+  /// verify_conn that pins the certificate
   None
 } derive Display
 

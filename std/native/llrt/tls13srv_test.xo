@@ -57,6 +57,31 @@ test "16 KeyUpdates are read, the 17th is one too many (Go's TestKeyUpdateSpamPo
   expect(c.err) == "tls: too many non-advancing records"
 }
 
+/// A record header of type t and length n (no body).
+fn rec_head(t: Bytes, n: Int) -> Bytes { asn1.cat([t, tls13.u16(n)]) }
+
+test "a record may be 18432 bytes before the version is known and 16640 after it, one more is record_overflow (Go's maxCiphertext and maxCiphertextTLS13)" {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  let cf = conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed"))
+  for (n, err) in [(16641, ""), (18432, ""), (18433, "tls: oversized record received with length 18433")] {
+    var s = server(cf)
+    feed(s, rec_head(b"\x16\x03\x01", n))
+    expect((n, s.err)) == (n, err)
+    let p = x509.parse(der)
+    var c = tls13.client(tls13.conf("x.test", [p.cert], 1800000000))
+    let _hello = tls13.take(c)
+    tls13.feed(c, rec_head(b"\x16\x03\x03", n))
+    expect((n, c.err)) == (n, err)
+  }
+  for (n, err) in [(16640, ""), (16641, "tls: oversized record received with length 16641")] {
+    var (c, s) = mem_pair()
+    feed(s, rec_head(b"\x17\x03\x03", n))
+    expect((n, s.err)) == (n, err)
+    tls13.feed(c, rec_head(b"\x17\x03\x03", n))
+    expect((n, c.err)) == (n, err)
+  }
+}
+
 test "17 empty application data records are one too many, in both directions" {
   var (c, s) = mem_pair()
   for _ in 0..16 {
@@ -342,6 +367,23 @@ test "a ticket resumes only where no client certificate is required: tickets car
     var c2 = cf
     c2.client_auth = mode
     expect((mode, session(server(c2), id, hash).is_some())) == (mode, ok)
+  }
+}
+
+test "with session tickets off (no ticket_keys) no ticket resumes, whatever key sealed it (GO-2021-0154: Go's disabled tickets kept a zero key a client could seal with)" {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  var cf = conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed"))
+  cf.now = 1800000000
+  var a = server(cf)
+  a.suite = tlsrec.SUITE_AES_128_GCM_SHA256
+  let st = tlsticket.state(0x0304, a.suite, cf.now, tls13.zeros(32), false, 0)
+  let hash = tlsrec.suite_hash(a.suite)
+  for seed in [tls13.zeros(32), b"", b"ticket seed"] {
+    let id = tlsticket.seal(tlsticket.key(seed, cf.now), st, tls13.zeros(16))
+    expect((seed, session(server(cf), id, hash).is_some())) == (seed, false)
+    var on = cf
+    on.ticket_keys = [tlsticket.key(seed, cf.now)]
+    expect((seed, session(server(on), id, hash).is_some())) == (seed, true)
   }
 }
 

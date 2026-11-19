@@ -2,6 +2,8 @@
 // --std-module=native/llrt/tls12`, run by internal/stdtest.
 
 use native/llrt/asn1
+use native/llrt/cpu
+use native/llrt/ct
 use native/llrt/raw
 use native/rt
 use std/testing
@@ -263,16 +265,33 @@ test "the CBC timing classes are what they say: ok opens, badmac and badpad do n
   }
 }
 
+test "a CBC record is opened with DIT set where the CPU has it, and DIT is as before after (decision 0619)" {
+  let k = cbc_keys()
+  let hdr = asn1.cat([b"\x17\x03\x03", u16(CBC_LEN)])
+  let want = if cpu.has_dit() { 1 } else { 0 }
+  let old = ct.dit_on()
+  ct.dit_off(0)
+  for name in ["ok1", "ok256", "badmac", "badpad"] {
+    let (r, seen) = open_cbc_at(k, hdr, cbc_record(k, name, 0), true)
+    expect((name, seen, r.ct >= 0)) == (name, want, name.starts_with("ok"))
+    // the bit is off again after the record
+    let now = ct.dit_on()
+    ct.dit_off(now)
+    expect((name, now)) == (name, 0)
+  }
+  ct.dit_off(old)
+}
+
 test "dudect: a CBC record's check takes the same time whatever its padding and MAC, and the early exit control is seen" uses clock, env, fs {
   let n = Int.parse(os.env.get("XO_DUDECT") ?? "") ?? 20000
   var bad: List[Str] = []
   var lines: List[Str] = []
   for (a, b, leak) in [
+    // pairs with the same outcome: whether a record opens is public (the
+    // peer sees data or an alert), its padding and which check failed
+    // are not
     ("ok1", "ok256", false),
-    ("ok1", "badmac", false),
-    ("ok256", "badpad", false),
     ("badmac", "badpad", false),
-    ("ok1", "badpad", false),
     ("ok1", "ok1", false),
     ("badpad", "badpad", false),
     ("control_early", "control_late", true),

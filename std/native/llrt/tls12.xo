@@ -627,6 +627,28 @@ pub fn extract_padding(p: Bytes) -> (Int, Int) {
 /// same failure. The MAC is computed and read in constant time
 /// (mac_cbc_ct, mac_at), which Go's leaves to its extra hashing.
 fn open_cbc(k: Keys, hdr: Bytes, body: Bytes) -> Inner {
+  let (r, _seen) = open_cbc_at(k, hdr, body, false)
+  r
+}
+
+/// open_cbc under Arm's DIT bit (decision 0619): without it an Apple
+/// core's timing of the record's decryption and MAC read depends on the
+/// plaintext (dudect on an M4 Pro: |t| up to 278 between paddings, under
+/// 2 with it). With probe, also the DIT bit as it stood inside the
+/// section (1 when set), for the test.
+fn open_cbc_at(k: Keys, hdr: Bytes, body: Bytes, probe: Bool) -> (Inner, Int) {
+  let dit = ct.dit_on()
+  let r = open_cbc_dit(k, hdr, body)
+  var seen = 0
+  if probe {
+    seen = ct.dit_on()
+    ct.dit_off(seen)
+  }
+  ct.dit_off(dit)
+  (r, seen)
+}
+
+fn open_cbc_dit(k: Keys, hdr: Bytes, body: Bytes) -> Inner {
   // an explicit IV, then at least the MAC and a padding byte, whole blocks
   if body.len() % 16 != 0 || body.len() < 16 + 32 {
     return Inner{ct: -1, data: b""}

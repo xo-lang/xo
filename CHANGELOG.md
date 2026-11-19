@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/tls, std/http; task #384): a TLS 1.3 server and client take a record before the first hello is read up to 18432 bytes, as Go's maxCiphertext (they refused one over 16640 with record_overflow).
+- Security (std/tls; task #384): a TLS 1.2 CBC record is checked with Arm's DIT bit set where the CPU has it (decision 0619); on Apple cores its timing depended on the plaintext without it.
 - Security (std/tls; task #384): a TLS 1.2 CBC record's MAC is computed and read in constant time whatever its padding (Lucky13); a CBC record's check timed the padding length before, as Go's does. Affected: 0.51.1 and earlier.
 - Security (std/tls; task #384, GO-2026-4337): a server that requires a client certificate no longer resumes a session ticket sealed by a configuration without client authentication (the client skipped the certificate). Affected: 0.51.1 and earlier.
 - Fix (std/tls, std/http; task #384): a TLS 1.3 server takes a client Certificate message of up to 262144 bytes, as Go; it refused one over 65536.

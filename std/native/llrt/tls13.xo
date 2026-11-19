@@ -110,6 +110,8 @@ const ALERT_MISSING_EXTENSION: Int = 109
 // Go's limits on a handshake message (maxHandshake, and
 // maxHandshakeCertificateMsg for a Certificate)
 const MAX_HANDSHAKE: Int = 65536
+/// Go's maxCiphertext: a record's most before the version is known.
+const MAX_CIPHER_ANY: Int = 18432
 const MAX_CERTIFICATE_MSG: Int = 262144
 
 /// The signature schemes a TLS 1.3 only client offers (a test hook: the
@@ -495,7 +497,9 @@ pub fn feed(var c: Client, data: Bytes) {
       return
     }
     let n = Int(c.rin[3]) * 256 + Int(c.rin[4])
-    if n > tlsrec.MAX_CIPHER {
+    // Go's readRecordOrCCS: maxCiphertext (18432) until the version is
+    // set (the first ServerHello read), maxCiphertextTLS13 after
+    if n > (if c.state == WAIT_SH && !c.hrr { MAX_CIPHER_ANY } else { tlsrec.MAX_CIPHER }) {
       c.why = tlsneg.header_fail(c.rin)
       fail(c, ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
       return

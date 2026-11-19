@@ -1,5 +1,37 @@
 # std/tls changes
 
+## 2026-11-19: security: a TLS 1.2 CBC record is checked under Arm's DIT bit
+
+- Kind: security
+- Commit: this commit
+- Found by: the std/tls review's dudect run at 10^6 measurements (task #384, decision 0616 section 3)
+- Go reference: crypto/subtle WithDataIndependentTiming (decision 0619's sections)
+- Test: std/native/llrt/tls12_test.xo "a CBC record is opened with DIT set where the CPU has it, and DIT is as before after (decision 0619)" and the CBC dudect test
+- Shipped in: not yet released
+
+The constant time CBC check ran without Arm's DIT bit, which decision
+0619 sets around std's other secret dependent operations. On an Apple
+core (an M4 Pro, linux/arm64) the time of the record's decryption and
+MAC read then depended on the plaintext: dudect told one padding from
+another and a bad MAC from bad padding (|t| up to 278). Under DIT, set
+where the CPU has it, every pair passes (max |t| under 4.5).
+
+## 2026-11-18: fix: a TLS 1.3 server and client take a first handshake record up to 18432 bytes, as Go
+
+- Kind: fix
+- Commit: this commit
+- Found by: the std/tls review's limits check (task #384, decision 0616 section 2)
+- Go reference: crypto/tls conn.go readRecordOrCCS (maxCiphertext until c.vers is set, then maxCiphertextTLS13)
+- Test: std/native/llrt/tls13srv_test.xo "a record may be 18432 bytes before the version is known and 16640 after it"
+- Shipped in: not yet released
+
+The TLS 1.3 server refused a ClientHello record over 16640 bytes, and
+the client a ServerHello record over 16640, with record_overflow. Go
+allows 18432 until the version is known (a large ClientHello with post
+quantum key shares and ECH can pass 16640) and 16640 after it, so a
+client Go accepts was refused. Both now follow Go: 18432 for the records
+before the first hello is read, 16640 after.
+
 ## 2026-11-18: security: TLS 1.2 CBC records are checked in constant time (Lucky13)
 
 - Kind: security
