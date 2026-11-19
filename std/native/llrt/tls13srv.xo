@@ -1289,6 +1289,12 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   s.c_hs = hkdf.expand_label(hash, hs_secret, "c hs traffic", th, l)
   let s_hs = hkdf.expand_label(hash, hs_secret, "s hs traffic", th, l)
   set_keys(s, true, 2, s_hs)
+  // Go's setReadTrafficSecret (GO-2026-4340): a message after the
+  // ClientHello in its record would be read as if under the new keys
+  if !s.hs.is_empty() {
+    fail(s, ALERT_UNEXPECTED_MESSAGE, "tls: handshake buffer not empty before setting read traffic secret")
+    return
+  }
   set_keys(s, false, 2, s.c_hs)
   let ke = tls13.log_keys(s.conf.key_log, "CLIENT_HANDSHAKE_TRAFFIC_SECRET", "SERVER_HANDSHAKE_TRAFFIC_SECRET", h.random, s.c_hs, s_hs)
   if !ke.is_empty() {

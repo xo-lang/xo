@@ -79,3 +79,53 @@ test "sender seals what std/hpke opens" {
     expect(r.open(b"aad2", c2) ?? _e => "FAIL".bytes()) == b"again"
   }
 }
+
+/// An outer ClientHello message (with its header) of these extensions.
+fn outer_hello(exts: List[Bytes]) -> Bytes {
+  var r = b""
+  for _ in 0..32 {
+    r = asn1.cat([r, b"\x07"])
+  }
+  let body = asn1.cat([b"\x03\x03", r, vec8(b""), vec16(b"\x13\x01"), vec8(b"\x00"), vec16(asn1.cat(exts))])
+  asn1.cat([u8(1), u8(body.len() >> 16), u16(body.len()), body])
+}
+
+/// An EncodedClientHelloInner of these extensions.
+fn inner_enc(exts: List[Bytes]) -> Bytes {
+  var r = b""
+  for _ in 0..32 {
+    r = asn1.cat([r, b"\x09"])
+  }
+  asn1.cat([b"\x03\x03", r, vec8(b""), vec16(b"\x13\x01"), vec8(b"\x00"), vec16(asn1.cat(exts))])
+}
+
+/// An ech_outer_extensions naming these types.
+fn outer_refs(ts: List[Int]) -> Bytes {
+  var b = b""
+  for t in ts {
+    b = asn1.cat([b, u16(t)])
+  }
+  ext(EXT_OUTER, vec8(b))
+}
+
+test "outer_extensions: one reference list, in the outer's order, never rewinding or naming ECH (GO-2026-6607: repeated references amplified memory)" {
+  let outer = outer_hello([ext(0x000a, b"\x00\x02\x00\x1d"), ext(0x000d, b"\x00\x02\x08\x07"), ext(0x0010, b"\x00\x03\x02h2")])
+  let (ok, e) = decode_inner(outer, b"", inner_enc([outer_refs([0x000a, 0x0010])]))
+  expect(e) == ""
+  expect(ok.len() > 4) == true
+  // two outer_extensions extensions
+  expect(decode_inner(outer, b"", inner_enc([outer_refs([0x000a]), outer_refs([0x0010])])).1) == "tls: invalid outer extensions"
+  // the same extension twice, or out of the outer's order
+  expect(decode_inner(outer, b"", inner_enc([outer_refs([0x000a, 0x000a])])).1) == "tls: invalid outer extensions"
+  expect(decode_inner(outer, b"", inner_enc([outer_refs([0x0010, 0x000a])])).1) == "tls: invalid outer extensions"
+  // encrypted_client_hello or outer_extensions itself, or one the outer lacks
+  expect(decode_inner(outer, b"", inner_enc([outer_refs([EXT_ECH])])).1) == "tls: invalid outer extensions"
+  expect(decode_inner(outer, b"", inner_enc([outer_refs([EXT_OUTER])])).1) == "tls: invalid outer extensions"
+  expect(decode_inner(outer, b"", inner_enc([outer_refs([0x0029])])).1) == "tls: invalid outer extensions"
+  // 32768 references to one extension of the outer: refused, not 32768 copies
+  var many: List[Int] = []
+  for _ in 0..127 {
+    many.push(0x000d)
+  }
+  expect(decode_inner(outer, b"", inner_enc([outer_refs(many)])).1) == "tls: invalid outer extensions"
+}

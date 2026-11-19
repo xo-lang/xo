@@ -284,3 +284,15 @@ test "an ALPN mismatch quotes the client's protocols as Go's %q, control and inv
   feed(s, swap_once(tls13.take(c), b"a~b", b"a\xffb"))
   expect((s.alert, s.err)) == (ALERT_NO_APPLICATION_PROTOCOL, "tls: client requested unsupported application protocols ([\"a\\r\\nb\" \"q\\\"z\" \"a\\xffb\"])")
 }
+
+test "a handshake message in the ClientHello's record past the ClientHello is refused before the read keys change (GO-2026-4340, CVE-2025-61730)" {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  let p = x509.parse(der)
+  var c = tls13.client(tls13.conf("x.test", [p.cert], 1800000000))
+  var s = server(conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed")))
+  let first = tls13.take(c)
+  expect((Int(first[0]), tls13.u16_at(first, 3) + 5 == first.len())) == (22, true)
+  let body = asn1.cat([first[5..first.len()], tls13.message(20, tls13.zeros(32))])
+  feed(s, asn1.cat([b"\x16\x03\x01", tls13.u16(body.len()), body]))
+  expect((s.alert, s.err)) == (ALERT_UNEXPECTED_MESSAGE, "tls: handshake buffer not empty before setting read traffic secret")
+}

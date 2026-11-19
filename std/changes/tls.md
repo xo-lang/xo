@@ -1,5 +1,19 @@
 # std/tls changes
 
+## 2026-11-18: security: a TLS 1.3 server refuses handshake bytes after the ClientHello in its record before it changes read keys
+
+- Kind: security
+- Commit: this commit
+- Found by: xo-lang-3 (task #384, the Go vulnerability sweep of decision 0616's checklist)
+- Go reference: GO-2026-4340 (CVE-2025-61730), crypto/tls conn.go setReadTrafficSecret
+- Test: std/native/llrt tls13srv_test.xo (a handshake message in the ClientHello's record past the ClientHello is refused); tlsech_test.xo (outer_extensions, GO-2026-6607, which already held)
+- Shipped in: not yet released
+
+A record holding the ClientHello and another handshake message after it had that message read once the server
+moved to the client's handshake keys, though it came in plaintext. The server now answers unexpected_message with
+Go's "tls: handshake buffer not empty before setting read traffic secret", as it already did before its other key
+changes (and as the client does).
+
 ## 2026-11-18: security: a server's unsupported-ALPN error quotes the client's protocols as Go's %q
 
 - Kind: security
