@@ -534,7 +534,8 @@ pub fn aes_cbc_enc14(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_enc
 /// bytes), the last ciphertext block stored back at iv; dst and src may be
 /// the same. arm64 and LLVM there run one loop with the decryption keys
 /// made once in vector registers and four blocks side by side (ssa
-/// a64aescbcdec.xo); elsewhere aes_decNN a block.
+/// a64aescbcdec.xo), amd64 one with AES-NI eight blocks side by side (ssa
+/// x86aescbcdec.xo); elsewhere aes_decNN a block.
 pub fn aes_cbc_dec10(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_dec_soft(dst, src, rk, iv, n, 10) }
 
 pub fn aes_cbc_dec12(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_cbc_dec_soft(dst, src, rk, iv, n, 12) }

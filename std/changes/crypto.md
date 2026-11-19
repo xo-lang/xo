@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-19: perf: AES-CBC decryption on x86-64 runs eight blocks at a time
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/aesmodes cbcdec on linux/amd64: 1.242 of Go's crypto/cipher)
+- Go reference: crypto/cipher's CBC decrypter (outputs checked against it); the eight block pipeline (eight independent AESDEC chains, all eight ciphertext blocks read before any store so in place decryption works) is Xo's own
+- Measured: linux/amd64 host, exclusive, cbcdec driver 5 runs, 3 rounds: 74 to 79 ms before, 15 ms after, output checksums equal
+- Test: aesmodes corpus tests ("CBC is Go's", vectors of up to 17 blocks: the eight block loop twice and the one block tail) and the aead_cbc_hmac, crypto_prims and native_crypto goldens, under linux/amd64 (Docker, AES-NI and PCLMULQDQ present)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: AES-GCM on x86-64 reduces GHASH as Go does, 16% faster bulk
 
 - Kind: perf

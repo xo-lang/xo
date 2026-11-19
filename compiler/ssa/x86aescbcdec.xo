@@ -1,0 +1,80 @@
+// AES-CBC decryption on x86-64 eight blocks at a time with AES-NI:
+// cpu.aes_cbc_dec10, aes_cbc_dec12 and aes_cbc_dec14 as one loop, the
+// instruction sequence both native x86-64 lowerings use (compiler/arm64
+// calls.xo, compiler/llvm call.xo). Before, each block ran cpu.aes_decNN
+// alone, the middle keys through aesimc every block (bench/perf/aesmodes
+// cbcdec 1.24x Go's time on the linux/amd64 host, 2026-11-18). CBC
+// decryption has no chain between blocks (each block's plaintext is its
+// decryption xored with the ciphertext before it), so eight go through
+// the rounds side by side, as Go's cbc decrypter does with its eight
+// block decryptBlocks: xmm0 to xmm7 the blocks, xmm8 a round key (the
+// middle ones through aesimc once per eight blocks), xmm9 a ciphertext
+// block, xmm10 the ciphertext before the batch (the IV first), xmm11 the
+// one block loop's ciphertext. r8 dst, r9 src, r10 the bytes left. Each
+// batch reads all its ciphertext before it stores, so dst may be src.
+
+/// The general registers aes_cbc_dec_x86_lines writes.
+pub fn aes_cbc_dec_x86_gprs() -> List[Str] { ["r8", "r9", "r10"] }
+
+/// The xmm registers aes_cbc_dec_x86_lines writes.
+pub fn aes_cbc_dec_x86_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
+
+/// Blocks 0 to k - 1 (xmm0 up) through the nr rounds of decryption with
+/// the encryption keys at rk: the last key added, the middle ones in
+/// reverse through aesimc, aesdeclast with the first.
+fn x86_cbc_dec_rounds(nr: Int, rk: Str, k: Int) -> List[Str] {
+  var t = ["movdqu ${16 * nr}(${rk}), %xmm8"]
+  for s in 0..k {
+    t.push("pxor %xmm8, %xmm${s}")
+  }
+  for r in 1..nr {
+    t = t + ["movdqu ${16 * (nr - r)}(${rk}), %xmm8", "aesimc %xmm8, %xmm8"]
+    for s in 0..k {
+      t.push("aesdec %xmm8, %xmm${s}")
+    }
+  }
+  t.push("movdqu (${rk}), %xmm8")
+  for s in 0..k {
+    t.push("aesdeclast %xmm8, %xmm${s}")
+  }
+  t
+}
+
+/// cpu.aes_cbc_decNN: dst = the AES-CBC decryption of the n bytes (a
+/// multiple of 16) at src with the nr + 1 encryption round keys at rk and
+/// the IV at iv (16 bytes), the last ciphertext block stored back at iv.
+pub fn aes_cbc_dec_x86_lines(nr: Int, dst: Str, src: Str, rk: Str, iv: Str, n: Str) -> List[Str] {
+  var t = [
+    "movq ${dst}, %r8",
+    "movq ${src}, %r9",
+    "movq ${n}, %r10",
+    "movdqu (${iv}), %xmm10",
+    "cmpq $128, %r10",
+    "jb 2f",
+    "1:",
+  ]
+  for s in 0..8 {
+    t.push("movdqu ${16 * s}(%r9), %xmm${s}")
+  }
+  t = t + x86_cbc_dec_rounds(nr, rk, 8) + ["pxor %xmm10, %xmm0"]
+  for s in 1..8 {
+    t = t + ["movdqu ${16 * (s - 1)}(%r9), %xmm9", "pxor %xmm9, %xmm${s}"]
+  }
+  t.push("movdqu 112(%r9), %xmm10")
+  for s in 0..8 {
+    t.push("movdqu %xmm${s}, ${16 * s}(%r8)")
+  }
+  t = t + ["addq $128, %r8", "addq $128, %r9", "subq $128, %r10", "cmpq $128, %r10", "jae 1b", "2:", "testq %r10, %r10", "jz 8f", "3:"]
+  t = t + ["movdqu (%r9), %xmm0", "movdqa %xmm0, %xmm11"] + x86_cbc_dec_rounds(nr, rk, 1)
+  t + [
+    "pxor %xmm10, %xmm0",
+    "movdqa %xmm11, %xmm10",
+    "movdqu %xmm0, (%r8)",
+    "addq $16, %r8",
+    "addq $16, %r9",
+    "subq $16, %r10",
+    "jnz 3b",
+    "8:",
+    "movdqu %xmm10, (${iv})",
+  ]
+}
