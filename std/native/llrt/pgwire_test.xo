@@ -950,3 +950,32 @@ test "decode takes a ParameterDescription's OIDs from its length, as pgproto3 (T
   expect(decode(Bytes.from_hex("740000000e00010000001700000019") ?? b"")) == Ok(Backend.ParamDescription(oids: [23, 25]))
   expect(decode(Bytes.from_hex("740000000c0005000000170000") ?? b"")) == Ok(Backend.ParamDescription(oids: [23]))
 }
+
+test "decode checks the copy, function call, NegotiateProtocolVersion and bodiless messages as pgproto3's Decode (TestPgFuzz seed 28 case 1674)" {
+  // case 1674: a RowDescription whose type byte became V; its result size 0x00026330 is not the body's
+  expect(decode(Bytes.from_hex("56000000300002633000000000000000000002bd0008ffffffff0000633100000000000000000000170004ffffffff0000") ?? b"")) == Err(WireErr.Bad(msg: "invalid message format: FunctionCallResponse"))
+  expect(decode(Bytes.from_hex("5600000009ffffffffab") ?? b"")) == Ok(Backend.Other(kind: "V", body: Bytes.from_hex("ffffffffab") ?? b""))
+  expect(decode(Bytes.from_hex("560000000a00000002abcd") ?? b"").is_ok()) == true
+  expect(decode(Bytes.from_hex("5600000006abcd") ?? b"").is_err()) == true
+  // CopyInResponse: format, count, 2 bytes a column
+  expect(decode(Bytes.from_hex("470000000b00000200010001") ?? b"").is_ok()) == true
+  expect(decode(Bytes.from_hex("470000000800000200") ?? b"").is_err()) == true
+  expect(decode(Bytes.from_hex("48000000060000") ?? b"").is_err()) == true
+  expect(decode(Bytes.from_hex("5700000007000000") ?? b"").is_ok()) == true
+  // CopyDone, BindComplete and the other bodiless ones refuse a body
+  expect(decode(Bytes.from_hex("6300000004") ?? b"").is_ok()) == true
+  expect(decode(Bytes.from_hex("6300000005aa") ?? b"").is_err()) == true
+  for (k, name) in [("31", "ParseComplete"), ("32", "BindComplete"), ("33", "CloseComplete"), ("49", "EmptyQueryResponse"), ("6e", "NoData"), ("73", "PortalSuspended")] {
+    expect(decode(Bytes.from_hex(k + "00000004") ?? b"").is_ok()) == true
+    expect(decode(Bytes.from_hex(k + "00000005aa") ?? b"")) == Err(WireErr.Bad(msg: "invalid message length: ${name}"))
+  }
+  // ReadyForQuery is one byte; BackendKeyData at least 8
+  expect(decode(Bytes.from_hex("5a0000000649aa") ?? b"")) == Err(WireErr.Bad(msg: "invalid message length: ReadyForQuery"))
+  expect(decode(Bytes.from_hex("4b0000000a0000004d0908") ?? b"")) == Err(WireErr.Bad(msg: "invalid message length: BackendKeyData"))
+  // NegotiateProtocolVersion: minor, option count, that many strings
+  expect(decode(Bytes.from_hex("760000000e00000000000000016162") ?? b"").is_err()) == true
+  expect(decode(Bytes.from_hex("760000000f0000000000000001616200") ?? b"").is_ok()) == true
+  // trailing bytes past the options are ignored, as there
+  expect(decode(Bytes.from_hex("76000000100000000000000001616200ff") ?? b"").is_ok()) == true
+  expect(decode(Bytes.from_hex("760000000f0000000000000002616200") ?? b"").is_err()) == true
+}

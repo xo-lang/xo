@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix (std/sql, Postgres; task #152): FunctionCallResponse, CopyInResponse, CopyOutResponse, CopyBothResponse, CopyDone and NegotiateProtocolVersion bodies are checked as pgx's pgproto3 checks them, and ParseComplete, BindComplete, CloseComplete, EmptyQueryResponse, NoData, PortalSuspended, ReadyForQuery and BackendKeyData refuse a body of the wrong length; such a message is a malformed message error where Xo kept it (TestPgFuzz seed 28).
 - Fix (std/sql MySQL; task #90): an ENUM or SET column in the binary character set reads as `Text`, as go-sql-driver; it was a `Blob`.
 - Feature (std/ui; task #200, decision 0719): a Model's `server` fields never reach a client: pages, syncs, pushed views and Msg attributes are encoded with `json.encode(public: true)`, and `App.with_server(serve)` runs a server-only step after update for each Msg the server applies (never in predict), the one place a server field is written.
 - Fix (xo bench --ab; task #372): the order alternates over the measured rounds (the warmup counted made B run first in 2 of the default 3), and an odd `--rounds` runs one more round, so the default runs 4 and each side runs first equally often; a run before this change that read a few percent faster on B with 3 rounds may have been the second-run-slower effect. A wall_ms verdict needs both medians at 100 ms or more ("too short" under it): loop a shorter workload. `--early` stops only after an even count.

@@ -274,6 +274,12 @@ pub fn frame_len(buf: Bytes) -> Int? ! WireErr {
 }
 
 /// Decodes one whole message (as frame_len measured it).
+// pgproto3's bodiless messages refuse any body (invalidMessageLenErr)
+fn empty_body(r: Rd, name: Str) -> Bytes ! WireErr {
+  if r.b.len() != 0 { return Err(WireErr.Bad(msg: "invalid message length: ${name}")) }
+  r.b
+}
+
 pub fn decode(m: Bytes) -> Backend ! WireErr {
   let kind = m[0..1].to_str() ?? "?"
   var r = Rd{b: m[5..], at: 0}
@@ -295,11 +301,14 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
       }
     }
     "K" => {
+      if r.b.len() < 8 { return Err(WireErr.Bad(msg: "invalid message length: BackendKeyData")) }
       let pid = r.i32()?
       Backend.KeyData(pid: pid, secret: r.rest())
     }
-    "2" => Backend.BindComplete
-    "3" => Backend.CloseComplete
+    "2" => { let _ = empty_body(r, "BindComplete")?
+      Backend.BindComplete }
+    "3" => { let _ = empty_body(r, "CloseComplete")?
+      Backend.CloseComplete }
     "C" => {
       // pgproto3: the tag's NUL ends the body, or "string terminated too early"
       let tag = r.cstr()?
@@ -315,7 +324,8 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
       }
       Backend.DataRow(values: vals)
     }
-    "I" => Backend.EmptyQuery
+    "I" => { let _ = empty_body(r, "EmptyQueryResponse")?
+      Backend.EmptyQuery }
     "E" => Backend.Error(fields: fields(r)?)
     "N" => Backend.Notice(fields: fields(r)?)
     "A" => {
@@ -323,7 +333,8 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
       let ch = r.cstr()?
       Backend.Notification(pid: pid, channel: ch, payload: r.cstr()?)
     }
-    "n" => Backend.NoData
+    "n" => { let _ = empty_body(r, "NoData")?
+      Backend.NoData }
     "t" => {
       // pgproto3 ParameterDescription.Decode skips the count (wrong past
       // 65535 parameters) and takes as many OIDs as the rest holds, 4
@@ -337,9 +348,14 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
       let name = r.cstr()?
       Backend.ParamStatus(name: name, value: r.cstr()?)
     }
-    "1" => Backend.ParseComplete
-    "s" => Backend.PortalSuspended
-    "Z" => Backend.Ready(status: r.take(1)?.to_str() ?? "?")
+    "1" => { let _ = empty_body(r, "ParseComplete")?
+      Backend.ParseComplete }
+    "s" => { let _ = empty_body(r, "PortalSuspended")?
+      Backend.PortalSuspended }
+    "Z" => {
+      if r.b.len() != 1 { return Err(WireErr.Bad(msg: "invalid message length: ReadyForQuery")) }
+      Backend.Ready(status: r.take(1)?.to_str() ?? "?")
+    }
     "T" => {
       let n = r.u16()?
       var fs: List[Field] = List.with_capacity(n)
@@ -355,8 +371,35 @@ pub fn decode(m: Bytes) -> Backend ! WireErr {
       Backend.RowDesc(fields: fs)
     }
     // the other types pgproto3's Frontend knows (copy, function call,
-    // NegotiateProtocolVersion); any other type byte is refused, as there
-    "c" | "d" | "G" | "H" | "V" | "W" | "v" => Backend.Other(kind: kind, body: r.rest())
+    // NegotiateProtocolVersion), each checked as its Decode does (a
+    // mutated RowDescription read as "V" is refused, TestPgFuzz seed 28
+    // case 1674); any other type byte is refused, as there
+    "d" => Backend.Other(kind: kind, body: r.rest())
+    "c" => Backend.Other(kind: kind, body: empty_body(r, "CopyDone")?)
+    "V" => {
+      let size = if r.b.len() >= 4 { r.i32()? } else { -2 }
+      if size < -1 || (size >= 0 && r.b.len() - 4 != size) { return Err(WireErr.Bad(msg: "invalid message format: FunctionCallResponse")) }
+      Backend.Other(kind: kind, body: r.b)
+    }
+    "G" | "H" | "W" => {
+      let name = match kind {
+        "G" => "CopyInResponse"
+        "H" => "CopyOutResponse"
+        _ => "CopyBothResponse"
+      }
+      if r.b.len() < 3 || r.b.len() - 3 != ((Int(r.b[1]) << 8) | Int(r.b[2])) * 2 { return Err(WireErr.Bad(msg: "invalid message format: ${name}")) }
+      Backend.Other(kind: kind, body: r.b)
+    }
+    "v" => {
+      if r.b.len() < 8 { return Err(WireErr.Bad(msg: "invalid message length: NegotiateProtocolVersion")) }
+      let _minor = r.i32()?
+      let n = r.i32()? & 4294967295
+      for _ in 0..n {
+        if r.at >= r.b.len() { return Err(WireErr.Bad(msg: "invalid message format: NegotiateProtocolVersion")) }
+        let _opt = r.cstr()?
+      }
+      Backend.Other(kind: kind, body: r.b)
+    }
     _ => return Err(WireErr.Bad(msg: "unknown message type: ${kind}"))
   }
 }

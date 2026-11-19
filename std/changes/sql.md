@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-18: fix: Postgres checks the copy, function call and bodiless messages as pgproto3
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestPgFuzz seed 28 case 1674 (task #152, linux/arm64 host 2)
+- Go reference: pgx v5 pgproto3 FunctionCallResponse.Decode (the result size is -1 or the rest of the body), CopyInResponse, CopyOutResponse and CopyBothResponse.Decode (2 bytes a column), NegotiateProtocolVersion.Decode, and the invalidMessageLenErr of CopyDone, ParseComplete, BindComplete, CloseComplete, EmptyQueryResponse, NoData, PortalSuspended, ReadyForQuery (1 byte) and BackendKeyData (at least 8)
+- Test: native/llrt/pgwire's "decode checks the copy, function call, NegotiateProtocolVersion and bodiless messages as pgproto3's Decode" on arm64; TestPgFuzz seed 28
+
+Xo kept these messages whatever their bodies held: the fuzz case, a RowDescription whose type byte became
+V, was skipped as a function call result and the query ended with no columns, where pgconn closes the
+connection on the malformed message. Each is now a malformed message error, as pgconn's.
+
 ## 2026-11-18: fix: a MySQL length near Int's largest is a short packet, not a fault
 
 - Kind: fix
