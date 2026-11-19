@@ -7,7 +7,6 @@ amqpfuzz_test.go
 amqptestfuzz_test.go
 base32fuzz_test.go
 bcryptfuzz_test.go
-bigfuzz_test.go
 clifuzz_test.go
 compressfuzz_test.go
 cookiejarfuzz_test.go
@@ -22,7 +21,6 @@ grpchealthfuzz_test.go
 grpcreflectfuzz_test.go
 hpkefuzz_test.go
 httpproxyfuzz_test.go
-idnafuzz_test.go
 imagefuzz_test.go
 jpegencfuzz_test.go
 jpegfuzz_test.go
@@ -30,7 +28,6 @@ jsonrpcfuzz_test.go
 lzwfuzz_test.go
 normfuzz_test.go
 otlpfuzz_test.go
-otpfuzz_test.go
 protobuffuzz_test.go
 rsafuzz_test.go
 templatefuzz_test.go

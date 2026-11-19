@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // bigRand is a random integer of up to bits bits, sometimes negative,
@@ -262,6 +264,14 @@ func bigCorpus() string {
 	}
 	o.WriteString("]\n\n/// (text, base, Go's SetString: the value in hex, or \"bad\"; then the\n/// display: the value's decimal text, or for \"bad\" the error std/big\n/// documents, invalid number (quoted) in base N, or invalid base N)\nconst PARSE: List[(Str, Int, Str, Str)] = [\n")
 	texts := []string{"", "0", "-0", "+7", "--1", "12x", "0x_1f", "0x1f", "0X1F", "0b101", "0o17", "017", "08", "0_1", "1__2", "1_2", "_1", "1_", "0x", "0b", "ff", "FF", "zz", "ZZ", "-", "+", " 1", "1 ", "9223372036854775808", "-9223372036854775809", "1.5"}
+	if bigFuzzSeed() != 0 {
+		// a fresh seed adds the hostile dictionary's digit runs and hex
+		// (task #352); seed 0, the committed corpus, stays as it was
+		texts = append(texts, hostile.Digits()...)
+		for _, h := range hostile.Hex() {
+			texts = append(texts, "0x"+h, "-0x"+h)
+		}
+	}
 	for i := 0; i < 400; i++ {
 		var s string
 		if i < len(texts) {

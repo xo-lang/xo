@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	"golang.org/x/net/idna"
+
+	"stdcorpus/idnaoracle/hostile"
 )
 
 func xq(s string) string {
@@ -233,6 +235,13 @@ func fuzzLabel(rg *rand.Rand, pools [][]rune) string {
 		}
 		for k := 0; k < n; k++ {
 			b = append(b, digits[rg.Intn(len(digits))])
+		}
+		if n%5 == 3 {
+			// the hostile dictionary (task #352): a punycode label of a
+			// digit run past Int, whose deltas overflow, chosen by n so
+			// the cases after it stay as they were
+			ds := hostile.Digits()
+			b = append(b[:4], strings.TrimPrefix(ds[n%len(ds)], "+")...)
 		}
 		return string(b)
 	case 2:

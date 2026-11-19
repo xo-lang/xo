@@ -34,6 +34,8 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/hotp"
 	"github.com/pquerna/otp/totp"
+
+	"stdcorpus/otporacle/hostile"
 )
 
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
@@ -55,6 +57,19 @@ func encOf(s string) otp.Encoder {
 		return otp.EncoderSteam
 	}
 	return otp.EncoderDefault
+}
+
+// hostileNonNeg is one of the hostile dictionary's Int edges that is not
+// negative (task #352; counters and times are not), chosen by k so the
+// cases after it stay as they were.
+func hostileNonNeg(k int) int64 {
+	var vs []int64
+	for _, v := range hostile.Ints() {
+		if v >= 0 {
+			vs = append(vs, v)
+		}
+	}
+	return vs[k%len(vs)]
 }
 
 type gen struct{ r *rand.Rand }
@@ -84,7 +99,11 @@ func (g gen) counter() uint64 {
 	case 1:
 		return uint64(math.MaxInt64 - g.r.Intn(4))
 	case 2:
-		return uint64(1) << uint(g.r.Intn(63))
+		if s := g.r.Intn(63); s%9 != 4 {
+			return uint64(1) << uint(s)
+		} else {
+			return uint64(hostileNonNeg(s))
+		}
 	}
 	return uint64(g.r.Int63n(1 << 40))
 }
@@ -96,7 +115,11 @@ func (g gen) unix() int64 {
 	case 1:
 		return math.MaxInt64 - int64(g.r.Intn(4))
 	case 2:
-		return int64(1) << uint(g.r.Intn(63))
+		if s := g.r.Intn(63); s%9 != 4 {
+			return int64(1) << uint(s)
+		} else {
+			return hostileNonNeg(s)
+		}
 	}
 	return 1_500_000_000 + g.r.Int63n(2_000_000_000)
 }
