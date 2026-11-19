@@ -39,10 +39,10 @@ test "options" {
   expect(parse_opts(["--ab", "a"]).is_err())
   expect(parse_opts(["--ab", "--env-b=X=1", "a"]).is_ok())
   expect(parse_opts(["--ab", "--rounds=x", "a", "b"]).is_err())
-  // every --ab runs 3 rounds unless told otherwise (decision 0340),
-  // rounded up to even (task #372)
+  // every --ab runs 4 rounds unless told otherwise (owner 2026-11-18,
+  // question #163); no odd count was asked, so no note (task #378)
   match parse_opts(["--ab", "a", "b"]) {
-    Ok(o) => expect(o.rounds == 4 && o.asked == 3)
+    Ok(o) => expect(o.rounds == 4 && o.asked == 0)
     Err(e) => expect(e == "")
   }
   expect(parse_opts(["--ab", "--bogus", "a", "b"]).is_err())
@@ -279,4 +279,47 @@ test "a wall time verdict needs 100 ms samples (task #372)" {
     }
     Err(e) => expect(e) == ""
   }
+}
+
+test "--ab copies A and B into one tmpfs directory on Linux only (task #378)" {
+  expect(stage_root("linux", false, true) == "/dev/shm")
+  expect(stage_root("linux", true, true) == "")
+  expect(stage_root("linux", false, false) == "")
+  expect(stage_root("darwin", false, true) == "")
+  let o = parse_opts(["--ab", "--in-place", "p", "q"]).or_fault("opts")
+  expect(o.in_place)
+  expect(!parse_opts(["--ab", "p", "q"]).or_fault("opts").in_place)
+}
+
+test "a staged xo finds the std beside its original (task #378)" {
+  expect(with_std(["K=V"], "/x/std") == ["K=V", "XO_STD=/x/std"])
+  expect(with_std(["XO_STD=/mine"], "/x/std") == ["XO_STD=/mine"])
+  expect(with_std(["K=V"], "") == ["K=V"])
+  expect(base_of("/a/b/xo") == "xo" && base_of("xo") == "xo")
+  expect(dir_of("/a/b/xo") == "/a/b" && dir_of("xo") == "." && dir_of("/xo") == "/")
+}
+
+test "stage writes both sides into one new directory and keeps the bytes (task #378)" {
+  // the test Fs: an in-memory tree
+  let root = "/shm"
+  let src = "/src"
+  os.fs.create_dir_all(root).or_fault("root")
+  os.fs.create_dir_all(src).or_fault("src")
+  os.fs.write("${src}/pa", b"#!/bin/sh\necho a\n").or_fault("pa")
+  os.fs.write("${src}/pb", b"#!/bin/sh\necho b\n").or_fault("pb")
+  let o = parse_opts(["--ab", "${src}/pa", "${src}/pb"]).or_fault("opts")
+  let st = stage(os.fs, root, o, "${src}/pa", "${src}/pb")
+  expect(st.note == "")
+  expect(st.dir.starts_with(root) && st.a.starts_with(st.dir) && st.b.starts_with(st.dir) && st.a != st.b)
+  expect(os.fs.read(st.a).or_fault("a") == b"#!/bin/sh\necho a\n" && os.fs.read(st.b).or_fault("b") == b"#!/bin/sh\necho b\n")
+  expect((os.fs.mode(st.a).or_fault("mode") & 0o111) == 0o111)
+  let one = stage(os.fs, root, o, "${src}/pa", "${src}/pa")
+  expect(one.a == one.b && one.a.starts_with(one.dir))
+  let bare = stage(os.fs, root, o, "sh", "sh")
+  expect(bare.dir == "" && bare.a == "sh" && bare.note.contains("not a file path"))
+}
+
+test "the default is 4 rounds, with no odd count note (task #378)" {
+  let o = parse_opts(["--ab", "p", "q"]).or_fault("opts")
+  expect(o.rounds == 4 && o.asked == 0)
 }

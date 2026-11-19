@@ -1127,7 +1127,10 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   `--rounds=3`. Small effects and "no slower" claims run 4 too (no
   10-round confirmations, owner 2026-10-31); report a 4-round verdict on
   an effect under about 3% as such. A wall_ms verdict needs both medians
-  at 100 ms or more ("too short", decision #162). A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
+  at 100 ms or more ("too short", decision #162). On Linux `--ab` runs
+  both sides from copies in one /dev/shm directory (task #378: on ext4 a
+  cp copy ran 9.3% slower than its tar extracted original); a
+  hand-made null A/B compares two copies written the same way. A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
   the run stops once wall, CPU and max RSS (or `--metrics`) are each
   decided better, worse, or the same within 1% at two looks in a row,
   each look at alpha over the number of looks; the output says "stopped

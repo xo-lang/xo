@@ -23,12 +23,14 @@ pub fn usage() -> Str {
     "usage: xo bench --ab [--rounds=N] [--warmup=N] [--env-a=K=V] [--env-b=K=V] [--args-a=WORDS] [--args-b=WORDS]",
     "                     [--max-load=X] [--load-wait=D] [--guard=CMD] [--no-guard] [--ops=N]",
     "                     [--metrics=a,b] [--keep-loaded] [--allow-fail] [--allow-fallback] [--timeout=D]",
-    "                     [--alpha=P] [--seed=N] [--early] [--json] A [B] [-- ARGS...]",
+    "                     [--alpha=P] [--seed=N] [--early] [--in-place] [--json] A [B] [-- ARGS...]",
   ].join("\n")
 }
 
 struct Opts {
-  rounds: Int = 3
+  /// 4 (owner, 2026-11-18, question #163): each side first in 2; with 3
+  /// every run without --rounds printed the odd count note
+  rounds: Int = 4
   /// the --rounds given when it was odd (balanced_rounds made it even), else 0
   asked: Int = 0
   warmup: Int = 1
@@ -56,6 +58,9 @@ struct Opts {
   /// --early: stop before --rounds once every watched metric is decided
   /// at two looks in a row (early_check)
   early: Bool = false
+  /// --in-place: measure A and B where they are, not from copies in one
+  /// tmpfs directory (stage_root)
+  in_place: Bool = false
   progs: List[Str] = []
 }
 
@@ -135,6 +140,8 @@ fn parse_opts(args: List[Str]) -> Opts ! Str {
       o.allow_fallback = true
     } else if a == "--no-guard" {
       o.no_guard = true
+    } else if a == "--in-place" {
+      o.in_place = true
     } else if let Some(v) = flag_val(a, "rounds") {
       o.rounds = Int.parse(v) ?? return Err("--rounds needs an integer")
     } else if let Some(v) = flag_val(a, "warmup") {
@@ -792,7 +799,132 @@ fn inline_fallback(os: Os, prog: Str) -> Str uses fs.read {
   rest[0..j]
 }
 
-pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, proc, stdio) {
+/// stage_root: the tmpfs directory --ab copies A and B into before the
+/// first round, or "" to measure them where they are (task #378). On
+/// ext4 a binary's page cache placement follows how its file was written:
+/// a cp copy of a tar extracted binary ran 9.3% slower than the original
+/// on the linux/amd64 host (median of 24 null rounds), two files written
+/// the same way matched, and on tmpfs the same pair read +0.27%
+/// (notes/xw-1/347/verdict.md, 2026-11-18). Copies written the same way
+/// into one tmpfs directory take that out of every pair. Linux only
+/// (shm: /dev/shm is there); --in-place keeps the files as given.
+fn stage_root(goos: Str, in_place: Bool, shm: Bool) -> Str {
+  if in_place || goos != "linux" || !shm {
+    return ""
+  }
+  "/dev/shm"
+}
+
+/// The base name of a path.
+fn base_of(p: Str) -> Str {
+  let parts = p.split("/")
+  parts[parts.len() - 1]
+}
+
+/// The directory of a path ("." for a bare name).
+fn dir_of(p: Str) -> Str {
+  let parts = p.split("/")
+  if parts.len() == 1 {
+    return "."
+  }
+  let d = parts[0..parts.len() - 1].join("/")
+  if d.is_empty() { "/" } else { d }
+}
+
+/// with_std: a side's --env with XO_STD naming the std directory beside
+/// prog (one of the places check.std_dir looks), so an xo run from its
+/// tmpfs copy finds the same std; env as given when it sets XO_STD or
+/// prog has none beside it.
+fn with_std(env: List[Str], std: Str) -> List[Str] {
+  if std.is_empty() || env.any(fn(e: Str) { e.starts_with("XO_STD=") }) {
+    return env
+  }
+  var out = env
+  out.push("XO_STD=${std}")
+  out
+}
+
+/// The std directory beside an executable at abs (an absolute path), as
+/// check.std_dir finds it, else "".
+fn std_beside(fs: Fs, abs: Str) -> Str uses fs.read {
+  let d = dir_of(abs)
+  for cand in ["${d}/../lib/xo/std", "${d}/std", "${d}/../std"] {
+    if fs.exists("${cand}/prelude.xo").ok() ?? false {
+      return cand
+    }
+  }
+  ""
+}
+
+/// A staged pair: the paths to run, the tmpfs directory to remove ("" if
+/// none), each side's env, and a note when staging was skipped.
+struct Staged {
+  a: Str
+  b: Str
+  dir: Str
+  env_a: List[Str]
+  env_b: List[Str]
+  note: Str
+}
+
+/// The absolute path of p, made against the working directory.
+fn abs_path(fs: Fs, p: Str) -> Str uses fs.read {
+  if p.starts_with("/") {
+    return p
+  }
+  let wd = fs.cwd_path().ok() ?? ""
+  if wd.is_empty() { p } else { "${wd}/${p}" }
+}
+
+/// copy_exe writes prog's bytes to DIR/SUB/its base name, mode 0o755.
+fn copy_exe(fs: Fs, prog: Str, dir: Str, sub: Str) -> Str ! FsErr uses (fs.read, fs.write) {
+  let d = "${dir}/${sub}"
+  fs.create_dir_all(d)?
+  let out = "${d}/${base_of(prog)}"
+  fs.write(out, fs.read(prog)?)?
+  fs.set_mode(out, 0o755)?
+  Ok(out)
+}
+
+/// stage copies A and B into one new directory under root (stage_root),
+/// one copy when they are the same file; a program that is not a file at
+/// the path given (a name found on $PATH) is measured in place.
+fn stage(fs: Fs, root: Str, o: Opts, pa: Str, pb: Str) -> Staged uses fs {
+  let none = Staged{a: pa, b: pb, dir: "", env_a: o.env_a, env_b: o.env_b, note: ""}
+  if root.is_empty() {
+    return none
+  }
+  for p in [pa, pb] {
+    if !p.contains("/") || !(fs.exists(p).ok() ?? false) {
+      return Staged{a: pa, b: pb, dir: "", env_a: o.env_a, env_b: o.env_b, note: "${p} is not a file path, so A and B run in place (not from copies in ${root})"}
+    }
+  }
+  let dir = match create_temp_dir(fs, root, "xo-bench-") {
+    Ok(d) => d
+    Err(e) => return Staged{a: pa, b: pb, dir: "", env_a: o.env_a, env_b: o.env_b, note: "no copies in ${root} (${e}), so A and B run in place"}
+  }
+  let aa = abs_path(fs, pa)
+  let ab = abs_path(fs, pb)
+  let ca = match copy_exe(fs, pa, dir, "a") {
+    Ok(x) => x
+    Err(e) => {
+      fs.remove_all(dir).ignore_err("a scratch directory left behind is harmless")
+      return Staged{a: pa, b: pb, dir: "", env_a: o.env_a, env_b: o.env_b, note: "no copy of ${pa} in ${root} (${e}), so A and B run in place"}
+    }
+  }
+  let cb = if ab == aa { ca } else {
+    match copy_exe(fs, pb, dir, "b") {
+      Ok(x) => x
+      Err(e) => {
+        fs.remove_all(dir).ignore_err("a scratch directory left behind is harmless")
+        return Staged{a: pa, b: pb, dir: "", env_a: o.env_a, env_b: o.env_b, note: "no copy of ${pb} in ${root} (${e}), so A and B run in place"}
+      }
+    }
+  }
+  Staged{a: ca, b: cb, dir: dir, env_a: with_std(o.env_a, std_beside(fs, aa)), env_b: with_std(o.env_b, std_beside(fs, ab)), note: ""}
+}
+
+pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs, proc, stdio) {
   let o0 = match parse_opts(args) {
     Ok(x) => x
     Err(e) => {
@@ -816,6 +948,22 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
       }
     }
   }
+  let st = stage(os.fs, stage_root(h.goos, o0.in_place, os.fs.exists("/dev/shm").ok() ?? false), o0, pa, pb)
+  if !st.note.is_empty() && !o0.json {
+    os.stdio.eprintln("xo bench: ${st.note}")
+  }
+  var os1 = o0
+  os1.env_a = st.env_a
+  os1.env_b = st.env_b
+  let rc = measure(os, h, os1, pa, pb, st.a, st.b)
+  if !st.dir.is_empty() {
+    os.fs.remove_all(st.dir).ignore_err("a scratch directory left behind is harmless")
+  }
+  rc
+}
+
+/// measure runs the rounds of A (run from ra, shown as pa) and B (rb, pb).
+fn measure(os: Os, h: Host, o0: Opts, pa: Str, pb: Str, ra_prog: Str, rb_prog: Str) -> Int uses (clock, env, fs.read, proc, stdio) {
   // the load before any round runs: the limit a round is loaded at is
   // relative to it (load_limit)
   let shared = shared_cache_note(o0, os.env.get("XO_BACKEND_CACHE_DIR") ?? "", os.env.get("XO_BACKEND_CACHE") ?? "")
@@ -855,10 +1003,10 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
       }
       if is_a {
         la = ld
-        ra = run_once(os, h, o, pa, aa, o.env_a)
+        ra = run_once(os, h, o, ra_prog, aa, o.env_a)
       } else {
         lb = ld
-        rb = run_once(os, h, o, pb, ab, o.env_b)
+        rb = run_once(os, h, o, rb_prog, ab, o.env_b)
       }
     }
     if !ra.ok || !rb.ok {
