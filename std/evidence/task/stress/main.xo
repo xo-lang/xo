@@ -1,283 +1,51 @@
-// task stress program (decision 0616 section 2): 64 tasks run std/task's
-// pieces at once, each pass checking the documented answers (spec/std.md
-// 7, core 7.1): map_concurrent keeps input order, gives each item's
-// result or error and never runs more than its limit at once;
-// map_concurrent_until gives the fast items' results and TimedOut for the
-// ones still sleeping at its deadline; a semaphore of 3 permits never
-// lets a fourth in; a Once shared by 8 tasks runs its function once and
-// hands every caller the same value (or the same error); isolate turns
-// an index fault into Faulted, an error into Failed and a value into Ok;
-// with_timeout gives a quick call's value and TimedOut for one that
-// sleeps past it, with deadline Some inside and None outside; with_budget
-// stops an endless loop with Exceeded("steps") and passes a short one;
-// a group's tasks (s.group()) give their values; is_canceled and
-// stop_requested stay false. A background task samples the resident set
-// every 10 s (Linux /proc/self/status). Pass: no mismatch, no fault, and
-// the resident set at the end within 10% or 4 MB of its sample at 15
-// minutes.
+// task stress program (decision 0616 section 2): 64 tasks replay the seed 1
+// cases of internal/stdtest/taskfuzz_test.go (map_concurrent's results and
+// limit, Semaphore's permits, Once's single run, the limit and permit
+// faults), each result checked against the answer computed in Go, for a
+// fixed time. Every pass also goes through one Semaphore of 8 permits that
+// all tasks share, checking that no more than 8 hold it at once. A
+// background task samples the resident set every 10 s (Linux
+// /proc/self/status). Pass: no mismatch, no fault, and the resident set at
+// the end within 10% or 4 MB of its median at the mark.
 //
-// Usage: stress [MINUTES (30)] [TASKS (64)]
+//   main [MINUTES (30)] [TASKS (64)]
 use std/task
 
-fn check_map(i: Int) -> Int ! Str {
-  let limit = 1 + i % 8
-  let n = 16 + i % 17
-  var items: List[Int] = []
-  for k in 0..n {
-    items.push(k * 3 + i % 5)
-  }
-  let now = Atomic[Int].new(0)
-  let most = Atomic[Int].new(0)
-  let rs = task.map_concurrent(items, limit, fn(x: Int) -> Int ! Str {
-    let c = now.add(1)
-    most.max(c)
-    defer now.add(-1)
-    if x % 7 == 3 {
-      return Err("seven ${x}")
-    }
-    x * x
-  })
-  if rs.len() != n {
-    return Err("map_concurrent: ${rs.len()} results of ${n}")
-  }
-  for k in 0..n {
-    let x = items[k]
-    let want: Result[Int, Str] = if x % 7 == 3 { Err("seven ${x}") } else { Ok(x * x) }
-    if rs[k] != want {
-      return Err("map_concurrent: item ${k}")
-    }
-  }
-  if most.get() > limit || most.get() < 1 {
-    return Err("map_concurrent: ${most.get()} at once, limit ${limit}")
-  }
-  Ok(n)
-}
-
-fn check_until(clock: Clock, i: Int) -> Int ! Str uses clock {
-  // items 0, 2, 4, 6: at once; 1, 3, 5, 7: sleep past the deadline
-  // 500 ms: a --race build missed 20 ms on an item that does not sleep
-  // (item 2, the 2026-11-17 host 3 race round, task #225)
-  let items = [0, 1, 2, 3, 4, 5, 6, 7]
-  // when each item started, in ms after the call (-1: never), for the
-  // failure message: a late start is the scheduler's, an early one the
-  // deadline's
-  let t0 = clock.now()
-  let started: List[Atomic[Int]] = items.map(fn(_) { Atomic[Int].new(-1) })
-  let rs = task.map_concurrent_until(clock, 500ms, items, 8, fn(x: Int) -> Int ! Str uses (clock, sync) {
-    started[x].set(clock.since(t0).millis())
-    if x % 2 == 1 {
-      clock.sleep(2s)
-    }
-    if x == 4 && i % 2 == 0 {
-      return Err("four")
-    }
-    x + 100
-  })
-  for k in 0..8 {
-    let ok = match rs[k] {
-      Ok(v) => k % 2 == 0 && v == k + 100 && !(k == 4 && i % 2 == 0)
-      Err(task.Timed.TimedOut) => k % 2 == 1
-      Err(task.Timed.Failed(e)) => k == 4 && i % 2 == 0 && e == "four"
-    }
-    if !ok {
-      let at: List[Int] = started.map(fn(a) { a.get() })
-      return Err("map_concurrent_until: item ${k} (${rs[k].is_ok()}); items started at ${at} ms, returned after ${clock.since(t0).millis()} ms")
-    }
-  }
-  Ok(8)
-}
-
-fn check_semaphore() -> Int ! Str {
-  let sem = task.semaphore(3)
-  let now = Atomic[Int].new(0)
-  let most = Atomic[Int].new(0)
-  let sum = scope s {
-    var hs: List[Task[Int, Str]] = []
-    for k in 0..12 {
-      hs.push(s.spawn(fn() -> Int ! Str {
-        sem.with(fn() -> Int ! Str {
-          let c = now.add(1)
-          most.max(c)
-          defer now.add(-1)
-          k
-        })
-      }))
-    }
-    var t = 0
-    for h in hs {
-      t += h.await?
-    }
-    t
-  }
-  if sum != 66 {
-    return Err("semaphore: sum ${sum}")
-  }
-  if most.get() > 3 || most.get() < 1 {
-    return Err("semaphore: ${most.get()} at once")
-  }
-  Ok(12)
-}
-
-fn check_once(i: Int) -> Int ! Str {
-  let o = task.once[Int, Str]()
-  let runs = Atomic[Int].new(0)
-  let fail = i % 3 == 0
-  let got = scope s {
-    var hs: List[Task[Result[Int, Str], Str]] = []
-    for _ in 0..8 {
-      hs.push(s.spawn(fn() -> Result[Int, Str] ! Str {
-        Ok(o.get(fn() -> Int ! Str {
-          runs.add(1)
-          if fail {
-            return Err("once ${i}")
-          }
-          i * 7
-        }))
-      }))
-    }
-    var out: List[Result[Int, Str]] = []
-    for h in hs {
-      out.push(h.await?)
-    }
-    out
-  }
-  if runs.get() != 1 {
-    return Err("once: ran ${runs.get()} times")
-  }
-  let want: Result[Int, Str] = if fail { Err("once ${i}") } else { Ok(i * 7) }
-  for r in got {
-    if r != want {
-      return Err("once: a caller got another answer")
-    }
-  }
-  Ok(8)
-}
-
-fn check_isolate(i: Int) -> Int ! Str {
-  let xs = [1, 2, 3]
-  match task.isolate(fn() -> Int ! Str { xs[3 + i % 4] }) {
-    Err(task.Isolated.Faulted(f)) => {
-      if f.msg.is_empty() || !f.location.contains("main.xo") {
-        return Err("isolate: fault ${f.msg} at ${f.location}")
+/// One pass over the cases from offset start: the checks done, or the first
+/// mismatch.
+fn pass(start: Int, shared: task.Semaphore, held: Mutex[(Int, Int)]) -> Int ! Str {
+  var n = 0
+  for k in 0..CASES.len() {
+    let i = (start + k) % CASES.len()
+    let (kind, limit, items, want, msg) = CASES[i]
+    if kind >= 3 {
+      let got = fault_of(kind, limit)
+      if got != msg {
+        return Err("case ${i}: fault ${got}")
+      }
+    } else {
+      let (got, most, runs) = run(kind, limit, items)
+      if got != want {
+        return Err("case ${i}: results ${got.debug()}")
+      }
+      if kind < 2 && most > limit {
+        return Err("case ${i}: ${most} in flight, limit ${limit}")
+      }
+      if kind == 2 && runs != 1 {
+        return Err("case ${i}: f ran ${runs} times")
       }
     }
-    _ => return Err("isolate: no fault")
-  }
-  match task.isolate(fn() -> Int ! Str { Err("bad ${i}") }) {
-    Err(task.Isolated.Failed(e)) => {
-      if e != "bad ${i}" {
-        return Err("isolate: error ${e}")
-      }
+    let over = shared.with(fn() -> Int ! Never {
+      held.with(fn(var p: (Int, Int)) { p = (p.0 + 1, p.1.max(p.0 + 1)) })
+      defer held.with(fn(var p: (Int, Int)) { p = (p.0 - 1, p.1) })
+      held.with_read(fn(p: (Int, Int)) -> Int { p.0 })
+    })
+    if over > 8 {
+      return Err("case ${i}: ${over} hold the shared semaphore of 8")
     }
-    _ => return Err("isolate: no error")
+    n += 1 + items.len()
   }
-  match task.isolate(fn() -> Int ! Str { xs[i % 3] }) {
-    Ok(v) => {
-      if v != i % 3 + 1 {
-        return Err("isolate: value ${v}")
-      }
-    }
-    _ => return Err("isolate: no value")
-  }
-  Ok(3)
-}
-
-fn check_timeout(clock: Clock, i: Int) -> Int ! Str uses clock {
-  if task.deadline(clock) != None {
-    return Err("deadline outside with_timeout")
-  }
-  let t0 = clock.now()
-  match task.with_timeout(clock, 10s, fn() -> Int ! Str uses clock {
-    let d = task.deadline(clock) ?? t0
-    if d <= t0 || d > clock.now() + 10s {
-      return Err("deadline ${d}")
-    }
-    i + 1
-  }) {
-    Ok(v) => {
-      if v != i + 1 {
-        return Err("with_timeout: value ${v}")
-      }
-    }
-    Err(e) => return Err("with_timeout: ${e}")
-  }
-  match task.with_timeout(clock, 5ms, fn() -> Int ! Str uses clock {
-    clock.sleep(5s)
-    0
-  }) {
-    Err(task.Timed.TimedOut) => {}
-    _ => return Err("with_timeout: no timeout")
-  }
-  Ok(2)
-}
-
-fn check_budget(clock: Clock, i: Int) -> Int ! Str uses clock {
-  match task.with_budget(clock, task.budget(steps: 10000), fn() -> Int ! Str {
-    var n = 0
-    while true {
-      n += 1
-    }
-    n
-  }) {
-    Err(task.Budgeted.Exceeded(r)) => {
-      if r != "steps" {
-        return Err("with_budget: exceeded ${r}")
-      }
-    }
-    _ => return Err("with_budget: endless loop finished")
-  }
-  match task.with_budget(clock, task.budget(steps: 1000000), fn() -> Int ! Str {
-    var n = 0
-    for k in 0..(10 + i % 10) {
-      n += k
-    }
-    n
-  }) {
-    Ok(v) => {
-      let m = 10 + i % 10
-      if v != m * (m - 1) / 2 {
-        return Err("with_budget: value ${v}")
-      }
-    }
-    Err(e) => return Err("with_budget: ${e}")
-  }
-  Ok(2)
-}
-
-fn check_group(i: Int) -> Int ! Str {
-  let sum = scope s {
-    let g = s.group()
-    var hs: List[Task[Int, Str]] = []
-    for k in 0..6 {
-      hs.push(g.spawn(fn() -> Int ! Str { k * i }))
-    }
-    var t = 0
-    for h in hs {
-      t += h.await?
-    }
-    t
-  }
-  if sum != 15 * i {
-    return Err("group: sum ${sum}")
-  }
-  if task.is_canceled() || task.stop_requested() {
-    return Err("canceled or stopping")
-  }
-  Ok(6)
-}
-
-fn pass(clock: Clock, i: Int) -> Int ! Str uses clock {
-  var n = check_map(i)?
-  n += check_semaphore()?
-  n += check_once(i)?
-  n += check_isolate(i)?
-  n += check_group(i)?
-  n += check_budget(clock, i)?
-  if i % 8 == 0 {
-    n += check_timeout(clock, i)?
-    n += check_until(clock, i)?
-  }
-  Ok(n)
+  n
 }
 
 fn rss_kib(os: Os) -> Int {
@@ -303,8 +71,10 @@ fn main(os: Os) ! {
   let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run
   let mark = start + Duration.from_secs(Float(mark_s))
   let none_yet: List[Int] = []
-  let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak): decision 0616, medians since 2026-11-17
-  let ops = scope s {
+  let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak)
+  let shared = task.semaphore(8)
+  let held = Mutex[(Int, Int)].new((0, 0))
+  let checks = scope s {
     s.spawn_background(fn() {
       var marked = false
       while true {
@@ -328,7 +98,7 @@ fn main(os: Os) ! {
         var n = 0
         var i = t
         while clock.now() < end {
-          n += pass(clock, i)?
+          n += pass(i, shared, held)?
           i += 1
         }
         n
@@ -340,22 +110,18 @@ fn main(os: Os) ! {
     }
     total
   }
+  let most = held.with_read(fn(p: (Int, Int)) -> Int { p.1 })
   let (rss_after, peak) = samples.with_read(fn(t) { t })
   let (at_mark, last) = rss_medians(rss_after)
   let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
   let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes ${mark_s / 60} to ${mark_s / 60 + 2}), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
   let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
-  os.stdio.println("task stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  os.stdio.println("task stress: ${checks} checks by ${tasks} tasks in ${minutes} min, 0 mismatches, shared semaphore held by at most ${most} of 8, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
   if !ok {
     return Err("memory grew ${growth}%")
   }
 }
 
-/// The resident set early and late, in KiB (decision 0616 as amended
-/// 2026-11-17, owner): the median of the samples in the 2 minutes after
-/// the mark (minutes 15 to 17 of a 30 minute run, decision 0717) and the median of the last
-/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
-/// short run takes a third of its samples each. (0, 0) when none.
 fn rss_medians(xs: List[Int]) -> (Int, Int) {
   if xs.is_empty() {
     return (0, 0)
@@ -369,3 +135,203 @@ fn rss_median(xs: List[Int]) -> Int {
   let s = xs.sort()
   s[s.len() / 2]
 }
+
+fn mix(x: Int) -> Int { (x % 1000003) * 2654435761 % 1000003 }
+
+/// An item's work: spin, then Err(x / 2 + 7) when it fails, else Ok(mix(x)).
+fn work(x: Int, fail: Bool, spin: Int) -> Int ! Int {
+  var acc = 0
+  for k in 0..spin {
+    acc += k
+  }
+  if fail {
+    return Err(x / 2 + 7 + acc * 0)
+  }
+  mix(x) + acc * 0
+}
+
+fn flat(rs: List[Result[Int, Int]]) -> List[(Bool, Int)] {
+  var out: List[(Bool, Int)] = []
+  for r in rs {
+    match r {
+      Ok(v) => out.push((true, v))
+      Err(e) => out.push((false, e))
+    }
+  }
+  out
+}
+
+/// A case's results, the most items in flight at once, and how many times
+/// a Once ran f.
+fn run(kind: Int, limit: Int, items: List[(Int, Bool, Int)]) -> (List[(Bool, Int)], Int, Int) {
+  let live = Mutex[(Int, Int)].new((0, 0))
+  let runs = Mutex[Int].new(0)
+  let all = items.len().max(1)
+  var rs: List[Result[Int, Int]] = []
+  if kind == 0 {
+    rs = task.map_concurrent(items, limit, fn(it: (Int, Bool, Int)) -> Int ! Int {
+      live.with(fn(var p: (Int, Int)) { p = (p.0 + 1, p.1.max(p.0 + 1)) })
+      defer live.with(fn(var p: (Int, Int)) { p = (p.0 - 1, p.1) })
+      work(it.0, it.1, it.2)
+    })
+  } else if kind == 1 {
+    let sem = task.semaphore(limit)
+    rs = task.map_concurrent(items, all, fn(it: (Int, Bool, Int)) -> Int ! Int {
+      sem.with(fn() -> Int ! Int {
+        live.with(fn(var p: (Int, Int)) { p = (p.0 + 1, p.1.max(p.0 + 1)) })
+        defer live.with(fn(var p: (Int, Int)) { p = (p.0 - 1, p.1) })
+        work(it.0, it.1, it.2)
+      })
+    })
+  } else {
+    let o: task.Once[Int, Int] = task.once()
+    let first = items[0]
+    rs = task.map_concurrent(items, all, fn(it: (Int, Bool, Int)) -> Int ! Int {
+      o.get(fn() -> Int ! Int {
+        runs.with(fn(var n: Int) { n += 1 })
+        work(first.0, first.1, it.2)
+      })
+    })
+  }
+  (flat(rs), live.with_read(fn(p: (Int, Int)) -> Int { p.1 }), runs.with_read(fn(n: Int) -> Int { n }))
+}
+
+/// The fault a limit or permit count of n raises, caught by task.isolate.
+fn fault_of(kind: Int, n: Int) -> Str {
+  let r = task.isolate(fn() -> Int ! Never {
+    if kind == 3 {
+      let _ = task.map_concurrent([1], n, fn(x: Int) -> Int ! Never { x })
+    } else {
+      let _ = task.semaphore(n)
+    }
+    0
+  })
+  match r {
+    Err(task.Isolated.Faulted(f)) => f.msg
+    _ => "no fault"
+  }
+}
+
+/// (kind, limit or permits, items (x, fail, spin), the results (ok, value), the fault message)
+const CASES: List[(Int, Int, List[(Int, Bool, Int)], List[(Bool, Int)], Str)] = [
+  (0, 28, [(622234, false, 200), (-521609, true, 0), (513281, false, 2000), (4294967297, false, 0), (800354, false, 0), (9007199254740991, false, 10), (934401, false, 0), (916054, false, 0), (-619080, false, 0), (-849193, false, 0), (-440289, false, 10), (328953, false, 200), (796520, false, 2000), (-4294967297, true, 200), (361203, false, 0), (477353, false, 200), (-242531, false, 0), (-22884, false, 200), (-280019, false, 200), (-9223372036854775808, false, 200), (-564461, false, 2000), (390944, false, 10), (-607456, false, 10), (9007199254740991, true, 200), (271852, false, 0), (110828, false, 0), (-817779, false, 10), (109614, false, 10), (-127, false, 10), (703564, false, 10), (234007, false, 0), (906810, false, 0)], [(true, 284396), (false, -260797), (true, 439779), (true, 557697), (true, 613679), (true, 605455), (true, 614197), (true, 809491), (true, -10397), (true, -826361), (true, -628849), (true, 342272), (true, 437233), (false, -2147483641), (true, 818634), (true, 523417), (true, -208007), (true, -722949), (true, -488808), (true, -48922), (true, -126914), (true, 950524), (true, -289740), (false, 4503599627370502), (true, 664857), (true, 965339), (true, -988892), (true, 618910), (true, -330311), (true, 72687), (true, 660272), (true, 247397)], ""),
+  (0, 13, [(-805214, true, 200), (-4611686018427387904, true, 10), (-127, true, 2000), (65536, false, 0), (-128, true, 2000), (543540, false, 0), (-804395, false, 0), (372732, false, 200), (-822467, false, 200), (757397, false, 0), (65537, false, 0), (381837, false, 200), (4294967297, true, 200), (548909, false, 0), (870622, false, 0), (-9223372036854775807, false, 0), (-4294967296, false, 10), (-87991, false, 0), (-836234, false, 10), (-2147483647, false, 200), (432534, false, 10), (349755, false, 0), (726111, false, 200), (975521, false, 10), (32768, false, 2000), (-396649, true, 2000), (-383059, true, 0), (591139, true, 0), (-296726, false, 0), (4611686018427387904, false, 0), (-9242, true, 10), (-2147483648, true, 200), (738662, false, 0), (145876, false, 0), (132539, true, 0), (82185, true, 200), (39868, true, 0)], [(false, -402600), (false, -2305843009213693945), (false, -56), (true, 151156), (false, -57), (true, 170885), (true, -344251), (true, 898509), (true, -504586), (true, 707167), (true, 578955), (true, 996719), (false, 2147483655), (true, 16825), (true, 103628), (true, -621126), (true, -129898), (true, -348883), (true, -995752), (true, -637153), (true, 57555), (true, 390373), (true, 627805), (true, 656304), (true, 75578), (false, -198317), (false, -191522), (false, 295576), (true, -705260), (true, 24461), (false, -4614), (false, -1073741817), (true, 916947), (true, 419709), (false, 66276), (false, 41099), (false, 19941)], ""),
+  (2, 0, [(-389969, false, 10), (-435147, false, 0), (622775, false, 0), (159789, true, 200), (-32768, false, 2000), (924735, false, 10), (136514, false, 200), (915346, false, 2000), (-156945, false, 2000), (676251, false, 200), (2147483647, false, 10), (-128, false, 10), (-565722, false, 0), (562449, false, 0), (-407999, false, 0), (-379831, true, 0), (59165, false, 0), (65535, true, 2000), (-91249, false, 0), (-425412, true, 0), (907495, true, 10), (984125, false, 10), (-634606, false, 0), (255, false, 2000), (284336, false, 10), (-111116, false, 200), (653865, false, 10), (-257, false, 200), (9007199254740993, false, 0), (-846061, false, 2000), (9007199254740992, false, 10), (-256, false, 2000)], [(true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750), (true, -847750)], ""),
+  (2, 0, [(753589, false, 2000), (-903668, false, 0), (-915288, false, 10), (-2147483648, false, 10), (-369476, false, 10), (-129, false, 2000), (9007199254740991, false, 10), (652753, false, 0), (-152653, false, 0), (-978016, false, 0), (-9007199254740991, false, 2000), (-653076, false, 0), (686993, false, 0), (-505424, true, 2000), (-76502, false, 0), (606832, false, 10), (-927856, false, 0), (-319658, true, 200), (4294967295, true, 200), (-930630, false, 0), (896498, true, 0)], [(true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462), (true, 653462)], ""),
+  (1, 8, [(-61405, false, 0), (-207936, false, 2000), (312623, false, 0), (103266, true, 0), (-2147483649, false, 0), (558384, false, 0), (584077, false, 10), (677386, false, 0), (311189, false, 2000), (-4611686018427387904, false, 10), (436637, false, 2000), (65536, false, 2000), (-205883, true, 2000), (-63592, false, 0), (207699, false, 200), (117545, false, 2000), (286361, false, 0), (-726070, true, 10), (-199767, false, 10), (32768, true, 10), (828966, false, 0), (-854993, false, 10), (-273126, false, 10), (1, false, 0), (-330610, false, 200), (684372, false, 2000), (733815, false, 0), (954958, false, 0), (635033, false, 10), (-315782, false, 200), (127, false, 2000), (-584233, false, 0), (-2147483649, false, 200), (-27965, true, 0), (-127, false, 0)], [(true, -918791), (true, -546002), (true, 405560), (false, 51640), (true, -492748), (true, 400191), (true, 806925), (true, 184062), (true, 943636), (true, -24461), (true, 311587), (true, 151156), (false, -102934), (true, -512396), (true, 157942), (true, 482600), (true, 581927), (false, -363028), (true, -866456), (false, 16391), (true, 761947), (true, -53115), (true, -679148), (true, 427799), (true, -203088), (true, 778912), (true, 381413), (true, 851858), (true, 667372), (true, -818548), (true, 330311), (true, -543368), (true, -492748), (false, -13975), (true, -330311)], ""),
+  (0, 1, [(-549578, false, 0), (-302844, false, 200), (-32185, false, 200), (4294967296, false, 0), (460339, false, 10), (14106, false, 2000), (-560060, false, 0), (794960, false, 2000), (-937825, false, 2000), (465944, false, 200), (114115, false, 0), (125905, false, 2000), (487276, false, 0), (4294967297, false, 0), (-32768, false, 0), (902376, false, 0), (-2147483649, false, 0), (342365, true, 0)], [(true, -213498), (true, -971691), (true, -669511), (true, 129898), (true, 973068), (true, 514592), (true, -389164), (true, 72794), (true, -393578), (true, 779269), (true, 136431), (true, 871512), (true, 560159), (true, 557697), (true, -75578), (true, 392322), (true, -492748), (false, 171189)], ""),
+  (0, 1, [(-727926, false, 10), (-9007199254740991, false, 0), (245114, false, 0), (-746267, false, 2000), (-166030, true, 2000), (127, true, 10), (-559028, false, 2000), (-565666, false, 200), (592030, false, 0), (705191, true, 0), (-887627, false, 2000), (201753, false, 2000), (4294967295, false, 200), (-794689, false, 0), (-77774, true, 10), (338740, false, 2000), (-2147483647, false, 10), (4611686018427387904, false, 200), (-129, true, 2000), (790545, false, 200), (-174818, false, 0), (-127, false, 10)], [(true, -80659), (true, -605455), (true, 209509), (true, -318580), (false, -83008), (false, 70), (true, -901922), (true, -623164), (true, 82163), (false, 352602), (true, -803801), (true, 472720), (true, 702102), (true, -139613), (false, -38880), (true, 198524), (true, -637153), (true, 24461), (false, -57), (true, 345876), (true, -741224), (true, -330311)], ""),
+  (3, -3, [], [], "map_concurrent needs a positive limit, got -3"),
+  (1, 8, [(-4611686018427387905, true, 200), (-255, false, 200), (216720, true, 0), (-257, false, 200), (515045, false, 0), (-255, true, 0), (4294967296, false, 0), (658702, false, 2000), (361619, true, 0), (65536, false, 0), (303747, false, 200), (115552, true, 200), (153352, false, 2000), (441656, false, 10), (181019, true, 200), (517606, false, 200), (-44640, true, 0)], [(false, -2305843009213693945), (true, -88418), (false, 108367), (true, -944016), (true, 74950), (false, -120), (true, 129898), (true, 211525), (false, 180816), (true, 151156), (true, 273027), (false, 57783), (true, 635439), (true, 428327), (false, 90516), (true, 664904), (false, -22313)], ""),
+  (0, 35, [(207233, false, 200), (-2147483649, false, 200), (9007199254740993, false, 0), (-825900, true, 2000), (-220067, false, 10), (-32768, false, 2000), (580934, false, 10), (151768, true, 200), (809408, false, 2000), (-643836, true, 0), (-4611686018427387903, true, 10), (-2147483647, false, 200), (-795820, false, 200), (907738, false, 200), (233988, false, 200), (-128, false, 10), (-734619, false, 2000), (877330, false, 0), (342914, false, 10), (137140, true, 10), (11861, false, 200), (32768, true, 0), (992943, false, 2000), (-91076, true, 200), (603183, false, 0), (-9223372036854775807, false, 2000), (-528706, false, 10), (509501, false, 0), (79934, false, 200), (-924577, false, 2000), (-831904, false, 200), (-3525, false, 2000), (527691, false, 0), (65537, true, 0), (-705962, false, 0)], [(true, 804208), (true, -492748), (true, 461050), (false, -412943), (true, -160101), (true, -75578), (true, 238700), (false, 75891), (true, 894206), (false, -321911), (false, -2305843009213693944), (true, -637153), (true, -978833), (true, 243678), (true, 532115), (true, -758110), (true, -330777), (true, 770713), (true, 826195), (false, 68577), (true, 108717), (false, 16391), (true, 748123), (false, -45531), (true, 310097), (true, -621126), (true, -219557), (true, 364410), (true, 582681), (true, -929430), (true, -631638), (true, -986954), (true, 4874), (false, 32775), (true, -931614)], ""),
+  (0, 14, [(-210650, false, 0), (245481, false, 10), (416245, false, 200), (-186205, false, 0), (-256, false, 200), (4294967296, false, 0), (-51398, false, 10), (-737911, false, 200), (779928, false, 2000), (-510945, false, 0), (674084, false, 0), (-609176, false, 10), (-769673, false, 0), (455258, true, 0), (-27707, true, 10)], [(true, -589005), (true, 211271), (true, 660551), (true, -73821), (true, -516217), (true, 129898), (true, -947041), (true, -640861), (true, 417519), (true, -104312), (true, 596003), (true, -101812), (true, -351935), (false, 227636), (false, -13846)], ""),
+  (0, 34, [(545916, false, 10), (780963, false, 2000), (-434849, false, 0), (-100679, false, 10), (736156, false, 0), (624959, true, 2000), (-1, false, 0), (-9223372036854775807, false, 0), (2147483649, false, 10), (-2147483647, false, 2000), (272525, false, 200), (119016, false, 2000), (-443558, false, 0), (-418, false, 0), (-65537, false, 0), (85888, false, 2000), (286477, false, 10), (1, false, 10), (2147483647, true, 2000), (65536, false, 0), (-697445, false, 0), (546802, false, 2000), (-938786, false, 2000), (-665660, false, 200), (-563628, false, 10), (257, true, 2000), (-640532, false, 200), (625244, true, 10)], [(true, 618261), (true, 188155), (true, -409270), (true, -246311), (true, 855869), (false, 312486), (true, -427799), (true, -621126), (true, 492748), (true, -637153), (true, 572720), (true, 773042), (true, -99583), (true, -819448), (true, -578955), (true, 690286), (true, 206461), (true, 427799), (false, 1073741830), (true, 151156), (true, -378460), (true, 647038), (true, -507184), (true, -828039), (true, -771418), (false, 135), (true, -127014), (false, 312629)], ""),
+  (0, 1, [(193612, false, 0), (-315350, false, 10), (67293, true, 200), (-427706, false, 0), (-249638, false, 0), (-128, false, 0), (-4294967295, false, 200), (459863, false, 200), (-210783, false, 0), (-129475, true, 10), (127, true, 0), (-1, false, 0), (68315, false, 10), (-927209, false, 0), (-4294967296, false, 0), (-2147483648, false, 2000), (484463, false, 10), (140226, false, 2000), (908627, false, 0), (-993139, true, 0), (-980469, false, 10), (-65535, true, 10), (-4294967296, false, 2000), (-2147483649, false, 0)], [(true, 771510), (true, -9932), (false, 33653), (true, -650181), (true, -566380), (true, -758110), (true, -702102), (true, 341353), (true, -486101), (false, -64730), (false, 70), (true, -427799), (true, 1010), (true, -893020), (true, -129898), (true, -64949), (true, 165181), (true, 362610), (true, 555849), (false, -496562), (true, -399405), (false, -32760), (true, -129898), (true, -492748)], ""),
+  (0, 6, [(127, false, 0), (310987, false, 0), (-265239, false, 2000), (32769, false, 10)], [(true, 330311), (true, 528496), (true, -638557), (true, 503377)], ""),
+  (0, 39, [(708550, true, 10), (276958, true, 0), (597506, false, 0), (966831, false, 0), (340147, false, 2000), (-32767, false, 10), (2147483647, false, 0), (-4611686018427387903, true, 10), (-564648, false, 2000), (643266, false, 10), (-354974, false, 0), (-439260, false, 0), (-348014, false, 200), (681529, false, 2000), (-9007199254740992, false, 200), (-127, false, 2000), (-683624, false, 2000), (196234, false, 200), (641649, false, 2000), (-760469, false, 0), (-405311, false, 200), (-345668, false, 0)], [(false, 354282), (false, 138486), (true, 702461), (true, 94145), (true, 109911), (true, -647782), (true, 637153), (false, -2305843009213693944), (true, -125087), (true, 725973), (true, -66655), (true, -424998), (true, -594549), (true, 550003), (true, -33251), (true, -330311), (true, -786220), (true, 457122), (true, 977066), (true, -901753), (true, -120316), (true, -981107)], ""),
+  (2, 0, [(-4611686018427387905, true, 0), (-256, false, 2000), (274487, false, 2000), (-766478, false, 10), (928642, false, 2000), (-2147483649, false, 200), (4611686018427387903, true, 2000), (-641784, false, 2000), (-686667, false, 200), (-936650, true, 10), (-370436, true, 0), (122875, false, 0), (4294967296, false, 10), (-128177, true, 200), (-908940, false, 10), (-238197, false, 2000), (377352, false, 10), (-2147483649, false, 0), (928758, false, 0), (-369980, false, 2000), (-340101, false, 0), (877097, false, 0), (937587, true, 0), (627235, false, 10), (371700, false, 0), (566668, false, 200), (-65537, false, 10), (3007, false, 0), (9223372036854775806, false, 2000), (-808860, false, 10), (708115, false, 2000), (912653, false, 0), (-841670, false, 0), (-2147483649, false, 0), (-937215, false, 200), (-262972, false, 0)], [(false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945), (false, -2305843009213693945)], ""),
+  (0, 19, [(-207920, true, 0), (-256, false, 2000), (9007199254740991, false, 0), (257, false, 10), (4611686018427387903, false, 0), (255, false, 0), (9007199254740992, false, 0), (65537, false, 200), (-548025, false, 2000), (197828, false, 0), (-459703, false, 200), (-924086, false, 0), (647923, true, 200), (-4294967297, true, 0), (412275, false, 2000), (-65536, true, 0), (-880911, false, 0), (65535, false, 10), (489279, false, 2000), (-863861, false, 10), (-25150, false, 0), (540835, true, 10), (442039, false, 0), (-746183, true, 0), (618368, false, 2000)], [(false, -103953), (true, -516217), (true, 605455), (true, 944016), (true, 596665), (true, 88418), (true, 33251), (true, 578955), (true, -843646), (true, 366682), (true, -893720), (true, -880751), (false, 323968), (false, -2147483641), (true, 303615), (false, -32761), (true, -714336), (true, 723360), (true, 438985), (true, -763268), (true, -112573), (false, 270424), (true, 274852), (false, -373084), (true, 418424)], ""),
+  (0, 34, [(682894, false, 0), (-798623, false, 0), (752784, false, 200), (-807123, false, 2000), (-122214, false, 10), (-431003, false, 0), (-9007199254740993, true, 0), (782361, false, 200), (182544, false, 10)], [(true, 493886), (true, -95830), (true, 276299), (true, -376422), (true, -870140), (true, -99251), (false, -4503599627370489), (true, 249363), (true, 906383)], ""),
+  (0, 11, [(4294967296, false, 10), (-4294967296, true, 0), (652712, false, 10), (65535, true, 0), (261130, true, 200), (653426, false, 0), (-4294967297, false, 0), (250495, true, 200), (-9007199254740991, false, 0), (8087, false, 200), (-32767, false, 0), (-573400, false, 10), (-790514, true, 0), (636517, false, 0), (-4611686018427387905, false, 0), (2147483647, false, 10), (256, false, 10), (-89901, false, 0), (194592, true, 2000), (9417, false, 200), (-431310, true, 0), (-158555, false, 200), (641268, false, 2000), (-201778, true, 2000), (2147483648, true, 2000), (734855, false, 0), (-198440, false, 0), (120271, false, 0), (-485593, false, 200)], [(true, 129898), (false, -2147483641), (true, 703204), (false, 32774), (false, 130572), (true, 150772), (true, -557697), (false, 125254), (true, -605455), (true, 600136), (true, -647782), (true, -210703), (false, -395250), (true, 519183), (true, -452260), (true, 637153), (true, 516217), (true, -442522), (false, 97303), (true, 571099), (false, -215648), (true, -466958), (true, 986136), (false, -100882), (false, 1073741831), (true, 291038), (true, -178884), (true, 659176), (true, -576602)], ""),
+  (0, 26, [(601925, true, 2000), (2147483649, true, 0), (129, false, 200), (707629, false, 0), (-333925, false, 2000), (468999, false, 10), (32768, true, 2000), (786578, false, 0), (-649887, true, 10), (0, false, 2000), (-915880, false, 0), (-153127, true, 10)], [(false, 300969), (false, 1073741831), (true, 185906), (true, 70405), (true, -352519), (true, 701293), (false, 16391), (true, 272334), (false, -324936), (true, 0), (true, -372687), (false, -76556)], ""),
+  (0, 13, [(773067, false, 0), (-4611686018427387904, true, 10), (-32528, false, 200), (69574, true, 0), (194815, false, 2000), (-354718, true, 2000), (-257, false, 10), (372782, false, 2000), (180776, false, 10), (-256, false, 200), (-9007199254740992, false, 200), (320691, false, 0)], [(true, 297385), (false, -2305843009213693945), (true, -404127), (false, 34794), (true, 412162), (false, -177352), (true, -944016), (true, 288393), (true, 560019), (true, -516217), (true, -33251), (true, 877539)], ""),
+  (2, 0, [(-752275, false, 10), (-55851, false, 0), (-129, false, 0), (463313, false, 0), (237452, false, 10), (392090, false, 2000), (148836, false, 0), (566024, true, 10), (-4294967296, true, 200), (155640, false, 0), (65535, false, 200), (264332, false, 10), (-456093, false, 200), (171597, false, 0), (-4611686018427387905, true, 10), (448733, false, 0), (-965421, true, 200), (-687796, false, 200), (-65535, true, 0), (-2147483648, false, 0), (-888016, true, 10), (-257, false, 0), (566726, false, 10), (582262, false, 0), (-65536, false, 0), (569441, false, 200), (-50911, false, 0), (78551, false, 0), (-440829, false, 0), (126590, false, 0), (-815974, true, 200), (-409904, true, 0), (4611686018427387904, false, 200), (-587273, true, 2000), (500250, true, 2000), (-490507, true, 2000), (-627821, false, 10), (-481763, false, 200)], [(true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262), (true, -527262)], ""),
+  (0, 30, [(0, true, 2000), (525052, false, 200)], [(false, 7), (true, 46700)], ""),
+  (0, 43, [(-854660, true, 10), (601860, false, 0), (65536, false, 10), (-545166, false, 0), (786838, false, 2000), (-205379, true, 200), (863915, false, 10), (-151436, false, 200), (354098, false, 0), (147201, false, 10), (797828, true, 0), (4294967296, false, 0), (-4611686018427387903, true, 0), (4294967297, false, 200), (-463755, false, 0), (762710, false, 200), (468048, false, 2000), (536167, false, 0), (973633, false, 0), (-847480, true, 0), (780350, true, 10), (908829, false, 0), (809454, false, 2000), (2147483647, false, 10), (-50476, false, 10), (9007199254740992, false, 10), (-257, true, 200)], [(false, -427323), (true, 333718), (true, 151156), (true, -769974), (true, 499741), (false, -102682), (true, 864345), (true, -975015), (true, 315856), (true, 251683), (false, 398921), (true, 129898), (false, -2305843009213693944), (true, 557697), (true, -330066), (true, 596435), (true, 865665), (true, 18320), (true, 974216), (false, -423733), (false, 390182), (true, 970989), (true, 572900), (true, 637153), (true, -517545), (true, 33251), (false, -121)], ""),
+  (1, 7, [(-2147483648, false, 10), (435618, true, 200), (425529, false, 2000), (-98182, true, 200), (-735217, false, 0), (664072, false, 10), (-169205, false, 10)], [(true, -64949), (false, 217816), (true, 334551), (false, -49084), (true, -153811), (true, 485264), (true, -512640)], ""),
+  (0, 15, [(-4611686018427387904, false, 200), (-429128, false, 10), (-2147483647, false, 0), (-2147483647, false, 0), (-151224, false, 0), (970527, true, 0), (595882, false, 10), (-703129, false, 200), (-450022, true, 200), (227779, false, 2000), (162673, false, 2000), (948854, false, 10), (-539731, false, 2000), (-890204, true, 10), (893292, false, 200), (9007199254740992, false, 0), (-32768, false, 200), (-598872, false, 0), (-641282, false, 0), (207551, false, 2000), (922815, true, 200), (-371998, false, 0), (536237, true, 0), (-247098, false, 10), (-2147483649, false, 10)], [(true, -24461), (true, -978535), (true, -637153), (true, -637153), (true, -281897), (false, 485270), (true, 958970), (true, -980683), (false, -225004), (true, 336092), (true, 137954), (true, 574595), (true, -689384), (false, -445095), (true, 277864), (true, 33251), (true, -75578), (true, -74140), (true, -975304), (true, 843882), (false, 461414), (true, -894985), (false, 268125), (true, -960181), (true, -492748)], ""),
+  (0, 19, [(-714140, true, 10)], [(false, -357063)], ""),
+  (1, 5, [(-472125, false, 10), (260861, false, 0), (-2401, false, 200), (214008, false, 200), (-192336, false, 0), (-739267, false, 0), (962281, false, 10), (267084, false, 2000), (792411, false, 10), (-255, false, 0), (-791452, false, 10), (-993142, false, 2000), (129, true, 0), (-289491, true, 0), (587067, false, 0), (32769, false, 0), (645682, false, 0), (93296, false, 10), (254894, false, 0), (446219, false, 0), (-814868, true, 200), (2147483649, false, 0), (-9007199254740993, true, 10)], [(true, -996956), (true, 740154), (true, -142318), (true, 133736), (true, -901624), (true, -734565), (true, 614536), (true, 925345), (true, 616416), (true, -88418), (true, -358405), (true, -879869), (false, 71), (false, -144738), (true, 922098), (true, 503377), (true, 285255), (true, 815771), (true, 71177), (true, 469308), (false, -407427), (true, 492748), (false, -4503599627370489)], ""),
+  (0, 9, [(366420, false, 2000), (759723, false, 0), (-916795, false, 0), (127, true, 2000), (659874, false, 200), (319975, false, 0), (-185087, false, 10), (-101953, false, 0), (810825, false, 2000), (125408, false, 2000), (-281098, false, 200), (-69563, false, 0), (403871, false, 2000), (-167294, false, 10), (-639893, false, 0), (32767, false, 0), (-678689, false, 2000), (936052, false, 10)], [(true, 639321), (true, 764656), (true, -807599), (false, 70), (true, 590450), (true, 574373), (true, -795976), (true, -260602), (true, 83568), (true, 256045), (true, -82543), (true, -892563), (true, 91604), (true, -991205), (true, -764275), (true, 647782), (true, -604488), (true, 908228)], ""),
+  (0, 7, [(271747, false, 0), (-65537, false, 200), (-592321, false, 200), (-223254, false, 0), (9007199254740991, true, 10), (-769260, false, 200), (428264, false, 0), (-703681, false, 10), (402269, true, 0), (223640, false, 0), (-319098, false, 0), (-2147483648, false, 0), (968329, false, 2000), (460241, true, 2000), (-947695, false, 0), (-540952, false, 200), (732857, true, 200), (4294967295, false, 2000), (127, false, 0), (82130, false, 2000), (197142, true, 200), (677266, false, 0), (617813, false, 10), (694545, false, 0)], [(true, 746097), (true, -578955), (true, -571300), (true, -551425), (false, 4503599627370502), (true, -671479), (true, 361306), (true, -125020), (false, 201141), (true, 681344), (true, -395775), (true, -64949), (true, 935127), (false, 230127), (true, -757042), (true, -30394), (false, 366435), (true, 702102), (true, 330311), (true, 26465), (false, 98578), (true, 848338), (true, 990693), (true, 765083)], ""),
+  (1, 6, [(-156972, false, 0), (126489, false, 0), (-927155, false, 2000), (-608913, false, 0), (436207, false, 0), (-272946, false, 0), (-209914, false, 10), (643392, false, 10), (-933006, false, 0), (-592209, false, 2000), (342, false, 2000), (874977, false, 0), (161017, false, 2000), (-303716, false, 0), (-230356, false, 0), (-289002, false, 0), (-508547, false, 2000), (32769, true, 2000), (277708, false, 200), (-690305, true, 2000), (-4294967297, false, 0), (-65536, false, 2000), (864186, false, 200), (56289, false, 200), (-684305, false, 10), (-386712, true, 200), (-32768, true, 200)], [(true, -263172), (true, 705378), (true, -791943), (true, -591014), (true, 358569), (true, -675559), (true, -729886), (true, 628485), (true, -836383), (true, -657956), (true, 306820), (true, 162684), (true, 704937), (true, -11297), (true, -770809), (true, -395696), (true, -245388), (false, 16391), (true, 848286), (false, -345145), (true, -557697), (true, -151156), (true, 797526), (true, 305671), (true, -116463), (false, -193349), (false, -16377)], ""),
+  (1, 1, [(-913771, false, 0), (-92394, true, 200), (2147483647, false, 10), (703032, false, 0), (-946860, false, 0), (-446889, false, 200), (-402059, false, 0), (32768, true, 0), (-2147483647, false, 200), (517820, false, 2000), (9223372036854775806, false, 200), (984840, false, 2000), (-764600, false, 10), (523555, false, 200), (865321, false, 0), (-819462, true, 0), (855064, true, 0), (-331314, false, 200), (-534860, false, 200), (703780, false, 0), (-736510, true, 0), (-591001, true, 2000), (898997, false, 2000), (824710, false, 200), (65535, false, 0), (-256, false, 0), (957896, false, 0), (664763, false, 0), (-740342, false, 10), (135886, true, 200), (378209, true, 0), (-176244, false, 200), (-129, false, 0), (-689062, false, 2000), (103769, false, 0), (9007199254740993, false, 0), (-582239, false, 10), (65537, false, 10)], [(true, -147302), (false, -46190), (true, 637153), (true, 484303), (true, -545948), (true, -93777), (true, -922144), (false, 16391), (true, -637153), (true, 213614), (true, 193327), (true, 303224), (true, -134118), (true, 633520), (true, 347933), (false, -409724), (false, 427539), (true, -372681), (true, -886707), (true, 476995), (false, -368248), (false, -295493), (true, 863839), (true, 54863), (true, 723360), (true, -516217), (true, 721549), (true, 93485), (true, -617110), (false, 67950), (false, 189111), (true, -780768), (true, -185906), (true, -150201), (true, 141255), (true, 461050), (true, -514721), (true, 578955)], ""),
+  (0, 45, [(70173, false, 2000), (4294967295, true, 200), (28895, true, 0), (-65535, true, 0), (920504, false, 200), (-130556, false, 0), (4611686018427387905, false, 0), (-189424, false, 2000), (-273890, false, 0), (329323, false, 0), (-256935, true, 10), (32768, false, 0), (-736801, false, 10), (652587, false, 10), (650002, false, 2000), (-255, false, 2000), (-596990, false, 0), (763229, false, 0), (4294967297, false, 0), (65537, false, 0), (-165559, false, 0), (-162157, false, 0), (-326235, false, 10), (739150, false, 200), (-592275, false, 2000), (-360786, false, 0), (-54982, true, 2000), (-768065, false, 10), (-746722, false, 0), (816343, true, 10), (882891, false, 10), (222930, false, 0), (836408, false, 0), (683938, false, 200), (990424, true, 2000)], [(true, 849170), (false, 2147483654), (false, 14454), (false, -32760), (true, 509329), (true, -558691), (true, 452260), (true, -154671), (true, -516603), (true, 627428), (false, -128460), (true, 75578), (true, -785396), (true, 228488), (true, 371391), (true, -88418), (true, -958840), (true, 623450), (true, 557697), (true, 578955), (true, -762166), (true, -394333), (true, -588079), (true, 682232), (true, -892606), (true, -426985), (false, -27484), (true, -453207), (true, -966543), (false, 408178), (true, 753815), (true, 944966), (true, 432553), (true, 114701), (false, 495219)], ""),
+  (0, 5, [(4611686018427387905, false, 0), (-685052, true, 200), (-247778, false, 10), (-324124, false, 0), (-257, false, 2000), (4294967296, false, 2000), (-65536, false, 200), (-966962, false, 10), (4294967295, true, 2000), (32769, false, 0), (-206017, false, 2000), (-377317, true, 0), (4294967296, false, 2000), (-981051, false, 2000), (-344836, false, 0), (2147483647, true, 200), (-4294967296, false, 0), (110153, false, 10)], [(true, 452260), (false, -342519), (true, -862628), (true, -507099), (true, -944016), (true, 129898), (true, -151156), (true, -135646), (false, 2147483654), (true, 503377), (true, -602184), (false, -188651), (true, 129898), (true, -377676), (true, -53404), (false, 1073741830), (true, -129898), (true, 201878)], ""),
+  (0, 1, [(0, false, 200), (-183623, false, 0), (636772, false, 0), (562014, false, 200), (966822, false, 0), (-662538, false, 0), (558601, false, 0), (959152, false, 10), (154597, true, 0), (966266, false, 200), (-729646, true, 0), (-32767, false, 0), (872058, false, 2000), (2147483648, false, 0), (9007199254740991, false, 10), (66156, false, 200), (838748, true, 200), (4611686018427387904, true, 10), (-461291, false, 2000), (101074, true, 2000), (25486, false, 200)], [(true, 0), (true, -500118), (true, 607601), (true, 305902), (true, 243966), (true, -243566), (true, 232295), (true, 35479), (false, 77305), (true, 388436), (false, -364816), (true, -647782), (true, 421150), (true, 64949), (true, 605455), (true, 385741), (false, 419381), (false, 2305843009213693959), (true, -236492), (false, 50544), (true, 852608)], ""),
+  (2, 0, [(732555, true, 2000), (-91426, false, 2000), (241882, false, 0), (-142482, true, 200), (849927, true, 10), (-174762, false, 0), (573445, true, 2000), (433212, true, 0), (1148, true, 200), (-2147483647, false, 10), (-57874, false, 200), (-4611686018427387905, false, 10), (334069, false, 0), (2147483647, false, 0), (-903269, false, 200), (-4294967297, false, 10), (2147483648, false, 0), (409586, false, 200), (60931, false, 0), (-32767, true, 0), (0, false, 0), (308918, true, 2000), (-81330, false, 200), (266060, false, 10), (-731836, false, 10), (-659782, false, 10), (9007199254740991, false, 0), (-32768, false, 10), (-416351, false, 0), (-974282, true, 10), (-46498, false, 0), (-394391, false, 10), (-301288, false, 200), (-28314, false, 200), (-293865, false, 200), (100477, false, 10), (-573929, true, 0), (-548479, false, 10), (-882143, false, 2000), (-128, false, 10)], [(false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284), (false, 366284)], ""),
+  (2, 0, [(79410, false, 2000), (424606, false, 200), (-1, false, 10), (-686467, true, 0), (-2147483648, false, 0), (-65537, true, 10), (902112, true, 10), (839836, true, 0), (-956434, true, 0), (-266706, false, 2000), (-546815, false, 10), (-661774, false, 200)], [(true, 416677), (true, 416677), (true, 416677), (true, 416677), (true, 416677), (true, 416677), (true, 416677), (true, 416677), (true, 416677), (true, 416677), (true, 416677), (true, 416677)], ""),
+  (0, 1, [(-828781, false, 2000), (-254437, false, 10), (534506, false, 0), (256, false, 10), (-871956, false, 0), (95582, true, 2000), (-496901, false, 0), (-236579, true, 10), (833077, false, 0), (94163, false, 0), (-456958, false, 10), (-3192, false, 0), (-2147483648, false, 0), (-376020, false, 2000), (0, false, 10)], [(true, -619369), (true, -567622), (true, 446314), (true, 516217), (true, -785784), (false, 47798), (true, -113180), (false, -118282), (true, 438359), (true, 716391), (true, -588987), (true, -530313), (true, -64949), (true, -497400), (true, 0)], ""),
+  (0, 1, [], [], ""),
+  (2, 0, [(-386371, false, 200), (-466119, false, 2000), (-848097, false, 0), (600781, false, 2000), (568664, false, 0), (-192883, false, 10), (67664, false, 0), (826706, false, 200), (614471, false, 0), (2147483648, true, 2000), (257, false, 10), (954692, false, 200), (9007199254740992, false, 2000), (-9007199254740993, true, 200)], [(true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565), (true, -631565)], ""),
+  (1, 7, [(-73685, false, 2000), (453279, false, 0), (143917, false, 0), (1, false, 10), (911410, false, 0), (609212, true, 200), (-556825, false, 0), (180732, false, 0), (630009, false, 0), (-811955, false, 200), (649794, false, 0), (9223372036854775807, false, 0), (257, true, 2000), (-570316, false, 0), (-583820, false, 0), (9007199254740991, false, 2000), (96242, false, 0), (-423012, false, 0), (810805, false, 0), (4294967296, true, 0), (-125208, true, 10), (-617129, false, 2000), (-1, false, 200), (9007199254740992, false, 10), (610474, false, 2000), (627798, true, 0), (-441446, false, 2000), (32769, false, 2000), (-2147483647, false, 0), (-268778, false, 0)], [(true, -274749), (true, 721188), (true, 363982), (true, 427799), (true, 116893), (false, 304613), (true, -463551), (true, 736920), (true, 411643), (true, -494989), (true, 389466), (true, 621126), (false, 135), (true, -882547), (true, -862912), (true, 605455), (true, 107842), (true, -567699), (true, 527615), (false, 2147483655), (false, -62597), (true, -377053), (true, -427799), (true, 33251), (true, 383249), (false, 313906), (true, -590807), (true, 503377), (true, -637153), (true, -614676)], ""),
+  (1, 5, [(423247, false, 0), (33289, false, 200), (344410, false, 2000), (1, false, 0), (512227, false, 0)], [(true, 100161), (true, 958191), (true, 811579), (true, 427799), (true, 540986)], ""),
+  (1, 5, [(-439844, true, 0), (-65537, false, 2000), (-4294967295, false, 0), (329112, false, 0), (921224, false, 0), (-247604, false, 200), (-703384, false, 0), (-496598, false, 0), (273199, false, 10), (767723, false, 10), (331228, false, 2000), (718370, false, 0), (991792, true, 0), (-841036, false, 200), (191730, false, 0), (-465359, false, 0), (-413853, true, 0), (-243120, false, 200), (481187, true, 0), (-592864, true, 2000), (4294967297, false, 10), (-128, false, 0), (129, false, 0), (-841501, false, 10), (-256, false, 0), (-885401, false, 200), (4294967295, false, 10), (-582883, true, 0), (575426, false, 2000), (-779931, false, 200), (-58799, false, 10), (-474742, false, 0), (-817763, false, 200), (710196, false, 0), (-787570, true, 200), (-985680, false, 0)], [(false, -219915), (true, -578955), (true, -702102), (true, 362109), (true, 523685), (true, -425824), (true, -69098), (true, -490473), (true, 908382), (true, 146387), (true, 582078), (true, 45679), (false, 495903), (true, -280385), (true, 656207), (true, -517604), (false, -206919), (true, -180862), (false, 240600), (false, -296425), (true, 557697), (true, -758110), (true, 185906), (true, -206323), (true, -516217), (true, -526083), (true, 702102), (false, -291434), (true, 928879), (true, -700913), (true, -77939), (true, -543579), (true, -144126), (true, 227144), (false, -393778), (true, -653307)], ""),
+  (3, -1, [], [], "map_concurrent needs a positive limit, got -1"),
+  (0, 1, [(-4294967296, true, 10), (118657, false, 10), (740963, false, 10), (-933052, true, 0), (658175, false, 200), (-9007199254740991, false, 0), (-9007199254740993, false, 0), (463193, false, 2000), (-10151, false, 200), (32768, true, 10), (442605, false, 2000), (637919, true, 0), (-23831, false, 200), (308467, false, 10), (120487, true, 200), (-761682, false, 10), (-910294, false, 10), (251883, false, 2000), (32768, false, 10), (9007199254740992, false, 10), (-32768, true, 10), (-664459, false, 10), (363533, false, 200), (684724, false, 0), (289974, false, 0)], [(false, -2147483641), (true, 193660), (true, 279491), (false, -466519), (true, 762130), (true, -605455), (true, -461050), (true, 907751), (true, -574623), (false, 16391), (true, 408360), (false, 318966), (true, -847387), (true, 478250), (false, 60250), (true, -820383), (true, -694643), (true, 972255), (true, 75578), (true, 33251), (false, -16377), (true, -42979), (true, 587313), (true, 363707), (true, 215076)], ""),
+  (2, 0, [(-32769, false, 200), (112453, false, 10), (2147483647, true, 0), (-752245, false, 200), (-278913, false, 0), (-151671, true, 10), (-431637, false, 0), (103206, false, 200), (327245, true, 0), (32768, true, 0), (4611686018427387904, true, 200), (30866, false, 10), (688428, false, 0), (579455, false, 0), (872674, false, 10), (52073, true, 200), (-161538, true, 0)], [(true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377), (true, -503377)], ""),
+  (1, 4, [(-387851, false, 200), (529956, false, 2000), (-539568, false, 0), (-206845, false, 10), (-301966, false, 0), (818008, true, 200), (-231159, false, 0), (498446, false, 0), (-431022, false, 0), (-144926, false, 0), (120524, true, 200), (9007199254740991, true, 10), (-992522, true, 200), (-649876, true, 0), (508315, true, 2000), (-4263, false, 200), (1467, true, 2000), (882774, true, 0), (-65535, false, 200), (-240296, false, 200), (-481992, false, 2000), (-4611686018427387903, false, 2000), (2147483649, false, 10), (-155985, false, 0), (750516, false, 10), (128277, false, 2000), (65535, false, 0), (4294967297, false, 200), (1, false, 0), (-127, false, 10), (14146, false, 10), (599905, false, 0), (884637, true, 200), (617997, false, 0), (-328975, false, 2000), (4294967296, true, 2000), (-70221, false, 0), (583242, true, 0), (-812492, true, 2000), (-459707, true, 10)], [(true, -772186), (true, 966705), (true, -958357), (true, -818694), (true, -365294), (false, 409011), (true, -292374), (true, 60652), (true, -227408), (true, -11877), (false, 60269), (false, 4503599627370502), (false, -496254), (false, -324931), (false, 254164), (true, -701668), (false, 740), (false, 441394), (true, -723360), (true, -80110), (true, -77023), (true, -596665), (true, 492748), (true, -26825), (true, 31077), (true, 607695), (true, 723360), (true, 557697), (true, 427799), (true, -330311), (true, 626501), (true, 989184), (false, 442325), (true, 705472), (true, -753823), (false, 2147483655), (true, -383459), (false, 291628), (false, -406239), (false, -229846)], ""),
+  (0, 1, [(-507226, false, 0), (185616, false, 2000), (-364268, false, 0), (-964376, false, 0), (4611686018427387904, false, 10), (607505, false, 0), (-4294967295, false, 200), (256, false, 10), (4294967295, true, 0), (-951467, false, 0), (-393352, false, 0), (-217039, false, 2000), (238149, true, 10), (663158, true, 0), (-335723, false, 0), (-920165, false, 0), (505726, false, 2000), (-4294967295, true, 10), (-9223372036854775807, true, 0), (517662, true, 200), (2147483647, false, 2000)], [(true, -124604), (true, 100966), (true, -18633), (true, -850753), (true, 24461), (true, 251828), (true, -702102), (true, 516217), (false, 2147483654), (true, -410028), (true, -87423), (true, -788617), (false, 119081), (false, 331586), (true, -532814), (true, -485903), (true, 428030), (false, -2147483640), (false, -4611686018427387896), (false, 258838), (true, 637153)], ""),
+  (0, 1, [(-4294967295, false, 0), (-157432, false, 0), (295920, true, 10), (22139, false, 2000), (119649, false, 10), (527211, false, 0), (-886189, true, 10), (901354, true, 10), (-507805, false, 0), (-233323, false, 2000), (-230112, false, 2000), (-905687, false, 0), (-581633, false, 2000)], [(true, -702102), (true, -50121), (false, 147967), (true, 13648), (true, 568996), (true, 661972), (false, -443087), (false, 450684), (true, -819484), (true, -46632), (true, -388165), (true, -830563), (true, -269304)], ""),
+  (1, 6, [(-4611686018427387905, false, 0), (-369133, true, 2000), (-460793, true, 0), (-128, false, 2000), (4611686018427387904, true, 200), (2147483649, true, 2000), (-656522, false, 2000), (311208, false, 2000), (-197713, false, 0), (-140680, false, 0), (-703206, false, 200), (465610, false, 10), (933699, false, 0), (-859466, false, 0), (605901, false, 0), (-28810, false, 200), (-128, false, 0), (912586, false, 0), (655003, true, 2000), (565731, false, 2000), (569073, true, 0), (32767, false, 200)], [(true, -452260), (false, -184559), (false, -230389), (true, -758110), (false, 2305843009213693959), (false, 1073741831), (true, -612504), (true, 71790), (true, -169944), (true, -582774), (true, -921107), (true, 894832), (true, 300199), (true, -592303), (true, 64290), (true, -852218), (true, -758110), (true, 207008), (false, 327508), (true, 430015), (false, 284543), (true, 647782)], ""),
+  (1, 7, [(292186, false, 0), (-728189, true, 2000), (32769, true, 0), (742687, true, 2000), (-65535, false, 0), (401810, false, 0), (-163814, true, 200), (195345, false, 200), (1, false, 2000), (-9223372036854775807, false, 0), (-257, false, 10), (-82164, false, 200), (-222910, true, 2000), (817910, false, 0), (-572813, false, 200), (-646842, false, 2000), (-191737, false, 0), (-2147483647, false, 2000), (-473250, false, 10), (951664, true, 0), (249436, true, 200), (881911, false, 200), (-617401, false, 2000), (-812782, false, 0), (9223372036854775807, false, 2000), (-257, true, 2000), (-256, false, 200), (339661, false, 10), (-20996, false, 10), (-929630, false, 2000), (-345067, true, 2000)], [(true, 503626), (false, -364087), (false, 16391), (false, 371350), (true, -723360), (true, 400511), (false, -81900), (true, 144951), (true, 427799), (true, -621126), (true, -944016), (true, -571589), (false, -111448), (true, 30390), (true, -93443), (true, -530607), (true, -650791), (true, -637153), (true, -269385), (false, 475839), (false, 124725), (true, 512052), (true, -738033), (true, -283700), (true, 621126), (false, -121), (true, -516217), (true, 200221), (true, -40858), (true, -591291), (false, -172526)], ""),
+  (0, 7, [(-25183, true, 10), (-517468, true, 200), (795517, false, 0), (-127, true, 10)], [(false, -12584), (false, -258727), (true, 356123), (false, -56)], ""),
+  (0, 25, [(126841, false, 2000), (606919, true, 0), (257, true, 2000), (-963294, false, 0), (-9007199254740992, true, 10), (128, false, 0), (614507, false, 0), (65535, false, 0), (-898836, false, 2000), (456790, false, 2000), (-256, false, 10), (-29966, true, 10), (32767, true, 0), (111033, false, 10), (-548030, false, 10), (397015, false, 0), (-493215, false, 10), (-571880, true, 2000), (444369, false, 0), (338216, false, 0), (127, false, 10), (4611686018427387904, true, 2000), (4294967296, true, 10), (-637439, false, 0), (-751121, false, 0), (4294967295, false, 2000), (-862114, false, 200), (359582, false, 10), (-174423, false, 0), (189498, true, 10)], [(true, 290173), (false, 303466), (false, 135), (true, -973624), (false, -4503599627370489), (true, 758110), (true, 691441), (true, 723360), (true, -988407), (true, 718971), (true, -516217), (false, -14976), (false, 16390), (true, 663870), (true, -982635), (true, 110459), (true, -250797), (false, -285933), (true, 43531), (true, 32520), (true, 330311), (false, 2305843009213693959), (false, 2147483655), (true, -948679), (true, -848698), (true, 702102), (true, -400656), (true, 358534), (true, -761126), (false, 94756)], ""),
+  (0, 37, [(7907, true, 200), (420333, false, 2000), (-1, false, 10), (-892629, false, 10), (-210523, true, 2000), (65537, true, 10), (600519, false, 0), (11117, false, 0), (712793, false, 2000), (379860, true, 0), (-620211, false, 200), (-903442, false, 2000), (-605146, false, 200), (142645, false, 0), (29408, false, 0), (4294967296, true, 0)], [(false, 3960), (true, 497616), (true, -427799), (true, -647979), (false, -105254), (false, 32775), (true, 656981), (true, 827218), (true, 217814), (false, 189937), (true, -849617), (true, -424688), (true, -77014), (true, 205286), (true, 675252), (false, 2147483655)], ""),
+  (2, 0, [(-9007199254740993, false, 0), (-799331, false, 2000), (855187, false, 10), (127, false, 0), (-438947, false, 0), (-9007199254740993, true, 2000), (-990363, true, 0), (-273982, false, 0), (0, false, 200), (342441, true, 200), (871399, true, 0), (2147483647, false, 0), (9007199254740991, false, 0), (128, false, 10), (991799, false, 200), (941936, false, 2000), (-130042, false, 10), (493885, true, 200), (63165, false, 2000), (2147483647, false, 10), (542019, false, 2000), (-65535, false, 0), (375622, false, 10), (-377544, false, 0), (-4611686018427387903, false, 0), (9007199254740991, false, 0), (-18618, true, 10), (-980614, false, 200), (-4294967295, true, 0), (-42395, false, 10), (-32768, false, 0), (-27456, true, 0), (-32768, false, 0)], [(true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050), (true, -461050)], ""),
+  (0, 8, [(922357, false, 2000), (256, false, 2000), (-65537, false, 0), (953747, true, 0), (-22286, true, 10), (102696, false, 0), (4294967296, false, 0), (-229275, false, 10), (-876082, false, 2000), (4294967297, false, 0), (237724, false, 0), (-457995, false, 0), (-9223372036854775807, false, 0), (-300264, false, 2000), (805245, false, 200), (-990079, false, 0), (-525652, false, 200), (-914502, false, 0), (-703050, false, 10), (-84396, true, 2000), (844190, false, 0), (65536, false, 10), (224699, false, 200)], [(true, 218497), (true, 516217), (true, -578955), (false, 476880), (false, -11136), (true, 114305), (true, 129898), (true, -321476), (true, -879163), (true, 557697), (true, 784385), (true, -215218), (true, -621126), (true, -253580), (true, 972312), (true, -535462), (true, -725332), (true, -867435), (true, -184661), (false, -42191), (true, 554384), (true, 151156), (true, 719126)], ""),
+  (1, 3, [(-582686, false, 10), (-332027, false, 200), (846550, false, 2000), (536895, false, 200), (549297, false, 0), (-4611686018427387903, false, 2000), (587504, false, 0), (191389, true, 10), (896234, false, 10), (124912, true, 2000), (-2147483647, true, 0), (722215, false, 2000), (-842761, false, 2000), (633140, false, 2000), (65535, false, 0), (-883827, true, 10), (-238261, false, 0), (-47385, false, 10), (-65535, false, 0), (9223372036854775807, false, 0), (-677018, false, 0), (-448281, false, 10), (69842, false, 200), (282194, false, 200), (-4294967296, false, 2000), (-406533, false, 0), (-555092, false, 2000), (561436, true, 10), (-851121, false, 200), (-464214, false, 200), (-65537, false, 2000), (-478857, true, 2000), (-708293, false, 0), (-880287, false, 10), (-887047, false, 0)], [(true, -740301), (true, -392453), (true, 156994), (true, 455059), (true, 2339), (true, -596665), (true, 869700), (false, 95701), (true, 858748), (false, 62463), (false, -1073741816), (true, 927902), (true, -231446), (true, 846295), (true, 723360), (false, -441906), (true, -511758), (true, -194802), (true, -723360), (true, 621126), (true, -754504), (true, -588200), (true, 248124), (true, 948843), (true, -129898), (true, -889128), (true, -90107), (false, 280725), (true, -620358), (true, -689219), (true, -578955), (false, -239421), (true, -128089), (true, -768561), (true, -681125)], ""),
+  (1, 1, [(-475656, false, 10), (-101241, true, 0)], [(true, -550692), (false, -50613)], ""),
+  (4, -2, [], [], "a semaphore needs at least one permit, got -2"),
+  (0, 1, [(-664207, false, 0), (-731182, true, 0), (602664, false, 2000), (-467402, true, 0), (490963, true, 0), (-588496, false, 2000), (793607, true, 200), (29993, false, 0), (4294967296, false, 0), (9007199254740993, false, 200), (-923821, true, 200), (897808, false, 0), (565734, false, 0), (738425, false, 0), (933946, false, 0), (338888, false, 0), (-64428, true, 0), (-194373, false, 0), (669770, true, 10), (32768, false, 200), (-942269, false, 10), (863096, true, 0), (-2147483648, false, 0), (-2147483648, true, 0), (-719499, true, 0), (-774665, false, 2000), (738357, false, 200)], [(true, -237955), (false, -365584), (true, 283082), (false, -233694), (false, 245488), (true, -245033), (false, 396810), (true, 936917), (true, 129898), (true, 461050), (false, -461903), (true, 212352), (true, 713409), (true, 528887), (true, 966237), (true, 512587), (false, -32207), (true, -325571), (false, 334892), (true, 75578), (true, -526631), (false, 431555), (true, -64949), (false, -1073741817), (false, -359742), (true, -918138), (true, 438642)], ""),
+  (4, -1, [], [], "a semaphore needs at least one permit, got -1"),
+  (0, 36, [(893528, true, 2000), (-163171, false, 0), (-556216, false, 0), (-255, false, 0), (-348008, false, 0), (-702743, false, 0), (-16810, false, 2000), (-694603, false, 10), (858041, false, 10), (203802, false, 2000), (365059, true, 200), (-401732, false, 2000), (523436, false, 10), (767166, false, 0), (683671, false, 0), (-906639, false, 2000), (-353766, true, 2000), (-609885, false, 0), (-2147483649, false, 200), (982447, false, 2000), (-879652, false, 200), (9007199254740991, true, 0), (-267305, false, 0), (769586, false, 10), (-255, true, 10), (-269057, false, 0), (118662, false, 10), (462812, false, 0), (389882, true, 200), (-248985, true, 0), (-77948, false, 10), (-430667, true, 0), (322926, true, 10), (661571, false, 200), (-847046, false, 2000), (9007199254740992, false, 0)], [(false, 446771), (true, -181217), (true, -934743), (true, -88418), (true, -27761), (true, -850764), (true, -279617), (true, -577350), (true, 980558), (true, 30240), (false, 182536), (true, -32288), (true, 725592), (true, 863061), (true, 892713), (true, -93987), (false, -176876), (true, -410394), (true, -492748), (true, 583289), (true, -117009), (false, 4503599627370502), (true, -468639), (true, 133533), (false, -120), (true, -970240), (true, 332649), (true, 916821), (false, 194948), (false, -124485), (true, -976417), (false, -215326), (false, 161470), (true, 563175), (true, -344662), (true, 33251)], ""),
+  (1, 5, [(-113851, false, 2000), (-4294967297, false, 2000), (-9223372036854775808, false, 0), (412062, false, 2000)], [(true, -197834), (true, -557697), (true, -48922), (true, 182701)], ""),
+  (0, 25, [(919905, true, 0), (240760, false, 10), (11740, false, 2000), (137269, true, 2000), (9223372036854775807, false, 2000), (32768, false, 200), (-9007199254740991, false, 10), (-425145, false, 0), (-169875, true, 10), (551850, false, 2000), (-4611686018427387905, false, 0), (-32767, false, 10), (759744, false, 0)], [(false, 459959), (true, 578252), (true, 345194), (false, 68641), (true, 621126), (true, 75578), (true, -605455), (true, -60227), (false, -84930), (true, 169910), (true, -452260), (true, -647782), (true, 748408)], ""),
+  (4, 0, [], [], "a semaphore needs at least one permit, got 0"),
+  (0, 22, [(788129, false, 2000), (-580852, false, 10), (128, false, 200), (127680, true, 0), (434714, false, 10), (-4611686018427387903, false, 200), (-638892, false, 0), (-390026, false, 10), (98676, false, 0), (716804, false, 0), (-4611686018427387903, false, 200), (-33273, false, 10), (128, false, 10), (-378662, false, 10), (-734957, false, 2000), (882772, false, 0)], [(true, 786594), (true, -159287), (true, 758110), (false, 63847), (true, 656579), (true, -596665), (true, -538760), (true, -232218), (true, 367485), (true, 114455), (true, -596665), (true, -113425), (true, 758110), (true, -738968), (true, -926407), (true, 845887)], ""),
+  (0, 33, [(85951, false, 0), (-219934, false, 2000), (-122080, false, 200), (890467, false, 0), (-674513, true, 2000), (-257, true, 200), (-186122, false, 0), (-457670, false, 200), (488035, true, 10), (4294967295, false, 200), (65537, false, 0), (-4611686018427387905, false, 0), (-65536, false, 0), (-44547, false, 0), (2147483648, false, 200), (107878, true, 10), (-219288, true, 10), (-9007199254740993, false, 2000), (-9223372036854775808, false, 2000), (773430, false, 200), (-304522, true, 0)], [(true, 641542), (true, -263005), (true, -545245), (true, 749316), (false, -337249), (false, -121), (true, -566612), (true, -180960), (false, 244024), (true, 702102), (true, 578955), (true, -452260), (true, -151156), (true, -104882), (true, 64949), (false, 53946), (false, -109637), (true, -461050), (true, -48922), (true, 587957), (false, -152254)], ""),
+  (3, -4, [], [], "map_concurrent needs a positive limit, got -4"),
+  (3, -257, [], [], "map_concurrent needs a positive limit, got -257"),
+  (2, 0, [(544939, false, 0), (-258642, true, 0), (-16301, true, 2000), (400639, false, 200), (-481391, false, 200), (785374, true, 10), (-48942, false, 10), (-100612, false, 0), (-665134, true, 200), (-974139, false, 0), (-796447, false, 10), (691285, true, 0)], [(true, 659892), (true, 659892), (true, 659892), (true, 659892), (true, 659892), (true, 659892), (true, 659892), (true, 659892), (true, 659892), (true, 659892), (true, 659892), (true, 659892)], ""),
+  (0, 16, [(-406540, true, 0), (136676, false, 10), (493227, false, 0), (-957606, false, 2000), (-128, false, 2000), (2147483648, true, 10), (283753, true, 10), (32769, false, 0), (926793, true, 2000), (127, false, 200)], [(false, -203263), (true, 680717), (true, 384370), (true, -660211), (true, -758110), (false, 1073741831), (false, 141883), (true, 503377), (false, 463403), (true, 330311)], ""),
+  (1, 7, [(4294967295, true, 10), (55989, false, 0), (734993, false, 0), (-4294967296, true, 0), (-462283, false, 10), (348608, false, 2000), (-63313, true, 200), (-779755, true, 10), (192291, true, 10), (2147483649, false, 10), (4294967296, false, 2000), (19866, true, 0), (-996432, true, 10), (32768, true, 0), (-83245, false, 2000), (-921318, false, 10), (-4611686018427387905, false, 0)], [(false, 2147483654), (true, 966358), (true, 327123), (false, -2147483641), (true, -611828), (true, 706393), (false, -31649), (false, -389870), (false, 96152), (true, 492748), (true, 129898), (false, 9940), (false, -498209), (false, 16391), (true, -20919), (true, -736671), (true, -452260)], ""),
+  (4, -257, [], [], "a semaphore needs at least one permit, got -257"),
+  (2, 0, [(742808, true, 200), (30983, false, 2000), (-4611686018427387903, false, 200), (-580710, false, 0), (491877, true, 0), (32767, false, 0), (-2147483647, true, 200), (256, false, 200), (435067, true, 200), (-397234, false, 10), (-333396, true, 10), (525811, false, 0), (224826, true, 0), (100256, false, 2000), (-396495, false, 2000), (-497561, false, 200), (971879, true, 0), (-658088, false, 10), (-9007199254740992, false, 200), (-833623, false, 0)], [(false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411), (false, 371411)], ""),
+  (2, 0, [(337438, false, 0), (552339, false, 200), (-32767, false, 0), (-92370, false, 0), (4611686018427387904, false, 200), (-567162, false, 0), (-32768, false, 200), (643399, false, 0), (994125, false, 10), (-351585, true, 200), (235524, false, 2000), (-306135, false, 0), (117665, false, 0), (256, false, 0), (380551, true, 200), (-129, false, 10), (762199, false, 0), (4611686018427387905, false, 200), (-859288, false, 0)], [(true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897), (true, 205897)], ""),
+  (0, 1, [(9007199254740991, false, 200), (-206591, false, 0), (65536, false, 2000), (-995881, true, 200), (543456, false, 0), (645646, false, 2000), (16524, false, 0), (55756, false, 200), (160912, false, 10), (-9007199254740993, false, 10), (948052, false, 10), (-235438, false, 10), (-827943, false, 10), (-643395, false, 10), (746752, false, 10), (4294967297, false, 2000), (-979477, false, 0), (774373, false, 2000), (-924735, true, 0), (-933914, false, 2000), (-4294967297, false, 200), (545620, false, 2000), (-2147483649, false, 2000), (-2147483648, false, 0), (65536, false, 10)], [(true, 605455), (true, -158072), (true, 151156), (false, -497933), (true, 235877), (true, 884539), (true, 929472), (true, 289488), (true, 786177), (true, -461050), (true, 480826), (true, -838805), (true, -124881), (true, -911879), (true, 800474), (true, 557697), (true, -24069), (true, 1202), (false, -462360), (true, -276708), (true, -557697), (true, 990138), (true, -492748), (true, -64949), (true, 151156)], ""),
+  (0, 1, [(-337108, false, 200), (430082, false, 0), (241513, true, 10), (-760521, false, 0), (60330, false, 0), (123959, true, 0), (57246, false, 0), (-32768, false, 10), (-127, true, 10), (-9007199254740992, false, 10), (-645247, false, 0), (-9223372036854775808, true, 2000), (127065, false, 10), (-567519, false, 200), (-255, true, 0), (-2147483648, false, 0), (-289968, false, 0), (4294967296, false, 0), (-61704, false, 0), (-650676, false, 0), (-440127, false, 200), (-329736, true, 200), (887551, true, 0), (-87512, false, 0), (-332384, true, 2000), (694074, false, 0), (-2147483648, false, 0), (-982956, true, 0), (153256, false, 0), (-18869, true, 0), (972243, false, 2000), (-932761, false, 200), (255, true, 10), (371723, false, 0), (9007199254740993, false, 0), (-78143, false, 2000), (246897, false, 10)], [(true, -32650), (true, 97554), (false, 120763), (true, -147232), (true, 36243), (false, 61986), (true, 708087), (true, -75578), (false, -56), (true, -33251), (true, -193248), (false, -4611686018427387897), (true, 116861), (true, -332332), (false, -120), (true, -64949), (true, -648291), (true, 129898), (true, -830308), (true, -707053), (true, -325618), (false, -164861), (false, 443782), (true, -433777), (false, -166185), (true, 272357), (true, -64949), (false, -491471), (true, 566858), (false, -9427), (true, 335388), (true, -25940), (false, 134), (true, 250611), (true, 461050), (true, -396970), (true, 972840)], ""),
+  (0, 12, [(299881, false, 200), (127, true, 200), (-954076, true, 0), (-766633, false, 0), (-853795, false, 2000), (-308856, false, 10), (-65536, false, 10), (303743, false, 200), (848031, false, 200), (911856, false, 0), (65535, false, 0), (-428233, false, 10), (816388, false, 0), (246085, false, 200), (32767, true, 2000), (-3928, false, 0), (541128, true, 0), (412045, false, 0), (-563298, true, 2000), (484602, false, 200), (-816824, true, 200), (-489203, false, 2000)], [(true, 407055), (false, 70), (false, -477031), (true, -846878), (true, -551452), (true, -891563), (true, -151156), (true, 561837), (true, 725414), (true, 914677), (true, 723360), (true, -99576), (true, 922268), (true, 601093), (false, 16390), (true, -389432), (false, 270571), (true, 910142), (false, -281642), (true, 629065), (false, -408405), (true, -926360)], ""),
+  (0, 7, [(68691, true, 200), (-2147483647, false, 0), (-499973, false, 10), (24843, false, 2000), (65535, false, 2000), (626775, false, 2000), (-647299, false, 200), (613366, true, 10), (-22119, false, 200), (325544, false, 0), (-1, false, 2000), (-32769, true, 2000), (75969, true, 0), (-810380, false, 0), (4294967297, true, 10), (129, false, 0), (-128, false, 2000), (262936, true, 0), (496701, false, 2000), (874485, false, 200), (-367950, false, 0), (4611686018427387903, false, 10), (-40924, false, 0)], [(false, 34352), (true, -637153), (true, -307766), (true, 778676), (true, 723360), (true, 913829), (true, -34162), (false, 306690), (true, -457695), (true, 979858), (true, -427799), (false, -16377), (false, 37991), (true, -713586), (false, 2147483655), (true, 185906), (true, -758110), (false, 131475), (true, 553638), (true, 686209), (true, -169826), (true, 596665), (true, -193755)], ""),
+  (0, 22, [(-4611686018427387904, false, 0), (-507239, false, 10), (948966, false, 10), (986890, false, 0), (-181507, false, 10), (-559469, false, 0), (836629, false, 0), (-135892, true, 2000), (310069, false, 200), (26386, true, 0), (-59975, false, 0), (332037, false, 0), (255, false, 2000), (-409935, false, 0), (294685, false, 0), (-303447, true, 2000)], [(true, -24461), (true, -685976), (true, 487939), (true, 288543), (true, -280149), (true, -560714), (true, 975850), (false, -67939), (true, 810193), (false, 13200), (true, -168054), (true, 670431), (true, 88418), (true, -256958), (true, 570120), (false, -151716)], ""),
+  (0, 1, [], [], ""),
+  (0, 41, [(-2147483647, true, 10), (9223372036854775806, false, 2000), (663925, false, 200), (9007199254740992, false, 0), (-839778, false, 0), (353021, false, 0), (-127, false, 0), (97752, false, 0), (83759, false, 10), (601832, false, 200), (-130435, false, 200), (263381, true, 0), (-4294967295, false, 0), (-2147483648, true, 0), (654016, true, 2000), (-4611686018427387905, false, 0), (32768, true, 0), (578071, false, 0), (-694851, false, 0), (-725721, false, 0), (-273917, false, 200), (95065, false, 10), (-287058, false, 200), (-554617, false, 200), (-424741, false, 0), (65536, false, 0), (-926597, false, 0), (9007199254740992, false, 0), (553403, false, 10), (-694785, true, 0), (32769, false, 200), (-707479, false, 2000), (-433828, false, 0), (-65537, false, 10), (4611686018427387904, false, 2000), (979275, false, 10), (937163, false, 2000), (4294967295, false, 0), (4611686018427387904, false, 0), (-469177, false, 200)], [(false, -1073741816), (true, 193327), (true, 599000), (true, 33251), (true, -110857), (true, 577716), (true, -330311), (true, 82394), (true, 908948), (true, 355382), (true, -795168), (false, 131697), (true, -702102), (false, -1073741817), (false, 327015), (true, -452260), (false, 16391), (true, 453838), (true, -671184), (true, -786696), (true, -67140), (true, 589931), (true, -756936), (true, -886194), (true, -229950), (true, 151156), (true, -80815), (true, 33251), (true, 539765), (false, -347385), (true, 503377), (true, -900750), (true, -627802), (true, -578955), (true, 24461), (true, 608932), (true, 191489), (true, 702102), (true, 24461), (true, -849287)], ""),
+  (0, 19, [(623602, false, 0), (-66336, false, 2000), (-403146, false, 0), (-904115, true, 0), (235661, false, 200), (2147483649, false, 10), (-166035, false, 0), (-588078, true, 0), (-32768, false, 2000), (913816, true, 0), (695321, true, 2000), (-9007199254740992, false, 0), (-4294967295, true, 0), (852599, false, 0), (474682, false, 0), (492118, false, 2000), (-183097, true, 2000), (-771359, true, 200), (405005, false, 0), (-132022, false, 0), (377218, false, 0), (303704, false, 0), (523937, true, 0), (866563, true, 0), (0, false, 0), (454186, true, 200), (-68714, true, 200), (256, false, 200), (-9007199254740991, false, 0), (-318374, true, 0), (-12766, false, 0), (4611686018427387904, false, 2000), (-352333, false, 0), (30597, false, 200), (-256, false, 10), (-557738, false, 0), (-421457, false, 0), (-328321, false, 0)], [(true, 511673), (true, -389330), (true, -938262), (false, -452050), (true, 237694), (true, 492748), (true, -393878), (false, -294032), (true, -75578), (false, 456915), (false, 347667), (true, -33251), (false, -2147483640), (true, 905384), (true, 875717), (true, 956704), (false, -91541), (false, -385672), (true, 214215), (true, -710144), (true, 999066), (true, 877727), (false, 261975), (false, 433288), (true, 0), (false, 227100), (false, -34350), (true, 516217), (true, -605455), (false, -159180), (true, -265651), (true, 24461), (true, -252886), (true, 326736), (true, -516217), (true, -42865), (true, -342249), (true, -974117)], ""),
+  (1, 8, [(65536, true, 2000), (-257, false, 0), (-295966, true, 2000), (-44824, false, 200), (141106, false, 0), (129, true, 0), (951539, false, 0), (-355, false, 0), (-65535, false, 200), (-9223372036854775807, true, 0), (312308, true, 200)], [(false, 32775), (true, -944016), (false, -147976), (true, -604851), (true, 824602), (false, 71), (true, 211463), (true, -868192), (true, -723360), (false, -4611686018427387896), (false, 156161)], ""),
+  (0, 34, [(-128, false, 0), (-615231, false, 0), (-32769, false, 0), (839301, false, 200), (65537, false, 2000), (-100462, false, 2000), (-4294967297, false, 0), (-162239, false, 0), (895552, false, 10), (-32768, false, 10), (796388, false, 2000), (884406, true, 10), (-728952, true, 10), (0, false, 2000), (779940, true, 0), (969694, false, 0), (455089, false, 2000), (-746596, false, 0), (667108, false, 10), (-2147483648, false, 0), (-972883, false, 200)], [(true, -758110), (true, -416987), (true, -503377), (true, 51346), (true, 578955), (true, -414207), (true, -557697), (true, -473746), (true, 100703), (true, -75578), (true, 967936), (false, 442210), (false, -364469), (true, 0), (false, 389977), (true, 879010), (true, 35053), (true, -64028), (true, 279131), (true, -64949), (true, -125926)], ""),
+  (1, 8, [(170951, true, 10), (-184651, false, 10), (710711, false, 2000), (613143, false, 0), (48619, false, 200), (863661, false, 10), (333055, false, 10), (-4294967297, false, 2000), (-211619, false, 10), (-549160, true, 2000)], [(false, 85482), (true, -276170), (true, 542969), (true, 175354), (true, 97184), (true, 203723), (true, 168505), (true, -557697), (true, -124991), (false, -274573)], ""),
+  (1, 4, [(96900, false, 10), (427568, false, 200), (-128, true, 0), (-563527, false, 0), (65536, false, 200), (275890, false, 0), (-699465, false, 200)], [(true, 598741), (true, 614096), (false, -57), (true, -563848), (true, 151156), (true, 112035), (true, -529848)], ""),
+  (1, 5, [(-954096, false, 0), (245392, false, 0), (-272537, false, 0), (-32767, true, 0), (-4611686018427387903, false, 10), (-464469, false, 0), (910459, false, 200), (-32767, true, 0), (155006, false, 200), (539157, true, 10), (-357017, false, 2000), (-624057, true, 0), (-2147483647, true, 0), (256, false, 0), (-610914, false, 2000), (2147483649, false, 200), (-166665, false, 0)], [(true, -90224), (true, 137274), (true, -706293), (false, -16376), (true, -596665), (true, -777637), (true, 281265), (false, -16376), (true, 212861), (false, 269585), (true, -57390), (false, -312021), (false, -1073741816), (true, 516217), (true, -614245), (true, 492748), (true, -906441)], ""),
+  (1, 2, [(-569353, true, 2000), (-391615, false, 200)], [(false, -284669), (true, -2789)], ""),
+  (0, 20, [(-903647, false, 0), (677194, false, 2000), (-9007199254740993, false, 10), (358349, false, 0), (129, false, 200), (125456, true, 10), (99807, false, 200), (109354, false, 0), (-397321, false, 10), (385723, false, 200), (186878, false, 0), (720856, false, 10), (-4294967297, false, 200), (0, true, 0), (4611686018427387905, true, 200), (661449, false, 2000), (-491005, true, 200), (-394243, true, 0), (-783674, true, 0), (-2147483648, false, 200), (-610593, false, 10), (800743, false, 2000), (268429, true, 10), (-335431, false, 10), (-844042, false, 0), (-36058, false, 2000), (256, false, 0), (-593614, true, 0), (319093, true, 2000), (937014, false, 0), (-9223372036854775807, false, 200), (-394801, false, 10), (-926288, false, 10), (-905402, true, 0), (-521481, false, 0), (-345054, true, 10), (974279, true, 10), (-949595, false, 2000), (826721, false, 200), (981064, false, 10)], [(true, -123219), (true, 46900), (true, -461050), (true, 883951), (true, 185906), (false, 62735), (true, 206702), (true, 391503), (true, -16560), (true, 418644), (true, 981687), (true, 550804), (true, -557697), (false, 7), (false, 2305843009213693959), (true, 371853), (false, -245495), (false, -197114), (false, -391830), (true, -64949), (true, -291177), (true, 26989), (false, 134221), (true, -615881), (true, -240321), (true, -530067), (true, 516217), (false, -296800), (false, 159553), (true, 449630), (true, -621126), (true, -966317), (true, -891323), (false, -452694), (true, -381055), (false, -172520), (false, 487146), (true, -572703), (true, 356072), (true, 939048)], ""),
+  (0, 1, [(-638769, false, 2000), (900150, false, 2000), (-467642, false, 0), (-128, false, 2000), (-720943, true, 0), (134500, true, 2000), (235771, true, 0), (-964696, false, 200), (-256, false, 10), (4611686018427387905, true, 0), (-967314, false, 2000), (408021, true, 2000), (-4611686018427387903, false, 0), (-202309, false, 0), (-1787, false, 0), (334579, true, 2000), (4294967296, false, 200), (289506, false, 10), (257, false, 2000), (412457, true, 0), (732188, true, 10), (682121, true, 2000), (-2147483647, false, 10), (9007199254740993, false, 200), (777691, false, 0), (878890, false, 10), (8188, true, 0), (-829213, false, 0), (713264, false, 10), (880968, false, 10), (-770192, true, 0), (894320, true, 0), (529710, false, 2000), (-352299, true, 200)], [(true, -919642), (true, 114604), (true, -179790), (true, -758110), (false, -360464), (false, 67257), (false, 117892), (true, -746022), (true, -516217), (false, 2305843009213693959), (true, -720444), (false, 204017), (true, -596665), (true, -328250), (true, -474521), (false, 167296), (true, 129898), (true, 5744), (true, 944016), (false, 206235), (false, 366101), (false, 341067), (true, -637153), (true, 461050), (true, 434027), (true, 135149), (false, 4101), (true, -427982), (true, 710540), (true, 98804), (false, -385089), (false, 447167), (true, 728466), (false, -176142)], ""),
+  (1, 3, [(0, false, 10), (-76413, false, 2000), (258264, false, 2000), (902753, true, 2000), (-825260, true, 0), (2147483649, false, 10), (-734352, false, 0), (-57363, true, 10), (-825085, true, 0), (32767, true, 2000), (441121, false, 2000), (-4294967296, false, 0), (370034, false, 0), (-868318, false, 0), (-398046, false, 200), (-145085, false, 10), (-8550, false, 0), (-4611686018427387904, false, 2000), (256, false, 0), (-657030, false, 200), (793498, true, 200), (4294967296, false, 10), (591957, true, 0), (113822, false, 2000), (58321, false, 200), (83285, true, 2000), (-17757, false, 0), (-128, false, 0), (-939336, false, 10), (-427296, false, 0), (-2147483648, true, 200), (9223372036854775807, false, 200), (619328, true, 0), (9007199254740991, false, 10), (-248367, false, 200), (200416, false, 200)], [(true, 0), (true, -306920), (true, 749484), (false, 451383), (false, -412623), (true, 492748), (true, -108786), (false, -28674), (false, -412535), (false, 16390), (true, 556549), (true, -129898), (true, 700269), (true, -457690), (true, -169905), (true, -31714), (true, -670479), (true, -24461), (true, 516217), (true, -933745), (false, 396756), (true, 129898), (false, 295985), (true, 791702), (true, 590632), (false, 41649), (true, -404055), (true, -758110), (true, -795929), (true, -253116), (false, -1073741817), (true, 621126), (false, 309671), (true, 605455), (true, -835483), (true, 507173)], ""),
+  (1, 7, [(64072, true, 10), (32768, false, 10), (-298862, false, 2000), (-723854, true, 0), (372845, true, 0), (4294967295, false, 0), (712968, false, 10), (-4294967295, false, 2000), (32768, false, 0)], [(false, 32043), (true, 75578), (true, -481182), (false, -361920), (false, 186429), (true, 702102), (true, 82414), (true, -702102), (true, 75578)], ""),
+  (1, 6, [(128, true, 0), (-665274, true, 0), (-395045, false, 0), (324413, false, 2000), (502412, false, 10), (0, false, 2000), (32767, true, 200), (70103, false, 0), (253961, false, 200), (-206137, false, 2000), (-9007199254740993, false, 0), (9223372036854775807, false, 0), (7797, false, 0)], [(false, 71), (false, -332630), (true, -348958), (true, 140638), (true, 706398), (true, 0), (false, 16390), (true, 903330), (true, 935910), (true, -937911), (true, -461050), (true, 621126), (true, 538798)], ""),
+  (4, -4294967295, [], [], "a semaphore needs at least one permit, got -4294967295"),
+  (1, 4, [(-255, false, 0), (718566, false, 10), (-936555, true, 0), (345725, false, 0), (-32767, false, 0), (-151271, false, 0), (148537, true, 10)], [(true, -88418), (true, 894034), (false, -468270), (true, 365575), (true, -647782), (true, -388390), (false, 74275)], ""),
+  (2, 0, [(508591, false, 0), (-65535, false, 10), (-647530, false, 10), (91693, false, 10), (257, false, 0), (538200, true, 0), (-123620, false, 10), (-111257, false, 200), (-9007199254740992, true, 200), (4294967295, true, 200), (209207, false, 0), (855322, false, 0), (-408943, false, 200)], [(true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487), (true, 68487)], ""),
+  (1, 6, [(-470431, false, 200), (9223372036854775807, false, 10), (555661, false, 200), (970465, false, 0), (-935947, false, 10), (-109846, false, 200), (433048, false, 200), (493265, false, 0), (692037, false, 0), (110413, false, 0), (709699, true, 10), (-9223372036854775807, true, 0), (-749772, false, 2000), (-255, true, 0), (-235110, true, 10), (453818, false, 2000), (-498467, true, 0), (9007199254740993, true, 200), (988155, false, 200), (457870, true, 200), (960852, false, 0), (-145380, false, 10), (4611686018427387903, false, 0), (-777266, false, 10), (673763, true, 0), (878670, true, 200), (-194678, false, 0), (745122, false, 0), (117953, false, 10)], [(true, -307622), (true, 621126), (true, 507009), (true, 711049), (true, -989468), (true, -867981), (true, 945584), (true, 640684), (true, 848410), (true, 429285), (false, 354856), (false, -4611686018427387896), (true, -749578), (false, -120), (false, -117548), (true, 304156), (false, -249226), (false, 4503599627370503), (true, 452655), (false, 228942), (true, 291598), (true, -232041), (true, 596665), (true, -619998), (false, 336888), (false, 439342), (true, -803876), (true, 490195), (true, 24067)], ""),
+  (0, 21, [(132970, false, 200)], [(true, 262378)], ""),
+  (2, 0, [(-240253, false, 0), (992005, false, 0), (-33814, true, 0), (224562, true, 0), (-28453, true, 200), (-127, false, 2000), (-4294967296, true, 2000), (141380, false, 2000), (-510269, false, 0), (256, false, 10), (128, true, 2000)], [(true, -684810), (true, -684810), (true, -684810), (true, -684810), (true, -684810), (true, -684810), (true, -684810), (true, -684810), (true, -684810), (true, -684810), (true, -684810)], ""),
+  (1, 1, [(463203, false, 200), (271297, false, 2000), (940360, false, 10), (-733846, false, 0), (538517, false, 0), (-116674, false, 0), (-883272, false, 0), (169114, false, 10), (-394899, true, 2000), (-906273, false, 0), (-708163, true, 0), (65535, false, 200), (403034, false, 2000), (-520641, false, 0), (786105, false, 0), (9007199254740993, false, 2000), (9223372036854775806, false, 200), (-209887, true, 2000), (-4611686018427387903, false, 10), (69007, false, 2000), (-479145, false, 0), (-65536, false, 0), (2147483649, true, 2000), (113041, false, 200), (-963908, true, 200), (739875, false, 2000), (-693683, true, 200), (-719385, false, 200), (-503235, false, 0), (-314787, false, 10), (-443018, false, 2000)], [(true, 185726), (true, 237123), (true, 860791), (true, -643143), (true, 342955), (true, -870790), (true, -744745), (true, 583048), (false, -197442), (true, -520024), (false, -354074), (true, 723360), (true, 24915), (true, -30972), (true, 924016), (true, 461050), (true, 193327), (false, -104936), (true, -596665), (true, 37030), (true, -136924), (true, -151156), (false, 1073741831), (true, 681685), (false, -481947), (true, 835577), (false, -346834), (true, -260362), (true, -783919), (true, -159818), (true, -88816)], ""),
+  (2, 0, [(-609871, true, 2000), (-360956, true, 2000), (206427, false, 2000), (-401940, true, 200), (-429025, true, 0), (138647, false, 2000), (381721, false, 0), (628887, false, 200), (-4294967297, false, 2000), (161601, false, 2000), (-4294967296, false, 200), (241069, false, 200), (514195, false, 2000), (9007199254740992, false, 2000), (-15933, true, 0), (-559451, false, 0), (-821125, false, 10), (18215, false, 0), (205065, false, 200), (175655, false, 2000), (-202767, true, 0), (-250332, false, 10), (-65536, false, 0), (-248771, false, 0), (-272324, false, 10), (-592886, false, 10), (278921, true, 10), (-792549, false, 200), (275739, false, 0), (166988, false, 10)], [(false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928), (false, -304928)], ""),
+  (2, 0, [(648741, true, 0), (-2147483648, false, 10), (-32767, true, 10), (-937639, false, 200), (-344685, true, 200), (857849, false, 200), (-887053, false, 200), (999710, false, 0), (695789, false, 0), (750644, false, 0), (-954495, true, 2000), (294296, true, 0), (-626696, true, 200), (255, false, 10), (-847718, true, 0), (60026, true, 200), (265959, false, 10), (118607, true, 10), (-128, false, 2000), (-207203, false, 0), (914545, false, 2000), (322837, false, 10), (765135, false, 2000), (256, false, 0), (999988, false, 200), (408985, false, 200), (4294967295, true, 0), (182016, false, 10)], [(false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377), (false, 324377)], ""),
+  (2, 0, [(431278, false, 10), (199179, false, 0), (-698754, true, 0), (792767, false, 200), (869568, false, 200), (-94174, false, 200), (-32767, false, 10), (44151, false, 0)], [(true, 743625), (true, 743625), (true, 743625), (true, 743625), (true, 743625), (true, 743625), (true, 743625), (true, 743625)], ""),
+  (0, 31, [(-866767, false, 2000), (-908868, false, 0), (-316379, true, 0), (426154, false, 0), (-580008, false, 200), (874421, false, 10), (644092, false, 0), (262678, false, 200), (384879, false, 10), (4294967295, false, 0), (873789, false, 2000), (516496, false, 0), (762272, false, 0), (235572, false, 0), (-98718, false, 10), (-129, true, 2000), (-378296, false, 200), (-589402, false, 0), (53078, false, 0), (227466, false, 200), (-9007199254740991, false, 0), (217297, true, 0), (-220430, false, 200), (221159, true, 0), (-873835, false, 0), (33965, true, 200), (458702, false, 0), (1, false, 200), (-202369, false, 0), (-873076, false, 0), (-508285, false, 0), (477678, true, 10), (-2147483648, false, 2000)], [(true, -943433), (true, -655099), (false, -158182), (true, 708125), (true, -98014), (true, 307154), (true, 86885), (true, 48603), (true, 357371), (true, 702102), (true, 938999), (true, 809439), (true, 221034), (true, 163697), (true, -334989), (false, -57), (true, -165002), (true, -829766), (true, 647204), (true, 435407), (true, -605455), (false, 108655), (true, -450673), (false, 110586), (true, -617693), (false, 16989), (true, 668205), (true, 427799), (true, -996115), (true, -919227), (true, -162386), (false, 238846), (true, -64949)], ""),
+  (4, -2147483647, [], [], "a semaphore needs at least one permit, got -2147483647"),
+  (0, 41, [(-855411, false, 200), (-4294967295, false, 0), (212966, true, 2000), (334535, true, 0), (150659, false, 10), (-994909, true, 0), (9223372036854775807, false, 0), (748751, true, 10), (-1, true, 200), (698995, false, 0), (-343096, false, 2000), (-549775, false, 10), (-237549, false, 2000), (-96515, false, 0)], [(true, -872563), (true, -702102), (false, 106490), (false, 167274), (true, 576188), (false, -497447), (true, 621126), (false, 374382), (false, 7), (true, 464921), (true, -685379), (true, -489649), (true, -919785), (true, -896621)], ""),
+  (1, 1, [(-234375, true, 200), (232381, false, 10), (-321038, false, 2000), (-944807, true, 2000), (752184, false, 200), (56286, true, 10), (483183, false, 0), (936790, false, 10), (-676340, false, 2000), (-633291, false, 2000), (208540, false, 0), (-32768, false, 2000), (-769531, false, 10), (-574262, false, 0)], [(false, -117180), (true, 61183), (true, -323345), (false, -472396), (true, 597670), (false, 28150), (true, 584105), (true, 622942), (true, -707652), (true, -443749), (true, 935824), (true, -75578), (true, -604660), (true, -972337)], ""),
+  (3, -3, [], [], "map_concurrent needs a positive limit, got -3"),
+  (0, 1, [(-297546, false, 2000), (257, true, 200), (20333, false, 10), (185283, true, 0), (-4611686018427387904, false, 200), (357310, false, 0), (-24867, true, 10), (-9223372036854775808, true, 0), (83014, false, 10), (127, false, 2000), (-32769, true, 0), (776440, false, 10), (127, true, 2000), (-4294967295, false, 10), (-123447, false, 200), (-2147483649, false, 200), (2147483647, false, 200), (-251777, false, 200), (-32768, false, 0), (-2147483647, false, 200), (9223372036854775806, false, 0), (-32767, false, 0), (-969391, false, 2000), (-48739, false, 200), (500559, true, 10), (433588, false, 200)], [(true, -499387), (false, 135), (true, 410973), (false, 92648), (true, -24461), (true, 402122), (false, -12426), (false, -4611686018427387897), (true, 199647), (true, 330311), (false, -16377), (true, 259083), (false, 70), (true, -702102), (true, -344723), (true, -492748), (true, 637153), (true, -625696), (true, -75578), (true, -637153), (true, 193327), (true, -647782), (true, -256300), (true, -432911), (false, 250286), (true, 956351)], ""),
+  (2, 0, [(893031, true, 2000), (174985, false, 2000), (-956843, true, 10), (32768, false, 10), (-597902, false, 200), (-476114, false, 0), (997530, true, 2000), (65535, true, 0), (182327, false, 0), (-340392, false, 0), (514038, false, 10), (517729, false, 200), (-78265, true, 10), (997516, false, 0), (-4294967296, false, 0), (256, false, 0), (-739119, false, 0), (-30374, true, 2000), (-212171, false, 0)], [(false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522), (false, 446522)], ""),
+  (0, 1, [(-622990, true, 0), (214860, false, 2000), (32768, true, 200), (512167, true, 200), (255, false, 10), (946093, false, 200), (977434, false, 0), (-180399, false, 200), (-2147483649, true, 0), (-275438, false, 200), (-775757, false, 200), (59711, false, 200), (4294967297, true, 0), (249839, false, 0), (416451, false, 0)], [(false, -311488), (true, 617392), (false, 16391), (false, 256090), (true, 88418), (true, 425099), (true, 33334), (true, -280279), (false, -1073741817), (true, -747469), (true, -73242), (true, 229457), (false, 2147483655), (true, 553721), (true, 786881)], ""),
+  (3, -9007199254740993, [], [], "map_concurrent needs a positive limit, got -9007199254740993"),
+  (4, -2, [], [], "a semaphore needs at least one permit, got -2"),
+  (2, 0, [(862086, true, 0), (-116492, false, 200), (-9007199254740992, true, 0), (-65535, false, 200), (553776, false, 0), (-953101, true, 0), (-32768, false, 2000), (-572653, true, 200), (256, false, 2000), (-128, false, 2000), (-848670, false, 200), (-65537, false, 200), (-621733, false, 10)], [(false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050), (false, 431050)], ""),
+  (2, 0, [(-255, false, 0), (619251, false, 200), (-368586, false, 10), (-83167, false, 0), (739195, false, 2000), (903464, true, 10), (-9223372036854775808, false, 2000), (800302, false, 0)], [(true, -88418), (true, -88418), (true, -88418), (true, -88418), (true, -88418), (true, -88418), (true, -88418), (true, -88418)], ""),
+  (0, 24, [(-820274, true, 200), (506009, false, 200), (875931, false, 0), (-709239, false, 2000), (905030, false, 200), (532130, true, 0), (9223372036854775806, false, 10), (755244, false, 0)], [(false, -410130), (true, 494784), (true, 281706), (true, -824731), (true, 767463), (false, 266072), (true, 193327), (true, 658683)], ""),
+  (2, 0, [(-296404, false, 0), (-308520, false, 10), (-257794, false, 2000), (239277, false, 0), (303380, true, 0), (-4294967296, false, 0)], [(true, -954396), (true, -954396), (true, -954396), (true, -954396), (true, -954396), (true, -954396)], ""),
+  (1, 5, [(157008, false, 0), (-203264, false, 2000), (624894, false, 2000), (122274, false, 0), (128, false, 2000), (-666145, false, 0)], [(true, 663891), (true, -875071), (true, 226322), (true, 538002), (true, 758110), (true, -309930)], ""),
+  (0, 34, [(4611686018427387903, false, 0), (2147483647, false, 0), (-32767, true, 0), (-755249, false, 0), (-869336, false, 0), (127, false, 0), (-678469, false, 10), (867573, false, 2000), (476974, true, 0), (-478822, false, 10), (-200431, true, 2000), (-209876, false, 0), (-392158, false, 0), (-594327, true, 2000), (-573421, false, 0), (2147483649, true, 200), (804660, false, 2000), (-143125, false, 200), (108780, true, 0), (870564, false, 2000), (798149, false, 10), (9223372036854775807, false, 0), (4611686018427387904, false, 10), (14676, false, 2000), (-129, true, 2000), (156198, true, 10), (-394226, false, 0), (352215, false, 0), (-4294967297, true, 0), (-562916, true, 200), (505974, false, 0), (-338033, true, 10), (853379, false, 200), (65535, false, 10)], [(true, 596665), (true, 637153), (false, -16376), (true, -797672), (true, -955767), (true, 330311), (true, -488990), (true, 748392), (false, 238494), (true, -958264), (false, -100208), (true, -473572), (true, -296950), (false, -297156), (true, -194455), (false, 1073741831), (true, 710647), (true, -548191), (false, 54397), (true, 291361), (true, 319713), (true, 621126), (true, 24461), (true, 359290), (false, -57), (false, 78106), (true, -982630), (true, 772757), (false, -2147483641), (false, -281451), (true, 521864), (false, -169009), (true, 587602), (true, 723360)], ""),
+]

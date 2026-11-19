@@ -148,6 +148,7 @@ var harnesses = map[string][]harness{
 	"metrics":      {{"TestMetricsFuzz", "XO_METRICSFUZZ"}},
 	"embed":        {{"TestEmbedFuzz", "XO_EMBEDFUZZ"}},
 	"backoff":      {{"TestBackoffFuzz", "XO_BACKOFFFUZZ"}},
+	"task":         {{"TestTaskFuzz", "XO_TASKFUZZ"}},
 	"protowire":    {{"TestProtowireFuzz", "XO_PROTOWIREFUZZ"}},
 	"smtp":         {{"TestSmtpFuzz", "XO_SMTPFUZZ"}},
 	"trace":        {{"TestTraceFuzz", "XO_TRACEFUZZ"}},
