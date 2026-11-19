@@ -1385,6 +1385,12 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   with a line that says to run it on host 1 (#415, 2026-11-19:
   l1-87-mvar drained 06:44 to past 08:18, the cap restarting on each of
   18 re-drains, at a load the host 3/4 VMs keep near 13 to 22).
+  The drain's quiet test (load under HEAVY_MEASURE_LOAD, 7) leaves out
+  the CPUs the Mac's VMs use (ps %CPU of each Virtualization.framework
+  or QEMU process): its lines read `load 5.40 (20.40 less 15.0 for the
+  VMs)`, so a Mac-only timing is not refused while the VMs run gates
+  (#421). The VMs still hold their cores: a timing that needs the whole
+  Mac waits for them by hand (`heavy.sh --status`, host 3/4 lanes).
   Last verified: 2026-11-19.
 - Gate before measuring a runtime or allocator change (lead, 2026-10-26:
   a threshold allocator was measured twice and its self-build footprint
