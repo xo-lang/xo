@@ -1,0 +1,303 @@
+// ui stress program (decision 0616 section 2): a Host (std/ui, its memory
+// store, keep 500 so it compacts often) serves an App over std/http on
+// loopback, and TASKS clients sync with it as the browser runtime does.
+// Each client is a Replica: it predicts each Msg it sends, batches 1 to 6
+// of them, and now and then holds them over a few rounds (offline) before
+// it POSTs /_xo/sync; it folds each reply's Down into its replica, asks
+// for the model (`?model=1`) every eighth sync, fetches the page now and
+// then, and every 50 rounds reloads: a new client from version 0, which a
+// compacted log answers with a snapshot. The App is a shared counter per
+// client, a list of the last notes and four seats that Reserve takes and
+// Release frees (a Reserve with no seat left changes nothing).
+// A background task samples the resident set every 10 s (Linux
+// /proc/self/status) and prints it each minute.
+// Pass: the server applied every Msg once (each client's counter is the
+// sum it sent, its notes counted), every replica, once its Msgs are
+// acknowledged, shows the server's model, the seats never go below zero
+// or past four, no fault, and the resident set at the end within 10% or
+// 4 MB of its sample at the mark.
+//
+//   main [MINUTES (30); 0: 300 rounds per client] [TASKS (32)]
+use std/http
+use std/json
+use std/ui
+
+struct Room {
+  counts: Map[Str, Int]
+  notes: Map[Str, Int]
+  last: List[Str]
+  seats: Int
+  holders: List[Str]
+} derive Eq, Json, Debug
+
+enum Msg {
+  Inc(who: Str, n: Int)
+  Note(who: Str, text: Str)
+  Reserve(who: Str)
+  Release(who: Str)
+} derive Eq, Json, Debug
+
+fn update(m: Room, msg: Msg) -> Room {
+  var r = m
+  match msg {
+    Inc(who, n) => { r.counts.put(who, (r.counts.get(who) ?? 0) + n) }
+    Note(who, text) => {
+      r.notes.put(who, (r.notes.get(who) ?? 0) + 1)
+      r.last.push(text)
+      if r.last.len() > 8 { r.last = r.last[r.last.len() - 8..] }
+    }
+    Reserve(who) => {
+      if r.seats > 0 && !r.holders.contains(who) {
+        r.seats -= 1
+        r.holders.push(who)
+      }
+    }
+    Release(who) => {
+      if r.holders.contains(who) {
+        r.seats += 1
+        r.holders = r.holders.filter(fn(h) { h != who })
+      }
+    }
+  }
+  r
+}
+
+fn view(m: Room) -> ui.Html {
+  var items: List[ui.Html] = []
+  for t in m.last {
+    items.push(ui.el("li", [], [ui.text(t)]))
+  }
+  ui.el("main", [], [ui.el("p", [ui.on("click", Msg.Reserve(who: "page"))], [ui.text("seats ${m.seats}")]), ui.el("ul", [], items)])
+}
+
+fn room_app() -> ui.App[Room, Msg] {
+  ui.app(Room{counts: {}, notes: {}, last: [], seats: 4, holders: []}, update, view)
+}
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+/// What a client sent: its counter's sum and its notes.
+struct Sent {
+  who: Str
+  inc: Int
+  notes: Int
+  rounds: Int
+  syncs: Int
+  reloads: Int
+}
+
+/// One sync over HTTP: the replica's outbox up, the reply's Down folded in.
+fn sync_once(c: http.Client, base: Str, r0: ui.Replica[Room, Msg], model: Bool) -> (ui.Replica[Room, Msg], Int) ! Str uses net.dial {
+  var r = r0
+  let body = json.encode_str(r.outbox())
+  let q = if model { "?model=1" } else { "" }
+  let resp = c.send(http.new_request("POST", "${base}/_xo/sync${q}", headers: {"Content-Type": "application/json"}, body: body.bytes())).map_err(fn(e) { "sync: ${e}" })?
+  if resp.status != 200 {
+    return Err("sync: status ${resp.status}")
+  }
+  let s = json.decode_str[ui.Sync[Room, Msg]](resp.text() ?? "").map_err(fn(e) { "sync reply: ${e}" })?
+  r.receive(s.down)
+  // Sync.ver is where the log was when the reply was written, which other
+  // clients' appends may have moved past the Down's entries
+  if r.version() > s.ver {
+    return Err("sync: replica at ${r.version()} past the reply's version ${s.ver}")
+  }
+  Ok((r, s.ver))
+}
+
+fn client(os: Os, c: http.Client, base: Str, t: Int, end: Time, rounds: Int) -> (Sent, ui.Replica[Room, Msg]) ! Str uses (net.dial, clock) {
+  let clock = os.clock
+  let app = room_app()
+  let who = "c${t}"
+  var gen = 0
+  var r = ui.replica(app, "${who}.${gen}", app.init, 0)
+  var x = next(t * 7919 + 17)
+  var sent = Sent{who: who, inc: 0, notes: 0, rounds: 0, syncs: 0, reloads: 0}
+  var hold = 0
+  while if rounds > 0 { sent.rounds < rounds } else { clock.now() < end } {
+    sent.rounds += 1
+    x = next(x)
+    for i in 0..1 + (x >> 20) % 6 {
+      let y = next(x + i)
+      let m = match (y >> 24) % 8 {
+        0 => Msg.Note(who: who, text: "${who} ${sent.rounds}.${i} 日本")
+        1 => Msg.Reserve(who: who)
+        2 => Msg.Release(who: who)
+        _ => Msg.Inc(who: who, n: 1 + (y >> 30) % 9)
+      }
+      match m {
+        Inc(_, n) => { sent.inc += n }
+        Note(_, _) => { sent.notes += 1 }
+        Reserve(_) => {}
+        Release(_) => {}
+      }
+      r.send(m)
+      let p = r.model()
+      if p.seats < 0 || p.seats > 4 || p.seats + p.holders.len() != 4 {
+        return Err("${who}: a prediction shows ${p.seats} seats and ${p.holders.len()} holders")
+      }
+    }
+    if hold > 0 {
+      hold -= 1
+      continue
+    }
+    if (x >> 40) % 4 == 0 {
+      hold = 1 + (x >> 44) % 3
+    }
+    r = sync_once(c, base, r, sent.syncs % 8 == 7)?.0
+    sent.syncs += 1
+    if (x >> 48) % 16 == 0 {
+      let page = c.get("${base}/").map_err(fn(e) { "page: ${e}" })?
+      if page.status != 200 || !(page.text() ?? "").contains("seats ") {
+        return Err("${who}: page status ${page.status}")
+      }
+    }
+    if sent.rounds % 50 == 0 && r.pending() == 0 {
+      // a reload: a new client that starts from version 0
+      gen += 1
+      sent.reloads += 1
+      r = sync_once(c, base, ui.replica(app, "${who}.${gen}", app.init, 0), false)?.0
+    }
+  }
+  var tries = 0
+  while r.pending() > 0 {
+    tries += 1
+    if tries > 20 {
+      return Err("${who}: ${r.pending()} Msgs never acknowledged")
+    }
+    r = sync_once(c, base, r, false)?.0
+  }
+  Ok((sent, r))
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 32 } else { 32 }
+  let rounds = if minutes == 0 { 300 } else { 0 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run
+  let mark = start + Duration.from_secs(Float(mark_s))
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))
+  let h = ui.host(room_app(), keep: 500)
+  var rt = http.router()
+  h.mount(rt)
+  let srv = http.server(os.net.listen("127.0.0.1:0")?, rt)
+  let base = "http://${srv.addr()}"
+  let c = http.client(os.net).with_max_idle_per_host(tasks + 4)
+  let got = scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("the server stops when the stress ends") })
+    s.spawn_background(fn() {
+      var marked = false
+      var ticks = 0
+      while true {
+        clock.sleep(10s)
+        let v = rss_kib(os)
+        ticks += 1
+        if ticks % 6 == 0 && v > 0 {
+          os.stdio.println("rss ${ticks / 6} min: ${v / 1024} MB")
+        }
+        let after_mark = marked || clock.now() >= mark
+        samples.with(fn(var x) {
+          var (m, p) = x
+          if after_mark && v > 0 { m.push(v) }
+          x = (m, if v > p { v } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[(Sent, ui.Replica[Room, Msg]), Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> (Sent, ui.Replica[Room, Msg]) ! Str { client(os, c, base, t, end, rounds) }))
+    }
+    var out: List[(Sent, ui.Replica[Room, Msg])] = []
+    for t in hs {
+      out.push(t.await.map_err(fn(e) { "a client: ${e}" })?)
+    }
+    // every Msg is acknowledged: each replica, synced once more, shows
+    // the server's model
+    let want = h.model()
+    for (st, r0) in out {
+      // a Down holds at most a batch of entries: sync until the replica
+      // is at the head of the log, which no client moves any more
+      var (r, at) = sync_once(c, base, r0, false)?
+      var n = 0
+      while r.version() < at {
+        n += 1
+        if n > 10000 {
+          return Err("${st.who}: its replica stays at ${r.version()} of ${at}")
+        }
+        (r, at) = sync_once(c, base, r, false)?
+      }
+      if r.model() != want || r.confirmed() != want {
+        return Err("${st.who}: its replica differs from the server's model at version ${r.version()}")
+      }
+    }
+    s.cancel()
+    out
+  }
+  let m = h.model()
+  var msgs = 0
+  var syncs = 0
+  var reloads = 0
+  for (st, _r) in got {
+    if (m.counts.get(st.who) ?? 0) != st.inc {
+      return Err("${st.who}: the server counted ${m.counts.get(st.who) ?? 0}, it sent ${st.inc}")
+    }
+    if (m.notes.get(st.who) ?? 0) != st.notes {
+      return Err("${st.who}: the server took ${m.notes.get(st.who) ?? 0} notes, it sent ${st.notes}")
+    }
+    syncs += st.syncs
+    reloads += st.reloads
+    msgs += st.rounds
+  }
+  if m.seats < 0 || m.seats + m.holders.len() != 4 {
+    return Err("the server shows ${m.seats} seats and ${m.holders.len()} holders")
+  }
+  let (rss_after, peak) = samples.with_read(fn(x) { x })
+  let (at_mark, last) = rss_medians(rss_after)
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes ${mark_s / 60} to ${mark_s / 60 + 2}), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let mem_ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("ui stress: ${syncs} syncs of ${msgs} rounds by ${tasks} clients in ${minutes} min (${reloads} reloads), every Msg applied once, every replica converged, ${mem}, ${if mem_ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !mem_ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+fn rss_kib(os: Os) -> Int {
+  // stdproven sets XO_STRESS_CHECK=1 for the --check=all run, whose leak
+  // report judges memory there: the resident set is not sampled
+  if (os.env.get("XO_STRESS_CHECK") ?? "") == "1" { return 0 }
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark and the median of the last 3 minutes' samples, 10 s apart; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}
