@@ -1778,15 +1778,18 @@ fn (var g: G) instr1(v: Int) {
     }
     FloatToInt => {
       let a = g.word(g.f.arg(x.args, 0))
-      let t = g.def1(true, "frintz $d0, $u0", [a])
+      // fcvtzs truncates toward zero itself, and the range tests give
+      // the same answer on a as on its truncation: doubles at 2^63 and
+      // beyond are whole, and a NaN compares unordered ("lt" holds)
+      // either way (task #87: frintz was one instruction a conversion)
       if ssa.has_pos(x.lp) {
         let lo = g.fimm(float_bits(-9223372036854775808.0))
         let la = g.loc_args(g.f.pos_of(x))
-        g.check("fcmp $u0, $u1", [t, lo], "lt", "xo_fault_float_int", [rsrc(a)] + la)
+        g.check("fcmp $u0, $u1", [a, lo], "lt", "xo_fault_float_int", [rsrc(a)] + la)
         let hi = g.fimm(float_bits(9223372036854775808.0))
-        g.check("fcmp $u0, $u1", [t, hi], "ge", "xo_fault_float_int", [rsrc(a)] + la)
+        g.check("fcmp $u0, $u1", [a, hi], "ge", "xo_fault_float_int", [rsrc(a)] + la)
       }
-      g.set(v, [g.def1(false, "fcvtzs $d0, $u0", [t])])
+      g.set(v, [g.def1(false, "fcvtzs $d0, $u0", [a])])
     }
     Struct | Tuple => {
       if g.sret_mk.contains(v) && g.sret_ptr != 0 {

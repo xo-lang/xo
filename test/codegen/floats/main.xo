@@ -43,6 +43,15 @@ fn negzero(x: Float, n: Int) -> Float {
   if n <= 0 { x } else { negzero(x * -0.0, n - 1) }
 }
 
+// Int(f) is fcvtzs after its two range tests, with no frintz first:
+// fcvtzs truncates toward zero itself (task #87: gomath.exp converts
+// once a call; golden float_int_edges keeps the faults and edges).
+// Recursive, so it is not inlined into main.
+fn toint(x: Float, n: Int) -> Int {
+  // arm64: "fcvtzs x[0-9]+, d[0-9]+" -"frintz"
+  if n <= 0 { Int(x) } else { toint(x * 1.5, n - 1) }
+}
+
 fn main(os: Os) {
   // cvtsi2sd writes only the low lane of its xmm destination, so it waits
   // for the register's last writer: the destination is zeroed first, as
@@ -53,7 +62,7 @@ fn main(os: Os) {
   for i in 0..100 {
     t = t + Float(i) / 3.0
   }
-  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)} ${t} ${horner(0.75, 3)} ${negs(0.5, 2)} ${1.0 / negzero(3.0, 1)} ${1.0 / negzero(3.0, 2)}")
+  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)} ${t} ${horner(0.75, 3)} ${negs(0.5, 2)} ${1.0 / negzero(3.0, 1)} ${1.0 / negzero(3.0, 2)} ${toint(-2.9, 2)} ${toint(7.7, 1)}")
 }
 
 // Float.fma's body uses FMA3 when the CPU has it (decision 0385 stage 3).
