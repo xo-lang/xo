@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (std/random; task #87): `random.normal` computes the draw's sign and magnitude without a branch (a random bit, mispredicted half the time); values unchanged. bench/perf/random normal 0.782 (0.774 to 0.798) of the time (`xo bench --ab`, host 1), linux/amd64 1.76x to 1.38x of Go.
 - Perf (compiler, arm64 and x86-64; task #87): `Int(f)` of a Float converts with fcvtzs (cvttsd2si) after its two range tests, with no round-toward-zero instruction first (the conversion truncates itself; NaN and out of range values fault as before, golden float_int_edges): bench/perf/random zipf 0.86% fewer instructions (callgrind, linux/arm64).
 - Fix (std/json, native): `-0` into a `UInt8`, `UInt16` or `UInt32` is refused, as Go and the Go backend; it decoded as 0.
 - Breaking: std/json: a Map key (or `json.Value` object key) in a `DecodeErr` path is written `["KEY"]`, quoted, not `.KEY` raw, so a peer's key cannot forge a log line (decision 0725); match on the new form. `decode_go` names a field under a Map as Go does (`T.m`).

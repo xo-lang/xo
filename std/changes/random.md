@@ -1,5 +1,16 @@
 # std/random changes
 
+## 2026-11-19: perf: normal without a branch on the draw's sign
+
+- Kind: perf
+- Commit: this push
+- Found by: task #87 (normal 1.7x of Go on linux/amd64 with equal instruction counts): `normal`'s `if w >= 2^31` and `if j < 0` test a random bit, so each branch was mispredicted half the time; Go's compiler makes both conditional moves
+- Go reference: math/rand/v2 normal.go (NormFloat64), go1.26.1
+- Test: golden random_seeded and internal/stdtest/testdata/corpus/random (draws equal to Go's, unchanged); bench/perf/random normal 0.782 (0.774 to 0.798) of the time (`xo bench --ab`, host 1); linux/amd64 10^6 draws 21.3 to 16.9 ms, Go 12.5 ms
+- Shipped in: not yet released
+
+`normal` computes `int32(u)` as `w - ((w & 2^31) << 1)` and its magnitude as `(j ^ m) - m` with `m = j >> 63`; the values are unchanged. Turning such branches into selects in the compiler instead was slower elsewhere (bench/perf/text float_fmt 1.025, zone_offset 1.039), since it cannot tell a random bit from a predictable test.
+
 ## 2026-11-16: feature: seeded and fixed, pure Rand sources
 
 - Kind: feature

@@ -15,10 +15,14 @@ pub fn normal(r: Rand) -> Float uses rand {
     // one word a try, split as Go's: j = int32(u), i = u >> 32 & 0x7F
     let u = r.int(Int.min, Int.max)
     let w = u & 0xFFFFFFFF
-    let j = if w >= 2147483648 { w - 4294967296 } else { w }
+    // j and its magnitude without a branch: their sign is a random bit,
+    // so a branch on it is mispredicted half the time (Go's compiler
+    // makes both conditional moves; task #87)
+    let j = w - ((w & 0x80000000) << 1)
     let i = u.shr_logical(32) & 127
     let x = Float(j) * WN[i]
-    let aj = if j < 0 { -j } else { j }
+    let m = j >> 63
+    let aj = (j ^ m) - m
     if aj < KN[i] {
       return x
     }
