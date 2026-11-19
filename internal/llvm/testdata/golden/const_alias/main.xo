@@ -1,0 +1,41 @@
+// A let bound to a list constant is the constant (task #427, compiler/ssa
+// note_const_alias): its element reads, its other uses (len, a loop over
+// it, a closure, a call), and an index out of range still faults with
+// list.index's text at the read.
+
+const KI: List[Int] = [7, -9223372036854775808, 9223372036854775807, -1, 0, 42]
+
+fn total(xs: List[Int]) -> Int {
+  var s = 0
+  for x in xs {
+    s = s.wrapping_add(x)
+  }
+  s
+}
+
+fn sum_to(n: Int) -> Int {
+  let k = KI
+  var s = 0
+  var j = 0
+  while j < n {
+    s = s.wrapping_add(k[j])
+    j += 1
+  }
+  s
+}
+
+fn main(os: Os) uses (stdio, env) {
+  for n in 0..7 {
+    os.stdio.println("${sum_to(n)}")
+  }
+  let k = KI
+  let last = fn() -> Int { k[k.len() - 1] }
+  var c = 0
+  for x in k {
+    if x < 0 {
+      c += 1
+    }
+  }
+  os.stdio.println("${k.len()} ${last()} ${c} ${total(k)} ${k == KI}")
+  os.stdio.println("${sum_to(os.env.args().len() + 7)}")
+}

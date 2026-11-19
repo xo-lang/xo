@@ -78,9 +78,15 @@ fn (var b: Builder) stmt_body(st: Stmt) {
     ExprStmt(x: x, ..) => {
       b.expr(x)
     }
-    LetStmt(pattern: p, value: value, ..) => {
+    LetStmt(pattern: p, typ: typ, value: value, is_var: is_var, ..) => {
       if let BindPat(name: name, ..) = p {
-        b.note_binding(value, b.c.var_of(b.s.file, name))
+        let vo = b.c.var_of(b.s.file, name)
+        b.note_binding(value, vo)
+        // `let x = C`: x is C, read where it is used (b.read), never a
+        // value of its own
+        if !is_var && typ.is_none() && b.note_const_alias(value, vo) {
+          return
+        }
       }
       let v = b.value(value)
       let fail = b.new_block()

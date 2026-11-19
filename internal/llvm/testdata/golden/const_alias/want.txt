@@ -1,0 +1,12 @@
+exit 70
+--- stdout
+0
+7
+-9223372036854775801
+6
+5
+5
+47
+6 42 2 47 true
+--- stderr
+fault: index 6 out of range for List of length 6 at main.xo:21:24

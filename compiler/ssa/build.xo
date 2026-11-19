@@ -301,6 +301,9 @@ pub struct Builder {
   /// (boundTo), by the key of the call.
   sites: Map[Int, Int] = {}
   bound_to: Map[Int, Int] = {}
+  /// A `let` bound to a constant, `let dci = Z_DC_INDEX`: its variable
+  /// and the constant's name, read through by const_elem (task #427).
+  const_alias: Map[Int, Expr] = {}
   /// Expressions already lowered, by span (pin_key), whose value expr
   /// returns again: a capability call's receiver, evaluated once before
   /// user_cap_call branches (decision 0307).
@@ -4240,6 +4243,9 @@ fn (var b: Builder) seal(bl: Int) {
 }
 
 fn (var b: Builder) read(vo: Int) -> Int {
+  if let Some(a) = b.const_alias.get(vo) {
+    return b.value(a)
+  }
   b.read_var(vo, b.s.cur)
 }
 

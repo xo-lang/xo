@@ -1086,7 +1086,18 @@ fn (var b: Builder) const_elem(x: Expr, index: Expr, t: Int, span: Span) -> Int?
     return None
   }
   let id = match x {
-    Ident(xi) => if b.c.var_of(b.s.file, xi) >= 0 { None } else { Some(xi) }
+    Ident(xi) => {
+      let vo = b.c.var_of(b.s.file, xi)
+      if vo >= 0 {
+        // a let bound to the constant reads it as the constant does
+        match b.const_alias.get(vo) {
+          Some(a) => return b.const_elem(a, index, t, span)
+          None => None
+        }
+      } else {
+        Some(xi)
+      }
+    }
     SelectorExpr(sel: sel, ..) => Some(sel)
     _ => None
   }
@@ -1117,6 +1128,31 @@ fn (var b: Builder) const_elem(x: Expr, index: Expr, t: Int, span: Span) -> Int?
 
 /// See const_elem.
 const CONST_ELEM_MAX = 1024
+
+/// Records `let x = C` for a constant C named by value, so x[i] reads
+/// C's elements as C[i] does (const_elem): std/brotli's update_nodes
+/// binds its 16 entry tables to locals, and each read was the list's
+/// bounds check against a length loaded per iteration (task #427).
+/// A let is never reassigned, so x is C wherever it is in scope.
+/// A use of x that is not such a read reads C there (b.read): the
+/// constant's slot, as `C` written in its place does, so a let whose
+/// every use is an element read leaves no read of the constant at all.
+fn (var b: Builder) note_const_alias(value: Expr, vo: Int) -> Bool {
+  if vo < 0 {
+    return false
+  }
+  let id = match value {
+    Ident(xi) => if b.c.var_of(b.s.file, xi) >= 0 { return false } else { xi }
+    SelectorExpr(sel: sel, ..) => sel
+    _ => return false
+  }
+  let r = b.c.ref_of(b.s.file, id)
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Const && b.c.objs[r].decl_file >= 0 {
+    b.const_alias[vo] = value
+    return true
+  }
+  false
+}
 
 /// A read of a list constant at an index known only at run time, `WE[i]`,
 /// when every element is an Int or Float literal: the elements as data,

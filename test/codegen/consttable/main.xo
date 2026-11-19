@@ -14,7 +14,27 @@ fn pick(i: Int) -> Float {
   WF[i] * Float(KI[i])
 }
 
+// A let bound to the constant reads it the same way (task #427,
+// std/brotli update_nodes' `let dci = Z_DC_INDEX`), and j < 16 against
+// the 16 elements proves each read: no check in the loop.
+const TI: List[Int] = [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
+const TO: List[Int] = [0, 0, 0, 0, -1, 1, -2, 2, -3, 3, -1, 1, -2, 2, -3, 3]
+
+fn aliased(lim: Int) -> Int {
+  // arm64: -"_?xo_x_const_once" -"b\.hs"
+  // amd64: -"_xo_x_const_once"
+  let ti = TI
+  let to = TO
+  var s = 0
+  var j = 0
+  while j < 16 && s < lim {
+    s += ti[j] * 3 + to[j]
+    j += 1
+  }
+  s
+}
+
 fn main(os: Os) uses (stdio, env) {
   let i = os.env.args().len() + 2
-  os.stdio.println("${pick(i)}")
+  os.stdio.println("${pick(i)} ${aliased(i * 100)}")
 }
