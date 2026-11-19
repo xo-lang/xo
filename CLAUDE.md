@@ -83,7 +83,8 @@ differs from this file, this file is current.
    it once with `XW_TASK=ID` on the first heavy.sh or offload-gate.sh run
    in its worktree (start, then gate), `PUSHQ_TASK=ID` or the binding
    marks the push, and `pushq.sh WT --gated --done ID` the last push
-   (push, then done). You call only `xw task ack ID` and `xw task block
+   (push, then done; a bug task adds `--tool NAME`, or "none, WHY", and
+   is refused without it, #405). You call only `xw task ack ID` and `xw task block
    ID REASON` (a block also goes to the lead); `xw task done ID` for a
    task that ends without a push.
 

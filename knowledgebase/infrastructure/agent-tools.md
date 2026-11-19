@@ -1841,7 +1841,11 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     marks it started, once; offload-gate.sh then marks gate on every run
     in the worktree, and pushq.sh marks the push for PUSHQ_TASK or the
     bound task. `pushq.sh WT --gated --done ID` (or `--docs --done ID`)
-    marks the push and then done. Detached, none of them fails or slows
+    marks the push and then done; on a bug task it needs the diagnosis
+    tool, `--tool NAME` or `PUSHQ_TOOL=NAME` ("none, WHY" when none
+    helped), passed to `xw task done` as "tool: NAME", and refuses the
+    push (exit 2) without it (#405; tested by pushq_done_tool_test.sh).
+    Detached, none of them fails or slows
     its tool (xwhook.sh xw_task_bind, xw_task_of, xw_task_mark; tested
     by xwhook_test.sh and pushq_prelane_test.sh). Agents call only `xw
     task ack` and `xw task block` (and `done` for a task with no push).

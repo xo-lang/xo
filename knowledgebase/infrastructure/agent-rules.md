@@ -48,6 +48,7 @@ Last verified: 2026-11-17.
 | A lease name is not resubmitted in a loop | xw alert | `workstream:alerts.xo` (retry_storm) | `workstream:test/pg_test.sh` | retry-storm |
 | Long waits and blocked leases go to the digest unless they grow | xw alert | `workstream:alerts.xo` (wait_rising) | `workstream:test/pg_test.sh` | long-wait, lease-blocked, wait-rising |
 | Assigned tasks and decisions are acked in the next tool round | xw inbox | `scripts/lead/xw-cc-hook.sh` | `scripts/lead/xw-cc-hook_test.sh` | unacked, unacked-task, unacked-idle |
+| A bug task closed by pushq --done names its diagnosis tool | pushq | `scripts/lead/pushq.sh` (--tool, PUSHQ_TOOL), `scripts/lead/xwhook.sh` (xw_task_push) | `scripts/lead/pushq_done_tool_test.sh` | no-tool-line |
 | Questions for the owner or the lead go through xw ask | xw | `workstream:asks.xo` | `workstream:test/work_test.sh` | |
 | A pushed task is marked done, or pushed as a part, not left pushed | pushq, xw | `scripts/lead/xwhook.sh` (xw_task_push: PUSHQ_TASK, PUSHQ_PARTIAL), `workstream:std.xo` (push_partial: auto-partial for a multi-module task) | `scripts/lead/xwhook_test.sh`, `workstream:xw_test.xo` | task-pushed |
 | A hook event is never lost when xw cannot run (#337) | xwhook | `scripts/lead/xwhook.sh` (_xw_send, _xw_replay), `workstream:alerts.xo` (hook_spool_alerts), `workstream:event.xo` (at=) | `scripts/lead/xwhook_test.sh`, `workstream:xw_test.xo` | hook-spool |
