@@ -913,7 +913,11 @@ pub fn text_value(c: w.Column, v: Bytes?, parse_time: Bool, z: time.Zone = time.
     7 | 10 | 12 | 14 => if parse_time { datetime_value(s, z)? } else { sql.SqlValue.Text(s: s) }
     16 | 255 => sql.SqlValue.Blob(b: b)
     245 => sql.SqlValue.JsonText(s: s)
-    15 | 247 | 248 | 249 | 250 | 251 | 252 | 253 | 254 => if c.charset == w.CHARSET_BINARY { sql.SqlValue.Blob(b: b) } else { sql.SqlValue.Text(s: s) }
+    // an ENUM or SET is text whatever its character set, as
+    // go-sql-driver's scanType and DatabaseTypeName
+    247 | 248 => sql.SqlValue.Text(s: s)
+    254 if c.flags & (w.FLAG_ENUM | w.FLAG_SET) != 0 => sql.SqlValue.Text(s: s)
+    15 | 249 | 250 | 251 | 252 | 253 | 254 => if c.charset == w.CHARSET_BINARY { sql.SqlValue.Blob(b: b) } else { sql.SqlValue.Text(s: s) }
     _ => sql.SqlValue.Text(s: s)
   })
 }
@@ -1701,7 +1705,7 @@ pub fn type_name(c: w.Column) -> Str {
     250 => if binary { "MEDIUMBLOB" } else { "MEDIUMTEXT" }
     251 => if binary { "LONGBLOB" } else { "LONGTEXT" }
     252 => if binary { "BLOB" } else { "TEXT" }
-    254 => if c.flags & 256 != 0 { "ENUM" } else if c.flags & 2048 != 0 { "SET" } else if binary { "BINARY" } else { "CHAR" }
+    254 => if c.flags & w.FLAG_ENUM != 0 { "ENUM" } else if c.flags & w.FLAG_SET != 0 { "SET" } else if binary { "BINARY" } else { "CHAR" }
     255 => "GEOMETRY"
     _ => ""
   }

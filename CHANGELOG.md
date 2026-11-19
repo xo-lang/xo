@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fix (std/sql MySQL; task #90): an ENUM or SET column in the binary character set reads as `Text`, as go-sql-driver; it was a `Blob`.
 - Fix (xo bench --ab; task #372): the order alternates over the measured rounds (the warmup counted made B run first in 2 of the default 3), and an odd `--rounds` runs one more round, so the default runs 4 and each side runs first equally often; a run before this change that read a few percent faster on B with 3 rounds may have been the second-run-slower effect. A wall_ms verdict needs both medians at 100 ms or more ("too short" under it): loop a shorter workload. `--early` stops only after an even count.
 - Fix (std/http; task #352): an `XO_HTTP_MAX_BODY` of 20 or more digits is Int's largest (no limit), as C's atoll saturates; it faulted with an integer overflow on the native backends.
 - Fix (std/sql MySQL; task #352): a packet whose 8 byte length encoded length is near Int's largest is a malformed packet error; the reader faulted with an integer overflow on the native backends.

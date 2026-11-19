@@ -88,6 +88,17 @@ test "text values convert as go-sql-driver's" {
   expect(text_value(col(12, 63, 0), Some(b"2024-02-29T23:59:59"), true)) == Err("bad value for field: `T`")
   expect(text_value(col(12, 63, 0), Some(b"2024-02-29 23:59"), true)) == Err("invalid time bytes: 2024-02-29 23:59")
   expect(text_value(col(12, 63, 0), Some(b"0000-00-00 00:00:00.000"), true)) == Ok(sql.SqlValue.Text(s: "0000-00-00 00:00:00.000"))
+  // an ENUM or SET is Text in the binary character set too (seed 42 case
+  // 2920), as a CHAR with the ENUM or SET flag; a VARCHAR, CHAR and BLOB
+  // in it are Blob
+  expect(text_value(col(247, 63, 0), Some(b"a"), false)) == Ok(sql.SqlValue.Text(s: "a"))
+  expect(text_value(col(248, 63, 0), Some(b"a,b"), false)) == Ok(sql.SqlValue.Text(s: "a,b"))
+  expect(text_value(col(254, 63, 256), Some(b"a"), false)) == Ok(sql.SqlValue.Text(s: "a"))
+  expect(text_value(col(254, 63, 2048), Some(b"a"), false)) == Ok(sql.SqlValue.Text(s: "a"))
+  expect(text_value(col(254, 63, 0), Some(b"a"), false)) == Ok(sql.SqlValue.Blob(b: b"a"))
+  expect(text_value(col(15, 63, 0), Some(b"a"), false)) == Ok(sql.SqlValue.Blob(b: b"a"))
+  expect(text_value(col(252, 63, 0), Some(b"a"), false)) == Ok(sql.SqlValue.Blob(b: b"a"))
+  expect(text_value(col(247, 33, 0), Some(b"a"), false)) == Ok(sql.SqlValue.Text(s: "a"))
   // a row's bytes after its last value are refused, as go-sql-driver
   // master's readRow (96884ae, #1816)
   expect(w.parse_text_row(b"\x01a\x99", 1).is_err()) == true

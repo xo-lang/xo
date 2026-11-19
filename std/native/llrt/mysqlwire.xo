@@ -485,6 +485,8 @@ pub const TYPE_GEOMETRY: Int = 255
 pub const FLAG_NOT_NULL: Int = 1
 pub const FLAG_UNSIGNED: Int = 32
 pub const FLAG_BINARY: Int = 128
+pub const FLAG_ENUM: Int = 256
+pub const FLAG_SET: Int = 2048
 
 /// The binary character set's number (a BINARY, VARBINARY or BLOB column).
 pub const CHARSET_BINARY: Int = 63

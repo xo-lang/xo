@@ -756,3 +756,14 @@ message error, as pgconn's.
 
 Xo took the end of the body as the end of the fields and kept the notice; such a message is now a malformed
 message error, as pgconn's.
+
+## 2026-11-18: fix: MySQL reads an ENUM or SET in the binary character set as Text
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestMysqlFuzz seed 42 case 2920 (task #90, linux/arm64 host 3)
+- Go reference: go-sql-driver v1.10.1 fields.go scanType and typeDatabaseName (MPL-2.0): ENUM and SET (and a CHAR with the ENUM or SET flag) scan as strings whatever the column's character set
+- Test: native/llrt/mysql's "text values convert as go-sql-driver's" on arm64; TestMysqlFuzz seed 42
+
+Xo gave a `Blob` for an ENUM or SET column whose character set is binary (63), against spec/std.md 10.9's
+table and the column's `ENUM` or `SET` type name; it is now `Text`.
