@@ -446,6 +446,26 @@ fn (var g: G) cimm(n: Int) -> Int {
   r
 }
 
+/// The register of the Float constant -f (the bits of f with the sign
+/// flipped, so -0.0 and NaNs are exact), shared with the function's other
+/// uses of that constant as words shares constants; a zero is not shared
+/// (the memo's key is the same for 0.0 and -0.0).
+fn (var g: G) fneg_const(f: Float) -> Int {
+  let nb = float_bits(f) ^ MIN_INT
+  if f == 0.0 {
+    return g.fimm(nb)
+  }
+  let nf = Float.from_bits(nb)
+  let key = float_key(nf)
+  let _mi = g.m_()
+  if let Some(r) = g.cm.cf.get(key) {
+    return r
+  }
+  let r = g.fimm(nb)
+  g.cm.cf[key] = r
+  r
+}
+
 /// Puts the double with bits b in a floating point register.
 fn (var g: G) fimm(bits: Int) -> Int {
   if bits == 0 {
@@ -1615,11 +1635,22 @@ fn (var g: G) instr1(v: Int) {
         g.set(v, [g.cimm(nc)])
         return
       }
-      let a = g.word(g.f.arg(x.args, 0))
       if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float {
+        let c = g.f.values[g.f.arg(x.args, 0)]
+        if c.op == ssa.Op.Const {
+          if let F(f) = c.aux {
+            // a negative Float literal (the SSA negates the constant):
+            // the negated constant, its sign bit flipped (task #87:
+            // gomath.exp loaded and negated three constants a call)
+            g.set(v, [g.fneg_const(f)])
+            return
+          }
+        }
+        let a = g.word(g.f.arg(x.args, 0))
         g.set(v, [g.def1(true, "fneg $d0, $u0", [a])])
         return
       }
+      let a = g.word(g.f.arg(x.args, 0))
       // nor one whose operand cannot be MIN_INT, as bounds proves a
       // checked add (2026-10-30: text.parse_duration's
       // `-unit_limit(unit)`, a join of positive constants, was a negs and

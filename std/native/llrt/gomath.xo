@@ -170,8 +170,10 @@ pub fn exp(x: Float) -> Float {
   } else if x > 0.0 {
     k = Int(log2e * x + 0.5)
   }
-  let hi = x - Float(k) * LN2HI
-  let lo = Float(k) * LN2LO
+  // one conversion (task #87: the compiler converted k twice)
+  let fk = Float(k)
+  let hi = x - fk * LN2HI
+  let lo = fk * LN2LO
   expmulti(hi, lo, k)
 }
 

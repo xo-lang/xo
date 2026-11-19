@@ -28,6 +28,21 @@ fn horner(x: Float, n: Int) -> Float {
   if n <= 0 { x } else { horner(((x * 0.125 + 0.25) * x + 0.5) * x, n - 1) }
 }
 
+// A negative Float literal (the SSA negates the constant) is the negated
+// constant itself, with no fneg of a loaded one (task #87: gomath.exp
+// negated three constants a call); -0.0 keeps its sign. Recursive, so it
+// is not inlined into main.
+fn negs(x: Float, n: Int) -> Float {
+  // arm64: "ldr d[0-9]+, [^\[ ]+\n" -"fneg d"
+  // amd64: -"xorpd %xmm15"
+  if n <= 0 { x } else { negs(x * -0.375 + -2.5, n - 1) }
+}
+
+fn negzero(x: Float, n: Int) -> Float {
+  // arm64: -"fneg d"
+  if n <= 0 { x } else { negzero(x * -0.0, n - 1) }
+}
+
 fn main(os: Os) {
   // cvtsi2sd writes only the low lane of its xmm destination, so it waits
   // for the register's last writer: the destination is zeroed first, as
@@ -38,7 +53,7 @@ fn main(os: Os) {
   for i in 0..100 {
     t = t + Float(i) / 3.0
   }
-  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)} ${t} ${horner(0.75, 3)}")
+  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)} ${t} ${horner(0.75, 3)} ${negs(0.5, 2)} ${1.0 / negzero(3.0, 1)} ${1.0 / negzero(3.0, 2)}")
 }
 
 // Float.fma's body uses FMA3 when the CPU has it (decision 0385 stage 3).
