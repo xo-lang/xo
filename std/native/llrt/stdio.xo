@@ -246,6 +246,18 @@ pub fn err(p: Int, n: Int, nl: Bool) {
   unlock(w, m)
 }
 
+/// s on the process's real standard error even in a test binary, whose
+/// Stdio is the test world's (FAKE): the task tree a SIGQUIT asks for
+/// (dump.xo), which the harness reads from the stream (task #363).
+pub fn eprint_real(s: Str) {
+  let w = rt.static_word(WORDS)
+  if mode(w) & FAKE != 0 {
+    write_all(2, raw.data(s), s.len())
+    return
+  }
+  err(raw.data(s), s.len(), false)
+}
+
 /// Stdio.print or println of s.
 pub fn print(s: Str, nl: Bool) { out(raw.data(s), s.len(), nl) }
 

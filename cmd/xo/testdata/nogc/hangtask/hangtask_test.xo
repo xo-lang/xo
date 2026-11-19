@@ -1,0 +1,29 @@
+// A test whose task waits for a value nobody sends, after one that
+// passes (TestNoGCTimeoutDump): on the native backends the watchdog
+// sends SIGQUIT before the kill, and the failure shows the task tree
+// (task #363), with the receive's line.
+fn wait_forever() {
+  let c = Chan[Int].new(cap: 0)
+  scope s {
+    s.spawn(fn() {
+      let _v = c.recv()
+    })
+    // a task that never blocks: without it every task waits, and the
+    // runtime reports the deadlock at once (XO-F001) instead of hanging
+    let n = Atomic[Int].new(0)
+    s.spawn(fn() {
+      while n.get() >= 0 {
+        let _a = n.add(1) % 2
+        n.set(0)
+      }
+    })
+  }
+}
+
+test "before" {
+  expect(1 + 1) == 2
+}
+
+test "waits" {
+  wait_forever()
+}

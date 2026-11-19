@@ -99,7 +99,7 @@ pub fn write() {
   }
   b.write("end of xo dump\n")
   let text = b.freeze()
-  stdio.eprint(text, false)
+  stdio.eprint_real(text)
   write_file(text)
   heapblk.release(rec)
 }

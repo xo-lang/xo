@@ -1496,6 +1496,58 @@ pub fn ev_start() {
   }
 }
 
+/// A test binary's SIGQUIT without the event loop (task #363): on_quit's
+/// self pipe and a thread of its own that writes the task tree (cabi.xo
+/// quit_thread, dump_now). The event loop's poller thread and its workers'
+/// polls would take part in the test world's virtual clock, whose move
+/// waits for every context to block (pool.xo dl_check): with it started
+/// in every test binary, a test's sleep never woke. The read end blocks
+/// (only this thread reads it), the write end does not (the handler never
+/// waits).
+pub fn quit_start() {
+  let e = ev()
+  if e == 0 {
+    return
+  }
+  let p = obj.scratch()
+  let pr = match target.os {
+    TargetOs.Darwin => Int(sys_darwin.pipe(p))
+    TargetOs.Linux => linux.pipe2(p, linux.O_CLOEXEC)
+    TargetOs.FreeBSD => freebsd.pipe2(p, freebsd.O_CLOEXEC)
+    TargetOs.Windows | TargetOs.Wasi => -1
+  }
+  if pr < 0 {
+    return
+  }
+  let r = s32(rt.mem_load(p, 0, 4))
+  let w = s32(rt.mem_load(p, 4, 4))
+  // F_SETFD 2, FD_CLOEXEC 1 (macOS's pipe has no flags); sock.nonblock
+  // sets FD_CLOEXEC too
+  let _c = sock.fcntl(r, 2, 1)
+  let _b = sock.nonblock(w)
+  rt.mem_store(e, EV_PIPE_R, r, 4)
+  rt.mem_store(e, EV_PIPE_W, w, 4)
+  let _t = pool.thread_start(rt.fn_addr("quit_thread"), 0)
+}
+
+/// quit_start's thread: a byte on the pipe is a SIGQUIT (on_quit counted
+/// it in EV_QUITS), answered with the task tree; it ends when the pipe
+/// does.
+pub fn quit_loop() {
+  let e = ev()
+  let r = s32(rt.mem_load(e, EV_PIPE_R, 4))
+  let b = rt.heap_large(16)
+  while true {
+    let n = read_fd(r, b, 1)
+    if n == 0 {
+      return
+    }
+    if n > 0 && rt.slot_swap(addw(e, EV_QUITS), 0, 0, ACQ_REL) > 0 {
+      let _d = rt.call_c2(rt.fn_addr("dump_now"), 0, 0)
+    }
+  }
+}
+
 /// The start on Linux and macOS (xo_rt.c ev_init): out of memory when the
 /// system refuses one of the parts, as the C's was.
 fn ev_init() {

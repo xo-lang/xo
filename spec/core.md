@@ -4421,7 +4421,10 @@ call and its result, plus scheduler decisions.
   and is never written through a symbolic link. On the native backends
   (decision 0251) a task's wait is named as on the Go backend (`blocked in
   receive at main.xo:5`); the scopes' own sites and the holders of a mutex
-  are not shown yet. A test binary has no dump.
+  are not shown yet. A native test binary has one too (written to the
+  process's real standard error, not the test's): when a test runs
+  past `xo test --timeout`, the harness sends SIGQUIT before it kills the
+  process and the failure shows the task tree under the timeout's line.
 - **[P2]** Deadlocks are detected by the runtime and reported as a wait cycle
   with locations (fault `XO-F001`, exit status 70, crash bundle). A task
   counts as blocked when it waits on another task (channel, mutex, semaphore,

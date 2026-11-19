@@ -465,7 +465,10 @@ func TestNoGCTimeout(t *testing.T) {
 	backends := nativeBackends(t)
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := filepath.Join("testdata", "nogc", "hang")
+	// the timed out test's task tree (task #363) names its process
+	pid := regexp.MustCompile(`xo dump: pid [0-9]+`)
 	goCode, goOut := xoTest(t, "-v", "--timeout=2s", dir)
+	goOut = pid.ReplaceAllString(goOut, "xo dump: pid N")
 	for _, want := range []string{"--- PASS: before\n", "--- FAIL: spins (", "    the test did not finish within 2s of real time\n", "      2026-01-01T00:00:00Z INFO about to spin\n", "--- PASS: after\n", "FAIL: 2 passed, 1 failed, 0 skipped\n"} {
 		if goCode != 1 || !strings.Contains(goOut, want) {
 			t.Fatalf("go backend: exit %d, no %q in\n%s", goCode, want, goOut)
@@ -476,6 +479,7 @@ func TestNoGCTimeout(t *testing.T) {
 			setenv(t, "XO_TEST_BATCH", batch)
 			start := time.Now()
 			code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", "--timeout=2s", dir)
+			out = pid.ReplaceAllString(out, "xo dump: pid N")
 			if code != goCode || out != goOut {
 				t.Errorf("%s (XO_TEST_BATCH=%s) differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", be, batch, goCode, code, goOut, be, out)
 			}
@@ -491,6 +495,41 @@ func TestNoGCTimeout(t *testing.T) {
 	code, out := xoTest(t, "--timeout=0", "--run=fore", dir)
 	if code != 0 || !strings.Contains(out, "ok: 1 passed, 0 failed, 0 skipped") {
 		t.Errorf("go --timeout=0: exit %d\n%s", code, out)
+	}
+}
+
+// TestNoGCTimeoutDump runs testdata/nogc/hangtask, whose second test's
+// task waits on a receive forever, with `--timeout=2s`: on the native
+// backends, in batches and one process per test, the failure carries the
+// task tree the test binary wrote on the watchdog's SIGQUIT (task #363),
+// with the line where the task waits.
+func TestNoGCTimeoutDump(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds and runs test binaries")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("no SIGQUIT on Windows")
+	}
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	setenv(t, "XO_DUMP_DIR", t.TempDir())
+	dir := filepath.Join("testdata", "nogc", "hangtask")
+	for _, be := range nativeBackends(t) {
+		for _, batch := range []string{"1", "0"} {
+			setenv(t, "XO_TEST_BATCH", batch)
+			code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", "--timeout=2s", dir)
+			// llvm's dump on darwin names no line for a blocked operation
+			// yet (linux's does)
+			at := " at hangtask_test.xo:9\n"
+			if be == "llvm" && runtime.GOOS == "darwin" {
+				at = ""
+			}
+			for _, want := range []string{"--- PASS: before\n", "--- FAIL: waits (", "    the test did not finish within 2s of real time\n    xo dump: pid ", "        task 2 (spawned at hangtask_test.xo:8): blocked in receive" + at, "FAIL: 1 passed, 1 failed, 0 skipped\n"} {
+				if code != 1 || !strings.Contains(out, want) {
+					t.Errorf("%s (XO_TEST_BATCH=%s): exit %d, no %q in\n%s", be, batch, code, want, out)
+				}
+			}
+		}
 	}
 }
 

@@ -550,13 +550,13 @@ fn hex4(n: Int) -> Str {
 /// (NAME=value words), in the test's module directory.
 fn run_test_env(os: Os, bin: Str, limit: Duration, t: TestInfo, s: Int, env: List[Str]) -> (Outcome, PropCase) {
   let words = ["XO_TEST=${t.index}", "XO_TEST_SEED=${s}"] + env
-  let r = run_proc(test_cmd(os, bin, t.dir, words), limit)
+  let r = run_proc(os.proc, test_cmd(os, bin, t.dir, words), limit)
   if !r.failed.is_empty() {
     return (Outcome{status: "fail", msg: r.failed}, PropCase{})
   }
   let (o, pc) = parse_run(r.out, r.err, r.code)
   if r.timed_out {
-    return (Outcome{status: "fail", msg: timeout_msg(limit), logs: o.logs}, pc)
+    return (Outcome{status: "fail", msg: timeout_msg(limit) + dump_part(r.err), logs: o.logs}, pc)
   }
   (o, pc)
 }
@@ -564,11 +564,26 @@ fn run_test_env(os: Os, bin: Str, limit: Duration, t: TestInfo, s: Int, env: Lis
 /// A timed out run's message (std/rt's runOneTest).
 fn timeout_msg(limit: Duration) -> Str { "the test did not finish within ${limit} of real time" }
 
+/// The task tree a timed out test binary wrote to its standard error when
+/// the watchdog sent it SIGQUIT (task #363: where each task waits), after
+/// a newline; "" when it wrote none (Windows, a program without tasks).
+fn dump_part(err: Str) -> Str {
+  let d = match err.cut("xo dump: pid ") {
+    Some((_, rest)) => rest
+    None => return ""
+  }
+  let body = match d.cut("end of xo dump") {
+    Some((b, _)) => b
+    None => d
+  }
+  "\nxo dump: pid ${trim_nl(body)}"
+}
+
 /// Kills child when limit passes with no event on ev (a run that began
 /// and did not end in time; killed is set then); returns when ev closes.
 /// No polling: a run that ends costs no wait (a 20 ms poll here made each
 /// shrinking replay 20 ms slower, 2026-10-15).
-fn watchdog(ev: Chan[Int], limit: Duration, killed: Atomic[Int], child: Child) uses clock {
+fn watchdog(ev: Chan[Int], limit: Duration, killed: Atomic[Int], child: Child, quit: (Proc, Chan[Int])?) uses (clock, proc) {
   var open = true
   while open {
     select {
@@ -579,6 +594,17 @@ fn watchdog(ev: Chan[Int], limit: Duration, killed: Atomic[Int], child: Child) u
       }
       after limit => {
         killed.set(1)
+        // the task tree first (task #363): SIGQUIT makes a test binary
+        // write it to its standard error, and the reader says when its
+        // end (or the stream's) came, at most 2 s
+        if let Some((p, dumped)) = quit {
+          if p.kill(child.pid(), "QUIT").is_ok() {
+            select {
+              _d = dumped.recv() => {}
+              after 2s => {}
+            }
+          }
+        }
         child.kill()
         open = false
       }
@@ -600,7 +626,7 @@ struct Ran {
 /// (not 0) a watchdog kills the process when a run in it takes longer:
 /// a run starts with the process and again at each XO-TEST-BEGIN line
 /// of a batch. Only the child this call started is killed.
-fn run_proc(c: Cmd, limit: Duration) -> Ran uses (proc, clock) {
+fn run_proc(p: Proc, c: Cmd, limit: Duration) -> Ran uses (proc, clock) {
   let child = match c.spawn() {
     Ok(ch) => ch
     Err(e) => return Ran{failed: "${e}"}
@@ -609,6 +635,8 @@ fn run_proc(c: Cmd, limit: Duration) -> Ran uses (proc, clock) {
   // end of the output; the watchdog's timer restarts at each event
   let ev = Chan[Int].new(cap: 1024)
   let killed = Atomic[Int].new(0)
+  // the end of a task tree on standard error, or of the stream
+  let dumped = Chan[Int].new(cap: 1)
   let (out, err) = scope s {
     let to = s.spawn(fn() -> Bytes {
       var b = BytesBuilder.new()
@@ -639,16 +667,23 @@ fn run_proc(c: Cmd, limit: Duration) -> Ran uses (proc, clock) {
     })
     let te = s.spawn(fn() -> Bytes {
       var b = BytesBuilder.new()
+      let end = "end of xo dump".bytes()
       while true {
         match child.read_err(65536) {
-          Ok(Some(x)) => b.write(x)
+          Ok(Some(x)) => {
+            b.write(x)
+            if x.contains(end) {
+              let _sent = dumped.try_send(1)
+            }
+          }
           _ => break
         }
       }
+      let _sent = dumped.try_send(1)
       b.freeze()
     })
     if limit > 0s {
-      s.spawn(fn() { watchdog(ev, limit, killed, child) })
+      s.spawn(fn() { watchdog(ev, limit, killed, child, Some((p, dumped))) })
     }
     (to.await, te.await)
   }
@@ -847,7 +882,7 @@ fn run_chunk(os: Os, bin: Str, limit: Duration, runs: List[Run], o: TestOpts) ->
       i = j
       continue
     }
-    let (segs, ended, code, timed_out) = run_batch(os, bin, limit, batch, prof_words(o))
+    let (segs, ended, code, timed_out, dump) = run_batch(os, bin, limit, batch, prof_words(o))
     // the runs that ended in the process
     var n = 0
     while n < segs.len() && ended[n] {
@@ -863,7 +898,7 @@ fn run_chunk(os: Os, bin: Str, limit: Duration, runs: List[Run], o: TestOpts) ->
       // fails as alone (std/rt's runOneTest), without running again
       let r = batch[n]
       let (so, spc) = parse_run(segs[n], "", 1)
-      let to = Outcome{status: "fail", msg: timeout_msg(limit), logs: so.logs}
+      let to = Outcome{status: "fail", msg: timeout_msg(limit) + dump, logs: so.logs}
       if r.case < 0 {
         out[r.k] = to
       } else {
@@ -912,8 +947,8 @@ fn run_chunk(os: Os, bin: Str, limit: Duration, runs: List[Run], o: TestOpts) ->
 
 /// Runs batch in one process (XO_TEST_BATCH): the output lines of each
 /// run that began, whether it ended, the process's status, and whether
-/// its last run timed out.
-fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run], pw: List[Str]) -> (List[Str], List[Bool], Int, Bool) {
+/// its last run timed out, with the task tree it wrote then (task #363).
+fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run], pw: List[Str]) -> (List[Str], List[Bool], Int, Bool, Str) {
   var parts: List[Str] = []
   var i = 0
   while i < batch.len() {
@@ -935,9 +970,9 @@ fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run], pw: List[Str])
   let words = ["XO_TEST=${first.t.index}", "XO_TEST_SEED=${first.seed}", "XO_TEST_BATCH=${parts.join(",")}"] + pw
   var segs: List[Str] = []
   var ended: List[Bool] = []
-  let r = run_proc(test_cmd(os, bin, first.t.dir, words), limit)
+  let r = run_proc(os.proc, test_cmd(os, bin, first.t.dir, words), limit)
   if !r.failed.is_empty() {
-    return (segs, ended, 1, false)
+    return (segs, ended, 1, false, "")
   }
   var lines: List[Str] = []
   var open = false
@@ -961,7 +996,7 @@ fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run], pw: List[Str])
   if open {
     segs[segs.len() - 1] = lines.join("\n")
   }
-  (segs, ended, r.code, r.timed_out)
+  (segs, ended, r.code, r.timed_out, if r.timed_out { dump_part(r.err) } else { "" })
 }
 
 /// Case c of property test t run alone (run_property's step): the test's
@@ -1252,7 +1287,7 @@ fn serve_run(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, replay: 
       (ls, b, e)
     })
     if limit > 0s {
-      sc.spawn(fn() { watchdog(ev, limit, killed, c) })
+      sc.spawn(fn() { watchdog(ev, limit, killed, c, None) })
     }
     rd.await
   }

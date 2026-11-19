@@ -343,6 +343,7 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     // a test binary's main starts the test world itself (the native
     // prelude's llrt_tw_start)
     ignore_sigpipe()
+    test_quit()
   } else {
     signals()
   }
@@ -442,6 +443,35 @@ fn signals() {
       freebsd_sig(SIGPIPE, SIG_IGN, 0)
     }
     TargetOs.Wasi => {}
+  }
+}
+
+/// A test binary's SIGQUIT (task #363, class guard proposal 7): the task
+/// tree as `xo dump` writes it, so `xo test` can show where a test that
+/// ran past its timeout waits before it kills the process. SIGINT and
+/// SIGTERM keep the system's action. Its own pipe and thread, not the event
+/// loop's (poll.xo quit_start). Not where the program cannot use
+/// concurrency (no tasks to show), nor on Windows (no SIGQUIT).
+fn test_quit() {
+  if !concflag.built() {
+    return
+  }
+  match target.os {
+    TargetOs.Linux => {
+      let _e = rt.call_c2(rt.fn_addr("quit_start"), 0, 0)
+      let _q = linux.sigaction(SIGQUIT, rt.fn_addr("on_quit"), SA_RESTART_LINUX)
+    }
+    TargetOs.Darwin => {
+      let _e = rt.call_c2(rt.fn_addr("quit_start"), 0, 0)
+      let sa = rt.heap_large(16)
+      darwin_sig(sa, SIGQUIT, rt.fn_addr("on_quit"), SA_RESTART_DARWIN)
+      release(sa)
+    }
+    TargetOs.FreeBSD => {
+      let _e = rt.call_c2(rt.fn_addr("quit_start"), 0, 0)
+      freebsd_sig(SIGQUIT, rt.fn_addr("on_quit"), freebsd.SA_RESTART)
+    }
+    _ => {}
   }
 }
 
