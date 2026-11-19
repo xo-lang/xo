@@ -1,5 +1,19 @@
 # std/task changes
 
+## 2026-11-19: perf: a done Once.get copies out only its value
+
+- Kind: perf
+- Commit: this push
+- Found by: perf row bench/perf/task once (task #419: 12.7 of Go's sync.OnceValues on the linux/amd64 host)
+- Go reference: none (sync.OnceValues reads a done flag and returns the stored values)
+- Test: internal/arm64 TestOnceGetFast; goldens task_native and test_once on every backend
+
+A get of a done Once returns its value from under the read lock instead
+of a copy of the whole state, whose Result and Isolated cases were
+counted and matched on every get (a quarter of a get's profile on the
+Mac). A failed Once now takes the write lock on each get, as a first get
+does. 20,000,000 gets on the Mac: 0.19 to 0.14 s.
+
 ## 2026-11-17: perf: Semaphore.with takes a free permit without the channel lock
 
 - Kind: perf
