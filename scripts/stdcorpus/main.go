@@ -125,6 +125,7 @@ var generators = map[string]func() string{
 	"jpegenc":      jpegencCorpus,
 	"png":          pngCorpus,
 	"prelude":      preludeCorpus,
+	"preludefuzz":  preludeFuzzCorpus,
 	"regexp":       regexpCorpus,
 	"runes":        runesCorpus,
 	"smtp":         smtpCorpus,

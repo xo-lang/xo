@@ -90,6 +90,7 @@ func TestHtmlparseFuzz(t *testing.T)    { corpusFuzz(t, "htmlparse", "HTMLPARSEF
 func TestHtmltokFuzz(t *testing.T)      { corpusFuzz(t, "htmltok", "HTMLTOKFUZZ") }
 func TestPublicsuffixFuzz(t *testing.T) { corpusFuzz(t, "publicsuffix", "PUBLICSUFFIXFUZZ") }
 func TestRandomFuzz(t *testing.T)       { corpusFuzz(t, "random", "RANDOMFUZZ") }
+func TestPreludeFuzz(t *testing.T)      { corpusFuzz(t, "preludefuzz", "PRELUDEFUZZ") }
 func TestProtodescFuzz(t *testing.T)    { corpusFuzz(t, "protodesc", "PROTODESCFUZZ") }
 func TestProtoparseFuzz(t *testing.T)   { corpusFuzz(t, "protoparsefuzz", "PROTOPARSEFUZZ") }
 func TestMigrateFuzz(t *testing.T)      { corpusFuzz(t, "migratefuzz", "MIGRATEFUZZ") }
