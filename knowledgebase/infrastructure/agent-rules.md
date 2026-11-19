@@ -90,6 +90,7 @@ Last verified: 2026-11-17.
 | Long fuzz sweeps go sharded to a host, never the Mac gate class | CLAUDE.md | `scripts/lead/heavyd/heavy.sh` (exit 67) | `scripts/lead/heavy_fuzz_test.sh` | |
 | Never wait idle while a gate or push runs | CLAUDE.md | `workstream:work.xo` (checks: idle, idle-empty, waiting) | `workstream:test/work_test.sh` | idle, idle-empty, waiting |
 | A scope is never freed while its node is linked or its last unit is still counting itself done (gotchas/orphan-scope-free-races-last-unit.md, #326) | std/native runtime | `internal/llvm/threads_test.go` (xo test --check=free,guard on race_orphan; scope_free invariant, task #348) | `internal/llvm/threads_test.go` (TestFreeCheckOrphanScope) | gotcha:orphan-scope-free-races-last-unit |
+| pushq runs every check and gate command under an allowlisted env (env -i plus login, GO* and XO_* settings), so no caller or lane OFF_*, OFFGATE_*, HEAVY_* or GATE_* setting reaches one (gotchas/gate-env-leaks-into-push.md, #376) | pushq | `scripts/lead/pushq-env.sh` (pq_env in pushq.sh; GATE_RUN_ENV for the corpus check) | `scripts/lead/pushq_prelane_test.sh` (allowlisted env cases) | gotcha:gate-env-leaks-into-push |
 
 ## Retired kinds
 

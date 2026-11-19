@@ -33,3 +33,13 @@ variable"); TestOffloadAmd64Exclusive failed every push while passing when
 run by hand. The test now clears OFFLOAD_ENV, OFF_LANE, OFF_NO_LANE,
 HEAVY_LANE and HEAVY_LANE_ENV at its top. Check a new lead tool test with
 `HEAVY_LANE=arm64 bash scripts/lead/NAME_test.sh` before pushing it.
+
+Fixed for every check 2026-11-18 (#376): clearing names one by one kept
+missing the next one (OFF_* in #169, HEAVY_LANE twice). pushq.sh now runs
+each check and gate command through `scripts/lead/pushq-env.sh`, which
+starts from `env -i` and keeps only HOME, USER, LOGNAME, PATH, SHELL,
+TMPDIR, TERM, LANG, LC_*, TZ, SSH_AUTH_SOCK, GO*, CGO_*, CC and XO_*
+(less XO_GATE_BASE). A check that needs another setting names it on its
+command line. pushq_prelane_test.sh plants OFF_MAX_MIN, HEAVY_EXTRA and
+the lane's HEAVY_LANE and asserts that no check sees them. A new pushq
+check goes through `"$pq_env"` too.
