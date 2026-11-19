@@ -1,55 +1,55 @@
 kind: perf
 module: crypto
 result: fail
-commit: 8ea9d8269
+commit: 931899a77
 source: a4b65f271df516bff2d6174587e5b80557457ebf71478845b9d7d0b0fb89b664
 date: 2026-11-19
-host: linux/amd64 host
-command: go run ./scripts/stdproven perf -rounds 9 -host "linux/amd64 host" crypto
-measure: 41 cases of 8 twin directories, worst Xo / Go 1.473 over the cases above 5 ms (Proven at or under 1.05), 1m5s
+host: linux/arm64 host 2
+command: go run ./scripts/stdproven perf -rounds 9 -host "linux/arm64 host 2" crypto
+measure: 41 cases of 8 twin directories, worst Xo / Go 1.322 over the cases above 5 ms (Proven at or under 1.05), 52s
 
 Performance against Go (decisions 0461, 0616): scripts/twincheck -time 9 over bench/perf/aead, bench/perf/aesgcm, bench/perf/aesmodes, bench/perf/blake2b, bench/perf/chacha, bench/perf/ed25519, bench/perf/mlkem, bench/perf/sha3; medians of wall time, the two programs alternating.
 
 | workload | Go ms | Xo ms | Xo / Go |
 |---|---|---|---|
-| bench/perf/aead/none | 5.0 | 2.7 | 0.531 |
-| bench/perf/aead/gcm_small | 50.9 | 53.6 | 1.053 |
-| bench/perf/aead/gcm_big | 36.9 | 15.7 | 0.426 |
-| bench/perf/aead/chacha_small | 83.8 | 123.3 | 1.473 |
-| bench/perf/aead/chacha_big | 47.4 | 28.7 | 0.606 |
-| bench/perf/aead/cbc_small | 304.5 | 128.1 | 0.421 |
-| bench/perf/aead/cbc_big | 125.0 | 80.5 | 0.644 |
-| bench/perf/aead/gcm_key | 54.6 | 35.5 | 0.650 |
-| bench/perf/aead/hkdf | 190.7 | 101.0 | 0.530 |
-| bench/perf/aesgcm/seal | 55.3 | 51.8 | 0.937 |
-| bench/perf/aesgcm/open | 53.3 | 52.1 | 0.977 |
-| bench/perf/aesgcm/seal1 | 43.5 | 45.3 | 1.040 |
-| bench/perf/aesgcm/open1 | 42.7 | 45.8 | 1.072 |
-| bench/perf/aesgcm/key | 13.0 | 8.7 | 0.669 |
-| bench/perf/aesmodes/none (under 5 ms: startup) | 1.6 | 1.4 | 0.846 |
-| bench/perf/aesmodes/block | 7.1 | 4.9 | 0.692 |
-| bench/perf/aesmodes/cbcenc | 16.7 | 12.9 | 0.771 |
-| bench/perf/aesmodes/cbcdec | 10.9 | 2.4 | 0.220 |
-| bench/perf/aesmodes/ctr | 8.9 | 6.9 | 0.771 |
-| bench/perf/blake2b/none | 5.5 | 2.7 | 0.493 |
-| bench/perf/blake2b/big | 54.4 | 32.2 | 0.593 |
-| bench/perf/blake2b/big512 | 54.4 | 32.5 | 0.598 |
-| bench/perf/blake2b/small | 43.2 | 28.2 | 0.653 |
-| bench/perf/blake2b/keyed | 108.4 | 68.8 | 0.635 |
-| bench/perf/chacha/seal | 103.4 | 106.0 | 1.025 |
-| bench/perf/chacha/open | 104.5 | 107.6 | 1.030 |
-| bench/perf/chacha/xor | 296.7 | 319.4 | 1.077 |
-| bench/perf/chacha/poly | 66.6 | 61.5 | 0.924 |
-| bench/perf/ed25519/none (under 5 ms: startup) | 1.6 | 1.3 | 0.831 |
-| bench/perf/ed25519/keygen | 54.2 | 46.2 | 0.852 |
-| bench/perf/ed25519/sign | 65.6 | 51.6 | 0.786 |
-| bench/perf/ed25519/signkey | 65.7 | 51.4 | 0.782 |
-| bench/perf/ed25519/verify | 151.4 | 144.1 | 0.952 |
-| bench/perf/mlkem/none (under 5 ms: startup) | 1.7 | 1.3 | 0.751 |
-| bench/perf/mlkem/keygen | 125.2 | 66.0 | 0.527 |
-| bench/perf/mlkem/parse | 49.5 | 42.4 | 0.857 |
-| bench/perf/mlkem/encaps | 125.5 | 38.1 | 0.304 |
-| bench/perf/mlkem/decaps | 118.3 | 66.0 | 0.558 |
-| bench/perf/sha3/none | 5.1 | 2.6 | 0.517 |
-| bench/perf/sha3/big | 82.1 | 87.1 | 1.061 |
-| bench/perf/sha3/small | 68.2 | 73.0 | 1.071 |
+| bench/perf/aead/none (under 5 ms: startup) | 3.3 | 1.9 | 0.572 |
+| bench/perf/aead/gcm_small | 46.9 | 37.6 | 0.801 |
+| bench/perf/aead/gcm_big | 29.3 | 14.8 | 0.504 |
+| bench/perf/aead/chacha_small | 94.3 | 83.2 | 0.882 |
+| bench/perf/aead/chacha_big | 107.6 | 67.2 | 0.624 |
+| bench/perf/aead/cbc_small | 193.0 | 127.6 | 0.661 |
+| bench/perf/aead/cbc_big | 82.1 | 52.6 | 0.641 |
+| bench/perf/aead/gcm_key | 34.7 | 45.9 | 1.322 |
+| bench/perf/aead/hkdf | 123.6 | 96.9 | 0.784 |
+| bench/perf/aesgcm/seal | 38.3 | 38.0 | 0.993 |
+| bench/perf/aesgcm/open | 36.7 | 36.8 | 1.003 |
+| bench/perf/aesgcm/seal1 | 34.0 | 32.7 | 0.961 |
+| bench/perf/aesgcm/open1 | 32.6 | 31.4 | 0.963 |
+| bench/perf/aesgcm/key | 6.2 | 7.8 | 1.263 |
+| bench/perf/aesmodes/none (under 5 ms: startup) | 0.5 | 0.5 | 1.054 |
+| bench/perf/aesmodes/block | 6.2 | 6.9 | 1.110 |
+| bench/perf/aesmodes/cbcenc | 10.0 | 5.3 | 0.532 |
+| bench/perf/aesmodes/cbcdec | 5.6 | 1.1 | 0.202 |
+| bench/perf/aesmodes/ctr (under 5 ms: startup) | 2.8 | 3.4 | 1.186 |
+| bench/perf/blake2b/none (under 5 ms: startup) | 3.3 | 1.8 | 0.534 |
+| bench/perf/blake2b/big | 32.3 | 28.2 | 0.873 |
+| bench/perf/blake2b/big512 | 32.5 | 28.3 | 0.872 |
+| bench/perf/blake2b/small | 25.7 | 27.7 | 1.077 |
+| bench/perf/blake2b/keyed | 56.0 | 50.9 | 0.909 |
+| bench/perf/chacha/seal | 241.3 | 231.2 | 0.958 |
+| bench/perf/chacha/open | 231.1 | 232.4 | 1.005 |
+| bench/perf/chacha/xor | 162.3 | 162.4 | 1.001 |
+| bench/perf/chacha/poly | 70.1 | 66.2 | 0.944 |
+| bench/perf/ed25519/none (under 5 ms: startup) | 0.5 | 0.6 | 1.071 |
+| bench/perf/ed25519/keygen | 49.9 | 35.3 | 0.707 |
+| bench/perf/ed25519/sign | 62.7 | 38.6 | 0.616 |
+| bench/perf/ed25519/signkey | 62.7 | 38.6 | 0.616 |
+| bench/perf/ed25519/verify | 131.5 | 98.9 | 0.752 |
+| bench/perf/mlkem/none (under 5 ms: startup) | 0.6 | 0.6 | 0.928 |
+| bench/perf/mlkem/keygen | 86.9 | 47.9 | 0.551 |
+| bench/perf/mlkem/parse | 35.6 | 30.7 | 0.861 |
+| bench/perf/mlkem/encaps | 92.5 | 29.6 | 0.320 |
+| bench/perf/mlkem/decaps | 85.1 | 52.0 | 0.611 |
+| bench/perf/sha3/none (under 5 ms: startup) | 3.4 | 1.8 | 0.548 |
+| bench/perf/sha3/big | 69.1 | 69.6 | 1.007 |
+| bench/perf/sha3/small | 53.7 | 54.2 | 1.009 |
