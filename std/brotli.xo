@@ -6,6 +6,7 @@
 // Origin: brotli (THIRD_PARTY_NOTICES)
 
 use std/http
+use std/internal
 
 // BEGIN GENERATED
 // From github.com/andybalholm/brotli (scripts/genbrotli): a 122784 byte dictionary, 121 transforms.
@@ -1476,15 +1477,7 @@ fn write_bits(var w: BitBuf, n: Int, bits: Int) {
 fn zero_bytes(n: Int) -> List[UInt8] { List[UInt8].filled(n, 0) }
 
 /// The 8 and 4 byte little endian words of b at i.
-fn ld64(b: Bytes, i: Int) -> Int {
-  var v = 0
-  var k = 7
-  while k >= 0 {
-    v = v.wrapping_shl(8) | Int(b[i + k])
-    k -= 1
-  }
-  v
-}
+fn ld64(b: Bytes, i: Int) -> Int { internal.le_word(b, i) }
 
 fn ld32(b: Bytes, i: Int) -> Int {
   Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)

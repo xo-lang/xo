@@ -776,6 +776,14 @@ pub fn uuid_word(b: Bytes, i: Int) -> Int {
   rt.bytes_word(b, i).swap_bytes()
 }
 
+/// One load; a b too short for it faults.
+pub fn le_word(b: Bytes, i: Int) -> Int {
+  if i < 0 || i + 8 > b.len() {
+    fault("le_word: 8 bytes at ${i} of ${b.len()}")
+  }
+  rt.bytes_word(b, i)
+}
+
 pub fn uuid_half(s: Bytes, off: Int, dashed: Bool, half: Int) -> Int? {
   let n = if dashed { 36 } else { 32 }
   if off < 0 || s.len() - off < n {

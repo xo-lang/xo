@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: the encoder reads an 8-byte word with one load
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (perf profile of quality 1 on linux/arm64 host 2: write_bits 23% and match_len 19%, neither in Go's profile; ld64 was eight checked byte loads, as the arm64 backend does not combine loads)
+- Go reference: andybalholm/brotli's binary.LittleEndian.Uint64 reads (one load)
+- Measured: `xo bench --ab` on linux/arm64 host 1 (origin/main e6c1d8b8e against this change): bench/perf/brotli enc1 0.783 of the time (12 rounds, 95% 0.776 to 0.798, 38.8 to 30.4 ms), enc6 0.965 (6 rounds), enc11 1.003 (4 rounds, unchanged); max RSS unchanged; runs under 40 ms read "too short"
+- Test: brotli module tests (ld64 against the byte loop at every offset)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: the encoder's hash table is one zeroed allocation
 
 - Kind: perf

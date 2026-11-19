@@ -305,6 +305,11 @@ func Internal_uuid_word(_ *Task, b Bytes, i int64) int64 {
 	return int64(binary.BigEndian.Uint64([]byte(b[i : i+8])))
 }
 
+// Internal_le_word is `internal.le_word(b, i)`: b[i:i+8] little endian.
+func Internal_le_word(_ *Task, b Bytes, i int64) int64 {
+	return int64(binary.LittleEndian.Uint64([]byte(b[i : i+8])))
+}
+
 // Internal_uuid_bytes_words is `internal.uuid_bytes_words(hi, lo)`.
 func Internal_uuid_bytes_words(_ *Task, hi, lo int64) Bytes {
 	var b [16]byte

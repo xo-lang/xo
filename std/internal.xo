@@ -53,6 +53,11 @@ fn uuid_bytes_words(hi: Int, lo: Int) -> Bytes
 /// The word of b[i..i + 8], the first byte highest; b holds them (std/uuid
 /// checks its length first).
 fn uuid_word(b: Bytes, i: Int) -> Int
+/// The word of b[i..i + 8], the first byte lowest (Go's
+/// binary.LittleEndian.Uint64(b[i:])): one load where the arm64 backend
+/// would make eight checked byte loads (std/brotli's ld64); fewer than 8
+/// bytes from i faults.
+fn le_word(b: Bytes, i: Int) -> Int
 
 /// A primitive of the native TLS stack's (work item B31, decision 0202)
 /// for the golden tests that diff it against Go's crypto (std/rt's
