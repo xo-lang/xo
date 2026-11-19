@@ -283,36 +283,7 @@ func (v_r Regexp_Regex) M_captures(tk *Task, v_s string) Option[List[Option[stri
 			return v
 		}(None[List[Option[string]]]())
 	}
-	var v_out List[Option[string]] = List[Option[string]]{}
-	_ = v_out
-	var v_i int64 = int64(0)
-	_ = v_i
-	for {
-		if !(AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:143:9"), int64(1), "std/regexp.xo:143:9") < List_len[int64](tk, v_m)) {
-			break
-		}
-		{
-			if List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:144:10"), "std/regexp.xo:144:8") >= int64(0) {
-				x_pv17 := Some[string](Regexp_sl(tk, v_s, List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:145:29"), "std/regexp.xo:145:27"), List_At(v_m, AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:145:39"), int64(1), "std/regexp.xo:145:39"), "std/regexp.xo:145:37")))
-				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv17)
-				} else {
-					v_out = List_PushSlow(v_out, x_pv17)
-				}
-				_ = Unit{}
-			} else {
-				x_pv18 := None[string]()
-				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv18)
-				} else {
-					v_out = List_PushSlow(v_out, x_pv18)
-				}
-				_ = Unit{}
-			}
-			v_i = AddIUp(v_i, int64(1), "std/regexp.xo:149:5")
-		}
-	}
-	return Some[List[Option[string]]](List_Own(v_out))
+	return Some[List[Option[string]]](List_Own(Regexp_groups_of(tk, v_s, List_Own(v_m), List_len[string](tk, v_r.F_names))))
 }
 
 func (v_r Regexp_Regex) M_named(tk *Task, v_s string) Option[Map[string, string]] {
@@ -337,8 +308,8 @@ func (v_r Regexp_Regex) M_named(tk *Task, v_s string) Option[Map[string, string]
 		{
 			var v_name string = List_AtU(v_r.F_names, v_i)
 			_ = v_name
-			if ((v_name != "") && (((int64(2) * v_i) + int64(1)) < List_len[int64](tk, v_m))) && (List_At(v_m, (int64(2)*v_i), "std/regexp.xo:164:45") >= int64(0)) {
-				Map_put[string, string](tk, &v_out, v_name, Regexp_sl(tk, v_s, List_At(v_m, (int64(2)*v_i), "std/regexp.xo:165:27"), List_At(v_m, ((int64(2)*v_i)+int64(1)), "std/regexp.xo:165:37")))
+			if ((v_name != "") && (((int64(2) * v_i) + int64(1)) < List_len[int64](tk, v_m))) && (List_At(v_m, (int64(2)*v_i), "std/regexp.xo:154:45") >= int64(0)) {
+				Map_put[string, string](tk, &v_out, v_name, Regexp_sl(tk, v_s, List_At(v_m, (int64(2)*v_i), "std/regexp.xo:155:27"), List_At(v_m, ((int64(2)*v_i)+int64(1)), "std/regexp.xo:155:37")))
 			}
 			v_i = (v_i + int64(1))
 		}
@@ -347,16 +318,16 @@ func (v_r Regexp_Regex) M_named(tk *Task, v_s string) Option[Map[string, string]
 }
 
 func (v_r Regexp_Regex) M_replace_all(tk *Task, v_s string, v_repl string) string {
-	x_a20 := v_s
-	x_a21 := v_repl
-	x_a22 := Str_contains(tk, v_repl, "$")
-	return Addr(func(v Regexp_Regex) Regexp_Regex { v.XoMark(); return v }(v_r)).M_replace(tk, x_a20, x_a21, x_a22)
+	x_a17 := v_s
+	x_a18 := v_repl
+	x_a19 := Str_contains(tk, v_repl, "$")
+	return Addr(func(v Regexp_Regex) Regexp_Regex { v.XoMark(); return v }(v_r)).M_replace(tk, x_a17, x_a18, x_a19)
 }
 
 func (v_r Regexp_Regex) M_replace_all_literal(tk *Task, v_s string, v_repl string) string {
-	x_a23 := v_s
-	x_a24 := v_repl
-	return Addr(func(v Regexp_Regex) Regexp_Regex { v.XoMark(); return v }(v_r)).M_replace(tk, x_a23, x_a24, false)
+	x_a20 := v_s
+	x_a21 := v_repl
+	return Addr(func(v Regexp_Regex) Regexp_Regex { v.XoMark(); return v }(v_r)).M_replace(tk, x_a20, x_a21, false)
 }
 
 func (v_r Regexp_Regex) M_replace_all_with(tk *Task, v_s string, v_f func(*Task, string) Result[string, Never]) string {
@@ -368,7 +339,7 @@ func (v_r Regexp_Regex) M_replace_all_with(tk *Task, v_s string, v_f func(*Task,
 	_ = v_search
 	var v_end int64 = Str_len(tk, v_s)
 	_ = v_end
-x_L25:
+x_L22:
 	for {
 		if !(v_search <= v_end) {
 			break
@@ -377,13 +348,13 @@ x_L25:
 			var v_a List[int64] = List_Own(Regexp_exec(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, v_search, int64(2)))
 			_ = v_a
 			if List_is_empty[int64](tk, v_a) {
-				break x_L25
+				break x_L22
 			}
-			v_b.M_write_str(tk, Regexp_sl(tk, v_s, v_last_end, List_At(v_a, int64(0), "std/regexp.xo:191:33")))
-			if (List_At(v_a, int64(1), "std/regexp.xo:192:8") > v_last_end) || (List_At(v_a, int64(0), "std/regexp.xo:192:27") == int64(0)) {
-				v_b.M_write_str(tk, v_f(tk, Regexp_sl(tk, v_s, List_At(v_a, int64(0), "std/regexp.xo:193:27"), List_At(v_a, int64(1), "std/regexp.xo:193:33"))).V)
+			v_b.M_write_str(tk, Regexp_sl(tk, v_s, v_last_end, List_At(v_a, int64(0), "std/regexp.xo:181:33")))
+			if (List_At(v_a, int64(1), "std/regexp.xo:182:8") > v_last_end) || (List_At(v_a, int64(0), "std/regexp.xo:182:27") == int64(0)) {
+				v_b.M_write_str(tk, v_f(tk, Regexp_sl(tk, v_s, List_At(v_a, int64(0), "std/regexp.xo:183:27"), List_At(v_a, int64(1), "std/regexp.xo:183:33"))).V)
 			}
-			v_last_end = List_At(v_a, int64(1), "std/regexp.xo:195:16")
+			v_last_end = List_At(v_a, int64(1), "std/regexp.xo:185:16")
 			var v_width int64 = int64(0)
 			_ = v_width
 			var v_st int64 = Regexp_step_at(tk, v_s, v_search)
@@ -391,43 +362,43 @@ x_L25:
 			if v_st >= int64(0) {
 				v_width = (v_st & int64(7))
 			}
-			if (v_search + v_width) > List_At(v_a, int64(1), "std/regexp.xo:201:25") {
+			if (v_search + v_width) > List_At(v_a, int64(1), "std/regexp.xo:191:25") {
 				v_search = (v_search + v_width)
 			} else {
-				if (v_search + int64(1)) > List_At(v_a, int64(1), "std/regexp.xo:203:28") {
+				if (v_search + int64(1)) > List_At(v_a, int64(1), "std/regexp.xo:193:28") {
 					v_search = (v_search + int64(1))
 				} else {
-					v_search = List_At(v_a, int64(1), "std/regexp.xo:206:16")
+					v_search = List_At(v_a, int64(1), "std/regexp.xo:196:16")
 				}
 			}
 		}
 	}
 	v_b.M_write_str(tk, Regexp_sl(tk, v_s, v_last_end, v_end))
-	x_t26 := Bytes_to_str(tk, v_b.M_freeze(tk))
-	var x_c27 string
-	if x_t26.Some {
-		x_c27 = x_t26.V
+	x_t23 := Bytes_to_str(tk, v_b.M_freeze(tk))
+	var x_c24 string
+	if x_t23.Some {
+		x_c24 = x_t23.V
 	} else {
-		x_c27 = v_s
+		x_c24 = v_s
 	}
-	return x_c27
+	return x_c24
 }
 
 func (v_r Regexp_Regex) M_find_all_index(tk *Task, v_s string) List[Tuple2[int64, int64]] {
 	var v_out List[Tuple2[int64, int64]] = List[Tuple2[int64, int64]]{}
 	_ = v_out
-	x_it28 := List_Own(Regexp_all_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, int64(2)))
-	for _, x_e30 := range List_Items(x_it28) {
-		x_el31 := x_e30
-		_ = x_el31
-		var v_m List[int64] = x_el31
+	x_it25 := List_Own(Regexp_all_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, int64(2)))
+	for _, x_e27 := range List_Items(x_it25) {
+		x_el28 := x_e27
+		_ = x_el28
+		var v_m List[int64] = x_el28
 		_ = v_m
 		{
-			x_pv32 := Tuple2[int64, int64]{F0: List_At(v_m, int64(0), "std/regexp.xo:218:15"), F1: List_At(v_m, int64(1), "std/regexp.xo:218:21")}
+			x_pv29 := Tuple2[int64, int64]{F0: List_At(v_m, int64(0), "std/regexp.xo:208:15"), F1: List_At(v_m, int64(1), "std/regexp.xo:208:21")}
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv32)
+				v_out = List_PushFast(v_out, x_pv29)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv32)
+				v_out = List_PushSlow(v_out, x_pv29)
 			}
 			_ = Unit{}
 		}
@@ -438,18 +409,18 @@ func (v_r Regexp_Regex) M_find_all_index(tk *Task, v_s string) List[Tuple2[int64
 func (v_r Regexp_Regex) M_captures_all(tk *Task, v_s string) List[List[Option[string]]] {
 	var v_out List[List[Option[string]]] = List[List[Option[string]]]{}
 	_ = v_out
-	x_it33 := List_Own(Regexp_all_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, v_r.F_prog.F_num_cap))
-	for _, x_e35 := range List_Items(x_it33) {
-		x_el36 := x_e35
-		_ = x_el36
-		var v_m List[int64] = x_el36
+	x_it30 := List_Own(Regexp_all_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, v_r.F_prog.F_num_cap))
+	for _, x_e32 := range List_Items(x_it30) {
+		x_el33 := x_e32
+		_ = x_el33
+		var v_m List[int64] = x_el33
 		_ = v_m
 		{
-			x_pv37 := List_Own(Regexp_groups_of(tk, v_s, List_Own(v_m)))
+			x_pv34 := List_Own(Regexp_groups_of(tk, v_s, List_Own(v_m), List_len[string](tk, v_r.F_names)))
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv37)
+				v_out = List_PushFast(v_out, x_pv34)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv37)
+				v_out = List_PushSlow(v_out, x_pv34)
 			}
 			_ = Unit{}
 		}
@@ -468,24 +439,24 @@ func (v_r Regexp_Regex) M_captures_index(tk *Task, v_s string) Option[List[Optio
 			return v
 		}(None[List[Option[Tuple2[int64, int64]]]]())
 	}
-	return Some[List[Option[Tuple2[int64, int64]]]](List_Own(Regexp_spans_of(tk, List_Own(v_m))))
+	return Some[List[Option[Tuple2[int64, int64]]]](List_Own(Regexp_spans_of(tk, List_Own(v_m), List_len[string](tk, v_r.F_names))))
 }
 
 func (v_r Regexp_Regex) M_captures_all_index(tk *Task, v_s string) List[List[Option[Tuple2[int64, int64]]]] {
 	var v_out List[List[Option[Tuple2[int64, int64]]]] = List[List[Option[Tuple2[int64, int64]]]]{}
 	_ = v_out
-	x_it38 := List_Own(Regexp_all_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, v_r.F_prog.F_num_cap))
-	for _, x_e40 := range List_Items(x_it38) {
-		x_el41 := x_e40
-		_ = x_el41
-		var v_m List[int64] = x_el41
+	x_it35 := List_Own(Regexp_all_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, v_r.F_prog.F_num_cap))
+	for _, x_e37 := range List_Items(x_it35) {
+		x_el38 := x_e37
+		_ = x_el38
+		var v_m List[int64] = x_el38
 		_ = v_m
 		{
-			x_pv42 := List_Own(Regexp_spans_of(tk, List_Own(v_m)))
+			x_pv39 := List_Own(Regexp_spans_of(tk, List_Own(v_m), List_len[string](tk, v_r.F_names)))
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv42)
+				v_out = List_PushFast(v_out, x_pv39)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv42)
+				v_out = List_PushSlow(v_out, x_pv39)
 			}
 			_ = Unit{}
 		}
@@ -493,18 +464,51 @@ func (v_r Regexp_Regex) M_captures_all_index(tk *Task, v_s string) List[List[Opt
 	return List_Own(v_out)
 }
 
-func Regexp_groups_of(tk *Task, v_s string, v_m List[int64]) List[Option[string]] {
+func Regexp_groups_of(tk *Task, v_s string, v_m List[int64], v_n int64) List[Option[string]] {
 	var v_out List[Option[string]] = List[Option[string]]{}
 	_ = v_out
 	var v_i int64 = int64(0)
 	_ = v_i
 	for {
-		if !(AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:257:9"), int64(1), "std/regexp.xo:257:9") < List_len[int64](tk, v_m)) {
+		if !(v_i < v_n) {
 			break
 		}
 		{
-			if List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:258:10"), "std/regexp.xo:258:8") >= int64(0) {
-				x_pv44 := Some[string](Regexp_sl(tk, v_s, List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:259:29"), "std/regexp.xo:259:27"), List_At(v_m, AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:259:39"), int64(1), "std/regexp.xo:259:39"), "std/regexp.xo:259:37")))
+			if (AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:251:8"), int64(1), "std/regexp.xo:251:8") < List_len[int64](tk, v_m)) && (List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:251:33"), "std/regexp.xo:251:31") >= int64(0)) {
+				x_pv41 := Some[string](Regexp_sl(tk, v_s, List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:252:29"), "std/regexp.xo:252:27"), List_At(v_m, AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:252:39"), int64(1), "std/regexp.xo:252:39"), "std/regexp.xo:252:37")))
+				if List_CanPush(v_out) {
+					v_out = List_PushFast(v_out, x_pv41)
+				} else {
+					v_out = List_PushSlow(v_out, x_pv41)
+				}
+				_ = Unit{}
+			} else {
+				x_pv42 := None[string]()
+				if List_CanPush(v_out) {
+					v_out = List_PushFast(v_out, x_pv42)
+				} else {
+					v_out = List_PushSlow(v_out, x_pv42)
+				}
+				_ = Unit{}
+			}
+			v_i = (v_i + int64(1))
+		}
+	}
+	return List_Own(v_out)
+}
+
+func Regexp_spans_of(tk *Task, v_m List[int64], v_n int64) List[Option[Tuple2[int64, int64]]] {
+	var v_out List[Option[Tuple2[int64, int64]]] = List[Option[Tuple2[int64, int64]]]{}
+	_ = v_out
+	var v_i int64 = int64(0)
+	_ = v_i
+	for {
+		if !(v_i < v_n) {
+			break
+		}
+		{
+			if (AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:266:8"), int64(1), "std/regexp.xo:266:8") < List_len[int64](tk, v_m)) && (List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:266:33"), "std/regexp.xo:266:31") >= int64(0)) {
+				x_pv44 := Some[Tuple2[int64, int64]](Tuple2[int64, int64]{F0: List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:267:24"), "std/regexp.xo:267:22"), F1: List_At(v_m, AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:267:34"), int64(1), "std/regexp.xo:267:34"), "std/regexp.xo:267:32")})
 				if List_CanPush(v_out) {
 					v_out = List_PushFast(v_out, x_pv44)
 				} else {
@@ -512,7 +516,7 @@ func Regexp_groups_of(tk *Task, v_s string, v_m List[int64]) List[Option[string]
 				}
 				_ = Unit{}
 			} else {
-				x_pv45 := None[string]()
+				x_pv45 := None[Tuple2[int64, int64]]()
 				if List_CanPush(v_out) {
 					v_out = List_PushFast(v_out, x_pv45)
 				} else {
@@ -520,40 +524,7 @@ func Regexp_groups_of(tk *Task, v_s string, v_m List[int64]) List[Option[string]
 				}
 				_ = Unit{}
 			}
-			v_i = AddIUp(v_i, int64(1), "std/regexp.xo:263:5")
-		}
-	}
-	return List_Own(v_out)
-}
-
-func Regexp_spans_of(tk *Task, v_m List[int64]) List[Option[Tuple2[int64, int64]]] {
-	var v_out List[Option[Tuple2[int64, int64]]] = List[Option[Tuple2[int64, int64]]]{}
-	_ = v_out
-	var v_i int64 = int64(0)
-	_ = v_i
-	for {
-		if !(AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:271:9"), int64(1), "std/regexp.xo:271:9") < List_len[int64](tk, v_m)) {
-			break
-		}
-		{
-			if List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:272:10"), "std/regexp.xo:272:8") >= int64(0) {
-				x_pv47 := Some[Tuple2[int64, int64]](Tuple2[int64, int64]{F0: List_At(v_m, MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:273:24"), "std/regexp.xo:273:22"), F1: List_At(v_m, AddIUp(MulKI(int64(2), v_i, -4611686018427387904, 4611686018427387903, "std/regexp.xo:273:34"), int64(1), "std/regexp.xo:273:34"), "std/regexp.xo:273:32")})
-				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv47)
-				} else {
-					v_out = List_PushSlow(v_out, x_pv47)
-				}
-				_ = Unit{}
-			} else {
-				x_pv48 := None[Tuple2[int64, int64]]()
-				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv48)
-				} else {
-					v_out = List_PushSlow(v_out, x_pv48)
-				}
-				_ = Unit{}
-			}
-			v_i = AddIUp(v_i, int64(1), "std/regexp.xo:277:5")
+			v_i = (v_i + int64(1))
 		}
 	}
 	return List_Own(v_out)
@@ -569,32 +540,32 @@ func (v_r Regexp_Regex) M_split(tk *Task, v_s string) List[string] {
 	_ = v_beg
 	var v_end int64 = int64(0)
 	_ = v_end
-	x_it49 := List_Own(Regexp_all_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, int64(2)))
-	for _, x_e51 := range List_Items(x_it49) {
-		x_el52 := x_e51
-		_ = x_el52
-		var v_m List[int64] = x_el52
+	x_it46 := List_Own(Regexp_all_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, int64(2)))
+	for _, x_e48 := range List_Items(x_it46) {
+		x_el49 := x_e48
+		_ = x_el49
+		var v_m List[int64] = x_el49
 		_ = v_m
 		{
-			v_end = List_At(v_m, int64(0), "std/regexp.xo:291:11")
-			if List_At(v_m, int64(1), "std/regexp.xo:292:8") != int64(0) {
-				x_pv53 := Regexp_sl(tk, v_s, v_beg, v_end)
+			v_end = List_At(v_m, int64(0), "std/regexp.xo:285:11")
+			if List_At(v_m, int64(1), "std/regexp.xo:286:8") != int64(0) {
+				x_pv50 := Regexp_sl(tk, v_s, v_beg, v_end)
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv53)
+					v_out = List_PushFast(v_out, x_pv50)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv53)
+					v_out = List_PushSlow(v_out, x_pv50)
 				}
 				_ = Unit{}
 			}
-			v_beg = List_At(v_m, int64(1), "std/regexp.xo:295:11")
+			v_beg = List_At(v_m, int64(1), "std/regexp.xo:289:11")
 		}
 	}
 	if v_end != Str_len(tk, v_s) {
-		x_pv54 := Regexp_sl(tk, v_s, v_beg, Str_len(tk, v_s))
+		x_pv51 := Regexp_sl(tk, v_s, v_beg, Str_len(tk, v_s))
 		if List_CanPush(v_out) {
-			v_out = List_PushFast(v_out, x_pv54)
+			v_out = List_PushFast(v_out, x_pv51)
 		} else {
-			v_out = List_PushSlow(v_out, x_pv54)
+			v_out = List_PushSlow(v_out, x_pv51)
 		}
 		_ = Unit{}
 	}
@@ -953,45 +924,45 @@ func (v_p *Regexp_Parser) M_check_size(tk *Task, v_re int64) {
 		if (*v_p).F_repeats == int64(0) {
 			(*v_p).F_repeats = int64(1)
 		}
-		if List_At((*v_p).F_ops, v_re, "std/regexp.xo:427:8") == Regexp_OP_REPEAT {
-			var v_n int64 = List_At((*v_p).F_maxs, v_re, "std/regexp.xo:428:15")
+		if List_At((*v_p).F_ops, v_re, "std/regexp.xo:421:8") == Regexp_OP_REPEAT {
+			var v_n int64 = List_At((*v_p).F_maxs, v_re, "std/regexp.xo:422:15")
 			_ = v_n
 			if v_n == int64(-1) {
-				v_n = List_At((*v_p).F_mins, v_re, "std/regexp.xo:430:13")
+				v_n = List_At((*v_p).F_mins, v_re, "std/regexp.xo:424:13")
 			}
 			if v_n <= int64(0) {
 				v_n = int64(1)
 			}
-			if v_n > DivS(Regexp_MAX_SIZE, (*v_p).F_repeats, "std/regexp.xo:435:14") {
+			if v_n > DivS(Regexp_MAX_SIZE, (*v_p).F_repeats, "std/regexp.xo:429:14") {
 				(*v_p).F_repeats = Regexp_MAX_SIZE
 			} else {
-				(*v_p).F_repeats = MulS((*v_p).F_repeats, v_n, "std/regexp.xo:438:9")
+				(*v_p).F_repeats = MulS((*v_p).F_repeats, v_n, "std/regexp.xo:432:9")
 			}
 		}
-		if List_len[int64](tk, (*v_p).F_ops) < DivS(Regexp_MAX_SIZE, (*v_p).F_repeats, "std/regexp.xo:441:22") {
+		if List_len[int64](tk, (*v_p).F_ops) < DivS(Regexp_MAX_SIZE, (*v_p).F_repeats, "std/regexp.xo:435:22") {
 			return
 		}
 		(*v_p).F_size_on = true
 		(*v_p).F_sizes = List_Own(List_with_capacity[int64](tk, List_len[int64](tk, (*v_p).F_ops)))
-		x_it55 := Range[int64]{Lo: int64(0), Hi: List_len[int64](tk, (*v_p).F_ops), Incl: false}
-		for x_i57 := x_it55.Lo; x_i57 < x_it55.Hi; x_i57++ {
-			x_el58 := x_i57
-			_ = x_el58
+		x_it52 := Range[int64]{Lo: int64(0), Hi: List_len[int64](tk, (*v_p).F_ops), Incl: false}
+		for x_i54 := x_it52.Lo; x_i54 < x_it52.Hi; x_i54++ {
+			x_el55 := x_i54
+			_ = x_el55
 			{
-				x_pv59 := int64(-1)
+				x_pv56 := int64(-1)
 				if List_CanPush((*v_p).F_sizes) {
-					(*v_p).F_sizes = List_PushFast((*v_p).F_sizes, x_pv59)
+					(*v_p).F_sizes = List_PushFast((*v_p).F_sizes, x_pv56)
 				} else {
-					(*v_p).F_sizes = List_PushSlow((*v_p).F_sizes, x_pv59)
+					(*v_p).F_sizes = List_PushSlow((*v_p).F_sizes, x_pv56)
 				}
 				_ = Unit{}
 			}
 		}
-		x_it60 := List_Own(List_clone[int64](tk, List_Own((*v_p).F_stack)))
-		for _, x_e62 := range List_Items(x_it60) {
-			x_el63 := x_e62
-			_ = x_el63
-			var v_x int64 = x_el63
+		x_it57 := List_Own(List_clone[int64](tk, List_Own((*v_p).F_stack)))
+		for _, x_e59 := range List_Items(x_it57) {
+			x_el60 := x_e59
+			_ = x_el60
+			var v_x int64 = x_el60
 			_ = v_x
 			{
 				(*v_p).M_check_size(tk, v_x)
@@ -1008,54 +979,54 @@ func (v_p *Regexp_Parser) M_check_size(tk *Task, v_re int64) {
 }
 
 func (v_p *Regexp_Parser) M_calc_size(tk *Task, v_re int64, v_force bool) int64 {
-	if !(v_force) && (List_At((*v_p).F_sizes, v_re, "std/regexp.xo:460:16") >= int64(0)) {
-		return List_At((*v_p).F_sizes, v_re, "std/regexp.xo:461:12")
+	if !(v_force) && (List_At((*v_p).F_sizes, v_re, "std/regexp.xo:454:16") >= int64(0)) {
+		return List_At((*v_p).F_sizes, v_re, "std/regexp.xo:455:12")
 	}
-	var v_op int64 = List_At((*v_p).F_ops, v_re, "std/regexp.xo:463:12")
+	var v_op int64 = List_At((*v_p).F_ops, v_re, "std/regexp.xo:457:12")
 	_ = v_op
 	var v_size int64 = int64(0)
 	_ = v_size
 	if v_op == Regexp_OP_LITERAL {
-		v_size = List_len[int64](tk, List_At((*v_p).F_runes, v_re, "std/regexp.xo:466:12"))
+		v_size = List_len[int64](tk, List_At((*v_p).F_runes, v_re, "std/regexp.xo:460:12"))
 	} else {
 		if (v_op == Regexp_OP_CAPTURE) || (v_op == Regexp_OP_STAR) {
-			v_size = AddS(int64(2), (*v_p).M_calc_size(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:469:28"), int64(0), "std/regexp.xo:469:28"), false), "std/regexp.xo:469:12")
+			v_size = AddS(int64(2), (*v_p).M_calc_size(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:463:28"), int64(0), "std/regexp.xo:463:28"), false), "std/regexp.xo:463:12")
 		} else {
 			if (v_op == Regexp_OP_PLUS) || (v_op == Regexp_OP_QUEST) {
-				v_size = AddS(int64(1), (*v_p).M_calc_size(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:471:28"), int64(0), "std/regexp.xo:471:28"), false), "std/regexp.xo:471:12")
+				v_size = AddS(int64(1), (*v_p).M_calc_size(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:465:28"), int64(0), "std/regexp.xo:465:28"), false), "std/regexp.xo:465:12")
 			} else {
 				if (v_op == Regexp_OP_CONCAT) || (v_op == Regexp_OP_ALTERNATE) {
-					x_it64 := List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:473:16"))
-					for _, x_e66 := range List_Items(x_it64) {
-						x_el67 := x_e66
-						_ = x_el67
-						var v_sub int64 = x_el67
+					x_it61 := List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:467:16"))
+					for _, x_e63 := range List_Items(x_it61) {
+						x_el64 := x_e63
+						_ = x_el64
+						var v_sub int64 = x_el64
 						_ = v_sub
 						{
-							v_size = AddS(v_size, (*v_p).M_calc_size(tk, v_sub, false), "std/regexp.xo:474:7")
+							v_size = AddS(v_size, (*v_p).M_calc_size(tk, v_sub, false), "std/regexp.xo:468:7")
 						}
 					}
-					if (v_op == Regexp_OP_ALTERNATE) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:476:30")) > int64(1)) {
-						v_size = AddS(v_size, (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:477:15")) - int64(1)), "std/regexp.xo:477:7")
+					if (v_op == Regexp_OP_ALTERNATE) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:470:30")) > int64(1)) {
+						v_size = AddS(v_size, (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:471:15")) - int64(1)), "std/regexp.xo:471:7")
 					}
 				} else {
 					if v_op == Regexp_OP_REPEAT {
-						var v_sub_1 int64 = (*v_p).M_calc_size(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:480:27"), int64(0), "std/regexp.xo:480:27"), false)
+						var v_sub_1 int64 = (*v_p).M_calc_size(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:474:27"), int64(0), "std/regexp.xo:474:27"), false)
 						_ = v_sub_1
-						var v_mn int64 = List_At((*v_p).F_mins, v_re, "std/regexp.xo:481:14")
+						var v_mn int64 = List_At((*v_p).F_mins, v_re, "std/regexp.xo:475:14")
 						_ = v_mn
-						var v_mx int64 = List_At((*v_p).F_maxs, v_re, "std/regexp.xo:482:14")
+						var v_mx int64 = List_At((*v_p).F_maxs, v_re, "std/regexp.xo:476:14")
 						_ = v_mx
 						if v_mx == int64(-1) {
-							var x_v68 int64
+							var x_v65 int64
 							if v_mn == int64(0) {
-								x_v68 = AddS(int64(2), v_sub_1, "std/regexp.xo:484:27")
+								x_v65 = AddS(int64(2), v_sub_1, "std/regexp.xo:478:27")
 							} else {
-								x_v68 = AddS(int64(1), MulS(v_mn, v_sub_1, "std/regexp.xo:484:48"), "std/regexp.xo:484:44")
+								x_v65 = AddS(int64(1), MulS(v_mn, v_sub_1, "std/regexp.xo:478:48"), "std/regexp.xo:478:44")
 							}
-							v_size = x_v68
+							v_size = x_v65
 						} else {
-							v_size = AddS(MulS(v_mx, v_sub_1, "std/regexp.xo:487:14"), SubS(v_mx, v_mn, "std/regexp.xo:487:26"), "std/regexp.xo:487:14")
+							v_size = AddS(MulS(v_mx, v_sub_1, "std/regexp.xo:481:14"), SubS(v_mx, v_mn, "std/regexp.xo:481:26"), "std/regexp.xo:481:14")
 						}
 					}
 				}
@@ -1065,55 +1036,55 @@ func (v_p *Regexp_Parser) M_calc_size(tk *Task, v_re int64, v_force bool) int64 
 	if v_size < int64(1) {
 		v_size = int64(1)
 	}
-	x_ix69 := v_re
+	x_ix66 := v_re
 	if !List_Mine((*v_p).F_sizes) {
 		(*v_p).F_sizes = List_Unshared((*v_p).F_sizes)
 	}
-	List_PutM((*v_p).F_sizes, x_ix69, v_size, "std/regexp.xo:493:3")
+	List_PutM((*v_p).F_sizes, x_ix66, v_size, "std/regexp.xo:487:3")
 	return v_size
 }
 
 func (v_p *Regexp_Parser) M_node(tk *Task, v_op int64) int64 {
-	x_pv70 := v_op
+	x_pv67 := v_op
 	if List_CanPush((*v_p).F_ops) {
-		(*v_p).F_ops = List_PushFast((*v_p).F_ops, x_pv70)
+		(*v_p).F_ops = List_PushFast((*v_p).F_ops, x_pv67)
 	} else {
-		(*v_p).F_ops = List_PushSlow((*v_p).F_ops, x_pv70)
+		(*v_p).F_ops = List_PushSlow((*v_p).F_ops, x_pv67)
 	}
 	_ = Unit{}
-	x_pv71 := (*v_p).F_flags
+	x_pv68 := (*v_p).F_flags
 	if List_CanPush((*v_p).F_nflags) {
-		(*v_p).F_nflags = List_PushFast((*v_p).F_nflags, x_pv71)
+		(*v_p).F_nflags = List_PushFast((*v_p).F_nflags, x_pv68)
 	} else {
-		(*v_p).F_nflags = List_PushSlow((*v_p).F_nflags, x_pv71)
+		(*v_p).F_nflags = List_PushSlow((*v_p).F_nflags, x_pv68)
 	}
 	_ = Unit{}
-	x_pv72 := List[int64]{}
+	x_pv69 := List[int64]{}
 	if List_CanPush((*v_p).F_runes) {
-		(*v_p).F_runes = List_PushFast((*v_p).F_runes, x_pv72)
+		(*v_p).F_runes = List_PushFast((*v_p).F_runes, x_pv69)
 	} else {
-		(*v_p).F_runes = List_PushSlow((*v_p).F_runes, x_pv72)
+		(*v_p).F_runes = List_PushSlow((*v_p).F_runes, x_pv69)
 	}
 	_ = Unit{}
-	x_pv73 := int64(0)
+	x_pv70 := int64(0)
 	if List_CanPush((*v_p).F_mins) {
-		(*v_p).F_mins = List_PushFast((*v_p).F_mins, x_pv73)
+		(*v_p).F_mins = List_PushFast((*v_p).F_mins, x_pv70)
 	} else {
-		(*v_p).F_mins = List_PushSlow((*v_p).F_mins, x_pv73)
+		(*v_p).F_mins = List_PushSlow((*v_p).F_mins, x_pv70)
 	}
 	_ = Unit{}
-	x_pv74 := int64(0)
+	x_pv71 := int64(0)
 	if List_CanPush((*v_p).F_maxs) {
-		(*v_p).F_maxs = List_PushFast((*v_p).F_maxs, x_pv74)
+		(*v_p).F_maxs = List_PushFast((*v_p).F_maxs, x_pv71)
 	} else {
-		(*v_p).F_maxs = List_PushSlow((*v_p).F_maxs, x_pv74)
+		(*v_p).F_maxs = List_PushSlow((*v_p).F_maxs, x_pv71)
 	}
 	_ = Unit{}
-	x_pv75 := int64(0)
+	x_pv72 := int64(0)
 	if List_CanPush((*v_p).F_caps) {
-		(*v_p).F_caps = List_PushFast((*v_p).F_caps, x_pv75)
+		(*v_p).F_caps = List_PushFast((*v_p).F_caps, x_pv72)
 	} else {
-		(*v_p).F_caps = List_PushSlow((*v_p).F_caps, x_pv75)
+		(*v_p).F_caps = List_PushSlow((*v_p).F_caps, x_pv72)
 	}
 	_ = Unit{}
 	if List_CanPush((*v_p).F_names) {
@@ -1122,19 +1093,19 @@ func (v_p *Regexp_Parser) M_node(tk *Task, v_op int64) int64 {
 		(*v_p).F_names = List_PushSlow((*v_p).F_names, "")
 	}
 	_ = Unit{}
-	x_pv76 := List[int64]{}
+	x_pv73 := List[int64]{}
 	if List_CanPush((*v_p).F_subs) {
-		(*v_p).F_subs = List_PushFast((*v_p).F_subs, x_pv76)
+		(*v_p).F_subs = List_PushFast((*v_p).F_subs, x_pv73)
 	} else {
-		(*v_p).F_subs = List_PushSlow((*v_p).F_subs, x_pv76)
+		(*v_p).F_subs = List_PushSlow((*v_p).F_subs, x_pv73)
 	}
 	_ = Unit{}
 	if (*v_p).F_size_on {
-		x_pv77 := int64(-1)
+		x_pv74 := int64(-1)
 		if List_CanPush((*v_p).F_sizes) {
-			(*v_p).F_sizes = List_PushFast((*v_p).F_sizes, x_pv77)
+			(*v_p).F_sizes = List_PushFast((*v_p).F_sizes, x_pv74)
 		} else {
-			(*v_p).F_sizes = List_PushSlow((*v_p).F_sizes, x_pv77)
+			(*v_p).F_sizes = List_PushSlow((*v_p).F_sizes, x_pv74)
 		}
 		_ = Unit{}
 	}
@@ -1142,67 +1113,67 @@ func (v_p *Regexp_Parser) M_node(tk *Task, v_op int64) int64 {
 }
 
 func (v_p *Regexp_Parser) M_push(tk *Task, v_n int64) int64 {
-	(*v_p).F_num_runes = AddS((*v_p).F_num_runes, List_len[int64](tk, List_At((*v_p).F_runes, v_n, "std/regexp.xo:515:18")), "std/regexp.xo:515:3")
-	if List_At((*v_p).F_ops, v_n, "std/regexp.xo:516:6") == Regexp_OP_CHAR_CLASS {
-		var v_r List[int64] = List_Own(List_At((*v_p).F_runes, v_n, "std/regexp.xo:517:13"))
+	(*v_p).F_num_runes = AddS((*v_p).F_num_runes, List_len[int64](tk, List_At((*v_p).F_runes, v_n, "std/regexp.xo:509:18")), "std/regexp.xo:509:3")
+	if List_At((*v_p).F_ops, v_n, "std/regexp.xo:510:6") == Regexp_OP_CHAR_CLASS {
+		var v_r List[int64] = List_Own(List_At((*v_p).F_runes, v_n, "std/regexp.xo:511:13"))
 		_ = v_r
-		if (List_len[int64](tk, v_r) == int64(2)) && (List_At(v_r, int64(0), "std/regexp.xo:518:24") == List_At(v_r, int64(1), "std/regexp.xo:518:32")) {
+		if (List_len[int64](tk, v_r) == int64(2)) && (List_At(v_r, int64(0), "std/regexp.xo:512:24") == List_At(v_r, int64(1), "std/regexp.xo:512:32")) {
 			var v_fl int64 = (((*v_p).F_flags | Regexp_FOLD_CASE) ^ Regexp_FOLD_CASE)
 			_ = v_fl
-			if (*v_p).M_maybe_concat(tk, List_At(v_r, int64(0), "std/regexp.xo:520:25"), v_fl) {
+			if (*v_p).M_maybe_concat(tk, List_At(v_r, int64(0), "std/regexp.xo:514:25"), v_fl) {
 				return v_n
 			}
-			x_ix78 := v_n
+			x_ix75 := v_n
 			if !List_Mine((*v_p).F_ops) {
 				(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 			}
-			List_PutM((*v_p).F_ops, x_ix78, Regexp_OP_LITERAL, "std/regexp.xo:523:7")
-			x_ix79 := v_n
+			List_PutM((*v_p).F_ops, x_ix75, Regexp_OP_LITERAL, "std/regexp.xo:517:7")
+			x_ix76 := v_n
 			if !List_Mine((*v_p).F_runes) {
 				(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 			}
-			List_PutM((*v_p).F_runes, x_ix79, ListOf[int64](List_At(v_r, int64(0), "std/regexp.xo:524:21")), "std/regexp.xo:524:7")
-			x_ix80 := v_n
+			List_PutM((*v_p).F_runes, x_ix76, ListOf[int64](List_At(v_r, int64(0), "std/regexp.xo:518:21")), "std/regexp.xo:518:7")
+			x_ix77 := v_n
 			if !List_Mine((*v_p).F_nflags) {
 				(*v_p).F_nflags = List_Unshared((*v_p).F_nflags)
 			}
-			List_PutM((*v_p).F_nflags, x_ix80, v_fl, "std/regexp.xo:525:7")
-			x_pv81 := v_n
+			List_PutM((*v_p).F_nflags, x_ix77, v_fl, "std/regexp.xo:519:7")
+			x_pv78 := v_n
 			if List_CanPush((*v_p).F_stack) {
-				(*v_p).F_stack = List_PushFast((*v_p).F_stack, x_pv81)
+				(*v_p).F_stack = List_PushFast((*v_p).F_stack, x_pv78)
 			} else {
-				(*v_p).F_stack = List_PushSlow((*v_p).F_stack, x_pv81)
+				(*v_p).F_stack = List_PushSlow((*v_p).F_stack, x_pv78)
 			}
 			_ = Unit{}
 			(*v_p).M_check_limits(tk, v_n)
 			return v_n
 		}
-		if (((((List_len[int64](tk, v_r) == int64(4)) && (List_At(v_r, int64(0), "std/regexp.xo:531:25") == List_At(v_r, int64(1), "std/regexp.xo:531:33"))) && (List_At(v_r, int64(2), "std/regexp.xo:531:41") == List_At(v_r, int64(3), "std/regexp.xo:531:49"))) && (Regexp_simple_fold(tk, List_At(v_r, int64(0), "std/regexp.xo:531:69")) == List_At(v_r, int64(2), "std/regexp.xo:531:78"))) && (Regexp_simple_fold(tk, List_At(v_r, int64(2), "std/regexp.xo:531:98")) == List_At(v_r, int64(0), "std/regexp.xo:531:107"))) || ((((List_len[int64](tk, v_r) == int64(2)) && (AddIUp(List_At(v_r, int64(0), "std/regexp.xo:531:133"), int64(1), "std/regexp.xo:531:133") == List_At(v_r, int64(1), "std/regexp.xo:531:145"))) && (Regexp_simple_fold(tk, List_At(v_r, int64(0), "std/regexp.xo:531:165")) == List_At(v_r, int64(1), "std/regexp.xo:531:174"))) && (Regexp_simple_fold(tk, List_At(v_r, int64(1), "std/regexp.xo:531:194")) == List_At(v_r, int64(0), "std/regexp.xo:531:203"))) {
+		if (((((List_len[int64](tk, v_r) == int64(4)) && (List_At(v_r, int64(0), "std/regexp.xo:525:25") == List_At(v_r, int64(1), "std/regexp.xo:525:33"))) && (List_At(v_r, int64(2), "std/regexp.xo:525:41") == List_At(v_r, int64(3), "std/regexp.xo:525:49"))) && (Regexp_simple_fold(tk, List_At(v_r, int64(0), "std/regexp.xo:525:69")) == List_At(v_r, int64(2), "std/regexp.xo:525:78"))) && (Regexp_simple_fold(tk, List_At(v_r, int64(2), "std/regexp.xo:525:98")) == List_At(v_r, int64(0), "std/regexp.xo:525:107"))) || ((((List_len[int64](tk, v_r) == int64(2)) && (AddIUp(List_At(v_r, int64(0), "std/regexp.xo:525:133"), int64(1), "std/regexp.xo:525:133") == List_At(v_r, int64(1), "std/regexp.xo:525:145"))) && (Regexp_simple_fold(tk, List_At(v_r, int64(0), "std/regexp.xo:525:165")) == List_At(v_r, int64(1), "std/regexp.xo:525:174"))) && (Regexp_simple_fold(tk, List_At(v_r, int64(1), "std/regexp.xo:525:194")) == List_At(v_r, int64(0), "std/regexp.xo:525:203"))) {
 			var v_fl_1 int64 = ((*v_p).F_flags | Regexp_FOLD_CASE)
 			_ = v_fl_1
-			if (*v_p).M_maybe_concat(tk, List_At(v_r, int64(0), "std/regexp.xo:533:25"), v_fl_1) {
+			if (*v_p).M_maybe_concat(tk, List_At(v_r, int64(0), "std/regexp.xo:527:25"), v_fl_1) {
 				return v_n
 			}
-			x_ix82 := v_n
+			x_ix79 := v_n
 			if !List_Mine((*v_p).F_ops) {
 				(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 			}
-			List_PutM((*v_p).F_ops, x_ix82, Regexp_OP_LITERAL, "std/regexp.xo:536:7")
-			x_ix83 := v_n
+			List_PutM((*v_p).F_ops, x_ix79, Regexp_OP_LITERAL, "std/regexp.xo:530:7")
+			x_ix80 := v_n
 			if !List_Mine((*v_p).F_runes) {
 				(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 			}
-			List_PutM((*v_p).F_runes, x_ix83, ListOf[int64](List_At(v_r, int64(0), "std/regexp.xo:537:21")), "std/regexp.xo:537:7")
-			x_ix84 := v_n
+			List_PutM((*v_p).F_runes, x_ix80, ListOf[int64](List_At(v_r, int64(0), "std/regexp.xo:531:21")), "std/regexp.xo:531:7")
+			x_ix81 := v_n
 			if !List_Mine((*v_p).F_nflags) {
 				(*v_p).F_nflags = List_Unshared((*v_p).F_nflags)
 			}
-			List_PutM((*v_p).F_nflags, x_ix84, v_fl_1, "std/regexp.xo:538:7")
-			x_pv85 := v_n
+			List_PutM((*v_p).F_nflags, x_ix81, v_fl_1, "std/regexp.xo:532:7")
+			x_pv82 := v_n
 			if List_CanPush((*v_p).F_stack) {
-				(*v_p).F_stack = List_PushFast((*v_p).F_stack, x_pv85)
+				(*v_p).F_stack = List_PushFast((*v_p).F_stack, x_pv82)
 			} else {
-				(*v_p).F_stack = List_PushSlow((*v_p).F_stack, x_pv85)
+				(*v_p).F_stack = List_PushSlow((*v_p).F_stack, x_pv82)
 			}
 			_ = Unit{}
 			(*v_p).M_check_limits(tk, v_n)
@@ -1211,14 +1182,14 @@ func (v_p *Regexp_Parser) M_push(tk *Task, v_n int64) int64 {
 	}
 	var v_sn int64 = List_len[int64](tk, (*v_p).F_stack)
 	_ = v_sn
-	if ((v_sn >= int64(2)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_sn-int64(1)), "std/regexp.xo:545:23"), "std/regexp.xo:545:17") == Regexp_OP_LITERAL)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_sn-int64(2)), "std/regexp.xo:545:63"), "std/regexp.xo:545:57") == Regexp_OP_LITERAL) {
+	if ((v_sn >= int64(2)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_sn-int64(1)), "std/regexp.xo:539:23"), "std/regexp.xo:539:17") == Regexp_OP_LITERAL)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_sn-int64(2)), "std/regexp.xo:539:63"), "std/regexp.xo:539:57") == Regexp_OP_LITERAL) {
 		(*v_p).M_maybe_concat(tk, int64(-1), int64(0))
 	}
-	x_pv86 := v_n
+	x_pv83 := v_n
 	if List_CanPush((*v_p).F_stack) {
-		(*v_p).F_stack = List_PushFast((*v_p).F_stack, x_pv86)
+		(*v_p).F_stack = List_PushFast((*v_p).F_stack, x_pv83)
 	} else {
-		(*v_p).F_stack = List_PushSlow((*v_p).F_stack, x_pv86)
+		(*v_p).F_stack = List_PushSlow((*v_p).F_stack, x_pv83)
 	}
 	_ = Unit{}
 	(*v_p).M_check_limits(tk, v_n)
@@ -1231,39 +1202,39 @@ func (v_p *Regexp_Parser) M_maybe_concat(tk *Task, v_r int64, v_flags int64) boo
 	if v_n < int64(2) {
 		return false
 	}
-	var v_re1 int64 = List_At((*v_p).F_stack, (v_n - int64(1)), "std/regexp.xo:562:13")
+	var v_re1 int64 = List_At((*v_p).F_stack, (v_n - int64(1)), "std/regexp.xo:556:13")
 	_ = v_re1
-	var v_re2 int64 = List_At((*v_p).F_stack, (v_n - int64(2)), "std/regexp.xo:563:13")
+	var v_re2 int64 = List_At((*v_p).F_stack, (v_n - int64(2)), "std/regexp.xo:557:13")
 	_ = v_re2
-	if ((List_At((*v_p).F_ops, v_re1, "std/regexp.xo:564:6") != Regexp_OP_LITERAL) || (List_At((*v_p).F_ops, v_re2, "std/regexp.xo:564:34") != Regexp_OP_LITERAL)) || ((List_At((*v_p).F_nflags, v_re1, "std/regexp.xo:564:63") & Regexp_FOLD_CASE) != (List_At((*v_p).F_nflags, v_re2, "std/regexp.xo:564:94") & Regexp_FOLD_CASE)) {
+	if ((List_At((*v_p).F_ops, v_re1, "std/regexp.xo:558:6") != Regexp_OP_LITERAL) || (List_At((*v_p).F_ops, v_re2, "std/regexp.xo:558:34") != Regexp_OP_LITERAL)) || ((List_At((*v_p).F_nflags, v_re1, "std/regexp.xo:558:63") & Regexp_FOLD_CASE) != (List_At((*v_p).F_nflags, v_re2, "std/regexp.xo:558:94") & Regexp_FOLD_CASE)) {
 		return false
 	}
-	x_it87 := List_Own(List_At((*v_p).F_runes, v_re1, "std/regexp.xo:567:12"))
-	for _, x_e89 := range List_Items(x_it87) {
-		x_el90 := x_e89
-		_ = x_el90
-		var v_x int64 = x_el90
+	x_it84 := List_Own(List_At((*v_p).F_runes, v_re1, "std/regexp.xo:561:12"))
+	for _, x_e86 := range List_Items(x_it84) {
+		x_el87 := x_e86
+		_ = x_el87
+		var v_x int64 = x_el87
 		_ = v_x
 		{
-			x_ix91 := v_re2
+			x_ix88 := v_re2
 			if !List_Mine((*v_p).F_runes) {
 				(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 			}
-			x_ep92 := List_PtrM((*v_p).F_runes, x_ix91, "std/regexp.xo:568:5")
-			List_push[int64](tk, &(*x_ep92), v_x)
+			x_ep89 := List_PtrM((*v_p).F_runes, x_ix88, "std/regexp.xo:562:5")
+			List_push[int64](tk, &(*x_ep89), v_x)
 		}
 	}
 	if v_r >= int64(0) {
-		x_ix93 := v_re1
+		x_ix90 := v_re1
 		if !List_Mine((*v_p).F_runes) {
 			(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 		}
-		List_PutM((*v_p).F_runes, x_ix93, ListOf[int64](v_r), "std/regexp.xo:571:5")
-		x_ix94 := v_re1
+		List_PutM((*v_p).F_runes, x_ix90, ListOf[int64](v_r), "std/regexp.xo:565:5")
+		x_ix91 := v_re1
 		if !List_Mine((*v_p).F_nflags) {
 			(*v_p).F_nflags = List_Unshared((*v_p).F_nflags)
 		}
-		List_PutM((*v_p).F_nflags, x_ix94, v_flags, "std/regexp.xo:572:5")
+		List_PutM((*v_p).F_nflags, x_ix91, v_flags, "std/regexp.xo:566:5")
 		return true
 	}
 	(*v_p).M_pop(tk)
@@ -1302,17 +1273,17 @@ func (v_p *Regexp_Parser) M_literal(tk *Task, v_r int64) {
 	var v_n int64 = (*v_p).M_node(tk, Regexp_OP_LITERAL)
 	_ = v_n
 	if ((*v_p).F_flags & Regexp_FOLD_CASE) != int64(0) {
-		x_ix96 := v_n
+		x_ix93 := v_n
 		if !List_Mine((*v_p).F_runes) {
 			(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 		}
-		List_PutM((*v_p).F_runes, x_ix96, ListOf[int64](Regexp_min_fold_rune(tk, v_r)), "std/regexp.xo:603:5")
+		List_PutM((*v_p).F_runes, x_ix93, ListOf[int64](Regexp_min_fold_rune(tk, v_r)), "std/regexp.xo:597:5")
 	} else {
-		x_ix97 := v_n
+		x_ix94 := v_n
 		if !List_Mine((*v_p).F_runes) {
 			(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 		}
-		List_PutM((*v_p).F_runes, x_ix97, ListOf[int64](v_r), "std/regexp.xo:605:5")
+		List_PutM((*v_p).F_runes, x_ix94, ListOf[int64](v_r), "std/regexp.xo:599:5")
 	}
 	(*v_p).M_push(tk, v_n)
 	return
@@ -1321,29 +1292,29 @@ func (v_p *Regexp_Parser) M_literal(tk *Task, v_r int64) {
 func (v_p *Regexp_Parser) M_class_node(tk *Task, v_ranges List[int64]) {
 	var v_n int64 = (*v_p).M_node(tk, Regexp_OP_CHAR_CLASS)
 	_ = v_n
-	x_ix98 := v_n
+	x_ix95 := v_n
 	if !List_Mine((*v_p).F_runes) {
 		(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 	}
-	List_PutM((*v_p).F_runes, x_ix98, List_Own(v_ranges), "std/regexp.xo:612:3")
+	List_PutM((*v_p).F_runes, x_ix95, List_Own(v_ranges), "std/regexp.xo:606:3")
 	(*v_p).M_push(tk, v_n)
 	return
 }
 
 func (v_p *Regexp_Parser) M_pop(tk *Task) int64 {
-	x_m99 := List_pop[int64](tk, &(*v_p).F_stack)
-	_ = x_m99
+	x_m96 := List_pop[int64](tk, &(*v_p).F_stack)
+	_ = x_m96
 	switch {
 	default:
-		if x_m99.Some {
-			var v_n int64 = x_m99.V
+		if x_m96.Some {
+			var v_n int64 = x_m96.V
 			_ = v_n
 			return v_n
 		}
-		if !x_m99.Some {
+		if !x_m96.Some {
 			return int64(-1)
 		}
-		panic(Unreachable("std/regexp.xo:617:3"))
+		panic(Unreachable("std/regexp.xo:611:3"))
 	}
 }
 
@@ -1351,14 +1322,14 @@ func Regexp_byte_at(tk *Task, v_s string, v_i int64) int64 {
 	if (v_i < int64(0)) || (v_i >= Str_len(tk, v_s)) {
 		return int64(-1)
 	}
-	return int64(BytesAt(Str_bytes(tk, v_s), v_i, "std/regexp.xo:627:7"))
+	return int64(BytesAt(Str_bytes(tk, v_s), v_i, "std/regexp.xo:621:7"))
 }
 
 func Regexp_esc2(tk *Task, v_s string, v_i int64) string {
-	if Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:634:17")) >= int64(128) {
+	if Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:628:17")) >= int64(128) {
 		return ""
 	}
-	return Regexp_sl(tk, v_s, v_i, AddIUp(v_i, int64(2), "std/regexp.xo:637:12"))
+	return Regexp_sl(tk, v_s, v_i, AddIUp(v_i, int64(2), "std/regexp.xo:631:12"))
 }
 
 func Regexp_sl(tk *Task, v_s string, v_a int64, v_b int64) string {
@@ -1368,50 +1339,50 @@ func Regexp_sl(tk *Task, v_s string, v_a int64, v_b int64) string {
 	_ = v_lo
 	var v_hi int64 = Max(Min(v_b, v_n), v_lo)
 	_ = v_hi
-	return StrSlice(v_s, v_lo, v_hi, true, true, "std/regexp.xo:646:3")
+	return StrSlice(v_s, v_lo, v_hi, true, true, "std/regexp.xo:640:3")
 }
 
 func Regexp_decode_at(tk *Task, v_b Bytes, v_i int64) int64 {
 	if v_i >= Bytes_len(tk, v_b) {
-		return Shl(int64(65533), int64(3), "std/regexp.xo:653:12")
+		return Shl(int64(65533), int64(3), "std/regexp.xo:647:12")
 	}
-	x_a101 := v_i
-	x_let102 := Bytes_decode_rune(tk, v_b, x_a101)
-	_ = x_let102
-	var v_r Rune = x_let102.F0
+	x_a98 := v_i
+	x_let99 := Bytes_decode_rune(tk, v_b, x_a98)
+	_ = x_let99
+	var v_r Rune = x_let99.F0
 	_ = v_r
-	var v_k int64 = x_let102.F1
+	var v_k int64 = x_let99.F1
 	_ = v_k
-	return (Shl(Conv[int64, Rune](v_r, "std/regexp.xo:656:4"), int64(3), "std/regexp.xo:656:4") | v_k)
+	return (Shl(Conv[int64, Rune](v_r, "std/regexp.xo:650:4"), int64(3), "std/regexp.xo:650:4") | v_k)
 }
 
 func Regexp_find_from(tk *Task, v_s string, v_sub string, v_from int64) int64 {
 	var v_n int64 = Str_len(tk, v_s)
 	_ = v_n
-	var x_v103 int64
+	var x_v100 int64
 	if v_from < int64(0) {
-		x_v103 = int64(0)
+		x_v100 = int64(0)
 	} else {
-		x_v103 = v_from
+		x_v100 = v_from
 	}
-	var v_f int64 = x_v103
+	var v_f int64 = x_v100
 	_ = v_f
 	if v_f > v_n {
 		return int64(-1)
 	}
-	x_m104 := Bytes_find(tk, BytesSlice(Str_bytes(tk, v_s), v_f, v_n, true, true, "std/regexp.xo:667:9"), Str_bytes(tk, v_sub))
-	_ = x_m104
+	x_m101 := Bytes_find(tk, BytesSlice(Str_bytes(tk, v_s), v_f, v_n, true, true, "std/regexp.xo:661:9"), Str_bytes(tk, v_sub))
+	_ = x_m101
 	switch {
 	default:
-		if x_m104.Some {
-			var v_k int64 = x_m104.V
+		if x_m101.Some {
+			var v_k int64 = x_m101.V
 			_ = v_k
-			return AddS(v_f, v_k, "std/regexp.xo:668:16")
+			return AddS(v_f, v_k, "std/regexp.xo:662:16")
 		}
-		if !x_m104.Some {
+		if !x_m101.Some {
 			return int64(-1)
 		}
-		panic(Unreachable("std/regexp.xo:667:3"))
+		panic(Unreachable("std/regexp.xo:661:3"))
 	}
 }
 
@@ -1444,7 +1415,7 @@ func Regexp_check_utf8(tk *Task, v_s string, v_a int64, v_b int64) Result[Unit, 
 			if ((v_d >> int64(3)) == int64(65533)) && ((v_d & int64(7)) == int64(1)) {
 				return Err[Unit](Regexp_perr(tk, "invalid UTF-8", Regexp_sl(tk, v_s, v_i, v_b)))
 			}
-			v_i = AddS(v_i, (v_d & int64(7)), "std/regexp.xo:701:5")
+			v_i = AddS(v_i, (v_d & int64(7)), "std/regexp.xo:695:5")
 		}
 	}
 	return Ok[Unit, Regexp_PErr](Unit{})
@@ -1456,13 +1427,13 @@ func Regexp_is_alnum(tk *Task, v_c int64) bool {
 
 func Regexp_unhex(tk *Task, v_c int64) int64 {
 	if (v_c >= int64(48)) && (v_c <= int64(57)) {
-		return SubS(v_c, int64(48), "std/regexp.xo:709:12")
+		return SubS(v_c, int64(48), "std/regexp.xo:703:12")
 	}
 	if (v_c >= int64(97)) && (v_c <= int64(102)) {
-		return AddIUp(SubS(v_c, int64(97), "std/regexp.xo:712:12"), int64(10), "std/regexp.xo:712:12")
+		return AddIUp(SubS(v_c, int64(97), "std/regexp.xo:706:12"), int64(10), "std/regexp.xo:706:12")
 	}
 	if (v_c >= int64(65)) && (v_c <= int64(70)) {
-		return AddIUp(SubS(v_c, int64(65), "std/regexp.xo:715:12"), int64(10), "std/regexp.xo:715:12")
+		return AddIUp(SubS(v_c, int64(65), "std/regexp.xo:709:12"), int64(10), "std/regexp.xo:709:12")
 	}
 	return int64(-1)
 }
@@ -1478,24 +1449,24 @@ func Regexp_append_range(tk *Task, v_r *List[int64], v_lo int64, v_hi int64) {
 		}
 		{
 			if v_n >= v_i {
-				var v_rlo int64 = List_At((*v_r), (v_n - v_i), "std/regexp.xo:726:17")
+				var v_rlo int64 = List_At((*v_r), (v_n - v_i), "std/regexp.xo:720:17")
 				_ = v_rlo
-				var v_rhi int64 = List_At((*v_r), ((v_n - v_i) + int64(1)), "std/regexp.xo:727:17")
+				var v_rhi int64 = List_At((*v_r), ((v_n - v_i) + int64(1)), "std/regexp.xo:721:17")
 				_ = v_rhi
-				if (v_lo <= AddIUp(v_rhi, int64(1), "std/regexp.xo:728:16")) && (v_rlo <= AddIUp(v_hi, int64(1), "std/regexp.xo:728:34")) {
+				if (v_lo <= AddIUp(v_rhi, int64(1), "std/regexp.xo:722:16")) && (v_rlo <= AddIUp(v_hi, int64(1), "std/regexp.xo:722:34")) {
 					if v_lo < v_rlo {
-						x_ix108 := (v_n - v_i)
+						x_ix105 := (v_n - v_i)
 						if !List_Mine((*v_r)) {
 							(*v_r) = List_Unshared((*v_r))
 						}
-						List_PutM((*v_r), x_ix108, v_lo, "std/regexp.xo:730:11")
+						List_PutM((*v_r), x_ix105, v_lo, "std/regexp.xo:724:11")
 					}
 					if v_hi > v_rhi {
-						x_ix109 := ((v_n - v_i) + int64(1))
+						x_ix106 := ((v_n - v_i) + int64(1))
 						if !List_Mine((*v_r)) {
 							(*v_r) = List_Unshared((*v_r))
 						}
-						List_PutM((*v_r), x_ix109, v_hi, "std/regexp.xo:733:11")
+						List_PutM((*v_r), x_ix106, v_hi, "std/regexp.xo:727:11")
 					}
 					return
 				}
@@ -1503,18 +1474,18 @@ func Regexp_append_range(tk *Task, v_r *List[int64], v_lo int64, v_hi int64) {
 			v_i = (v_i + int64(2))
 		}
 	}
-	x_pv110 := v_lo
+	x_pv107 := v_lo
 	if List_CanPush((*v_r)) {
-		(*v_r) = List_PushFast((*v_r), x_pv110)
+		(*v_r) = List_PushFast((*v_r), x_pv107)
 	} else {
-		(*v_r) = List_PushSlow((*v_r), x_pv110)
+		(*v_r) = List_PushSlow((*v_r), x_pv107)
 	}
 	_ = Unit{}
-	x_pv111 := v_hi
+	x_pv108 := v_hi
 	if List_CanPush((*v_r)) {
-		(*v_r) = List_PushFast((*v_r), x_pv111)
+		(*v_r) = List_PushFast((*v_r), x_pv108)
 	} else {
-		(*v_r) = List_PushSlow((*v_r), x_pv111)
+		(*v_r) = List_PushSlow((*v_r), x_pv108)
 	}
 	_ = Unit{}
 	return
@@ -1570,12 +1541,12 @@ func Regexp_append_class(tk *Task, v_r *List[int64], v_x List[int64]) {
 	var v_i int64 = int64(0)
 	_ = v_i
 	for {
-		if !(AddIUp(v_i, int64(1), "std/regexp.xo:777:9") < List_len[int64](tk, v_x)) {
+		if !(AddIUp(v_i, int64(1), "std/regexp.xo:771:9") < List_len[int64](tk, v_x)) {
 			break
 		}
 		{
-			Regexp_append_range(tk, &(*v_r), List_At(v_x, v_i, "std/regexp.xo:778:21"), List_At(v_x, AddIUp(v_i, int64(1), "std/regexp.xo:778:29"), "std/regexp.xo:778:27"))
-			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:779:5")
+			Regexp_append_range(tk, &(*v_r), List_At(v_x, v_i, "std/regexp.xo:772:21"), List_At(v_x, AddIUp(v_i, int64(1), "std/regexp.xo:772:29"), "std/regexp.xo:772:27"))
+			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:773:5")
 		}
 	}
 	return
@@ -1585,12 +1556,12 @@ func Regexp_append_folded_class(tk *Task, v_r *List[int64], v_x List[int64]) {
 	var v_i int64 = int64(0)
 	_ = v_i
 	for {
-		if !(AddIUp(v_i, int64(1), "std/regexp.xo:785:9") < List_len[int64](tk, v_x)) {
+		if !(AddIUp(v_i, int64(1), "std/regexp.xo:779:9") < List_len[int64](tk, v_x)) {
 			break
 		}
 		{
-			Regexp_append_folded_range(tk, &(*v_r), List_At(v_x, v_i, "std/regexp.xo:786:28"), List_At(v_x, AddIUp(v_i, int64(1), "std/regexp.xo:786:36"), "std/regexp.xo:786:34"))
-			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:787:5")
+			Regexp_append_folded_range(tk, &(*v_r), List_At(v_x, v_i, "std/regexp.xo:780:28"), List_At(v_x, AddIUp(v_i, int64(1), "std/regexp.xo:780:36"), "std/regexp.xo:780:34"))
+			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:781:5")
 		}
 	}
 	return
@@ -1602,19 +1573,19 @@ func Regexp_append_negated_class(tk *Task, v_r *List[int64], v_x List[int64]) {
 	var v_i int64 = int64(0)
 	_ = v_i
 	for {
-		if !(AddIUp(v_i, int64(1), "std/regexp.xo:795:9") < List_len[int64](tk, v_x)) {
+		if !(AddIUp(v_i, int64(1), "std/regexp.xo:789:9") < List_len[int64](tk, v_x)) {
 			break
 		}
 		{
-			var v_lo int64 = List_At(v_x, v_i, "std/regexp.xo:796:14")
+			var v_lo int64 = List_At(v_x, v_i, "std/regexp.xo:790:14")
 			_ = v_lo
-			var v_hi int64 = List_At(v_x, AddIUp(v_i, int64(1), "std/regexp.xo:797:16"), "std/regexp.xo:797:14")
+			var v_hi int64 = List_At(v_x, AddIUp(v_i, int64(1), "std/regexp.xo:791:16"), "std/regexp.xo:791:14")
 			_ = v_hi
-			if v_next_lo <= SubIDown(v_lo, int64(1), "std/regexp.xo:798:19") {
-				Regexp_append_range(tk, &(*v_r), v_next_lo, SubIDown(v_lo, int64(1), "std/regexp.xo:799:32"))
+			if v_next_lo <= SubIDown(v_lo, int64(1), "std/regexp.xo:792:19") {
+				Regexp_append_range(tk, &(*v_r), v_next_lo, SubIDown(v_lo, int64(1), "std/regexp.xo:793:32"))
 			}
-			v_next_lo = AddIUp(v_hi, int64(1), "std/regexp.xo:801:15")
-			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:802:5")
+			v_next_lo = AddIUp(v_hi, int64(1), "std/regexp.xo:795:15")
+			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:796:5")
 		}
 	}
 	if v_next_lo <= Regexp_MAX_RUNE {
@@ -1632,28 +1603,28 @@ func Regexp_clean_class(tk *Task, v_r List[int64]) List[int64] {
 	var v_i int64 = int64(0)
 	_ = v_i
 	for {
-		if !(AddIUp(v_i, int64(1), "std/regexp.xo:814:9") < List_len[int64](tk, v_r)) {
+		if !(AddIUp(v_i, int64(1), "std/regexp.xo:808:9") < List_len[int64](tk, v_r)) {
 			break
 		}
 		{
-			x_pv118 := AddS(MulIK(List_At(v_r, v_i, "std/regexp.xo:815:15"), int64(2097152), -4398046511104, 4398046511103, "std/regexp.xo:815:15"), SubS(int64(2097151), List_At(v_r, AddIUp(v_i, int64(1), "std/regexp.xo:815:45"), "std/regexp.xo:815:43"), "std/regexp.xo:815:33"), "std/regexp.xo:815:15")
+			x_pv115 := AddS(MulIK(List_At(v_r, v_i, "std/regexp.xo:809:15"), int64(2097152), -4398046511104, 4398046511103, "std/regexp.xo:809:15"), SubS(int64(2097151), List_At(v_r, AddIUp(v_i, int64(1), "std/regexp.xo:809:45"), "std/regexp.xo:809:43"), "std/regexp.xo:809:33"), "std/regexp.xo:809:15")
 			if List_CanPush(v_keys) {
-				v_keys = List_PushFast(v_keys, x_pv118)
+				v_keys = List_PushFast(v_keys, x_pv115)
 			} else {
-				v_keys = List_PushSlow(v_keys, x_pv118)
+				v_keys = List_PushSlow(v_keys, x_pv115)
 			}
 			_ = Unit{}
-			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:816:5")
+			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:810:5")
 		}
 	}
 	var v_out List[int64] = List[int64]{}
 	_ = v_out
-	x_it119 := List_sort[int64](tk, v_keys)
-x_L120:
-	for _, x_e121 := range List_Items(x_it119) {
-		x_el122 := x_e121
-		_ = x_el122
-		var v_key int64 = x_el122
+	x_it116 := List_sort[int64](tk, v_keys)
+x_L117:
+	for _, x_e118 := range List_Items(x_it116) {
+		x_el119 := x_e118
+		_ = x_el119
+		var v_key int64 = x_el119
 		_ = v_key
 		{
 			var v_lo int64 = (v_key / int64(2097152))
@@ -1662,28 +1633,28 @@ x_L120:
 			_ = v_hi
 			var v_w int64 = List_len[int64](tk, v_out)
 			_ = v_w
-			if (v_w >= int64(2)) && (v_lo <= AddIUp(List_At(v_out, (v_w-int64(1)), "std/regexp.xo:823:24"), int64(1), "std/regexp.xo:823:24")) {
-				if v_hi > List_At(v_out, (v_w-int64(1)), "std/regexp.xo:824:15") {
-					x_ix123 := (v_w - int64(1))
+			if (v_w >= int64(2)) && (v_lo <= AddIUp(List_At(v_out, (v_w-int64(1)), "std/regexp.xo:817:24"), int64(1), "std/regexp.xo:817:24")) {
+				if v_hi > List_At(v_out, (v_w-int64(1)), "std/regexp.xo:818:15") {
+					x_ix120 := (v_w - int64(1))
 					if !List_Mine(v_out) {
 						v_out = List_Unshared(v_out)
 					}
-					List_PutM(v_out, x_ix123, v_hi, "std/regexp.xo:825:9")
+					List_PutM(v_out, x_ix120, v_hi, "std/regexp.xo:819:9")
 				}
-				continue x_L120
+				continue x_L117
 			}
-			x_pv124 := v_lo
+			x_pv121 := v_lo
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv124)
+				v_out = List_PushFast(v_out, x_pv121)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv124)
+				v_out = List_PushSlow(v_out, x_pv121)
 			}
 			_ = Unit{}
-			x_pv125 := v_hi
+			x_pv122 := v_hi
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv125)
+				v_out = List_PushFast(v_out, x_pv122)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv125)
+				v_out = List_PushSlow(v_out, x_pv122)
 			}
 			_ = Unit{}
 		}
@@ -1710,10 +1681,10 @@ func Regexp_in_class(tk *Task, v_r int64, v_class List[int64]) bool {
 		{
 			var v_m int64 = ((v_lo + v_hi) / int64(2))
 			_ = v_m
-			if v_r > List_At(v_class, ((int64(2)*v_m)+int64(1)), "std/regexp.xo:846:12") {
+			if v_r > List_At(v_class, ((int64(2)*v_m)+int64(1)), "std/regexp.xo:840:12") {
 				v_lo = (v_m + int64(1))
 			} else {
-				if v_r < List_At(v_class, (int64(2)*v_m), "std/regexp.xo:848:19") {
+				if v_r < List_At(v_class, (int64(2)*v_m), "std/regexp.xo:842:19") {
 					v_hi = v_m
 				} else {
 					return true
@@ -1760,73 +1731,73 @@ func Regexp_posix_group(tk *Task, v_name string) Tuple2[int64, List[int64]] {
 		v_neg = true
 		v_n = ("[:" + Regexp_sl(tk, v_n, int64(3), Str_len(tk, v_n)))
 	}
-	var x_v128 List[int64]
-	x_m129 := v_n
-	_ = x_m129
-x_M130:
+	var x_v125 List[int64]
+	x_m126 := v_n
+	_ = x_m126
+x_M127:
 	switch {
 	default:
-		if x_m129 == "[:alnum:]" {
-			x_v128 = ListOf[int64](int64(48), int64(57), int64(65), int64(90), int64(97), int64(122))
-			break x_M130
+		if x_m126 == "[:alnum:]" {
+			x_v125 = ListOf[int64](int64(48), int64(57), int64(65), int64(90), int64(97), int64(122))
+			break x_M127
 		}
-		if x_m129 == "[:alpha:]" {
-			x_v128 = ListOf[int64](int64(65), int64(90), int64(97), int64(122))
-			break x_M130
+		if x_m126 == "[:alpha:]" {
+			x_v125 = ListOf[int64](int64(65), int64(90), int64(97), int64(122))
+			break x_M127
 		}
-		if x_m129 == "[:ascii:]" {
-			x_v128 = ListOf[int64](int64(0), int64(127))
-			break x_M130
+		if x_m126 == "[:ascii:]" {
+			x_v125 = ListOf[int64](int64(0), int64(127))
+			break x_M127
 		}
-		if x_m129 == "[:blank:]" {
-			x_v128 = ListOf[int64](int64(9), int64(9), int64(32), int64(32))
-			break x_M130
+		if x_m126 == "[:blank:]" {
+			x_v125 = ListOf[int64](int64(9), int64(9), int64(32), int64(32))
+			break x_M127
 		}
-		if x_m129 == "[:cntrl:]" {
-			x_v128 = ListOf[int64](int64(0), int64(31), int64(127), int64(127))
-			break x_M130
+		if x_m126 == "[:cntrl:]" {
+			x_v125 = ListOf[int64](int64(0), int64(31), int64(127), int64(127))
+			break x_M127
 		}
-		if x_m129 == "[:digit:]" {
-			x_v128 = ListOf[int64](int64(48), int64(57))
-			break x_M130
+		if x_m126 == "[:digit:]" {
+			x_v125 = ListOf[int64](int64(48), int64(57))
+			break x_M127
 		}
-		if x_m129 == "[:graph:]" {
-			x_v128 = ListOf[int64](int64(33), int64(126))
-			break x_M130
+		if x_m126 == "[:graph:]" {
+			x_v125 = ListOf[int64](int64(33), int64(126))
+			break x_M127
 		}
-		if x_m129 == "[:lower:]" {
-			x_v128 = ListOf[int64](int64(97), int64(122))
-			break x_M130
+		if x_m126 == "[:lower:]" {
+			x_v125 = ListOf[int64](int64(97), int64(122))
+			break x_M127
 		}
-		if x_m129 == "[:print:]" {
-			x_v128 = ListOf[int64](int64(32), int64(126))
-			break x_M130
+		if x_m126 == "[:print:]" {
+			x_v125 = ListOf[int64](int64(32), int64(126))
+			break x_M127
 		}
-		if x_m129 == "[:punct:]" {
-			x_v128 = ListOf[int64](int64(33), int64(47), int64(58), int64(64), int64(91), int64(96), int64(123), int64(126))
-			break x_M130
+		if x_m126 == "[:punct:]" {
+			x_v125 = ListOf[int64](int64(33), int64(47), int64(58), int64(64), int64(91), int64(96), int64(123), int64(126))
+			break x_M127
 		}
-		if x_m129 == "[:space:]" {
-			x_v128 = ListOf[int64](int64(9), int64(13), int64(32), int64(32))
-			break x_M130
+		if x_m126 == "[:space:]" {
+			x_v125 = ListOf[int64](int64(9), int64(13), int64(32), int64(32))
+			break x_M127
 		}
-		if x_m129 == "[:upper:]" {
-			x_v128 = ListOf[int64](int64(65), int64(90))
-			break x_M130
+		if x_m126 == "[:upper:]" {
+			x_v125 = ListOf[int64](int64(65), int64(90))
+			break x_M127
 		}
-		if x_m129 == "[:word:]" {
-			x_v128 = ListOf[int64](int64(48), int64(57), int64(65), int64(90), int64(95), int64(95), int64(97), int64(122))
-			break x_M130
+		if x_m126 == "[:word:]" {
+			x_v125 = ListOf[int64](int64(48), int64(57), int64(65), int64(90), int64(95), int64(95), int64(97), int64(122))
+			break x_M127
 		}
-		if x_m129 == "[:xdigit:]" {
-			x_v128 = ListOf[int64](int64(48), int64(57), int64(65), int64(70), int64(97), int64(102))
-			break x_M130
+		if x_m126 == "[:xdigit:]" {
+			x_v125 = ListOf[int64](int64(48), int64(57), int64(65), int64(70), int64(97), int64(102))
+			break x_M127
 		}
 		{
-			x_v128 = List[int64]{}
+			x_v125 = List[int64]{}
 		}
 	}
-	var v_class List[int64] = x_v128
+	var v_class List[int64] = x_v125
 	_ = v_class
 	if List_is_empty[int64](tk, v_class) {
 		return Tuple2[int64, List[int64]]{F0: int64(0), F1: List[int64]{}}
@@ -1867,7 +1838,7 @@ func Regexp_canonical_name(tk *Task, v_name string) string {
 	_ = v_first
 	var v_i int64 = int64(0)
 	_ = v_i
-x_L131:
+x_L128:
 	for {
 		if !(v_i < Str_len(tk, v_name)) {
 			break
@@ -1877,29 +1848,29 @@ x_L131:
 			_ = v_c
 			v_i = (v_i + int64(1))
 			if ((v_c == int64(95)) || (v_c == int64(45))) || (v_c == int64(32)) {
-				continue x_L131
+				continue x_L128
 			}
 			if v_first {
 				if (v_c >= int64(97)) && (v_c <= int64(122)) {
-					v_c = SubS(v_c, int64(32), "std/regexp.xo:937:9")
+					v_c = SubS(v_c, int64(32), "std/regexp.xo:931:9")
 				}
 				v_first = false
 			} else {
 				if (v_c >= int64(65)) && (v_c <= int64(90)) {
-					v_c = AddS(v_c, int64(32), "std/regexp.xo:941:7")
+					v_c = AddS(v_c, int64(32), "std/regexp.xo:935:7")
 				}
 			}
-			v_b.M_write_byte(tk, ConvS_uint8(v_c, "std/regexp.xo:943:18"))
+			v_b.M_write_byte(tk, ConvS_uint8(v_c, "std/regexp.xo:937:18"))
 		}
 	}
-	x_t132 := Bytes_to_str(tk, v_b.M_freeze(tk))
-	var x_c133 string
-	if x_t132.Some {
-		x_c133 = x_t132.V
+	x_t129 := Bytes_to_str(tk, v_b.M_freeze(tk))
+	var x_c130 string
+	if x_t129.Some {
+		x_c130 = x_t129.V
 	} else {
-		x_c133 = v_name
+		x_c130 = v_name
 	}
-	return x_c133
+	return x_c130
 }
 
 func Regexp_class_table(tk *Task, v_k int64) List[int64] {
@@ -1907,31 +1878,31 @@ func Regexp_class_table(tk *Task, v_k int64) List[int64] {
 	_ = v_t
 	var v_r Bytes = Uniclass_RANGES
 	_ = v_r
-	var v_first int64 = Regexp_u24(tk, v_t, MulKI(int64(6), v_k, -1537228672809129301, 1537228672809129301, "std/regexp.xo:952:22"))
+	var v_first int64 = Regexp_u24(tk, v_t, MulKI(int64(6), v_k, -1537228672809129301, 1537228672809129301, "std/regexp.xo:946:22"))
 	_ = v_first
-	var v_n int64 = Regexp_u24(tk, v_t, AddIUp(MulKI(int64(6), v_k, -1537228672809129301, 1537228672809129301, "std/regexp.xo:953:18"), int64(3), "std/regexp.xo:953:18"))
+	var v_n int64 = Regexp_u24(tk, v_t, AddIUp(MulKI(int64(6), v_k, -1537228672809129301, 1537228672809129301, "std/regexp.xo:947:18"), int64(3), "std/regexp.xo:947:18"))
 	_ = v_n
 	var v_out List[int64] = List[int64]{}
 	_ = v_out
 	var v_i int64 = v_first
 	_ = v_i
 	for {
-		if !(v_i < AddS(v_first, v_n, "std/regexp.xo:956:13")) {
+		if !(v_i < AddS(v_first, v_n, "std/regexp.xo:950:13")) {
 			break
 		}
 		{
-			x_pv135 := Regexp_u24(tk, v_r, MulKI(int64(6), v_i, -1537228672809129301, 1537228672809129301, "std/regexp.xo:957:21"))
+			x_pv132 := Regexp_u24(tk, v_r, MulKI(int64(6), v_i, -1537228672809129301, 1537228672809129301, "std/regexp.xo:951:21"))
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv135)
+				v_out = List_PushFast(v_out, x_pv132)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv135)
+				v_out = List_PushSlow(v_out, x_pv132)
 			}
 			_ = Unit{}
-			x_pv136 := Regexp_u24(tk, v_r, AddIUp(MulKI(int64(6), v_i, -1537228672809129301, 1537228672809129301, "std/regexp.xo:958:21"), int64(3), "std/regexp.xo:958:21"))
+			x_pv133 := Regexp_u24(tk, v_r, AddIUp(MulKI(int64(6), v_i, -1537228672809129301, 1537228672809129301, "std/regexp.xo:952:21"), int64(3), "std/regexp.xo:952:21"))
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv136)
+				v_out = List_PushFast(v_out, x_pv133)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv136)
+				v_out = List_PushSlow(v_out, x_pv133)
 			}
 			_ = Unit{}
 			v_i = (v_i + int64(1))
@@ -1941,7 +1912,7 @@ func Regexp_class_table(tk *Task, v_k int64) List[int64] {
 }
 
 func Regexp_u24(tk *Task, v_t Bytes, v_i int64) int64 {
-	return ((Shl(int64(BytesAt(v_t, v_i, "std/regexp.xo:965:8")), int64(16), "std/regexp.xo:965:4") | Shl(int64(BytesAt(v_t, AddIUp(v_i, int64(1), "std/regexp.xo:965:30"), "std/regexp.xo:965:28")), int64(8), "std/regexp.xo:965:24")) | int64(BytesAt(v_t, AddIUp(v_i, int64(2), "std/regexp.xo:965:52"), "std/regexp.xo:965:50")))
+	return ((Shl(int64(BytesAt(v_t, v_i, "std/regexp.xo:959:8")), int64(16), "std/regexp.xo:959:4") | Shl(int64(BytesAt(v_t, AddIUp(v_i, int64(1), "std/regexp.xo:959:30"), "std/regexp.xo:959:28")), int64(8), "std/regexp.xo:959:24")) | int64(BytesAt(v_t, AddIUp(v_i, int64(2), "std/regexp.xo:959:52"), "std/regexp.xo:959:50")))
 }
 
 func Regexp_unicode_table(tk *Task, v_name string) Tuple3[int64, List[int64], List[int64]] {
@@ -1959,32 +1930,32 @@ func Regexp_unicode_table(tk *Task, v_name string) Tuple3[int64, List[int64], Li
 			_ = Map[Unit, Unit]{}
 		}
 	}
-	x_let138 := Uniclass_class_of(tk, v_c)
-	_ = x_let138
-	var v_tab int64 = x_let138.F0
+	x_let135 := Uniclass_class_of(tk, v_c)
+	_ = x_let135
+	var v_tab int64 = x_let135.F0
 	_ = v_tab
-	var v_fold int64 = x_let138.F1
+	var v_fold int64 = x_let135.F1
 	_ = v_fold
-	var v_sign int64 = x_let138.F2
+	var v_sign int64 = x_let135.F2
 	_ = v_sign
 	if v_sign == int64(0) {
 		return Tuple3[int64, List[int64], List[int64]]{F0: int64(0), F1: List[int64]{}, F2: List[int64]{}}
 	}
-	x_a140 := v_sign
-	x_a141 := List_Own(Regexp_class_table(tk, v_tab))
-	var x_v139 List[int64]
+	x_a137 := v_sign
+	x_a138 := List_Own(Regexp_class_table(tk, v_tab))
+	var x_v136 List[int64]
 	if v_fold < int64(0) {
-		x_v139 = List[int64]{}
+		x_v136 = List[int64]{}
 	} else {
-		x_v139 = List_Own(Regexp_class_table(tk, v_fold))
+		x_v136 = List_Own(Regexp_class_table(tk, v_fold))
 	}
-	return Tuple3[int64, List[int64], List[int64]]{F0: x_a140, F1: x_a141, F2: x_v139}
+	return Tuple3[int64, List[int64], List[int64]]{F0: x_a137, F1: x_a138, F2: x_v136}
 }
 
 func (v_p *Regexp_Parser) M_parse_unicode_class(tk *Task, v_s string, v_i int64, v_r List[int64]) Result[Option[Tuple2[List[int64], int64]], Regexp_PErr] {
 	var v_n int64 = Str_len(tk, v_s)
 	_ = v_n
-	if (((((*v_p).F_flags & Regexp_UNICODE_GROUPS) == int64(0)) || (AddIUp(v_i, int64(1), "std/regexp.xo:989:41") >= v_n)) || (Regexp_byte_at(tk, v_s, v_i) != int64(92))) || ((Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:989:92")) != int64(112)) && (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:989:120")) != int64(80))) {
+	if (((((*v_p).F_flags & Regexp_UNICODE_GROUPS) == int64(0)) || (AddIUp(v_i, int64(1), "std/regexp.xo:983:41") >= v_n)) || (Regexp_byte_at(tk, v_s, v_i) != int64(92))) || ((Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:983:92")) != int64(112)) && (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:983:120")) != int64(80))) {
 		return Ok[Option[Tuple2[List[int64], int64]], Regexp_PErr](func(v Option[Tuple2[List[int64], int64]]) Option[Tuple2[List[int64], int64]] {
 			if v.Some {
 				v.V.F0.XoMark()
@@ -1994,18 +1965,18 @@ func (v_p *Regexp_Parser) M_parse_unicode_class(tk *Task, v_s string, v_i int64,
 	}
 	var v_sign int64 = int64(1)
 	_ = v_sign
-	if Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:993:17")) == int64(80) {
+	if Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:987:17")) == int64(80) {
 		v_sign = int64(-1)
 	}
-	x_r142 := Regexp_next_rune(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:996:29"))
-	if !x_r142.Ok {
-		return ErrTr[Option[Tuple2[List[int64], int64]]](x_r142.E, Frame4(x_r142.Tr, "regexp.Parser.parse_unicode_class", "std/regexp.xo:996", "p s i r", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i, List_Own(v_r)))
+	x_r139 := Regexp_next_rune(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:990:29"))
+	if !x_r139.Ok {
+		return ErrTr[Option[Tuple2[List[int64], int64]]](x_r139.E, Frame4(x_r139.Tr, "regexp.Parser.parse_unicode_class", "std/regexp.xo:990", "p s i r", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i, List_Own(v_r)))
 	}
-	x_let143 := x_r142.V
-	_ = x_let143
-	var v_c int64 = x_let143.F0
+	x_let140 := x_r139.V
+	_ = x_let140
+	var v_c int64 = x_let140.F0
 	_ = v_c
-	var v_t int64 = x_let143.F1
+	var v_t int64 = x_let140.F1
 	_ = v_t
 	var v_seq string = ""
 	_ = v_seq
@@ -2015,42 +1986,42 @@ func (v_p *Regexp_Parser) M_parse_unicode_class(tk *Task, v_s string, v_i int64,
 	_ = v_after
 	if v_c != int64(123) {
 		v_seq = Regexp_sl(tk, v_s, v_i, v_t)
-		v_name = Regexp_sl(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:1002:18"), v_t)
+		v_name = Regexp_sl(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:996:18"), v_t)
 	} else {
 		var v_end int64 = Regexp_find_from(tk, v_s, "}", v_i)
 		_ = v_end
 		if v_end < int64(0) {
-			x_r144 := Regexp_check_utf8(tk, v_s, v_i, v_n)
-			if !x_r144.Ok {
-				return ErrTr[Option[Tuple2[List[int64], int64]]](x_r144.E, Frame4(x_r144.Tr, "regexp.Parser.parse_unicode_class", "std/regexp.xo:1006", "p s i r", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i, List_Own(v_r)))
+			x_r141 := Regexp_check_utf8(tk, v_s, v_i, v_n)
+			if !x_r141.Ok {
+				return ErrTr[Option[Tuple2[List[int64], int64]]](x_r141.E, Frame4(x_r141.Tr, "regexp.Parser.parse_unicode_class", "std/regexp.xo:1000", "p s i r", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i, List_Own(v_r)))
 			}
-			_ = x_r144.V
+			_ = x_r141.V
 			return Err[Option[Tuple2[List[int64], int64]]](Regexp_perr(tk, "invalid character class range", Regexp_sl(tk, v_s, v_i, v_n)))
 		}
-		v_seq = Regexp_sl(tk, v_s, v_i, AddIUp(v_end, int64(1), "std/regexp.xo:1009:20"))
-		v_after = AddIUp(v_end, int64(1), "std/regexp.xo:1010:13")
-		v_name = Regexp_sl(tk, v_s, AddIUp(v_i, int64(3), "std/regexp.xo:1011:18"), v_end)
-		x_r145 := Regexp_check_utf8(tk, v_s, AddIUp(v_i, int64(3), "std/regexp.xo:1012:19"), v_end)
-		if !x_r145.Ok {
-			return ErrTr[Option[Tuple2[List[int64], int64]]](x_r145.E, Frame4(x_r145.Tr, "regexp.Parser.parse_unicode_class", "std/regexp.xo:1012", "p s i r", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i, List_Own(v_r)))
+		v_seq = Regexp_sl(tk, v_s, v_i, AddIUp(v_end, int64(1), "std/regexp.xo:1003:20"))
+		v_after = AddIUp(v_end, int64(1), "std/regexp.xo:1004:13")
+		v_name = Regexp_sl(tk, v_s, AddIUp(v_i, int64(3), "std/regexp.xo:1005:18"), v_end)
+		x_r142 := Regexp_check_utf8(tk, v_s, AddIUp(v_i, int64(3), "std/regexp.xo:1006:19"), v_end)
+		if !x_r142.Ok {
+			return ErrTr[Option[Tuple2[List[int64], int64]]](x_r142.E, Frame4(x_r142.Tr, "regexp.Parser.parse_unicode_class", "std/regexp.xo:1006", "p s i r", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i, List_Own(v_r)))
 		}
-		_ = x_r145.V
+		_ = x_r142.V
 	}
 	if (v_name != "") && (Regexp_byte_at(tk, v_name, int64(0)) == int64(94)) {
 		v_sign = (int64(0) - v_sign)
 		v_name = Regexp_sl(tk, v_name, int64(1), Str_len(tk, v_name))
 	}
-	x_let146 := func(v Tuple3[int64, List[int64], List[int64]]) Tuple3[int64, List[int64], List[int64]] {
+	x_let143 := func(v Tuple3[int64, List[int64], List[int64]]) Tuple3[int64, List[int64], List[int64]] {
 		v.F1.XoMark()
 		v.F2.XoMark()
 		return v
 	}(Regexp_unicode_table(tk, v_name))
-	_ = x_let146
-	var v_tsign int64 = x_let146.F0
+	_ = x_let143
+	var v_tsign int64 = x_let143.F0
 	_ = v_tsign
-	var v_tab List[int64] = x_let146.F1
+	var v_tab List[int64] = x_let143.F1
 	_ = v_tab
-	var v_fold List[int64] = x_let146.F2
+	var v_fold List[int64] = x_let143.F2
 	_ = v_fold
 	if v_tsign == int64(0) {
 		return Err[Option[Tuple2[List[int64], int64]]](Regexp_perr(tk, "invalid character class range", v_seq))
@@ -2085,18 +2056,18 @@ func (v_p *Regexp_Parser) M_parse_unicode_class(tk *Task, v_s string, v_i int64,
 func Regexp_parse_escape(tk *Task, v_s string, v_i int64) Result[Tuple2[int64, int64], Regexp_PErr] {
 	var v_n int64 = Str_len(tk, v_s)
 	_ = v_n
-	if AddIUp(v_i, int64(1), "std/regexp.xo:1049:6") >= v_n {
+	if AddIUp(v_i, int64(1), "std/regexp.xo:1043:6") >= v_n {
 		return Err[Tuple2[int64, int64]](Regexp_perr(tk, "trailing backslash at end of expression", ""))
 	}
-	x_r147 := Regexp_next_rune(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:1052:30"))
-	if !x_r147.Ok {
-		return ErrTr[Tuple2[int64, int64]](x_r147.E, Frame2(x_r147.Tr, "regexp.parse_escape", "std/regexp.xo:1052", "s i", v_s, v_i))
+	x_r144 := Regexp_next_rune(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:1046:30"))
+	if !x_r144.Ok {
+		return ErrTr[Tuple2[int64, int64]](x_r144.E, Frame2(x_r144.Tr, "regexp.parse_escape", "std/regexp.xo:1046", "s i", v_s, v_i))
 	}
-	x_let148 := x_r147.V
-	_ = x_let148
-	var v_c int64 = x_let148.F0
+	x_let145 := x_r144.V
+	_ = x_let145
+	var v_c int64 = x_let145.F0
 	_ = v_c
-	var v_t0 int64 = x_let148.F1
+	var v_t0 int64 = x_let145.F1
 	_ = v_t0
 	var v_t int64 = v_t0
 	_ = v_t
@@ -2105,7 +2076,7 @@ func Regexp_parse_escape(tk *Task, v_s string, v_i int64) Result[Tuple2[int64, i
 	}
 	if (v_c >= int64(48)) && (v_c <= int64(55)) {
 		if (v_c == int64(48)) || (((v_t < v_n) && (Regexp_byte_at(tk, v_s, v_t) >= int64(48))) && (Regexp_byte_at(tk, v_s, v_t) <= int64(55))) {
-			var v_r int64 = SubS(v_c, int64(48), "std/regexp.xo:1060:15")
+			var v_r int64 = SubS(v_c, int64(48), "std/regexp.xo:1054:15")
 			_ = v_r
 			var v_k int64 = int64(1)
 			_ = v_k
@@ -2114,7 +2085,7 @@ func Regexp_parse_escape(tk *Task, v_s string, v_i int64) Result[Tuple2[int64, i
 					break
 				}
 				{
-					v_r = SubS(AddS(MulIK(v_r, int64(8), -1152921504606846976, 1152921504606846975, "std/regexp.xo:1063:13"), Regexp_byte_at(tk, v_s, v_t), "std/regexp.xo:1063:13"), int64(48), "std/regexp.xo:1063:13")
+					v_r = SubS(AddS(MulIK(v_r, int64(8), -1152921504606846976, 1152921504606846975, "std/regexp.xo:1057:13"), Regexp_byte_at(tk, v_s, v_t), "std/regexp.xo:1057:13"), int64(48), "std/regexp.xo:1057:13")
 					v_t = (v_t + int64(1))
 					v_k = (v_k + int64(1))
 				}
@@ -2127,15 +2098,15 @@ func Regexp_parse_escape(tk *Task, v_s string, v_i int64) Result[Tuple2[int64, i
 		if v_t >= v_n {
 			return Err[Tuple2[int64, int64]](Regexp_perr(tk, "invalid escape sequence", Regexp_sl(tk, v_s, v_i, v_t)))
 		}
-		x_r150 := Regexp_next_rune(tk, v_s, v_t)
-		if !x_r150.Ok {
-			return ErrTr[Tuple2[int64, int64]](x_r150.E, Frame2(x_r150.Tr, "regexp.parse_escape", "std/regexp.xo:1075", "s i", v_s, v_i))
+		x_r147 := Regexp_next_rune(tk, v_s, v_t)
+		if !x_r147.Ok {
+			return ErrTr[Tuple2[int64, int64]](x_r147.E, Frame2(x_r147.Tr, "regexp.parse_escape", "std/regexp.xo:1069", "s i", v_s, v_i))
 		}
-		x_let151 := x_r150.V
-		_ = x_let151
-		var v_c2 int64 = x_let151.F0
+		x_let148 := x_r147.V
+		_ = x_let148
+		var v_c2 int64 = x_let148.F0
 		_ = v_c2
-		var v_t2 int64 = x_let151.F1
+		var v_t2 int64 = x_let148.F1
 		_ = v_t2
 		v_t = v_t2
 		if v_c2 == int64(123) {
@@ -2143,7 +2114,7 @@ func Regexp_parse_escape(tk *Task, v_s string, v_i int64) Result[Tuple2[int64, i
 			_ = v_nhex
 			var v_r_1 int64 = int64(0)
 			_ = v_r_1
-		x_L152:
+		x_L149:
 			for {
 				if !(true) {
 					break
@@ -2152,30 +2123,30 @@ func Regexp_parse_escape(tk *Task, v_s string, v_i int64) Result[Tuple2[int64, i
 					if v_t >= v_n {
 						return Err[Tuple2[int64, int64]](Regexp_perr(tk, "invalid escape sequence", Regexp_sl(tk, v_s, v_i, v_t)))
 					}
-					x_r153 := Regexp_next_rune(tk, v_s, v_t)
-					if !x_r153.Ok {
-						return ErrTr[Tuple2[int64, int64]](x_r153.E, Frame2(x_r153.Tr, "regexp.parse_escape", "std/regexp.xo:1084", "s i", v_s, v_i))
+					x_r150 := Regexp_next_rune(tk, v_s, v_t)
+					if !x_r150.Ok {
+						return ErrTr[Tuple2[int64, int64]](x_r150.E, Frame2(x_r150.Tr, "regexp.parse_escape", "std/regexp.xo:1078", "s i", v_s, v_i))
 					}
-					x_let154 := x_r153.V
-					_ = x_let154
-					var v_c3 int64 = x_let154.F0
+					x_let151 := x_r150.V
+					_ = x_let151
+					var v_c3 int64 = x_let151.F0
 					_ = v_c3
-					var v_t3 int64 = x_let154.F1
+					var v_t3 int64 = x_let151.F1
 					_ = v_t3
 					v_t = v_t3
 					if v_c3 == int64(125) {
-						break x_L152
+						break x_L149
 					}
 					var v_v int64 = Regexp_unhex(tk, v_c3)
 					_ = v_v
 					if v_v < int64(0) {
 						return Err[Tuple2[int64, int64]](Regexp_perr(tk, "invalid escape sequence", Regexp_sl(tk, v_s, v_i, v_t)))
 					}
-					v_r_1 = AddS((v_r_1 * int64(16)), v_v, "std/regexp.xo:1093:13")
+					v_r_1 = AddS((v_r_1 * int64(16)), v_v, "std/regexp.xo:1087:13")
 					if v_r_1 > Regexp_MAX_RUNE {
 						return Err[Tuple2[int64, int64]](Regexp_perr(tk, "invalid escape sequence", Regexp_sl(tk, v_s, v_i, v_t)))
 					}
-					v_nhex = AddIUp(v_nhex, int64(1), "std/regexp.xo:1097:9")
+					v_nhex = AddIUp(v_nhex, int64(1), "std/regexp.xo:1091:9")
 				}
 			}
 			if v_nhex == int64(0) {
@@ -2185,15 +2156,15 @@ func Regexp_parse_escape(tk *Task, v_s string, v_i int64) Result[Tuple2[int64, i
 		}
 		var v_x int64 = Regexp_unhex(tk, v_c2)
 		_ = v_x
-		x_r155 := Regexp_next_rune(tk, v_s, v_t)
-		if !x_r155.Ok {
-			return ErrTr[Tuple2[int64, int64]](x_r155.E, Frame2(x_r155.Tr, "regexp.parse_escape", "std/regexp.xo:1105", "s i", v_s, v_i))
+		x_r152 := Regexp_next_rune(tk, v_s, v_t)
+		if !x_r152.Ok {
+			return ErrTr[Tuple2[int64, int64]](x_r152.E, Frame2(x_r152.Tr, "regexp.parse_escape", "std/regexp.xo:1099", "s i", v_s, v_i))
 		}
-		x_let156 := x_r155.V
-		_ = x_let156
-		var v_c4 int64 = x_let156.F0
+		x_let153 := x_r152.V
+		_ = x_let153
+		var v_c4 int64 = x_let153.F0
 		_ = v_c4
-		var v_t4 int64 = x_let156.F1
+		var v_t4 int64 = x_let153.F1
 		_ = v_t4
 		v_t = v_t4
 		var v_y int64 = Regexp_unhex(tk, v_c4)
@@ -2201,41 +2172,41 @@ func Regexp_parse_escape(tk *Task, v_s string, v_i int64) Result[Tuple2[int64, i
 		if (v_x < int64(0)) || (v_y < int64(0)) {
 			return Err[Tuple2[int64, int64]](Regexp_perr(tk, "invalid escape sequence", Regexp_sl(tk, v_s, v_i, v_t)))
 		}
-		return Ok[Tuple2[int64, int64], Regexp_PErr](Tuple2[int64, int64]{F0: AddS(MulIK(v_x, int64(16), -576460752303423488, 576460752303423487, "std/regexp.xo:1111:13"), v_y, "std/regexp.xo:1111:13"), F1: v_t})
+		return Ok[Tuple2[int64, int64], Regexp_PErr](Tuple2[int64, int64]{F0: AddS(MulIK(v_x, int64(16), -576460752303423488, 576460752303423487, "std/regexp.xo:1105:13"), v_y, "std/regexp.xo:1105:13"), F1: v_t})
 	}
-	var x_v157 int64
-x_M158:
+	var x_v154 int64
+x_M155:
 	switch {
 	default:
 		if v_c == int64(97) {
-			x_v157 = int64(7)
-			break x_M158
+			x_v154 = int64(7)
+			break x_M155
 		}
 		if v_c == int64(102) {
-			x_v157 = int64(12)
-			break x_M158
+			x_v154 = int64(12)
+			break x_M155
 		}
 		if v_c == int64(110) {
-			x_v157 = int64(10)
-			break x_M158
+			x_v154 = int64(10)
+			break x_M155
 		}
 		if v_c == int64(114) {
-			x_v157 = int64(13)
-			break x_M158
+			x_v154 = int64(13)
+			break x_M155
 		}
 		if v_c == int64(116) {
-			x_v157 = int64(9)
-			break x_M158
+			x_v154 = int64(9)
+			break x_M155
 		}
 		if v_c == int64(118) {
-			x_v157 = int64(11)
-			break x_M158
+			x_v154 = int64(11)
+			break x_M155
 		}
 		{
-			x_v157 = int64(-1)
+			x_v154 = int64(-1)
 		}
 	}
-	var v_r_2 int64 = x_v157
+	var v_r_2 int64 = x_v154
 	_ = v_r_2
 	if v_r_2 < int64(0) {
 		return Err[Tuple2[int64, int64]](Regexp_perr(tk, "invalid escape sequence", Regexp_sl(tk, v_s, v_i, v_t)))
@@ -2258,7 +2229,7 @@ func (v_p *Regexp_Parser) M_parse_class(tk *Task, v_s string, v_i0 int64) Result
 	_ = v_n
 	var v_whole string = Regexp_sl(tk, v_s, v_i0, v_n)
 	_ = v_whole
-	var v_t int64 = AddIUp(v_i0, int64(1), "std/regexp.xo:1142:11")
+	var v_t int64 = AddIUp(v_i0, int64(1), "std/regexp.xo:1136:11")
 	_ = v_t
 	var v_class List[int64] = List[int64]{}
 	_ = v_class
@@ -2270,34 +2241,34 @@ func (v_p *Regexp_Parser) M_parse_class(tk *Task, v_s string, v_i0 int64) Result
 	}
 	var v_first bool = true
 	_ = v_first
-x_L159:
+x_L156:
 	for {
 		if !(((v_t >= v_n) || (Regexp_byte_at(tk, v_s, v_t) != int64(93))) || v_first) {
 			break
 		}
 		{
 			v_first = false
-			if ((AddIUp(v_t, int64(2), "std/regexp.xo:1153:8") < v_n) && (Regexp_byte_at(tk, v_s, v_t) == int64(91))) && (Regexp_byte_at(tk, v_s, AddIUp(v_t, int64(1), "std/regexp.xo:1153:56")) == int64(58)) {
-				var v_e int64 = Regexp_find_from(tk, v_s, ":]", AddIUp(v_t, int64(2), "std/regexp.xo:1154:34"))
+			if ((AddIUp(v_t, int64(2), "std/regexp.xo:1147:8") < v_n) && (Regexp_byte_at(tk, v_s, v_t) == int64(91))) && (Regexp_byte_at(tk, v_s, AddIUp(v_t, int64(1), "std/regexp.xo:1147:56")) == int64(58)) {
+				var v_e int64 = Regexp_find_from(tk, v_s, ":]", AddIUp(v_t, int64(2), "std/regexp.xo:1148:34"))
 				_ = v_e
 				if v_e >= int64(0) {
-					var v_name string = Regexp_sl(tk, v_s, v_t, AddIUp(v_e, int64(2), "std/regexp.xo:1156:29"))
+					var v_name string = Regexp_sl(tk, v_s, v_t, AddIUp(v_e, int64(2), "std/regexp.xo:1150:29"))
 					_ = v_name
-					x_let160 := func(v Tuple2[int64, List[int64]]) Tuple2[int64, List[int64]] { v.F1.XoMark(); return v }(Regexp_posix_group(tk, v_name))
-					_ = x_let160
-					var v_gs int64 = x_let160.F0
+					x_let157 := func(v Tuple2[int64, List[int64]]) Tuple2[int64, List[int64]] { v.F1.XoMark(); return v }(Regexp_posix_group(tk, v_name))
+					_ = x_let157
+					var v_gs int64 = x_let157.F0
 					_ = v_gs
-					var v_g List[int64] = x_let160.F1
+					var v_g List[int64] = x_let157.F1
 					_ = v_g
 					if v_gs == int64(0) {
 						return Err[int64](Regexp_perr(tk, "invalid character class range", v_name))
 					}
 					(*v_p).M_append_group(tk, &v_class, v_gs, List_Own(v_g))
-					v_t = AddIUp(v_e, int64(2), "std/regexp.xo:1162:13")
-					continue x_L159
+					v_t = AddIUp(v_e, int64(2), "std/regexp.xo:1156:13")
+					continue x_L156
 				}
 			}
-			x_r161 := func(v Result[Option[Tuple2[List[int64], int64]], Regexp_PErr]) Result[Option[Tuple2[List[int64], int64]], Regexp_PErr] {
+			x_r158 := func(v Result[Option[Tuple2[List[int64], int64]], Regexp_PErr]) Result[Option[Tuple2[List[int64], int64]], Regexp_PErr] {
 				if v.Ok {
 					if v.V.Some {
 						v.V.V.F0.XoMark()
@@ -2305,68 +2276,68 @@ x_L159:
 				}
 				return v
 			}((*v_p).M_parse_unicode_class(tk, v_s, v_t, List_Own(v_class)))
-			if !x_r161.Ok {
-				return ErrTr[int64](x_r161.E, Frame3(x_r161.Tr, "regexp.Parser.parse_class", "std/regexp.xo:1166", "p s i0", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i0))
+			if !x_r158.Ok {
+				return ErrTr[int64](x_r158.E, Frame3(x_r158.Tr, "regexp.Parser.parse_class", "std/regexp.xo:1160", "p s i0", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i0))
 			}
-			x_m162 := x_r161.V
-			_ = x_m162
-		x_M163:
+			x_m159 := x_r158.V
+			_ = x_m159
+		x_M160:
 			switch {
 			default:
-				if x_m162.Some {
-					var v_c2 List[int64] = x_m162.V.F0
+				if x_m159.Some {
+					var v_c2 List[int64] = x_m159.V.F0
 					_ = v_c2
-					var v_t2 int64 = x_m162.V.F1
+					var v_t2 int64 = x_m159.V.F1
 					_ = v_t2
 					{
 						v_class = List_Own(v_c2)
 						v_t = v_t2
-						continue x_L159
+						continue x_L156
 					}
 				}
-				if !x_m162.Some {
-					break x_M163
+				if !x_m159.Some {
+					break x_M160
 				}
-				panic(Unreachable("std/regexp.xo:1166:5"))
+				panic(Unreachable("std/regexp.xo:1160:5"))
 			}
-			if ((((*v_p).F_flags & Regexp_PERL_X) != int64(0)) && (AddIUp(v_t, int64(1), "std/regexp.xo:1174:35") < v_n)) && (Regexp_byte_at(tk, v_s, v_t) == int64(92)) {
-				x_let164 := func(v Tuple2[int64, List[int64]]) Tuple2[int64, List[int64]] { v.F1.XoMark(); return v }(Regexp_perl_group(tk, Regexp_esc2(tk, v_s, v_t)))
-				_ = x_let164
-				var v_gs_1 int64 = x_let164.F0
+			if ((((*v_p).F_flags & Regexp_PERL_X) != int64(0)) && (AddIUp(v_t, int64(1), "std/regexp.xo:1168:35") < v_n)) && (Regexp_byte_at(tk, v_s, v_t) == int64(92)) {
+				x_let161 := func(v Tuple2[int64, List[int64]]) Tuple2[int64, List[int64]] { v.F1.XoMark(); return v }(Regexp_perl_group(tk, Regexp_esc2(tk, v_s, v_t)))
+				_ = x_let161
+				var v_gs_1 int64 = x_let161.F0
 				_ = v_gs_1
-				var v_g_1 List[int64] = x_let164.F1
+				var v_g_1 List[int64] = x_let161.F1
 				_ = v_g_1
 				if v_gs_1 != int64(0) {
 					(*v_p).M_append_group(tk, &v_class, v_gs_1, List_Own(v_g_1))
-					v_t = AddIUp(v_t, int64(2), "std/regexp.xo:1178:9")
-					continue x_L159
+					v_t = AddIUp(v_t, int64(2), "std/regexp.xo:1172:9")
+					continue x_L156
 				}
 			}
 			var v_rng int64 = v_t
 			_ = v_rng
-			x_r165 := Regexp_parse_class_char(tk, v_s, v_t, v_whole)
-			if !x_r165.Ok {
-				return ErrTr[int64](x_r165.E, Frame3(x_r165.Tr, "regexp.Parser.parse_class", "std/regexp.xo:1183", "p s i0", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i0))
+			x_r162 := Regexp_parse_class_char(tk, v_s, v_t, v_whole)
+			if !x_r162.Ok {
+				return ErrTr[int64](x_r162.E, Frame3(x_r162.Tr, "regexp.Parser.parse_class", "std/regexp.xo:1177", "p s i0", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i0))
 			}
-			x_let166 := x_r165.V
-			_ = x_let166
-			var v_lo int64 = x_let166.F0
+			x_let163 := x_r162.V
+			_ = x_let163
+			var v_lo int64 = x_let163.F0
 			_ = v_lo
-			var v_t1 int64 = x_let166.F1
+			var v_t1 int64 = x_let163.F1
 			_ = v_t1
 			v_t = v_t1
 			var v_hi int64 = v_lo
 			_ = v_hi
-			if ((AddIUp(v_t, int64(1), "std/regexp.xo:1186:8") < v_n) && (Regexp_byte_at(tk, v_s, v_t) == int64(45))) && (Regexp_byte_at(tk, v_s, AddIUp(v_t, int64(1), "std/regexp.xo:1186:56")) != int64(93)) {
-				x_r167 := Regexp_parse_class_char(tk, v_s, AddIUp(v_t, int64(1), "std/regexp.xo:1187:42"), v_whole)
-				if !x_r167.Ok {
-					return ErrTr[int64](x_r167.E, Frame3(x_r167.Tr, "regexp.Parser.parse_class", "std/regexp.xo:1187", "p s i0", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i0))
+			if ((AddIUp(v_t, int64(1), "std/regexp.xo:1180:8") < v_n) && (Regexp_byte_at(tk, v_s, v_t) == int64(45))) && (Regexp_byte_at(tk, v_s, AddIUp(v_t, int64(1), "std/regexp.xo:1180:56")) != int64(93)) {
+				x_r164 := Regexp_parse_class_char(tk, v_s, AddIUp(v_t, int64(1), "std/regexp.xo:1181:42"), v_whole)
+				if !x_r164.Ok {
+					return ErrTr[int64](x_r164.E, Frame3(x_r164.Tr, "regexp.Parser.parse_class", "std/regexp.xo:1181", "p s i0", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i0))
 				}
-				x_let168 := x_r167.V
-				_ = x_let168
-				var v_h2 int64 = x_let168.F0
+				x_let165 := x_r164.V
+				_ = x_let165
+				var v_h2 int64 = x_let165.F0
 				_ = v_h2
-				var v_t2_1 int64 = x_let168.F1
+				var v_t2_1 int64 = x_let165.F1
 				_ = v_t2_1
 				v_t = v_t2_1
 				v_hi = v_h2
@@ -2394,15 +2365,15 @@ x_L159:
 func Regexp_parse_repeat(tk *Task, v_s string, v_i int64) Tuple4[bool, int64, int64, int64] {
 	var v_n int64 = Str_len(tk, v_s)
 	_ = v_n
-	var v_t int64 = AddIUp(v_i, int64(1), "std/regexp.xo:1213:11")
+	var v_t int64 = AddIUp(v_i, int64(1), "std/regexp.xo:1207:11")
 	_ = v_t
-	x_let169 := Regexp_parse_int(tk, v_s, v_t)
-	_ = x_let169
-	var v_ok1 bool = x_let169.F0
+	x_let166 := Regexp_parse_int(tk, v_s, v_t)
+	_ = x_let166
+	var v_ok1 bool = x_let166.F0
 	_ = v_ok1
-	var v_min0 int64 = x_let169.F1
+	var v_min0 int64 = x_let166.F1
 	_ = v_min0
-	var v_t1 int64 = x_let169.F2
+	var v_t1 int64 = x_let166.F2
 	_ = v_t1
 	if !(v_ok1) || (v_t1 >= v_n) {
 		return Tuple4[bool, int64, int64, int64]{F0: false, F1: int64(0), F2: int64(0), F3: v_i}
@@ -2422,13 +2393,13 @@ func Regexp_parse_repeat(tk *Task, v_s string, v_i int64) Tuple4[bool, int64, in
 		if Regexp_byte_at(tk, v_s, v_t) == int64(125) {
 			v_max = int64(-1)
 		} else {
-			x_let170 := Regexp_parse_int(tk, v_s, v_t)
-			_ = x_let170
-			var v_ok2 bool = x_let170.F0
+			x_let167 := Regexp_parse_int(tk, v_s, v_t)
+			_ = x_let167
+			var v_ok2 bool = x_let167.F0
 			_ = v_ok2
-			var v_max0 int64 = x_let170.F1
+			var v_max0 int64 = x_let167.F1
 			_ = v_max0
-			var v_t2 int64 = x_let170.F2
+			var v_t2 int64 = x_let167.F2
 			_ = v_t2
 			if !(v_ok2) {
 				return Tuple4[bool, int64, int64, int64]{F0: false, F1: int64(0), F2: int64(0), F3: v_i}
@@ -2468,7 +2439,7 @@ func Regexp_parse_int(tk *Task, v_s string, v_i int64) Tuple3[bool, int64, int64
 				if v_v >= int64(100000000) {
 					v_v = int64(-1)
 				} else {
-					v_v = SubS(AddS((v_v*int64(10)), Regexp_byte_at(tk, v_s, v_t), "std/regexp.xo:1264:13"), int64(48), "std/regexp.xo:1264:13")
+					v_v = SubS(AddS((v_v*int64(10)), Regexp_byte_at(tk, v_s, v_t), "std/regexp.xo:1258:13"), int64(48), "std/regexp.xo:1258:13")
 				}
 			}
 			v_t = (v_t + int64(1))
@@ -2480,19 +2451,19 @@ func Regexp_parse_int(tk *Task, v_s string, v_i int64) Tuple3[bool, int64, int64
 func (v_p *Regexp_Parser) M_repeat_is_valid(tk *Task, v_re int64, v_n0 int64) bool {
 	var v_n int64 = v_n0
 	_ = v_n
-	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1274:6") == Regexp_OP_REPEAT {
-		var v_mx int64 = List_At((*v_p).F_maxs, v_re, "std/regexp.xo:1275:14")
+	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1268:6") == Regexp_OP_REPEAT {
+		var v_mx int64 = List_At((*v_p).F_maxs, v_re, "std/regexp.xo:1269:14")
 		_ = v_mx
 		if v_mx == int64(0) {
 			return true
 		}
-		var x_v172 int64
+		var x_v169 int64
 		if v_mx < int64(0) {
-			x_v172 = List_At((*v_p).F_mins, v_re, "std/regexp.xo:1279:25")
+			x_v169 = List_At((*v_p).F_mins, v_re, "std/regexp.xo:1273:25")
 		} else {
-			x_v172 = v_mx
+			x_v169 = v_mx
 		}
-		var v_m int64 = x_v172
+		var v_m int64 = x_v169
 		_ = v_m
 		if v_m > v_n {
 			return false
@@ -2501,11 +2472,11 @@ func (v_p *Regexp_Parser) M_repeat_is_valid(tk *Task, v_re int64, v_n0 int64) bo
 			v_n = (v_n / v_m)
 		}
 	}
-	x_it173 := List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1287:14"))
-	for _, x_e175 := range List_Items(x_it173) {
-		x_el176 := x_e175
-		_ = x_el176
-		var v_sub int64 = x_el176
+	x_it170 := List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1281:14"))
+	for _, x_e172 := range List_Items(x_it170) {
+		x_el173 := x_e172
+		_ = x_el173
+		var v_sub int64 = x_el173
 		_ = v_sub
 		{
 			if !((*v_p).M_repeat_is_valid(tk, v_sub, v_n)) {
@@ -2532,38 +2503,38 @@ func (v_p *Regexp_Parser) M_repeat(tk *Task, v_op int64, v_min int64, v_max int6
 	}
 	var v_n int64 = List_len[int64](tk, (*v_p).F_stack)
 	_ = v_n
-	if (v_n == int64(0)) || (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_n-int64(1)), "std/regexp.xo:1311:22"), "std/regexp.xo:1311:16") >= Regexp_OP_LEFT_PAREN) {
+	if (v_n == int64(0)) || (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_n-int64(1)), "std/regexp.xo:1305:22"), "std/regexp.xo:1305:16") >= Regexp_OP_LEFT_PAREN) {
 		return Err[int64](Regexp_perr(tk, "missing argument to repetition operator", Regexp_sl(tk, v_s, v_before, v_after)))
 	}
-	var v_sub int64 = List_At((*v_p).F_stack, (v_n - int64(1)), "std/regexp.xo:1314:13")
+	var v_sub int64 = List_At((*v_p).F_stack, (v_n - int64(1)), "std/regexp.xo:1308:13")
 	_ = v_sub
 	var v_re int64 = (*v_p).M_node(tk, v_op)
 	_ = v_re
-	x_ix177 := v_re
+	x_ix174 := v_re
 	if !List_Mine((*v_p).F_mins) {
 		(*v_p).F_mins = List_Unshared((*v_p).F_mins)
 	}
-	List_PutM((*v_p).F_mins, x_ix177, v_min, "std/regexp.xo:1316:3")
-	x_ix178 := v_re
+	List_PutM((*v_p).F_mins, x_ix174, v_min, "std/regexp.xo:1310:3")
+	x_ix175 := v_re
 	if !List_Mine((*v_p).F_maxs) {
 		(*v_p).F_maxs = List_Unshared((*v_p).F_maxs)
 	}
-	List_PutM((*v_p).F_maxs, x_ix178, v_max, "std/regexp.xo:1317:3")
-	x_ix179 := v_re
+	List_PutM((*v_p).F_maxs, x_ix175, v_max, "std/regexp.xo:1311:3")
+	x_ix176 := v_re
 	if !List_Mine((*v_p).F_nflags) {
 		(*v_p).F_nflags = List_Unshared((*v_p).F_nflags)
 	}
-	List_PutM((*v_p).F_nflags, x_ix179, v_flags, "std/regexp.xo:1318:3")
-	x_ix180 := v_re
+	List_PutM((*v_p).F_nflags, x_ix176, v_flags, "std/regexp.xo:1312:3")
+	x_ix177 := v_re
 	if !List_Mine((*v_p).F_subs) {
 		(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 	}
-	List_PutM((*v_p).F_subs, x_ix180, ListOf[int64](v_sub), "std/regexp.xo:1319:3")
-	x_ix181 := (v_n - int64(1))
+	List_PutM((*v_p).F_subs, x_ix177, ListOf[int64](v_sub), "std/regexp.xo:1313:3")
+	x_ix178 := (v_n - int64(1))
 	if !List_Mine((*v_p).F_stack) {
 		(*v_p).F_stack = List_Unshared((*v_p).F_stack)
 	}
-	List_PutM((*v_p).F_stack, x_ix181, v_re, "std/regexp.xo:1320:3")
+	List_PutM((*v_p).F_stack, x_ix178, v_re, "std/regexp.xo:1314:3")
 	(*v_p).M_check_limits(tk, v_re)
 	if (*v_p).F_limit != "" {
 		return Err[int64](Regexp_perr(tk, (*v_p).F_limit, (*v_p).F_whole))
@@ -2576,40 +2547,40 @@ func (v_p *Regexp_Parser) M_repeat(tk *Task, v_op int64, v_min int64, v_max int6
 
 func (v_p *Regexp_Parser) M_collapse(tk *Task, v_subs List[int64], v_op int64) int64 {
 	if List_len[int64](tk, v_subs) == int64(1) {
-		return List_At(v_subs, int64(0), "std/regexp.xo:1333:12")
+		return List_At(v_subs, int64(0), "std/regexp.xo:1327:12")
 	}
 	var v_all List[int64] = List[int64]{}
 	_ = v_all
-	x_it182 := v_subs
-	for _, x_e184 := range List_Items(x_it182) {
-		x_el185 := x_e184
-		_ = x_el185
-		var v_sub int64 = x_el185
+	x_it179 := v_subs
+	for _, x_e181 := range List_Items(x_it179) {
+		x_el182 := x_e181
+		_ = x_el182
+		var v_sub int64 = x_el182
 		_ = v_sub
 		{
-			if List_At((*v_p).F_ops, v_sub, "std/regexp.xo:1337:8") == v_op {
-				x_it186 := List_At((*v_p).F_subs, v_sub, "std/regexp.xo:1338:16")
-				for _, x_e188 := range List_Items(x_it186) {
-					x_el189 := x_e188
-					_ = x_el189
-					var v_x int64 = x_el189
+			if List_At((*v_p).F_ops, v_sub, "std/regexp.xo:1331:8") == v_op {
+				x_it183 := List_At((*v_p).F_subs, v_sub, "std/regexp.xo:1332:16")
+				for _, x_e185 := range List_Items(x_it183) {
+					x_el186 := x_e185
+					_ = x_el186
+					var v_x int64 = x_el186
 					_ = v_x
 					{
-						x_pv190 := v_x
+						x_pv187 := v_x
 						if List_CanPush(v_all) {
-							v_all = List_PushFast(v_all, x_pv190)
+							v_all = List_PushFast(v_all, x_pv187)
 						} else {
-							v_all = List_PushSlow(v_all, x_pv190)
+							v_all = List_PushSlow(v_all, x_pv187)
 						}
 						_ = Unit{}
 					}
 				}
 			} else {
-				x_pv191 := v_sub
+				x_pv188 := v_sub
 				if List_CanPush(v_all) {
-					v_all = List_PushFast(v_all, x_pv191)
+					v_all = List_PushFast(v_all, x_pv188)
 				} else {
-					v_all = List_PushSlow(v_all, x_pv191)
+					v_all = List_PushSlow(v_all, x_pv188)
 				}
 				_ = Unit{}
 			}
@@ -2618,16 +2589,16 @@ func (v_p *Regexp_Parser) M_collapse(tk *Task, v_subs List[int64], v_op int64) i
 	if v_op == Regexp_OP_ALTERNATE {
 		v_all = List_Own((*v_p).M_factor(tk, List_Own(v_all)))
 		if List_len[int64](tk, v_all) == int64(1) {
-			return List_At(v_all, int64(0), "std/regexp.xo:1348:14")
+			return List_At(v_all, int64(0), "std/regexp.xo:1342:14")
 		}
 	}
 	var v_re int64 = (*v_p).M_node(tk, v_op)
 	_ = v_re
-	x_ix192 := v_re
+	x_ix189 := v_re
 	if !List_Mine((*v_p).F_subs) {
 		(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 	}
-	List_PutM((*v_p).F_subs, x_ix192, List_Own(v_all), "std/regexp.xo:1352:3")
+	List_PutM((*v_p).F_subs, x_ix189, List_Own(v_all), "std/regexp.xo:1346:3")
 	return v_re
 }
 
@@ -2635,7 +2606,7 @@ func (v_p *Regexp_Parser) M_run_start(tk *Task) int64 {
 	var v_i int64 = List_len[int64](tk, (*v_p).F_stack)
 	_ = v_i
 	for {
-		if !((v_i > int64(0)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_i-int64(1)), "std/regexp.xo:1359:24"), "std/regexp.xo:1359:18") < Regexp_OP_LEFT_PAREN)) {
+		if !((v_i > int64(0)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_i-int64(1)), "std/regexp.xo:1353:24"), "std/regexp.xo:1353:18") < Regexp_OP_LEFT_PAREN)) {
 			break
 		}
 		{
@@ -2655,11 +2626,11 @@ func (v_p *Regexp_Parser) M_take_from(tk *Task, v_i int64) List[int64] {
 			break
 		}
 		{
-			x_pv195 := List_At((*v_p).F_stack, v_k, "std/regexp.xo:1369:15")
+			x_pv192 := List_At((*v_p).F_stack, v_k, "std/regexp.xo:1363:15")
 			if List_CanPush(v_subs) {
-				v_subs = List_PushFast(v_subs, x_pv195)
+				v_subs = List_PushFast(v_subs, x_pv192)
 			} else {
-				v_subs = List_PushSlow(v_subs, x_pv195)
+				v_subs = List_PushSlow(v_subs, x_pv192)
 			}
 			_ = Unit{}
 			v_k = (v_k + int64(1))
@@ -2677,31 +2648,31 @@ func (v_p *Regexp_Parser) M_take_from(tk *Task, v_i int64) List[int64] {
 }
 
 func (v_p *Regexp_Parser) M_is_char_class(tk *Task, v_re int64) bool {
-	var v_op int64 = List_At((*v_p).F_ops, v_re, "std/regexp.xo:1379:12")
+	var v_op int64 = List_At((*v_p).F_ops, v_re, "std/regexp.xo:1373:12")
 	_ = v_op
-	return ((((v_op == Regexp_OP_CHAR_CLASS) || (v_op == Regexp_OP_ANY_CHAR_NOT_NL)) || (v_op == Regexp_OP_ANY_CHAR)) || ((v_op == Regexp_OP_LITERAL) && (List_len[int64](tk, List_At((*v_p).F_runes, v_re, "std/regexp.xo:1380:96")) == int64(1))))
+	return ((((v_op == Regexp_OP_CHAR_CLASS) || (v_op == Regexp_OP_ANY_CHAR_NOT_NL)) || (v_op == Regexp_OP_ANY_CHAR)) || ((v_op == Regexp_OP_LITERAL) && (List_len[int64](tk, List_At((*v_p).F_runes, v_re, "std/regexp.xo:1374:96")) == int64(1))))
 }
 
 func (v_p *Regexp_Parser) M_match_rune(tk *Task, v_re int64, v_r int64) bool {
-	var v_op int64 = List_At((*v_p).F_ops, v_re, "std/regexp.xo:1385:12")
+	var v_op int64 = List_At((*v_p).F_ops, v_re, "std/regexp.xo:1379:12")
 	_ = v_op
 	if v_op == Regexp_OP_LITERAL {
-		return ((List_len[int64](tk, List_At((*v_p).F_runes, v_re, "std/regexp.xo:1387:12")) == int64(1)) && (List_At(List_At((*v_p).F_runes, v_re, "std/regexp.xo:1387:38"), int64(0), "std/regexp.xo:1387:38") == v_r))
+		return ((List_len[int64](tk, List_At((*v_p).F_runes, v_re, "std/regexp.xo:1381:12")) == int64(1)) && (List_At(List_At((*v_p).F_runes, v_re, "std/regexp.xo:1381:38"), int64(0), "std/regexp.xo:1381:38") == v_r))
 	}
 	if v_op == Regexp_OP_CHAR_CLASS {
-		var v_rs List[int64] = List_Own(List_At((*v_p).F_runes, v_re, "std/regexp.xo:1390:14"))
+		var v_rs List[int64] = List_Own(List_At((*v_p).F_runes, v_re, "std/regexp.xo:1384:14"))
 		_ = v_rs
 		var v_i int64 = int64(0)
 		_ = v_i
 		for {
-			if !(AddIUp(v_i, int64(1), "std/regexp.xo:1392:11") < List_len[int64](tk, v_rs)) {
+			if !(AddIUp(v_i, int64(1), "std/regexp.xo:1386:11") < List_len[int64](tk, v_rs)) {
 				break
 			}
 			{
-				if (List_At(v_rs, v_i, "std/regexp.xo:1393:10") <= v_r) && (v_r <= List_At(v_rs, AddIUp(v_i, int64(1), "std/regexp.xo:1393:32"), "std/regexp.xo:1393:29")) {
+				if (List_At(v_rs, v_i, "std/regexp.xo:1387:10") <= v_r) && (v_r <= List_At(v_rs, AddIUp(v_i, int64(1), "std/regexp.xo:1387:32"), "std/regexp.xo:1387:29")) {
 					return true
 				}
-				v_i = AddIUp(v_i, int64(2), "std/regexp.xo:1396:7")
+				v_i = AddIUp(v_i, int64(2), "std/regexp.xo:1390:7")
 			}
 		}
 		return false
@@ -2723,15 +2694,15 @@ func Regexp_append_literal(tk *Task, v_r *List[int64], v_x int64, v_flags int64)
 }
 
 func (v_p *Regexp_Parser) M_merge_char_class(tk *Task, v_dst int64, v_src int64) {
-	var v_op int64 = List_At((*v_p).F_ops, v_dst, "std/regexp.xo:1416:12")
+	var v_op int64 = List_At((*v_p).F_ops, v_dst, "std/regexp.xo:1410:12")
 	_ = v_op
 	if v_op == Regexp_OP_ANY_CHAR_NOT_NL {
 		if (*v_p).M_match_rune(tk, v_src, int64(10)) {
-			x_ix198 := v_dst
+			x_ix195 := v_dst
 			if !List_Mine((*v_p).F_ops) {
 				(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 			}
-			List_PutM((*v_p).F_ops, x_ix198, Regexp_OP_ANY_CHAR, "std/regexp.xo:1419:7")
+			List_PutM((*v_p).F_ops, x_ix195, Regexp_OP_ANY_CHAR, "std/regexp.xo:1413:7")
 			return
 		}
 		{
@@ -2739,38 +2710,38 @@ func (v_p *Regexp_Parser) M_merge_char_class(tk *Task, v_dst int64, v_src int64)
 		}
 	} else {
 		if v_op == Regexp_OP_CHAR_CLASS {
-			var v_rs List[int64] = List_Own(List_At((*v_p).F_runes, v_dst, "std/regexp.xo:1422:14"))
+			var v_rs List[int64] = List_Own(List_At((*v_p).F_runes, v_dst, "std/regexp.xo:1416:14"))
 			_ = v_rs
-			if List_At((*v_p).F_ops, v_src, "std/regexp.xo:1423:8") == Regexp_OP_LITERAL {
-				Regexp_append_literal(tk, &v_rs, List_At(List_At((*v_p).F_runes, v_src, "std/regexp.xo:1424:26"), int64(0), "std/regexp.xo:1424:26"), List_At((*v_p).F_nflags, v_src, "std/regexp.xo:1424:43"))
+			if List_At((*v_p).F_ops, v_src, "std/regexp.xo:1417:8") == Regexp_OP_LITERAL {
+				Regexp_append_literal(tk, &v_rs, List_At(List_At((*v_p).F_runes, v_src, "std/regexp.xo:1418:26"), int64(0), "std/regexp.xo:1418:26"), List_At((*v_p).F_nflags, v_src, "std/regexp.xo:1418:43"))
 			} else {
-				Regexp_append_class(tk, &v_rs, List_Own(List_At((*v_p).F_runes, v_src, "std/regexp.xo:1426:24")))
+				Regexp_append_class(tk, &v_rs, List_Own(List_At((*v_p).F_runes, v_src, "std/regexp.xo:1420:24")))
 			}
-			x_ix199 := v_dst
+			x_ix196 := v_dst
 			if !List_Mine((*v_p).F_runes) {
 				(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 			}
-			List_PutM((*v_p).F_runes, x_ix199, List_Own(v_rs), "std/regexp.xo:1428:5")
+			List_PutM((*v_p).F_runes, x_ix196, List_Own(v_rs), "std/regexp.xo:1422:5")
 			return
 		} else {
 			if v_op == Regexp_OP_LITERAL {
-				if (List_At(List_At((*v_p).F_runes, v_src, "std/regexp.xo:1430:8"), int64(0), "std/regexp.xo:1430:8") == List_At(List_At((*v_p).F_runes, v_dst, "std/regexp.xo:1430:27"), int64(0), "std/regexp.xo:1430:27")) && (List_At((*v_p).F_nflags, v_src, "std/regexp.xo:1430:46") == List_At((*v_p).F_nflags, v_dst, "std/regexp.xo:1430:63")) {
+				if (List_At(List_At((*v_p).F_runes, v_src, "std/regexp.xo:1424:8"), int64(0), "std/regexp.xo:1424:8") == List_At(List_At((*v_p).F_runes, v_dst, "std/regexp.xo:1424:27"), int64(0), "std/regexp.xo:1424:27")) && (List_At((*v_p).F_nflags, v_src, "std/regexp.xo:1424:46") == List_At((*v_p).F_nflags, v_dst, "std/regexp.xo:1424:63")) {
 					return
 				}
 				var v_rs_1 List[int64] = List[int64]{}
 				_ = v_rs_1
-				Regexp_append_literal(tk, &v_rs_1, List_At(List_At((*v_p).F_runes, v_dst, "std/regexp.xo:1434:24"), int64(0), "std/regexp.xo:1434:24"), List_At((*v_p).F_nflags, v_dst, "std/regexp.xo:1434:41"))
-				Regexp_append_literal(tk, &v_rs_1, List_At(List_At((*v_p).F_runes, v_src, "std/regexp.xo:1435:24"), int64(0), "std/regexp.xo:1435:24"), List_At((*v_p).F_nflags, v_src, "std/regexp.xo:1435:41"))
-				x_ix200 := v_dst
+				Regexp_append_literal(tk, &v_rs_1, List_At(List_At((*v_p).F_runes, v_dst, "std/regexp.xo:1428:24"), int64(0), "std/regexp.xo:1428:24"), List_At((*v_p).F_nflags, v_dst, "std/regexp.xo:1428:41"))
+				Regexp_append_literal(tk, &v_rs_1, List_At(List_At((*v_p).F_runes, v_src, "std/regexp.xo:1429:24"), int64(0), "std/regexp.xo:1429:24"), List_At((*v_p).F_nflags, v_src, "std/regexp.xo:1429:41"))
+				x_ix197 := v_dst
 				if !List_Mine((*v_p).F_ops) {
 					(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 				}
-				List_PutM((*v_p).F_ops, x_ix200, Regexp_OP_CHAR_CLASS, "std/regexp.xo:1436:5")
-				x_ix201 := v_dst
+				List_PutM((*v_p).F_ops, x_ix197, Regexp_OP_CHAR_CLASS, "std/regexp.xo:1430:5")
+				x_ix198 := v_dst
 				if !List_Mine((*v_p).F_runes) {
 					(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 				}
-				List_PutM((*v_p).F_runes, x_ix201, List_Own(v_rs_1), "std/regexp.xo:1437:5")
+				List_PutM((*v_p).F_runes, x_ix198, List_Own(v_rs_1), "std/regexp.xo:1431:5")
 				return
 			}
 			{
@@ -2781,60 +2752,60 @@ func (v_p *Regexp_Parser) M_merge_char_class(tk *Task, v_dst int64, v_src int64)
 }
 
 func (v_p *Regexp_Parser) M_clean_alt(tk *Task, v_re int64) {
-	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1444:6") != Regexp_OP_CHAR_CLASS {
+	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1438:6") != Regexp_OP_CHAR_CLASS {
 		return
 	}
-	var v_r List[int64] = List_Own(List_At((*v_p).F_runes, v_re, "std/regexp.xo:1447:11"))
+	var v_r List[int64] = List_Own(List_At((*v_p).F_runes, v_re, "std/regexp.xo:1441:11"))
 	_ = v_r
 	var v_clean bool = true
 	_ = v_clean
 	var v_i int64 = int64(0)
 	_ = v_i
-x_L202:
+x_L199:
 	for {
-		if !(AddIUp(v_i, int64(1), "std/regexp.xo:1450:9") < List_len[int64](tk, v_r)) {
+		if !(AddIUp(v_i, int64(1), "std/regexp.xo:1444:9") < List_len[int64](tk, v_r)) {
 			break
 		}
 		{
-			if (List_At(v_r, v_i, "std/regexp.xo:1451:8") > List_At(v_r, AddIUp(v_i, int64(1), "std/regexp.xo:1451:17"), "std/regexp.xo:1451:15")) || ((v_i >= int64(2)) && (List_At(v_r, v_i, "std/regexp.xo:1451:38") <= AddIUp(List_At(v_r, (v_i-int64(1)), "std/regexp.xo:1451:46"), int64(1), "std/regexp.xo:1451:46"))) {
+			if (List_At(v_r, v_i, "std/regexp.xo:1445:8") > List_At(v_r, AddIUp(v_i, int64(1), "std/regexp.xo:1445:17"), "std/regexp.xo:1445:15")) || ((v_i >= int64(2)) && (List_At(v_r, v_i, "std/regexp.xo:1445:38") <= AddIUp(List_At(v_r, (v_i-int64(1)), "std/regexp.xo:1445:46"), int64(1), "std/regexp.xo:1445:46"))) {
 				v_clean = false
-				break x_L202
+				break x_L199
 			}
-			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:1455:5")
+			v_i = AddIUp(v_i, int64(2), "std/regexp.xo:1449:5")
 		}
 	}
 	if !(v_clean) {
 		v_r = List_Own(Regexp_clean_class(tk, List_Own(v_r)))
-		x_ix203 := v_re
+		x_ix200 := v_re
 		if !List_Mine((*v_p).F_runes) {
 			(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 		}
-		List_PutM((*v_p).F_runes, x_ix203, List_Own(v_r), "std/regexp.xo:1459:5")
+		List_PutM((*v_p).F_runes, x_ix200, List_Own(v_r), "std/regexp.xo:1453:5")
 	}
-	if ((List_len[int64](tk, v_r) == int64(2)) && (List_At(v_r, int64(0), "std/regexp.xo:1461:22") == int64(0))) && (List_At(v_r, int64(1), "std/regexp.xo:1461:35") == Regexp_MAX_RUNE) {
-		x_ix204 := v_re
+	if ((List_len[int64](tk, v_r) == int64(2)) && (List_At(v_r, int64(0), "std/regexp.xo:1455:22") == int64(0))) && (List_At(v_r, int64(1), "std/regexp.xo:1455:35") == Regexp_MAX_RUNE) {
+		x_ix201 := v_re
 		if !List_Mine((*v_p).F_runes) {
 			(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 		}
-		List_PutM((*v_p).F_runes, x_ix204, List[int64]{}, "std/regexp.xo:1462:5")
-		x_ix205 := v_re
+		List_PutM((*v_p).F_runes, x_ix201, List[int64]{}, "std/regexp.xo:1456:5")
+		x_ix202 := v_re
 		if !List_Mine((*v_p).F_ops) {
 			(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 		}
-		List_PutM((*v_p).F_ops, x_ix205, Regexp_OP_ANY_CHAR, "std/regexp.xo:1463:5")
+		List_PutM((*v_p).F_ops, x_ix202, Regexp_OP_ANY_CHAR, "std/regexp.xo:1457:5")
 		return
 	} else {
-		if ((((List_len[int64](tk, v_r) == int64(4)) && (List_At(v_r, int64(0), "std/regexp.xo:1464:29") == int64(0))) && (List_At(v_r, int64(1), "std/regexp.xo:1464:42") == int64(9))) && (List_At(v_r, int64(2), "std/regexp.xo:1464:55") == int64(11))) && (List_At(v_r, int64(3), "std/regexp.xo:1464:69") == Regexp_MAX_RUNE) {
-			x_ix206 := v_re
+		if ((((List_len[int64](tk, v_r) == int64(4)) && (List_At(v_r, int64(0), "std/regexp.xo:1458:29") == int64(0))) && (List_At(v_r, int64(1), "std/regexp.xo:1458:42") == int64(9))) && (List_At(v_r, int64(2), "std/regexp.xo:1458:55") == int64(11))) && (List_At(v_r, int64(3), "std/regexp.xo:1458:69") == Regexp_MAX_RUNE) {
+			x_ix203 := v_re
 			if !List_Mine((*v_p).F_runes) {
 				(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 			}
-			List_PutM((*v_p).F_runes, x_ix206, List[int64]{}, "std/regexp.xo:1465:5")
-			x_ix207 := v_re
+			List_PutM((*v_p).F_runes, x_ix203, List[int64]{}, "std/regexp.xo:1459:5")
+			x_ix204 := v_re
 			if !List_Mine((*v_p).F_ops) {
 				(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 			}
-			List_PutM((*v_p).F_ops, x_ix207, Regexp_OP_ANY_CHAR_NOT_NL, "std/regexp.xo:1466:5")
+			List_PutM((*v_p).F_ops, x_ix204, Regexp_OP_ANY_CHAR_NOT_NL, "std/regexp.xo:1460:5")
 			return
 		}
 		{
@@ -2846,10 +2817,10 @@ x_L202:
 func (v_p *Regexp_Parser) M_leading_string(tk *Task, v_re0 int64) int64 {
 	var v_re int64 = v_re0
 	_ = v_re
-	if (List_At((*v_p).F_ops, v_re, "std/regexp.xo:1474:6") == Regexp_OP_CONCAT) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:1474:32")) > int64(0)) {
-		v_re = List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1475:10"), int64(0), "std/regexp.xo:1475:10")
+	if (List_At((*v_p).F_ops, v_re, "std/regexp.xo:1468:6") == Regexp_OP_CONCAT) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:1468:32")) > int64(0)) {
+		v_re = List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1469:10"), int64(0), "std/regexp.xo:1469:10")
 	}
-	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1477:6") != Regexp_OP_LITERAL {
+	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1471:6") != Regexp_OP_LITERAL {
 		return int64(-1)
 	}
 	return v_re
@@ -2858,36 +2829,36 @@ func (v_p *Regexp_Parser) M_leading_string(tk *Task, v_re0 int64) int64 {
 func (v_p *Regexp_Parser) M_remove_leading_string(tk *Task, v_re0 int64, v_n int64) int64 {
 	var v_re int64 = v_re0
 	_ = v_re
-	if (List_At((*v_p).F_ops, v_re, "std/regexp.xo:1486:6") == Regexp_OP_CONCAT) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:1486:32")) > int64(0)) {
-		var v_subs List[int64] = List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1487:16"))
+	if (List_At((*v_p).F_ops, v_re, "std/regexp.xo:1480:6") == Regexp_OP_CONCAT) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:1480:32")) > int64(0)) {
+		var v_subs List[int64] = List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1481:16"))
 		_ = v_subs
-		var v_sub int64 = (*v_p).M_remove_leading_string(tk, List_At(v_subs, int64(0), "std/regexp.xo:1488:39"), v_n)
+		var v_sub int64 = (*v_p).M_remove_leading_string(tk, List_At(v_subs, int64(0), "std/regexp.xo:1482:39"), v_n)
 		_ = v_sub
-		x_ix208 := int64(0)
+		x_ix205 := int64(0)
 		if !List_Mine(v_subs) {
 			v_subs = List_Unshared(v_subs)
 		}
-		List_PutM(v_subs, x_ix208, v_sub, "std/regexp.xo:1489:5")
-		x_ix209 := v_re
+		List_PutM(v_subs, x_ix205, v_sub, "std/regexp.xo:1483:5")
+		x_ix206 := v_re
 		if !List_Mine((*v_p).F_subs) {
 			(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 		}
-		List_PutM((*v_p).F_subs, x_ix209, List_Own(v_subs), "std/regexp.xo:1490:5")
-		if List_At((*v_p).F_ops, v_sub, "std/regexp.xo:1491:8") == Regexp_OP_EMPTY_MATCH {
+		List_PutM((*v_p).F_subs, x_ix206, List_Own(v_subs), "std/regexp.xo:1484:5")
+		if List_At((*v_p).F_ops, v_sub, "std/regexp.xo:1485:8") == Regexp_OP_EMPTY_MATCH {
 			if List_len[int64](tk, v_subs) < int64(2) {
-				x_ix210 := v_re
+				x_ix207 := v_re
 				if !List_Mine((*v_p).F_ops) {
 					(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 				}
-				List_PutM((*v_p).F_ops, x_ix210, Regexp_OP_EMPTY_MATCH, "std/regexp.xo:1493:9")
-				x_ix211 := v_re
+				List_PutM((*v_p).F_ops, x_ix207, Regexp_OP_EMPTY_MATCH, "std/regexp.xo:1487:9")
+				x_ix208 := v_re
 				if !List_Mine((*v_p).F_subs) {
 					(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 				}
-				List_PutM((*v_p).F_subs, x_ix211, List[int64]{}, "std/regexp.xo:1494:9")
+				List_PutM((*v_p).F_subs, x_ix208, List[int64]{}, "std/regexp.xo:1488:9")
 			} else {
 				if List_len[int64](tk, v_subs) == int64(2) {
-					v_re = List_At(v_subs, int64(1), "std/regexp.xo:1496:14")
+					v_re = List_At(v_subs, int64(1), "std/regexp.xo:1490:14")
 				} else {
 					var v_rest List[int64] = List[int64]{}
 					_ = v_rest
@@ -2898,28 +2869,28 @@ func (v_p *Regexp_Parser) M_remove_leading_string(tk *Task, v_re0 int64, v_n int
 							break
 						}
 						{
-							x_pv213 := List_At(v_subs, v_k, "std/regexp.xo:1501:21")
+							x_pv210 := List_At(v_subs, v_k, "std/regexp.xo:1495:21")
 							if List_CanPush(v_rest) {
-								v_rest = List_PushFast(v_rest, x_pv213)
+								v_rest = List_PushFast(v_rest, x_pv210)
 							} else {
-								v_rest = List_PushSlow(v_rest, x_pv213)
+								v_rest = List_PushSlow(v_rest, x_pv210)
 							}
 							_ = Unit{}
 							v_k = (v_k + int64(1))
 						}
 					}
-					x_ix214 := v_re
+					x_ix211 := v_re
 					if !List_Mine((*v_p).F_subs) {
 						(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 					}
-					List_PutM((*v_p).F_subs, x_ix214, List_Own(v_rest), "std/regexp.xo:1504:9")
+					List_PutM((*v_p).F_subs, x_ix211, List_Own(v_rest), "std/regexp.xo:1498:9")
 				}
 			}
 		}
 		return v_re
 	}
-	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1509:6") == Regexp_OP_LITERAL {
-		var v_rs List[int64] = List_Own(List_At((*v_p).F_runes, v_re, "std/regexp.xo:1510:14"))
+	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1503:6") == Regexp_OP_LITERAL {
+		var v_rs List[int64] = List_Own(List_At((*v_p).F_runes, v_re, "std/regexp.xo:1504:14"))
 		_ = v_rs
 		var v_rest_1 List[int64] = List[int64]{}
 		_ = v_rest_1
@@ -2930,40 +2901,40 @@ func (v_p *Regexp_Parser) M_remove_leading_string(tk *Task, v_re0 int64, v_n int
 				break
 			}
 			{
-				x_pv216 := List_At(v_rs, v_k_1, "std/regexp.xo:1514:17")
+				x_pv213 := List_At(v_rs, v_k_1, "std/regexp.xo:1508:17")
 				if List_CanPush(v_rest_1) {
-					v_rest_1 = List_PushFast(v_rest_1, x_pv216)
+					v_rest_1 = List_PushFast(v_rest_1, x_pv213)
 				} else {
-					v_rest_1 = List_PushSlow(v_rest_1, x_pv216)
+					v_rest_1 = List_PushSlow(v_rest_1, x_pv213)
 				}
 				_ = Unit{}
 				v_k_1 = (v_k_1 + int64(1))
 			}
 		}
-		x_ix217 := v_re
+		x_ix214 := v_re
 		if !List_Mine((*v_p).F_runes) {
 			(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 		}
-		List_PutM((*v_p).F_runes, x_ix217, List_Own(v_rest_1), "std/regexp.xo:1517:5")
+		List_PutM((*v_p).F_runes, x_ix214, List_Own(v_rest_1), "std/regexp.xo:1511:5")
 		if List_is_empty[int64](tk, v_rest_1) {
-			x_ix218 := v_re
+			x_ix215 := v_re
 			if !List_Mine((*v_p).F_ops) {
 				(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 			}
-			List_PutM((*v_p).F_ops, x_ix218, Regexp_OP_EMPTY_MATCH, "std/regexp.xo:1519:7")
+			List_PutM((*v_p).F_ops, x_ix215, Regexp_OP_EMPTY_MATCH, "std/regexp.xo:1513:7")
 		}
 	}
 	return v_re
 }
 
 func (v_p *Regexp_Parser) M_leading_regexp(tk *Task, v_re int64) int64 {
-	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1528:6") == Regexp_OP_EMPTY_MATCH {
+	if List_At((*v_p).F_ops, v_re, "std/regexp.xo:1522:6") == Regexp_OP_EMPTY_MATCH {
 		return int64(-1)
 	}
-	if (List_At((*v_p).F_ops, v_re, "std/regexp.xo:1531:6") == Regexp_OP_CONCAT) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:1531:32")) > int64(0)) {
-		var v_sub int64 = List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1532:15"), int64(0), "std/regexp.xo:1532:15")
+	if (List_At((*v_p).F_ops, v_re, "std/regexp.xo:1525:6") == Regexp_OP_CONCAT) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:1525:32")) > int64(0)) {
+		var v_sub int64 = List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1526:15"), int64(0), "std/regexp.xo:1526:15")
 		_ = v_sub
-		if List_At((*v_p).F_ops, v_sub, "std/regexp.xo:1533:8") == Regexp_OP_EMPTY_MATCH {
+		if List_At((*v_p).F_ops, v_sub, "std/regexp.xo:1527:8") == Regexp_OP_EMPTY_MATCH {
 			return int64(-1)
 		}
 		return v_sub
@@ -2972,8 +2943,8 @@ func (v_p *Regexp_Parser) M_leading_regexp(tk *Task, v_re int64) int64 {
 }
 
 func (v_p *Regexp_Parser) M_remove_leading_regexp(tk *Task, v_re int64) int64 {
-	if (List_At((*v_p).F_ops, v_re, "std/regexp.xo:1542:6") == Regexp_OP_CONCAT) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:1542:32")) > int64(0)) {
-		var v_subs List[int64] = List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1543:16"))
+	if (List_At((*v_p).F_ops, v_re, "std/regexp.xo:1536:6") == Regexp_OP_CONCAT) && (List_len[int64](tk, List_At((*v_p).F_subs, v_re, "std/regexp.xo:1536:32")) > int64(0)) {
+		var v_subs List[int64] = List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1537:16"))
 		_ = v_subs
 		var v_rest List[int64] = List[int64]{}
 		_ = v_rest
@@ -2984,37 +2955,37 @@ func (v_p *Regexp_Parser) M_remove_leading_regexp(tk *Task, v_re int64) int64 {
 				break
 			}
 			{
-				x_pv220 := List_AtU(v_subs, v_k)
+				x_pv217 := List_AtU(v_subs, v_k)
 				if List_CanPush(v_rest) {
-					v_rest = List_PushFast(v_rest, x_pv220)
+					v_rest = List_PushFast(v_rest, x_pv217)
 				} else {
-					v_rest = List_PushSlow(v_rest, x_pv220)
+					v_rest = List_PushSlow(v_rest, x_pv217)
 				}
 				_ = Unit{}
 				v_k = (v_k + int64(1))
 			}
 		}
 		if List_is_empty[int64](tk, v_rest) {
-			x_ix221 := v_re
+			x_ix218 := v_re
 			if !List_Mine((*v_p).F_ops) {
 				(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 			}
-			List_PutM((*v_p).F_ops, x_ix221, Regexp_OP_EMPTY_MATCH, "std/regexp.xo:1551:7")
-			x_ix222 := v_re
+			List_PutM((*v_p).F_ops, x_ix218, Regexp_OP_EMPTY_MATCH, "std/regexp.xo:1545:7")
+			x_ix219 := v_re
 			if !List_Mine((*v_p).F_subs) {
 				(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 			}
-			List_PutM((*v_p).F_subs, x_ix222, List[int64]{}, "std/regexp.xo:1552:7")
+			List_PutM((*v_p).F_subs, x_ix219, List[int64]{}, "std/regexp.xo:1546:7")
 			return v_re
 		}
 		if List_len[int64](tk, v_rest) == int64(1) {
-			return List_At(v_rest, int64(0), "std/regexp.xo:1556:14")
+			return List_At(v_rest, int64(0), "std/regexp.xo:1550:14")
 		}
-		x_ix223 := v_re
+		x_ix220 := v_re
 		if !List_Mine((*v_p).F_subs) {
 			(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 		}
-		List_PutM((*v_p).F_subs, x_ix223, List_Own(v_rest), "std/regexp.xo:1558:5")
+		List_PutM((*v_p).F_subs, x_ix220, List_Own(v_rest), "std/regexp.xo:1552:5")
 		return v_re
 	}
 	return (*v_p).M_node(tk, Regexp_OP_EMPTY_MATCH)
@@ -3031,7 +3002,7 @@ func Regexp_same_runes(tk *Task, v_a List[int64], v_b List[int64]) bool {
 			break
 		}
 		{
-			if List_AtU(v_a, v_i) != List_At(v_b, v_i, "std/regexp.xo:1570:16") {
+			if List_AtU(v_a, v_i) != List_At(v_b, v_i, "std/regexp.xo:1564:16") {
 				return false
 			}
 			v_i = (v_i + int64(1))
@@ -3041,22 +3012,22 @@ func Regexp_same_runes(tk *Task, v_a List[int64], v_b List[int64]) bool {
 }
 
 func (v_p *Regexp_Parser) M_equal(tk *Task, v_x int64, v_y int64) bool {
-	var v_op int64 = List_At((*v_p).F_ops, v_x, "std/regexp.xo:1581:12")
+	var v_op int64 = List_At((*v_p).F_ops, v_x, "std/regexp.xo:1575:12")
 	_ = v_op
-	if v_op != List_At((*v_p).F_ops, v_y, "std/regexp.xo:1582:12") {
+	if v_op != List_At((*v_p).F_ops, v_y, "std/regexp.xo:1576:12") {
 		return false
 	}
 	if v_op == Regexp_OP_LITERAL {
-		return (((List_At((*v_p).F_nflags, v_x, "std/regexp.xo:1586:13") & Regexp_FOLD_CASE) == (List_At((*v_p).F_nflags, v_y, "std/regexp.xo:1586:42") & Regexp_FOLD_CASE)) && Regexp_same_runes(tk, List_Own(List_At((*v_p).F_runes, v_x, "std/regexp.xo:1586:81")), List_Own(List_At((*v_p).F_runes, v_y, "std/regexp.xo:1586:93"))))
+		return (((List_At((*v_p).F_nflags, v_x, "std/regexp.xo:1580:13") & Regexp_FOLD_CASE) == (List_At((*v_p).F_nflags, v_y, "std/regexp.xo:1580:42") & Regexp_FOLD_CASE)) && Regexp_same_runes(tk, List_Own(List_At((*v_p).F_runes, v_x, "std/regexp.xo:1580:81")), List_Own(List_At((*v_p).F_runes, v_y, "std/regexp.xo:1580:93"))))
 	}
 	if v_op == Regexp_OP_CHAR_CLASS {
-		return Regexp_same_runes(tk, List_Own(List_At((*v_p).F_runes, v_x, "std/regexp.xo:1589:23")), List_Own(List_At((*v_p).F_runes, v_y, "std/regexp.xo:1589:35")))
+		return Regexp_same_runes(tk, List_Own(List_At((*v_p).F_runes, v_x, "std/regexp.xo:1583:23")), List_Own(List_At((*v_p).F_runes, v_y, "std/regexp.xo:1583:35")))
 	}
 	if (v_op == Regexp_OP_ANY_CHAR) || (v_op == Regexp_OP_ANY_CHAR_NOT_NL) {
 		return true
 	}
 	if v_op == Regexp_OP_REPEAT {
-		return (((((List_At((*v_p).F_nflags, v_x, "std/regexp.xo:1595:13") & Regexp_NON_GREEDY) == (List_At((*v_p).F_nflags, v_y, "std/regexp.xo:1595:43") & Regexp_NON_GREEDY)) && (List_At((*v_p).F_mins, v_x, "std/regexp.xo:1595:72") == List_At((*v_p).F_mins, v_y, "std/regexp.xo:1595:85"))) && (List_At((*v_p).F_maxs, v_x, "std/regexp.xo:1595:98") == List_At((*v_p).F_maxs, v_y, "std/regexp.xo:1595:111"))) && (*v_p).M_equal(tk, List_At(List_At((*v_p).F_subs, v_x, "std/regexp.xo:1595:132"), int64(0), "std/regexp.xo:1595:132"), List_At(List_At((*v_p).F_subs, v_y, "std/regexp.xo:1595:146"), int64(0), "std/regexp.xo:1595:146")))
+		return (((((List_At((*v_p).F_nflags, v_x, "std/regexp.xo:1589:13") & Regexp_NON_GREEDY) == (List_At((*v_p).F_nflags, v_y, "std/regexp.xo:1589:43") & Regexp_NON_GREEDY)) && (List_At((*v_p).F_mins, v_x, "std/regexp.xo:1589:72") == List_At((*v_p).F_mins, v_y, "std/regexp.xo:1589:85"))) && (List_At((*v_p).F_maxs, v_x, "std/regexp.xo:1589:98") == List_At((*v_p).F_maxs, v_y, "std/regexp.xo:1589:111"))) && (*v_p).M_equal(tk, List_At(List_At((*v_p).F_subs, v_x, "std/regexp.xo:1589:132"), int64(0), "std/regexp.xo:1589:132"), List_At(List_At((*v_p).F_subs, v_y, "std/regexp.xo:1589:146"), int64(0), "std/regexp.xo:1589:146")))
 	}
 	return false
 }
@@ -3075,7 +3046,7 @@ func (v_p *Regexp_Parser) M_factor(tk *Task, v_sub0 List[int64]) List[int64] {
 	_ = v_start
 	var v_i int64 = int64(0)
 	_ = v_i
-x_L225:
+x_L222:
 	for {
 		if !(v_i <= List_len[int64](tk, v_sub0)) {
 			break
@@ -3089,14 +3060,14 @@ x_L225:
 				var v_ls int64 = (*v_p).M_leading_string(tk, List_AtU(v_sub0, v_i))
 				_ = v_ls
 				if v_ls >= int64(0) {
-					v_istr = List_Own(List_At((*v_p).F_runes, v_ls, "std/regexp.xo:1621:16"))
-					v_iflags = (List_At((*v_p).F_nflags, v_ls, "std/regexp.xo:1622:18") & Regexp_FOLD_CASE)
+					v_istr = List_Own(List_At((*v_p).F_runes, v_ls, "std/regexp.xo:1615:16"))
+					v_iflags = (List_At((*v_p).F_nflags, v_ls, "std/regexp.xo:1616:18") & Regexp_FOLD_CASE)
 				}
 				if v_iflags == v_strflags {
 					var v_same int64 = int64(0)
 					_ = v_same
 					for {
-						if !(((v_same < List_len[int64](tk, v_str)) && (v_same < List_len[int64](tk, v_istr))) && (List_At(v_str, v_same, "std/regexp.xo:1626:56") == List_At(v_istr, v_same, "std/regexp.xo:1626:69"))) {
+						if !(((v_same < List_len[int64](tk, v_str)) && (v_same < List_len[int64](tk, v_istr))) && (List_At(v_str, v_same, "std/regexp.xo:1620:56") == List_At(v_istr, v_same, "std/regexp.xo:1620:69"))) {
 							break
 						}
 						{
@@ -3114,11 +3085,11 @@ x_L225:
 									break
 								}
 								{
-									x_pv228 := List_At(v_str, v_k, "std/regexp.xo:1634:25")
+									x_pv225 := List_At(v_str, v_k, "std/regexp.xo:1628:25")
 									if List_CanPush(v_head) {
-										v_head = List_PushFast(v_head, x_pv228)
+										v_head = List_PushFast(v_head, x_pv225)
 									} else {
-										v_head = List_PushSlow(v_head, x_pv228)
+										v_head = List_PushSlow(v_head, x_pv225)
 									}
 									_ = Unit{}
 									v_k = (v_k + int64(1))
@@ -3127,33 +3098,33 @@ x_L225:
 							v_str = List_Own(v_head)
 						}
 						v_i = (v_i + int64(1))
-						continue x_L225
+						continue x_L222
 					}
 				}
 			}
 			if v_i == v_start {
 			} else {
 				if v_i == (v_start + int64(1)) {
-					x_pv229 := List_At(v_sub0, v_start, "std/regexp.xo:1646:16")
+					x_pv226 := List_At(v_sub0, v_start, "std/regexp.xo:1640:16")
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv229)
+						v_out = List_PushFast(v_out, x_pv226)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv229)
+						v_out = List_PushSlow(v_out, x_pv226)
 					}
 					_ = Unit{}
 				} else {
 					var v_prefix int64 = (*v_p).M_node(tk, Regexp_OP_LITERAL)
 					_ = v_prefix
-					x_ix230 := v_prefix
+					x_ix227 := v_prefix
 					if !List_Mine((*v_p).F_nflags) {
 						(*v_p).F_nflags = List_Unshared((*v_p).F_nflags)
 					}
-					List_PutM((*v_p).F_nflags, x_ix230, v_strflags, "std/regexp.xo:1649:7")
-					x_ix231 := v_prefix
+					List_PutM((*v_p).F_nflags, x_ix227, v_strflags, "std/regexp.xo:1643:7")
+					x_ix228 := v_prefix
 					if !List_Mine((*v_p).F_runes) {
 						(*v_p).F_runes = List_Unshared((*v_p).F_runes)
 					}
-					List_PutM((*v_p).F_runes, x_ix231, List_Own(v_str), "std/regexp.xo:1650:7")
+					List_PutM((*v_p).F_runes, x_ix228, List_Own(v_str), "std/regexp.xo:1644:7")
 					var v_run List[int64] = List[int64]{}
 					_ = v_run
 					var v_j int64 = v_start
@@ -3166,11 +3137,11 @@ x_L225:
 							var v_r int64 = (*v_p).M_remove_leading_string(tk, List_AtU(v_sub0, v_j), List_len[int64](tk, v_str))
 							_ = v_r
 							(*v_p).M_check_limits(tk, v_r)
-							x_pv233 := v_r
+							x_pv230 := v_r
 							if List_CanPush(v_run) {
-								v_run = List_PushFast(v_run, x_pv233)
+								v_run = List_PushFast(v_run, x_pv230)
 							} else {
-								v_run = List_PushSlow(v_run, x_pv233)
+								v_run = List_PushSlow(v_run, x_pv230)
 							}
 							_ = Unit{}
 							v_j = (v_j + int64(1))
@@ -3180,16 +3151,16 @@ x_L225:
 					_ = v_suffix
 					var v_re int64 = (*v_p).M_node(tk, Regexp_OP_CONCAT)
 					_ = v_re
-					x_ix234 := v_re
+					x_ix231 := v_re
 					if !List_Mine((*v_p).F_subs) {
 						(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 					}
-					List_PutM((*v_p).F_subs, x_ix234, ListOf[int64](v_prefix, v_suffix), "std/regexp.xo:1661:7")
-					x_pv235 := v_re
+					List_PutM((*v_p).F_subs, x_ix231, ListOf[int64](v_prefix, v_suffix), "std/regexp.xo:1655:7")
+					x_pv232 := v_re
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv235)
+						v_out = List_PushFast(v_out, x_pv232)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv235)
+						v_out = List_PushSlow(v_out, x_pv232)
 					}
 					_ = Unit{}
 				}
@@ -3207,7 +3178,7 @@ x_L225:
 	var v_first int64 = int64(-1)
 	_ = v_first
 	v_i = int64(0)
-x_L236:
+x_L233:
 	for {
 		if !(v_i <= List_len[int64](tk, v_sub1)) {
 			break
@@ -3217,19 +3188,19 @@ x_L236:
 			_ = v_ifirst
 			if v_i < List_len[int64](tk, v_sub1) {
 				v_ifirst = (*v_p).M_leading_regexp(tk, List_AtU(v_sub1, v_i))
-				if (((v_first >= int64(0)) && (v_ifirst >= int64(0))) && ((*v_p).M_is_char_class(tk, v_first) || (((List_At((*v_p).F_ops, v_first, "std/regexp.xo:1682:67") == Regexp_OP_REPEAT) && (List_At((*v_p).F_mins, v_first, "std/regexp.xo:1682:96") == List_At((*v_p).F_maxs, v_first, "std/regexp.xo:1682:113"))) && (*v_p).M_is_char_class(tk, List_At(List_At((*v_p).F_subs, v_first, "std/regexp.xo:1682:146"), int64(0), "std/regexp.xo:1682:146"))))) && (*v_p).M_equal(tk, v_first, v_ifirst) {
+				if (((v_first >= int64(0)) && (v_ifirst >= int64(0))) && ((*v_p).M_is_char_class(tk, v_first) || (((List_At((*v_p).F_ops, v_first, "std/regexp.xo:1676:67") == Regexp_OP_REPEAT) && (List_At((*v_p).F_mins, v_first, "std/regexp.xo:1676:96") == List_At((*v_p).F_maxs, v_first, "std/regexp.xo:1676:113"))) && (*v_p).M_is_char_class(tk, List_At(List_At((*v_p).F_subs, v_first, "std/regexp.xo:1676:146"), int64(0), "std/regexp.xo:1676:146"))))) && (*v_p).M_equal(tk, v_first, v_ifirst) {
 					v_i = (v_i + int64(1))
-					continue x_L236
+					continue x_L233
 				}
 			}
 			if v_i == v_start {
 			} else {
 				if v_i == (v_start + int64(1)) {
-					x_pv237 := List_At(v_sub1, v_start, "std/regexp.xo:1689:16")
+					x_pv234 := List_At(v_sub1, v_start, "std/regexp.xo:1683:16")
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv237)
+						v_out = List_PushFast(v_out, x_pv234)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv237)
+						v_out = List_PushSlow(v_out, x_pv234)
 					}
 					_ = Unit{}
 				} else {
@@ -3245,11 +3216,11 @@ x_L236:
 							var v_r_1 int64 = (*v_p).M_remove_leading_regexp(tk, List_AtU(v_sub1, v_j_1))
 							_ = v_r_1
 							(*v_p).M_check_limits(tk, v_r_1)
-							x_pv239 := v_r_1
+							x_pv236 := v_r_1
 							if List_CanPush(v_run_1) {
-								v_run_1 = List_PushFast(v_run_1, x_pv239)
+								v_run_1 = List_PushFast(v_run_1, x_pv236)
 							} else {
-								v_run_1 = List_PushSlow(v_run_1, x_pv239)
+								v_run_1 = List_PushSlow(v_run_1, x_pv236)
 							}
 							_ = Unit{}
 							v_j_1 = (v_j_1 + int64(1))
@@ -3259,16 +3230,16 @@ x_L236:
 					_ = v_suffix_1
 					var v_re_1 int64 = (*v_p).M_node(tk, Regexp_OP_CONCAT)
 					_ = v_re_1
-					x_ix240 := v_re_1
+					x_ix237 := v_re_1
 					if !List_Mine((*v_p).F_subs) {
 						(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 					}
-					List_PutM((*v_p).F_subs, x_ix240, ListOf[int64](v_first, v_suffix_1), "std/regexp.xo:1701:7")
-					x_pv241 := v_re_1
+					List_PutM((*v_p).F_subs, x_ix237, ListOf[int64](v_first, v_suffix_1), "std/regexp.xo:1695:7")
+					x_pv238 := v_re_1
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv241)
+						v_out = List_PushFast(v_out, x_pv238)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv241)
+						v_out = List_PushSlow(v_out, x_pv238)
 					}
 					_ = Unit{}
 				}
@@ -3283,7 +3254,7 @@ x_L236:
 	v_out = List[int64]{}
 	v_start = int64(0)
 	v_i = int64(0)
-x_L242:
+x_L239:
 	for {
 		if !(v_i <= List_len[int64](tk, v_sub2)) {
 			break
@@ -3291,16 +3262,16 @@ x_L242:
 		{
 			if (v_i < List_len[int64](tk, v_sub2)) && (*v_p).M_is_char_class(tk, List_AtU(v_sub2, v_i)) {
 				v_i = (v_i + int64(1))
-				continue x_L242
+				continue x_L239
 			}
 			if v_i == v_start {
 			} else {
 				if v_i == (v_start + int64(1)) {
-					x_pv243 := List_At(v_sub2, v_start, "std/regexp.xo:1721:16")
+					x_pv240 := List_At(v_sub2, v_start, "std/regexp.xo:1715:16")
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv243)
+						v_out = List_PushFast(v_out, x_pv240)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv243)
+						v_out = List_PushSlow(v_out, x_pv240)
 					}
 					_ = Unit{}
 				} else {
@@ -3313,17 +3284,17 @@ x_L242:
 							break
 						}
 						{
-							var v_ob int64 = List_At((*v_p).F_ops, List_At(v_sub2, v_best, "std/regexp.xo:1727:24"), "std/regexp.xo:1727:18")
+							var v_ob int64 = List_At((*v_p).F_ops, List_At(v_sub2, v_best, "std/regexp.xo:1721:24"), "std/regexp.xo:1721:18")
 							_ = v_ob
-							var v_oj int64 = List_At((*v_p).F_ops, List_AtU(v_sub2, v_j_2), "std/regexp.xo:1728:18")
+							var v_oj int64 = List_At((*v_p).F_ops, List_AtU(v_sub2, v_j_2), "std/regexp.xo:1722:18")
 							_ = v_oj
-							if (v_ob < v_oj) || ((v_ob == v_oj) && (List_len[int64](tk, List_At((*v_p).F_runes, List_At(v_sub2, v_best, "std/regexp.xo:1729:44"), "std/regexp.xo:1729:36")) < List_len[int64](tk, List_At((*v_p).F_runes, List_AtU(v_sub2, v_j_2), "std/regexp.xo:1729:64")))) {
+							if (v_ob < v_oj) || ((v_ob == v_oj) && (List_len[int64](tk, List_At((*v_p).F_runes, List_At(v_sub2, v_best, "std/regexp.xo:1723:44"), "std/regexp.xo:1723:36")) < List_len[int64](tk, List_At((*v_p).F_runes, List_AtU(v_sub2, v_j_2), "std/regexp.xo:1723:64")))) {
 								v_best = v_j_2
 							}
 							v_j_2 = (v_j_2 + int64(1))
 						}
 					}
-					var v_dst int64 = List_At(v_sub2, v_best, "std/regexp.xo:1734:17")
+					var v_dst int64 = List_At(v_sub2, v_best, "std/regexp.xo:1728:17")
 					_ = v_dst
 					v_j_2 = v_start
 					for {
@@ -3338,21 +3309,21 @@ x_L242:
 						}
 					}
 					(*v_p).M_clean_alt(tk, v_dst)
-					x_pv246 := v_dst
+					x_pv243 := v_dst
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv246)
+						v_out = List_PushFast(v_out, x_pv243)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv246)
+						v_out = List_PushSlow(v_out, x_pv243)
 					}
 					_ = Unit{}
 				}
 			}
 			if v_i < List_len[int64](tk, v_sub2) {
-				x_pv247 := List_AtU(v_sub2, v_i)
+				x_pv244 := List_AtU(v_sub2, v_i)
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv247)
+					v_out = List_PushFast(v_out, x_pv244)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv247)
+					v_out = List_PushSlow(v_out, x_pv244)
 				}
 				_ = Unit{}
 			}
@@ -3364,21 +3335,21 @@ x_L242:
 	_ = v_sub3
 	v_out = List[int64]{}
 	v_i = int64(0)
-x_L248:
+x_L245:
 	for {
 		if !(v_i < List_len[int64](tk, v_sub3)) {
 			break
 		}
 		{
-			if (((v_i + int64(1)) < List_len[int64](tk, v_sub3)) && (List_At((*v_p).F_ops, List_AtU(v_sub3, v_i), "std/regexp.xo:1757:30") == Regexp_OP_EMPTY_MATCH)) && (List_At((*v_p).F_ops, List_At(v_sub3, (v_i+int64(1)), "std/regexp.xo:1757:72"), "std/regexp.xo:1757:66") == Regexp_OP_EMPTY_MATCH) {
+			if (((v_i + int64(1)) < List_len[int64](tk, v_sub3)) && (List_At((*v_p).F_ops, List_AtU(v_sub3, v_i), "std/regexp.xo:1751:30") == Regexp_OP_EMPTY_MATCH)) && (List_At((*v_p).F_ops, List_At(v_sub3, (v_i+int64(1)), "std/regexp.xo:1751:72"), "std/regexp.xo:1751:66") == Regexp_OP_EMPTY_MATCH) {
 				v_i = (v_i + int64(1))
-				continue x_L248
+				continue x_L245
 			}
-			x_pv249 := List_AtU(v_sub3, v_i)
+			x_pv246 := List_AtU(v_sub3, v_i)
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv249)
+				v_out = List_PushFast(v_out, x_pv246)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv249)
+				v_out = List_PushSlow(v_out, x_pv246)
 			}
 			_ = Unit{}
 			v_i = (v_i + int64(1))
@@ -3390,7 +3361,7 @@ x_L248:
 func (v_p *Regexp_Parser) M_concat(tk *Task) int64 {
 	var v_sn int64 = List_len[int64](tk, (*v_p).F_stack)
 	_ = v_sn
-	if ((v_sn >= int64(2)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_sn-int64(1)), "std/regexp.xo:1769:23"), "std/regexp.xo:1769:17") == Regexp_OP_LITERAL)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_sn-int64(2)), "std/regexp.xo:1769:63"), "std/regexp.xo:1769:57") == Regexp_OP_LITERAL) {
+	if ((v_sn >= int64(2)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_sn-int64(1)), "std/regexp.xo:1763:23"), "std/regexp.xo:1763:17") == Regexp_OP_LITERAL)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_sn-int64(2)), "std/regexp.xo:1763:63"), "std/regexp.xo:1763:57") == Regexp_OP_LITERAL) {
 		(*v_p).M_maybe_concat(tk, int64(-1), int64(0))
 	}
 	var v_subs List[int64] = List_Own((*v_p).M_take_from(tk, (*v_p).M_run_start(tk)))
@@ -3413,7 +3384,7 @@ func (v_p *Regexp_Parser) M_alternate(tk *Task) int64 {
 		_ = v_e
 		return (*v_p).M_push(tk, v_e)
 	}
-	(*v_p).M_clean_alt(tk, List_At(v_subs, (List_len[int64](tk, v_subs)-int64(1)), "std/regexp.xo:1787:15"))
+	(*v_p).M_clean_alt(tk, List_At(v_subs, (List_len[int64](tk, v_subs)-int64(1)), "std/regexp.xo:1781:15"))
 	var v_a int64 = (*v_p).M_collapse(tk, List_Own(v_subs), Regexp_OP_ALTERNATE)
 	_ = v_a
 	return (*v_p).M_push(tk, v_a)
@@ -3422,42 +3393,42 @@ func (v_p *Regexp_Parser) M_alternate(tk *Task) int64 {
 func (v_p *Regexp_Parser) M_swap_vertical_bar(tk *Task) bool {
 	var v_n int64 = List_len[int64](tk, (*v_p).F_stack)
 	_ = v_n
-	if (((v_n >= int64(3)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_n-int64(2)), "std/regexp.xo:1797:22"), "std/regexp.xo:1797:16") == Regexp_OP_VERTICAL_BAR)) && (*v_p).M_is_char_class(tk, List_At((*v_p).F_stack, (v_n-int64(1)), "std/regexp.xo:1797:76"))) && (*v_p).M_is_char_class(tk, List_At((*v_p).F_stack, (v_n-int64(3)), "std/regexp.xo:1797:111")) {
-		var v_re1 int64 = List_At((*v_p).F_stack, (v_n - int64(1)), "std/regexp.xo:1798:15")
+	if (((v_n >= int64(3)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_n-int64(2)), "std/regexp.xo:1791:22"), "std/regexp.xo:1791:16") == Regexp_OP_VERTICAL_BAR)) && (*v_p).M_is_char_class(tk, List_At((*v_p).F_stack, (v_n-int64(1)), "std/regexp.xo:1791:76"))) && (*v_p).M_is_char_class(tk, List_At((*v_p).F_stack, (v_n-int64(3)), "std/regexp.xo:1791:111")) {
+		var v_re1 int64 = List_At((*v_p).F_stack, (v_n - int64(1)), "std/regexp.xo:1792:15")
 		_ = v_re1
-		var v_re3 int64 = List_At((*v_p).F_stack, (v_n - int64(3)), "std/regexp.xo:1799:15")
+		var v_re3 int64 = List_At((*v_p).F_stack, (v_n - int64(3)), "std/regexp.xo:1793:15")
 		_ = v_re3
-		if List_At((*v_p).F_ops, v_re1, "std/regexp.xo:1800:8") > List_At((*v_p).F_ops, v_re3, "std/regexp.xo:1800:21") {
+		if List_At((*v_p).F_ops, v_re1, "std/regexp.xo:1794:8") > List_At((*v_p).F_ops, v_re3, "std/regexp.xo:1794:21") {
 			var v_t int64 = v_re1
 			_ = v_t
 			v_re1 = v_re3
 			v_re3 = v_t
-			x_ix250 := (v_n - int64(3))
+			x_ix247 := (v_n - int64(3))
 			if !List_Mine((*v_p).F_stack) {
 				(*v_p).F_stack = List_Unshared((*v_p).F_stack)
 			}
-			List_PutM((*v_p).F_stack, x_ix250, v_re3, "std/regexp.xo:1804:7")
+			List_PutM((*v_p).F_stack, x_ix247, v_re3, "std/regexp.xo:1798:7")
 		}
 		(*v_p).M_merge_char_class(tk, v_re3, v_re1)
 		(*v_p).M_pop(tk)
 		return true
 	}
-	if (v_n >= int64(2)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_n-int64(2)), "std/regexp.xo:1810:22"), "std/regexp.xo:1810:16") == Regexp_OP_VERTICAL_BAR) {
+	if (v_n >= int64(2)) && (List_At((*v_p).F_ops, List_At((*v_p).F_stack, (v_n-int64(2)), "std/regexp.xo:1804:22"), "std/regexp.xo:1804:16") == Regexp_OP_VERTICAL_BAR) {
 		if v_n >= int64(3) {
-			(*v_p).M_clean_alt(tk, List_At((*v_p).F_stack, (v_n-int64(3)), "std/regexp.xo:1812:19"))
+			(*v_p).M_clean_alt(tk, List_At((*v_p).F_stack, (v_n-int64(3)), "std/regexp.xo:1806:19"))
 		}
-		var v_re1_1 int64 = List_At((*v_p).F_stack, (v_n - int64(1)), "std/regexp.xo:1814:15")
+		var v_re1_1 int64 = List_At((*v_p).F_stack, (v_n - int64(1)), "std/regexp.xo:1808:15")
 		_ = v_re1_1
-		x_ix251 := (v_n - int64(1))
+		x_ix248 := (v_n - int64(1))
 		if !List_Mine((*v_p).F_stack) {
 			(*v_p).F_stack = List_Unshared((*v_p).F_stack)
 		}
-		List_PutM((*v_p).F_stack, x_ix251, List_At((*v_p).F_stack, (v_n-int64(2)), "std/regexp.xo:1815:22"), "std/regexp.xo:1815:5")
-		x_ix252 := (v_n - int64(2))
+		List_PutM((*v_p).F_stack, x_ix248, List_At((*v_p).F_stack, (v_n-int64(2)), "std/regexp.xo:1809:22"), "std/regexp.xo:1809:5")
+		x_ix249 := (v_n - int64(2))
 		if !List_Mine((*v_p).F_stack) {
 			(*v_p).F_stack = List_Unshared((*v_p).F_stack)
 		}
-		List_PutM((*v_p).F_stack, x_ix252, v_re1_1, "std/regexp.xo:1816:5")
+		List_PutM((*v_p).F_stack, x_ix249, v_re1_1, "std/regexp.xo:1810:5")
 		return true
 	}
 	return false
@@ -3489,23 +3460,23 @@ func (v_p *Regexp_Parser) M_parse_right_paren(tk *Task) Result[Unit, Regexp_PErr
 	_ = v_re1
 	var v_re2 int64 = (*v_p).M_pop(tk)
 	_ = v_re2
-	if List_At((*v_p).F_ops, v_re2, "std/regexp.xo:1841:6") != Regexp_OP_LEFT_PAREN {
+	if List_At((*v_p).F_ops, v_re2, "std/regexp.xo:1835:6") != Regexp_OP_LEFT_PAREN {
 		return Err[Unit](Regexp_perr(tk, "unexpected )", (*v_p).F_whole))
 	}
-	(*v_p).F_flags = List_At((*v_p).F_nflags, v_re2, "std/regexp.xo:1844:13")
-	if List_At((*v_p).F_caps, v_re2, "std/regexp.xo:1845:6") == int64(0) {
+	(*v_p).F_flags = List_At((*v_p).F_nflags, v_re2, "std/regexp.xo:1838:13")
+	if List_At((*v_p).F_caps, v_re2, "std/regexp.xo:1839:6") == int64(0) {
 		(*v_p).M_push(tk, v_re1)
 	} else {
-		x_ix253 := v_re2
+		x_ix250 := v_re2
 		if !List_Mine((*v_p).F_ops) {
 			(*v_p).F_ops = List_Unshared((*v_p).F_ops)
 		}
-		List_PutM((*v_p).F_ops, x_ix253, Regexp_OP_CAPTURE, "std/regexp.xo:1848:5")
-		x_ix254 := v_re2
+		List_PutM((*v_p).F_ops, x_ix250, Regexp_OP_CAPTURE, "std/regexp.xo:1842:5")
+		x_ix251 := v_re2
 		if !List_Mine((*v_p).F_subs) {
 			(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 		}
-		List_PutM((*v_p).F_subs, x_ix254, ListOf[int64](v_re1), "std/regexp.xo:1849:5")
+		List_PutM((*v_p).F_subs, x_ix251, ListOf[int64](v_re1), "std/regexp.xo:1843:5")
 		(*v_p).M_push(tk, v_re2)
 	}
 	return Ok[Unit, Regexp_PErr](Unit{})
@@ -3515,14 +3486,14 @@ func Regexp_is_valid_capture_name(tk *Task, v_name string) bool {
 	if v_name == "" {
 		return false
 	}
-	x_it255 := Str_runes(tk, v_name)
-	for _, x_e257 := range List_Items(x_it255) {
-		x_el258 := x_e257
-		_ = x_el258
-		var v_r Rune = x_el258
+	x_it252 := Str_runes(tk, v_name)
+	for _, x_e254 := range List_Items(x_it252) {
+		x_el255 := x_e254
+		_ = x_el255
+		var v_r Rune = x_el255
 		_ = v_r
 		{
-			var v_c int64 = Conv[int64, Rune](v_r, "std/regexp.xo:1860:13")
+			var v_c int64 = Conv[int64, Rune](v_r, "std/regexp.xo:1854:13")
 			_ = v_c
 			if (v_c != int64(95)) && !(Regexp_is_alnum(tk, v_c)) {
 				return false
@@ -3535,52 +3506,52 @@ func Regexp_is_valid_capture_name(tk *Task, v_name string) bool {
 func (v_p *Regexp_Parser) M_parse_perl_flags(tk *Task, v_s string, v_i int64) Result[int64, Regexp_PErr] {
 	var v_n int64 = Str_len(tk, v_s)
 	_ = v_n
-	var v_starts_p bool = (((SubS(v_n, v_i, "std/regexp.xo:1871:18") > int64(4)) && (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:1871:42")) == int64(80))) && (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(3), "std/regexp.xo:1871:70")) == int64(60)))
+	var v_starts_p bool = (((SubS(v_n, v_i, "std/regexp.xo:1865:18") > int64(4)) && (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:1865:42")) == int64(80))) && (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(3), "std/regexp.xo:1865:70")) == int64(60)))
 	_ = v_starts_p
-	var v_starts_name bool = ((SubS(v_n, v_i, "std/regexp.xo:1872:21") > int64(3)) && (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:1872:45")) == int64(60)))
+	var v_starts_name bool = ((SubS(v_n, v_i, "std/regexp.xo:1866:21") > int64(3)) && (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:1866:45")) == int64(60)))
 	_ = v_starts_name
 	if v_starts_p || v_starts_name {
-		var v_start int64 = AddIUp(v_i, int64(4), "std/regexp.xo:1874:17")
+		var v_start int64 = AddIUp(v_i, int64(4), "std/regexp.xo:1868:17")
 		_ = v_start
 		if v_starts_name {
-			v_start = AddIUp(v_i, int64(3), "std/regexp.xo:1876:15")
+			v_start = AddIUp(v_i, int64(3), "std/regexp.xo:1870:15")
 		}
 		var v_end int64 = Regexp_find_from(tk, v_s, ">", v_i)
 		_ = v_end
 		if v_end < int64(0) {
-			x_r259 := Regexp_check_utf8(tk, v_s, v_i, v_n)
-			if !x_r259.Ok {
-				return ErrTr[int64](x_r259.E, Frame3(x_r259.Tr, "regexp.Parser.parse_perl_flags", "std/regexp.xo:1880", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
+			x_r256 := Regexp_check_utf8(tk, v_s, v_i, v_n)
+			if !x_r256.Ok {
+				return ErrTr[int64](x_r256.E, Frame3(x_r256.Tr, "regexp.Parser.parse_perl_flags", "std/regexp.xo:1874", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
 			}
-			_ = x_r259.V
+			_ = x_r256.V
 			return Err[int64](Regexp_perr(tk, "invalid named capture", Regexp_sl(tk, v_s, v_i, v_n)))
 		}
 		var v_name string = Regexp_sl(tk, v_s, v_start, v_end)
 		_ = v_name
-		x_r260 := Regexp_check_utf8(tk, v_s, v_start, v_end)
-		if !x_r260.Ok {
-			return ErrTr[int64](x_r260.E, Frame3(x_r260.Tr, "regexp.Parser.parse_perl_flags", "std/regexp.xo:1884", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
+		x_r257 := Regexp_check_utf8(tk, v_s, v_start, v_end)
+		if !x_r257.Ok {
+			return ErrTr[int64](x_r257.E, Frame3(x_r257.Tr, "regexp.Parser.parse_perl_flags", "std/regexp.xo:1878", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
 		}
-		_ = x_r260.V
+		_ = x_r257.V
 		if !(Regexp_is_valid_capture_name(tk, v_name)) {
-			return Err[int64](Regexp_perr(tk, "invalid named capture", Regexp_sl(tk, v_s, v_i, AddIUp(v_end, int64(1), "std/regexp.xo:1886:57"))))
+			return Err[int64](Regexp_perr(tk, "invalid named capture", Regexp_sl(tk, v_s, v_i, AddIUp(v_end, int64(1), "std/regexp.xo:1880:57"))))
 		}
-		(*v_p).F_num_cap = AddS((*v_p).F_num_cap, int64(1), "std/regexp.xo:1888:5")
+		(*v_p).F_num_cap = AddS((*v_p).F_num_cap, int64(1), "std/regexp.xo:1882:5")
 		var v_re int64 = (*v_p).M_op(tk, Regexp_OP_LEFT_PAREN)
 		_ = v_re
-		x_ix261 := v_re
+		x_ix258 := v_re
 		if !List_Mine((*v_p).F_caps) {
 			(*v_p).F_caps = List_Unshared((*v_p).F_caps)
 		}
-		List_PutM((*v_p).F_caps, x_ix261, (*v_p).F_num_cap, "std/regexp.xo:1890:5")
-		x_ix262 := v_re
+		List_PutM((*v_p).F_caps, x_ix258, (*v_p).F_num_cap, "std/regexp.xo:1884:5")
+		x_ix259 := v_re
 		if !List_Mine((*v_p).F_names) {
 			(*v_p).F_names = List_Unshared((*v_p).F_names)
 		}
-		List_PutM((*v_p).F_names, x_ix262, v_name, "std/regexp.xo:1891:5")
-		return Ok[int64, Regexp_PErr](AddIUp(v_end, int64(1), "std/regexp.xo:1892:12"))
+		List_PutM((*v_p).F_names, x_ix259, v_name, "std/regexp.xo:1885:5")
+		return Ok[int64, Regexp_PErr](AddIUp(v_end, int64(1), "std/regexp.xo:1886:12"))
 	}
-	var v_t int64 = AddIUp(v_i, int64(2), "std/regexp.xo:1894:11")
+	var v_t int64 = AddIUp(v_i, int64(2), "std/regexp.xo:1888:11")
 	_ = v_t
 	var v_flags int64 = (*v_p).F_flags
 	_ = v_flags
@@ -3588,21 +3559,21 @@ func (v_p *Regexp_Parser) M_parse_perl_flags(tk *Task, v_s string, v_i int64) Re
 	_ = v_sign
 	var v_saw bool = false
 	_ = v_saw
-x_L263:
+x_L260:
 	for {
 		if !(v_t < v_n) {
 			break
 		}
 		{
-			x_r264 := Regexp_next_rune(tk, v_s, v_t)
-			if !x_r264.Ok {
-				return ErrTr[int64](x_r264.E, Frame3(x_r264.Tr, "regexp.Parser.parse_perl_flags", "std/regexp.xo:1899", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
+			x_r261 := Regexp_next_rune(tk, v_s, v_t)
+			if !x_r261.Ok {
+				return ErrTr[int64](x_r261.E, Frame3(x_r261.Tr, "regexp.Parser.parse_perl_flags", "std/regexp.xo:1893", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
 			}
-			x_let265 := x_r264.V
-			_ = x_let265
-			var v_c int64 = x_let265.F0
+			x_let262 := x_r261.V
+			_ = x_let262
+			var v_c int64 = x_let262.F0
 			_ = v_c
-			var v_t2 int64 = x_let265.F1
+			var v_t2 int64 = x_let262.F1
 			_ = v_t2
 			v_t = v_t2
 			if v_c == int64(105) {
@@ -3623,7 +3594,7 @@ x_L263:
 						} else {
 							if v_c == int64(45) {
 								if v_sign < int64(0) {
-									break x_L263
+									break x_L260
 								}
 								v_sign = int64(-1)
 								v_flags = ((int64(0) - int64(1)) - v_flags)
@@ -3632,7 +3603,7 @@ x_L263:
 								if (v_c == int64(58)) || (v_c == int64(41)) {
 									if v_sign < int64(0) {
 										if !(v_saw) {
-											break x_L263
+											break x_L260
 										}
 										v_flags = ((int64(0) - int64(1)) - v_flags)
 									}
@@ -3642,7 +3613,7 @@ x_L263:
 									(*v_p).F_flags = v_flags
 									return Ok[int64, Regexp_PErr](v_t)
 								} else {
-									break x_L263
+									break x_L260
 								}
 							}
 						}
@@ -3657,14 +3628,14 @@ x_L263:
 func (v_p *Regexp_Parser) M_height(tk *Task, v_re int64) int64 {
 	var v_h int64 = int64(1)
 	_ = v_h
-	x_it266 := List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1942:14"))
-	for _, x_e268 := range List_Items(x_it266) {
-		x_el269 := x_e268
-		_ = x_el269
-		var v_sub int64 = x_el269
+	x_it263 := List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:1936:14"))
+	for _, x_e265 := range List_Items(x_it263) {
+		x_el266 := x_e265
+		_ = x_el266
+		var v_sub int64 = x_el266
 		_ = v_sub
 		{
-			var v_hs int64 = AddS(int64(1), (*v_p).M_height(tk, v_sub), "std/regexp.xo:1943:14")
+			var v_hs int64 = AddS(int64(1), (*v_p).M_height(tk, v_sub), "std/regexp.xo:1937:14")
 			_ = v_hs
 			if v_hs > v_h {
 				v_h = v_hs
@@ -3692,20 +3663,20 @@ func (v_p *Regexp_Parser) M_parse(tk *Task, v_s string) Result[int64, Regexp_PEr
 			_ = v_c0
 			if v_c0 == int64(40) {
 				if ((((*v_p).F_flags & Regexp_PERL_X) != int64(0)) && ((v_i + int64(1)) < v_n)) && (Regexp_byte_at(tk, v_s, (v_i+int64(1))) == int64(63)) {
-					x_r271 := (*v_p).M_parse_perl_flags(tk, v_s, v_i)
-					if !x_r271.Ok {
-						return ErrTr[int64](x_r271.E, Frame2(x_r271.Tr, "regexp.Parser.parse", "std/regexp.xo:1960", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
+					x_r268 := (*v_p).M_parse_perl_flags(tk, v_s, v_i)
+					if !x_r268.Ok {
+						return ErrTr[int64](x_r268.E, Frame2(x_r268.Tr, "regexp.Parser.parse", "std/regexp.xo:1954", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
 					}
-					v_i = x_r271.V
+					v_i = x_r268.V
 				} else {
-					(*v_p).F_num_cap = AddS((*v_p).F_num_cap, int64(1), "std/regexp.xo:1962:9")
+					(*v_p).F_num_cap = AddS((*v_p).F_num_cap, int64(1), "std/regexp.xo:1956:9")
 					var v_re int64 = (*v_p).M_op(tk, Regexp_OP_LEFT_PAREN)
 					_ = v_re
-					x_ix272 := v_re
+					x_ix269 := v_re
 					if !List_Mine((*v_p).F_caps) {
 						(*v_p).F_caps = List_Unshared((*v_p).F_caps)
 					}
-					List_PutM((*v_p).F_caps, x_ix272, (*v_p).F_num_cap, "std/regexp.xo:1964:9")
+					List_PutM((*v_p).F_caps, x_ix269, (*v_p).F_num_cap, "std/regexp.xo:1958:9")
 					v_i = (v_i + int64(1))
 				}
 			} else {
@@ -3714,11 +3685,11 @@ func (v_p *Regexp_Parser) M_parse(tk *Task, v_s string) Result[int64, Regexp_PEr
 					v_i = (v_i + int64(1))
 				} else {
 					if v_c0 == int64(41) {
-						x_r273 := (*v_p).M_parse_right_paren(tk)
-						if !x_r273.Ok {
-							return ErrTr[int64](x_r273.E, Frame2(x_r273.Tr, "regexp.Parser.parse", "std/regexp.xo:1971", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
+						x_r270 := (*v_p).M_parse_right_paren(tk)
+						if !x_r270.Ok {
+							return ErrTr[int64](x_r270.E, Frame2(x_r270.Tr, "regexp.Parser.parse", "std/regexp.xo:1965", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
 						}
-						_ = x_r273.V
+						_ = x_r270.V
 						v_i = (v_i + int64(1))
 					} else {
 						if v_c0 == int64(94) {
@@ -3746,11 +3717,11 @@ func (v_p *Regexp_Parser) M_parse(tk *Task, v_s string) Result[int64, Regexp_PEr
 									v_i = (v_i + int64(1))
 								} else {
 									if v_c0 == int64(91) {
-										x_r274 := (*v_p).M_parse_class(tk, v_s, v_i)
-										if !x_r274.Ok {
-											return ErrTr[int64](x_r274.E, Frame2(x_r274.Tr, "regexp.Parser.parse", "std/regexp.xo:1995", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
+										x_r271 := (*v_p).M_parse_class(tk, v_s, v_i)
+										if !x_r271.Ok {
+											return ErrTr[int64](x_r271.E, Frame2(x_r271.Tr, "regexp.Parser.parse", "std/regexp.xo:1989", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
 										}
-										v_i = x_r274.V
+										v_i = x_r271.V
 									} else {
 										if ((v_c0 == int64(42)) || (v_c0 == int64(43))) || (v_c0 == int64(63)) {
 											var v_op int64 = Regexp_OP_QUEST
@@ -3764,25 +3735,25 @@ func (v_p *Regexp_Parser) M_parse(tk *Task, v_s string) Result[int64, Regexp_PEr
 											}
 											var v_before int64 = v_i
 											_ = v_before
-											x_r275 := (*v_p).M_repeat(tk, v_op, int64(0), int64(0), v_s, v_before, (v_i + int64(1)), v_last)
-											if !x_r275.Ok {
-												return ErrTr[int64](x_r275.E, Frame2(x_r275.Tr, "regexp.Parser.parse", "std/regexp.xo:2004", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
+											x_r272 := (*v_p).M_repeat(tk, v_op, int64(0), int64(0), v_s, v_before, (v_i + int64(1)), v_last)
+											if !x_r272.Ok {
+												return ErrTr[int64](x_r272.E, Frame2(x_r272.Tr, "regexp.Parser.parse", "std/regexp.xo:1998", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
 											}
-											v_i = x_r275.V
+											v_i = x_r272.V
 											v_rep = v_before
 										} else {
 											if v_c0 == int64(123) {
 												var v_before_1 int64 = v_i
 												_ = v_before_1
-												x_let276 := Regexp_parse_repeat(tk, v_s, v_i)
-												_ = x_let276
-												var v_ok bool = x_let276.F0
+												x_let273 := Regexp_parse_repeat(tk, v_s, v_i)
+												_ = x_let273
+												var v_ok bool = x_let273.F0
 												_ = v_ok
-												var v_min int64 = x_let276.F1
+												var v_min int64 = x_let273.F1
 												_ = v_min
-												var v_max int64 = x_let276.F2
+												var v_max int64 = x_let273.F2
 												_ = v_max
-												var v_after int64 = x_let276.F3
+												var v_after int64 = x_let273.F3
 												_ = v_after
 												if !(v_ok) {
 													(*v_p).M_literal(tk, int64(123))
@@ -3791,30 +3762,30 @@ func (v_p *Regexp_Parser) M_parse(tk *Task, v_s string) Result[int64, Regexp_PEr
 													if (((v_min < int64(0)) || (v_min > int64(1000))) || (v_max > int64(1000))) || ((v_max >= int64(0)) && (v_min > v_max)) {
 														return Err[int64](Regexp_perr(tk, "invalid repeat count", Regexp_sl(tk, v_s, v_before_1, v_after)))
 													}
-													x_r277 := (*v_p).M_repeat(tk, Regexp_OP_REPEAT, v_min, v_max, v_s, v_before_1, v_after, v_last)
-													if !x_r277.Ok {
-														return ErrTr[int64](x_r277.E, Frame2(x_r277.Tr, "regexp.Parser.parse", "std/regexp.xo:2016", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
+													x_r274 := (*v_p).M_repeat(tk, Regexp_OP_REPEAT, v_min, v_max, v_s, v_before_1, v_after, v_last)
+													if !x_r274.Ok {
+														return ErrTr[int64](x_r274.E, Frame2(x_r274.Tr, "regexp.Parser.parse", "std/regexp.xo:2010", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
 													}
-													v_i = x_r277.V
+													v_i = x_r274.V
 													v_rep = v_before_1
 												}
 											} else {
 												if v_c0 == int64(92) {
-													x_r278 := (*v_p).M_parse_backslash(tk, v_s, v_i)
-													if !x_r278.Ok {
-														return ErrTr[int64](x_r278.E, Frame2(x_r278.Tr, "regexp.Parser.parse", "std/regexp.xo:2020", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
+													x_r275 := (*v_p).M_parse_backslash(tk, v_s, v_i)
+													if !x_r275.Ok {
+														return ErrTr[int64](x_r275.E, Frame2(x_r275.Tr, "regexp.Parser.parse", "std/regexp.xo:2014", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
 													}
-													v_i = x_r278.V
+													v_i = x_r275.V
 												} else {
-													x_r279 := Regexp_next_rune(tk, v_s, v_i)
-													if !x_r279.Ok {
-														return ErrTr[int64](x_r279.E, Frame2(x_r279.Tr, "regexp.Parser.parse", "std/regexp.xo:2022", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
+													x_r276 := Regexp_next_rune(tk, v_s, v_i)
+													if !x_r276.Ok {
+														return ErrTr[int64](x_r276.E, Frame2(x_r276.Tr, "regexp.Parser.parse", "std/regexp.xo:2016", "p s", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s))
 													}
-													x_let280 := x_r279.V
-													_ = x_let280
-													var v_c int64 = x_let280.F0
+													x_let277 := x_r276.V
+													_ = x_let277
+													var v_c int64 = x_let277.F0
 													_ = v_c
-													var v_t int64 = x_let280.F1
+													var v_t int64 = x_let277.F1
 													_ = v_t
 													(*v_p).M_literal(tk, v_c)
 													v_i = v_t
@@ -3845,7 +3816,7 @@ func (v_p *Regexp_Parser) M_parse(tk *Task, v_s string) Result[int64, Regexp_PEr
 	if List_len[int64](tk, (*v_p).F_stack) != int64(1) {
 		return Err[int64](Regexp_perr(tk, "missing closing )", v_s))
 	}
-	var v_root int64 = List_At((*v_p).F_stack, int64(0), "std/regexp.xo:2042:14")
+	var v_root int64 = List_At((*v_p).F_stack, int64(0), "std/regexp.xo:2036:14")
 	_ = v_root
 	if (List_len[int64](tk, (*v_p).F_ops) > int64(1000)) && ((*v_p).M_height(tk, v_root) > int64(1000)) {
 		return Err[int64](Regexp_perr(tk, "expression nests too deeply", v_s))
@@ -3856,34 +3827,34 @@ func (v_p *Regexp_Parser) M_parse(tk *Task, v_s string) Result[int64, Regexp_PEr
 func (v_p *Regexp_Parser) M_parse_backslash(tk *Task, v_s string, v_i int64) Result[int64, Regexp_PErr] {
 	var v_n int64 = Str_len(tk, v_s)
 	_ = v_n
-	if (((*v_p).F_flags & Regexp_PERL_X) != int64(0)) && (AddIUp(v_i, int64(1), "std/regexp.xo:2055:33") < v_n) {
-		var v_c1 int64 = Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:2056:25"))
+	if (((*v_p).F_flags & Regexp_PERL_X) != int64(0)) && (AddIUp(v_i, int64(1), "std/regexp.xo:2049:33") < v_n) {
+		var v_c1 int64 = Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:2050:25"))
 		_ = v_c1
 		if v_c1 == int64(65) {
 			(*v_p).M_op(tk, Regexp_OP_BEGIN_TEXT)
-			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2059:14"))
+			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2053:14"))
 		}
 		if v_c1 == int64(98) {
 			(*v_p).M_op(tk, Regexp_OP_WORD_BOUNDARY)
-			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2063:14"))
+			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2057:14"))
 		}
 		if v_c1 == int64(66) {
 			(*v_p).M_op(tk, Regexp_OP_NO_WORD_BOUNDARY)
-			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2067:14"))
+			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2061:14"))
 		}
 		if v_c1 == int64(67) {
-			return Err[int64](Regexp_perr(tk, "invalid escape sequence", Regexp_sl(tk, v_s, v_i, AddIUp(v_i, int64(2), "std/regexp.xo:2070:59"))))
+			return Err[int64](Regexp_perr(tk, "invalid escape sequence", Regexp_sl(tk, v_s, v_i, AddIUp(v_i, int64(2), "std/regexp.xo:2064:59"))))
 		}
 		if v_c1 == int64(81) {
-			var v_end int64 = Regexp_find_from(tk, v_s, "\\E", AddIUp(v_i, int64(2), "std/regexp.xo:2073:37"))
+			var v_end int64 = Regexp_find_from(tk, v_s, "\\E", AddIUp(v_i, int64(2), "std/regexp.xo:2067:37"))
 			_ = v_end
-			var v_next int64 = AddIUp(v_end, int64(2), "std/regexp.xo:2074:18")
+			var v_next int64 = AddIUp(v_end, int64(2), "std/regexp.xo:2068:18")
 			_ = v_next
 			if v_end < int64(0) {
 				v_end = v_n
 				v_next = v_n
 			}
-			var v_lit string = Regexp_sl(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:2079:23"), v_end)
+			var v_lit string = Regexp_sl(tk, v_s, AddIUp(v_i, int64(2), "std/regexp.xo:2073:23"), v_end)
 			_ = v_lit
 			var v_k int64 = int64(0)
 			_ = v_k
@@ -3892,15 +3863,15 @@ func (v_p *Regexp_Parser) M_parse_backslash(tk *Task, v_s string, v_i int64) Res
 					break
 				}
 				{
-					x_r282 := Regexp_next_rune(tk, v_lit, v_k)
-					if !x_r282.Ok {
-						return ErrTr[int64](x_r282.E, Frame3(x_r282.Tr, "regexp.Parser.parse_backslash", "std/regexp.xo:2082", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
+					x_r279 := Regexp_next_rune(tk, v_lit, v_k)
+					if !x_r279.Ok {
+						return ErrTr[int64](x_r279.E, Frame3(x_r279.Tr, "regexp.Parser.parse_backslash", "std/regexp.xo:2076", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
 					}
-					x_let283 := x_r282.V
-					_ = x_let283
-					var v_c int64 = x_let283.F0
+					x_let280 := x_r279.V
+					_ = x_let280
+					var v_c int64 = x_let280.F0
 					_ = v_c
-					var v_k2 int64 = x_let283.F1
+					var v_k2 int64 = x_let280.F1
 					_ = v_k2
 					(*v_p).M_literal(tk, v_c)
 					v_k = v_k2
@@ -3910,11 +3881,11 @@ func (v_p *Regexp_Parser) M_parse_backslash(tk *Task, v_s string, v_i int64) Res
 		}
 		if v_c1 == int64(122) {
 			(*v_p).M_op(tk, Regexp_OP_END_TEXT)
-			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2090:14"))
+			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2084:14"))
 		}
 	}
-	if (AddIUp(v_i, int64(1), "std/regexp.xo:2093:6") < v_n) && ((Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:2093:31")) == int64(112)) || (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:2093:59")) == int64(80))) {
-		x_r284 := func(v Result[Option[Tuple2[List[int64], int64]], Regexp_PErr]) Result[Option[Tuple2[List[int64], int64]], Regexp_PErr] {
+	if (AddIUp(v_i, int64(1), "std/regexp.xo:2087:6") < v_n) && ((Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:2087:31")) == int64(112)) || (Regexp_byte_at(tk, v_s, AddIUp(v_i, int64(1), "std/regexp.xo:2087:59")) == int64(80))) {
+		x_r281 := func(v Result[Option[Tuple2[List[int64], int64]], Regexp_PErr]) Result[Option[Tuple2[List[int64], int64]], Regexp_PErr] {
 			if v.Ok {
 				if v.V.Some {
 					v.V.V.F0.XoMark()
@@ -3922,132 +3893,132 @@ func (v_p *Regexp_Parser) M_parse_backslash(tk *Task, v_s string, v_i int64) Res
 			}
 			return v
 		}((*v_p).M_parse_unicode_class(tk, v_s, v_i, List[int64]{}))
-		if !x_r284.Ok {
-			return ErrTr[int64](x_r284.E, Frame3(x_r284.Tr, "regexp.Parser.parse_backslash", "std/regexp.xo:2094", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
+		if !x_r281.Ok {
+			return ErrTr[int64](x_r281.E, Frame3(x_r281.Tr, "regexp.Parser.parse_backslash", "std/regexp.xo:2088", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
 		}
-		x_m285 := x_r284.V
-		_ = x_m285
-	x_M286:
+		x_m282 := x_r281.V
+		_ = x_m282
+	x_M283:
 		switch {
 		default:
-			if x_m285.Some {
-				var v_r List[int64] = x_m285.V.F0
+			if x_m282.Some {
+				var v_r List[int64] = x_m282.V.F0
 				_ = v_r
-				var v_t int64 = x_m285.V.F1
+				var v_t int64 = x_m282.V.F1
 				_ = v_t
 				{
 					(*v_p).M_class_node(tk, List_Own(Regexp_clean_class(tk, List_Own(v_r))))
 					return Ok[int64, Regexp_PErr](v_t)
 				}
 			}
-			if !x_m285.Some {
-				break x_M286
+			if !x_m282.Some {
+				break x_M283
 			}
-			panic(Unreachable("std/regexp.xo:2094:5"))
+			panic(Unreachable("std/regexp.xo:2088:5"))
 		}
 	}
-	if (((*v_p).F_flags & Regexp_PERL_X) != int64(0)) && (AddIUp(v_i, int64(1), "std/regexp.xo:2102:33") < v_n) {
-		x_let287 := func(v Tuple2[int64, List[int64]]) Tuple2[int64, List[int64]] { v.F1.XoMark(); return v }(Regexp_perl_group(tk, Regexp_esc2(tk, v_s, v_i)))
-		_ = x_let287
-		var v_gs int64 = x_let287.F0
+	if (((*v_p).F_flags & Regexp_PERL_X) != int64(0)) && (AddIUp(v_i, int64(1), "std/regexp.xo:2096:33") < v_n) {
+		x_let284 := func(v Tuple2[int64, List[int64]]) Tuple2[int64, List[int64]] { v.F1.XoMark(); return v }(Regexp_perl_group(tk, Regexp_esc2(tk, v_s, v_i)))
+		_ = x_let284
+		var v_gs int64 = x_let284.F0
 		_ = v_gs
-		var v_g List[int64] = x_let287.F1
+		var v_g List[int64] = x_let284.F1
 		_ = v_g
 		if (v_gs > int64(0)) && (((*v_p).F_flags & Regexp_FOLD_CASE) == int64(0)) {
 			(*v_p).M_class_node(tk, List_Own(v_g))
-			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2108:14"))
+			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2102:14"))
 		}
 		if v_gs != int64(0) {
 			var v_r_1 List[int64] = List[int64]{}
 			_ = v_r_1
 			(*v_p).M_append_group(tk, &v_r_1, v_gs, List_Own(v_g))
 			(*v_p).M_class_node(tk, List_Own(Regexp_clean_class(tk, List_Own(v_r_1))))
-			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2114:14"))
+			return Ok[int64, Regexp_PErr](AddIUp(v_i, int64(2), "std/regexp.xo:2108:14"))
 		}
 	}
-	x_r288 := Regexp_parse_escape(tk, v_s, v_i)
-	if !x_r288.Ok {
-		return ErrTr[int64](x_r288.E, Frame3(x_r288.Tr, "regexp.Parser.parse_backslash", "std/regexp.xo:2117", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
+	x_r285 := Regexp_parse_escape(tk, v_s, v_i)
+	if !x_r285.Ok {
+		return ErrTr[int64](x_r285.E, Frame3(x_r285.Tr, "regexp.Parser.parse_backslash", "std/regexp.xo:2111", "p s i", func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }((*v_p)), v_s, v_i))
 	}
-	x_let289 := x_r288.V
-	_ = x_let289
-	var v_c_1 int64 = x_let289.F0
+	x_let286 := x_r285.V
+	_ = x_let286
+	var v_c_1 int64 = x_let286.F0
 	_ = v_c_1
-	var v_t_1 int64 = x_let289.F1
+	var v_t_1 int64 = x_let286.F1
 	_ = v_t_1
 	(*v_p).M_literal(tk, v_c_1)
 	return Ok[int64, Regexp_PErr](v_t_1)
 }
 
 func (v_p *Regexp_Parser) M_simplify1(tk *Task, v_op int64, v_flags int64, v_sub int64) int64 {
-	if List_At((*v_p).F_ops, v_sub, "std/regexp.xo:2123:6") == Regexp_OP_EMPTY_MATCH {
+	if List_At((*v_p).F_ops, v_sub, "std/regexp.xo:2117:6") == Regexp_OP_EMPTY_MATCH {
 		return v_sub
 	}
-	if (v_op == List_At((*v_p).F_ops, v_sub, "std/regexp.xo:2126:12")) && ((v_flags & Regexp_NON_GREEDY) == (List_At((*v_p).F_nflags, v_sub, "std/regexp.xo:2126:51") & Regexp_NON_GREEDY)) {
+	if (v_op == List_At((*v_p).F_ops, v_sub, "std/regexp.xo:2120:12")) && ((v_flags & Regexp_NON_GREEDY) == (List_At((*v_p).F_nflags, v_sub, "std/regexp.xo:2120:51") & Regexp_NON_GREEDY)) {
 		return v_sub
 	}
 	var v_re int64 = (*v_p).M_node(tk, v_op)
 	_ = v_re
-	x_ix290 := v_re
+	x_ix287 := v_re
 	if !List_Mine((*v_p).F_nflags) {
 		(*v_p).F_nflags = List_Unshared((*v_p).F_nflags)
 	}
-	List_PutM((*v_p).F_nflags, x_ix290, v_flags, "std/regexp.xo:2130:3")
-	x_ix291 := v_re
+	List_PutM((*v_p).F_nflags, x_ix287, v_flags, "std/regexp.xo:2124:3")
+	x_ix288 := v_re
 	if !List_Mine((*v_p).F_subs) {
 		(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 	}
-	List_PutM((*v_p).F_subs, x_ix291, ListOf[int64](v_sub), "std/regexp.xo:2131:3")
+	List_PutM((*v_p).F_subs, x_ix288, ListOf[int64](v_sub), "std/regexp.xo:2125:3")
 	return v_re
 }
 
 func (v_p *Regexp_Parser) M_simplify(tk *Task, v_re int64) int64 {
-	var v_op int64 = List_At((*v_p).F_ops, v_re, "std/regexp.xo:2136:12")
+	var v_op int64 = List_At((*v_p).F_ops, v_re, "std/regexp.xo:2130:12")
 	_ = v_op
 	if ((v_op == Regexp_OP_CAPTURE) || (v_op == Regexp_OP_CONCAT)) || (v_op == Regexp_OP_ALTERNATE) {
 		var v_subs List[int64] = List[int64]{}
 		_ = v_subs
-		x_it292 := List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:2139:16"))
-		for _, x_e294 := range List_Items(x_it292) {
-			x_el295 := x_e294
-			_ = x_el295
-			var v_sub int64 = x_el295
+		x_it289 := List_Own(List_At((*v_p).F_subs, v_re, "std/regexp.xo:2133:16"))
+		for _, x_e291 := range List_Items(x_it289) {
+			x_el292 := x_e291
+			_ = x_el292
+			var v_sub int64 = x_el292
 			_ = v_sub
 			{
-				x_pv296 := (*v_p).M_simplify(tk, v_sub)
+				x_pv293 := (*v_p).M_simplify(tk, v_sub)
 				if List_CanPush(v_subs) {
-					v_subs = List_PushFast(v_subs, x_pv296)
+					v_subs = List_PushFast(v_subs, x_pv293)
 				} else {
-					v_subs = List_PushSlow(v_subs, x_pv296)
+					v_subs = List_PushSlow(v_subs, x_pv293)
 				}
 				_ = Unit{}
 			}
 		}
-		x_ix297 := v_re
+		x_ix294 := v_re
 		if !List_Mine((*v_p).F_subs) {
 			(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 		}
-		List_PutM((*v_p).F_subs, x_ix297, List_Own(v_subs), "std/regexp.xo:2142:5")
+		List_PutM((*v_p).F_subs, x_ix294, List_Own(v_subs), "std/regexp.xo:2136:5")
 		return v_re
 	}
 	if ((v_op == Regexp_OP_STAR) || (v_op == Regexp_OP_PLUS)) || (v_op == Regexp_OP_QUEST) {
-		var v_sub_1 int64 = (*v_p).M_simplify(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:2146:26"), int64(0), "std/regexp.xo:2146:26"))
+		var v_sub_1 int64 = (*v_p).M_simplify(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:2140:26"), int64(0), "std/regexp.xo:2140:26"))
 		_ = v_sub_1
-		return (*v_p).M_simplify1(tk, v_op, List_At((*v_p).F_nflags, v_re, "std/regexp.xo:2147:28"), v_sub_1)
+		return (*v_p).M_simplify1(tk, v_op, List_At((*v_p).F_nflags, v_re, "std/regexp.xo:2141:28"), v_sub_1)
 	}
 	if v_op != Regexp_OP_REPEAT {
 		return v_re
 	}
-	var v_min int64 = List_At((*v_p).F_mins, v_re, "std/regexp.xo:2152:13")
+	var v_min int64 = List_At((*v_p).F_mins, v_re, "std/regexp.xo:2146:13")
 	_ = v_min
-	var v_max int64 = List_At((*v_p).F_maxs, v_re, "std/regexp.xo:2153:13")
+	var v_max int64 = List_At((*v_p).F_maxs, v_re, "std/regexp.xo:2147:13")
 	_ = v_max
-	var v_flags int64 = List_At((*v_p).F_nflags, v_re, "std/regexp.xo:2154:15")
+	var v_flags int64 = List_At((*v_p).F_nflags, v_re, "std/regexp.xo:2148:15")
 	_ = v_flags
 	if (v_min == int64(0)) && (v_max == int64(0)) {
 		return (*v_p).M_node(tk, Regexp_OP_EMPTY_MATCH)
 	}
-	var v_sub_2 int64 = (*v_p).M_simplify(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:2158:24"), int64(0), "std/regexp.xo:2158:24"))
+	var v_sub_2 int64 = (*v_p).M_simplify(tk, List_At(List_At((*v_p).F_subs, v_re, "std/regexp.xo:2152:24"), int64(0), "std/regexp.xo:2152:24"))
 	_ = v_sub_2
 	if v_max == int64(-1) {
 		if v_min == int64(0) {
@@ -4063,32 +4034,32 @@ func (v_p *Regexp_Parser) M_simplify(tk *Task, v_re int64) int64 {
 		var v_k int64 = int64(0)
 		_ = v_k
 		for {
-			if !(v_k < SubIDown(v_min, int64(1), "std/regexp.xo:2169:15")) {
+			if !(v_k < SubIDown(v_min, int64(1), "std/regexp.xo:2163:15")) {
 				break
 			}
 			{
-				x_pv299 := v_sub_2
+				x_pv296 := v_sub_2
 				if List_CanPush(v_subs_1) {
-					v_subs_1 = List_PushFast(v_subs_1, x_pv299)
+					v_subs_1 = List_PushFast(v_subs_1, x_pv296)
 				} else {
-					v_subs_1 = List_PushSlow(v_subs_1, x_pv299)
+					v_subs_1 = List_PushSlow(v_subs_1, x_pv296)
 				}
 				_ = Unit{}
 				v_k = (v_k + int64(1))
 			}
 		}
-		x_pv300 := (*v_p).M_simplify1(tk, Regexp_OP_PLUS, v_flags, v_sub_2)
+		x_pv297 := (*v_p).M_simplify1(tk, Regexp_OP_PLUS, v_flags, v_sub_2)
 		if List_CanPush(v_subs_1) {
-			v_subs_1 = List_PushFast(v_subs_1, x_pv300)
+			v_subs_1 = List_PushFast(v_subs_1, x_pv297)
 		} else {
-			v_subs_1 = List_PushSlow(v_subs_1, x_pv300)
+			v_subs_1 = List_PushSlow(v_subs_1, x_pv297)
 		}
 		_ = Unit{}
-		x_ix301 := v_c
+		x_ix298 := v_c
 		if !List_Mine((*v_p).F_subs) {
 			(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 		}
-		List_PutM((*v_p).F_subs, x_ix301, List_Own(v_subs_1), "std/regexp.xo:2174:5")
+		List_PutM((*v_p).F_subs, x_ix298, List_Own(v_subs_1), "std/regexp.xo:2168:5")
 		return v_c
 	}
 	if (v_min == int64(1)) && (v_max == int64(1)) {
@@ -4107,11 +4078,11 @@ func (v_p *Regexp_Parser) M_simplify(tk *Task, v_re int64) int64 {
 				break
 			}
 			{
-				x_pv303 := v_sub_2
+				x_pv300 := v_sub_2
 				if List_CanPush(v_psubs) {
-					v_psubs = List_PushFast(v_psubs, x_pv303)
+					v_psubs = List_PushFast(v_psubs, x_pv300)
 				} else {
-					v_psubs = List_PushSlow(v_psubs, x_pv303)
+					v_psubs = List_PushSlow(v_psubs, x_pv300)
 				}
 				_ = Unit{}
 				v_k_1 = (v_k_1 + int64(1))
@@ -4130,11 +4101,11 @@ func (v_p *Regexp_Parser) M_simplify(tk *Task, v_re int64) int64 {
 			{
 				var v_c2 int64 = (*v_p).M_node(tk, Regexp_OP_CONCAT)
 				_ = v_c2
-				x_ix305 := v_c2
+				x_ix302 := v_c2
 				if !List_Mine((*v_p).F_subs) {
 					(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 				}
-				List_PutM((*v_p).F_subs, x_ix305, ListOf[int64](v_sub_2, v_suffix), "std/regexp.xo:2195:7")
+				List_PutM((*v_p).F_subs, x_ix302, ListOf[int64](v_sub_2, v_suffix), "std/regexp.xo:2189:7")
 				v_suffix = (*v_p).M_simplify1(tk, Regexp_OP_QUEST, v_flags, v_c2)
 				v_k_2 = (v_k_2 + int64(1))
 			}
@@ -4142,20 +4113,20 @@ func (v_p *Regexp_Parser) M_simplify(tk *Task, v_re int64) int64 {
 		if v_prefix < int64(0) {
 			return v_suffix
 		}
-		x_pv306 := v_suffix
+		x_pv303 := v_suffix
 		if List_CanPush(v_psubs) {
-			v_psubs = List_PushFast(v_psubs, x_pv306)
+			v_psubs = List_PushFast(v_psubs, x_pv303)
 		} else {
-			v_psubs = List_PushSlow(v_psubs, x_pv306)
+			v_psubs = List_PushSlow(v_psubs, x_pv303)
 		}
 		_ = Unit{}
 	}
 	if v_prefix >= int64(0) {
-		x_ix307 := v_prefix
+		x_ix304 := v_prefix
 		if !List_Mine((*v_p).F_subs) {
 			(*v_p).F_subs = List_Unshared((*v_p).F_subs)
 		}
-		List_PutM((*v_p).F_subs, x_ix307, List_Own(v_psubs), "std/regexp.xo:2205:5")
+		List_PutM((*v_p).F_subs, x_ix304, List_Own(v_psubs), "std/regexp.xo:2199:5")
 		return v_prefix
 	}
 	return (*v_p).M_node(tk, Regexp_OP_NO_MATCH)
@@ -4409,32 +4380,32 @@ func Regexp_fail_frag(tk *Task) Regexp_Frag {
 }
 
 func (v_g *Regexp_Prog) M_inst(tk *Task, v_op int64) Regexp_Frag {
-	x_pv308 := v_op
+	x_pv305 := v_op
 	if List_CanPush((*v_g).F_op) {
-		(*v_g).F_op = List_PushFast((*v_g).F_op, x_pv308)
+		(*v_g).F_op = List_PushFast((*v_g).F_op, x_pv305)
 	} else {
-		(*v_g).F_op = List_PushSlow((*v_g).F_op, x_pv308)
+		(*v_g).F_op = List_PushSlow((*v_g).F_op, x_pv305)
 	}
 	_ = Unit{}
-	x_pv309 := int64(0)
+	x_pv306 := int64(0)
 	if List_CanPush((*v_g).F_out) {
-		(*v_g).F_out = List_PushFast((*v_g).F_out, x_pv309)
+		(*v_g).F_out = List_PushFast((*v_g).F_out, x_pv306)
 	} else {
-		(*v_g).F_out = List_PushSlow((*v_g).F_out, x_pv309)
+		(*v_g).F_out = List_PushSlow((*v_g).F_out, x_pv306)
 	}
 	_ = Unit{}
-	x_pv310 := int64(0)
+	x_pv307 := int64(0)
 	if List_CanPush((*v_g).F_arg) {
-		(*v_g).F_arg = List_PushFast((*v_g).F_arg, x_pv310)
+		(*v_g).F_arg = List_PushFast((*v_g).F_arg, x_pv307)
 	} else {
-		(*v_g).F_arg = List_PushSlow((*v_g).F_arg, x_pv310)
+		(*v_g).F_arg = List_PushSlow((*v_g).F_arg, x_pv307)
 	}
 	_ = Unit{}
-	x_pv311 := List[int64]{}
+	x_pv308 := List[int64]{}
 	if List_CanPush((*v_g).F_rune) {
-		(*v_g).F_rune = List_PushFast((*v_g).F_rune, x_pv311)
+		(*v_g).F_rune = List_PushFast((*v_g).F_rune, x_pv308)
 	} else {
-		(*v_g).F_rune = List_PushSlow((*v_g).F_rune, x_pv311)
+		(*v_g).F_rune = List_PushSlow((*v_g).F_rune, x_pv308)
 	}
 	_ = Unit{}
 	if List_CanPush((*v_g).F_fold) {
@@ -4457,19 +4428,19 @@ func (v_g *Regexp_Prog) M_patch(tk *Task, v_head0 int64, v_val int64) {
 			var v_i int64 = (v_head >> int64(1))
 			_ = v_i
 			if (v_head & int64(1)) == int64(0) {
-				v_head = List_At((*v_g).F_out, v_i, "std/regexp.xo:2301:14")
-				x_ix313 := v_i
+				v_head = List_At((*v_g).F_out, v_i, "std/regexp.xo:2295:14")
+				x_ix310 := v_i
 				if !List_Mine((*v_g).F_out) {
 					(*v_g).F_out = List_Unshared((*v_g).F_out)
 				}
-				List_PutM((*v_g).F_out, x_ix313, v_val, "std/regexp.xo:2302:7")
+				List_PutM((*v_g).F_out, x_ix310, v_val, "std/regexp.xo:2296:7")
 			} else {
-				v_head = List_At((*v_g).F_arg, v_i, "std/regexp.xo:2304:14")
-				x_ix314 := v_i
+				v_head = List_At((*v_g).F_arg, v_i, "std/regexp.xo:2298:14")
+				x_ix311 := v_i
 				if !List_Mine((*v_g).F_arg) {
 					(*v_g).F_arg = List_Unshared((*v_g).F_arg)
 				}
-				List_PutM((*v_g).F_arg, x_ix314, v_val, "std/regexp.xo:2305:7")
+				List_PutM((*v_g).F_arg, x_ix311, v_val, "std/regexp.xo:2299:7")
 			}
 		}
 	}
@@ -4486,17 +4457,17 @@ func (v_g *Regexp_Prog) M_append_list(tk *Task, v_h1 int64, v_t1 int64, v_h2 int
 	var v_i int64 = (v_t1 >> int64(1))
 	_ = v_i
 	if (v_t1 & int64(1)) == int64(0) {
-		x_ix315 := v_i
+		x_ix312 := v_i
 		if !List_Mine((*v_g).F_out) {
 			(*v_g).F_out = List_Unshared((*v_g).F_out)
 		}
-		List_PutM((*v_g).F_out, x_ix315, v_h2, "std/regexp.xo:2320:5")
+		List_PutM((*v_g).F_out, x_ix312, v_h2, "std/regexp.xo:2314:5")
 	} else {
-		x_ix316 := v_i
+		x_ix313 := v_i
 		if !List_Mine((*v_g).F_arg) {
 			(*v_g).F_arg = List_Unshared((*v_g).F_arg)
 		}
-		List_PutM((*v_g).F_arg, x_ix316, v_h2, "std/regexp.xo:2322:5")
+		List_PutM((*v_g).F_arg, x_ix313, v_h2, "std/regexp.xo:2316:5")
 	}
 	return Tuple2[int64, int64]{F0: v_h1, F1: v_t2}
 }
@@ -4504,7 +4475,7 @@ func (v_g *Regexp_Prog) M_append_list(tk *Task, v_h1 int64, v_t1 int64, v_h2 int
 func (v_g *Regexp_Prog) M_nop(tk *Task) Regexp_Frag {
 	var v_f Regexp_Frag = (*v_g).M_inst(tk, Regexp_I_NOP)
 	_ = v_f
-	v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2329:12")
+	v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2323:12")
 	v_f.F_tail = v_f.F_head
 	return v_f
 }
@@ -4512,15 +4483,15 @@ func (v_g *Regexp_Prog) M_nop(tk *Task) Regexp_Frag {
 func (v_g *Regexp_Prog) M_cap(tk *Task, v_arg int64) Regexp_Frag {
 	var v_f Regexp_Frag = (*v_g).M_inst(tk, Regexp_I_CAPTURE)
 	_ = v_f
-	v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2336:12")
+	v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2330:12")
 	v_f.F_tail = v_f.F_head
-	x_ix317 := v_f.F_i
+	x_ix314 := v_f.F_i
 	if !List_Mine((*v_g).F_arg) {
 		(*v_g).F_arg = List_Unshared((*v_g).F_arg)
 	}
-	List_PutM((*v_g).F_arg, x_ix317, v_arg, "std/regexp.xo:2338:3")
-	if (*v_g).F_num_cap < AddIUp(v_arg, int64(1), "std/regexp.xo:2339:18") {
-		(*v_g).F_num_cap = AddIUp(v_arg, int64(1), "std/regexp.xo:2340:17")
+	List_PutM((*v_g).F_arg, x_ix314, v_arg, "std/regexp.xo:2332:3")
+	if (*v_g).F_num_cap < AddIUp(v_arg, int64(1), "std/regexp.xo:2333:18") {
+		(*v_g).F_num_cap = AddIUp(v_arg, int64(1), "std/regexp.xo:2334:17")
 	}
 	return v_f
 }
@@ -4542,21 +4513,21 @@ func (v_g *Regexp_Prog) M_alt(tk *Task, v_f1 Regexp_Frag, v_f2 Regexp_Frag) Rege
 	}
 	var v_f Regexp_Frag = (*v_g).M_inst(tk, Regexp_I_ALT)
 	_ = v_f
-	x_ix318 := v_f.F_i
+	x_ix315 := v_f.F_i
 	if !List_Mine((*v_g).F_out) {
 		(*v_g).F_out = List_Unshared((*v_g).F_out)
 	}
-	List_PutM((*v_g).F_out, x_ix318, v_f1.F_i, "std/regexp.xo:2361:3")
-	x_ix319 := v_f.F_i
+	List_PutM((*v_g).F_out, x_ix315, v_f1.F_i, "std/regexp.xo:2355:3")
+	x_ix316 := v_f.F_i
 	if !List_Mine((*v_g).F_arg) {
 		(*v_g).F_arg = List_Unshared((*v_g).F_arg)
 	}
-	List_PutM((*v_g).F_arg, x_ix319, v_f2.F_i, "std/regexp.xo:2362:3")
-	x_let320 := (*v_g).M_append_list(tk, v_f1.F_head, v_f1.F_tail, v_f2.F_head, v_f2.F_tail)
-	_ = x_let320
-	var v_h int64 = x_let320.F0
+	List_PutM((*v_g).F_arg, x_ix316, v_f2.F_i, "std/regexp.xo:2356:3")
+	x_let317 := (*v_g).M_append_list(tk, v_f1.F_head, v_f1.F_tail, v_f2.F_head, v_f2.F_tail)
+	_ = x_let317
+	var v_h int64 = x_let317.F0
 	_ = v_h
-	var v_t int64 = x_let320.F1
+	var v_t int64 = x_let317.F1
 	_ = v_t
 	v_f.F_head = v_h
 	v_f.F_tail = v_t
@@ -4568,26 +4539,26 @@ func (v_g *Regexp_Prog) M_quest(tk *Task, v_f1 Regexp_Frag, v_nongreedy bool) Re
 	var v_f Regexp_Frag = (*v_g).M_inst(tk, Regexp_I_ALT)
 	_ = v_f
 	if v_nongreedy {
-		x_ix321 := v_f.F_i
+		x_ix318 := v_f.F_i
 		if !List_Mine((*v_g).F_arg) {
 			(*v_g).F_arg = List_Unshared((*v_g).F_arg)
 		}
-		List_PutM((*v_g).F_arg, x_ix321, v_f1.F_i, "std/regexp.xo:2373:5")
-		v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2374:14")
+		List_PutM((*v_g).F_arg, x_ix318, v_f1.F_i, "std/regexp.xo:2367:5")
+		v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2368:14")
 	} else {
-		x_ix322 := v_f.F_i
+		x_ix319 := v_f.F_i
 		if !List_Mine((*v_g).F_out) {
 			(*v_g).F_out = List_Unshared((*v_g).F_out)
 		}
-		List_PutM((*v_g).F_out, x_ix322, v_f1.F_i, "std/regexp.xo:2376:5")
-		v_f.F_head = (Shl(v_f.F_i, int64(1), "std/regexp.xo:2377:15") | int64(1))
+		List_PutM((*v_g).F_out, x_ix319, v_f1.F_i, "std/regexp.xo:2370:5")
+		v_f.F_head = (Shl(v_f.F_i, int64(1), "std/regexp.xo:2371:15") | int64(1))
 	}
 	v_f.F_tail = v_f.F_head
-	x_let323 := (*v_g).M_append_list(tk, v_f.F_head, v_f.F_tail, v_f1.F_head, v_f1.F_tail)
-	_ = x_let323
-	var v_h int64 = x_let323.F0
+	x_let320 := (*v_g).M_append_list(tk, v_f.F_head, v_f.F_tail, v_f1.F_head, v_f1.F_tail)
+	_ = x_let320
+	var v_h int64 = x_let320.F0
 	_ = v_h
-	var v_t int64 = x_let323.F1
+	var v_t int64 = x_let320.F1
 	_ = v_t
 	v_f.F_head = v_h
 	v_f.F_tail = v_t
@@ -4598,19 +4569,19 @@ func (v_g *Regexp_Prog) M_loop_frag(tk *Task, v_f1 Regexp_Frag, v_nongreedy bool
 	var v_f Regexp_Frag = (*v_g).M_inst(tk, Regexp_I_ALT)
 	_ = v_f
 	if v_nongreedy {
-		x_ix324 := v_f.F_i
+		x_ix321 := v_f.F_i
 		if !List_Mine((*v_g).F_arg) {
 			(*v_g).F_arg = List_Unshared((*v_g).F_arg)
 		}
-		List_PutM((*v_g).F_arg, x_ix324, v_f1.F_i, "std/regexp.xo:2389:5")
-		v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2390:14")
+		List_PutM((*v_g).F_arg, x_ix321, v_f1.F_i, "std/regexp.xo:2383:5")
+		v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2384:14")
 	} else {
-		x_ix325 := v_f.F_i
+		x_ix322 := v_f.F_i
 		if !List_Mine((*v_g).F_out) {
 			(*v_g).F_out = List_Unshared((*v_g).F_out)
 		}
-		List_PutM((*v_g).F_out, x_ix325, v_f1.F_i, "std/regexp.xo:2392:5")
-		v_f.F_head = (Shl(v_f.F_i, int64(1), "std/regexp.xo:2393:15") | int64(1))
+		List_PutM((*v_g).F_out, x_ix322, v_f1.F_i, "std/regexp.xo:2386:5")
+		v_f.F_head = (Shl(v_f.F_i, int64(1), "std/regexp.xo:2387:15") | int64(1))
 	}
 	v_f.F_tail = v_f.F_head
 	(*v_g).M_patch(tk, v_f1.F_head, v_f.F_i)
@@ -4635,12 +4606,12 @@ func (v_g *Regexp_Prog) M_star(tk *Task, v_f1 Regexp_Frag, v_nongreedy bool) Reg
 func (v_g *Regexp_Prog) M_empty(tk *Task, v_op int64) Regexp_Frag {
 	var v_f Regexp_Frag = (*v_g).M_inst(tk, Regexp_I_EMPTY)
 	_ = v_f
-	x_ix326 := v_f.F_i
+	x_ix323 := v_f.F_i
 	if !List_Mine((*v_g).F_arg) {
 		(*v_g).F_arg = List_Unshared((*v_g).F_arg)
 	}
-	List_PutM((*v_g).F_arg, x_ix326, v_op, "std/regexp.xo:2416:3")
-	v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2417:12")
+	List_PutM((*v_g).F_arg, x_ix323, v_op, "std/regexp.xo:2410:3")
+	v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2411:12")
 	v_f.F_tail = v_f.F_head
 	return v_f
 }
@@ -4649,43 +4620,43 @@ func (v_g *Regexp_Prog) M_rune_frag(tk *Task, v_r List[int64], v_fold0 bool) Reg
 	var v_f Regexp_Frag = (*v_g).M_inst(tk, Regexp_I_RUNE)
 	_ = v_f
 	v_f.F_nullable = false
-	x_ix327 := v_f.F_i
+	x_ix324 := v_f.F_i
 	if !List_Mine((*v_g).F_rune) {
 		(*v_g).F_rune = List_Unshared((*v_g).F_rune)
 	}
-	List_PutM((*v_g).F_rune, x_ix327, List_Own(v_r), "std/regexp.xo:2425:3")
+	List_PutM((*v_g).F_rune, x_ix324, List_Own(v_r), "std/regexp.xo:2419:3")
 	var v_fold bool = v_fold0
 	_ = v_fold
-	if (List_len[int64](tk, v_r) != int64(1)) || (Regexp_simple_fold(tk, List_At(v_r, int64(0), "std/regexp.xo:2427:34")) == List_At(v_r, int64(0), "std/regexp.xo:2427:43")) {
+	if (List_len[int64](tk, v_r) != int64(1)) || (Regexp_simple_fold(tk, List_At(v_r, int64(0), "std/regexp.xo:2421:34")) == List_At(v_r, int64(0), "std/regexp.xo:2421:43")) {
 		v_fold = false
 	}
-	x_ix328 := v_f.F_i
+	x_ix325 := v_f.F_i
 	if !List_Mine((*v_g).F_fold) {
 		(*v_g).F_fold = List_Unshared((*v_g).F_fold)
 	}
-	List_PutM((*v_g).F_fold, x_ix328, v_fold, "std/regexp.xo:2430:3")
-	v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2431:12")
+	List_PutM((*v_g).F_fold, x_ix325, v_fold, "std/regexp.xo:2424:3")
+	v_f.F_head = Shl(v_f.F_i, int64(1), "std/regexp.xo:2425:12")
 	v_f.F_tail = v_f.F_head
-	if !(v_fold) && ((List_len[int64](tk, v_r) == int64(1)) || ((List_len[int64](tk, v_r) == int64(2)) && (List_At(v_r, int64(0), "std/regexp.xo:2433:49") == List_At(v_r, int64(1), "std/regexp.xo:2433:57")))) {
-		x_ix329 := v_f.F_i
+	if !(v_fold) && ((List_len[int64](tk, v_r) == int64(1)) || ((List_len[int64](tk, v_r) == int64(2)) && (List_At(v_r, int64(0), "std/regexp.xo:2427:49") == List_At(v_r, int64(1), "std/regexp.xo:2427:57")))) {
+		x_ix326 := v_f.F_i
 		if !List_Mine((*v_g).F_op) {
 			(*v_g).F_op = List_Unshared((*v_g).F_op)
 		}
-		List_PutM((*v_g).F_op, x_ix329, Regexp_I_RUNE1, "std/regexp.xo:2434:5")
+		List_PutM((*v_g).F_op, x_ix326, Regexp_I_RUNE1, "std/regexp.xo:2428:5")
 	} else {
-		if ((List_len[int64](tk, v_r) == int64(2)) && (List_At(v_r, int64(0), "std/regexp.xo:2435:29") == int64(0))) && (List_At(v_r, int64(1), "std/regexp.xo:2435:42") == Regexp_MAX_RUNE) {
-			x_ix330 := v_f.F_i
+		if ((List_len[int64](tk, v_r) == int64(2)) && (List_At(v_r, int64(0), "std/regexp.xo:2429:29") == int64(0))) && (List_At(v_r, int64(1), "std/regexp.xo:2429:42") == Regexp_MAX_RUNE) {
+			x_ix327 := v_f.F_i
 			if !List_Mine((*v_g).F_op) {
 				(*v_g).F_op = List_Unshared((*v_g).F_op)
 			}
-			List_PutM((*v_g).F_op, x_ix330, Regexp_I_ANY, "std/regexp.xo:2436:5")
+			List_PutM((*v_g).F_op, x_ix327, Regexp_I_ANY, "std/regexp.xo:2430:5")
 		} else {
-			if ((((List_len[int64](tk, v_r) == int64(4)) && (List_At(v_r, int64(0), "std/regexp.xo:2437:29") == int64(0))) && (List_At(v_r, int64(1), "std/regexp.xo:2437:42") == int64(9))) && (List_At(v_r, int64(2), "std/regexp.xo:2437:55") == int64(11))) && (List_At(v_r, int64(3), "std/regexp.xo:2437:69") == Regexp_MAX_RUNE) {
-				x_ix331 := v_f.F_i
+			if ((((List_len[int64](tk, v_r) == int64(4)) && (List_At(v_r, int64(0), "std/regexp.xo:2431:29") == int64(0))) && (List_At(v_r, int64(1), "std/regexp.xo:2431:42") == int64(9))) && (List_At(v_r, int64(2), "std/regexp.xo:2431:55") == int64(11))) && (List_At(v_r, int64(3), "std/regexp.xo:2431:69") == Regexp_MAX_RUNE) {
+				x_ix328 := v_f.F_i
 				if !List_Mine((*v_g).F_op) {
 					(*v_g).F_op = List_Unshared((*v_g).F_op)
 				}
-				List_PutM((*v_g).F_op, x_ix331, Regexp_I_ANY_NOT_NL, "std/regexp.xo:2438:5")
+				List_PutM((*v_g).F_op, x_ix328, Regexp_I_ANY_NOT_NL, "std/regexp.xo:2432:5")
 			}
 		}
 	}
@@ -4693,9 +4664,9 @@ func (v_g *Regexp_Prog) M_rune_frag(tk *Task, v_r List[int64], v_fold0 bool) Reg
 }
 
 func (v_g *Regexp_Prog) M_compile(tk *Task, v_p Regexp_Parser, v_re int64) Regexp_Frag {
-	var v_op int64 = List_At(v_p.F_ops, v_re, "std/regexp.xo:2444:12")
+	var v_op int64 = List_At(v_p.F_ops, v_re, "std/regexp.xo:2438:12")
 	_ = v_op
-	var v_flags int64 = List_At(v_p.F_nflags, v_re, "std/regexp.xo:2445:15")
+	var v_flags int64 = List_At(v_p.F_nflags, v_re, "std/regexp.xo:2439:15")
 	_ = v_flags
 	if v_op == Regexp_OP_NO_MATCH {
 		return Regexp_fail_frag(tk)
@@ -4704,7 +4675,7 @@ func (v_g *Regexp_Prog) M_compile(tk *Task, v_p Regexp_Parser, v_re int64) Regex
 		return (*v_g).M_nop(tk)
 	}
 	if v_op == Regexp_OP_LITERAL {
-		var v_rs List[int64] = List_Own(List_At(v_p.F_runes, v_re, "std/regexp.xo:2453:14"))
+		var v_rs List[int64] = List_Own(List_At(v_p.F_runes, v_re, "std/regexp.xo:2447:14"))
 		_ = v_rs
 		if List_is_empty[int64](tk, v_rs) {
 			return (*v_g).M_nop(tk)
@@ -4731,7 +4702,7 @@ func (v_g *Regexp_Prog) M_compile(tk *Task, v_p Regexp_Parser, v_re int64) Regex
 		return v_f
 	}
 	if v_op == Regexp_OP_CHAR_CLASS {
-		return (*v_g).M_rune_frag(tk, List_Own(List_At(v_p.F_runes, v_re, "std/regexp.xo:2471:24")), ((v_flags & Regexp_FOLD_CASE) != int64(0)))
+		return (*v_g).M_rune_frag(tk, List_Own(List_At(v_p.F_runes, v_re, "std/regexp.xo:2465:24")), ((v_flags & Regexp_FOLD_CASE) != int64(0)))
 	}
 	if v_op == Regexp_OP_ANY_CHAR_NOT_NL {
 		return (*v_g).M_rune_frag(tk, ListOf[int64](int64(0), int64(9), int64(11), Regexp_MAX_RUNE), false)
@@ -4760,35 +4731,35 @@ func (v_g *Regexp_Prog) M_compile(tk *Task, v_p Regexp_Parser, v_re int64) Regex
 	var v_ng bool = ((v_flags & Regexp_NON_GREEDY) != int64(0))
 	_ = v_ng
 	if v_op == Regexp_OP_CAPTURE {
-		var v_c int64 = List_At(v_p.F_caps, v_re, "std/regexp.xo:2499:13")
+		var v_c int64 = List_At(v_p.F_caps, v_re, "std/regexp.xo:2493:13")
 		_ = v_c
-		var v_bra Regexp_Frag = (*v_g).M_cap(tk, Shl(v_c, int64(1), "std/regexp.xo:2500:21"))
+		var v_bra Regexp_Frag = (*v_g).M_cap(tk, Shl(v_c, int64(1), "std/regexp.xo:2494:21"))
 		_ = v_bra
-		var v_sub Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), List_At(List_At(v_p.F_subs, v_re, "std/regexp.xo:2501:28"), int64(0), "std/regexp.xo:2501:28"))
+		var v_sub Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), List_At(List_At(v_p.F_subs, v_re, "std/regexp.xo:2495:28"), int64(0), "std/regexp.xo:2495:28"))
 		_ = v_sub
-		var v_ket Regexp_Frag = (*v_g).M_cap(tk, (Shl(v_c, int64(1), "std/regexp.xo:2502:22") | int64(1)))
+		var v_ket Regexp_Frag = (*v_g).M_cap(tk, (Shl(v_c, int64(1), "std/regexp.xo:2496:22") | int64(1)))
 		_ = v_ket
 		var v_bs Regexp_Frag = (*v_g).M_cat(tk, v_bra, v_sub)
 		_ = v_bs
 		return (*v_g).M_cat(tk, v_bs, v_ket)
 	}
 	if v_op == Regexp_OP_STAR {
-		var v_sub_1 Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), List_At(List_At(v_p.F_subs, v_re, "std/regexp.xo:2507:28"), int64(0), "std/regexp.xo:2507:28"))
+		var v_sub_1 Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), List_At(List_At(v_p.F_subs, v_re, "std/regexp.xo:2501:28"), int64(0), "std/regexp.xo:2501:28"))
 		_ = v_sub_1
 		return (*v_g).M_star(tk, v_sub_1, v_ng)
 	}
 	if v_op == Regexp_OP_PLUS {
-		var v_sub_2 Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), List_At(List_At(v_p.F_subs, v_re, "std/regexp.xo:2511:28"), int64(0), "std/regexp.xo:2511:28"))
+		var v_sub_2 Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), List_At(List_At(v_p.F_subs, v_re, "std/regexp.xo:2505:28"), int64(0), "std/regexp.xo:2505:28"))
 		_ = v_sub_2
 		return (*v_g).M_plus(tk, v_sub_2, v_ng)
 	}
 	if v_op == Regexp_OP_QUEST {
-		var v_sub_3 Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), List_At(List_At(v_p.F_subs, v_re, "std/regexp.xo:2515:28"), int64(0), "std/regexp.xo:2515:28"))
+		var v_sub_3 Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), List_At(List_At(v_p.F_subs, v_re, "std/regexp.xo:2509:28"), int64(0), "std/regexp.xo:2509:28"))
 		_ = v_sub_3
 		return (*v_g).M_quest(tk, v_sub_3, v_ng)
 	}
 	if v_op == Regexp_OP_CONCAT {
-		var v_subs List[int64] = List_Own(List_At(v_p.F_subs, v_re, "std/regexp.xo:2519:16"))
+		var v_subs List[int64] = List_Own(List_At(v_p.F_subs, v_re, "std/regexp.xo:2513:16"))
 		_ = v_subs
 		if List_is_empty[int64](tk, v_subs) {
 			return (*v_g).M_nop(tk)
@@ -4816,11 +4787,11 @@ func (v_g *Regexp_Prog) M_compile(tk *Task, v_p Regexp_Parser, v_re int64) Regex
 	}
 	var v_f_2 Regexp_Frag = Regexp_fail_frag(tk)
 	_ = v_f_2
-	x_it334 := List_At(v_p.F_subs, v_re, "std/regexp.xo:2538:14")
-	for _, x_e336 := range List_Items(x_it334) {
-		x_el337 := x_e336
-		_ = x_el337
-		var v_sub_4 int64 = x_el337
+	x_it331 := List_At(v_p.F_subs, v_re, "std/regexp.xo:2532:14")
+	for _, x_e333 := range List_Items(x_it331) {
+		x_el334 := x_e333
+		_ = x_el334
+		var v_sub_4 int64 = x_el334
 		_ = v_sub_4
 		{
 			var v_f1_2 Regexp_Frag = (*v_g).M_compile(tk, func(v Regexp_Parser) Regexp_Parser { v.XoMark(); return v }(v_p), v_sub_4)
@@ -4833,11 +4804,11 @@ func (v_g *Regexp_Prog) M_compile(tk *Task, v_p Regexp_Parser, v_re int64) Regex
 
 func Regexp_ascii_set(tk *Task, v_a *List[int64], v_b int64, v_r int64) {
 	if (v_r >= int64(0)) && (v_r < int64(128)) {
-		x_ix338 := AddS(v_b, (v_r >> int64(5)), "std/regexp.xo:2548:7")
+		x_ix335 := AddS(v_b, (v_r >> int64(5)), "std/regexp.xo:2542:7")
 		if !List_Mine((*v_a)) {
 			(*v_a) = List_Unshared((*v_a))
 		}
-		List_PutM((*v_a), x_ix338, (List_At((*v_a), AddS(v_b, (v_r>>int64(5)), "std/regexp.xo:2548:25"), "std/regexp.xo:2548:23") | Shl(int64(1), (v_r&int64(31)), "std/regexp.xo:2548:42")), "std/regexp.xo:2548:5")
+		List_PutM((*v_a), x_ix335, (List_At((*v_a), AddS(v_b, (v_r>>int64(5)), "std/regexp.xo:2542:25"), "std/regexp.xo:2542:23") | Shl(int64(1), (v_r&int64(31)), "std/regexp.xo:2542:42")), "std/regexp.xo:2542:5")
 		return
 	}
 	{
@@ -4855,20 +4826,20 @@ func Regexp_ascii_range(tk *Task, v_a *List[int64], v_b int64, v_lo int64, v_hi 
 		{
 			var v_w int64 = (v_l >> int64(5))
 			_ = v_w
-			var x_v340 int64
-			if v_hi < AddIUp(MulKI(int64(32), v_w, -288230376151711744, 288230376151711743, "std/regexp.xo:2559:23"), int64(31), "std/regexp.xo:2559:23") {
-				x_v340 = v_hi
+			var x_v337 int64
+			if v_hi < AddIUp(MulKI(int64(32), v_w, -288230376151711744, 288230376151711743, "std/regexp.xo:2553:23"), int64(31), "std/regexp.xo:2553:23") {
+				x_v337 = v_hi
 			} else {
-				x_v340 = AddIUp(MulKI(int64(32), v_w, -288230376151711744, 288230376151711743, "std/regexp.xo:2559:49"), int64(31), "std/regexp.xo:2559:49")
+				x_v337 = AddIUp(MulKI(int64(32), v_w, -288230376151711744, 288230376151711743, "std/regexp.xo:2553:49"), int64(31), "std/regexp.xo:2553:49")
 			}
-			var v_end int64 = x_v340
+			var v_end int64 = x_v337
 			_ = v_end
-			x_ix341 := AddS(v_b, v_w, "std/regexp.xo:2560:7")
+			x_ix338 := AddS(v_b, v_w, "std/regexp.xo:2554:7")
 			if !List_Mine((*v_a)) {
 				(*v_a) = List_Unshared((*v_a))
 			}
-			List_PutM((*v_a), x_ix341, (List_At((*v_a), AddS(v_b, v_w, "std/regexp.xo:2560:18"), "std/regexp.xo:2560:16") | Shl(SubIDown(Shl(int64(1), AddIUp(SubS(v_end, v_l, "std/regexp.xo:2560:36"), int64(1), "std/regexp.xo:2560:36"), "std/regexp.xo:2560:30"), int64(1), "std/regexp.xo:2560:29"), (v_l&int64(31)), "std/regexp.xo:2560:28")), "std/regexp.xo:2560:5")
-			v_l = AddIUp(v_end, int64(1), "std/regexp.xo:2561:9")
+			List_PutM((*v_a), x_ix338, (List_At((*v_a), AddS(v_b, v_w, "std/regexp.xo:2554:18"), "std/regexp.xo:2554:16") | Shl(SubIDown(Shl(int64(1), AddIUp(SubS(v_end, v_l, "std/regexp.xo:2554:36"), int64(1), "std/regexp.xo:2554:36"), "std/regexp.xo:2554:30"), int64(1), "std/regexp.xo:2554:29"), (v_l&int64(31)), "std/regexp.xo:2554:28")), "std/regexp.xo:2554:5")
+			v_l = AddIUp(v_end, int64(1), "std/regexp.xo:2555:9")
 		}
 	}
 	return
@@ -4886,19 +4857,19 @@ func (v_g *Regexp_Prog) M_ascii_bytes(tk *Task) {
 			break
 		}
 		{
-			var v_op int64 = List_At((*v_g).F_op, v_pc, "std/regexp.xo:2571:14")
+			var v_op int64 = List_At((*v_g).F_op, v_pc, "std/regexp.xo:2565:14")
 			_ = v_op
 			if (((v_op == Regexp_I_RUNE) || (v_op == Regexp_I_RUNE1)) || (v_op == Regexp_I_ANY)) || (v_op == Regexp_I_ANY_NOT_NL) {
 				var v_b int64 = (v_pc * int64(4))
 				_ = v_b
 				if v_op == Regexp_I_RUNE {
-					var v_rs List[int64] = List_Own(List_At((*v_g).F_rune, v_pc, "std/regexp.xo:2575:18"))
+					var v_rs List[int64] = List_Own(List_At((*v_g).F_rune, v_pc, "std/regexp.xo:2569:18"))
 					_ = v_rs
 					if List_len[int64](tk, v_rs) == int64(1) {
-						var v_r0 int64 = List_At(v_rs, int64(0), "std/regexp.xo:2577:20")
+						var v_r0 int64 = List_At(v_rs, int64(0), "std/regexp.xo:2571:20")
 						_ = v_r0
 						Regexp_ascii_set(tk, &v_a, v_b, v_r0)
-						if List_At((*v_g).F_fold, v_pc, "std/regexp.xo:2579:14") {
+						if List_At((*v_g).F_fold, v_pc, "std/regexp.xo:2573:14") {
 							var v_r1 int64 = Regexp_simple_fold(tk, v_r0)
 							_ = v_r1
 							for {
@@ -4919,30 +4890,30 @@ func (v_g *Regexp_Prog) M_ascii_bytes(tk *Task) {
 								break
 							}
 							{
-								x_a346 := v_b
-								x_a347 := List_AtU(v_rs, v_i)
-								var x_v345 int64
-								if List_At(v_rs, (v_i+int64(1)), "std/regexp.xo:2589:41") < int64(127) {
-									x_v345 = List_At(v_rs, (v_i + int64(1)), "std/regexp.xo:2589:59")
+								x_a343 := v_b
+								x_a344 := List_AtU(v_rs, v_i)
+								var x_v342 int64
+								if List_At(v_rs, (v_i+int64(1)), "std/regexp.xo:2583:41") < int64(127) {
+									x_v342 = List_At(v_rs, (v_i + int64(1)), "std/regexp.xo:2583:59")
 								} else {
-									x_v345 = int64(127)
+									x_v342 = int64(127)
 								}
-								Regexp_ascii_range(tk, &v_a, x_a346, x_a347, x_v345)
+								Regexp_ascii_range(tk, &v_a, x_a343, x_a344, x_v342)
 								v_i = (v_i + int64(2))
 							}
 						}
 					}
 				} else {
 					if v_op == Regexp_I_RUNE1 {
-						Regexp_ascii_set(tk, &v_a, v_b, List_At(List_At((*v_g).F_rune, v_pc, "std/regexp.xo:2594:25"), int64(0), "std/regexp.xo:2594:25"))
+						Regexp_ascii_set(tk, &v_a, v_b, List_At(List_At((*v_g).F_rune, v_pc, "std/regexp.xo:2588:25"), int64(0), "std/regexp.xo:2588:25"))
 					} else {
 						Regexp_ascii_range(tk, &v_a, v_b, int64(0), int64(127))
 						if v_op == Regexp_I_ANY_NOT_NL {
-							x_ix348 := v_b
+							x_ix345 := v_b
 							if !List_Mine(v_a) {
 								v_a = List_Unshared(v_a)
 							}
-							List_PutM(v_a, x_ix348, (List_At(v_a, v_b, "std/regexp.xo:2598:18") & (int64(4294967295) ^ Shl(int64(1), int64(10), "std/regexp.xo:2598:40"))), "std/regexp.xo:2598:11")
+							List_PutM(v_a, x_ix345, (List_At(v_a, v_b, "std/regexp.xo:2592:18") & (int64(4294967295) ^ Shl(int64(1), int64(10), "std/regexp.xo:2592:40"))), "std/regexp.xo:2592:11")
 						}
 					}
 				}
@@ -4961,53 +4932,53 @@ func (v_g *Regexp_Prog) M_first_bytes(tk *Task) {
 	_ = v_stack
 	var v_first List[int64] = List_Own(Regexp_zeros(tk, int64(4)))
 	_ = v_first
-x_L349:
+x_L346:
 	for {
 		if !(List_len[int64](tk, v_stack) > int64(0)) {
 			break
 		}
 		{
-			x_t350 := List_pop[int64](tk, &v_stack)
-			var x_c351 int64
-			if x_t350.Some {
-				x_c351 = x_t350.V
+			x_t347 := List_pop[int64](tk, &v_stack)
+			var x_c348 int64
+			if x_t347.Some {
+				x_c348 = x_t347.V
 			} else {
-				x_c351 = int64(0)
+				x_c348 = int64(0)
 			}
-			var v_pc int64 = x_c351
+			var v_pc int64 = x_c348
 			_ = v_pc
-			if (v_pc == int64(0)) || (List_At(v_seen, v_pc, "std/regexp.xo:2616:19") != int64(0)) {
-				continue x_L349
+			if (v_pc == int64(0)) || (List_At(v_seen, v_pc, "std/regexp.xo:2610:19") != int64(0)) {
+				continue x_L346
 			}
-			x_ix352 := v_pc
+			x_ix349 := v_pc
 			if !List_Mine(v_seen) {
 				v_seen = List_Unshared(v_seen)
 			}
-			List_PutM(v_seen, x_ix352, int64(1), "std/regexp.xo:2619:5")
-			var v_op int64 = List_At((*v_g).F_op, v_pc, "std/regexp.xo:2620:14")
+			List_PutM(v_seen, x_ix349, int64(1), "std/regexp.xo:2613:5")
+			var v_op int64 = List_At((*v_g).F_op, v_pc, "std/regexp.xo:2614:14")
 			_ = v_op
 			if v_op == Regexp_I_ALT {
-				x_pv353 := List_At((*v_g).F_out, v_pc, "std/regexp.xo:2622:18")
+				x_pv350 := List_At((*v_g).F_out, v_pc, "std/regexp.xo:2616:18")
 				if List_CanPush(v_stack) {
-					v_stack = List_PushFast(v_stack, x_pv353)
+					v_stack = List_PushFast(v_stack, x_pv350)
 				} else {
-					v_stack = List_PushSlow(v_stack, x_pv353)
+					v_stack = List_PushSlow(v_stack, x_pv350)
 				}
 				_ = Unit{}
-				x_pv354 := List_At((*v_g).F_arg, v_pc, "std/regexp.xo:2623:18")
+				x_pv351 := List_At((*v_g).F_arg, v_pc, "std/regexp.xo:2617:18")
 				if List_CanPush(v_stack) {
-					v_stack = List_PushFast(v_stack, x_pv354)
+					v_stack = List_PushFast(v_stack, x_pv351)
 				} else {
-					v_stack = List_PushSlow(v_stack, x_pv354)
+					v_stack = List_PushSlow(v_stack, x_pv351)
 				}
 				_ = Unit{}
 			} else {
 				if ((v_op == Regexp_I_NOP) || (v_op == Regexp_I_CAPTURE)) || (v_op == Regexp_I_EMPTY) {
-					x_pv355 := List_At((*v_g).F_out, v_pc, "std/regexp.xo:2625:18")
+					x_pv352 := List_At((*v_g).F_out, v_pc, "std/regexp.xo:2619:18")
 					if List_CanPush(v_stack) {
-						v_stack = List_PushFast(v_stack, x_pv355)
+						v_stack = List_PushFast(v_stack, x_pv352)
 					} else {
-						v_stack = List_PushSlow(v_stack, x_pv355)
+						v_stack = List_PushSlow(v_stack, x_pv352)
 					}
 					_ = Unit{}
 				} else {
@@ -5022,11 +4993,11 @@ x_L349:
 									break
 								}
 								{
-									x_ix357 := v_w
+									x_ix354 := v_w
 									if !List_Mine(v_first) {
 										v_first = List_Unshared(v_first)
 									}
-									List_PutM(v_first, x_ix357, (List_At(v_first, v_w, "std/regexp.xo:2631:20") | List_At((*v_g).F_ascii, AddS(MulIK(v_pc, int64(4), -2305843009213693952, 2305843009213693951, "std/regexp.xo:2631:39"), v_w, "std/regexp.xo:2631:39"), "std/regexp.xo:2631:31")), "std/regexp.xo:2631:9")
+									List_PutM(v_first, x_ix354, (List_At(v_first, v_w, "std/regexp.xo:2625:20") | List_At((*v_g).F_ascii, AddS(MulIK(v_pc, int64(4), -2305843009213693952, 2305843009213693951, "std/regexp.xo:2625:39"), v_w, "std/regexp.xo:2625:39"), "std/regexp.xo:2625:31")), "std/regexp.xo:2625:9")
 									v_w = (v_w + int64(1))
 								}
 							}
@@ -5053,12 +5024,12 @@ func Regexp_next_start(tk *Task, v_g Regexp_Prog, v_s string, v_pos0 int64) int6
 			break
 		}
 		{
-			var v_c int64 = int64(BytesAt(v_b, v_pos, "std/regexp.xo:2647:17"))
+			var v_c int64 = int64(BytesAt(v_b, v_pos, "std/regexp.xo:2641:17"))
 			_ = v_c
 			if v_c >= int64(128) {
 				return v_pos
 			}
-			if ((List_At(v_g.F_first, (v_c>>int64(5)), "std/regexp.xo:2651:10") >> (v_c & int64(31))) & int64(1)) != int64(0) {
+			if ((List_At(v_g.F_first, (v_c>>int64(5)), "std/regexp.xo:2645:10") >> (v_c & int64(31))) & int64(1)) != int64(0) {
 				return v_pos
 			}
 			v_pos = (v_pos + int64(1))
@@ -5110,7 +5081,7 @@ func Regexp_step_at(tk *Task, v_s string, v_pos int64) int64 {
 	if v_pos >= Bytes_len(tk, v_b) {
 		return int64(-8)
 	}
-	var v_c int64 = int64(BytesAt(v_b, v_pos, "std/regexp.xo:2692:15"))
+	var v_c int64 = int64(BytesAt(v_b, v_pos, "std/regexp.xo:2686:15"))
 	_ = v_c
 	if v_c < int64(128) {
 		return ((v_c * int64(8)) + int64(1))
@@ -5205,7 +5176,7 @@ func (v *Regexp_Queue) XoMark() {
 }
 
 func Regexp_new_queue(tk *Task, v_n int64, v_ncap int64) Regexp_Queue {
-	return Regexp_Queue{F_pcs: List_Own(Regexp_zeros(tk, v_n)), F_has: List_Own(Regexp_zeros(tk, v_n)), F_caps: List_Own(Regexp_zeros(tk, MulS(v_n, v_ncap, "std/regexp.xo:2727:51"))), F_sparse: List_Own(Regexp_zeros(tk, v_n)), F_len: int64(0), F_ncap: v_ncap}
+	return Regexp_Queue{F_pcs: List_Own(Regexp_zeros(tk, v_n)), F_has: List_Own(Regexp_zeros(tk, v_n)), F_caps: List_Own(Regexp_zeros(tk, MulS(v_n, v_ncap, "std/regexp.xo:2721:51"))), F_sparse: List_Own(Regexp_zeros(tk, v_n)), F_len: int64(0), F_ncap: v_ncap}
 }
 
 func (v_q *Regexp_Queue) M_clear(tk *Task) {
@@ -5214,21 +5185,21 @@ func (v_q *Regexp_Queue) M_clear(tk *Task) {
 }
 
 func (v_q *Regexp_Queue) M_contains(tk *Task, v_pc int64) bool {
-	var v_j int64 = List_At((*v_q).F_sparse, v_pc, "std/regexp.xo:2735:11")
+	var v_j int64 = List_At((*v_q).F_sparse, v_pc, "std/regexp.xo:2729:11")
 	_ = v_j
-	return ((v_j < (*v_q).F_len) && (List_At((*v_q).F_pcs, v_j, "std/regexp.xo:2736:16") == v_pc))
+	return ((v_j < (*v_q).F_len) && (List_At((*v_q).F_pcs, v_j, "std/regexp.xo:2730:16") == v_pc))
 }
 
 func Regexp_rune_matches(tk *Task, v_g Regexp_Prog, v_pc int64, v_r int64) bool {
-	var v_rs List[int64] = List_Own(List_At(v_g.F_rune, v_pc, "std/regexp.xo:2740:12"))
+	var v_rs List[int64] = List_Own(List_At(v_g.F_rune, v_pc, "std/regexp.xo:2734:12"))
 	_ = v_rs
 	if List_len[int64](tk, v_rs) == int64(1) {
-		var v_r0 int64 = List_At(v_rs, int64(0), "std/regexp.xo:2742:14")
+		var v_r0 int64 = List_At(v_rs, int64(0), "std/regexp.xo:2736:14")
 		_ = v_r0
 		if v_r == v_r0 {
 			return true
 		}
-		if List_At(v_g.F_fold, v_pc, "std/regexp.xo:2746:8") {
+		if List_At(v_g.F_fold, v_pc, "std/regexp.xo:2740:8") {
 			var v_r1 int64 = Regexp_simple_fold(tk, v_r0)
 			_ = v_r1
 			for {
@@ -5251,7 +5222,7 @@ func Regexp_rune_matches(tk *Task, v_g Regexp_Prog, v_pc int64, v_r int64) bool 
 func Regexp_add(tk *Task, v_g Regexp_Prog, v_q *Regexp_Queue, v_pc0 int64, v_pos int64, v_cap *List[int64], v_cb int64, v_cond int64) {
 	var v_pc int64 = v_pc0
 	_ = v_pc
-x_L360:
+x_L357:
 	for {
 		if !(true) {
 			break
@@ -5260,74 +5231,74 @@ x_L360:
 			if v_pc == int64(0) {
 				return
 			}
-			var v_sj int64 = List_At((*v_q).F_sparse, v_pc, "std/regexp.xo:2769:14")
+			var v_sj int64 = List_At((*v_q).F_sparse, v_pc, "std/regexp.xo:2763:14")
 			_ = v_sj
 			var v_n int64 = (*v_q).F_len
 			_ = v_n
-			if (v_sj < v_n) && (List_At((*v_q).F_pcs, v_sj, "std/regexp.xo:2771:18") == v_pc) {
+			if (v_sj < v_n) && (List_At((*v_q).F_pcs, v_sj, "std/regexp.xo:2765:18") == v_pc) {
 				return
 			}
-			x_ix361 := v_pc
+			x_ix358 := v_pc
 			if !List_Mine((*v_q).F_sparse) {
 				(*v_q).F_sparse = List_Unshared((*v_q).F_sparse)
 			}
-			List_PutM((*v_q).F_sparse, x_ix361, v_n, "std/regexp.xo:2774:5")
-			x_ix362 := v_n
+			List_PutM((*v_q).F_sparse, x_ix358, v_n, "std/regexp.xo:2768:5")
+			x_ix359 := v_n
 			if !List_Mine((*v_q).F_pcs) {
 				(*v_q).F_pcs = List_Unshared((*v_q).F_pcs)
 			}
-			List_PutM((*v_q).F_pcs, x_ix362, v_pc, "std/regexp.xo:2775:5")
-			x_ix363 := v_n
+			List_PutM((*v_q).F_pcs, x_ix359, v_pc, "std/regexp.xo:2769:5")
+			x_ix360 := v_n
 			if !List_Mine((*v_q).F_has) {
 				(*v_q).F_has = List_Unshared((*v_q).F_has)
 			}
-			List_PutM((*v_q).F_has, x_ix363, int64(0), "std/regexp.xo:2776:5")
-			(*v_q).F_len = AddIUp(v_n, int64(1), "std/regexp.xo:2777:13")
-			var v_op int64 = List_At(v_g.F_op, v_pc, "std/regexp.xo:2778:14")
+			List_PutM((*v_q).F_has, x_ix360, int64(0), "std/regexp.xo:2770:5")
+			(*v_q).F_len = AddIUp(v_n, int64(1), "std/regexp.xo:2771:13")
+			var v_op int64 = List_At(v_g.F_op, v_pc, "std/regexp.xo:2772:14")
 			_ = v_op
 			if v_op == Regexp_I_FAIL {
 				return
 			}
 			if v_op == Regexp_I_ALT {
-				var v_o int64 = List_At(v_g.F_out, v_pc, "std/regexp.xo:2783:15")
+				var v_o int64 = List_At(v_g.F_out, v_pc, "std/regexp.xo:2777:15")
 				_ = v_o
 				var v_on int64 = (*v_q).F_len
 				_ = v_on
-				var v_osj int64 = List_At((*v_q).F_sparse, v_o, "std/regexp.xo:2785:17")
+				var v_osj int64 = List_At((*v_q).F_sparse, v_o, "std/regexp.xo:2779:17")
 				_ = v_osj
-				var v_oop int64 = List_At(v_g.F_op, v_o, "std/regexp.xo:2786:17")
+				var v_oop int64 = List_At(v_g.F_op, v_o, "std/regexp.xo:2780:17")
 				_ = v_oop
-				if ((v_o != int64(0)) && (v_oop >= Regexp_I_RUNE)) && !((v_osj < v_on) && (List_At((*v_q).F_pcs, v_osj, "std/regexp.xo:2787:51") == v_o)) {
-					x_ix364 := v_o
+				if ((v_o != int64(0)) && (v_oop >= Regexp_I_RUNE)) && !((v_osj < v_on) && (List_At((*v_q).F_pcs, v_osj, "std/regexp.xo:2781:51") == v_o)) {
+					x_ix361 := v_o
 					if !List_Mine((*v_q).F_sparse) {
 						(*v_q).F_sparse = List_Unshared((*v_q).F_sparse)
 					}
-					List_PutM((*v_q).F_sparse, x_ix364, v_on, "std/regexp.xo:2789:9")
-					x_ix365 := v_on
+					List_PutM((*v_q).F_sparse, x_ix361, v_on, "std/regexp.xo:2783:9")
+					x_ix362 := v_on
 					if !List_Mine((*v_q).F_pcs) {
 						(*v_q).F_pcs = List_Unshared((*v_q).F_pcs)
 					}
-					List_PutM((*v_q).F_pcs, x_ix365, v_o, "std/regexp.xo:2790:9")
-					x_ix366 := v_on
+					List_PutM((*v_q).F_pcs, x_ix362, v_o, "std/regexp.xo:2784:9")
+					x_ix363 := v_on
 					if !List_Mine((*v_q).F_has) {
 						(*v_q).F_has = List_Unshared((*v_q).F_has)
 					}
-					List_PutM((*v_q).F_has, x_ix366, int64(1), "std/regexp.xo:2791:9")
-					(*v_q).F_len = AddIUp(v_on, int64(1), "std/regexp.xo:2792:17")
+					List_PutM((*v_q).F_has, x_ix363, int64(1), "std/regexp.xo:2785:9")
+					(*v_q).F_len = AddIUp(v_on, int64(1), "std/regexp.xo:2786:17")
 					var v_nc int64 = (*v_q).F_ncap
 					_ = v_nc
-					var v_base int64 = MulS(v_on, v_nc, "std/regexp.xo:2794:20")
+					var v_base int64 = MulS(v_on, v_nc, "std/regexp.xo:2788:20")
 					_ = v_base
-					x_ix367 := v_base
+					x_ix364 := v_base
 					if !List_Mine((*v_q).F_caps) {
 						(*v_q).F_caps = List_Unshared((*v_q).F_caps)
 					}
-					List_PutM((*v_q).F_caps, x_ix367, List_At((*v_cap), v_cb, "std/regexp.xo:2795:24"), "std/regexp.xo:2795:9")
-					x_ix368 := AddIUp(v_base, int64(1), "std/regexp.xo:2796:16")
+					List_PutM((*v_q).F_caps, x_ix364, List_At((*v_cap), v_cb, "std/regexp.xo:2789:24"), "std/regexp.xo:2789:9")
+					x_ix365 := AddIUp(v_base, int64(1), "std/regexp.xo:2790:16")
 					if !List_Mine((*v_q).F_caps) {
 						(*v_q).F_caps = List_Unshared((*v_q).F_caps)
 					}
-					List_PutM((*v_q).F_caps, x_ix368, List_At((*v_cap), AddIUp(v_cb, int64(1), "std/regexp.xo:2796:32"), "std/regexp.xo:2796:28"), "std/regexp.xo:2796:9")
+					List_PutM((*v_q).F_caps, x_ix365, List_At((*v_cap), AddIUp(v_cb, int64(1), "std/regexp.xo:2790:32"), "std/regexp.xo:2790:28"), "std/regexp.xo:2790:9")
 					var v_i int64 = int64(2)
 					_ = v_i
 					for {
@@ -5335,74 +5306,74 @@ x_L360:
 							break
 						}
 						{
-							x_ix370 := AddS(v_base, v_i, "std/regexp.xo:2799:18")
+							x_ix367 := AddS(v_base, v_i, "std/regexp.xo:2793:18")
 							if !List_Mine((*v_q).F_caps) {
 								(*v_q).F_caps = List_Unshared((*v_q).F_caps)
 							}
-							List_PutM((*v_q).F_caps, x_ix370, List_At((*v_cap), AddS(v_cb, v_i, "std/regexp.xo:2799:34"), "std/regexp.xo:2799:30"), "std/regexp.xo:2799:11")
+							List_PutM((*v_q).F_caps, x_ix367, List_At((*v_cap), AddS(v_cb, v_i, "std/regexp.xo:2793:34"), "std/regexp.xo:2793:30"), "std/regexp.xo:2793:11")
 							v_i = (v_i + int64(1))
 						}
 					}
 				} else {
 					Regexp_add(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &(*v_q), v_o, v_pos, &(*v_cap), v_cb, v_cond)
 				}
-				v_pc = List_At(v_g.F_arg, v_pc, "std/regexp.xo:2805:12")
-				continue x_L360
+				v_pc = List_At(v_g.F_arg, v_pc, "std/regexp.xo:2799:12")
+				continue x_L357
 			}
 			if v_op == Regexp_I_EMPTY {
-				if (List_At(v_g.F_arg, v_pc, "std/regexp.xo:2809:11") & ((int64(0) - int64(1)) - v_cond)) == int64(0) {
-					v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2810:14")
-					continue x_L360
+				if (List_At(v_g.F_arg, v_pc, "std/regexp.xo:2803:11") & ((int64(0) - int64(1)) - v_cond)) == int64(0) {
+					v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2804:14")
+					continue x_L357
 				}
 				return
 			}
 			if v_op == Regexp_I_NOP {
-				v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2816:12")
-				continue x_L360
+				v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2810:12")
+				continue x_L357
 			}
 			if v_op == Regexp_I_CAPTURE {
-				var v_a int64 = List_At(v_g.F_arg, v_pc, "std/regexp.xo:2820:15")
+				var v_a int64 = List_At(v_g.F_arg, v_pc, "std/regexp.xo:2814:15")
 				_ = v_a
 				if v_a < (*v_q).F_ncap {
-					var v_old int64 = List_At((*v_cap), AddS(v_cb, v_a, "std/regexp.xo:2822:23"), "std/regexp.xo:2822:19")
+					var v_old int64 = List_At((*v_cap), AddS(v_cb, v_a, "std/regexp.xo:2816:23"), "std/regexp.xo:2816:19")
 					_ = v_old
-					x_ix371 := AddS(v_cb, v_a, "std/regexp.xo:2823:13")
+					x_ix368 := AddS(v_cb, v_a, "std/regexp.xo:2817:13")
 					if !List_Mine((*v_cap)) {
 						(*v_cap) = List_Unshared((*v_cap))
 					}
-					List_PutM((*v_cap), x_ix371, v_pos, "std/regexp.xo:2823:9")
-					Regexp_add(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &(*v_q), List_At(v_g.F_out, v_pc, "std/regexp.xo:2824:19"), v_pos, &(*v_cap), v_cb, v_cond)
-					x_ix372 := AddS(v_cb, v_a, "std/regexp.xo:2825:13")
+					List_PutM((*v_cap), x_ix368, v_pos, "std/regexp.xo:2817:9")
+					Regexp_add(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &(*v_q), List_At(v_g.F_out, v_pc, "std/regexp.xo:2818:19"), v_pos, &(*v_cap), v_cb, v_cond)
+					x_ix369 := AddS(v_cb, v_a, "std/regexp.xo:2819:13")
 					if !List_Mine((*v_cap)) {
 						(*v_cap) = List_Unshared((*v_cap))
 					}
-					List_PutM((*v_cap), x_ix372, v_old, "std/regexp.xo:2825:9")
+					List_PutM((*v_cap), x_ix369, v_old, "std/regexp.xo:2819:9")
 					return
 				}
-				v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2828:12")
-				continue x_L360
+				v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2822:12")
+				continue x_L357
 			}
-			var v_j int64 = SubIDown((*v_q).F_len, int64(1), "std/regexp.xo:2832:13")
+			var v_j int64 = SubIDown((*v_q).F_len, int64(1), "std/regexp.xo:2826:13")
 			_ = v_j
-			x_ix373 := v_j
+			x_ix370 := v_j
 			if !List_Mine((*v_q).F_has) {
 				(*v_q).F_has = List_Unshared((*v_q).F_has)
 			}
-			List_PutM((*v_q).F_has, x_ix373, int64(1), "std/regexp.xo:2833:5")
+			List_PutM((*v_q).F_has, x_ix370, int64(1), "std/regexp.xo:2827:5")
 			var v_nc_1 int64 = (*v_q).F_ncap
 			_ = v_nc_1
-			var v_base_1 int64 = MulS(v_j, v_nc_1, "std/regexp.xo:2835:16")
+			var v_base_1 int64 = MulS(v_j, v_nc_1, "std/regexp.xo:2829:16")
 			_ = v_base_1
-			x_ix374 := v_base_1
+			x_ix371 := v_base_1
 			if !List_Mine((*v_q).F_caps) {
 				(*v_q).F_caps = List_Unshared((*v_q).F_caps)
 			}
-			List_PutM((*v_q).F_caps, x_ix374, List_At((*v_cap), v_cb, "std/regexp.xo:2836:20"), "std/regexp.xo:2836:5")
-			x_ix375 := AddIUp(v_base_1, int64(1), "std/regexp.xo:2837:12")
+			List_PutM((*v_q).F_caps, x_ix371, List_At((*v_cap), v_cb, "std/regexp.xo:2830:20"), "std/regexp.xo:2830:5")
+			x_ix372 := AddIUp(v_base_1, int64(1), "std/regexp.xo:2831:12")
 			if !List_Mine((*v_q).F_caps) {
 				(*v_q).F_caps = List_Unshared((*v_q).F_caps)
 			}
-			List_PutM((*v_q).F_caps, x_ix375, List_At((*v_cap), AddIUp(v_cb, int64(1), "std/regexp.xo:2837:28"), "std/regexp.xo:2837:24"), "std/regexp.xo:2837:5")
+			List_PutM((*v_q).F_caps, x_ix372, List_At((*v_cap), AddIUp(v_cb, int64(1), "std/regexp.xo:2831:28"), "std/regexp.xo:2831:24"), "std/regexp.xo:2831:5")
 			var v_i_1 int64 = int64(2)
 			_ = v_i_1
 			for {
@@ -5410,11 +5381,11 @@ x_L360:
 					break
 				}
 				{
-					x_ix377 := AddS(v_base_1, v_i_1, "std/regexp.xo:2840:14")
+					x_ix374 := AddS(v_base_1, v_i_1, "std/regexp.xo:2834:14")
 					if !List_Mine((*v_q).F_caps) {
 						(*v_q).F_caps = List_Unshared((*v_q).F_caps)
 					}
-					List_PutM((*v_q).F_caps, x_ix377, List_At((*v_cap), AddS(v_cb, v_i_1, "std/regexp.xo:2840:30"), "std/regexp.xo:2840:26"), "std/regexp.xo:2840:7")
+					List_PutM((*v_q).F_caps, x_ix374, List_At((*v_cap), AddS(v_cb, v_i_1, "std/regexp.xo:2834:30"), "std/regexp.xo:2834:26"), "std/regexp.xo:2834:7")
 					v_i_1 = (v_i_1 + int64(1))
 				}
 			}
@@ -5427,11 +5398,11 @@ x_L360:
 func Regexp_with_at(tk *Task, v_l List[int64], v_i int64, v_v int64) List[int64] {
 	var v_x List[int64] = List_Own(v_l)
 	_ = v_x
-	x_ix378 := v_i
+	x_ix375 := v_i
 	if !List_Mine(v_x) {
 		v_x = List_Unshared(v_x)
 	}
-	List_PutM(v_x, x_ix378, v_v, "std/regexp.xo:2850:3")
+	List_PutM(v_x, x_ix375, v_v, "std/regexp.xo:2844:3")
 	return List_Own(v_x)
 }
 
@@ -5443,46 +5414,46 @@ func Regexp_literal_prefix(tk *Task, v_g Regexp_Prog) string {
 	var v_pc int64 = v_g.F_start
 	_ = v_pc
 	for {
-		if !((v_pc != int64(0)) && ((List_At(v_g.F_op, v_pc, "std/regexp.xo:2862:21") == Regexp_I_NOP) || (List_At(v_g.F_op, v_pc, "std/regexp.xo:2862:42") == Regexp_I_CAPTURE))) {
+		if !((v_pc != int64(0)) && ((List_At(v_g.F_op, v_pc, "std/regexp.xo:2856:21") == Regexp_I_NOP) || (List_At(v_g.F_op, v_pc, "std/regexp.xo:2856:42") == Regexp_I_CAPTURE))) {
 			break
 		}
 		{
-			v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2863:10")
+			v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2857:10")
 		}
 	}
 	var v_b BytesBuilder = BytesBuilder_new(tk)
 	_ = v_b
-x_L380:
+x_L377:
 	for {
-		if !((v_pc != int64(0)) && (List_At(v_g.F_op, v_pc, "std/regexp.xo:2866:20") == Regexp_I_RUNE1)) {
+		if !((v_pc != int64(0)) && (List_At(v_g.F_op, v_pc, "std/regexp.xo:2860:20") == Regexp_I_RUNE1)) {
 			break
 		}
 		{
-			var v_c int64 = List_At(List_At(v_g.F_rune, v_pc, "std/regexp.xo:2869:13"), int64(0), "std/regexp.xo:2869:13")
+			var v_c int64 = List_At(List_At(v_g.F_rune, v_pc, "std/regexp.xo:2863:13"), int64(0), "std/regexp.xo:2863:13")
 			_ = v_c
 			if (v_c >= int64(55296)) && (v_c <= int64(57343)) {
-				break x_L380
+				break x_L377
 			}
-			v_b.M_write_rune(tk, RuneOf(v_c, "std/regexp.xo:2873:18"))
-			v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2874:10")
+			v_b.M_write_rune(tk, RuneOf(v_c, "std/regexp.xo:2867:18"))
+			v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2868:10")
 			for {
-				if !((v_pc != int64(0)) && ((List_At(v_g.F_op, v_pc, "std/regexp.xo:2875:23") == Regexp_I_NOP) || (List_At(v_g.F_op, v_pc, "std/regexp.xo:2875:44") == Regexp_I_CAPTURE))) {
+				if !((v_pc != int64(0)) && ((List_At(v_g.F_op, v_pc, "std/regexp.xo:2869:23") == Regexp_I_NOP) || (List_At(v_g.F_op, v_pc, "std/regexp.xo:2869:44") == Regexp_I_CAPTURE))) {
 					break
 				}
 				{
-					v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2876:12")
+					v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2870:12")
 				}
 			}
 		}
 	}
-	x_t382 := Bytes_to_str(tk, v_b.M_freeze(tk))
-	var x_c383 string
-	if x_t382.Some {
-		x_c383 = x_t382.V
+	x_t379 := Bytes_to_str(tk, v_b.M_freeze(tk))
+	var x_c380 string
+	if x_t379.Some {
+		x_c380 = x_t379.V
 	} else {
-		x_c383 = ""
+		x_c380 = ""
 	}
-	return x_c383
+	return x_c380
 }
 
 type Regexp_BT struct {
@@ -5572,51 +5543,51 @@ func (v *Regexp_BT) XoMark() {
 }
 
 func (v_b *Regexp_BT) M_should_visit(tk *Task, v_pc int64, v_pos int64) bool {
-	var v_n int64 = AddS(MulS(v_pc, AddIUp((*v_b).F_end, int64(1), "std/regexp.xo:2902:17"), "std/regexp.xo:2902:11"), v_pos, "std/regexp.xo:2902:11")
+	var v_n int64 = AddS(MulS(v_pc, AddIUp((*v_b).F_end, int64(1), "std/regexp.xo:2896:17"), "std/regexp.xo:2896:11"), v_pos, "std/regexp.xo:2896:11")
 	_ = v_n
 	var v_w int64 = (v_n >> int64(5))
 	_ = v_w
-	var v_bit int64 = Shl(int64(1), (v_n & int64(31)), "std/regexp.xo:2904:13")
+	var v_bit int64 = Shl(int64(1), (v_n & int64(31)), "std/regexp.xo:2898:13")
 	_ = v_bit
-	var v_v int64 = List_At((*v_b).F_buf, AddS((*v_b).F_vis0, v_w, "std/regexp.xo:2905:17"), "std/regexp.xo:2905:11")
+	var v_v int64 = List_At((*v_b).F_buf, AddS((*v_b).F_vis0, v_w, "std/regexp.xo:2899:17"), "std/regexp.xo:2899:11")
 	_ = v_v
 	if (v_v & v_bit) != int64(0) {
 		return false
 	}
-	x_ix384 := AddS((*v_b).F_vis0, v_w, "std/regexp.xo:2909:9")
+	x_ix381 := AddS((*v_b).F_vis0, v_w, "std/regexp.xo:2903:9")
 	if !List_Mine((*v_b).F_buf) {
 		(*v_b).F_buf = List_Unshared((*v_b).F_buf)
 	}
-	List_PutM((*v_b).F_buf, x_ix384, (v_v | v_bit), "std/regexp.xo:2909:3")
+	List_PutM((*v_b).F_buf, x_ix381, (v_v | v_bit), "std/regexp.xo:2903:3")
 	return true
 }
 
 func (v_b *Regexp_BT) M_job(tk *Task, v_pc int64, v_pos int64, v_arg int64) {
-	var v_j int64 = ((Shl(v_pos, int64(12), "std/regexp.xo:2916:12") | Shl(v_pc, int64(1), "std/regexp.xo:2916:26")) | v_arg)
+	var v_j int64 = ((Shl(v_pos, int64(12), "std/regexp.xo:2910:12") | Shl(v_pc, int64(1), "std/regexp.xo:2910:26")) | v_arg)
 	_ = v_j
-	var v_at int64 = AddS((*v_b).F_job0, (*v_b).F_jn, "std/regexp.xo:2917:12")
+	var v_at int64 = AddS((*v_b).F_job0, (*v_b).F_jn, "std/regexp.xo:2911:12")
 	_ = v_at
 	if v_at < List_len[int64](tk, (*v_b).F_buf) {
-		x_ix385 := v_at
+		x_ix382 := v_at
 		if !List_Mine((*v_b).F_buf) {
 			(*v_b).F_buf = List_Unshared((*v_b).F_buf)
 		}
-		List_PutM((*v_b).F_buf, x_ix385, v_j, "std/regexp.xo:2919:5")
+		List_PutM((*v_b).F_buf, x_ix382, v_j, "std/regexp.xo:2913:5")
 	} else {
-		x_pv386 := v_j
+		x_pv383 := v_j
 		if List_CanPush((*v_b).F_buf) {
-			(*v_b).F_buf = List_PushFast((*v_b).F_buf, x_pv386)
+			(*v_b).F_buf = List_PushFast((*v_b).F_buf, x_pv383)
 		} else {
-			(*v_b).F_buf = List_PushSlow((*v_b).F_buf, x_pv386)
+			(*v_b).F_buf = List_PushSlow((*v_b).F_buf, x_pv383)
 		}
 		_ = Unit{}
 	}
-	(*v_b).F_jn = AddS((*v_b).F_jn, int64(1), "std/regexp.xo:2923:3")
+	(*v_b).F_jn = AddS((*v_b).F_jn, int64(1), "std/regexp.xo:2917:3")
 	return
 }
 
 func (v_b *Regexp_BT) M_push(tk *Task, v_g Regexp_Prog, v_pc int64, v_pos int64, v_arg int64) {
-	if ((v_pc != int64(0)) && (List_At(v_g.F_op, v_pc, "std/regexp.xo:2927:17") != Regexp_I_FAIL)) && ((v_arg == int64(1)) || (*v_b).M_should_visit(tk, v_pc, v_pos)) {
+	if ((v_pc != int64(0)) && (List_At(v_g.F_op, v_pc, "std/regexp.xo:2921:17") != Regexp_I_FAIL)) && ((v_arg == int64(1)) || (*v_b).M_should_visit(tk, v_pc, v_pos)) {
 		(*v_b).M_job(tk, v_pc, v_pos, v_arg)
 		return
 	}
@@ -5632,7 +5603,7 @@ func Regexp_try_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_b *Regexp_BT,
 	_ = v_vis0
 	var v_sd Bytes = Str_bytes(tk, v_s)
 	_ = v_sd
-	var v_end1 int64 = AddIUp((*v_b).F_end, int64(1), "std/regexp.xo:2938:14")
+	var v_end1 int64 = AddIUp((*v_b).F_end, int64(1), "std/regexp.xo:2932:14")
 	_ = v_end1
 	(*v_b).M_push(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_pc0, v_pos0, int64(0))
 	for {
@@ -5640,8 +5611,8 @@ func Regexp_try_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_b *Regexp_BT,
 			break
 		}
 		{
-			(*v_b).F_jn = SubS((*v_b).F_jn, int64(1), "std/regexp.xo:2941:5")
-			var v_j int64 = List_At((*v_b).F_buf, AddS((*v_b).F_job0, (*v_b).F_jn, "std/regexp.xo:2943:19"), "std/regexp.xo:2943:13")
+			(*v_b).F_jn = SubS((*v_b).F_jn, int64(1), "std/regexp.xo:2935:5")
+			var v_j int64 = List_At((*v_b).F_buf, AddS((*v_b).F_job0, (*v_b).F_jn, "std/regexp.xo:2937:19"), "std/regexp.xo:2937:13")
 			_ = v_j
 			var v_pc0_1 int64 = ((v_j >> int64(1)) & int64(2047))
 			_ = v_pc0_1
@@ -5657,87 +5628,87 @@ func Regexp_try_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_b *Regexp_BT,
 			_ = v_arg
 			var v_check bool = false
 			_ = v_check
-		x_L388:
+		x_L385:
 			for {
 				if !(true) {
 					break
 				}
 				{
 					if v_check {
-						var v_n int64 = AddS(MulS(v_pc, v_end1, "std/regexp.xo:2954:17"), v_pos, "std/regexp.xo:2954:17")
+						var v_n int64 = AddS(MulS(v_pc, v_end1, "std/regexp.xo:2948:17"), v_pos, "std/regexp.xo:2948:17")
 						_ = v_n
 						var v_w int64 = (v_n >> int64(5))
 						_ = v_w
-						var v_bit int64 = Shl(int64(1), (v_n & int64(31)), "std/regexp.xo:2956:19")
+						var v_bit int64 = Shl(int64(1), (v_n & int64(31)), "std/regexp.xo:2950:19")
 						_ = v_bit
-						var v_v int64 = List_At((*v_b).F_buf, AddS(v_vis0, v_w, "std/regexp.xo:2957:23"), "std/regexp.xo:2957:17")
+						var v_v int64 = List_At((*v_b).F_buf, AddS(v_vis0, v_w, "std/regexp.xo:2951:23"), "std/regexp.xo:2951:17")
 						_ = v_v
 						if (v_v & v_bit) != int64(0) {
-							break x_L388
+							break x_L385
 						}
-						x_ix389 := AddS(v_vis0, v_w, "std/regexp.xo:2961:15")
+						x_ix386 := AddS(v_vis0, v_w, "std/regexp.xo:2955:15")
 						if !List_Mine((*v_b).F_buf) {
 							(*v_b).F_buf = List_Unshared((*v_b).F_buf)
 						}
-						List_PutM((*v_b).F_buf, x_ix389, (v_v | v_bit), "std/regexp.xo:2961:9")
+						List_PutM((*v_b).F_buf, x_ix386, (v_v | v_bit), "std/regexp.xo:2955:9")
 					}
 					v_check = true
 					if v_pc == int64(0) {
-						break x_L388
+						break x_L385
 					}
-					var v_op int64 = List_At(v_g.F_op, v_pc, "std/regexp.xo:2967:16")
+					var v_op int64 = List_At(v_g.F_op, v_pc, "std/regexp.xo:2961:16")
 					_ = v_op
 					if v_op == Regexp_I_ALT {
 						if v_arg == int64(1) {
 							v_arg = int64(0)
-							v_pc = List_At(v_g.F_arg, v_pc, "std/regexp.xo:2971:16")
+							v_pc = List_At(v_g.F_arg, v_pc, "std/regexp.xo:2965:16")
 						} else {
-							var v_jat int64 = AddS((*v_b).F_job0, (*v_b).F_jn, "std/regexp.xo:2975:21")
+							var v_jat int64 = AddS((*v_b).F_job0, (*v_b).F_jn, "std/regexp.xo:2969:21")
 							_ = v_jat
-							var v_jv int64 = ((Shl(v_pos, int64(12), "std/regexp.xo:2976:21") | Shl(v_pc, int64(1), "std/regexp.xo:2976:35")) | int64(1))
+							var v_jv int64 = ((Shl(v_pos, int64(12), "std/regexp.xo:2970:21") | Shl(v_pc, int64(1), "std/regexp.xo:2970:35")) | int64(1))
 							_ = v_jv
 							if v_jat < List_len[int64](tk, (*v_b).F_buf) {
-								x_ix390 := v_jat
+								x_ix387 := v_jat
 								if !List_Mine((*v_b).F_buf) {
 									(*v_b).F_buf = List_Unshared((*v_b).F_buf)
 								}
-								List_PutM((*v_b).F_buf, x_ix390, v_jv, "std/regexp.xo:2978:13")
+								List_PutM((*v_b).F_buf, x_ix387, v_jv, "std/regexp.xo:2972:13")
 							} else {
-								x_pv391 := v_jv
+								x_pv388 := v_jv
 								if List_CanPush((*v_b).F_buf) {
-									(*v_b).F_buf = List_PushFast((*v_b).F_buf, x_pv391)
+									(*v_b).F_buf = List_PushFast((*v_b).F_buf, x_pv388)
 								} else {
-									(*v_b).F_buf = List_PushSlow((*v_b).F_buf, x_pv391)
+									(*v_b).F_buf = List_PushSlow((*v_b).F_buf, x_pv388)
 								}
 								_ = Unit{}
 							}
-							(*v_b).F_jn = AddS((*v_b).F_jn, int64(1), "std/regexp.xo:2982:11")
-							v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2983:16")
+							(*v_b).F_jn = AddS((*v_b).F_jn, int64(1), "std/regexp.xo:2976:11")
+							v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2977:16")
 						}
-						continue x_L388
+						continue x_L385
 					}
 					if (((v_op == Regexp_I_RUNE) || (v_op == Regexp_I_RUNE1)) || (v_op == Regexp_I_ANY)) || (v_op == Regexp_I_ANY_NOT_NL) {
 						if v_pos < (*v_b).F_end {
-							var v_c int64 = int64(BytesAt(v_sd, v_pos, "std/regexp.xo:2989:23"))
+							var v_c int64 = int64(BytesAt(v_sd, v_pos, "std/regexp.xo:2983:23"))
 							_ = v_c
 							if v_c < int64(128) {
-								if ((List_At(v_g.F_ascii, AddS(MulIK(v_pc, int64(4), -2305843009213693952, 2305843009213693951, "std/regexp.xo:2991:26"), (v_c>>int64(5)), "std/regexp.xo:2991:26"), "std/regexp.xo:2991:18") >> (v_c & int64(31))) & int64(1)) == int64(0) {
-									break x_L388
+								if ((List_At(v_g.F_ascii, AddS(MulIK(v_pc, int64(4), -2305843009213693952, 2305843009213693951, "std/regexp.xo:2985:26"), (v_c>>int64(5)), "std/regexp.xo:2985:26"), "std/regexp.xo:2985:18") >> (v_c & int64(31))) & int64(1)) == int64(0) {
+									break x_L385
 								}
 								v_pos = (v_pos + int64(1))
-								v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2995:18")
-								continue x_L388
+								v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:2989:18")
+								continue x_L385
 							}
 						}
 						var v_st int64 = Regexp_step_at(tk, v_s, v_pos)
 						_ = v_st
-						var x_v392 int64
+						var x_v389 int64
 						if v_st < int64(0) {
-							x_v392 = int64(-1)
+							x_v389 = int64(-1)
 						} else {
-							x_v392 = (v_st >> int64(3))
+							x_v389 = (v_st >> int64(3))
 						}
-						var v_r int64 = x_v392
+						var v_r int64 = x_v389
 						_ = v_r
 						var v_ok bool = false
 						_ = v_ok
@@ -5745,7 +5716,7 @@ func Regexp_try_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_b *Regexp_BT,
 							v_ok = ((v_r >= int64(0)) && Regexp_rune_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_pc, v_r))
 						} else {
 							if v_op == Regexp_I_RUNE1 {
-								v_ok = ((v_r >= int64(0)) && (v_r == List_At(List_At(v_g.F_rune, v_pc, "std/regexp.xo:3005:31"), int64(0), "std/regexp.xo:3005:31")))
+								v_ok = ((v_r >= int64(0)) && (v_r == List_At(List_At(v_g.F_rune, v_pc, "std/regexp.xo:2999:31"), int64(0), "std/regexp.xo:2999:31")))
 							} else {
 								if v_op == Regexp_I_ANY {
 									v_ok = (v_r >= int64(0))
@@ -5755,54 +5726,54 @@ func Regexp_try_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_b *Regexp_BT,
 							}
 						}
 						if !(v_ok) {
-							break x_L388
+							break x_L385
 						}
-						v_pos = AddS(v_pos, (v_st & int64(7)), "std/regexp.xo:3014:9")
-						v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3015:14")
-						continue x_L388
+						v_pos = AddS(v_pos, (v_st & int64(7)), "std/regexp.xo:3008:9")
+						v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3009:14")
+						continue x_L385
 					}
 					if v_op == Regexp_I_CAPTURE {
 						if v_arg == int64(1) {
-							x_ix393 := List_At(v_g.F_arg, v_pc, "std/regexp.xo:3020:17")
+							x_ix390 := List_At(v_g.F_arg, v_pc, "std/regexp.xo:3014:17")
 							if !List_Mine((*v_b).F_buf) {
 								(*v_b).F_buf = List_Unshared((*v_b).F_buf)
 							}
-							List_PutM((*v_b).F_buf, x_ix393, v_pos, "std/regexp.xo:3020:11")
-							break x_L388
+							List_PutM((*v_b).F_buf, x_ix390, v_pos, "std/regexp.xo:3014:11")
+							break x_L385
 						}
-						var v_a int64 = List_At(v_g.F_arg, v_pc, "std/regexp.xo:3023:17")
+						var v_a int64 = List_At(v_g.F_arg, v_pc, "std/regexp.xo:3017:17")
 						_ = v_a
 						if v_a < v_ncap {
-							(*v_b).M_job(tk, v_pc, List_At((*v_b).F_buf, v_a, "std/regexp.xo:3025:21"), int64(1))
-							x_ix394 := v_a
+							(*v_b).M_job(tk, v_pc, List_At((*v_b).F_buf, v_a, "std/regexp.xo:3019:21"), int64(1))
+							x_ix391 := v_a
 							if !List_Mine((*v_b).F_buf) {
 								(*v_b).F_buf = List_Unshared((*v_b).F_buf)
 							}
-							List_PutM((*v_b).F_buf, x_ix394, v_pos, "std/regexp.xo:3026:11")
+							List_PutM((*v_b).F_buf, x_ix391, v_pos, "std/regexp.xo:3020:11")
 						}
-						v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3028:14")
-						continue x_L388
+						v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3022:14")
+						continue x_L385
 					}
 					if v_op == Regexp_I_EMPTY {
 						var v_cond int64 = Regexp_empty_context(tk, Regexp_rune_before(tk, v_s, v_pos), Regexp_rune_at(tk, v_s, v_pos))
 						_ = v_cond
-						if (List_At(v_g.F_arg, v_pc, "std/regexp.xo:3033:13") & ((int64(0) - int64(1)) - v_cond)) != int64(0) {
-							break x_L388
+						if (List_At(v_g.F_arg, v_pc, "std/regexp.xo:3027:13") & ((int64(0) - int64(1)) - v_cond)) != int64(0) {
+							break x_L385
 						}
-						v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3036:14")
-						continue x_L388
+						v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3030:14")
+						continue x_L385
 					}
 					if v_op == Regexp_I_NOP {
-						v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3040:14")
-						continue x_L388
+						v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3034:14")
+						continue x_L385
 					}
 					if v_op == Regexp_I_MATCH {
-						x_ix395 := int64(1)
+						x_ix392 := int64(1)
 						if !List_Mine((*v_b).F_buf) {
 							(*v_b).F_buf = List_Unshared((*v_b).F_buf)
 						}
-						List_PutM((*v_b).F_buf, x_ix395, v_pos, "std/regexp.xo:3044:9")
-						if List_At((*v_b).F_matchcap, int64(1), "std/regexp.xo:3045:12") == int64(-1) {
+						List_PutM((*v_b).F_buf, x_ix392, v_pos, "std/regexp.xo:3038:9")
+						if List_At((*v_b).F_matchcap, int64(1), "std/regexp.xo:3039:12") == int64(-1) {
 							var v_i int64 = int64(0)
 							_ = v_i
 							for {
@@ -5810,18 +5781,18 @@ func Regexp_try_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_b *Regexp_BT,
 									break
 								}
 								{
-									x_ix397 := v_i
+									x_ix394 := v_i
 									if !List_Mine((*v_b).F_matchcap) {
 										(*v_b).F_matchcap = List_Unshared((*v_b).F_matchcap)
 									}
-									List_PutM((*v_b).F_matchcap, x_ix397, List_At((*v_b).F_buf, v_i, "std/regexp.xo:3048:29"), "std/regexp.xo:3048:13")
+									List_PutM((*v_b).F_matchcap, x_ix394, List_At((*v_b).F_buf, v_i, "std/regexp.xo:3042:29"), "std/regexp.xo:3042:13")
 									v_i = (v_i + int64(1))
 								}
 							}
 						}
 						return true
 					}
-					break x_L388
+					break x_L385
 				}
 			}
 		}
@@ -5843,14 +5814,14 @@ func Regexp_anchored_start(tk *Task, v_g Regexp_Prog) bool {
 	var v_pc int64 = v_g.F_start
 	_ = v_pc
 	for {
-		if !((v_pc != int64(0)) && ((List_At(v_g.F_op, v_pc, "std/regexp.xo:3072:21") == Regexp_I_NOP) || (List_At(v_g.F_op, v_pc, "std/regexp.xo:3072:42") == Regexp_I_CAPTURE))) {
+		if !((v_pc != int64(0)) && ((List_At(v_g.F_op, v_pc, "std/regexp.xo:3066:21") == Regexp_I_NOP) || (List_At(v_g.F_op, v_pc, "std/regexp.xo:3066:42") == Regexp_I_CAPTURE))) {
 			break
 		}
 		{
-			v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3073:10")
+			v_pc = List_At(v_g.F_out, v_pc, "std/regexp.xo:3067:10")
 		}
 	}
-	return (((v_pc != int64(0)) && (List_At(v_g.F_op, v_pc, "std/regexp.xo:3075:14") == Regexp_I_EMPTY)) && ((List_At(v_g.F_arg, v_pc, "std/regexp.xo:3075:38") & Regexp_E_BEGIN_TEXT) != int64(0)))
+	return (((v_pc != int64(0)) && (List_At(v_g.F_op, v_pc, "std/regexp.xo:3069:14") == Regexp_I_EMPTY)) && ((List_At(v_g.F_arg, v_pc, "std/regexp.xo:3069:38") & Regexp_E_BEGIN_TEXT) != int64(0)))
 }
 
 var Regexp_OP_ALT_MATCH = func() int64 {
@@ -5858,7 +5829,7 @@ var Regexp_OP_ALT_MATCH = func() int64 {
 }()
 
 func Regexp_one_pass_runes(tk *Task, v_g Regexp_Prog, v_pc int64) List[int64] {
-	var v_op int64 = List_At(v_g.F_op, v_pc, "std/regexp.xo:3082:12")
+	var v_op int64 = List_At(v_g.F_op, v_pc, "std/regexp.xo:3076:12")
 	_ = v_op
 	if v_op == Regexp_I_ANY {
 		return ListOf[int64](int64(0), Regexp_MAX_RUNE)
@@ -5866,14 +5837,14 @@ func Regexp_one_pass_runes(tk *Task, v_g Regexp_Prog, v_pc int64) List[int64] {
 	if v_op == Regexp_I_ANY_NOT_NL {
 		return ListOf[int64](int64(0), int64(9), int64(11), Regexp_MAX_RUNE)
 	}
-	var v_rs List[int64] = List_Own(List_At(v_g.F_rune, v_pc, "std/regexp.xo:3089:12"))
+	var v_rs List[int64] = List_Own(List_At(v_g.F_rune, v_pc, "std/regexp.xo:3083:12"))
 	_ = v_rs
 	if (v_op == Regexp_I_RUNE1) || (List_len[int64](tk, v_rs) == int64(1)) {
-		var v_r0 int64 = List_At(v_rs, int64(0), "std/regexp.xo:3091:14")
+		var v_r0 int64 = List_At(v_rs, int64(0), "std/regexp.xo:3085:14")
 		_ = v_r0
 		var v_all List[int64] = ListOf[int64](v_r0)
 		_ = v_all
-		if List_At(v_g.F_fold, v_pc, "std/regexp.xo:3093:8") {
+		if List_At(v_g.F_fold, v_pc, "std/regexp.xo:3087:8") {
 			var v_r1 int64 = Regexp_simple_fold(tk, v_r0)
 			_ = v_r1
 			for {
@@ -5881,11 +5852,11 @@ func Regexp_one_pass_runes(tk *Task, v_g Regexp_Prog, v_pc int64) List[int64] {
 					break
 				}
 				{
-					x_pv400 := v_r1
+					x_pv397 := v_r1
 					if List_CanPush(v_all) {
-						v_all = List_PushFast(v_all, x_pv400)
+						v_all = List_PushFast(v_all, x_pv397)
 					} else {
-						v_all = List_PushSlow(v_all, x_pv400)
+						v_all = List_PushSlow(v_all, x_pv397)
 					}
 					_ = Unit{}
 					v_r1 = Regexp_simple_fold(tk, v_r1)
@@ -5899,52 +5870,52 @@ func Regexp_one_pass_runes(tk *Task, v_g Regexp_Prog, v_pc int64) List[int64] {
 				break
 			}
 			{
-				var v_v int64 = List_At(v_all, v_i, "std/regexp.xo:3102:15")
+				var v_v int64 = List_At(v_all, v_i, "std/regexp.xo:3096:15")
 				_ = v_v
 				var v_j int64 = v_i
 				_ = v_j
 				for {
-					if !((v_j > int64(0)) && (List_At(v_all, (v_j-int64(1)), "std/regexp.xo:3104:22") > v_v)) {
+					if !((v_j > int64(0)) && (List_At(v_all, (v_j-int64(1)), "std/regexp.xo:3098:22") > v_v)) {
 						break
 					}
 					{
-						x_ix403 := v_j
+						x_ix400 := v_j
 						if !List_Mine(v_all) {
 							v_all = List_Unshared(v_all)
 						}
-						List_PutM(v_all, x_ix403, List_At(v_all, (v_j-int64(1)), "std/regexp.xo:3105:18"), "std/regexp.xo:3105:9")
+						List_PutM(v_all, x_ix400, List_At(v_all, (v_j-int64(1)), "std/regexp.xo:3099:18"), "std/regexp.xo:3099:9")
 						v_j = (v_j - int64(1))
 					}
 				}
-				x_ix404 := v_j
+				x_ix401 := v_j
 				if !List_Mine(v_all) {
 					v_all = List_Unshared(v_all)
 				}
-				List_PutM(v_all, x_ix404, v_v, "std/regexp.xo:3108:7")
+				List_PutM(v_all, x_ix401, v_v, "std/regexp.xo:3102:7")
 				v_i = (v_i + int64(1))
 			}
 		}
 		var v_pairs List[int64] = List[int64]{}
 		_ = v_pairs
-		x_it405 := v_all
-		for _, x_e407 := range List_Items(x_it405) {
-			x_el408 := x_e407
-			_ = x_el408
-			var v_v_1 int64 = x_el408
+		x_it402 := v_all
+		for _, x_e404 := range List_Items(x_it402) {
+			x_el405 := x_e404
+			_ = x_el405
+			var v_v_1 int64 = x_el405
 			_ = v_v_1
 			{
-				x_pv409 := v_v_1
+				x_pv406 := v_v_1
 				if List_CanPush(v_pairs) {
-					v_pairs = List_PushFast(v_pairs, x_pv409)
+					v_pairs = List_PushFast(v_pairs, x_pv406)
 				} else {
-					v_pairs = List_PushSlow(v_pairs, x_pv409)
+					v_pairs = List_PushSlow(v_pairs, x_pv406)
 				}
 				_ = Unit{}
-				x_pv410 := v_v_1
+				x_pv407 := v_v_1
 				if List_CanPush(v_pairs) {
-					v_pairs = List_PushFast(v_pairs, x_pv410)
+					v_pairs = List_PushFast(v_pairs, x_pv407)
 				} else {
-					v_pairs = List_PushSlow(v_pairs, x_pv410)
+					v_pairs = List_PushSlow(v_pairs, x_pv407)
 				}
 				_ = Unit{}
 			}
@@ -5988,40 +5959,40 @@ func Regexp_merge_rune_sets(tk *Task, v_l List[int64], v_r List[int64], v_lpc in
 			var v_pc int64 = int64(0)
 			_ = v_pc
 			if v_left {
-				v_lo = List_At(v_l, v_lx, "std/regexp.xo:3141:12")
-				v_hi = List_At(v_l, AddIUp(v_lx, int64(1), "std/regexp.xo:3142:14"), "std/regexp.xo:3142:12")
+				v_lo = List_At(v_l, v_lx, "std/regexp.xo:3135:12")
+				v_hi = List_At(v_l, AddIUp(v_lx, int64(1), "std/regexp.xo:3136:14"), "std/regexp.xo:3136:12")
 				v_pc = v_lpc
-				v_lx = AddIUp(v_lx, int64(2), "std/regexp.xo:3144:7")
+				v_lx = AddIUp(v_lx, int64(2), "std/regexp.xo:3138:7")
 			} else {
-				v_lo = List_At(v_r, v_rx, "std/regexp.xo:3146:12")
-				v_hi = List_At(v_r, AddIUp(v_rx, int64(1), "std/regexp.xo:3147:14"), "std/regexp.xo:3147:12")
+				v_lo = List_At(v_r, v_rx, "std/regexp.xo:3140:12")
+				v_hi = List_At(v_r, AddIUp(v_rx, int64(1), "std/regexp.xo:3141:14"), "std/regexp.xo:3141:12")
 				v_pc = v_rpc
-				v_rx = AddIUp(v_rx, int64(2), "std/regexp.xo:3149:7")
+				v_rx = AddIUp(v_rx, int64(2), "std/regexp.xo:3143:7")
 			}
 			var v_k int64 = List_len[int64](tk, v_merged)
 			_ = v_k
-			if (v_k > int64(0)) && (v_lo <= List_At(v_merged, (v_k-int64(1)), "std/regexp.xo:3152:23")) {
+			if (v_k > int64(0)) && (v_lo <= List_At(v_merged, (v_k-int64(1)), "std/regexp.xo:3146:23")) {
 				return Tuple3[bool, List[int64], List[int64]]{F0: false, F1: List[int64]{}, F2: List[int64]{}}
 			}
-			x_pv412 := v_lo
+			x_pv409 := v_lo
 			if List_CanPush(v_merged) {
-				v_merged = List_PushFast(v_merged, x_pv412)
+				v_merged = List_PushFast(v_merged, x_pv409)
 			} else {
-				v_merged = List_PushSlow(v_merged, x_pv412)
+				v_merged = List_PushSlow(v_merged, x_pv409)
 			}
 			_ = Unit{}
-			x_pv413 := v_hi
+			x_pv410 := v_hi
 			if List_CanPush(v_merged) {
-				v_merged = List_PushFast(v_merged, x_pv413)
+				v_merged = List_PushFast(v_merged, x_pv410)
 			} else {
-				v_merged = List_PushSlow(v_merged, x_pv413)
+				v_merged = List_PushSlow(v_merged, x_pv410)
 			}
 			_ = Unit{}
-			x_pv414 := v_pc
+			x_pv411 := v_pc
 			if List_CanPush(v_next) {
-				v_next = List_PushFast(v_next, x_pv414)
+				v_next = List_PushFast(v_next, x_pv411)
 			} else {
-				v_next = List_PushSlow(v_next, x_pv414)
+				v_next = List_PushSlow(v_next, x_pv411)
 			}
 			_ = Unit{}
 		}
@@ -6145,45 +6116,45 @@ func (v *Regexp_OnePassB) XoMark() {
 }
 
 func Regexp_one_pass_check(tk *Task, v_g Regexp_Prog, v_b *Regexp_OnePassB, v_pc int64) bool {
-	if List_At((*v_b).F_vis, v_pc, "std/regexp.xo:3180:6") == (*v_b).F_stamp {
+	if List_At((*v_b).F_vis, v_pc, "std/regexp.xo:3174:6") == (*v_b).F_stamp {
 		return true
 	}
-	x_ix415 := v_pc
+	x_ix412 := v_pc
 	if !List_Mine((*v_b).F_vis) {
 		(*v_b).F_vis = List_Unshared((*v_b).F_vis)
 	}
-	List_PutM((*v_b).F_vis, x_ix415, (*v_b).F_stamp, "std/regexp.xo:3183:3")
-	var v_op int64 = List_At((*v_b).F_op, v_pc, "std/regexp.xo:3184:12")
+	List_PutM((*v_b).F_vis, x_ix412, (*v_b).F_stamp, "std/regexp.xo:3177:3")
+	var v_op int64 = List_At((*v_b).F_op, v_pc, "std/regexp.xo:3178:12")
 	_ = v_op
 	if (v_op == Regexp_I_ALT) || (v_op == Regexp_OP_ALT_MATCH) {
-		if !(Regexp_one_pass_check(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &(*v_b), List_At((*v_b).F_out, v_pc, "std/regexp.xo:3186:30"))) {
+		if !(Regexp_one_pass_check(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &(*v_b), List_At((*v_b).F_out, v_pc, "std/regexp.xo:3180:30"))) {
 			return false
 		}
-		if !(Regexp_one_pass_check(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &(*v_b), List_At((*v_b).F_arg, v_pc, "std/regexp.xo:3189:30"))) {
+		if !(Regexp_one_pass_check(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &(*v_b), List_At((*v_b).F_arg, v_pc, "std/regexp.xo:3183:30"))) {
 			return false
 		}
-		var v_o int64 = List_At((*v_b).F_out, v_pc, "std/regexp.xo:3192:13")
+		var v_o int64 = List_At((*v_b).F_out, v_pc, "std/regexp.xo:3186:13")
 		_ = v_o
-		var v_a int64 = List_At((*v_b).F_arg, v_pc, "std/regexp.xo:3193:13")
+		var v_a int64 = List_At((*v_b).F_arg, v_pc, "std/regexp.xo:3187:13")
 		_ = v_a
-		var v_mo bool = List_At((*v_b).F_m, v_o, "std/regexp.xo:3194:14")
+		var v_mo bool = List_At((*v_b).F_m, v_o, "std/regexp.xo:3188:14")
 		_ = v_mo
-		var v_ma bool = List_At((*v_b).F_m, v_a, "std/regexp.xo:3195:14")
+		var v_ma bool = List_At((*v_b).F_m, v_a, "std/regexp.xo:3189:14")
 		_ = v_ma
 		if v_mo && v_ma {
 			return false
 		}
 		if v_ma {
-			x_ix416 := v_pc
+			x_ix413 := v_pc
 			if !List_Mine((*v_b).F_out) {
 				(*v_b).F_out = List_Unshared((*v_b).F_out)
 			}
-			List_PutM((*v_b).F_out, x_ix416, v_a, "std/regexp.xo:3201:7")
-			x_ix417 := v_pc
+			List_PutM((*v_b).F_out, x_ix413, v_a, "std/regexp.xo:3195:7")
+			x_ix414 := v_pc
 			if !List_Mine((*v_b).F_arg) {
 				(*v_b).F_arg = List_Unshared((*v_b).F_arg)
 			}
-			List_PutM((*v_b).F_arg, x_ix417, v_o, "std/regexp.xo:3202:7")
+			List_PutM((*v_b).F_arg, x_ix414, v_o, "std/regexp.xo:3196:7")
 			var v_t int64 = v_o
 			_ = v_t
 			v_o = v_a
@@ -6192,111 +6163,111 @@ func Regexp_one_pass_check(tk *Task, v_g Regexp_Prog, v_b *Regexp_OnePassB, v_pc
 			v_ma = false
 		}
 		if v_mo {
-			x_ix418 := v_pc
+			x_ix415 := v_pc
 			if !List_Mine((*v_b).F_m) {
 				(*v_b).F_m = List_Unshared((*v_b).F_m)
 			}
-			List_PutM((*v_b).F_m, x_ix418, true, "std/regexp.xo:3210:7")
-			x_ix419 := v_pc
+			List_PutM((*v_b).F_m, x_ix415, true, "std/regexp.xo:3204:7")
+			x_ix416 := v_pc
 			if !List_Mine((*v_b).F_op) {
 				(*v_b).F_op = List_Unshared((*v_b).F_op)
 			}
-			List_PutM((*v_b).F_op, x_ix419, Regexp_OP_ALT_MATCH, "std/regexp.xo:3211:7")
+			List_PutM((*v_b).F_op, x_ix416, Regexp_OP_ALT_MATCH, "std/regexp.xo:3205:7")
 		}
-		x_let420 := func(v Tuple3[bool, List[int64], List[int64]]) Tuple3[bool, List[int64], List[int64]] {
+		x_let417 := func(v Tuple3[bool, List[int64], List[int64]]) Tuple3[bool, List[int64], List[int64]] {
 			v.F1.XoMark()
 			v.F2.XoMark()
 			return v
-		}(Regexp_merge_rune_sets(tk, List_Own(List_At((*v_b).F_runes, v_o, "std/regexp.xo:3213:44")), List_Own(List_At((*v_b).F_runes, v_a, "std/regexp.xo:3213:56")), v_o, v_a))
-		_ = x_let420
-		var v_ok bool = x_let420.F0
+		}(Regexp_merge_rune_sets(tk, List_Own(List_At((*v_b).F_runes, v_o, "std/regexp.xo:3207:44")), List_Own(List_At((*v_b).F_runes, v_a, "std/regexp.xo:3207:56")), v_o, v_a))
+		_ = x_let417
+		var v_ok bool = x_let417.F0
 		_ = v_ok
-		var v_merged List[int64] = x_let420.F1
+		var v_merged List[int64] = x_let417.F1
 		_ = v_merged
-		var v_nx List[int64] = x_let420.F2
+		var v_nx List[int64] = x_let417.F2
 		_ = v_nx
 		if !(v_ok) {
 			return false
 		}
-		x_ix421 := v_pc
+		x_ix418 := v_pc
 		if !List_Mine((*v_b).F_runes) {
 			(*v_b).F_runes = List_Unshared((*v_b).F_runes)
 		}
-		List_PutM((*v_b).F_runes, x_ix421, List_Own(v_merged), "std/regexp.xo:3217:5")
-		x_ix422 := v_pc
+		List_PutM((*v_b).F_runes, x_ix418, List_Own(v_merged), "std/regexp.xo:3211:5")
+		x_ix419 := v_pc
 		if !List_Mine((*v_b).F_next) {
 			(*v_b).F_next = List_Unshared((*v_b).F_next)
 		}
-		List_PutM((*v_b).F_next, x_ix422, List_Own(v_nx), "std/regexp.xo:3218:5")
+		List_PutM((*v_b).F_next, x_ix419, List_Own(v_nx), "std/regexp.xo:3212:5")
 		return true
 	}
 	if ((v_op == Regexp_I_CAPTURE) || (v_op == Regexp_I_NOP)) || (v_op == Regexp_I_EMPTY) {
-		var v_o_1 int64 = List_At((*v_b).F_out, v_pc, "std/regexp.xo:3222:13")
+		var v_o_1 int64 = List_At((*v_b).F_out, v_pc, "std/regexp.xo:3216:13")
 		_ = v_o_1
 		if !(Regexp_one_pass_check(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &(*v_b), v_o_1)) {
 			return false
 		}
-		x_ix423 := v_pc
+		x_ix420 := v_pc
 		if !List_Mine((*v_b).F_m) {
 			(*v_b).F_m = List_Unshared((*v_b).F_m)
 		}
-		List_PutM((*v_b).F_m, x_ix423, List_At((*v_b).F_m, v_o_1, "std/regexp.xo:3226:15"), "std/regexp.xo:3226:5")
-		x_ix424 := v_pc
+		List_PutM((*v_b).F_m, x_ix420, List_At((*v_b).F_m, v_o_1, "std/regexp.xo:3220:15"), "std/regexp.xo:3220:5")
+		x_ix421 := v_pc
 		if !List_Mine((*v_b).F_runes) {
 			(*v_b).F_runes = List_Unshared((*v_b).F_runes)
 		}
-		List_PutM((*v_b).F_runes, x_ix424, List_Own(List_At((*v_b).F_runes, v_o_1, "std/regexp.xo:3227:19")), "std/regexp.xo:3227:5")
+		List_PutM((*v_b).F_runes, x_ix421, List_Own(List_At((*v_b).F_runes, v_o_1, "std/regexp.xo:3221:19")), "std/regexp.xo:3221:5")
 		return true
 	}
 	if (v_op == Regexp_I_MATCH) || (v_op == Regexp_I_FAIL) {
-		x_ix425 := v_pc
+		x_ix422 := v_pc
 		if !List_Mine((*v_b).F_m) {
 			(*v_b).F_m = List_Unshared((*v_b).F_m)
 		}
-		List_PutM((*v_b).F_m, x_ix425, (v_op == Regexp_I_MATCH), "std/regexp.xo:3231:5")
+		List_PutM((*v_b).F_m, x_ix422, (v_op == Regexp_I_MATCH), "std/regexp.xo:3225:5")
 		return true
 	}
-	x_ix426 := v_pc
+	x_ix423 := v_pc
 	if !List_Mine((*v_b).F_m) {
 		(*v_b).F_m = List_Unshared((*v_b).F_m)
 	}
-	List_PutM((*v_b).F_m, x_ix426, false, "std/regexp.xo:3234:3")
-	if List_At((*v_b).F_done, v_pc, "std/regexp.xo:3235:6") {
+	List_PutM((*v_b).F_m, x_ix423, false, "std/regexp.xo:3228:3")
+	if List_At((*v_b).F_done, v_pc, "std/regexp.xo:3229:6") {
 		return true
 	}
-	x_ix427 := v_pc
+	x_ix424 := v_pc
 	if !List_Mine((*v_b).F_done) {
 		(*v_b).F_done = List_Unshared((*v_b).F_done)
 	}
-	List_PutM((*v_b).F_done, x_ix427, true, "std/regexp.xo:3238:3")
-	var v_o_2 int64 = List_At((*v_b).F_out, v_pc, "std/regexp.xo:3239:11")
+	List_PutM((*v_b).F_done, x_ix424, true, "std/regexp.xo:3232:3")
+	var v_o_2 int64 = List_At((*v_b).F_out, v_pc, "std/regexp.xo:3233:11")
 	_ = v_o_2
-	if !(List_At((*v_b).F_inq, v_o_2, "std/regexp.xo:3240:7")) {
-		x_ix428 := v_o_2
+	if !(List_At((*v_b).F_inq, v_o_2, "std/regexp.xo:3234:7")) {
+		x_ix425 := v_o_2
 		if !List_Mine((*v_b).F_inq) {
 			(*v_b).F_inq = List_Unshared((*v_b).F_inq)
 		}
-		List_PutM((*v_b).F_inq, x_ix428, true, "std/regexp.xo:3241:5")
-		x_pv429 := v_o_2
+		List_PutM((*v_b).F_inq, x_ix425, true, "std/regexp.xo:3235:5")
+		x_pv426 := v_o_2
 		if List_CanPush((*v_b).F_iq) {
-			(*v_b).F_iq = List_PushFast((*v_b).F_iq, x_pv429)
+			(*v_b).F_iq = List_PushFast((*v_b).F_iq, x_pv426)
 		} else {
-			(*v_b).F_iq = List_PushSlow((*v_b).F_iq, x_pv429)
+			(*v_b).F_iq = List_PushSlow((*v_b).F_iq, x_pv426)
 		}
 		_ = Unit{}
 	}
-	x_ix430 := v_pc
+	x_ix427 := v_pc
 	if !List_Mine((*v_b).F_runes) {
 		(*v_b).F_runes = List_Unshared((*v_b).F_runes)
 	}
-	List_PutM((*v_b).F_runes, x_ix430, List_Own(Regexp_one_pass_runes(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_pc)), "std/regexp.xo:3244:3")
+	List_PutM((*v_b).F_runes, x_ix427, List_Own(Regexp_one_pass_runes(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_pc)), "std/regexp.xo:3238:3")
 	return true
 }
 
 func (v_g *Regexp_Prog) M_one_pass(tk *Task) {
 	var v_n int64 = List_len[int64](tk, (*v_g).F_op)
 	_ = v_n
-	if (((v_n >= int64(1000)) || ((*v_g).F_start == int64(0))) || (List_At((*v_g).F_op, (*v_g).F_start, "std/regexp.xo:3253:35") != Regexp_I_EMPTY)) || ((List_At((*v_g).F_arg, (*v_g).F_start, "std/regexp.xo:3253:64") & Regexp_E_BEGIN_TEXT) != Regexp_E_BEGIN_TEXT) {
+	if (((v_n >= int64(1000)) || ((*v_g).F_start == int64(0))) || (List_At((*v_g).F_op, (*v_g).F_start, "std/regexp.xo:3247:35") != Regexp_I_EMPTY)) || ((List_At((*v_g).F_arg, (*v_g).F_start, "std/regexp.xo:3247:64") & Regexp_E_BEGIN_TEXT) != Regexp_E_BEGIN_TEXT) {
 		return
 	}
 	var v_has_alt bool = false
@@ -6308,7 +6279,7 @@ func (v_g *Regexp_Prog) M_one_pass(tk *Task) {
 			break
 		}
 		{
-			if List_At((*v_g).F_op, v_pc, "std/regexp.xo:3259:8") == Regexp_I_ALT {
+			if List_At((*v_g).F_op, v_pc, "std/regexp.xo:3253:8") == Regexp_I_ALT {
 				v_has_alt = true
 			}
 			v_pc = (v_pc + int64(1))
@@ -6320,17 +6291,17 @@ func (v_g *Regexp_Prog) M_one_pass(tk *Task) {
 			break
 		}
 		{
-			var v_op int64 = List_At((*v_g).F_op, v_pc, "std/regexp.xo:3267:14")
+			var v_op int64 = List_At((*v_g).F_op, v_pc, "std/regexp.xo:3261:14")
 			_ = v_op
-			var v_op_out int64 = List_At((*v_g).F_op, List_At((*v_g).F_out, v_pc, "std/regexp.xo:3268:23"), "std/regexp.xo:3268:18")
+			var v_op_out int64 = List_At((*v_g).F_op, List_At((*v_g).F_out, v_pc, "std/regexp.xo:3262:23"), "std/regexp.xo:3262:18")
 			_ = v_op_out
 			if v_op == Regexp_I_ALT {
-				if (v_op_out == Regexp_I_MATCH) || (List_At((*v_g).F_op, List_At((*v_g).F_arg, v_pc, "std/regexp.xo:3270:36"), "std/regexp.xo:3270:31") == Regexp_I_MATCH) {
+				if (v_op_out == Regexp_I_MATCH) || (List_At((*v_g).F_op, List_At((*v_g).F_arg, v_pc, "std/regexp.xo:3264:36"), "std/regexp.xo:3264:31") == Regexp_I_MATCH) {
 					return
 				}
 			} else {
 				if v_op == Regexp_I_EMPTY {
-					if (v_op_out == Regexp_I_MATCH) && ((List_At((*v_g).F_arg, v_pc, "std/regexp.xo:3274:32") & Regexp_E_END_TEXT) != Regexp_E_END_TEXT) {
+					if (v_op_out == Regexp_I_MATCH) && ((List_At((*v_g).F_arg, v_pc, "std/regexp.xo:3268:32") & Regexp_E_END_TEXT) != Regexp_E_END_TEXT) {
 						return
 					}
 				} else {
@@ -6350,18 +6321,18 @@ func (v_g *Regexp_Prog) M_one_pass(tk *Task) {
 			break
 		}
 		{
-			x_pv434 := List[int64]{}
+			x_pv431 := List[int64]{}
 			if List_CanPush(v_b.F_runes) {
-				v_b.F_runes = List_PushFast(v_b.F_runes, x_pv434)
+				v_b.F_runes = List_PushFast(v_b.F_runes, x_pv431)
 			} else {
-				v_b.F_runes = List_PushSlow(v_b.F_runes, x_pv434)
+				v_b.F_runes = List_PushSlow(v_b.F_runes, x_pv431)
 			}
 			_ = Unit{}
-			x_pv435 := List[int64]{}
+			x_pv432 := List[int64]{}
 			if List_CanPush(v_b.F_next) {
-				v_b.F_next = List_PushFast(v_b.F_next, x_pv435)
+				v_b.F_next = List_PushFast(v_b.F_next, x_pv432)
 			} else {
-				v_b.F_next = List_PushSlow(v_b.F_next, x_pv435)
+				v_b.F_next = List_PushSlow(v_b.F_next, x_pv432)
 			}
 			_ = Unit{}
 			if List_CanPush(v_b.F_done) {
@@ -6385,99 +6356,99 @@ func (v_g *Regexp_Prog) M_one_pass(tk *Task) {
 			v_pc = (v_pc + int64(1))
 		}
 	}
-	x_ix436 := (*v_g).F_start
+	x_ix433 := (*v_g).F_start
 	if !List_Mine(v_b.F_inq) {
 		v_b.F_inq = List_Unshared(v_b.F_inq)
 	}
-	List_PutM(v_b.F_inq, x_ix436, true, "std/regexp.xo:3292:3")
+	List_PutM(v_b.F_inq, x_ix433, true, "std/regexp.xo:3286:3")
 	v_pc = int64(0)
-x_L437:
+x_L434:
 	for {
 		if !(v_pc < v_n) {
 			break
 		}
 		{
-			if List_At(v_b.F_op, v_pc, "std/regexp.xo:3296:8") == Regexp_I_ALT {
+			if List_At(v_b.F_op, v_pc, "std/regexp.xo:3290:8") == Regexp_I_ALT {
 				var v_alt_is_arg bool = true
 				_ = v_alt_is_arg
-				var v_al int64 = List_At(v_b.F_arg, v_pc, "std/regexp.xo:3298:16")
+				var v_al int64 = List_At(v_b.F_arg, v_pc, "std/regexp.xo:3292:16")
 				_ = v_al
-				if List_At(v_b.F_op, v_al, "std/regexp.xo:3299:10") != Regexp_I_ALT {
+				if List_At(v_b.F_op, v_al, "std/regexp.xo:3293:10") != Regexp_I_ALT {
 					v_alt_is_arg = false
-					v_al = List_At(v_b.F_out, v_pc, "std/regexp.xo:3301:14")
-					if List_At(v_b.F_op, v_al, "std/regexp.xo:3302:12") != Regexp_I_ALT {
+					v_al = List_At(v_b.F_out, v_pc, "std/regexp.xo:3295:14")
+					if List_At(v_b.F_op, v_al, "std/regexp.xo:3296:12") != Regexp_I_ALT {
 						v_pc = (v_pc + int64(1))
-						continue x_L437
+						continue x_L434
 					}
 				}
-				var x_v438 int64
+				var x_v435 int64
 				if v_alt_is_arg {
-					x_v438 = List_At(v_b.F_out, v_pc, "std/regexp.xo:3307:35")
+					x_v435 = List_At(v_b.F_out, v_pc, "std/regexp.xo:3301:35")
 				} else {
-					x_v438 = List_At(v_b.F_arg, v_pc, "std/regexp.xo:3307:54")
+					x_v435 = List_At(v_b.F_arg, v_pc, "std/regexp.xo:3301:54")
 				}
-				var v_other int64 = x_v438
+				var v_other int64 = x_v435
 				_ = v_other
-				if List_At(v_b.F_op, v_other, "std/regexp.xo:3308:10") == Regexp_I_ALT {
+				if List_At(v_b.F_op, v_other, "std/regexp.xo:3302:10") == Regexp_I_ALT {
 					v_pc = (v_pc + int64(1))
-					continue x_L437
+					continue x_L434
 				}
 				var v_b_alt_is_out bool = true
 				_ = v_b_alt_is_out
 				var v_patch bool = false
 				_ = v_patch
-				if List_At(v_b.F_out, v_al, "std/regexp.xo:3315:10") == v_pc {
+				if List_At(v_b.F_out, v_al, "std/regexp.xo:3309:10") == v_pc {
 					v_patch = true
 				} else {
-					if List_At(v_b.F_arg, v_al, "std/regexp.xo:3317:17") == v_pc {
+					if List_At(v_b.F_arg, v_al, "std/regexp.xo:3311:17") == v_pc {
 						v_patch = true
 						v_b_alt_is_out = false
 					}
 				}
 				if v_patch {
 					if v_b_alt_is_out {
-						x_ix439 := v_al
+						x_ix436 := v_al
 						if !List_Mine(v_b.F_out) {
 							v_b.F_out = List_Unshared(v_b.F_out)
 						}
-						List_PutM(v_b.F_out, x_ix439, v_other, "std/regexp.xo:3323:11")
+						List_PutM(v_b.F_out, x_ix436, v_other, "std/regexp.xo:3317:11")
 					} else {
-						x_ix440 := v_al
+						x_ix437 := v_al
 						if !List_Mine(v_b.F_arg) {
 							v_b.F_arg = List_Unshared(v_b.F_arg)
 						}
-						List_PutM(v_b.F_arg, x_ix440, v_other, "std/regexp.xo:3325:11")
+						List_PutM(v_b.F_arg, x_ix437, v_other, "std/regexp.xo:3319:11")
 					}
 				}
-				var x_v441 int64
+				var x_v438 int64
 				if v_b_alt_is_out {
-					x_v441 = List_At(v_b.F_out, v_al, "std/regexp.xo:3329:37")
+					x_v438 = List_At(v_b.F_out, v_al, "std/regexp.xo:3323:37")
 				} else {
-					x_v441 = List_At(v_b.F_arg, v_al, "std/regexp.xo:3329:56")
+					x_v438 = List_At(v_b.F_arg, v_al, "std/regexp.xo:3323:56")
 				}
-				var v_b_alt int64 = x_v441
+				var v_b_alt int64 = x_v438
 				_ = v_b_alt
-				var x_v442 int64
+				var x_v439 int64
 				if v_b_alt_is_out {
-					x_v442 = List_At(v_b.F_arg, v_al, "std/regexp.xo:3330:39")
+					x_v439 = List_At(v_b.F_arg, v_al, "std/regexp.xo:3324:39")
 				} else {
-					x_v442 = List_At(v_b.F_out, v_al, "std/regexp.xo:3330:58")
+					x_v439 = List_At(v_b.F_out, v_al, "std/regexp.xo:3324:58")
 				}
-				var v_b_other int64 = x_v442
+				var v_b_other int64 = x_v439
 				_ = v_b_other
 				if v_other == v_b_alt {
 					if v_alt_is_arg {
-						x_ix443 := v_pc
+						x_ix440 := v_pc
 						if !List_Mine(v_b.F_arg) {
 							v_b.F_arg = List_Unshared(v_b.F_arg)
 						}
-						List_PutM(v_b.F_arg, x_ix443, v_b_other, "std/regexp.xo:3333:11")
+						List_PutM(v_b.F_arg, x_ix440, v_b_other, "std/regexp.xo:3327:11")
 					} else {
-						x_ix444 := v_pc
+						x_ix441 := v_pc
 						if !List_Mine(v_b.F_out) {
 							v_b.F_out = List_Unshared(v_b.F_out)
 						}
-						List_PutM(v_b.F_out, x_ix444, v_b_other, "std/regexp.xo:3335:11")
+						List_PutM(v_b.F_out, x_ix441, v_b_other, "std/regexp.xo:3329:11")
 					}
 				}
 			}
@@ -6491,8 +6462,8 @@ x_L437:
 			break
 		}
 		{
-			v_b.F_stamp = AddS(v_b.F_stamp, int64(1), "std/regexp.xo:3343:5")
-			if !(Regexp_one_pass_check(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }((*v_g)), &v_b, List_At(v_b.F_iq, v_i, "std/regexp.xo:3344:30"))) {
+			v_b.F_stamp = AddS(v_b.F_stamp, int64(1), "std/regexp.xo:3337:5")
+			if !(Regexp_one_pass_check(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }((*v_g)), &v_b, List_At(v_b.F_iq, v_i, "std/regexp.xo:3338:30"))) {
 				return
 			}
 			v_i = (v_i + int64(1))
@@ -6512,45 +6483,45 @@ x_L437:
 			break
 		}
 		{
-			if (List_At(v_b.F_op, v_pc, "std/regexp.xo:3355:8") == Regexp_I_ALT) || (List_At(v_b.F_op, v_pc, "std/regexp.xo:3355:29") == Regexp_OP_ALT_MATCH) {
-				x_ix447 := v_pc
+			if (List_At(v_b.F_op, v_pc, "std/regexp.xo:3349:8") == Regexp_I_ALT) || (List_At(v_b.F_op, v_pc, "std/regexp.xo:3349:29") == Regexp_OP_ALT_MATCH) {
+				x_ix444 := v_pc
 				if !List_Mine(v_base) {
 					v_base = List_Unshared(v_base)
 				}
-				List_PutM(v_base, x_ix447, List_len[int64](tk, v_nx), "std/regexp.xo:3356:7")
-				x_ix448 := v_pc
+				List_PutM(v_base, x_ix444, List_len[int64](tk, v_nx), "std/regexp.xo:3350:7")
+				x_ix445 := v_pc
 				if !List_Mine(v_cnt) {
 					v_cnt = List_Unshared(v_cnt)
 				}
-				List_PutM(v_cnt, x_ix448, List_len[int64](tk, List_At(v_b.F_next, v_pc, "std/regexp.xo:3357:17")), "std/regexp.xo:3357:7")
-				x_it449 := List_At(v_b.F_runes, v_pc, "std/regexp.xo:3358:16")
-				for _, x_e451 := range List_Items(x_it449) {
-					x_el452 := x_e451
-					_ = x_el452
-					var v_v int64 = x_el452
+				List_PutM(v_cnt, x_ix445, List_len[int64](tk, List_At(v_b.F_next, v_pc, "std/regexp.xo:3351:17")), "std/regexp.xo:3351:7")
+				x_it446 := List_At(v_b.F_runes, v_pc, "std/regexp.xo:3352:16")
+				for _, x_e448 := range List_Items(x_it446) {
+					x_el449 := x_e448
+					_ = x_el449
+					var v_v int64 = x_el449
 					_ = v_v
 					{
-						x_pv453 := v_v
+						x_pv450 := v_v
 						if List_CanPush(v_flat) {
-							v_flat = List_PushFast(v_flat, x_pv453)
+							v_flat = List_PushFast(v_flat, x_pv450)
 						} else {
-							v_flat = List_PushSlow(v_flat, x_pv453)
+							v_flat = List_PushSlow(v_flat, x_pv450)
 						}
 						_ = Unit{}
 					}
 				}
-				x_it454 := List_At(v_b.F_next, v_pc, "std/regexp.xo:3361:16")
-				for _, x_e456 := range List_Items(x_it454) {
-					x_el457 := x_e456
-					_ = x_el457
-					var v_v_1 int64 = x_el457
+				x_it451 := List_At(v_b.F_next, v_pc, "std/regexp.xo:3355:16")
+				for _, x_e453 := range List_Items(x_it451) {
+					x_el454 := x_e453
+					_ = x_el454
+					var v_v_1 int64 = x_el454
 					_ = v_v_1
 					{
-						x_pv458 := v_v_1
+						x_pv455 := v_v_1
 						if List_CanPush(v_nx) {
-							v_nx = List_PushFast(v_nx, x_pv458)
+							v_nx = List_PushFast(v_nx, x_pv455)
 						} else {
-							v_nx = List_PushSlow(v_nx, x_pv458)
+							v_nx = List_PushSlow(v_nx, x_pv455)
 						}
 						_ = Unit{}
 					}
@@ -6561,25 +6532,25 @@ x_L437:
 	}
 	var v_one List[int64] = ListOf[int64](v_n, List_len[int64](tk, v_flat))
 	_ = v_one
-	x_it459 := ListOf[List[int64]](List_Own(v_b.F_op), List_Own(v_b.F_out), List_Own(v_base), List_Own(v_cnt), List_Own(v_flat), List_Own(v_nx))
-	for _, x_e461 := range List_Items(x_it459) {
-		x_el462 := x_e461
-		_ = x_el462
-		var v_tab List[int64] = x_el462
+	x_it456 := ListOf[List[int64]](List_Own(v_b.F_op), List_Own(v_b.F_out), List_Own(v_base), List_Own(v_cnt), List_Own(v_flat), List_Own(v_nx))
+	for _, x_e458 := range List_Items(x_it456) {
+		x_el459 := x_e458
+		_ = x_el459
+		var v_tab List[int64] = x_el459
 		_ = v_tab
 		{
-			x_it463 := v_tab
-			for _, x_e465 := range List_Items(x_it463) {
-				x_el466 := x_e465
-				_ = x_el466
-				var v_v_2 int64 = x_el466
+			x_it460 := v_tab
+			for _, x_e462 := range List_Items(x_it460) {
+				x_el463 := x_e462
+				_ = x_el463
+				var v_v_2 int64 = x_el463
 				_ = v_v_2
 				{
-					x_pv467 := v_v_2
+					x_pv464 := v_v_2
 					if List_CanPush(v_one) {
-						v_one = List_PushFast(v_one, x_pv467)
+						v_one = List_PushFast(v_one, x_pv464)
 					} else {
-						v_one = List_PushSlow(v_one, x_pv467)
+						v_one = List_PushSlow(v_one, x_pv464)
 					}
 					_ = Unit{}
 				}
@@ -6598,17 +6569,17 @@ func Regexp_one_pass_exec(tk *Task, v_g Regexp_Prog, v_o List[int64], v_s string
 	_ = v_end
 	var v_sd Bytes = Str_bytes(tk, v_s)
 	_ = v_sd
-	var v_n int64 = List_At(v_o, int64(0), "std/regexp.xo:3384:11")
+	var v_n int64 = List_At(v_o, int64(0), "std/regexp.xo:3378:11")
 	_ = v_n
-	var v_o_out int64 = AddS(int64(2), v_n, "std/regexp.xo:3385:15")
+	var v_o_out int64 = AddS(int64(2), v_n, "std/regexp.xo:3379:15")
 	_ = v_o_out
-	var v_o_base int64 = AddS(int64(2), MulKI(int64(2), v_n, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3386:20"), "std/regexp.xo:3386:16")
+	var v_o_base int64 = AddS(int64(2), MulKI(int64(2), v_n, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3380:20"), "std/regexp.xo:3380:16")
 	_ = v_o_base
-	var v_o_cnt int64 = AddS(int64(2), MulKI(int64(3), v_n, -3074457345618258602, 3074457345618258602, "std/regexp.xo:3387:19"), "std/regexp.xo:3387:15")
+	var v_o_cnt int64 = AddS(int64(2), MulKI(int64(3), v_n, -3074457345618258602, 3074457345618258602, "std/regexp.xo:3381:19"), "std/regexp.xo:3381:15")
 	_ = v_o_cnt
-	var v_o_flat int64 = AddS(int64(2), MulKI(int64(4), v_n, -2305843009213693952, 2305843009213693951, "std/regexp.xo:3388:20"), "std/regexp.xo:3388:16")
+	var v_o_flat int64 = AddS(int64(2), MulKI(int64(4), v_n, -2305843009213693952, 2305843009213693951, "std/regexp.xo:3382:20"), "std/regexp.xo:3382:16")
 	_ = v_o_flat
-	var v_o_nx int64 = AddS(v_o_flat, List_At(v_o, int64(1), "std/regexp.xo:3389:23"), "std/regexp.xo:3389:14")
+	var v_o_nx int64 = AddS(v_o_flat, List_At(v_o, int64(1), "std/regexp.xo:3383:23"), "std/regexp.xo:3383:14")
 	_ = v_o_nx
 	var v_cap List[int64] = List_Own(Regexp_zeros(tk, v_ncap))
 	_ = v_cap
@@ -6619,11 +6590,11 @@ func Regexp_one_pass_exec(tk *Task, v_g Regexp_Prog, v_o List[int64], v_s string
 			break
 		}
 		{
-			x_ix469 := v_i
+			x_ix466 := v_i
 			if !List_Mine(v_cap) {
 				v_cap = List_Unshared(v_cap)
 			}
-			List_PutM(v_cap, x_ix469, int64(-1), "std/regexp.xo:3393:5")
+			List_PutM(v_cap, x_ix466, int64(-1), "std/regexp.xo:3387:5")
 			v_i = (v_i + int64(1))
 		}
 	}
@@ -6631,29 +6602,29 @@ func Regexp_one_pass_exec(tk *Task, v_g Regexp_Prog, v_o List[int64], v_s string
 	_ = v_pc
 	var v_pos int64 = int64(0)
 	_ = v_pos
-x_L470:
+x_L467:
 	for {
 		if !(true) {
 			break
 		}
 		{
-			var v_op int64 = List_At(v_o, AddS(int64(2), v_pc, "std/regexp.xo:3399:16"), "std/regexp.xo:3399:14")
+			var v_op int64 = List_At(v_o, AddS(int64(2), v_pc, "std/regexp.xo:3393:16"), "std/regexp.xo:3393:14")
 			_ = v_op
-			var v_nxt int64 = List_At(v_o, AddS(v_o_out, v_pc, "std/regexp.xo:3400:17"), "std/regexp.xo:3400:15")
+			var v_nxt int64 = List_At(v_o, AddS(v_o_out, v_pc, "std/regexp.xo:3394:17"), "std/regexp.xo:3394:15")
 			_ = v_nxt
 			if (((v_op == Regexp_I_RUNE) || (v_op == Regexp_I_RUNE1)) || (v_op == Regexp_I_ANY)) || (v_op == Regexp_I_ANY_NOT_NL) {
 				if v_pos >= v_end {
 					return List[int64]{}
 				}
-				var v_c int64 = int64(BytesAt(v_sd, v_pos, "std/regexp.xo:3405:19"))
+				var v_c int64 = int64(BytesAt(v_sd, v_pos, "std/regexp.xo:3399:19"))
 				_ = v_c
 				if v_c < int64(128) {
-					if ((List_At(v_g.F_ascii, AddS(MulIK(v_pc, int64(4), -2305843009213693952, 2305843009213693951, "std/regexp.xo:3407:22"), (v_c>>int64(5)), "std/regexp.xo:3407:22"), "std/regexp.xo:3407:14") >> (v_c & int64(31))) & int64(1)) == int64(0) {
+					if ((List_At(v_g.F_ascii, AddS(MulIK(v_pc, int64(4), -2305843009213693952, 2305843009213693951, "std/regexp.xo:3401:22"), (v_c>>int64(5)), "std/regexp.xo:3401:22"), "std/regexp.xo:3401:14") >> (v_c & int64(31))) & int64(1)) == int64(0) {
 						return List[int64]{}
 					}
 					v_pos = (v_pos + int64(1))
 					v_pc = v_nxt
-					continue x_L470
+					continue x_L467
 				}
 				var v_st int64 = Regexp_step_at(tk, v_s, v_pos)
 				_ = v_st
@@ -6665,7 +6636,7 @@ x_L470:
 					v_ok = Regexp_rune_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_pc, v_r)
 				} else {
 					if v_op == Regexp_I_RUNE1 {
-						v_ok = (v_r == List_At(List_At(v_g.F_rune, v_pc, "std/regexp.xo:3420:19"), int64(0), "std/regexp.xo:3420:19"))
+						v_ok = (v_r == List_At(List_At(v_g.F_rune, v_pc, "std/regexp.xo:3414:19"), int64(0), "std/regexp.xo:3414:19"))
 					} else {
 						if v_op == Regexp_I_ANY {
 							v_ok = true
@@ -6679,13 +6650,13 @@ x_L470:
 				}
 				v_pos = (v_pos + (v_st & int64(7)))
 				v_pc = v_nxt
-				continue x_L470
+				continue x_L467
 			}
 			if (v_op == Regexp_I_ALT) || (v_op == Regexp_OP_ALT_MATCH) {
 				var v_r_1 int64 = int64(-1)
 				_ = v_r_1
 				if v_pos < v_end {
-					var v_c_1 int64 = int64(BytesAt(v_sd, v_pos, "std/regexp.xo:3436:21"))
+					var v_c_1 int64 = int64(BytesAt(v_sd, v_pos, "std/regexp.xo:3430:21"))
 					_ = v_c_1
 					if v_c_1 < int64(128) {
 						v_r_1 = v_c_1
@@ -6693,38 +6664,38 @@ x_L470:
 						v_r_1 = (Regexp_step_at(tk, v_s, v_pos) >> int64(3))
 					}
 				}
-				var v_base int64 = List_At(v_o, AddS(v_o_base, v_pc, "std/regexp.xo:3443:20"), "std/regexp.xo:3443:18")
+				var v_base int64 = List_At(v_o, AddS(v_o_base, v_pc, "std/regexp.xo:3437:20"), "std/regexp.xo:3437:18")
 				_ = v_base
 				var v_lo int64 = int64(0)
 				_ = v_lo
-				var v_hi int64 = List_At(v_o, AddS(v_o_cnt, v_pc, "std/regexp.xo:3445:18"), "std/regexp.xo:3445:16")
+				var v_hi int64 = List_At(v_o, AddS(v_o_cnt, v_pc, "std/regexp.xo:3439:18"), "std/regexp.xo:3439:16")
 				_ = v_hi
 				var v_found int64 = int64(-1)
 				_ = v_found
-			x_L471:
+			x_L468:
 				for {
 					if !(v_lo < v_hi) {
 						break
 					}
 					{
-						var v_mid int64 = (AddS(v_lo, v_hi, "std/regexp.xo:3448:20") >> int64(1))
+						var v_mid int64 = (AddS(v_lo, v_hi, "std/regexp.xo:3442:20") >> int64(1))
 						_ = v_mid
-						var v_a int64 = List_At(v_o, AddS(v_o_flat, MulKI(int64(2), AddS(v_base, v_mid, "std/regexp.xo:3449:33"), -4611686018427387904, 4611686018427387903, "std/regexp.xo:3449:28"), "std/regexp.xo:3449:19"), "std/regexp.xo:3449:17")
+						var v_a int64 = List_At(v_o, AddS(v_o_flat, MulKI(int64(2), AddS(v_base, v_mid, "std/regexp.xo:3443:33"), -4611686018427387904, 4611686018427387903, "std/regexp.xo:3443:28"), "std/regexp.xo:3443:19"), "std/regexp.xo:3443:17")
 						_ = v_a
 						if v_r_1 < v_a {
 							v_hi = v_mid
 						} else {
-							if v_r_1 > List_At(v_o, AddIUp(AddS(v_o_flat, MulKI(int64(2), AddS(v_base, v_mid, "std/regexp.xo:3452:39"), -4611686018427387904, 4611686018427387903, "std/regexp.xo:3452:34"), "std/regexp.xo:3452:25"), int64(1), "std/regexp.xo:3452:25"), "std/regexp.xo:3452:23") {
+							if v_r_1 > List_At(v_o, AddIUp(AddS(v_o_flat, MulKI(int64(2), AddS(v_base, v_mid, "std/regexp.xo:3446:39"), -4611686018427387904, 4611686018427387903, "std/regexp.xo:3446:34"), "std/regexp.xo:3446:25"), int64(1), "std/regexp.xo:3446:25"), "std/regexp.xo:3446:23") {
 								v_lo = (v_mid + int64(1))
 							} else {
 								v_found = v_mid
-								break x_L471
+								break x_L468
 							}
 						}
 					}
 				}
 				if v_found >= int64(0) {
-					v_pc = List_At(v_o, AddS(AddS(v_o_nx, v_base, "std/regexp.xo:3460:16"), v_found, "std/regexp.xo:3460:16"), "std/regexp.xo:3460:14")
+					v_pc = List_At(v_o, AddS(AddS(v_o_nx, v_base, "std/regexp.xo:3454:16"), v_found, "std/regexp.xo:3454:16"), "std/regexp.xo:3454:14")
 				} else {
 					if v_op == Regexp_OP_ALT_MATCH {
 						v_pc = v_nxt
@@ -6732,23 +6703,23 @@ x_L470:
 						return List[int64]{}
 					}
 				}
-				continue x_L470
+				continue x_L467
 			}
 			if v_op == Regexp_I_CAPTURE {
-				var v_a_1 int64 = List_At(v_g.F_arg, v_pc, "std/regexp.xo:3469:15")
+				var v_a_1 int64 = List_At(v_g.F_arg, v_pc, "std/regexp.xo:3463:15")
 				_ = v_a_1
 				if v_a_1 < v_ncap {
-					x_ix472 := v_a_1
+					x_ix469 := v_a_1
 					if !List_Mine(v_cap) {
 						v_cap = List_Unshared(v_cap)
 					}
-					List_PutM(v_cap, x_ix472, v_pos, "std/regexp.xo:3471:9")
+					List_PutM(v_cap, x_ix469, v_pos, "std/regexp.xo:3465:9")
 				}
 				v_pc = v_nxt
-				continue x_L470
+				continue x_L467
 			}
 			if v_op == Regexp_I_EMPTY {
-				var v_want int64 = List_At(v_g.F_arg, v_pc, "std/regexp.xo:3478:18")
+				var v_want int64 = List_At(v_g.F_arg, v_pc, "std/regexp.xo:3472:18")
 				_ = v_want
 				if v_want == Regexp_E_END_TEXT {
 					if v_pos != v_end {
@@ -6768,23 +6739,23 @@ x_L470:
 					}
 				}
 				v_pc = v_nxt
-				continue x_L470
+				continue x_L467
 			}
 			if v_op == Regexp_I_NOP {
 				v_pc = v_nxt
-				continue x_L470
+				continue x_L467
 			}
 			if v_op == Regexp_I_MATCH {
-				x_ix473 := int64(0)
+				x_ix470 := int64(0)
 				if !List_Mine(v_cap) {
 					v_cap = List_Unshared(v_cap)
 				}
-				List_PutM(v_cap, x_ix473, int64(0), "std/regexp.xo:3501:7")
-				x_ix474 := int64(1)
+				List_PutM(v_cap, x_ix470, int64(0), "std/regexp.xo:3495:7")
+				x_ix471 := int64(1)
 				if !List_Mine(v_cap) {
 					v_cap = List_Unshared(v_cap)
 				}
-				List_PutM(v_cap, x_ix474, v_pos, "std/regexp.xo:3502:7")
+				List_PutM(v_cap, x_ix471, v_pos, "std/regexp.xo:3496:7")
 				return List_Own(v_cap)
 			}
 			return List[int64]{}
@@ -6798,9 +6769,9 @@ func Regexp_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_pos0 int64, v_nca
 	_ = v_end
 	var v_nprog int64 = List_len[int64](tk, v_g.F_op)
 	_ = v_nprog
-	var v_vw int64 = (AddIUp(MulS(v_nprog, (v_end+int64(1)), "std/regexp.xo:3513:13"), int64(31), "std/regexp.xo:3513:13") / int64(32))
+	var v_vw int64 = (AddIUp(MulS(v_nprog, (v_end+int64(1)), "std/regexp.xo:3507:13"), int64(31), "std/regexp.xo:3507:13") / int64(32))
 	_ = v_vw
-	var v_b Regexp_BT = Regexp_BT{F_end: v_end, F_buf: List_Own(Regexp_zeros(tk, AddIUp(AddS(v_ncap, v_vw, "std/regexp.xo:3514:35"), int64(32), "std/regexp.xo:3514:35"))), F_ncap: v_ncap, F_vis0: v_ncap, F_job0: AddS(v_ncap, v_vw, "std/regexp.xo:3514:82"), F_jn: int64(0), F_matchcap: List_Own(Regexp_zeros(tk, v_ncap)), F_nprog: v_nprog}
+	var v_b Regexp_BT = Regexp_BT{F_end: v_end, F_buf: List_Own(Regexp_zeros(tk, AddIUp(AddS(v_ncap, v_vw, "std/regexp.xo:3508:35"), int64(32), "std/regexp.xo:3508:35"))), F_ncap: v_ncap, F_vis0: v_ncap, F_job0: AddS(v_ncap, v_vw, "std/regexp.xo:3508:82"), F_jn: int64(0), F_matchcap: List_Own(Regexp_zeros(tk, v_ncap)), F_nprog: v_nprog}
 	_ = v_b
 	var v_i int64 = int64(0)
 	_ = v_i
@@ -6809,16 +6780,16 @@ func Regexp_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_pos0 int64, v_nca
 			break
 		}
 		{
-			x_ix476 := v_i
+			x_ix473 := v_i
 			if !List_Mine(v_b.F_buf) {
 				v_b.F_buf = List_Unshared(v_b.F_buf)
 			}
-			List_PutM(v_b.F_buf, x_ix476, int64(-1), "std/regexp.xo:3517:5")
-			x_ix477 := v_i
+			List_PutM(v_b.F_buf, x_ix473, int64(-1), "std/regexp.xo:3511:5")
+			x_ix474 := v_i
 			if !List_Mine(v_b.F_matchcap) {
 				v_b.F_matchcap = List_Unshared(v_b.F_matchcap)
 			}
-			List_PutM(v_b.F_matchcap, x_ix477, int64(-1), "std/regexp.xo:3518:5")
+			List_PutM(v_b.F_matchcap, x_ix474, int64(-1), "std/regexp.xo:3512:5")
 			v_i = (v_i + int64(1))
 		}
 	}
@@ -6828,17 +6799,17 @@ func Regexp_backtrack(tk *Task, v_g Regexp_Prog, v_s string, v_pos0 int64, v_nca
 		if v_pos0 != int64(0) {
 			return List[int64]{}
 		}
-		x_ix478 := int64(0)
+		x_ix475 := int64(0)
 		if !List_Mine(v_b.F_buf) {
 			v_b.F_buf = List_Unshared(v_b.F_buf)
 		}
-		List_PutM(v_b.F_buf, x_ix478, int64(0), "std/regexp.xo:3527:5")
+		List_PutM(v_b.F_buf, x_ix475, int64(0), "std/regexp.xo:3521:5")
 		if Regexp_try_backtrack(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_s, &v_b, v_g.F_start, int64(0)) {
 			return List_Own(v_b.F_matchcap)
 		}
 		return List[int64]{}
 	}
-x_L479:
+x_L476:
 	for {
 		if !(v_pos <= v_end) {
 			break
@@ -6861,20 +6832,20 @@ x_L479:
 					v_pos = v_at_1
 				}
 			}
-			x_ix480 := int64(0)
+			x_ix477 := int64(0)
 			if !List_Mine(v_b.F_buf) {
 				v_b.F_buf = List_Unshared(v_b.F_buf)
 			}
-			List_PutM(v_b.F_buf, x_ix480, v_pos, "std/regexp.xo:3547:5")
+			List_PutM(v_b.F_buf, x_ix477, v_pos, "std/regexp.xo:3541:5")
 			if Regexp_try_backtrack(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_s, &v_b, v_g.F_start, v_pos) {
 				return List_Own(v_b.F_matchcap)
 			}
 			var v_st int64 = Regexp_step_at(tk, v_s, v_pos)
 			_ = v_st
 			if v_st < int64(0) {
-				break x_L479
+				break x_L476
 			}
-			v_pos = AddS(v_pos, (v_st & int64(7)), "std/regexp.xo:3555:5")
+			v_pos = AddS(v_pos, (v_st & int64(7)), "std/regexp.xo:3549:5")
 		}
 	}
 	return List[int64]{}
@@ -6886,7 +6857,7 @@ func Regexp_exec(tk *Task, v_g Regexp_Prog, v_s string, v_pos0 int64, v_ncap int
 	if List_len[int64](tk, v_g.F_one) > int64(0) {
 		return List_Own(Regexp_one_pass_exec(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), List_Own(v_g.F_one), v_s, v_pos0, v_ncap))
 	}
-	if (v_n <= int64(500)) && (Str_len(tk, v_s) < DivS(int64(262144), v_n, "std/regexp.xo:3567:28")) {
+	if (v_n <= int64(500)) && (Str_len(tk, v_s) < DivS(int64(262144), v_n, "std/regexp.xo:3561:28")) {
 		return List_Own(Regexp_backtrack(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_s, v_pos0, v_ncap, v_g.F_prefix))
 	}
 	var v_runq Regexp_Queue = func(v Regexp_Queue) Regexp_Queue { v.XoMark(); return v }(Regexp_new_queue(tk, v_n, v_ncap))
@@ -6904,18 +6875,18 @@ func Regexp_exec(tk *Task, v_g Regexp_Prog, v_s string, v_pos0 int64, v_ncap int
 			break
 		}
 		{
-			x_pv482 := int64(-1)
+			x_pv479 := int64(-1)
 			if List_CanPush(v_matchcap) {
-				v_matchcap = List_PushFast(v_matchcap, x_pv482)
+				v_matchcap = List_PushFast(v_matchcap, x_pv479)
 			} else {
-				v_matchcap = List_PushSlow(v_matchcap, x_pv482)
+				v_matchcap = List_PushSlow(v_matchcap, x_pv479)
 			}
 			_ = Unit{}
-			x_ix483 := v_k
+			x_ix480 := v_k
 			if !List_Mine(v_cap) {
 				v_cap = List_Unshared(v_cap)
 			}
-			List_PutM(v_cap, x_ix483, int64(-1), "std/regexp.xo:3577:5")
+			List_PutM(v_cap, x_ix480, int64(-1), "std/regexp.xo:3571:5")
 			v_k = (v_k + int64(1))
 		}
 	}
@@ -6925,28 +6896,28 @@ func Regexp_exec(tk *Task, v_g Regexp_Prog, v_s string, v_pos0 int64, v_ncap int
 	_ = v_pos
 	var v_st int64 = Regexp_step_at(tk, v_s, v_pos)
 	_ = v_st
-	var x_v484 int64
+	var x_v481 int64
 	if v_st < int64(0) {
-		x_v484 = int64(-1)
+		x_v481 = int64(-1)
 	} else {
-		x_v484 = (v_st >> int64(3))
+		x_v481 = (v_st >> int64(3))
 	}
-	var v_r int64 = x_v484
+	var v_r int64 = x_v481
 	_ = v_r
-	var x_v485 int64
+	var x_v482 int64
 	if v_st < int64(0) {
-		x_v485 = int64(0)
+		x_v482 = int64(0)
 	} else {
-		x_v485 = (v_st & int64(7))
+		x_v482 = (v_st & int64(7))
 	}
-	var v_width int64 = x_v485
+	var v_width int64 = x_v482
 	_ = v_width
 	var v_r1 int64 = int64(-1)
 	_ = v_r1
 	var v_width1 int64 = int64(0)
 	_ = v_width1
 	if v_r >= int64(0) {
-		var v_st1 int64 = Regexp_step_at(tk, v_s, AddS(v_pos, v_width, "std/regexp.xo:3588:26"))
+		var v_st1 int64 = Regexp_step_at(tk, v_s, AddS(v_pos, v_width, "std/regexp.xo:3582:26"))
 		_ = v_st1
 		if v_st1 >= int64(0) {
 			v_r1 = (v_st1 >> int64(3))
@@ -6955,59 +6926,59 @@ func Regexp_exec(tk *Task, v_g Regexp_Prog, v_s string, v_pos0 int64, v_ncap int
 	}
 	var v_he bool = v_g.F_has_empty
 	_ = v_he
-	var x_v486 int64
+	var x_v483 int64
 	if v_he {
-		x_v486 = Regexp_empty_context(tk, Regexp_rune_before(tk, v_s, v_pos), v_r)
+		x_v483 = Regexp_empty_context(tk, Regexp_rune_before(tk, v_s, v_pos), v_r)
 	} else {
-		x_v486 = int64(0)
+		x_v483 = int64(0)
 	}
-	var v_cond int64 = x_v486
+	var v_cond int64 = x_v483
 	_ = v_cond
 	var v_prefix string = v_g.F_prefix
 	_ = v_prefix
-x_L487:
+x_L484:
 	for {
 		if !(true) {
 			break
 		}
 		{
 			if (v_runq.F_len == int64(0)) && v_matched {
-				break x_L487
+				break x_L484
 			}
-			if (v_runq.F_len == int64(0)) && (!(Str_is_empty(tk, v_prefix)) || (v_g.F_first_ok && !(((v_r >= int64(0)) && (v_r < int64(128))) && (((List_At(v_g.F_first, (v_r>>int64(5)), "std/regexp.xo:3601:88") >> (v_r & int64(31))) & int64(1)) != int64(0))))) {
-				var x_v488 int64
+			if (v_runq.F_len == int64(0)) && (!(Str_is_empty(tk, v_prefix)) || (v_g.F_first_ok && !(((v_r >= int64(0)) && (v_r < int64(128))) && (((List_At(v_g.F_first, (v_r>>int64(5)), "std/regexp.xo:3595:88") >> (v_r & int64(31))) & int64(1)) != int64(0))))) {
+				var x_v485 int64
 				if Str_is_empty(tk, v_prefix) {
-					x_v488 = Regexp_next_start(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_s, v_pos)
+					x_v485 = Regexp_next_start(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_s, v_pos)
 				} else {
-					x_v488 = Regexp_find_from(tk, v_s, v_prefix, v_pos)
+					x_v485 = Regexp_find_from(tk, v_s, v_prefix, v_pos)
 				}
-				var v_at int64 = x_v488
+				var v_at int64 = x_v485
 				_ = v_at
 				if v_at < int64(0) {
-					break x_L487
+					break x_L484
 				}
 				if v_at != v_pos {
 					v_pos = v_at
 					var v_st0 int64 = Regexp_step_at(tk, v_s, v_pos)
 					_ = v_st0
-					var x_v489 int64
+					var x_v486 int64
 					if v_st0 < int64(0) {
-						x_v489 = int64(-1)
+						x_v486 = int64(-1)
 					} else {
-						x_v489 = (v_st0 >> int64(3))
+						x_v486 = (v_st0 >> int64(3))
 					}
-					v_r = x_v489
-					var x_v490 int64
+					v_r = x_v486
+					var x_v487 int64
 					if v_st0 < int64(0) {
-						x_v490 = int64(0)
+						x_v487 = int64(0)
 					} else {
-						x_v490 = (v_st0 & int64(7))
+						x_v487 = (v_st0 & int64(7))
 					}
-					v_width = x_v490
+					v_width = x_v487
 					v_r1 = int64(-1)
 					v_width1 = int64(0)
 					if v_r >= int64(0) {
-						var v_st1_1 int64 = Regexp_step_at(tk, v_s, AddS(v_pos, v_width, "std/regexp.xo:3617:32"))
+						var v_st1_1 int64 = Regexp_step_at(tk, v_s, AddS(v_pos, v_width, "std/regexp.xo:3611:32"))
 						_ = v_st1_1
 						if v_st1_1 >= int64(0) {
 							v_r1 = (v_st1_1 >> int64(3))
@@ -7020,38 +6991,38 @@ x_L487:
 				}
 			}
 			if !(v_matched) {
-				x_ix491 := int64(0)
+				x_ix488 := int64(0)
 				if !List_Mine(v_cap) {
 					v_cap = List_Unshared(v_cap)
 				}
-				List_PutM(v_cap, x_ix491, v_pos, "std/regexp.xo:3630:7")
+				List_PutM(v_cap, x_ix488, v_pos, "std/regexp.xo:3624:7")
 				Regexp_add(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &v_runq, v_g.F_start, v_pos, &v_cap, int64(0), v_cond)
 			}
-			var x_v492 int64
+			var x_v489 int64
 			if v_he {
-				x_v492 = Regexp_empty_context(tk, v_r, v_r1)
+				x_v489 = Regexp_empty_context(tk, v_r, v_r1)
 			} else {
-				x_v492 = int64(0)
+				x_v489 = int64(0)
 			}
-			var v_next_cond int64 = x_v492
+			var v_next_cond int64 = x_v489
 			_ = v_next_cond
 			var v_j int64 = int64(0)
 			_ = v_j
-		x_L493:
+		x_L490:
 			for {
 				if !(v_j < v_runq.F_len) {
 					break
 				}
 				{
-					if List_At(v_runq.F_has, v_j, "std/regexp.xo:3637:10") == int64(1) {
-						var v_pc int64 = List_At(v_runq.F_pcs, v_j, "std/regexp.xo:3638:18")
+					if List_At(v_runq.F_has, v_j, "std/regexp.xo:3631:10") == int64(1) {
+						var v_pc int64 = List_At(v_runq.F_pcs, v_j, "std/regexp.xo:3632:18")
 						_ = v_pc
-						var v_op int64 = List_At(v_g.F_op, v_pc, "std/regexp.xo:3639:18")
+						var v_op int64 = List_At(v_g.F_op, v_pc, "std/regexp.xo:3633:18")
 						_ = v_op
 						var v_ok bool = false
 						_ = v_ok
 						if ((v_r >= int64(0)) && (v_r < int64(128))) && (v_op != Regexp_I_MATCH) {
-							v_ok = (((List_At(v_g.F_ascii, AddS(MulIK(v_pc, int64(4), -2305843009213693952, 2305843009213693951, "std/regexp.xo:3642:26"), (v_r>>int64(5)), "std/regexp.xo:3642:26"), "std/regexp.xo:3642:18") >> (v_r & int64(31))) & int64(1)) != int64(0))
+							v_ok = (((List_At(v_g.F_ascii, AddS(MulIK(v_pc, int64(4), -2305843009213693952, 2305843009213693951, "std/regexp.xo:3636:26"), (v_r>>int64(5)), "std/regexp.xo:3636:26"), "std/regexp.xo:3636:18") >> (v_r & int64(31))) & int64(1)) != int64(0))
 						} else {
 							if v_op == Regexp_I_MATCH {
 								var v_m List[int64] = List_Own(Regexp_zeros(tk, v_ncap))
@@ -7063,29 +7034,29 @@ x_L487:
 										break
 									}
 									{
-										x_ix495 := v_mi
+										x_ix492 := v_mi
 										if !List_Mine(v_m) {
 											v_m = List_Unshared(v_m)
 										}
-										List_PutM(v_m, x_ix495, List_At(v_runq.F_caps, AddS(MulS(v_j, v_ncap, "std/regexp.xo:3647:31"), v_mi, "std/regexp.xo:3647:31"), "std/regexp.xo:3647:21"), "std/regexp.xo:3647:13")
+										List_PutM(v_m, x_ix492, List_At(v_runq.F_caps, AddS(MulS(v_j, v_ncap, "std/regexp.xo:3641:31"), v_mi, "std/regexp.xo:3641:31"), "std/regexp.xo:3641:21"), "std/regexp.xo:3641:13")
 										v_mi = (v_mi + int64(1))
 									}
 								}
-								x_ix496 := int64(1)
+								x_ix493 := int64(1)
 								if !List_Mine(v_m) {
 									v_m = List_Unshared(v_m)
 								}
-								List_PutM(v_m, x_ix496, v_pos, "std/regexp.xo:3650:11")
+								List_PutM(v_m, x_ix493, v_pos, "std/regexp.xo:3644:11")
 								v_matchcap = List_Own(v_m)
 								v_matched = true
 								v_j = v_runq.F_len
-								continue x_L493
+								continue x_L490
 							} else {
 								if v_op == Regexp_I_RUNE {
 									v_ok = ((v_r >= int64(0)) && Regexp_rune_matches(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_pc, v_r))
 								} else {
 									if v_op == Regexp_I_RUNE1 {
-										v_ok = ((v_r >= int64(0)) && (v_r == List_At(List_At(v_g.F_rune, v_pc, "std/regexp.xo:3659:31"), int64(0), "std/regexp.xo:3659:31")))
+										v_ok = ((v_r >= int64(0)) && (v_r == List_At(List_At(v_g.F_rune, v_pc, "std/regexp.xo:3653:31"), int64(0), "std/regexp.xo:3653:31")))
 									} else {
 										if v_op == Regexp_I_ANY {
 											v_ok = (v_r >= int64(0))
@@ -7099,7 +7070,7 @@ x_L487:
 							}
 						}
 						if v_ok {
-							Regexp_add(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &v_nextq, List_At(v_g.F_out, v_pc, "std/regexp.xo:3666:25"), AddS(v_pos, v_width, "std/regexp.xo:3666:36"), &v_runq.F_caps, MulS(v_j, v_ncap, "std/regexp.xo:3666:60"), v_next_cond)
+							Regexp_add(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), &v_nextq, List_At(v_g.F_out, v_pc, "std/regexp.xo:3660:25"), AddS(v_pos, v_width, "std/regexp.xo:3660:36"), &v_runq.F_caps, MulS(v_j, v_ncap, "std/regexp.xo:3660:60"), v_next_cond)
 						}
 					}
 					v_j = (v_j + int64(1))
@@ -7107,13 +7078,13 @@ x_L487:
 			}
 			v_runq.M_clear(tk)
 			if v_width == int64(0) {
-				break x_L487
+				break x_L484
 			}
-			v_pos = AddS(v_pos, v_width, "std/regexp.xo:3675:5")
+			v_pos = AddS(v_pos, v_width, "std/regexp.xo:3669:5")
 			v_r = v_r1
 			v_width = v_width1
 			if v_r >= int64(0) {
-				var v_st2 int64 = Regexp_step_at(tk, v_s, AddS(v_pos, v_width, "std/regexp.xo:3679:28"))
+				var v_st2 int64 = Regexp_step_at(tk, v_s, AddS(v_pos, v_width, "std/regexp.xo:3673:28"))
 				_ = v_st2
 				if v_st2 >= int64(0) {
 					v_r1 = (v_st2 >> int64(3))
@@ -7145,7 +7116,7 @@ func Regexp_all_matches(tk *Task, v_g Regexp_Prog, v_s string, v_ncap int64) Lis
 	_ = v_pos
 	var v_prev_end int64 = int64(-1)
 	_ = v_prev_end
-x_L497:
+x_L494:
 	for {
 		if !(v_pos <= v_end) {
 			break
@@ -7154,12 +7125,12 @@ x_L497:
 			var v_m List[int64] = List_Own(Regexp_exec(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_g), v_s, v_pos, v_ncap))
 			_ = v_m
 			if List_is_empty[int64](tk, v_m) {
-				break x_L497
+				break x_L494
 			}
 			var v_accept bool = true
 			_ = v_accept
-			if List_At(v_m, int64(1), "std/regexp.xo:3712:8") == v_pos {
-				if List_At(v_m, int64(0), "std/regexp.xo:3713:10") == v_prev_end {
+			if List_At(v_m, int64(1), "std/regexp.xo:3706:8") == v_pos {
+				if List_At(v_m, int64(0), "std/regexp.xo:3707:10") == v_prev_end {
 					v_accept = false
 				}
 				var v_st int64 = Regexp_step_at(tk, v_s, v_pos)
@@ -7170,15 +7141,15 @@ x_L497:
 					v_pos = (v_pos + (v_st & int64(7)))
 				}
 			} else {
-				v_pos = List_At(v_m, int64(1), "std/regexp.xo:3723:13")
+				v_pos = List_At(v_m, int64(1), "std/regexp.xo:3717:13")
 			}
-			v_prev_end = List_At(v_m, int64(1), "std/regexp.xo:3725:16")
+			v_prev_end = List_At(v_m, int64(1), "std/regexp.xo:3719:16")
 			if v_accept {
-				x_pv498 := List_Own(v_m)
+				x_pv495 := List_Own(v_m)
 				if List_CanPush(v_out) {
-					v_out = List_PushFast(v_out, x_pv498)
+					v_out = List_PushFast(v_out, x_pv495)
 				} else {
-					v_out = List_PushSlow(v_out, x_pv498)
+					v_out = List_PushSlow(v_out, x_pv495)
 				}
 				_ = Unit{}
 			}
@@ -7203,7 +7174,7 @@ func Regexp_extract(tk *Task, v_t string, v_i0 int64) Tuple4[bool, string, int64
 	}
 	var v_start int64 = v_i
 	_ = v_start
-x_L499:
+x_L496:
 	for {
 		if !(v_i < v_n) {
 			break
@@ -7213,17 +7184,17 @@ x_L499:
 			_ = v_d
 			var v_c int64 = (v_d >> int64(3))
 			_ = v_c
-			x_t500 := Rune_try(tk, v_c)
-			var x_c501 Rune
-			if x_t500.Some {
-				x_c501 = x_t500.V
+			x_t497 := Rune_try(tk, v_c)
+			var x_c498 Rune
+			if x_t497.Some {
+				x_c498 = x_t497.V
 			} else {
-				x_c501 = RuneOf(int64(65533), "std/regexp.xo:3750:29")
+				x_c498 = RuneOf(int64(65533), "std/regexp.xo:3744:29")
 			}
-			var v_ru Rune = x_c501
+			var v_ru Rune = x_c498
 			_ = v_ru
 			if (!(Rune_is_letter(tk, v_ru)) && !(Rune_is_digit(tk, v_ru))) && (v_c != int64(95)) {
-				break x_L499
+				break x_L496
 			}
 			v_i = (v_i + (v_d & int64(7)))
 		}
@@ -7243,7 +7214,7 @@ x_L499:
 	_ = v_num
 	var v_k int64 = int64(0)
 	_ = v_k
-x_L502:
+x_L499:
 	for {
 		if !(v_k < Str_len(tk, v_name)) {
 			break
@@ -7253,9 +7224,9 @@ x_L502:
 			_ = v_c_1
 			if ((v_c_1 < int64(48)) || (v_c_1 > int64(57))) || (v_num >= int64(100000000)) {
 				v_num = int64(-1)
-				break x_L502
+				break x_L499
 			}
-			v_num = SubS(AddS(MulIK(v_num, int64(10), -922337203685477580, 922337203685477580, "std/regexp.xo:3774:11"), v_c_1, "std/regexp.xo:3774:11"), int64(48), "std/regexp.xo:3774:11")
+			v_num = SubS(AddS(MulIK(v_num, int64(10), -922337203685477580, 922337203685477580, "std/regexp.xo:3768:11"), v_c_1, "std/regexp.xo:3768:11"), int64(48), "std/regexp.xo:3768:11")
 			v_k = (v_k + int64(1))
 		}
 	}
@@ -7270,7 +7241,7 @@ func (v_r Regexp_Regex) M_expand(tk *Task, v_b *BytesBuilder, v_tpl string, v_s 
 	_ = v_n
 	var v_i int64 = int64(0)
 	_ = v_i
-x_L503:
+x_L500:
 	for {
 		if !(v_i < v_n) {
 			break
@@ -7279,46 +7250,46 @@ x_L503:
 			var v_d int64 = Regexp_find_from(tk, v_tpl, "$", v_i)
 			_ = v_d
 			if v_d < int64(0) {
-				break x_L503
+				break x_L500
 			}
 			(*v_b).M_write_str(tk, Regexp_sl(tk, v_tpl, v_i, v_d))
-			v_i = AddIUp(v_d, int64(1), "std/regexp.xo:3793:9")
+			v_i = AddIUp(v_d, int64(1), "std/regexp.xo:3787:9")
 			if (v_i < v_n) && (Regexp_byte_at(tk, v_tpl, v_i) == int64(36)) {
-				(*v_b).M_write_byte(tk, Conv[uint8, Rune](Rune(36), "std/regexp.xo:3795:20"))
+				(*v_b).M_write_byte(tk, Conv[uint8, Rune](Rune(36), "std/regexp.xo:3789:20"))
 				v_i = (v_i + int64(1))
-				continue x_L503
+				continue x_L500
 			}
-			x_let504 := Regexp_extract(tk, v_tpl, v_i)
-			_ = x_let504
-			var v_ok bool = x_let504.F0
+			x_let501 := Regexp_extract(tk, v_tpl, v_i)
+			_ = x_let501
+			var v_ok bool = x_let501.F0
 			_ = v_ok
-			var v_name string = x_let504.F1
+			var v_name string = x_let501.F1
 			_ = v_name
-			var v_num int64 = x_let504.F2
+			var v_num int64 = x_let501.F2
 			_ = v_num
-			var v_rest int64 = x_let504.F3
+			var v_rest int64 = x_let501.F3
 			_ = v_rest
 			if !(v_ok) {
-				(*v_b).M_write_byte(tk, Conv[uint8, Rune](Rune(36), "std/regexp.xo:3801:20"))
-				continue x_L503
+				(*v_b).M_write_byte(tk, Conv[uint8, Rune](Rune(36), "std/regexp.xo:3795:20"))
+				continue x_L500
 			}
 			v_i = v_rest
 			if v_num >= int64(0) {
-				if (AddIUp(MulKI(int64(2), v_num, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3806:10"), int64(1), "std/regexp.xo:3806:10") < List_len[int64](tk, v_m)) && (List_At(v_m, MulKI(int64(2), v_num, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3806:37"), "std/regexp.xo:3806:35") >= int64(0)) {
-					(*v_b).M_write_str(tk, Regexp_sl(tk, v_s, List_At(v_m, MulKI(int64(2), v_num, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3807:29"), "std/regexp.xo:3807:27"), List_At(v_m, AddIUp(MulKI(int64(2), v_num, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3807:41"), int64(1), "std/regexp.xo:3807:41"), "std/regexp.xo:3807:39")))
+				if (AddIUp(MulKI(int64(2), v_num, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3800:10"), int64(1), "std/regexp.xo:3800:10") < List_len[int64](tk, v_m)) && (List_At(v_m, MulKI(int64(2), v_num, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3800:37"), "std/regexp.xo:3800:35") >= int64(0)) {
+					(*v_b).M_write_str(tk, Regexp_sl(tk, v_s, List_At(v_m, MulKI(int64(2), v_num, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3801:29"), "std/regexp.xo:3801:27"), List_At(v_m, AddIUp(MulKI(int64(2), v_num, -4611686018427387904, 4611686018427387903, "std/regexp.xo:3801:41"), int64(1), "std/regexp.xo:3801:41"), "std/regexp.xo:3801:39")))
 				}
 			} else {
 				var v_k int64 = int64(0)
 				_ = v_k
-			x_L505:
+			x_L502:
 				for {
 					if !(v_k < List_len[string](tk, v_r.F_names)) {
 						break
 					}
 					{
-						if ((v_name == List_AtU(v_r.F_names, v_k)) && (((int64(2) * v_k) + int64(1)) < List_len[int64](tk, v_m))) && (List_At(v_m, (int64(2)*v_k), "std/regexp.xo:3812:57") >= int64(0)) {
-							(*v_b).M_write_str(tk, Regexp_sl(tk, v_s, List_At(v_m, (int64(2)*v_k), "std/regexp.xo:3813:29"), List_At(v_m, ((int64(2)*v_k)+int64(1)), "std/regexp.xo:3813:39")))
-							break x_L505
+						if ((v_name == List_AtU(v_r.F_names, v_k)) && (((int64(2) * v_k) + int64(1)) < List_len[int64](tk, v_m))) && (List_At(v_m, (int64(2)*v_k), "std/regexp.xo:3806:57") >= int64(0)) {
+							(*v_b).M_write_str(tk, Regexp_sl(tk, v_s, List_At(v_m, (int64(2)*v_k), "std/regexp.xo:3807:29"), List_At(v_m, ((int64(2)*v_k)+int64(1)), "std/regexp.xo:3807:39")))
+							break x_L502
 						}
 						v_k = (v_k + int64(1))
 					}
@@ -7344,7 +7315,7 @@ func (v_r Regexp_Regex) M_replace(tk *Task, v_s string, v_repl string, v_expand 
 	if v_expand {
 		v_ncap = v_r.F_prog.F_num_cap
 	}
-x_L506:
+x_L503:
 	for {
 		if !(v_search <= v_end) {
 			break
@@ -7353,20 +7324,20 @@ x_L506:
 			var v_a List[int64] = List_Own(Regexp_exec(tk, func(v Regexp_Prog) Regexp_Prog { v.XoMark(); return v }(v_r.F_prog), v_s, v_search, v_ncap))
 			_ = v_a
 			if List_is_empty[int64](tk, v_a) {
-				break x_L506
+				break x_L503
 			}
-			v_b.M_write_str(tk, Regexp_sl(tk, v_s, v_last_end, List_At(v_a, int64(0), "std/regexp.xo:3838:33")))
-			if (List_At(v_a, int64(1), "std/regexp.xo:3839:8") > v_last_end) || (List_At(v_a, int64(0), "std/regexp.xo:3839:27") == int64(0)) {
+			v_b.M_write_str(tk, Regexp_sl(tk, v_s, v_last_end, List_At(v_a, int64(0), "std/regexp.xo:3832:33")))
+			if (List_At(v_a, int64(1), "std/regexp.xo:3833:8") > v_last_end) || (List_At(v_a, int64(0), "std/regexp.xo:3833:27") == int64(0)) {
 				if v_expand {
-					x_a507 := v_repl
-					x_a508 := v_s
-					x_a509 := List_Own(v_a)
-					Addr(func(v Regexp_Regex) Regexp_Regex { v.XoMark(); return v }(v_r)).M_expand(tk, &v_b, x_a507, x_a508, x_a509)
+					x_a504 := v_repl
+					x_a505 := v_s
+					x_a506 := List_Own(v_a)
+					Addr(func(v Regexp_Regex) Regexp_Regex { v.XoMark(); return v }(v_r)).M_expand(tk, &v_b, x_a504, x_a505, x_a506)
 				} else {
 					v_b.M_write_str(tk, v_repl)
 				}
 			}
-			v_last_end = List_At(v_a, int64(1), "std/regexp.xo:3846:16")
+			v_last_end = List_At(v_a, int64(1), "std/regexp.xo:3840:16")
 			var v_width int64 = int64(0)
 			_ = v_width
 			var v_st int64 = Regexp_step_at(tk, v_s, v_search)
@@ -7374,24 +7345,24 @@ x_L506:
 			if v_st >= int64(0) {
 				v_width = (v_st & int64(7))
 			}
-			if (v_search + v_width) > List_At(v_a, int64(1), "std/regexp.xo:3852:25") {
+			if (v_search + v_width) > List_At(v_a, int64(1), "std/regexp.xo:3846:25") {
 				v_search = (v_search + v_width)
 			} else {
-				if (v_search + int64(1)) > List_At(v_a, int64(1), "std/regexp.xo:3854:28") {
+				if (v_search + int64(1)) > List_At(v_a, int64(1), "std/regexp.xo:3848:28") {
 					v_search = (v_search + int64(1))
 				} else {
-					v_search = List_At(v_a, int64(1), "std/regexp.xo:3857:16")
+					v_search = List_At(v_a, int64(1), "std/regexp.xo:3851:16")
 				}
 			}
 		}
 	}
 	v_b.M_write_str(tk, Regexp_sl(tk, v_s, v_last_end, v_end))
-	x_t510 := Bytes_to_str(tk, v_b.M_freeze(tk))
-	var x_c511 string
-	if x_t510.Some {
-		x_c511 = x_t510.V
+	x_t507 := Bytes_to_str(tk, v_b.M_freeze(tk))
+	var x_c508 string
+	if x_t507.Some {
+		x_c508 = x_t507.V
 	} else {
-		x_c511 = v_s
+		x_c508 = v_s
 	}
-	return x_c511
+	return x_c508
 }

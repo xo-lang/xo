@@ -1,0 +1,11 @@
+# Go's regexp test tables (go1.26) run through std/regexp
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# A pattern's error compares as its code and expression (RegexErr.msg,
+# Go's syntax.Error without "error parsing regexp: "). A find is
+# FindAllStringSubmatchIndex(-1) against captures_all_index.
+regexp all_test.go goodRe . compile
+regexp all_test.go badRe re compile
+regexp find_test.go findTests pat,text find
+regexp all_test.go replaceTests pattern,replacement,input replace
+regexp all_test.go replaceLiteralTests pattern,replacement,input replacelit
+regexp all_test.go metaTests pattern quote

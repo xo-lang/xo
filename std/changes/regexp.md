@@ -1,5 +1,20 @@
 # std/regexp changes
 
+## 2026-11-19: fix: a group repeated zero times is still a group
+
+- Kind: fix
+- Commit: this commit
+- Found by: std/evidence/regexp gotests (task #403: Go's findTests[54], `(a){0}` on "", gave one span, Go's two)
+- Go reference: regexp/regexp.go (pad: a match is padded with -1 to 2*(numSubexp+1), numSubexp from the parse before Simplify), go1.26
+- Test: std/regexp module test "a group repeated zero times still counts" (fails before: captures_index gave [Some((0, 0))])
+- Shipped in: not yet released
+
+Simplify drops the capture of a group repeated `{0}` times, so its match
+had no positions for it, and captures, captures_all, captures_index and
+captures_all_index left it out (a later group moved down one). Each now
+gives every parsed group, None for one that did not take part, as Go's
+FindStringSubmatchIndex.
+
 ## 2026-11-18: fix: a pattern past Go's size or rune limits is "expression too large"
 
 - Kind: fix

@@ -1,0 +1,65 @@
+// The Xo side of std/regexp's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/regexp's result as text, as go/main.go prints package regexp's.
+// Kinds compile, find, replace, replacelit and quote: regexp's
+// functions against Go's.
+// See scripts/stdproven/gotests.go.
+use std/regexp
+use std/base64
+
+fn find_all(pat: Str, text: Str) -> Str {
+  let re = match regexp.compile(pat) {
+    Ok(r) => r
+    Err(e) => return "err ${e.display()}"
+  }
+  var ms: List[Str] = []
+  for m in re.captures_all_index(text) {
+    var ps: List[Str] = []
+    for p in m {
+      ps.push(match p {
+        Some((a, b)) => "${a}-${b}"
+        None => "_"
+      })
+    }
+    ms.push(ps.join(","))
+  }
+  "${ms.len()}:${ms.join(";")}"
+}
+
+fn replace(pat: Str, repl: Str, s: Str, literal: Bool) -> Str {
+  let re = match regexp.compile(pat) {
+    Ok(r) => r
+    Err(e) => return "err ${e.display()}"
+  }
+  if literal { re.replace_all_literal(s, repl) } else { re.replace_all(s, repl) }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "compile" => match regexp.compile(inp[0]) {
+      Ok(_) => "ok"
+      Err(e) => "err ${e.msg}"
+    }
+    "find" => find_all(inp[0], inp[1])
+    "replace" => replace(inp[0], inp[1], inp[2], false)
+    "replacelit" => replace(inp[0], inp[1], inp[2], true)
+    "quote" => regexp.quote(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

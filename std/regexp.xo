@@ -138,17 +138,7 @@ pub fn (r: Regex) captures(s: Str) -> List[Str?]? {
   if m.is_empty() {
     return None
   }
-  var out: List[Str?] = []
-  var i = 0
-  while 2 * i + 1 < m.len() {
-    if m[2 * i] >= 0 {
-      out.push(Some(sl(s, m[2 * i], m[2 * i + 1])))
-    } else {
-      out.push(None)
-    }
-    i += 1
-  }
-  Some(out)
+  Some(groups_of(s, m, r.names.len()))
 }
 
 /// The named groups (`(?P<name>...)`) of the leftmost match that took part.
@@ -225,7 +215,7 @@ pub fn (r: Regex) find_all_index(s: Str) -> List[(Int, Int)] {
 pub fn (r: Regex) captures_all(s: Str) -> List[List[Str?]] {
   var out: List[List[Str?]] = []
   for m in all_matches(r.prog, s, r.prog.num_cap) {
-    out.push(groups_of(s, m))
+    out.push(groups_of(s, m, r.names.len()))
   }
   out
 }
@@ -238,7 +228,7 @@ pub fn (r: Regex) captures_index(s: Str) -> List[(Int, Int)?]? {
   if m.is_empty() {
     return None
   }
-  Some(spans_of(m))
+  Some(spans_of(m, r.names.len()))
 }
 
 /// captures_index of every match, left to right (Go's
@@ -246,16 +236,19 @@ pub fn (r: Regex) captures_index(s: Str) -> List[(Int, Int)?]? {
 pub fn (r: Regex) captures_all_index(s: Str) -> List[List[(Int, Int)?]] {
   var out: List[List[(Int, Int)?]] = []
   for m in all_matches(r.prog, s, r.prog.num_cap) {
-    out.push(spans_of(m))
+    out.push(spans_of(m, r.names.len()))
   }
   out
 }
 
-fn groups_of(s: Str, m: List[Int]) -> List[Str?] {
+/// The n groups of match m (n is the parsed group count with the whole
+/// match: a group the program dropped, as (a){0}, has no positions in m
+/// and is None, as Go's pad).
+fn groups_of(s: Str, m: List[Int], n: Int) -> List[Str?] {
   var out: List[Str?] = []
   var i = 0
-  while 2 * i + 1 < m.len() {
-    if m[2 * i] >= 0 {
+  while i < n {
+    if 2 * i + 1 < m.len() && m[2 * i] >= 0 {
       out.push(Some(sl(s, m[2 * i], m[2 * i + 1])))
     } else {
       out.push(None)
@@ -265,11 +258,12 @@ fn groups_of(s: Str, m: List[Int]) -> List[Str?] {
   out
 }
 
-fn spans_of(m: List[Int]) -> List[(Int, Int)?] {
+/// groups_of's spans.
+fn spans_of(m: List[Int], n: Int) -> List[(Int, Int)?] {
   var out: List[(Int, Int)?] = []
   var i = 0
-  while 2 * i + 1 < m.len() {
-    if m[2 * i] >= 0 {
+  while i < n {
+    if 2 * i + 1 < m.len() && m[2 * i] >= 0 {
       out.push(Some((m[2 * i], m[2 * i + 1])))
     } else {
       out.push(None)

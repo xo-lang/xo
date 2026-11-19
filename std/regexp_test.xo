@@ -18897,3 +18897,14 @@ test "Go's size and rune limits: a pattern past them is expression too large, on
   }
   expect(got) == ["nest 8485 ok", "nest 8486 too large", "nest 100000 too large", "a{1000} x3355 ok", "a{1000} x3356 too large", "class x20000 ok", "class x26000 too large"]
 }
+
+test "a group repeated zero times still counts: (a){0} has one group that never takes part, as Go's pad (gotests findTests[54], task #403)" {
+  // Go's FindStringSubmatchIndex: [0 0 -1 -1] and, for "(a){0}(b)" on
+  // "b", [0 1 -1 -1 0 1]; the simplified program has no capture for (a)
+  expect(must("(a){0}").captures_index("")) == Some([Some((0, 0)), None])
+  expect(must("(a){0}").captures("")) == Some([Some(""), None])
+  expect(must("(a){0}").captures_all_index("")) == [[Some((0, 0)), None]]
+  expect(must("(a){0}").captures_all("")) == [[Some(""), None]]
+  expect(must("(a){0}(b)").captures_index("b")) == Some([Some((0, 1)), None, Some((0, 1))])
+  expect(must("x(y){0}z").captures_all_index("xzxz")) == [[Some((0, 2)), None], [Some((2, 4)), None]]
+}
