@@ -1,0 +1,8 @@
+# Go's x509 test tables (go1.26) run through std/x509
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# oid builds an OID from each of raw (UnmarshalBinary), str
+# (ParseOID) and ints (OIDFromInts); inv parses str and builds ints;
+# parse parses: the OID's String, or "err" and the error text.
+crypto/x509 oid_test.go oidTests raw,str,ints oid
+crypto/x509 oid_test.go TestInvalidOID.cases str,ints inv
+crypto/x509 oid_test.go TestOIDMarshal.cases in parse

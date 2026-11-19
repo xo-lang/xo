@@ -1,0 +1,71 @@
+// The Xo side of std/x509's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/x509's result as text, as go/main.go prints package x509's.
+// Kinds oid, inv and parse over Go's crypto/x509 OID tables.
+// See scripts/stdproven/gotests.go.
+use std/x509
+use std/base64
+
+fn u64s(s: Str) -> List[UInt64] {
+  var v: List[UInt64] = []
+  if !s.is_empty() {
+    for p in s.split(",") {
+      var n: UInt64 = 0
+      for c in p.bytes() {
+        n = n * 10 + UInt64(Int(c) - 48)
+      }
+      v.push(n)
+    }
+  }
+  v
+}
+
+fn oid_out(r: Result[x509.Oid, x509.CertErr]) -> Str {
+  match r {
+    Ok(o) => o.display()
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn oid_bin(s: Str) -> Str {
+  var b = BytesBuilder.with_capacity(16)
+  if !s.is_empty() {
+    for p in s.split(",") {
+      b.write_byte(UInt8(Int.parse(p) ?? 0))
+    }
+  }
+  oid_out(x509.oid_from_binary(b.freeze()))
+}
+
+/// oid (raw, str, ints of oidTests) builds each, inv (str, ints) parses
+/// and builds, parse parses.
+fn orun(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "oid" => "bin ${oid_bin(inp[0])} | str ${oid_out(x509.parse_oid(inp[1]))} | ints ${oid_out(x509.oid_from_ints(u64s(inp[2])))}"
+    "inv" => "str ${oid_out(x509.parse_oid(inp[0]))} | ints ${oid_out(x509.oid_from_ints(u64s(inp[1])))}"
+    _ => oid_out(x509.parse_oid(inp[0]))
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "oid" | "inv" | "parse" => orun(kind, inp)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
