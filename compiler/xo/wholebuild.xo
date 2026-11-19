@@ -197,6 +197,10 @@ fn whole_build_hit(os: Os, hit: RunHit, od: Str) -> Bool {
     // never newer than what it names
     for (suf, sp) in hit.sides {
       let dst = "${out_stem(p)}${suf}"
+      // a dSYM's DWARF file is inside its bundle's directories
+      if os.fs.create_dir_all(dir_name(dst)).is_err() {
+        return false
+      }
       let st = "${dst}.tmp-${os.rand.bytes(6).to_hex()}"
       match os.fs.copy(sp, st) {
         Ok(_) => {}

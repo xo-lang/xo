@@ -530,3 +530,60 @@ func TestWholeBuildWasm(t *testing.T) {
 		t.Errorf("an edit built the same module")
 	}
 }
+
+// TestWholeBuildDebugSides (task #359): a hit of the run cache into a new
+// directory writes the debug information the build wrote beside the
+// binary: --dsym's bundle on darwin, --debug-info=split's PROG.debug on
+// linux. Before, the entry kept only a windows PDB, and the second build
+// had a binary and no dSYM (objverify.sh: dwarfdump --verify found no
+// file).
+func TestWholeBuildDebugSides(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	var flag, side string
+	switch runtime.GOOS {
+	case "darwin":
+		flag, side = "--dsym", ".dSYM/Contents/Resources/DWARF/prog"
+	case "linux":
+		flag, side = "--debug-info=split", ".debug"
+	default:
+		t.Skip("no dSYM or split debug file on " + runtime.GOOS)
+	}
+	tmp := t.TempDir()
+	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
+	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
+	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(tmp, "backend"))
+	setenv(t, "XO_WHOLE_BUILD", "on")
+	dir := filepath.Join(tmp, "prog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module dbgsides\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"three\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	build := func(out string, wantHit bool) []byte {
+		t.Helper()
+		var so, se bytes.Buffer
+		code := run(t, []string{"build", "--phase-times", flag, "-o", out, "."}, &so, &se)
+		hit := strings.Contains(se.String(), "phase run_cache ") && !strings.Contains(se.String(), "phase run_cache_miss ")
+		if code != 0 || hit != wantHit {
+			t.Fatalf("build %s -o %s: exit %d, cache hit %v (want %v)\n%s%s", flag, out, code, hit, wantHit, so.String(), se.String())
+		}
+		b, err := os.ReadFile(out + side)
+		if err != nil {
+			t.Fatalf("build %s -o %s (hit %v): no debug information beside it: %v", flag, out, hit, err)
+		}
+		return b
+	}
+	a := build(filepath.Join(tmp, "a", "prog"), false)
+	b := build(filepath.Join(tmp, "b", "prog"), true)
+	if !bytes.Equal(a, b) {
+		t.Errorf("a hit wrote other debug information than the build (%d against %d bytes)", len(b), len(a))
+	}
+}

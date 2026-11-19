@@ -3224,13 +3224,24 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
   // file, which a hit writes with the binary; a PDB this build did not
   // write (an older build's, under -s) stores no entry, since a hit
   // cannot know it
+  // so are --dsym's bundle (its DWARF file, PROG.dSYM/Contents/Resources/
+  // DWARF/PROG) and a split build's PROG.debug (decisions 0239, 0355): a
+  // hit that wrote the binary alone left a build to a new directory with
+  // no line tables (task #359, objverify's dwarfdump --verify)
   var sides: List[Str] = []
   var stale_side = false
   for (_, p) in bins {
+    var cands: List[Str] = []
     if p.ends_with(".exe") {
-      if let Ok(Some(fi)) = os.fs.stat("${p.trim_suffix(".exe")}.pdb") {
+      cands.push(".pdb")
+    } else {
+      cands.push(".dSYM/Contents/Resources/DWARF/${base_name(p)}")
+      cands.push(".debug")
+    }
+    for suf in cands {
+      if let Ok(Some(fi)) = os.fs.stat("${out_stem(p)}${suf}") {
         if fi.modified.unix_millis() >= o.run_start {
-          sides.push(".pdb")
+          sides.push(suf)
         } else {
           stale_side = true
         }

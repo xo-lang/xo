@@ -936,6 +936,7 @@ yourself.
   twice, and its GOOD failed, before the repro showed it predates the
   range).
 - `scripts/progen-batches.sh`, the amd64 progen runner, TestArithOracle.
+- `scripts/lead/objverify.sh XO OUT [NAME...]` (task #359), the object file and debug info class guard: each golden built with --dsym (darwin, whole program and XO_SEPCOMP=1) or --debug-info=split (linux), then `dwarfdump --verify` (or llvm-dwarfdump), `readelf -W -a` warnings on linux, and an lldb breakpoint on xo_f_main that must stop on main's line table entry row. Reverting the prologue_end mark (4141e07cd) fails it (BREAK closures want 23 got 25); 664a1277e's weak duplicate no longer arises at 502a0170c, so its revert passes. Last verified: 2026-11-18.
 - `scripts/codesize.py BINARY` (`__text` only: a split link's `_ptext`, the program's own modules, is not in it; sizebreak counts both): where a darwin/arm64 build's `__text` goes (functions, modules, generic copies, instruction kinds, whole value word copies, release runs, constant addresses); bench/results/xo-code-size-2026-10-18.md.
 - `scripts/docker-newest-go.sh DARWIN_XO ARCH WORK` (owner, 2026-10-27;
   decision 0393): `use go` against the newest Go release, read from
