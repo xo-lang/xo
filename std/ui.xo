@@ -198,12 +198,17 @@ fn name_ok(s: Str) -> Bool {
     return false
   }
   // every allowed character is ASCII, so the bytes are the runes (a
-  // byte of a longer one fails); no list of runes per name
-  for (i, c) in s.bytes().indexed() {
+  // byte of a longer one fails); read by index: indexed() made a List of
+  // pairs a name, 24% of bench/perf/ui render (2026-11-18)
+  let b = s.bytes()
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
     let ok = (c >= 97 && c <= 122) || (i > 0 && ((c >= 48 && c <= 57) || c == 45))
     if !ok {
       return false
     }
+    i += 1
   }
   true
 }

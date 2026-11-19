@@ -1,5 +1,15 @@
 # std/ui changes
 
+## 2026-11-18: perf: render checks tag and attribute names by index
+
+- Kind: perf
+- Commit: this push
+- Found by: task #88 (ui perf 1.124 of Go on bench/perf/ui render; CPU profile: name_ok's bytes().indexed() made a List of pairs per name, 24%)
+- Go reference: golang.org/x/net/html Render (bench/perf/ui/go)
+- Test: std/ui render tests (unchanged output)
+- Timing: bench/perf/ui render, 50,000 renders on the Mac: 4146 ms before, 2773 ms after (CPU profile wall)
+- Shipped in: not yet released
+
 ## 2026-11-18: feature: server fields and App.with_server
 
 - Kind: feature
