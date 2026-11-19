@@ -17,6 +17,17 @@ word and the byte's ASCII test with masks, so the loops of trim_chars,
 trim_start_chars, trim_end_chars and the cutset searches run without a
 data dependent branch.
 
+## 2026-11-18: feature: the rest of Go's math on Float
+
+- Kind: feature
+- Commit: this push
+- Found by: task #383 (stdcov: math's Signbit, Modf, RoundToEven, Nextafter, Remainder, Acosh, Asinh, Atanh, Erf, Erfc, Erfinv, Erfcinv, Gamma, Lgamma and the Ln2, Ln10, Log2E, Log10E, Sqrt2 constants had no Xo counterpart)
+- Go reference: math (go1.26) acosh.go, asinh.go, atanh.go, erf.go, erfinv.go, gamma.go, lgamma.go, remainder.go, nextafter.go, modf.go, floor.go, bits.go, const.go
+- Measured: not measured (new API)
+- Test: internal/stdtest corpus gomath2 (26,000 rows of Go's bits) and native/llrt gomath2_test.xo (a sample), the same bits on every backend
+- Affected: none (new methods and type constants)
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: List.filled(n, 0) skips zeroing a new mapping
 
 - Kind: perf

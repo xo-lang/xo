@@ -243,6 +243,16 @@ const FLOAT_NAN: Float = 0.0 / 0.0
 const FLOAT_PI: Float = 3.141592653589793
 /// e, the Float nearest it (Go's math.E). @static Float.e
 const FLOAT_E: Float = 2.718281828459045
+/// The natural logarithm of 2 (Go's math.Ln2). @static Float.ln2
+const FLOAT_LN2: Float = 0.6931471805599453
+/// The natural logarithm of 10 (Go's math.Ln10). @static Float.ln10
+const FLOAT_LN10: Float = 2.302585092994046
+/// The base 2 logarithm of e, 1/ln2 (Go's math.Log2E). @static Float.log2e
+const FLOAT_LOG2E: Float = 1.4426950408889634
+/// The base 10 logarithm of e, 1/ln10 (Go's math.Log10E). @static Float.log10e
+const FLOAT_LOG10E: Float = 0.4342944819032518
+/// The square root of 2 (Go's math.Sqrt2). @static Float.sqrt2
+const FLOAT_SQRT2: Float = 1.4142135623730951
 /// The largest finite Float (Go's math.MaxFloat64). @static Float.max
 const FLOAT_MAX: Float = 1.7976931348623157e308
 /// The most negative finite Float, `-Float.max`. @static Float.min
@@ -488,6 +498,41 @@ fn (f: Float) copysign(sign: Float) -> Float
 fn (f: Float) frexp() -> (Float, Int)
 /// f * 2^exp, exact unless it overflows or underflows (Go's math.Ldexp).
 fn (f: Float) ldexp(exp: Int) -> Float
+/// Whether f's sign bit is set: true for -0.0 and negative NaNs too (Go's
+/// math.Signbit).
+fn (f: Float) signbit() -> Bool
+/// f's integer part and fraction, both with f's sign: (int, frac) with
+/// int + frac == f (Go's math.Modf).
+fn (f: Float) modf() -> (Float, Float)
+/// f rounded to the nearest integer, a half to the even one (Go's
+/// math.RoundToEven); `round` takes a half away from zero.
+fn (f: Float) round_to_even() -> Float
+/// The next Float after f toward y; f when they are equal (Go's
+/// math.Nextafter).
+fn (f: Float) next_after(y: Float) -> Float
+/// The IEEE 754 remainder of f / y: f - n*y with n the nearest integer to
+/// f/y, ties to even (Go's math.Remainder); `mod` truncates instead.
+fn (f: Float) remainder(y: Float) -> Float
+/// The inverse hyperbolic cosine of f (Go's math.Acosh).
+fn (f: Float) acosh() -> Float
+/// The inverse hyperbolic sine of f (Go's math.Asinh).
+fn (f: Float) asinh() -> Float
+/// The inverse hyperbolic tangent of f (Go's math.Atanh).
+fn (f: Float) atanh() -> Float
+/// The error function of f (Go's math.Erf).
+fn (f: Float) erf() -> Float
+/// The complementary error function of f, 1 - erf(f) without the loss
+/// near 1 (Go's math.Erfc).
+fn (f: Float) erfc() -> Float
+/// The inverse error function of f (Go's math.Erfinv).
+fn (f: Float) erfinv() -> Float
+/// The inverse of erfc (Go's math.Erfcinv).
+fn (f: Float) erfcinv() -> Float
+/// The Gamma function of f (Go's math.Gamma).
+fn (f: Float) gamma() -> Float
+/// The natural logarithm of |Gamma(f)| and Gamma(f)'s sign, 1 or -1 (Go's
+/// math.Lgamma).
+fn (f: Float) lgamma() -> (Float, Int)
 /// The IEEE 754 bits of f, and the Float of bits b (Go's Float64bits,
 /// Float64frombits).
 fn (f: Float) to_bits() -> Int

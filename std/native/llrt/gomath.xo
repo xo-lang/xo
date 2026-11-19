@@ -1191,3 +1191,734 @@ pub fn fma(x: Float, y: Float, z: Float) -> Float {
   pe = pe & -nonzero(m)
   from_bits(ps.wrapping_shl(63).wrapping_add(pe.wrapping_shl(52)).wrapping_add(m))
 }
+
+// ---------------------------------------------------------------------------
+// floor.go RoundToEven, nextafter.go, remainder.go, acosh.go, asinh.go,
+// atanh.go, erf.go, erfinv.go, gamma.go, lgamma.go (task #383)
+
+const LN2: Float = 0.6931471805599453
+const SIGN_MASK: Int = -9223372036854775807 - 1
+const FRAC_MASK: Int = 4503599627370495
+const UVONE: Int = 0x3FF0000000000000
+
+pub fn round_to_even(x: Float) -> Float {
+  var b = bits(x)
+  var e = b.shr_logical(SHIFT) & MASK
+  if e >= BIAS + SHIFT {
+    // Whole already, or Inf or NaN: Go's shifts past 63 bits give 0 and
+    // leave the bits as they are; Xo's shift counts wrap, so stop here.
+    return x
+  }
+  if e >= BIAS {
+    let half_minus_ulp = (1).wrapping_shl(SHIFT - 1) - 1
+    e = e - BIAS
+    b = b.wrapping_add((half_minus_ulp + (b.shr_logical(SHIFT - e) & 1)).shr_logical(e))
+    b = b & ~FRAC_MASK.shr_logical(e)
+  } else if e == BIAS - 1 && (b & FRAC_MASK) != 0 {
+    b = (b & SIGN_MASK) | UVONE
+  } else {
+    b = b & SIGN_MASK
+  }
+  from_bits(b)
+}
+
+pub fn next_after(x: Float, y: Float) -> Float {
+  if is_nan(x) || is_nan(y) {
+    return nan()
+  }
+  if x == y {
+    return x
+  }
+  if x == 0.0 {
+    return copysign(from_bits(1), y)
+  }
+  if (y > x) == (x > 0.0) {
+    return from_bits(bits(x).wrapping_add(1))
+  }
+  from_bits(bits(x).wrapping_sub(1))
+}
+
+pub fn remainder(x0: Float, y0: Float) -> Float {
+  let tiny = 4.45014771701440276618e-308
+  let half_max = 8.988465674311579e+307
+  if is_nan(x0) || is_nan(y0) || is_inf(x0, 0) || y0 == 0.0 {
+    return nan()
+  }
+  if is_inf(y0, 0) {
+    return x0
+  }
+  var x = x0
+  var y = y0
+  var sign = false
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  if y < 0.0 {
+    y = -y
+  }
+  if x == y {
+    return if sign { -0.0 } else { 0.0 }
+  }
+  if y <= half_max {
+    x = mod(x, y + y)
+  }
+  if y < tiny {
+    if x + x > y {
+      x = x - y
+      if x + x >= y {
+        x = x - y
+      }
+    }
+  } else {
+    let y_half = 0.5 * y
+    if x > y_half {
+      x = x - y
+      if x >= y_half {
+        x = x - y
+      }
+    }
+  }
+  if sign {
+    x = -x
+  }
+  x
+}
+
+pub fn acosh(x: Float) -> Float {
+  let large = 268435456.0
+  if x < 1.0 || is_nan(x) {
+    return nan()
+  }
+  if x == 1.0 {
+    return 0.0
+  }
+  if x >= large {
+    return log(x) + LN2
+  }
+  if x > 2.0 {
+    return log(2.0 * x - 1.0 / (x + (x * x - 1.0).sqrt()))
+  }
+  let t = x - 1.0
+  log1p(t + (2.0 * t + t * t).sqrt())
+}
+
+pub fn asinh(x0: Float) -> Float {
+  let near_zero = 3.725290298461914e-09
+  let large = 268435456.0
+  if is_nan(x0) || is_inf(x0, 0) {
+    return x0
+  }
+  var x = x0
+  var sign = false
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  var temp = 0.0
+  if x > large {
+    temp = log(x) + LN2
+  } else if x > 2.0 {
+    temp = log(2.0 * x + 1.0 / ((x * x + 1.0).sqrt() + x))
+  } else if x < near_zero {
+    temp = x
+  } else {
+    temp = log1p(x + x * x / (1.0 + (1.0 + x * x).sqrt()))
+  }
+  if sign {
+    temp = -temp
+  }
+  temp
+}
+
+pub fn atanh(x0: Float) -> Float {
+  let near_zero = 3.725290298461914e-09
+  if x0 < -1.0 || x0 > 1.0 || is_nan(x0) {
+    return nan()
+  }
+  if x0 == 1.0 {
+    return inf(1)
+  }
+  if x0 == -1.0 {
+    return inf(-1)
+  }
+  var x = x0
+  var sign = false
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  var temp = 0.0
+  if x < near_zero {
+    temp = x
+  } else if x < 0.5 {
+    temp = x + x
+    temp = 0.5 * log1p(temp + temp * x / (1.0 - x))
+  } else {
+    temp = 0.5 * log1p((x + x) / (1.0 - x))
+  }
+  if sign {
+    temp = -temp
+  }
+  temp
+}
+
+const ERX: Float = 8.45062911510467529297e-01
+const EFX: Float = 1.28379167095512586316e-01
+const EFX8: Float = 1.02703333676410069053e+00
+const PP0: Float = 1.28379167095512558561e-01
+const PP1: Float = -3.25042107247001499370e-01
+const PP2: Float = -2.84817495755985104766e-02
+const PP3: Float = -5.77027029648944159157e-03
+const PP4: Float = -2.37630166566501626084e-05
+const QQ1: Float = 3.97917223959155352819e-01
+const QQ2: Float = 6.50222499887672944485e-02
+const QQ3: Float = 5.08130628187576562776e-03
+const QQ4: Float = 1.32494738004321644526e-04
+const QQ5: Float = -3.96022827877536812320e-06
+const PA0: Float = -2.36211856075265944077e-03
+const PA1: Float = 4.14856118683748331666e-01
+const PA2: Float = -3.72207876035701323847e-01
+const PA3: Float = 3.18346619901161753674e-01
+const PA4: Float = -1.10894694282396677476e-01
+const PA5: Float = 3.54783043256182359371e-02
+const PA6: Float = -2.16637559486879084300e-03
+const QA1: Float = 1.06420880400844228286e-01
+const QA2: Float = 5.40397917702171048937e-01
+const QA3: Float = 7.18286544141962662868e-02
+const QA4: Float = 1.26171219808761642112e-01
+const QA5: Float = 1.36370839120290507362e-02
+const QA6: Float = 1.19844998467991074170e-02
+const RA0: Float = -9.86494403484714822705e-03
+const RA1: Float = -6.93858572707181764372e-01
+const RA2: Float = -1.05586262253232909814e+01
+const RA3: Float = -6.23753324503260060396e+01
+const RA4: Float = -1.62396669462573470355e+02
+const RA5: Float = -1.84605092906711035994e+02
+const RA6: Float = -8.12874355063065934246e+01
+const RA7: Float = -9.81432934416914548592e+00
+const SA1: Float = 1.96512716674392571292e+01
+const SA2: Float = 1.37657754143519042600e+02
+const SA3: Float = 4.34565877475229228821e+02
+const SA4: Float = 6.45387271733267880336e+02
+const SA5: Float = 4.29008140027567833386e+02
+const SA6: Float = 1.08635005541779435134e+02
+const SA7: Float = 6.57024977031928170135e+00
+const SA8: Float = -6.04244152148580987438e-02
+const RB0: Float = -9.86494292470009928597e-03
+const RB1: Float = -7.99283237680523006574e-01
+const RB2: Float = -1.77579549177547519889e+01
+const RB3: Float = -1.60636384855821916062e+02
+const RB4: Float = -6.37566443368389627722e+02
+const RB5: Float = -1.02509513161107724954e+03
+const RB6: Float = -4.83519191608651397019e+02
+const SB1: Float = 3.03380607434824582924e+01
+const SB2: Float = 3.25792512996573918826e+02
+const SB3: Float = 1.53672958608443695994e+03
+const SB4: Float = 3.19985821950859553908e+03
+const SB5: Float = 2.55305040643316442583e+03
+const SB6: Float = 4.74528541206955367215e+02
+const SB7: Float = -2.24409524465858183362e+01
+// 1/0.35, folded exactly by Go
+const ERF_BREAK: Float = 2.857142857142857
+
+// The shared tail of erf and erfc for 1.25 <= x: exp(-x*x-0.5625) times
+// the rational correction, split as Go's (z is x with its low 32 bits 0).
+fn erf_tail(x: Float) -> Float {
+  let s = 1.0 / (x * x)
+  var r = 0.0
+  var q = 0.0
+  if x < ERF_BREAK {
+    r = RA0 + s * (RA1 + s * (RA2 + s * (RA3 + s * (RA4 + s * (RA5 + s * (RA6 + s * RA7))))))
+    q = 1.0 + s * (SA1 + s * (SA2 + s * (SA3 + s * (SA4 + s * (SA5 + s * (SA6 + s * (SA7 + s * SA8)))))))
+  } else {
+    r = RB0 + s * (RB1 + s * (RB2 + s * (RB3 + s * (RB4 + s * (RB5 + s * RB6)))))
+    q = 1.0 + s * (SB1 + s * (SB2 + s * (SB3 + s * (SB4 + s * (SB5 + s * (SB6 + s * SB7))))))
+  }
+  let z = from_bits(bits(x) & ~0xFFFFFFFF)
+  exp(-z * z - 0.5625) * exp((z - x) * (z + x) + r / q)
+}
+
+pub fn erf(x0: Float) -> Float {
+  let very_tiny = 2.848094538889218e-306
+  let small = 3.725290298461914e-09
+  if is_nan(x0) {
+    return nan()
+  }
+  if is_inf(x0, 1) {
+    return 1.0
+  }
+  if is_inf(x0, -1) {
+    return -1.0
+  }
+  var x = x0
+  var sign = false
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  if x < 0.84375 {
+    var temp = 0.0
+    if x < small {
+      if x < very_tiny {
+        temp = 0.125 * (8.0 * x + EFX8 * x)
+      } else {
+        temp = x + EFX * x
+      }
+    } else {
+      let z = x * x
+      let r = PP0 + z * (PP1 + z * (PP2 + z * (PP3 + z * PP4)))
+      let s = 1.0 + z * (QQ1 + z * (QQ2 + z * (QQ3 + z * (QQ4 + z * QQ5))))
+      let y = r / s
+      temp = x + x * y
+    }
+    return if sign { -temp } else { temp }
+  }
+  if x < 1.25 {
+    let s = x - 1.0
+    let p = PA0 + s * (PA1 + s * (PA2 + s * (PA3 + s * (PA4 + s * (PA5 + s * PA6)))))
+    let q = 1.0 + s * (QA1 + s * (QA2 + s * (QA3 + s * (QA4 + s * (QA5 + s * QA6)))))
+    return if sign { -ERX - p / q } else { ERX + p / q }
+  }
+  if x >= 6.0 {
+    return if sign { -1.0 } else { 1.0 }
+  }
+  let r = erf_tail(x)
+  if sign { r / x - 1.0 } else { 1.0 - r / x }
+}
+
+pub fn erfc(x0: Float) -> Float {
+  let tiny = 1.3877787807814457e-17
+  if is_nan(x0) {
+    return nan()
+  }
+  if is_inf(x0, 1) {
+    return 0.0
+  }
+  if is_inf(x0, -1) {
+    return 2.0
+  }
+  var x = x0
+  var sign = false
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  if x < 0.84375 {
+    var temp = 0.0
+    if x < tiny {
+      temp = x
+    } else {
+      let z = x * x
+      let r = PP0 + z * (PP1 + z * (PP2 + z * (PP3 + z * PP4)))
+      let s = 1.0 + z * (QQ1 + z * (QQ2 + z * (QQ3 + z * (QQ4 + z * QQ5))))
+      let y = r / s
+      if x < 0.25 {
+        temp = x + x * y
+      } else {
+        temp = 0.5 + (x * y + (x - 0.5))
+      }
+    }
+    return if sign { 1.0 + temp } else { 1.0 - temp }
+  }
+  if x < 1.25 {
+    let s = x - 1.0
+    let p = PA0 + s * (PA1 + s * (PA2 + s * (PA3 + s * (PA4 + s * (PA5 + s * PA6)))))
+    let q = 1.0 + s * (QA1 + s * (QA2 + s * (QA3 + s * (QA4 + s * (QA5 + s * QA6)))))
+    return if sign { 1.0 + ERX + p / q } else { 1.0 - ERX - p / q }
+  }
+  if x < 28.0 {
+    if sign && x >= ERF_BREAK && x > 6.0 {
+      return 2.0
+    }
+    let r = erf_tail(x)
+    return if sign { 2.0 - r / x } else { r / x }
+  }
+  if sign { 2.0 } else { 0.0 }
+}
+
+const EA0: Float = 1.1975323115670912564578e0
+const EA1: Float = 4.7072688112383978012285e1
+const EA2: Float = 6.9706266534389598238465e2
+const EA3: Float = 4.8548868893843886794648e3
+const EA4: Float = 1.6235862515167575384252e4
+const EA5: Float = 2.3782041382114385731252e4
+const EA6: Float = 1.1819493347062294404278e4
+const EA7: Float = 8.8709406962545514830200e2
+const EB0: Float = 1.0000000000000000000e0
+const EB1: Float = 4.2313330701600911252e1
+const EB2: Float = 6.8718700749205790830e2
+const EB3: Float = 5.3941960214247511077e3
+const EB4: Float = 2.1213794301586595867e4
+const EB5: Float = 3.9307895800092710610e4
+const EB6: Float = 2.8729085735721942674e4
+const EB7: Float = 5.2264952788528545610e3
+const EC0: Float = 1.42343711074968357734e0
+const EC1: Float = 4.63033784615654529590e0
+const EC2: Float = 5.76949722146069140550e0
+const EC3: Float = 3.64784832476320460504e0
+const EC4: Float = 1.27045825245236838258e0
+const EC5: Float = 2.41780725177450611770e-1
+const EC6: Float = 2.27238449892691845833e-2
+const EC7: Float = 7.74545014278341407640e-4
+const ED0: Float = 1.4142135623730950488016887e0
+const ED1: Float = 2.9036514445419946173133295e0
+const ED2: Float = 2.3707661626024532365971225e0
+const ED3: Float = 9.7547832001787427186894837e-1
+const ED4: Float = 2.0945065210512749128288442e-1
+const ED5: Float = 2.1494160384252876777097297e-2
+const ED6: Float = 7.7441459065157709165577218e-4
+const ED7: Float = 1.4859850019840355905497876e-9
+const EE0: Float = 6.65790464350110377720e0
+const EE1: Float = 5.46378491116411436990e0
+const EE2: Float = 1.78482653991729133580e0
+const EE3: Float = 2.96560571828504891230e-1
+const EE4: Float = 2.65321895265761230930e-2
+const EE5: Float = 1.24266094738807843860e-3
+const EE6: Float = 2.71155556874348757815e-5
+const EE7: Float = 2.01033439929228813265e-7
+const EF0: Float = 1.414213562373095048801689e0
+const EF1: Float = 8.482908416595164588112026e-1
+const EF2: Float = 1.936480946950659106176712e-1
+const EF3: Float = 2.103693768272068968719679e-2
+const EF4: Float = 1.112800997078859844711555e-3
+const EF5: Float = 2.611088405080593625138020e-5
+const EF6: Float = 2.010321207683943062279931e-7
+const EF7: Float = 2.891024605872965461538222e-15
+
+pub fn erfinv(x0: Float) -> Float {
+  if is_nan(x0) || x0 <= -1.0 || x0 >= 1.0 {
+    if x0 == -1.0 || x0 == 1.0 {
+      return inf(Int(x0))
+    }
+    return nan()
+  }
+  var x = x0
+  var sign = false
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  var ans = 0.0
+  if x <= 0.85 {
+    let r = 0.180625 - 0.25 * x * x
+    let z1 = ((((((EA7 * r + EA6) * r + EA5) * r + EA4) * r + EA3) * r + EA2) * r + EA1) * r + EA0
+    let z2 = ((((((EB7 * r + EB6) * r + EB5) * r + EB4) * r + EB3) * r + EB2) * r + EB1) * r + EB0
+    ans = (x * z1) / z2
+  } else {
+    var z1 = 0.0
+    var z2 = 0.0
+    var r = (LN2 - log(1.0 - x)).sqrt()
+    if r <= 5.0 {
+      r = r - 1.6
+      z1 = ((((((EC7 * r + EC6) * r + EC5) * r + EC4) * r + EC3) * r + EC2) * r + EC1) * r + EC0
+      z2 = ((((((ED7 * r + ED6) * r + ED5) * r + ED4) * r + ED3) * r + ED2) * r + ED1) * r + ED0
+    } else {
+      r = r - 5.0
+      z1 = ((((((EE7 * r + EE6) * r + EE5) * r + EE4) * r + EE3) * r + EE2) * r + EE1) * r + EE0
+      z2 = ((((((EF7 * r + EF6) * r + EF5) * r + EF4) * r + EF3) * r + EF2) * r + EF1) * r + EF0
+    }
+    ans = z1 / z2
+  }
+  if sign { -ans } else { ans }
+}
+
+pub fn erfcinv(x: Float) -> Float { erfinv(1.0 - x) }
+
+const GAM_P: List[Float] = [1.60119522476751861407e-04, 1.19135147006586384913e-03, 1.04213797561761569935e-02, 4.76367800457137231464e-02, 2.07448227648435975150e-01, 4.94214826801497100753e-01, 9.99999999999999996796e-01]
+const GAM_Q: List[Float] = [-2.31581873324120129819e-05, 5.39605580493303397842e-04, -4.45641913851797240494e-03, 1.18139785222060435552e-02, 3.58236398605498653373e-02, -2.34591795718243348568e-01, 7.14304917030273074085e-02, 1.00000000000000000320e+00]
+const GAM_S: List[Float] = [7.87311395793093628397e-04, -2.29549961613378126380e-04, -2.68132617805781232825e-03, 3.47222221605458667310e-03, 8.33333333333482257126e-02]
+
+fn stirling(x: Float) -> (Float, Float) {
+  if x > 200.0 {
+    return (inf(1), 1.0)
+  }
+  let sqrt_two_pi = 2.5066282746310007
+  let max_stirling = 143.01608
+  let s = GAM_S
+  var w = 1.0 / x
+  w = 1.0 + w * ((((s[0] * w + s[1]) * w + s[2]) * w + s[3]) * w + s[4])
+  var y1 = exp(x)
+  var y2 = 1.0
+  if x > max_stirling {
+    let v = pow(x, 0.5 * x - 0.25)
+    y2 = v / y1
+    y1 = v
+  } else {
+    y1 = pow(x, x - 0.5) / y1
+  }
+  (y1, sqrt_two_pi * w * y2)
+}
+
+fn is_neg_int(x: Float) -> Bool {
+  if x < 0.0 {
+    let (_, xf) = modf(x)
+    return xf == 0.0
+  }
+  false
+}
+
+pub fn gamma(x0: Float) -> Float {
+  let euler = 0.5772156649015329
+  if is_neg_int(x0) || is_inf(x0, -1) || is_nan(x0) {
+    return nan()
+  }
+  if is_inf(x0, 1) {
+    return inf(1)
+  }
+  if x0 == 0.0 {
+    return if signbit(x0) { inf(-1) } else { inf(1) }
+  }
+  var x = x0
+  var q = abs(x)
+  var p = q.floor()
+  if q > 33.0 {
+    if x >= 0.0 {
+      let (y1, y2) = stirling(x)
+      return y1 * y2
+    }
+    var signgam = 1
+    if (Int(p) & 1) == 0 {
+      signgam = -1
+    }
+    var z = q - p
+    if z > 0.5 {
+      p = p + 1.0
+      z = q - p
+    }
+    z = q * sin(PI * z)
+    if z == 0.0 {
+      return inf(signgam)
+    }
+    let (sq1, sq2) = stirling(q)
+    let absz = abs(z)
+    let d = absz * sq1 * sq2
+    if is_inf(d, 0) {
+      z = PI / absz / sq1 / sq2
+    } else {
+      z = PI / d
+    }
+    return Float(signgam) * z
+  }
+  var z = 1.0
+  while x >= 3.0 {
+    x = x - 1.0
+    z = z * x
+  }
+  var small = false
+  while x < 0.0 {
+    if x > -1e-09 {
+      small = true
+      break
+    }
+    z = z / x
+    x = x + 1.0
+  }
+  if !small {
+    while x < 2.0 {
+      if x < 1e-09 {
+        small = true
+        break
+      }
+      z = z / x
+      x = x + 1.0
+    }
+  }
+  if small {
+    if x == 0.0 {
+      return inf(1)
+    }
+    return z / ((1.0 + euler * x) * x)
+  }
+  if x == 2.0 {
+    return z
+  }
+  x = x - 2.0
+  let gp = GAM_P
+  let gq = GAM_Q
+  p = (((((x * gp[0] + gp[1]) * x + gp[2]) * x + gp[3]) * x + gp[4]) * x + gp[5]) * x + gp[6]
+  q = ((((((x * gq[0] + gq[1]) * x + gq[2]) * x + gq[3]) * x + gq[4]) * x + gq[5]) * x + gq[6]) * x + gq[7]
+  z * p / q
+}
+
+const LGAM_A: List[Float] = [7.72156649015328655494e-02, 3.22467033424113591611e-01, 6.73523010531292681824e-02, 2.05808084325167332806e-02, 7.38555086081402883957e-03, 2.89051383673415629091e-03, 1.19270763183362067845e-03, 5.10069792153511336608e-04, 2.20862790713908385557e-04, 1.08011567247583939954e-04, 2.52144565451257326939e-05, 4.48640949618915160150e-05]
+const LGAM_R: List[Float] = [1.0, 1.39200533467621045958e+00, 7.21935547567138069525e-01, 1.71933865632803078993e-01, 1.86459191715652901344e-02, 7.77942496381893596434e-04, 7.32668430744625636189e-06]
+const LGAM_S: List[Float] = [-7.72156649015328655494e-02, 2.14982415960608852501e-01, 3.25778796408930981787e-01, 1.46350472652464452805e-01, 2.66422703033638609560e-02, 1.84028451407337715652e-03, 3.19475326584100867617e-05]
+const LGAM_T: List[Float] = [4.83836122723810047042e-01, -1.47587722994593911752e-01, 6.46249402391333854778e-02, -3.27885410759859649565e-02, 1.79706750811820387126e-02, -1.03142241298341437450e-02, 6.10053870246291332635e-03, -3.68452016781138256760e-03, 2.25964780900612472250e-03, -1.40346469989232843813e-03, 8.81081882437654011382e-04, -5.38595305356740546715e-04, 3.15632070903625950361e-04, -3.12754168375120860518e-04, 3.35529192635519073543e-04]
+const LGAM_U: List[Float] = [-7.72156649015328655494e-02, 6.32827064025093366517e-01, 1.45492250137234768737e+00, 9.77717527963372745603e-01, 2.28963728064692451092e-01, 1.33810918536787660377e-02]
+const LGAM_V: List[Float] = [1.0, 2.45597793713041134822e+00, 2.12848976379893395361e+00, 7.69285150456672783825e-01, 1.04222645593369134254e-01, 3.21709242282423911810e-03]
+const LGAM_W: List[Float] = [4.18938533204672725052e-01, 8.33333333333329678849e-02, -2.77777777728775536470e-03, 7.93650558643019558500e-04, -5.95187557450339963135e-04, 8.36339918996282139126e-04, -1.63092934096575273989e-03]
+
+const TWO52: Float = 4503599627370496.0
+const TWO53: Float = 9007199254740992.0
+
+fn sin_pi(x0: Float) -> Float {
+  var x = x0
+  if x < 0.25 {
+    return -sin(PI * x)
+  }
+  var z = x.floor()
+  var n = 0
+  if z != x {
+    x = mod(x, 2.0)
+    n = Int(x * 4.0)
+  } else {
+    if x >= TWO53 {
+      x = 0.0
+      n = 0
+    } else {
+      if x < TWO52 {
+        z = x + TWO52
+      }
+      n = 1 & bits(z)
+      x = Float(n)
+      n = n * 4
+    }
+  }
+  if n == 0 {
+    x = sin(PI * x)
+  } else if n == 1 || n == 2 {
+    x = cos(PI * (0.5 - x))
+  } else if n == 3 || n == 4 {
+    x = sin(PI * (1.0 - x))
+  } else if n == 5 || n == 6 {
+    x = -cos(PI * (x - 1.5))
+  } else {
+    x = sin(PI * (x - 2.0))
+  }
+  -x
+}
+
+pub fn lgamma(x0: Float) -> (Float, Int) {
+  let tiny = 8.470329472543003e-22
+  let tc = 1.4616321449683622
+  let tf = -1.21486290535849611461e-01
+  let tt = -3.63867699703950536541e-18
+  let two58 = 288230376151711744.0
+  var sign = 1
+  if is_nan(x0) || is_inf(x0, 0) {
+    return (x0, sign)
+  }
+  if x0 == 0.0 {
+    return (inf(1), sign)
+  }
+  var x = x0
+  var neg = false
+  if x < 0.0 {
+    x = -x
+    neg = true
+  }
+  if x < tiny {
+    if neg {
+      sign = -1
+    }
+    return (-log(x), sign)
+  }
+  var nadj = 0.0
+  if neg {
+    if x >= TWO52 {
+      return (inf(1), sign)
+    }
+    let t = sin_pi(x)
+    if t == 0.0 {
+      return (inf(1), sign)
+    }
+    nadj = log(PI / abs(t * x))
+    if t < 0.0 {
+      sign = -1
+    }
+  }
+  var lg = 0.0
+  if x == 1.0 || x == 2.0 {
+    return (0.0, sign)
+  } else if x < 2.0 {
+    var y = 0.0
+    var i = 0
+    if x <= 0.9 {
+      lg = -log(x)
+      if x >= 0.7316321449683623 {
+        y = 1.0 - x
+        i = 0
+      } else if x >= 0.19163214496836226 {
+        y = x - 0.46163214496836225
+        i = 1
+      } else {
+        y = x
+        i = 2
+      }
+    } else {
+      lg = 0.0
+      if x >= 1.7316321449683623 {
+        y = 2.0 - x
+        i = 0
+      } else if x >= 1.1916321449683622 {
+        y = x - tc
+        i = 1
+      } else {
+        y = x - 1.0
+        i = 2
+      }
+    }
+    if i == 0 {
+      let a = LGAM_A
+      let z = y * y
+      let p1 = a[0] + z * (a[2] + z * (a[4] + z * (a[6] + z * (a[8] + z * a[10]))))
+      let p2 = z * (a[1] + z * (a[3] + z * (a[5] + z * (a[7] + z * (a[9] + z * a[11])))))
+      let p = y * p1 + p2
+      lg = lg + (p - 0.5 * y)
+    } else if i == 1 {
+      let t = LGAM_T
+      let z = y * y
+      let w = z * y
+      let p1 = t[0] + w * (t[3] + w * (t[6] + w * (t[9] + w * t[12])))
+      let p2 = t[1] + w * (t[4] + w * (t[7] + w * (t[10] + w * t[13])))
+      let p3 = t[2] + w * (t[5] + w * (t[8] + w * (t[11] + w * t[14])))
+      let p = z * p1 - (tt - w * (p2 + y * p3))
+      lg = lg + (tf + p)
+    } else {
+      let u = LGAM_U
+      let v = LGAM_V
+      let p1 = y * (u[0] + y * (u[1] + y * (u[2] + y * (u[3] + y * (u[4] + y * u[5])))))
+      let p2 = 1.0 + y * (v[1] + y * (v[2] + y * (v[3] + y * (v[4] + y * v[5]))))
+      lg = lg + (-0.5 * y + p1 / p2)
+    }
+  } else if x < 8.0 {
+    let s = LGAM_S
+    let r = LGAM_R
+    let i = Int(x)
+    let y = x - Float(i)
+    let p = y * (s[0] + y * (s[1] + y * (s[2] + y * (s[3] + y * (s[4] + y * (s[5] + y * s[6]))))))
+    let q = 1.0 + y * (r[1] + y * (r[2] + y * (r[3] + y * (r[4] + y * (r[5] + y * r[6])))))
+    lg = 0.5 * y + p / q
+    var z = 1.0
+    if i >= 7 {
+      z = z * (y + 6.0)
+    }
+    if i >= 6 {
+      z = z * (y + 5.0)
+    }
+    if i >= 5 {
+      z = z * (y + 4.0)
+    }
+    if i >= 4 {
+      z = z * (y + 3.0)
+    }
+    if i >= 3 {
+      z = z * (y + 2.0)
+      lg = lg + log(z)
+    }
+  } else if x < two58 {
+    let w0 = LGAM_W
+    let t = log(x)
+    let z = 1.0 / x
+    let y = z * z
+    let w = w0[0] + z * (w0[1] + y * (w0[2] + y * (w0[3] + y * (w0[4] + y * (w0[5] + y * w0[6])))))
+    lg = (x - 0.5) * (t - 1.0) + w
+  } else {
+    lg = x * (log(x) - 1.0)
+  }
+  if neg {
+    lg = nadj - lg
+  }
+  (lg, sign)
+}

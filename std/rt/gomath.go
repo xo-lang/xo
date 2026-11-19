@@ -69,6 +69,41 @@ func Float_fma(_ *Task, f, y, z float64) float64 { return math.FMA(f, y, z) }
 
 func Float_mod(_ *Task, f, y float64) float64 { return gmMod(f, y) }
 
+// Go's math beyond the first set (task #383), each from gomath_gen.go.
+func Float_signbit(_ *Task, f float64) bool { return gmSignbit(f) }
+
+func Float_modf(_ *Task, f float64) Tuple2[float64, float64] {
+	i, frac := gmModf(f)
+	return Tuple2[float64, float64]{i, frac}
+}
+
+func Float_round_to_even(_ *Task, f float64) float64 { return gmRoundToEven(f) }
+
+func Float_next_after(_ *Task, f, y float64) float64 { return gmNextafter(f, y) }
+
+func Float_remainder(_ *Task, f, y float64) float64 { return gmRemainder(f, y) }
+
+func Float_acosh(_ *Task, f float64) float64 { return gmAcosh(f) }
+
+func Float_asinh(_ *Task, f float64) float64 { return gmAsinh(f) }
+
+func Float_atanh(_ *Task, f float64) float64 { return gmAtanh(f) }
+
+func Float_erf(_ *Task, f float64) float64 { return gmErf(f) }
+
+func Float_erfc(_ *Task, f float64) float64 { return gmErfc(f) }
+
+func Float_erfinv(_ *Task, f float64) float64 { return gmErfinv(f) }
+
+func Float_erfcinv(_ *Task, f float64) float64 { return gmErfcinv(f) }
+
+func Float_gamma(_ *Task, f float64) float64 { return gmGamma(f) }
+
+func Float_lgamma(_ *Task, f float64) Tuple2[float64, int64] {
+	l, s := gmLgamma(f)
+	return Tuple2[float64, int64]{l, int64(s)}
+}
+
 func Float_is_inf(_ *Task, f float64) bool { return gmIsInf(f, 0) }
 
 func Int_leading_zeros(_ *Task, n int64) int64 { return int64(bits.LeadingZeros64(uint64(n))) }

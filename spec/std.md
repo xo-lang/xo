@@ -130,7 +130,13 @@ fn (f: Float) floor() -> Float               // also ceil, round, trunc, abs, sq
 fn (f: Float) to_fixed(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str  // strconv.FormatFloat 'f'; also to_exp ('e'), to_general ('g'); prec below 0 is the shortest (decision 0410)
 fn (f: Float) is_nan() -> Bool               // also is_inf
 fn (f: Float) exp() -> Float                 // also exp2, expm1, log, log2, log10, log1p, sin, cos, tan,
-                                             // asin, acos, atan, sinh, cosh, tanh, cbrt
+                                             // asin, acos, atan, sinh, cosh, tanh, cbrt, acosh, asinh,
+                                             // atanh, erf, erfc, erfinv, erfcinv, gamma, round_to_even
+fn (f: Float) lgamma() -> (Float, Int)       // Go's Lgamma: ln|Gamma(f)| and Gamma(f)'s sign
+fn (f: Float) modf() -> (Float, Float)       // Go's Modf: integer part and fraction, both with f's sign
+fn (f: Float) signbit() -> Bool              // Go's Signbit: true for -0.0
+fn (f: Float) next_after(y: Float) -> Float  // Go's Nextafter
+fn (f: Float) remainder(y: Float) -> Float   // Go's Remainder: IEEE 754, the quotient rounded to even
 fn (f: Float) pow(y: Float) -> Float
 fn (f: Float) atan2(x: Float) -> Float       // Go's Atan2(f, x)
 fn (f: Float) hypot(y: Float) -> Float
@@ -177,10 +183,11 @@ backend (decision 0385, golden float_fma). Special values are Go's:
 Float's type constants (decision 0592), as the integer bounds below:
 `Float.inf` (positive infinity; `-Float.inf` is negative), `Float.nan` (a
 NaN, unequal to every Float, itself too: test with `is_nan`), `Float.pi`,
-`Float.e`, `Float.max` (the largest finite Float), `Float.min`
+`Float.e`, `Float.ln2`, `Float.ln10`, `Float.log2e`, `Float.log10e`,
+`Float.sqrt2`, `Float.max` (the largest finite Float), `Float.min`
 (`-Float.max`) and `Float.smallest_nonzero` (the smallest positive
-subnormal), Go's math.Inf(1), NaN(), Pi, E, MaxFloat64 and
-SmallestNonzeroFloat64. `Float32.max` and `Float32.smallest_nonzero` are
+subnormal), Go's math.Inf(1), NaN(), Pi, E, Ln2, Ln10, Log2E, Log10E,
+Sqrt2, MaxFloat64 and SmallestNonzeroFloat64. `Float32.max` and `Float32.smallest_nonzero` are
 Go's MaxFloat32 and SmallestNonzeroFloat32, as Float32 values.
 
 The integer bounds `Int.max`, `Int.min`, `Int8.max` ... `UInt64.max` are
@@ -7704,7 +7711,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-617 declarations.
+631 declarations.
 
 ### Range
 
@@ -7820,6 +7827,20 @@ fn (f: Float) is_inf() -> Bool
 fn (f: Float) copysign(sign: Float) -> Float
 fn (f: Float) frexp() -> (Float, Int)
 fn (f: Float) ldexp(exp: Int) -> Float
+fn (f: Float) signbit() -> Bool
+fn (f: Float) modf() -> (Float, Float)
+fn (f: Float) round_to_even() -> Float
+fn (f: Float) next_after(y: Float) -> Float
+fn (f: Float) remainder(y: Float) -> Float
+fn (f: Float) acosh() -> Float
+fn (f: Float) asinh() -> Float
+fn (f: Float) atanh() -> Float
+fn (f: Float) erf() -> Float
+fn (f: Float) erfc() -> Float
+fn (f: Float) erfinv() -> Float
+fn (f: Float) erfcinv() -> Float
+fn (f: Float) gamma() -> Float
+fn (f: Float) lgamma() -> (Float, Int)
 fn (f: Float) to_bits() -> Int
 fn (static: Float) from_bits(b: Int) -> Float
 ```

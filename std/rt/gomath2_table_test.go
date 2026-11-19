@@ -1,0 +1,146 @@
+package rt
+
+import (
+	"fmt"
+	"math"
+	"math/rand"
+	"os"
+	"strings"
+	"testing"
+)
+
+// TestGomath2Table writes the expected bits of the prelude's second set of
+// Go math functions (task #383: signbit, modf, round_to_even, next_after,
+// remainder, acosh, asinh, atanh, erf, erfc, erfinv, erfcinv, gamma,
+// lgamma) as two Xo tables: the whole one for
+// internal/stdtest/testdata/corpus/gomath/gomath2_test.xo and a sample for
+// std/native/llrt/gomath_test.xo. The results come from gomath_gen.go,
+// Go's math source with every product rounded (decision 0287), which is
+// what Go gives on linux/amd64 GOAMD64=v1. Skipped unless
+// XO_GOMATH2_OUT names the directory to write into:
+//
+//	XO_GOMATH2_OUT=/tmp/g go test ./std/rt -run TestGomath2Table
+func TestGomath2Table(t *testing.T) {
+	out := os.Getenv("XO_GOMATH2_OUT")
+	if out == "" {
+		t.Skip("set XO_GOMATH2_OUT to regenerate the gomath2 tables")
+	}
+	type row struct {
+		name   string
+		x, y   float64
+		result uint64
+	}
+	unary := []struct {
+		name string
+		f    func(float64) uint64
+	}{
+		{"signbit", func(x float64) uint64 {
+			if gmSignbit(x) {
+				return 1
+			}
+			return 0
+		}},
+		{"modf_int", func(x float64) uint64 { i, _ := gmModf(x); return math.Float64bits(i) }},
+		{"modf_frac", func(x float64) uint64 { _, f := gmModf(x); return math.Float64bits(f) }},
+		{"round_to_even", func(x float64) uint64 { return math.Float64bits(gmRoundToEven(x)) }},
+		{"acosh", func(x float64) uint64 { return math.Float64bits(gmAcosh(x)) }},
+		{"asinh", func(x float64) uint64 { return math.Float64bits(gmAsinh(x)) }},
+		{"atanh", func(x float64) uint64 { return math.Float64bits(gmAtanh(x)) }},
+		{"erf", func(x float64) uint64 { return math.Float64bits(gmErf(x)) }},
+		{"erfc", func(x float64) uint64 { return math.Float64bits(gmErfc(x)) }},
+		{"erfinv", func(x float64) uint64 { return math.Float64bits(gmErfinv(x)) }},
+		{"erfcinv", func(x float64) uint64 { return math.Float64bits(gmErfcinv(x)) }},
+		{"gamma", func(x float64) uint64 { return math.Float64bits(gmGamma(x)) }},
+		{"lgamma", func(x float64) uint64 { l, _ := gmLgamma(x); return math.Float64bits(l) }},
+		{"lgamma_sign", func(x float64) uint64 { _, s := gmLgamma(x); return uint64(int64(s)) }},
+	}
+	binary := []struct {
+		name string
+		f    func(x, y float64) float64
+	}{
+		{"next_after", gmNextafter},
+		{"remainder", gmRemainder},
+	}
+	special := []float64{
+		0, math.Copysign(0, -1), 1, -1, 0.5, -0.5, 1.5, -1.5, 2, -2, 2.5, -2.5, 3, -3,
+		math.Inf(1), math.Inf(-1), math.NaN(), math.MaxFloat64, -math.MaxFloat64,
+		math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, 2.2250738585072014e-308,
+		0.84375, 1.25, 1 / 0.35, 6, 28, 33, 33.5, -33.5, 143.01608, 170.5, 171.7, 172,
+		200, 1e-9, -1e-9, 1e-10, 3.725290298461914e-09, 1e-300, 1e300, -1e300,
+		1 << 28, 1 << 52, 1 << 53, 1 << 58, -(1 << 52), 4503599627370495.5,
+		0.85, -0.85, 0.9, 0.9999999999999999, -0.9999999999999999, 1.0000000000000002,
+		1.461632144968362, 0.7316321449683623, 0.19163214496836226, 1.7316321449683623,
+		1.1916321449683622, 7.999999999999999, 8, -0.25, 0.25, 0.75, -170.5, -171.5,
+		-1e-20, 8.470329472543003e-22, 1.3877787807814457e-17,
+	}
+	var rows []row
+	add := func(x, y float64) {
+		for _, u := range unary {
+			rows = append(rows, row{u.name, x, 0, u.f(x)})
+		}
+		for _, b := range binary {
+			rows = append(rows, row{b.name, x, y, math.Float64bits(b.f(x, y))})
+		}
+	}
+	for i, x := range special {
+		add(x, special[(i*7+3)%len(special)])
+	}
+	for _, x := range special {
+		for _, y := range []float64{0, 1, -1, 2, math.Inf(1), math.NaN(), 1e-310, x} {
+			for _, b := range binary {
+				rows = append(rows, row{b.name, x, y, math.Float64bits(b.f(x, y))})
+			}
+		}
+	}
+	r := rand.New(rand.NewSource(383))
+	for i := 0; i < 1500; i++ {
+		var x, y float64
+		switch i % 5 {
+		case 0:
+			x, y = r.Float64()*4-2, r.Float64()*4-2
+		case 1:
+			x, y = r.Float64()*80-40, r.Float64()*20-10
+		case 2:
+			x, y = r.Float64()*400-200, r.Float64()*400-200
+		case 3:
+			x = math.Float64frombits(r.Uint64())
+			y = math.Float64frombits(r.Uint64())
+		default:
+			x = math.Copysign(math.Exp(r.Float64()*80-40), r.Float64()-0.5)
+			y = math.Copysign(math.Exp(r.Float64()*80-40), r.Float64()-0.5)
+		}
+		add(x, y)
+	}
+	write := func(path, head string, keep func(i int) bool) {
+		var b strings.Builder
+		b.WriteString(head)
+		b.WriteString("const MATH2: List[(Str, Int, Int, Int)] = [\n")
+		for i, w := range rows {
+			if keep(i) {
+				fmt.Fprintf(&b, "  (%q, %s, %s, %s),\n", w.name, xoInt(math.Float64bits(w.x)), xoInt(math.Float64bits(w.y)), xoInt(w.result))
+			}
+		}
+		b.WriteString("]\n")
+		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const src = "// Go's math (go1.26, its portable algorithms with every operation rounded,\n" +
+		"// std/rt/gomath_gen.go; what Go gives on linux/amd64 GOAMD64=v1): the\n" +
+		"// result bits of the second set (task #383) on special and random inputs.\n" +
+		"// Generated by std/rt TestGomath2Table (XO_GOMATH2_OUT=DIR); do not edit.\n"
+	write(out+"/corpus.txt", src+"// The whole table; std/native/llrt/gomath_test.xo keeps a sample.\n", func(int) bool { return true })
+	nspec := len(special) * (len(unary) + len(binary) + 8*len(binary))
+	write(out+"/sample.txt", src+"// A sample (the special inputs, then every 25th row); the whole table is\n"+
+		"// internal/stdtest/testdata/corpus/gomath/gomath2_test.xo.\n", func(i int) bool { return i < nspec || i%25 == 0 })
+	t.Logf("%d rows", len(rows))
+}
+
+// xoInt is u as an Xo Int literal (the minimum as Xo spells it).
+func xoInt(u uint64) string {
+	v := int64(u)
+	if v == math.MinInt64 {
+		return "(-9223372036854775807 - 1)"
+	}
+	return fmt.Sprint(v)
+}

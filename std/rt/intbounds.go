@@ -34,6 +34,11 @@ var (
 	FLOAT_NAN              = math.NaN()
 	FLOAT_PI               = math.Pi
 	FLOAT_E                = math.E
+	FLOAT_LN2              = math.Ln2
+	FLOAT_LN10             = math.Ln10
+	FLOAT_LOG2E            = math.Log2E
+	FLOAT_LOG10E           = math.Log10E
+	FLOAT_SQRT2            = math.Sqrt2
 	FLOAT_MAX              = math.MaxFloat64
 	FLOAT_MIN              = -math.MaxFloat64
 	FLOAT_SMALLEST_NONZERO = math.SmallestNonzeroFloat64
