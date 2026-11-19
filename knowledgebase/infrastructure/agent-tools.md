@@ -1118,14 +1118,16 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   One --ab per agent (#171): a second ab-host.sh from the same Claude
   session while its first is live or queued is refused, exit 2 (read
   the first result, then queue the next; `AB_HOST_MULTI_OK=1` skips it).
-  Rounds (owner, 2026-10-31: "Do 3 rounds"): ab-host.sh runs 3 rounds
-  after 1 warmup (3 for `edit`), and xo bench gives a verdict from 3
-  rounds (decision 0340's addendum). A 3-round verdict needs all three
-  rounds to agree, which a change with no effect does one time in four.
-  Every --ab runs 3 rounds, small effects and "no slower" claims too
-  (owner, 2026-10-31: "I thought all tests were dropped to 3?"; no
-  10-round confirmations); report a 3-round verdict on an effect under
-  about 3% as such. `xo bench --ab` itself defaults to 3 rounds since 2026-11-01. Since 2026-11-18 (task #372, lead decision #162) an odd count runs one more round, so 3 runs 4, each side first in 2: with 3, one side ran first twice, and a second-run-slower effect read as a speedup of the other; a wall_ms verdict also needs both medians at 100 ms or more ("too short"). A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
+  Rounds (owner, 2026-11-18, question #163, lead decision #167; this
+  replaced 2026-10-31's "Do 3 rounds"): every --ab runs 4 rounds, `xo
+  bench --ab` and ab-host.sh by default, after 1 warmup (3 for `edit`);
+  an odd `--rounds` runs one more round (task #372, 4bd89c76b), so each
+  side runs first equally often: with 3, one side ran first twice, and a
+  second-run-slower effect read as a speedup of the other. Do not pass
+  `--rounds=3`. Small effects and "no slower" claims run 4 too (no
+  10-round confirmations, owner 2026-10-31); report a 4-round verdict on
+  an effect under about 3% as such. A wall_ms verdict needs both medians
+  at 100 ms or more ("too short", decision #162). A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
   the run stops once wall, CPU and max RSS (or `--metrics`) are each
   decided better, worse, or the same within 1% at two looks in a row,
   each look at alpha over the number of looks; the output says "stopped
