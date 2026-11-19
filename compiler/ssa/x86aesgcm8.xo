@@ -9,10 +9,11 @@
 // products by its H power, summed over the eight and reduced once. The
 // GHASH convention is Xo's own, cpu.ghash8_soft's (the state's words y1
 // then y0 at y, each block's two words byte swapped, the table's entries
-// p0, p1, p0 ^ p1 with H^8 first, the 256 bit product shifted left one
-// bit and reduced with 64 bit shifts), so the portable body stays the
-// oracle (internal/llvm golden cpu_prims) and the table is arm64's
-// (ssa a64aesgcm8.xo).
+// p0, p1, p0 ^ p1 with H^8 first), so the portable body stays the oracle
+// (internal/llvm golden cpu_prims); the table is arm64's (ssa
+// a64aesgcm8.xo), each power times x^-1 (cpu.ghash8_xinv), so the 256
+// bit product is reduced as Go's, with two carry-less products and no
+// shift by one (2026-11-18).
 //
 // Go's register plan, which leaves no register for a constant in
 // memory: xmm0 to xmm7 the blocks; xmm8, xmm9, xmm10 the sums of x0 p0,
@@ -83,70 +84,36 @@ fn x86_gcm8_hash(j: Int, base: Str, off: Int, y: Str, hp: Str) -> List[Str] {
   t + (if j == 0 { ["movdqa %xmm11, %xmm10"] } else { ["pxor %xmm11, %xmm10"] })
 }
 
-/// The sums' reduction into the state at y: xmm8 = (a0, b0), xmm9 =
-/// (a1, b1), xmm10 = (c0, c1) make the product's words w0 to w3 (lo =
-/// (w0, w1), hi = (w2, w3)), shifted left one bit (s0 to s3), then
-/// reduced as ghash4_soft does: s1 ^= s0 << 63, 62, 57; y1 = s3 ^ s1 ^
-/// s1 >> 1, 2, 7; y0 = s2 ^ s0 ^ s0 >> 1, 2, 7 ^ s1 << 63, 62, 57.
+/// The sums' reduction into the state at y, Go's (gcm_amd64.s
+/// gcmAesEnc's reduceRound twice): Karatsuba's middle term (xmm10 ^ xmm8
+/// ^ xmm9) folded into the 256 bit product (xmm9, xmm8), then two
+/// products by the polynomial's constant (0xC2 << 56, built in xmm12 and
+/// xmm13 through rax: no register holds it and none reads memory). It is
+/// Go's because the table holds each power times x^-1 (Go's "H<<1 mod
+/// poly", cpu.ghash8_xinv), so the product needs no shift by one: 17
+/// instructions before the store where the shifts took 52 (2026-11-18).
 fn x86_gcm8_reduce(y: Str) -> List[Str] {
-  var t = [
-    // Karatsuba's middle term (z2l, z2h) into lo's lane 1 and hi's lane 0
+  [
     "pxor %xmm8, %xmm10",
     "pxor %xmm9, %xmm10",
     "movdqa %xmm10, %xmm11",
-    "pslldq $8, %xmm11",
-    "pxor %xmm11, %xmm8",
     "psrldq $8, %xmm10",
+    "pslldq $8, %xmm11",
     "pxor %xmm10, %xmm9",
-    // the 256 bit value shifted left one bit
-    "movdqa %xmm8, %xmm11",
-    "psrlq $63, %xmm11",
-    "movdqa %xmm9, %xmm12",
-    "psrlq $63, %xmm12",
-    "psllq $1, %xmm8",
-    "psllq $1, %xmm9",
-    "movdqa %xmm11, %xmm13",
-    "pslldq $8, %xmm13",
+    "pxor %xmm11, %xmm8",
+    "movabsq $-4467570830351532032, %rax",
+    "movq %rax, %xmm12",
+    "movdqa %xmm12, %xmm13",
+    "pclmulqdq $0, %xmm8, %xmm12",
+    "pshufd $78, %xmm8, %xmm8",
+    "pxor %xmm12, %xmm8",
+    "pclmulqdq $0, %xmm8, %xmm13",
+    "pshufd $78, %xmm8, %xmm8",
     "pxor %xmm13, %xmm8",
-    "psrldq $8, %xmm11",
-    "pxor %xmm11, %xmm9",
-    "pslldq $8, %xmm12",
-    "pxor %xmm12, %xmm9",
-  ]
-  // s1 ^= s0 << 63 ^ s0 << 62 ^ s0 << 57 (lo's lane 0 shifted into lane 1)
-  t = t + x86_gcm8_shl3("%xmm8") + ["pslldq $8, %xmm11", "pxor %xmm11, %xmm8"]
-  // y0's s1 << 63, 62, 57 (the updated s1, lane 1 into hi's lane 0)
-  t = t + x86_gcm8_shl3("%xmm8") + ["psrldq $8, %xmm11", "pxor %xmm11, %xmm9"]
-  // s ^ s >> 1 ^ s >> 2 ^ s >> 7 of lo's lanes into hi's: (y0, y1)
-  t + [
-    "movdqa %xmm8, %xmm11",
-    "movdqa %xmm8, %xmm12",
-    "psrlq $1, %xmm12",
-    "pxor %xmm12, %xmm11",
-    "movdqa %xmm8, %xmm12",
-    "psrlq $2, %xmm12",
-    "pxor %xmm12, %xmm11",
-    "movdqa %xmm8, %xmm12",
-    "psrlq $7, %xmm12",
-    "pxor %xmm12, %xmm11",
-    "pxor %xmm11, %xmm9",
-    // stored as y1 then y0
-    "pshufd $78, %xmm9, %xmm9",
-    "movdqu %xmm9, (${y})",
-  ]
-}
-
-/// xmm11 = r << 63 ^ r << 62 ^ r << 57, lane by lane (xmm12 a scratch).
-fn x86_gcm8_shl3(r: Str) -> List[Str] {
-  [
-    "movdqa ${r}, %xmm11",
-    "psllq $63, %xmm11",
-    "movdqa ${r}, %xmm12",
-    "psllq $62, %xmm12",
-    "pxor %xmm12, %xmm11",
-    "movdqa ${r}, %xmm12",
-    "psllq $57, %xmm12",
-    "pxor %xmm12, %xmm11",
+    "pxor %xmm9, %xmm8",
+    // (y0, y1) stored as y1 then y0
+    "pshufd $78, %xmm8, %xmm8",
+    "movdqu %xmm8, (${y})",
   ]
 }
 

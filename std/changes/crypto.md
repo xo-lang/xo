@@ -1,5 +1,22 @@
 # std/crypto changes
 
+## 2026-11-18: perf: AES-GCM on x86-64 reduces GHASH as Go does, 16% faster bulk
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/aesgcm on linux/amd64: seal1 1.243 and open1 1.263 of Go's crypto/cipher)
+- Go reference: crypto/internal/fips140/aes/gcm/gcm_amd64.s (gcmAesEnc's reduceRound: the table's powers times x^-1, two products by the polynomial)
+- Measured: linux/amd64 host, exclusive, 3 rounds of 100,000 16 KiB records: seal1 263 to 220 ms, open1 264 to 221 ms (0.84)
+- Test: crypto module tests (AES-GCM vectors and Go's sealed outputs) and the cpu_prims golden (the kernel against the portable body) on the linux/amd64 host
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+The eight block kernel (compiler/ssa x86aesgcm8.xo) read the table of
+H's powers as they are, so its 256 bit product was shifted left one bit
+and reduced with 64 bit shifts (52 instructions every 128 bytes). It now
+reads arm64's table form (each power times x^-1, cpu.ghash8_xinv) and
+reduces with two carry-less products, 17 instructions.
+
 ## 2026-11-18: perf: ChaCha20-Poly1305 on x86-64 seals and opens 65 to 192 bytes in one vector call
 
 - Kind: perf

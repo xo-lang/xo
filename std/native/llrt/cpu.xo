@@ -657,10 +657,11 @@ pub fn aes_gcm_dec14(dst: Int, src: Int, rk: Int, iv: Int, n: Int, y: Int, hp: I
 /// products, one reduction per 128 bytes, as Go's gcmAesEnc); elsewhere
 /// aes_gcm8_soft. Each 128 bytes C0 to C7 take the state S to (S ^ C0)
 /// P0 ^ C1 P1 ^ ... ^ C7 P7 with the table's eight entries P0 to P7,
-/// which is GHASH when they are H^8 to H. Where gcm8_xinv is true (arm64,
-/// its kernel reduces as Go's gcmAesDec) each entry holds its power times
-/// x^-1 (ghash8_xinv) and aes_gcm8_soft's P is that entry times x.
-pub fn gcm8_xinv() -> Bool { target.arch == TargetArch.Arm64 }
+/// which is GHASH when they are H^8 to H. Where gcm8_xinv is true (arm64
+/// and amd64, whose kernels reduce as Go's gcmAesDec) each entry holds
+/// its power times x^-1 (ghash8_xinv) and aes_gcm8_soft's P is that entry
+/// times x.
+pub fn gcm8_xinv() -> Bool { target.arch == TargetArch.Arm64 || target.arch == TargetArch.Amd64 }
 
 /// The GHASH element (p1, p0) (p1 the high word, as the table's p0 and p1
 /// halves) times x^-1, Go's "H<<1 mod poly" (gcm_arm64.s gcmAesInit): a

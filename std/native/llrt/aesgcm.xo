@@ -1099,7 +1099,7 @@ pub fn new_gcm(key: Bytes) -> Gcm {
   let (z1, z0) = if arm { g.mul(w1, w0) } else { (0, 0) }
   var hk = [z0, z1, z0 ^ z1, w0, w1, w0 ^ w1, v0, v1, v0 ^ v1, u0, u1, u0 ^ u1, t0, t1, t0 ^ t1, r0, r1, r0 ^ r1, q0, q1, q0 ^ q1, h0, h1, h0 ^ h1]
   if cpu.gcm8_xinv() {
-    // arm64's eight block kernel reads the eight powers times x^-1, from
+    // arm64's and amd64's eight block kernels read the eight powers times x^-1, from
     // HK8X (Go's table form, so its reduction needs no shift by one)
     for i in 0..8 {
       let (p1, p0) = cpu.ghash8_xinv(hk[3 * i + 1], hk[3 * i])
@@ -1203,7 +1203,7 @@ fn (g: Gcm) ctr_run(q0: Int, sp: Int, nlo: Int, nhi: Int, ctr: Int, whole: Int) 
 const HK4 = 96
 
 /// The byte offset in Gcm.hk of H^8 to H times x^-1, the eight block
-/// kernel's table where cpu.gcm8_xinv (arm64).
+/// kernel's table where cpu.gcm8_xinv (arm64 and amd64).
 const HK8X = 192
 
 /// Whether the interleaved kernel can run: the CPU's AES and carry-less
