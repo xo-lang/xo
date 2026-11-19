@@ -169,9 +169,12 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   hosts 2 to 4); a spec of several lanes (`arm64|pass2`) is refused only
   when every lane refuses, and runs in one that takes it. offload.sh
   defaults OFF_MAX_MIN to 45 for a plain job on those two hosts, and
-  stdproven-offload.sh picks the amd64 host for a plain run only with
-  OFF_MAX_MIN of 45 or less (TestScenarioTimingLaneCap,
-  stdproven_offload_test.sh). Exclusive leases and leases back after a
+  stdproven-offload.sh never places fuzz, race or stress evidence on
+  the amd64 host or host 1 (lead, 2026-11-18: a websocket stress went to
+  amd64): an unpinned run picks among hosts 2 to 4, and a run pinned to
+  a timing host exits 2 with the reason; SP_TIMING_HOST=1 (the lead's
+  OK only) lifts that, and amd64 then still takes only OFF_MAX_MIN of 45
+  or less (TestScenarioTimingLaneCap, stdproven_offload_test.sh). Exclusive leases and leases back after a
   heavyd restart are not capped. Last verified: 2026-11-18.
   A stdproven perf or serverperf timing on host 2 offers heavyd a move
   to the amd64 lane after SP_MOVE_MIN (5) minutes in pass2's queue (ADR
