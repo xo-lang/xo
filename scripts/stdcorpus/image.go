@@ -6,12 +6,15 @@ import (
 	"image/color"
 	"image/color/palette"
 	"image/draw"
+	"math"
 	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // imageCorpus is std/image's color conversions against Go's image/color:
@@ -24,6 +27,37 @@ import (
 func imageFuzzSeed() int64 {
 	seed, _ := strconv.ParseInt(os.Getenv("XO_IMAGEFUZZ_SEED"), 10, 64)
 	return seed
+}
+
+// imageHostileEdges and imageHostileN: imageHostileRect's corners, chosen
+// by a counter so the random stream is unchanged.
+var (
+	imageHostileEdges = hostile.Ints()
+	imageHostileN     int
+)
+
+// imageHostileRect is a rectangle with hostile corners, one from each
+// side of 0 in every other call so it overlaps the image.
+func imageHostileRect() image.Rectangle {
+	e := imageHostileEdges
+	k := imageHostileN
+	imageHostileN++
+	at := func(i int) int { return int(e[(k*4+i)%len(e)]) }
+	if k%2 == 0 {
+		return image.Rect(-abs1(at(0)), -abs1(at(1)), abs1(at(2)), abs1(at(3)))
+	}
+	return image.Rect(at(0), at(1), at(2), at(3))
+}
+
+// abs1 is |v|, or Int's largest for its smallest (whose negation wraps).
+func abs1(v int) int {
+	if v == math.MinInt {
+		return math.MaxInt
+	}
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func imageCorpus() string {
@@ -451,6 +485,11 @@ test "Image.set is Go's Set" {
 				copy(px, fill(len(px)))
 			}
 			rects := []image.Rectangle{image.Rect(1, 1, 4, 3), image.Rect(-2, 2, 3, 9), image.Rect(7, 7, 9, 9)}
+			if imageFuzzSeed() != 0 {
+				// a fresh seed adds a rectangle with corners at Int's edges
+				// (task #352): its width and height overflow an Int
+				rects = append(rects, imageHostileRect())
+			}
 			for _, rc := range rects {
 				sub := img.SubImage(rc)
 				spx, stride := subPix(sub)

@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // protoRef is what the oracle (internal/stdtest/protoref, google.golang.org/protobuf's protowire) makes of one case.
@@ -81,6 +83,12 @@ func protoVarint(v uint64, pad int) []byte {
 }
 
 // protoField is one random field: tag, then a value of its wire type (a group nests fields).
+// protoHostileLens and protoHostileN: protoField's hostile lengths.
+var (
+	protoHostileLens = append(hostile.Lengths(64), hostile.Lengths(32)...)
+	protoHostileN    int
+)
+
 func protoField(r *rand.Rand, depth int) []byte {
 	num := uint64(1 + r.Intn(20))
 	if r.Intn(30) == 0 {
@@ -103,7 +111,16 @@ func protoField(r *rand.Rand, depth int) []byte {
 		r.Read(b[len(b)-4:])
 	case 2:
 		n := r.Intn(12)
-		b = append(b, protoVarint(uint64(n), 0)...)
+		ln := uint64(n)
+		if protoFuzzSeed() != 0 {
+			// a fresh seed gives every fifth length a hostile one (task
+			// #352): the top bit set, 2^64 - 1, past Int, over the bytes
+			// that follow; chosen by a counter, so the stream is unchanged
+			if protoHostileN++; protoHostileN%5 == 0 {
+				ln = protoHostileLens[(protoHostileN/5)%len(protoHostileLens)]
+			}
+		}
+		b = append(b, protoVarint(ln, 0)...)
 		p := make([]byte, n)
 		r.Read(p)
 		b = append(b, p...)

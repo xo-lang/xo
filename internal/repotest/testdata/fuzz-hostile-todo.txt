@@ -5,7 +5,6 @@
 amqpfuzz_test.go
 amqptestfuzz_test.go
 base32fuzz_test.go
-bcryptfuzz_test.go
 clifuzz_test.go
 compressfuzz_test.go
 corpusfuzz_test.go
@@ -15,13 +14,11 @@ grpcfuzz_test.go
 grpchealthfuzz_test.go
 grpcreflectfuzz_test.go
 hpkefuzz_test.go
-imagefuzz_test.go
 jpegencfuzz_test.go
 jpegfuzz_test.go
 jsonrpcfuzz_test.go
 lzwfuzz_test.go
 otlpfuzz_test.go
-protobuffuzz_test.go
 rsafuzz_test.go
 templatefuzz_test.go
 tlsfuzz_test.go

@@ -19,7 +19,22 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"stdcorpus/bcryptoracle/hostile"
 )
+
+// hostileCosts: every third cost rewrite is one of these in place of its
+// pick (task #352), chosen by a counter so the random stream is unchanged:
+// digit runs past Int, Int's edges as text, a leading sign.
+var hostileCosts = func() []string {
+	cs := hostile.Digits()
+	for _, v := range hostile.Ints() {
+		cs = append(cs, strconv.FormatInt(v, 10))
+	}
+	return cs
+}()
+
+var hostileCostN int
 
 const hashChars = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
@@ -60,7 +75,11 @@ func fuzzHash(r *mrand.Rand, h string) string {
 			h = pick(r, "$2a$", "$2b$", "$2y$", "$2x$", "$2$", "$3a$", "2a$", "$2a") + h[min(4, len(h)):]
 		case 4:
 			if len(h) >= 7 {
-				h = h[:4] + pick(r, "04", "4", "03", "05", "06", "31", "32", "99", "-4", " 4", "0x", "") + h[6:]
+				c := pick(r, "04", "4", "03", "05", "06", "31", "32", "99", "-4", " 4", "0x", "")
+				if hostileCostN++; hostileCostN%3 == 0 {
+					c = hostileCosts[(hostileCostN/3)%len(hostileCosts)]
+				}
+				h = h[:4] + c + h[6:]
 			}
 		case 5:
 			h = h[:i]
