@@ -873,8 +873,16 @@ fn pool_room(base: Int, off: Int, nw: Int) -> Bool {
 /// heap_grow's first source once the bump chunk cannot grow in place: a
 /// pooled unit, the record's own first, then the central pool's, as
 /// record h's bump run (decision 0630). The chunk's reservation is dropped
-/// (H_BLIM 1), so extend never grows the unit.
+/// (H_BLIM BLIM_RUN), so extend never grows the unit and chunk advises no
+/// filled chunk before the next.
 pub fn pool_take(h: Int, n: Int) -> Bool {
+  // the record's chunk can still grow in place (XO_THP=dense's second
+  // half): extend opens it. A unit taken first dropped the half, and the
+  // record mapped a new chunk sooner (grpcreflect's 60 minute stress
+  // grew 7 to 10% on host 4, chunks 16 to 22, 2026-11-19)
+  if can_extend(h) {
+    return false
+  }
   let need = alloc.class_size(alloc.class_of_any(n)).wrapping_add(8).wrapping_add(PUNIT).wrapping_sub(1).shr_logical(PUNIT_SH)
   var e = 0
   if rt.mem_load(h, H_PPOOLN, 8) != 0 {
@@ -908,9 +916,13 @@ pub fn pool_take(h: Int, n: Int) -> Bool {
   rt.mem_store(h, 24, a, 8)
   rt.mem_store(h, 32, a.wrapping_add(len.wrapping_shl(PUNIT_SH)), 8)
   let _t = rt.slot_add(rt.mem_load(heaps_head(), H_CENTRAL, 8), 141, len, RELAXED)
-  rt.mem_store(h, H_BLIM, 1, 8)
+  rt.mem_store(h, H_BLIM, BLIM_RUN, 8)
   true
 }
+
+/// H_BLIM's value while the record bumps in a pooled run (pool_take): no
+/// reservation, as 1, and the bump end is the run's, not a chunk's.
+const BLIM_RUN = 2
 
 /// The units taken from the pool so far (XO_HEAPSTATS).
 pub fn taken_units() -> Int {
@@ -2434,7 +2446,11 @@ pub fn chunk(h: Int) {
   }
   // aligned to its size, so a page aligned prefixed block's chunk word is
   // found from the block (alloc.xo is_page; decision 0425)
-  let prev = rt.mem_load(h, 32, 8)
+  // the bump end of the chunk just filled; none after a pooled run, whose
+  // end is inside another chunk: thp_filled advised the 4 MB before it
+  // MADV_HUGEPAGE, units the sweep had given back among them, and
+  // khugepaged filled them in again
+  let prev = if rt.mem_load(h, H_BLIM, 8) == BLIM_RUN { 0 } else { rt.mem_load(h, 32, 8) }
   let c = map_aligned(CHUNK)
   thp_filled(prev, c)
   let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)

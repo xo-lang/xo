@@ -168,3 +168,118 @@ test "mapped_obj tells a mapped file's object from unique heap objects whose cap
 
 /// The string object holding b (raw.bytes_addr less the header).
 fn obj_of(b: Bytes) -> Int { raw.bytes_addr(b) - rt.layout(0) }
+
+/// The thread's heap record, as trim_thread finds it.
+fn test_record() -> Int {
+  let h = obj.solo_heap()
+  if h != 0 { h } else { rt.tlocal_get(TLS_HEAP) }
+}
+
+/// Gives the central pool one run of len units at a (decision 0630).
+fn test_pool_give(a: Int, len: Int) {
+  let cen = rt.mem_load(heaps_head(), H_CENTRAL, 8)
+  expect(pool_room(cen, CPOOL, 1))
+  clock(cen, CPOOL_C)
+  let k = rt.mem_load(cen, CPOOL + 8, 8)
+  rt.mem_store(rt.mem_load(cen, CPOOL, 8), k * 8, a | len, 8)
+  rt.mem_store(cen, CPOOL + 8, k + 1, 8)
+  cunlock(cen, CPOOL_C)
+}
+
+/// The value of hex digits s (no prefix).
+fn test_hex(s: Str) -> Int {
+  var v = 0
+  for b in s.bytes() {
+    let d = if b >= 97 { Int(b) - 87 } else { Int(b) - 48 }
+    v = v * 16 + d
+  }
+  v
+}
+
+/// Whether /proc/self/smaps marks any of [lo, hi) MADV_HUGEPAGE (hg).
+fn test_hg(lo: Int, hi: Int) -> Bool {
+  let fd = linux.open("/proc/self/smaps", 0, 0)
+  expect(fd >= 0)
+  let n = 65536
+  let b = rt.heap_large(n)
+  var s = ""
+  while true {
+    let k = linux.read_at(fd, b, n)
+    if k <= 0 {
+      break
+    }
+    s = s + raw.str_at(b, k)
+  }
+  let _c = linux.close(fd)
+  rt.heap_release(b - 8)
+  var inside = false
+  var hg = false
+  for line in s.lines() {
+    let f = line.fields()
+    if f.len() == 0 {
+      continue
+    }
+    let r = f[0].split("-")
+    if r.len() == 2 {
+      // a mapping's header line: start-end perms offset dev inode path
+      inside = test_hex(r[0]) < hi && test_hex(r[1]) > lo
+    } else if inside && f[0] == "VmFlags:" && f.contains("hg") {
+      hg = true
+    }
+  }
+  hg
+}
+
+test "a record with its second half reserved opens it before a pooled run" {
+  // XO_THP=dense: pool_take ran first, set H_BLIM 1 and dropped the
+  // record's reserved half, so the record mapped another chunk sooner
+  // (grpcreflect's 60 minute stress, chunks 16 to 22, 2026-11-19)
+  if !dense_halves() || !pages_on() {
+    return
+  }
+  let h = test_record()
+  let s24 = rt.mem_load(h, 24, 8)
+  let s32 = rt.mem_load(h, 32, 8)
+  let slim = rt.mem_load(h, H_BLIM, 8)
+  let c = map_aligned(CHUNK)
+  let u = map_aligned(CHUNK)
+  test_pool_give(u, 16)
+  // the first half used up, the second reserved (reserve, extend)
+  rt.mem_store(h, 24, c + HALF, 8)
+  rt.mem_store(h, 32, c + HALF, 8)
+  rt.mem_store(h, H_BLIM, c + CHUNK, 8)
+  let took = pool_take(h, 64)
+  let at = rt.mem_load(h, 24, 8)
+  rt.mem_store(h, 24, s24, 8)
+  rt.mem_store(h, 32, s32, 8)
+  rt.mem_store(h, H_BLIM, slim, 8)
+  // the run back out of the pool, whichever way it went
+  let cen = rt.mem_load(heaps_head(), H_CENTRAL, 8)
+  if !took {
+    clock(cen, CPOOL_C)
+    let _e = pool_pick(rt.mem_load(cen, CPOOL, 8), cen + CPOOL + 8, 16)
+    cunlock(cen, CPOOL_C)
+  }
+  expect(took) == false
+  expect(at) == c + HALF
+}
+
+test "a chunk after a pooled run advises no huge pages before the run's end" {
+  // XO_THP=dense: chunk's thp_filled took the run's end for a filled
+  // chunk's and advised the 4 MB before it MADV_HUGEPAGE, units the sweep
+  // gave back among them (grpcreflect's 60 minute stress grew 7 to 10%)
+  if !dense_halves() || !pages_on() {
+    return
+  }
+  let h = test_record()
+  // three chunks, none advised: the run at the third's start, so the 4
+  // MB before its end lies in the first two
+  let r = map_os(3 * CHUNK)
+  let a = r + 2 * CHUNK
+  test_pool_give(a, 16)
+  rt.mem_store(h, H_BLIM, 1, 8)
+  expect(pool_take(h, 64))
+  expect(rt.mem_load(h, 32, 8)) == a + 16 * PUNIT
+  chunk(h)
+  expect(test_hg(a + 16 * PUNIT - CHUNK, a)) == false
+}
