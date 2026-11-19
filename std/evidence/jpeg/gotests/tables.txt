@@ -1,0 +1,9 @@
+# Go's image/jpeg test tables (go1.26) run through std/jpeg
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# TestDecodeProgressive's images, baseline and progressive (Go checks the
+# two decode alike; here each is compared with Go's decode), and
+# TestWriter's qualities encoding video-001.png. The restart marker and
+# other tests build their inputs in code.
+image/jpeg reader_test.go TestDecodeProgressive.testCases .@{}.jpeg decode
+image/jpeg reader_test.go TestDecodeProgressive.testCases .@{}.progressive.jpeg decode
+image/jpeg writer_test.go testCase filename@{},quality encode

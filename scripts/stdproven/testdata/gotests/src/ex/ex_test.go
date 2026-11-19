@@ -83,3 +83,5 @@ var calls = []struct{ in string }{
 	{strings.Repeat("x", 1<<30)},
 	{strings.ToUpper("x")},
 }
+
+var files = []string{"a", "missing"}

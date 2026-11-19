@@ -1,0 +1,56 @@
+// The Xo side of std/png's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/png's result as text, as go/main.go prints package png's.
+// Kinds decode: decode's model, size, pix CRC-32 and palette against
+// Decode's image; config: decode_config's model and size. Inputs are the
+// bytes of Go's testdata files.
+// See scripts/stdproven/gotests.go.
+use std/png
+use std/crc32
+use std/base64
+
+/// An image as its model, size, the CRC-32 of its pix (Go's layout) and
+/// its palette as 0xRRGGBBAA values; an error as its text.
+fn decoded(data: Bytes) -> Str {
+  match png.decode(data) {
+    Ok(im) => {
+      var pal = ""
+      for p in im.palette {
+        pal = pal + ",${p}"
+      }
+      "${im.model} ${im.width}x${im.height} ${crc32.checksum(im.pix)} ${im.palette.len()}${pal}"
+    }
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn config(data: Bytes) -> Str {
+  match png.decode_config(data) {
+    Ok(c) => "${c.model} ${c.width}x${c.height}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn run(kind: Str, inp: List[Bytes]) -> Str {
+  match kind {
+    "decode" => decoded(inp[0])
+    "config" => config(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Bytes] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?)
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

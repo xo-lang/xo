@@ -23,6 +23,9 @@ func TestGoTableCases(t *testing.T) {
 		{"keyed", "out", []string{"0 1", "1 2", "2 3", "3 4"}, 0},
 		// a :bytes field keeps text that is not UTF-8
 		{"keyed", "in:bytes,out", []string{"0 a|1", "1 bc|2", "3 \xff|4"}, 1},
+		// NAME@PATTERN reads the file PATTERN names with {} the value; a
+		// file that is not there is skipped
+		{"files", ".@testdata/{}.bin", []string{"0 x\xffy"}, 1},
 		{"unkeyed", "0,1", []string{"0 x|y", "1 z|w"}, 0},
 		{"nums", "year,month,z,f", []string{"0 2011|-3|Local|1000000000", "1 16|1000|UTC|2"}, 3},
 		{"TestLocal.tests", "in", []string{"0 p", "1 q"}, 0},

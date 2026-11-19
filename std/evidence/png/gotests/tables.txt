@@ -1,0 +1,8 @@
+# Go's image/png test tables (go1.26) run through std/png
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# The PngSuite images TestReader decodes and the files TestReaderError
+# expects errors from (Go checks only that the error contains its text;
+# here the whole text is compared), read from Go's testdata.
+image/png reader_test.go filenames .@testdata/pngsuite/{}.png decode
+image/png reader_test.go filenamesPaletted .@testdata/pngsuite/{}.png config
+image/png reader_test.go readerErrors file@testdata/{} decode

@@ -1068,7 +1068,10 @@ as itself, and integer constant expressions of literals fold. A
 conversion of a literal (`[]byte("...")`) reads as the literal and
 `strings.Repeat(LIT, N)` as its text; a `NAME:bytes` field keeps text
 that is not UTF-8 (other fields skip it), for an adapter that reads
-that input as Bytes (std/evidence/gif/gotests).
+that input as Bytes (std/evidence/gif/gotests). `NAME@PATTERN` reads
+the bytes of the file PATTERN names beside the _test.go file, `{}` the
+value (`.@testdata/pngsuite/{}.png`, std/evidence/png/gotests); a
+missing file is a skipped element.
 Last verified: 2026-11-19.
 `go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N]
 [-backends B] [-host LABEL] MODULE` runs every fuzz harness that names

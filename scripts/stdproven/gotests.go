@@ -97,6 +97,16 @@ func readGoTables(path string) ([]goTable, error) {
 	return ts, nil
 }
 
+// fieldName is a FIELDS entry's name, without =DEFAULT, :bytes, :const
+// or @PATTERN.
+func fieldName(f string) string {
+	f, _, _ = strings.Cut(f, "=")
+	f = strings.TrimSuffix(f, ":bytes")
+	f = strings.TrimSuffix(f, ":const")
+	f, _, _ = strings.Cut(f, "@")
+	return f
+}
+
 // goTableCases reads table t from the Go source under goroot: its
 // elements' inputs, and how many elements had an input that is no literal.
 func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
@@ -120,7 +130,7 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 				c, ok = u.X.(*ast.CompositeLit)
 			}
 		}
-		if !ok && !(len(t.fields) == 1 && t.fields[0] == ".") {
+		if !ok && !(len(t.fields) == 1 && fieldName(t.fields[0]) == ".") {
 			skipped++
 			continue
 		}
@@ -129,6 +139,9 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 			field, def, hasDef := strings.Cut(field, "=")
 			name, isBytes := strings.CutSuffix(field, ":bytes")
 			name, isConst := strings.CutSuffix(name, ":const")
+			// NAME@PATTERN: the input is the bytes of the file at
+			// PATTERN (beside the _test.go file) with {} the value
+			name, pattern, isFile := strings.Cut(name, "@")
 			var e ast.Expr
 			if name == "." {
 				e = el
@@ -145,6 +158,10 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 			}
 			// a field marked :bytes may be any bytes (the adapter reads
 			// them as Bytes); others must be UTF-8, which Str holds
+			if ok && isFile {
+				b, err := os.ReadFile(filepath.Join(filepath.Dir(path), filepath.FromSlash(strings.ReplaceAll(pattern, "{}", s))))
+				s, ok, isBytes = string(b), err == nil, true
+			}
 			if !ok || (!isBytes && !utf8.ValidString(s)) {
 				break
 			}

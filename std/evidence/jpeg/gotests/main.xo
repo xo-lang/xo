@@ -1,0 +1,69 @@
+// The Xo side of std/jpeg's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/jpeg's result as text, as go/main.go prints package jpeg's.
+// Kinds decode: decode's model, size and plane CRC-32 against Decode's
+// image; encode: a PNG encoded at a quality, the JPEG's length and CRC-32
+// and its decode, against Encode's. Inputs are Go's testdata files.
+// See scripts/stdproven/gotests.go.
+use std/jpeg
+use std/png
+use std/crc32
+use std/base64
+
+/// An image as its model (and subsample for YCbCr), size and the CRC-32 of
+/// its planes (pix, then y, cb and cr), each with tight rows.
+fn print(im: jpeg.Image) -> Str {
+  var c = crc32.checksum(im.pix)
+  c = crc32.update(c, im.y)
+  c = crc32.update(c, im.cb)
+  c = crc32.update(c, im.cr)
+  let sub = if im.model == jpeg.Model.YCbCr { " ${im.subsample}" } else { "" }
+  "${im.model}${sub} ${im.width}x${im.height} ${c}"
+}
+
+fn decoded(data: Bytes) -> Str {
+  match jpeg.decode(data) {
+    Ok(im) => print(im)
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+/// Go's TestWriter: the PNG encoded at the quality; the JPEG's length and
+/// CRC-32, and its decoded image.
+fn encoded(data: Bytes, quality: Int) -> Str {
+  let p = match png.decode(data) {
+    Ok(p) => p
+    Err(e) => return "err ${e.display()}"
+  }
+  if p.model != png.Model.RGBA {
+    return "png model ${p.model}"
+  }
+  match jpeg.encode(jpeg.Image{width: p.width, height: p.height, model: jpeg.Model.RGBA, pix: p.pix}, quality) {
+    Ok(b) => "${b.len()} ${crc32.checksum(b)} ${decoded(b)}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn run(kind: Str, inp: List[Bytes]) -> Str {
+  match kind {
+    "decode" => decoded(inp[0])
+    "encode" => encoded(inp[0], Int.parse(inp[1].to_str() ?? "") ?? 0)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Bytes] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?)
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
