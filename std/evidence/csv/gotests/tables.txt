@@ -1,0 +1,6 @@
+# Go's encoding/csv test tables (go1.26) run through std/csv
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# Fields left out of a case take Go's zero values (NAME=DEFAULT); ReuseRecord
+# changes no output. HugeLines (strings.Repeat), BinaryBlobField (not UTF-8)
+# and the two utf8.RuneError delimiters are skipped.
+encoding/csv reader_test.go readTests Input=,Comma=0,Comment=0,UseFieldsPerRecord=false,FieldsPerRecord=0,LazyQuotes=false,TrimLeadingSpace=false read

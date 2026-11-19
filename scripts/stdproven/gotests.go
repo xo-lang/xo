@@ -14,7 +14,9 @@ package main
 //     func FUNC), the input fields (comma separated: a field name, or a
 //     position for an unkeyed element; a field written NAME:const also
 //     takes an exported constant of the package, or a | of them, as its
-//     name, "Debug|AlignRight", for the adapters to map), and the kind the
+//     name, "Debug|AlignRight", for the adapters to map; a field written
+//     NAME=DEFAULT reads as DEFAULT where a keyed element leaves NAME out,
+//     instead of skipping the element), and the kind the
 //     adapters know it by. Blank lines and # comments are skipped.
 //   - go/main.go: the Go adapter, `main CASES`, printing a result line per
 //     case.
@@ -122,8 +124,13 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 		}
 		in := make([]string, 0, len(t.fields))
 		for _, field := range t.fields {
+			field, def, hasDef := strings.Cut(field, "=")
 			name, isConst := strings.CutSuffix(field, ":const")
 			e := fieldExpr(c, name, order)
+			if e == nil && hasDef {
+				in = append(in, def)
+				continue
+			}
 			s, ok := stringLit(e)
 			if !ok && isConst {
 				s, ok = constNames(e)

@@ -1,0 +1,61 @@
+// The Xo side of std/csv's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/csv's result as text, as go/main.go prints package csv's.
+// Kind read: Go's TestRead (ReadAll) against csv.parse, the records as
+// R|LEN:FIELD... lines or the error's start line, line, column and text.
+// See scripts/stdproven/gotests.go.
+use std/csv
+use std/base64
+
+/// The text of std/csv's parse of a readTests case, as Go's TestRead sets
+/// up its Reader: the position markers left out of the input, Comma 0 for
+/// ',', FieldsPerRecord -1 unless UseFieldsPerRecord. A delimiter Go's
+/// Reader refuses is the error Go returns (std/csv faults on it, so the
+/// adapter checks first with valid_sep and valid_comment).
+fn parse_case(inp: List[Str]) -> Str {
+  let text = inp[0].replace("\u{a7}", "").replace("\u{b6}", "").replace("\u{2211}", "")
+  let c = Int.parse(inp[1]) ?? 0
+  let sep = if c == 0 { ',' } else { Rune(c) }
+  let comment = Rune(Int.parse(inp[2]) ?? 0)
+  let fields = if inp[3] == "true" { Int.parse(inp[4]) ?? 0 } else { -1 }
+  if sep == comment || !csv.valid_sep(sep) || !csv.valid_comment(comment) {
+    return "err csv: invalid field or comment delimiter"
+  }
+  match csv.parse(text, sep, comment, fields, inp[5] == "true", inp[6] == "true") {
+    Ok(rows) => {
+      var out = ""
+      for r in rows {
+        out = out + "R"
+        for f in r {
+          out = out + "|${f.len()}:${f}"
+        }
+        out = out + "\n"
+      }
+      out
+    }
+    Err(e) => "err ${e.start_line} ${e.line} ${e.column} ${e.msg}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "read" => parse_case(inp)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

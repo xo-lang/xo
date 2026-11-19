@@ -53,3 +53,9 @@ var slices = []struct {
 	{[]rune{n}},
 	{nil},
 }
+
+var opt = []pair{
+	{in: "a"},
+	{out: "2"},
+	{in: someVar},
+}

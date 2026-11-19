@@ -10,7 +10,8 @@ import (
 // keyed and unkeyed elements, pointer elements, + of strings, a table
 // local to a test function, numbers and time's zone names, and what is
 // skipped (no literal, not UTF-8, an expression, a float with a fraction),
-// and rune, bool and NAME:const inputs (task #403).
+// rune, bool and NAME:const inputs, and NAME=DEFAULT
+// fields (task #403).
 func TestGoTableCases(t *testing.T) {
 	tests := []struct {
 		name, fields string
@@ -29,6 +30,10 @@ func TestGoTableCases(t *testing.T) {
 		// a slice of integer or rune literals joins them with commas; a
 		// name in it, or nil, is skipped
 		{"slices", "in", []string{"0 97,65536,-1", "1 "}, 2},
+		// NAME=DEFAULT fills a field a keyed element leaves out; a field
+		// present but not a literal still skips the element
+		{"opt", "in=-,out=0", []string{"0 a|0", "1 -|2"}, 1},
+		{"opt", "in", []string{"0 a"}, 2},
 	}
 	for _, tt := range tests {
 		tab := goTable{pkg: "ex", file: "ex_test.go", name: tt.name, fields: strings.Split(tt.fields, ","), kind: "k"}
