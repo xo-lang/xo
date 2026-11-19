@@ -22,6 +22,8 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type hpInts []int
@@ -45,6 +47,18 @@ type hpCase struct {
 	got, end []int
 }
 
+// hpHostile turns a seventh of the widest span's values into Int's edges
+// from the hostile dictionary (task #352), where an ordering by
+// subtraction overflows; chosen by the value so the cases after it stay as
+// they were.
+func hpHostile(span, v int) int {
+	if span != 1<<20 || v%7 != 0 {
+		return v
+	}
+	is := hostile.Ints()
+	return int(is[uint(v)%uint(len(is))])
+}
+
 func hpCases(r *rand.Rand, n int) []hpCase {
 	cs := make([]hpCase, 0, n)
 	for len(cs) < n {
@@ -58,7 +72,7 @@ func hpCases(r *rand.Rand, n int) []hpCase {
 			init = make([]int, r.Intn(201))
 		}
 		for i := range init {
-			init[i] = r.Intn(span) - span/4
+			init[i] = hpHostile(span, r.Intn(span)-span/4)
 		}
 		c := hpCase{init: append([]int(nil), init...)}
 		h := hpInts(append([]int(nil), init...))
@@ -68,7 +82,7 @@ func hpCases(r *rand.Rand, n int) []hpCase {
 			if r.Intn(3) == 0 {
 				code = 0 // pushes a third of the time keep heaps from emptying
 			}
-			arg := r.Intn(span) - span/4
+			arg := hpHostile(span, r.Intn(span)-span/4)
 			if code == 2 || code == 3 {
 				if len(h) == 0 {
 					continue

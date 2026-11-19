@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type dqCase struct {
@@ -49,6 +51,13 @@ func dqCases(r *rand.Rand, n int) []dqCase {
 				code = r.Intn(2) // a push
 			}
 			arg := r.Intn(1000)
+			if arg%50 == 7 {
+				// the hostile dictionary (task #352): Int's edges as
+				// values, chosen by the value so the cases after it stay
+				// as they were
+				is := hostile.Ints()
+				arg = int(is[arg%len(is)])
+			}
 			switch code {
 			case 0:
 				q = append(q, arg)

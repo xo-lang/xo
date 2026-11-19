@@ -15,13 +15,11 @@ corpusfuzz_test.go
 crc32fuzz_test.go
 crc64fuzz_test.go
 debugfuzz_test.go
-dequefuzz_test.go
 fnvfuzz_test.go
 giffuzz_test.go
 grpcfuzz_test.go
 grpchealthfuzz_test.go
 grpcreflectfuzz_test.go
-heapfuzz_test.go
 hpkefuzz_test.go
 httpproxyfuzz_test.go
 httpurlfuzz_test.go
