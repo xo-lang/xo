@@ -35,3 +35,34 @@ each bug (they fail before the fix on linux/arm64).
 How it was found: 60 minute stress runs with XO_HEAPSTATS=pages and the
 per-minute /debug/sched lines, one dense path disabled at a time (diag
 branch, never pushed). 30 minute runs cannot tell these apart (10% bound).
+
+## Follow up: the used chunk's advice (Observed 2026-11-19)
+
+Symptom: after the fix above, grpcreflect's 60 minute stress grew 14% on
+host 2 (2% before it) and TestRuntimeHeapIdleTHP failed on host 4 and on
+the amd64 host: RSS fell to about 6.4 MB idle, then AnonHugePages rose
+from 0 to 6 MB at about 140 s and RSS to 12 MB.
+
+Cause: thp_filled advised the whole used chunk MADV_HUGEPAGE when the
+next chunk was mapped. That replaced advise_run's MADV_NOHUGEPAGE on the
+runs the sweep had given back while the chunk filled, and khugepaged
+(max_ptes_none 511) filled them in again on its next slow scan. The fix
+above opens second halves instead of pool runs, so more chunks are used
+up and the re-advice ran more often.
+
+The larger cause: advise(), which the idle age pass and trim use to give
+a free page block back, called MADV_DONTNEED only. A block in a second
+half extend had advised MADV_HUGEPAGE kept that advice, and khugepaged
+filled it in again. Before the fix above few second halves were opened,
+so few blocks sat in advised memory.
+
+Fix: advise() also advises the block's chunk MADV_NOHUGEPAGE under dense
+(as scavenge does, decision 0676), and thp_filled advises only the new
+chunk. TestRuntimeHeapIdleTHP on the amd64 host, KiB over its start after
+150 s idle: 9440 with neither, 9468 with thp_filled's change only, 3836
+with advise()'s only, 240 with both (207a53636 reversed: 3804). Tests:
+heapos_test.xo "a used chunk keeps the sweep's no huge page advice on its
+given back runs" and "a page block given back in an advised half leaves
+no huge page advice" (smaps, no hg). Rule: every path that gives pages
+back under dense also turns huge pages off for them, and no later advice
+turns them on again until the memory is reused.

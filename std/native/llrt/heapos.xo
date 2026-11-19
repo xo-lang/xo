@@ -1802,6 +1802,14 @@ fn advise(p: Int, cw: Int, v: Int, size: Int, pg: Int) -> Bool {
       if pg > 0 && p % pg == 0 && size % pg == 0 {
         rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
         let _a = linux.madvise(p, size, 4)
+        // and no huge pages for the block's chunk, as scavenge's (XO_THP=
+        // dense, decision 0676): a block in a second half extend advised
+        // MADV_HUGEPAGE was filled in again by khugepaged once 912f87eb2
+        // opened halves before pooled runs (TestRuntimeHeapIdleTHP, 9.4 MB
+        // over at 150 s idle; task #355, 2026-11-19)
+        if thp_mode() == 2 {
+          let _n = linux.madvise(p & (0).wrapping_sub(CHUNK), CHUNK, 15)
+        }
         return true
       }
       false
@@ -1911,8 +1919,8 @@ pub fn age_from(central: Bool, own: Bool) -> Int {
 /// page resident, the run's unused rest on no free list for the sweep to
 /// find (heapidlelists: 18 MB kept under dense, 7 MB with the advice off).
 /// The tail also loses its huge page advice, as advise_run's runs, so
-/// khugepaged does not fill it again; thp_filled advises the chunk again
-/// once it is used up. The bytes given back above bit 32, and 1 below it
+/// khugepaged does not fill it again (and keeps it: thp_filled no longer
+/// advises a used chunk again, task #355). The bytes given back above bit 32, and 1 below it
 /// while the tail waits a pass (the worker's W_AGE_MORE).
 fn bump_age(h: Int, pg: Int) -> Int {
   match target.os {
@@ -2799,11 +2807,14 @@ fn thp_advise(a: Int, n: Int) {
 }
 
 /// XO_THP=dense: when the record's previous chunk ended at end (0: this
-/// is its first chunk), that used up chunk and the new chunk c may take
-/// huge pages.
+/// is its first chunk), the new chunk c may take huge pages. The used up
+/// chunk is not advised again: its runs the sweep gave back carry
+/// advise_run's MADV_NOHUGEPAGE, which the advice undid, and khugepaged
+/// filled them in again (TestRuntimeHeapIdleTHP, 6 MB at 140 s idle;
+/// grpcreflect's 60 minute stress 14% on host 2, 2026-11-19, task #355).
+/// Its second half was advised when extend opened it.
 fn thp_filled(end: Int, c: Int) {
   if end != 0 && dense_halves() {
-    thp_advise(end.wrapping_sub(CHUNK), CHUNK)
     thp_advise(c, CHUNK)
   }
 }

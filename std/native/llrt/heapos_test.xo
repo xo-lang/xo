@@ -283,3 +283,42 @@ test "a chunk after a pooled run advises no huge pages before the run's end" {
   chunk(h)
   expect(test_hg(a + 16 * PUNIT - CHUNK, a)) == false
 }
+
+test "a used chunk keeps the sweep's no huge page advice on its given back runs" {
+  // XO_THP=dense: thp_filled advised the whole used chunk MADV_HUGEPAGE,
+  // which undid advise_run's MADV_NOHUGEPAGE on the runs the sweep had
+  // given back while the chunk filled, and khugepaged filled them in
+  // again (TestRuntimeHeapIdleTHP: AnonHugePages 0 to 6 MB at 140 s idle,
+  // host 4; grpcreflect's 60 minute stress grew 14% on host 2, 2026-11-19)
+  if !dense_halves() || !pages_on() {
+    return
+  }
+  let h = test_record()
+  let c = map_aligned(CHUNK)
+  // a run of 16 units in the chunk's first half given back
+  let a = c + 64 * PUNIT
+  advise_run(a, 16)
+  // the chunk used up: no reserve left, the bump at its end
+  rt.mem_store(h, 24, c + CHUNK, 8)
+  rt.mem_store(h, 32, c + CHUNK, 8)
+  rt.mem_store(h, H_BLIM, c + CHUNK, 8)
+  chunk(h)
+  expect(test_hg(a, a + 16 * PUNIT)) == false
+}
+
+test "a page block given back in an advised half leaves no huge page advice" {
+  // XO_THP=dense: advise gave a block's pages back with MADV_DONTNEED
+  // only; in a second half extend had advised MADV_HUGEPAGE, khugepaged
+  // filled them in again (TestRuntimeHeapIdleTHP 9.4 MB over at 150 s
+  // idle on the amd64 host, 2026-11-19)
+  if !dense_halves() || !pages_on() {
+    return
+  }
+  let c = map_aligned(CHUNK)
+  thp_advise(c + HALF, HALF)
+  let cw = rt.heap_large(16)
+  let p = c + HALF
+  expect(advise(p, cw, 0, HALF, 65536))
+  rt.heap_release(cw - 8)
+  expect(test_hg(p, p + HALF)) == false
+}
