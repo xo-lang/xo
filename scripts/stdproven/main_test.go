@@ -761,3 +761,24 @@ func TestGoOnlyModule(t *testing.T) {
 		t.Fatalf("the native backend did not refuse a `use go` program with XO1201 (err %v); goOnly's premise (decision 0248) no longer holds:\n%s", err, out)
 	}
 }
+
+// TestPerfRef: a case whose Go side adds "pkg" is package math's reference
+// time beside the portable baseline's row (decision 0721); other cases with
+// their own Go arguments are judged rows.
+func TestPerfRef(t *testing.T) {
+	for _, c := range []struct {
+		name, row string
+		ok        bool
+	}{
+		{"bench/perf/gomath/erf///erf/pkg", "bench/perf/gomath/erf", true},
+		{"bench/perf/gomath/pow/20///pow/20/pkg", "bench/perf/gomath/pow/20", true},
+		{"bench/perf/gomath/erf", "", false},
+		{"bench/perf/fan/4///fanout/4", "", false},
+		{"bench/perf/gomath/erf///erfc/pkg", "", false},
+	} {
+		row, ok := perfRef(c.name)
+		if row != c.row || ok != c.ok {
+			t.Errorf("perfRef(%q) = %q, %v; want %q, %v", c.name, row, ok, c.row, c.ok)
+		}
+	}
+}

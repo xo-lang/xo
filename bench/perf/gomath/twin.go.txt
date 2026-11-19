@@ -1,8 +1,15 @@
 // The Go twin of bench/perf/gomath/main.xo: the same arguments and loop
-// counts through math.Erf, Erfc, Erfinv, Erfcinv, Gamma, Lgamma, Nextafter,
-// Remainder and Acosh, printing the same "<workload> <checksum>" line. It is
-// a .txt so the Go tool does not build it as part of the repository; copy it
-// out and `go build` it.
+// counts through math.Erfinv, Erfcinv, Gamma, Lgamma, Nextafter, Remainder
+// and Acosh, printing the same "<workload> <checksum>" line. erf, erfc, exp
+// and pow run Go's portable code (decision 0721): package math runs FMA
+// assembly for Exp (which Erf, Erfc and Pow call) that Xo's rounded math
+// (decision 0287) does not use, so the copy at the end of this file (from
+// std/rt/gomath_gen.go: Go 1.26's math without assembly, each product
+// wrapped in float64() so it does not fuse; Sqrt and Trunc are package
+// math's, exact on every machine) is the baseline, and a second argument
+// "pkg" runs package math's function for the row's reference column. It is
+// a .txt so the Go tool does not build it as part of the repository; copy
+// it out and `go build` it.
 package main
 
 import (
@@ -24,15 +31,28 @@ func main() {
 	if len(os.Args) > 1 {
 		w = os.Args[1]
 	}
+	pkg := len(os.Args) > 2 && os.Args[2] == "pkg"
 	sum := 0
 	switch w {
 	case "erf":
+		if pkg {
+			for i := 0; i < n; i++ {
+				sum += b(math.Erf(arg(i, -6, 6)))
+			}
+			break
+		}
 		for i := 0; i < n; i++ {
-			sum += b(math.Erf(arg(i, -6, 6)))
+			sum += b(gmErf(arg(i, -6, 6)))
 		}
 	case "erfc":
+		if pkg {
+			for i := 0; i < n; i++ {
+				sum += b(math.Erfc(arg(i, -6, 28)))
+			}
+			break
+		}
 		for i := 0; i < n; i++ {
-			sum += b(math.Erfc(arg(i, -6, 28)))
+			sum += b(gmErfc(arg(i, -6, 28)))
 		}
 	case "erfinv":
 		for i := 0; i < n; i++ {
@@ -68,13 +88,669 @@ func main() {
 			sum += b(math.Acosh(arg(i, 1, 1e6)))
 		}
 	case "exp":
+		if pkg {
+			for i := 0; i < n; i++ {
+				sum += b(math.Exp(arg(i, -20, 20)))
+			}
+			break
+		}
 		for i := 0; i < n; i++ {
-			sum += b(math.Exp(arg(i, -20, 20)))
+			sum += b(gmExp(arg(i, -20, 20)))
 		}
 	case "pow":
+		if pkg {
+			for i := 0; i < n; i++ {
+				sum += b(math.Pow(arg(i, 0.5, 30), arg(i*7, -20, 20)))
+			}
+			break
+		}
 		for i := 0; i < n; i++ {
-			sum += b(math.Pow(arg(i, 0.5, 30), arg(i*7, -20, 20)))
+			sum += b(gmPow(arg(i, 0.5, 30), arg(i*7, -20, 20)))
 		}
 	}
 	fmt.Printf("%s %d\n", w, sum)
 }
+
+// Go's portable math for erf, erfc, exp and pow and what they call, from
+// std/rt/gomath_gen.go (scripts/gomath; decision 0287) with package math's
+// Sqrt and Trunc.
+
+func gmAbs(x float64) float64 {
+	return gmFloat64frombits(gmFloat64bits(x) &^ (1 << 63))
+}
+
+const (
+	gmuvnan    = 0x7FF8000000000001
+	gmuvinf    = 0x7FF0000000000000
+	gmuvneginf = 0xFFF0000000000000
+	gmuvone    = 0x3FF0000000000000
+	gmmask     = 0x7FF
+	gmshift    = 64 - 11 - 1
+	gmbias     = 1023
+	gmsignMask = 1 << 63
+	gmfracMask = 1<<gmshift - 1
+)
+
+func gmInf(sign int) float64 {
+	var v uint64
+	if sign >= 0 {
+		v = gmuvinf
+	} else {
+		v = gmuvneginf
+	}
+	return gmFloat64frombits(v)
+}
+
+func gmNaN() float64 { return gmFloat64frombits(gmuvnan) }
+
+func gmIsNaN(f float64) (is bool) {
+
+	return f != f
+}
+
+func gmIsInf(f float64, sign int) bool {
+
+	if sign == 0 {
+		f = gmAbs(f)
+	} else if sign < 0 {
+		f = -f
+	}
+	return f > gmMaxFloat64
+}
+
+func gmnormalize(x float64) (y float64, exp int) {
+	const SmallestNormal = 2.2250738585072014e-308
+	if gmAbs(x) < SmallestNormal {
+		return float64(x * (1 << 52)), -52
+	}
+	return x, 0
+}
+
+const (
+	gmE   = 2.71828182845904523536028747135266249775724709369995957496696763
+	gmPi  = 3.14159265358979323846264338327950288419716939937510582097494459
+	gmPhi = 1.61803398874989484820458683436563811772030917980576286213544862
+
+	gmSqrt2   = 1.41421356237309504880168872420969807856967187537694807317667974
+	gmSqrtE   = 1.64872127070012814684865078781416357165377610071014801157507931
+	gmSqrtPi  = 1.77245385090551602729816748334114518279754945612238712821380779
+	gmSqrtPhi = 1.27201964951406896425242246173749149171560804184009624861664038
+
+	gmLn2    = 0.693147180559945309417232121458176568075500134360255254120680009
+	gmLog2E  = 1 / gmLn2
+	gmLn10   = 2.30258509299404568401799145468436420760110148862877297603332790
+	gmLog10E = 1 / gmLn10
+)
+
+const (
+	gmMaxFloat32             = 0x1p127 * (1 + (1 - 0x1p-23))
+	gmSmallestNonzeroFloat32 = 0x1p-126 * 0x1p-23
+
+	gmMaxFloat64             = 0x1p1023 * (1 + (1 - 0x1p-52))
+	gmSmallestNonzeroFloat64 = 0x1p-1022 * 0x1p-52
+)
+
+func gmCopysign(f, sign float64) float64 {
+	const signBit = 1 << 63
+	return gmFloat64frombits(gmFloat64bits(f)&^signBit | gmFloat64bits(sign)&signBit)
+}
+
+const (
+	gmerx = 8.45062911510467529297e-01
+
+	gmefx  = 1.28379167095512586316e-01
+	gmefx8 = 1.02703333676410069053e+00
+	gmpp0  = 1.28379167095512558561e-01
+	gmpp1  = -3.25042107247001499370e-01
+	gmpp2  = -2.84817495755985104766e-02
+	gmpp3  = -5.77027029648944159157e-03
+	gmpp4  = -2.37630166566501626084e-05
+	gmqq1  = 3.97917223959155352819e-01
+	gmqq2  = 6.50222499887672944485e-02
+	gmqq3  = 5.08130628187576562776e-03
+	gmqq4  = 1.32494738004321644526e-04
+	gmqq5  = -3.96022827877536812320e-06
+
+	gmpa0 = -2.36211856075265944077e-03
+	gmpa1 = 4.14856118683748331666e-01
+	gmpa2 = -3.72207876035701323847e-01
+	gmpa3 = 3.18346619901161753674e-01
+	gmpa4 = -1.10894694282396677476e-01
+	gmpa5 = 3.54783043256182359371e-02
+	gmpa6 = -2.16637559486879084300e-03
+	gmqa1 = 1.06420880400844228286e-01
+	gmqa2 = 5.40397917702171048937e-01
+	gmqa3 = 7.18286544141962662868e-02
+	gmqa4 = 1.26171219808761642112e-01
+	gmqa5 = 1.36370839120290507362e-02
+	gmqa6 = 1.19844998467991074170e-02
+
+	gmra0 = -9.86494403484714822705e-03
+	gmra1 = -6.93858572707181764372e-01
+	gmra2 = -1.05586262253232909814e+01
+	gmra3 = -6.23753324503260060396e+01
+	gmra4 = -1.62396669462573470355e+02
+	gmra5 = -1.84605092906711035994e+02
+	gmra6 = -8.12874355063065934246e+01
+	gmra7 = -9.81432934416914548592e+00
+	gmsa1 = 1.96512716674392571292e+01
+	gmsa2 = 1.37657754143519042600e+02
+	gmsa3 = 4.34565877475229228821e+02
+	gmsa4 = 6.45387271733267880336e+02
+	gmsa5 = 4.29008140027567833386e+02
+	gmsa6 = 1.08635005541779435134e+02
+	gmsa7 = 6.57024977031928170135e+00
+	gmsa8 = -6.04244152148580987438e-02
+
+	gmrb0 = -9.86494292470009928597e-03
+	gmrb1 = -7.99283237680523006574e-01
+	gmrb2 = -1.77579549177547519889e+01
+	gmrb3 = -1.60636384855821916062e+02
+	gmrb4 = -6.37566443368389627722e+02
+	gmrb5 = -1.02509513161107724954e+03
+	gmrb6 = -4.83519191608651397019e+02
+	gmsb1 = 3.03380607434824582924e+01
+	gmsb2 = 3.25792512996573918826e+02
+	gmsb3 = 1.53672958608443695994e+03
+	gmsb4 = 3.19985821950859553908e+03
+	gmsb5 = 2.55305040643316442583e+03
+	gmsb6 = 4.74528541206955367215e+02
+	gmsb7 = -2.24409524465858183362e+01
+)
+
+func gmErf(x float64) float64 {
+	if gmhaveArchErf {
+		return gmarchErf(x)
+	}
+	return gmerf(x)
+}
+
+func gmerf(x float64) float64 {
+	const (
+		VeryTiny = 2.848094538889218e-306
+		Small    = 1.0 / (1 << 28)
+	)
+
+	switch {
+	case gmIsNaN(x):
+		return gmNaN()
+	case gmIsInf(x, 1):
+		return 1
+	case gmIsInf(x, -1):
+		return -1
+	}
+	sign := false
+	if x < 0 {
+		x = -x
+		sign = true
+	}
+	if x < 0.84375 {
+		var temp float64
+		if x < Small {
+			if x < VeryTiny {
+				temp = float64(0.125 * (float64(8.0*x) + float64(gmefx8*x)))
+			} else {
+				temp = x + float64(gmefx*x)
+			}
+		} else {
+			z := float64(x * x)
+			r := gmpp0 + float64(z*(gmpp1+float64(z*(gmpp2+float64(z*(gmpp3+float64(z*gmpp4)))))))
+			s := 1 + float64(z*(gmqq1+float64(z*(gmqq2+float64(z*(gmqq3+float64(z*(gmqq4+float64(z*gmqq5)))))))))
+			y := r / s
+			temp = x + float64(x*y)
+		}
+		if sign {
+			return -temp
+		}
+		return temp
+	}
+	if x < 1.25 {
+		s := x - 1
+		P := gmpa0 + float64(s*(gmpa1+float64(s*(gmpa2+float64(s*(gmpa3+float64(s*(gmpa4+float64(s*(gmpa5+float64(s*gmpa6)))))))))))
+		Q := 1 + float64(s*(gmqa1+float64(s*(gmqa2+float64(s*(gmqa3+float64(s*(gmqa4+float64(s*(gmqa5+float64(s*gmqa6)))))))))))
+		if sign {
+			return -gmerx - P/Q
+		}
+		return gmerx + P/Q
+	}
+	if x >= 6 {
+		if sign {
+			return -1
+		}
+		return 1
+	}
+	s := 1 / (float64(x * x))
+	var R, S float64
+	if x < 1/0.35 {
+		R = gmra0 + float64(s*(gmra1+float64(s*(gmra2+float64(s*(gmra3+float64(s*(gmra4+float64(s*(gmra5+float64(s*(gmra6+float64(s*gmra7)))))))))))))
+		S = 1 + float64(s*(gmsa1+float64(s*(gmsa2+float64(s*(gmsa3+float64(s*(gmsa4+float64(s*(gmsa5+float64(s*(gmsa6+float64(s*(gmsa7+float64(s*gmsa8)))))))))))))))
+	} else {
+		R = gmrb0 + float64(s*(gmrb1+float64(s*(gmrb2+float64(s*(gmrb3+float64(s*(gmrb4+float64(s*(gmrb5+float64(s*gmrb6)))))))))))
+		S = 1 + float64(s*(gmsb1+float64(s*(gmsb2+float64(s*(gmsb3+float64(s*(gmsb4+float64(s*(gmsb5+float64(s*(gmsb6+float64(s*gmsb7)))))))))))))
+	}
+	z := gmFloat64frombits(gmFloat64bits(x) & 0xffffffff00000000)
+	r := float64(gmExp(float64(-z*z)-0.5625) * gmExp(float64((z-x)*(z+x))+R/S))
+	if sign {
+		return r/x - 1
+	}
+	return 1 - r/x
+}
+
+func gmErfc(x float64) float64 {
+	if gmhaveArchErfc {
+		return gmarchErfc(x)
+	}
+	return gmerfc(x)
+}
+
+func gmerfc(x float64) float64 {
+	const Tiny = 1.0 / (1 << 56)
+
+	switch {
+	case gmIsNaN(x):
+		return gmNaN()
+	case gmIsInf(x, 1):
+		return 0
+	case gmIsInf(x, -1):
+		return 2
+	}
+	sign := false
+	if x < 0 {
+		x = -x
+		sign = true
+	}
+	if x < 0.84375 {
+		var temp float64
+		if x < Tiny {
+			temp = x
+		} else {
+			z := float64(x * x)
+			r := gmpp0 + float64(z*(gmpp1+float64(z*(gmpp2+float64(z*(gmpp3+float64(z*gmpp4)))))))
+			s := 1 + float64(z*(gmqq1+float64(z*(gmqq2+float64(z*(gmqq3+float64(z*(gmqq4+float64(z*gmqq5)))))))))
+			y := r / s
+			if x < 0.25 {
+				temp = x + float64(x*y)
+			} else {
+				temp = 0.5 + (float64(x*y) + (x - 0.5))
+			}
+		}
+		if sign {
+			return 1 + temp
+		}
+		return 1 - temp
+	}
+	if x < 1.25 {
+		s := x - 1
+		P := gmpa0 + float64(s*(gmpa1+float64(s*(gmpa2+float64(s*(gmpa3+float64(s*(gmpa4+float64(s*(gmpa5+float64(s*gmpa6)))))))))))
+		Q := 1 + float64(s*(gmqa1+float64(s*(gmqa2+float64(s*(gmqa3+float64(s*(gmqa4+float64(s*(gmqa5+float64(s*gmqa6)))))))))))
+		if sign {
+			return 1 + gmerx + P/Q
+		}
+		return 1 - gmerx - P/Q
+
+	}
+	if x < 28 {
+		s := 1 / (float64(x * x))
+		var R, S float64
+		if x < 1/0.35 {
+			R = gmra0 + float64(s*(gmra1+float64(s*(gmra2+float64(s*(gmra3+float64(s*(gmra4+float64(s*(gmra5+float64(s*(gmra6+float64(s*gmra7)))))))))))))
+			S = 1 + float64(s*(gmsa1+float64(s*(gmsa2+float64(s*(gmsa3+float64(s*(gmsa4+float64(s*(gmsa5+float64(s*(gmsa6+float64(s*(gmsa7+float64(s*gmsa8)))))))))))))))
+		} else {
+			if sign && x > 6 {
+				return 2
+			}
+			R = gmrb0 + float64(s*(gmrb1+float64(s*(gmrb2+float64(s*(gmrb3+float64(s*(gmrb4+float64(s*(gmrb5+float64(s*gmrb6)))))))))))
+			S = 1 + float64(s*(gmsb1+float64(s*(gmsb2+float64(s*(gmsb3+float64(s*(gmsb4+float64(s*(gmsb5+float64(s*(gmsb6+float64(s*gmsb7)))))))))))))
+		}
+		z := gmFloat64frombits(gmFloat64bits(x) & 0xffffffff00000000)
+		r := float64(gmExp(float64(-z*z)-0.5625) * gmExp(float64((z-x)*(z+x))+R/S))
+		if sign {
+			return 2 - r/x
+		}
+		return r / x
+	}
+	if sign {
+		return 2
+	}
+	return 0
+}
+
+func gmExp(x float64) float64 {
+	if gmhaveArchExp {
+		return gmarchExp(x)
+	}
+	return gmexp(x)
+}
+
+func gmexp(x float64) float64 {
+	const (
+		Ln2Hi = 6.93147180369123816490e-01
+		Ln2Lo = 1.90821492927058770002e-10
+		Log2e = 1.44269504088896338700e+00
+
+		Overflow  = 7.09782712893383973096e+02
+		Underflow = -7.45133219101941108420e+02
+		NearZero  = 1.0 / (1 << 28)
+	)
+
+	switch {
+	case gmIsNaN(x):
+		return x
+	case x > Overflow:
+		return gmInf(1)
+	case x < Underflow:
+		return 0
+	case -NearZero < x && x < NearZero:
+		return 1 + x
+	}
+
+	var k int
+	switch {
+	case x < 0:
+		k = int(float64(Log2e*x) - 0.5)
+	case x > 0:
+		k = int(float64(Log2e*x) + 0.5)
+	}
+	hi := x - float64(float64(k)*Ln2Hi)
+	lo := float64(float64(k) * Ln2Lo)
+
+	return gmexpmulti(hi, lo, k)
+}
+
+func gmexpmulti(hi, lo float64, k int) float64 {
+	const (
+		P1 = 1.66666666666666657415e-01
+		P2 = -2.77777777770155933842e-03
+		P3 = 6.61375632143793436117e-05
+		P4 = -1.65339022054652515390e-06
+		P5 = 4.13813679705723846039e-08
+	)
+
+	r := hi - lo
+	t := float64(r * r)
+	c := r - float64(t*(P1+float64(t*(P2+float64(t*(P3+float64(t*(P4+float64(t*P5)))))))))
+	y := 1 - ((lo - (float64(r*c))/(2-c)) - hi)
+
+	return gmLdexp(y, k)
+}
+
+const gmhaveArchExp = false
+
+func gmarchExp(x float64) float64 {
+	panic("not implemented")
+}
+
+func gmFrexp(f float64) (frac float64, exp int) {
+	if gmhaveArchFrexp {
+		return gmarchFrexp(f)
+	}
+	return gmfrexp(f)
+}
+
+func gmfrexp(f float64) (frac float64, exp int) {
+
+	switch {
+	case f == 0:
+		return f, 0
+	case gmIsInf(f, 0) || gmIsNaN(f):
+		return f, 0
+	}
+	f, exp = gmnormalize(f)
+	x := gmFloat64bits(f)
+	exp += int((x>>gmshift)&gmmask) - gmbias + 1
+	x &^= gmmask << gmshift
+	x |= (-1 + gmbias) << gmshift
+	frac = gmFloat64frombits(x)
+	return
+}
+
+func gmLdexp(frac float64, exp int) float64 {
+	if gmhaveArchLdexp {
+		return gmarchLdexp(frac, exp)
+	}
+	return gmldexp(frac, exp)
+}
+
+func gmldexp(frac float64, exp int) float64 {
+
+	switch {
+	case frac == 0:
+		return frac
+	case gmIsInf(frac, 0) || gmIsNaN(frac):
+		return frac
+	}
+	frac, e := gmnormalize(frac)
+	exp += e
+	x := gmFloat64bits(frac)
+	exp += int(x>>gmshift)&gmmask - gmbias
+	if exp < -1075 {
+		return gmCopysign(0, frac)
+	}
+	if exp > 1023 {
+		if frac < 0 {
+			return gmInf(-1)
+		}
+		return gmInf(1)
+	}
+	var m float64 = 1
+	if exp < -1022 {
+		exp += 53
+		m = 1.0 / (1 << 53)
+	}
+	x &^= gmmask << gmshift
+	x |= uint64(exp+gmbias) << gmshift
+	return float64(m * gmFloat64frombits(x))
+}
+
+func gmLog(x float64) float64 {
+	if gmhaveArchLog {
+		return gmarchLog(x)
+	}
+	return gmlog(x)
+}
+
+func gmlog(x float64) float64 {
+	const (
+		Ln2Hi = 6.93147180369123816490e-01
+		Ln2Lo = 1.90821492927058770002e-10
+		L1    = 6.666666666666735130e-01
+		L2    = 3.999999999940941908e-01
+		L3    = 2.857142874366239149e-01
+		L4    = 2.222219843214978396e-01
+		L5    = 1.818357216161805012e-01
+		L6    = 1.531383769920937332e-01
+		L7    = 1.479819860511658591e-01
+	)
+
+	switch {
+	case gmIsNaN(x) || gmIsInf(x, 1):
+		return x
+	case x < 0:
+		return gmNaN()
+	case x == 0:
+		return gmInf(-1)
+	}
+
+	f1, ki := gmFrexp(x)
+	if f1 < gmSqrt2/2 {
+		f1 *= 2
+		ki--
+	}
+	f := f1 - 1
+	k := float64(ki)
+
+	s := f / (2 + f)
+	s2 := float64(s * s)
+	s4 := float64(s2 * s2)
+	t1 := float64(s2 * (L1 + float64(s4*(L3+float64(s4*(L5+float64(s4*L7)))))))
+	t2 := float64(s4 * (L2 + float64(s4*(L4+float64(s4*L6)))))
+	R := t1 + t2
+	hfsq := float64(float64(0.5*f) * f)
+	return float64(k*Ln2Hi) - ((hfsq - (float64(s*(hfsq+R)) + float64(k*Ln2Lo))) - f)
+}
+
+const gmhaveArchLog = false
+
+func gmarchLog(x float64) float64 {
+	panic("not implemented")
+}
+
+func gmModf(f float64) (integer float64, fractional float64) {
+	integer = math.Trunc(f)
+	fractional = gmCopysign(f-integer, f)
+	return
+}
+
+func gmisOddInt(x float64) bool {
+	if gmAbs(x) >= (1 << 53) {
+
+		return false
+	}
+
+	xi, xf := gmModf(x)
+	return xf == 0 && int64(xi)&1 == 1
+}
+
+func gmPow(x, y float64) float64 {
+	if gmhaveArchPow {
+		return gmarchPow(x, y)
+	}
+	return gmpow(x, y)
+}
+
+func gmpow(x, y float64) float64 {
+	switch {
+	case y == 0 || x == 1:
+		return 1
+	case y == 1:
+		return x
+	case gmIsNaN(x) || gmIsNaN(y):
+		return gmNaN()
+	case x == 0:
+		switch {
+		case y < 0:
+			if gmSignbit(x) && gmisOddInt(y) {
+				return gmInf(-1)
+			}
+			return gmInf(1)
+		case y > 0:
+			if gmSignbit(x) && gmisOddInt(y) {
+				return x
+			}
+			return 0
+		}
+	case gmIsInf(y, 0):
+		switch {
+		case x == -1:
+			return 1
+		case (gmAbs(x) < 1) == gmIsInf(y, 1):
+			return 0
+		default:
+			return gmInf(1)
+		}
+	case gmIsInf(x, 0):
+		if gmIsInf(x, -1) {
+			return gmPow(1/x, -y)
+		}
+		switch {
+		case y < 0:
+			return 0
+		case y > 0:
+			return gmInf(1)
+		}
+	case y == 0.5:
+		return math.Sqrt(x)
+	case y == -0.5:
+		return 1 / math.Sqrt(x)
+	}
+
+	yi, yf := gmModf(gmAbs(y))
+	if yf != 0 && x < 0 {
+		return gmNaN()
+	}
+	if yi >= 1<<63 {
+
+		switch {
+		case x == -1:
+			return 1
+		case (gmAbs(x) < 1) == (y > 0):
+			return 0
+		default:
+			return gmInf(1)
+		}
+	}
+
+	a1 := 1.0
+	ae := 0
+
+	if yf != 0 {
+		if yf > 0.5 {
+			yf--
+			yi++
+		}
+		a1 = gmExp(float64(yf * gmLog(x)))
+	}
+
+	x1, xe := gmFrexp(x)
+	for i := int64(yi); i != 0; i >>= 1 {
+		if xe < -1<<12 || 1<<12 < xe {
+
+			ae += xe
+			break
+		}
+		if i&1 == 1 {
+			a1 *= x1
+			ae += xe
+		}
+		x1 *= x1
+		xe <<= 1
+		if x1 < .5 {
+			x1 += x1
+			xe--
+		}
+	}
+
+	if y < 0 {
+		a1 = 1 / a1
+		ae = -ae
+	}
+	return gmLdexp(a1, ae)
+}
+
+func gmSignbit(x float64) bool {
+	return int64(gmFloat64bits(x)) < 0
+}
+
+const gmhaveArchErf = false
+
+func gmarchErf(x float64) float64 {
+	panic("not implemented")
+}
+
+const gmhaveArchErfc = false
+
+func gmarchErfc(x float64) float64 {
+	panic("not implemented")
+}
+
+const gmhaveArchFrexp = false
+
+func gmarchFrexp(x float64) (float64, int) {
+	panic("not implemented")
+}
+
+const gmhaveArchLdexp = false
+
+func gmarchLdexp(frac float64, exp int) float64 {
+	panic("not implemented")
+}
+
+const gmhaveArchPow = false
+
+func gmarchPow(x, y float64) float64 {
+	panic("not implemented")
+}
+
+func gmFloat64bits(f float64) uint64 { return math.Float64bits(f) }
+
+func gmFloat64frombits(b uint64) float64 { return math.Float64frombits(b) }

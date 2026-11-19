@@ -1,7 +1,10 @@
-# twincheck: gomath's workloads (the same names on both sides).
+# twincheck: gomath's workloads (the same names on both sides); "W pkg" times
+# package math's W beside the portable baseline (decision 0721).
 - - none
 - - erf
+- - erf -- erf pkg
 - - erfc
+- - erfc -- erfc pkg
 - - erfinv
 - - erfcinv
 - - gamma
@@ -10,4 +13,6 @@
 - - remainder
 - - acosh
 - - exp
+- - exp -- exp pkg
 - - pow
+- - pow -- pow pkg

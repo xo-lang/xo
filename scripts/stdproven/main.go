@@ -1549,6 +1549,20 @@ func perf(args []string) error {
 	if len(rows) == 0 {
 		return fmt.Errorf("twincheck timed no case\n%s", text)
 	}
+	// A case whose Go side is its Xo arguments plus "pkg" (twin.txt
+	// "- - erf -- erf pkg") is a reference, not a judged row: its Go time,
+	// package math's, goes beside the row of the same arguments, whose Go
+	// twin runs Go's portable code (decision 0721).
+	refs := map[string]float64{}
+	judged := rows[:0:0]
+	for _, r := range rows {
+		if x, ok := perfRef(r.name); ok {
+			refs[x] = r.gom
+			continue
+		}
+		judged = append(judged, r)
+	}
+	rows = judged
 	worst := 0.0
 	var b strings.Builder
 	host := *hostLabel
@@ -1556,7 +1570,11 @@ func perf(args []string) error {
 		host = runtime.GOOS + "/" + runtime.GOARCH
 	}
 	var tb strings.Builder
-	tb.WriteString("| workload | Go ms | Xo ms | Xo / Go |\n|---|---|---|---|\n")
+	if len(refs) > 0 {
+		tb.WriteString("| workload | Go ms | Xo ms | Xo / Go | Go package math ms (decision 0721) |\n|---|---|---|---|---|\n")
+	} else {
+		tb.WriteString("| workload | Go ms | Xo ms | Xo / Go |\n|---|---|---|---|\n")
+	}
 	for _, r := range rows {
 		mark := ""
 		if r.xo < 5 && r.gom < 5 {
@@ -1564,7 +1582,14 @@ func perf(args []string) error {
 		} else if r.ratio > worst {
 			worst = r.ratio
 		}
-		fmt.Fprintf(&tb, "| %s%s | %.1f | %.1f | %.3f |\n", r.name, mark, r.gom, r.xo, r.ratio)
+		ref := ""
+		if len(refs) > 0 {
+			ref = " |"
+			if g, ok := refs[r.name]; ok {
+				ref = fmt.Sprintf(" %.1f |", g)
+			}
+		}
+		fmt.Fprintf(&tb, "| %s%s | %.1f | %.1f | %.3f |%s\n", r.name, mark, r.gom, r.xo, r.ratio, ref)
 	}
 	result := "pass"
 	if worst > 1.05 {
@@ -1581,6 +1606,20 @@ func perf(args []string) error {
 	}
 	fmt.Print(tb.String())
 	return os.WriteFile(outp, []byte(b.String()), 0o644)
+}
+
+// perfRef reports whether a twincheck time name is a reference case, its
+// Go side the Xo arguments plus "pkg", and the name of the row it stands
+// beside. twincheck names a case DIR/ARGS with its spaces as "/", so the
+// case "erf / erf pkg" of bench/perf/gomath is
+// "bench/perf/gomath/erf///erf/pkg", beside "bench/perf/gomath/erf".
+func perfRef(name string) (string, bool) {
+	x, g, ok := strings.Cut(name, "///")
+	args, isRef := strings.CutSuffix(g, "/pkg")
+	if !ok || !isRef || !strings.HasSuffix(x, "/"+args) {
+		return "", false
+	}
+	return x, true
 }
 
 // serverPerf is the perf evidence of a module whose twins are servers
