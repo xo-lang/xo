@@ -1,0 +1,3 @@
+# Go's time test tables (go1.26) run through std/time (stdproven gotests,
+# task #357): PKG FILE VAR FIELDS KIND
+time time_test.go dateTests year,month,day,hour,min,sec,nsec,z date

@@ -5,6 +5,7 @@
 //	go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE
 //	go run ./scripts/stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME
 //	go run ./scripts/stdproven race [-backend B] [-host LABEL] MODULE
+//	go run ./scripts/stdproven gotests [-backends B,...] [-host LABEL] [-check] MODULE (gotests.go)
 //
 // race (decision 0616 section 2) runs the module's own tests
 // (std/native/MODULE_test.xo) and every corpus directory of
@@ -209,6 +210,8 @@ func main() {
 		err = stress(os.Args[2:])
 	case "perf":
 		err = perf(os.Args[2:])
+	case "gotests":
+		err = goTests(os.Args[2:])
 	case "scale":
 		err = scale(os.Args[2:])
 	case "serverperf":
@@ -223,7 +226,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] [-check-minutes M] [-check-only] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE | stdproven scale [-host H] MODULE")
+	fmt.Fprintln(os.Stderr, "usage: stdproven hash MODULE | stdproven fuzz [-cases N] [-hours H] [-batch N] [-backends B,...] MODULE | stdproven gotests [-backends B,...] [-host LABEL] [-check] MODULE | stdproven timing [-n N] [-backends B,...] -pairs A:B,... MODULE NAME | stdproven race [-backend B] [-stress-minutes M] MODULE | stdproven stress [-minutes M] [-tasks N] [-backends B,...] [-check-minutes M] [-check-only] MODULE | stdproven perf [-rounds N] MODULE | stdproven serverperf [-reps N] MODULE | stdproven scale [-host H] MODULE")
 	os.Exit(2)
 }
 

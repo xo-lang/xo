@@ -1,0 +1,7 @@
+# Go's test tables (go1.26) run through std/http (stdproven gotests, task
+# #357): PKG FILE VAR FIELDS KIND. parse_url is url.Parse natively.
+net/url url_test.go urltests in parse_url
+net/url url_test.go TestParseErrors.tests in parse_url
+net/url url_test.go TestParseStrictIpv6.tests url parse_url
+net/url url_test.go parseRequestURLTests url parse_url
+net/url url_test.go resolveReferenceTests rel parse_url

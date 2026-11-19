@@ -1,0 +1,45 @@
+// The Xo side of std/http's gotests evidence (task #357): main CASES prints,
+// for each case line `KIND<TAB>B64...`, the base64 of std/url's result as
+// text (http.parse_url's), as go/main.go prints net/url's. See scripts/stdproven/gotests.go.
+use std/http
+use std/base64
+
+const SEP = "\u{1f}"
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "parse_url" => match http.parse_url(inp[0]) {
+      Ok(u) => {
+        let pw = match u.password {
+          Some(p) => "p=${p}"
+          None => "-"
+        }
+        let port = match u.port {
+          Some(p) => "${p}"
+          None => ""
+        }
+        ["ok", u.scheme, u.host, port, u.user, pw, u.path].join(SEP)
+      }
+      // the errors of a URL http.Url has no form for
+      Err(e) if e.display().starts_with("scheme must be http or https") || e.display().starts_with("missing host") => "rejected"
+      Err(e) => "err ${e.display()}"
+    }
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

@@ -1031,7 +1031,13 @@ A module reaches Proven with evidence files under
 `std/evidence/MODULE/` (race, stress, fuzz, review), each with a header
 naming its commit and the module's source hash.
 `go run ./scripts/stdproven hash MODULE` prints the hash and the files it
-covers; `go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N]
+covers; `go run ./scripts/stdproven gotests [-backends arm64,llvm]
+[-check] MODULE` (decision 0720) runs the input tables of Go's own
+_test.go files that `std/evidence/MODULE/gotests/tables.txt` lists
+through a Go adapter (`gotests/go`) and an Xo one (`gotests/main.xo`),
+prints each MISMATCH with both texts, and writes `gotests.md` (`-check`
+writes nothing); seconds a module, on the Mac. Last verified: 2026-11-19.
+`go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N]
 [-backends B] [-host LABEL] MODULE` runs every fuzz harness that names
 the module (scripts/stdproven harnesses) with fresh seeds until 1,000,000
 cases per backend or 8 hours, and writes `fuzz.md`; a seed whose test program the host killed before it checked a case (`signal: killed; 0 passed, 0 failed`) runs once more, logged in `fuzz.md`, and a mismatch or a second kill fails the run (2026-11-15). Long runs go to host 2

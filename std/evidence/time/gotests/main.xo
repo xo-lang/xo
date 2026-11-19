@@ -1,0 +1,69 @@
+// The Xo side of std/time's gotests evidence (task #357): main CASES prints,
+// for each case line `KIND<TAB>B64...`, the base64 of std/time's result as
+// text, as go/main.go prints package time's. See scripts/stdproven/gotests.go.
+use std/time
+use std/base64
+
+/// a / b rounded down, for b > 0.
+fn floor_div(a: Int, b: Int) -> Int {
+  if a >= 0 { a / b } else { -((-a + b - 1) / b) }
+}
+
+/// Go's time.Date: every field normalized into the next (13 months is a
+/// year and a month, -17 hours is a day back), then the civil time in z,
+/// the earlier instant where a daylight saving change skips or repeats it.
+fn go_date(n: List[Int], z: time.Zone) -> Str {
+  var year = n[0]
+  var month = n[1] - 1
+  year += floor_div(month, 12)
+  month = month - floor_div(month, 12) * 12 + 1
+  var sec = n[5] + floor_div(n[6], 1000000000)
+  let nanos = n[6] - floor_div(n[6], 1000000000) * 1000000000
+  var min = n[4] + floor_div(sec, 60)
+  sec = sec - floor_div(sec, 60) * 60
+  var hour = n[3] + floor_div(min, 60)
+  min = min - floor_div(min, 60) * 60
+  let days = floor_div(hour, 24)
+  hour = hour - days * 24
+  match time.date(year, month, 1) {
+    Ok(d) => match time.instant(d.add_days(n[2] - 1 + days), time.ClockTime { hour: hour, minute: min, second: sec, nanos: nanos }, z, time.Ambiguity.Earlier) {
+      Ok(t) => "${t.unix_nanos()}"
+      Err(e) => "err ${e.display()}"
+    }
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str], pacific: time.Zone) -> Str {
+  match kind {
+    "date" => {
+      var n: List[Int] = []
+      for s in inp[0..7] {
+        match Int.parse(s) {
+          Some(v) => n.push(v)
+          None => return "bad input ${s}"
+        }
+      }
+      go_date(n, if inp[7] == "UTC" { time.utc() } else { pacific })
+    }
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  // Local in Go's time tests (ForceUSPacificForTesting)
+  let pacific = time.zone("America/Los_Angeles")?
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp, pacific).bytes()))
+  }
+}

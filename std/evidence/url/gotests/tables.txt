@@ -1,0 +1,12 @@
+# Go's net/url test tables (go1.26) run through std/url (stdproven gotests,
+# task #357): PKG FILE VAR FIELDS KIND
+net/url url_test.go urltests in parse
+net/url url_test.go TestParseErrors.tests in parse
+net/url url_test.go TestParseStrictIpv6.tests url parse
+net/url url_test.go parseRequestURLTests url request
+net/url url_test.go unescapeTests in unescape
+net/url url_test.go queryEscapeTests in query_escape
+net/url url_test.go pathEscapeTests in path_escape
+net/url url_test.go resolveReferenceTests base,rel resolve
+net/url url_test.go parseTests query parse_query
+net/url url_test.go TestURLHostnameAndPort.tests in hostport

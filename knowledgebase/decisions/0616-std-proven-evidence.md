@@ -377,3 +377,6 @@ crypto; within it, a module that misses only the testing axis first.
   TestScalePlantedQuadraticFails runs scripts/stdproven/testdata/scaleplant,
   whose planted quadratic case fails at about 60x while its linear and
   stream cases pass. The coverage generator does not read scale.md yet.
+- 2026-11-19 (Xo Lang 3): a `gotests` kind (decision 0720): the input
+  tables of Go's own tests run through Go and the module, every result
+  equal (`stdproven gotests MODULE`; url, http and time first).

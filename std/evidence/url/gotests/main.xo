@@ -1,0 +1,83 @@
+// The Xo side of std/url's gotests evidence (task #357): main CASES prints,
+// for each case line `KIND<TAB>B64...`, the base64 of std/url's result as
+// text, as go/main.go prints net/url's. See scripts/stdproven/gotests.go.
+use std/url
+use std/base64
+
+const SEP = "\u{1f}"
+
+fn url_text(u: url.Url) -> Str {
+  let user = match u.user {
+    Some(i) => match i.password {
+      Some(p) => "u=${i.username} p=${p}"
+      None => "u=${i.username}"
+    }
+    None => "-"
+  }
+  ["ok", u.scheme, u.opaque, user, u.host, u.path, u.raw_path, "${u.omit_host}", "${u.force_query}", u.raw_query, u.fragment, u.raw_fragment, u.display()].join(SEP)
+}
+
+fn parsed(r: Result[url.Url, url.UrlErr]) -> Str {
+  match r {
+    Ok(u) => url_text(u)
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn unescaped(r: Result[Str, url.EscapeErr]) -> Str {
+  match r {
+    Ok(s) => "ok ${s}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn values_text(v: url.Values) -> Str {
+  var out = ""
+  for k in v.keys().sort() {
+    out = out + k + "=" + v.all(k).join(",") + SEP
+  }
+  out + "encode " + v.encode()
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "parse" => parsed(url.parse(inp[0]))
+    "request" => parsed(url.parse_request_uri(inp[0]))
+    "unescape" => unescaped(url.query_unescape(inp[0])) + SEP + unescaped(url.path_unescape(inp[0]))
+    "query_escape" => url.query_escape(inp[0])
+    "path_escape" => url.path_escape(inp[0])
+    "resolve" => match url.parse(inp[0]) {
+      Err(e) => "base err ${e.display()}"
+      Ok(base) => match url.parse(inp[1]) {
+        Err(e) => "ref err ${e.display()}"
+        Ok(r) => url_text(base.resolve_reference(r))
+      }
+    }
+    "parse_query" => match url.parse_query(inp[0]) {
+      // Go's ParseQuery returns the pairs it could read with the first error
+      Ok(v) => values_text(v) + SEP + "nil"
+      Err(e) => "partial" + SEP + e.display()
+    }
+    "hostport" => {
+      let u = url.Url{host: inp[0]}
+      u.hostname() + SEP + u.port()
+    }
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
