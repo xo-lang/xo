@@ -1,0 +1,26 @@
+// A read of a list constant of Float or Int literals at an index known
+// only at run time is a load from the elements kept as data (task #87,
+// compiler/ssa const_table): the values, the signed zero, Int's edges,
+// and the fault of an index out of range (list.index's text and
+// position).
+
+const WF: List[Float] = [0.5, -1.25, 3.0e10, -0.0, 1.0e-300, 2.5]
+const KI: List[Int] = [7, -9223372036854775808, 9223372036854775807, -1, 0, 42]
+
+fn get(i: Int) -> Float {
+  WF[i]
+}
+
+fn geti(i: Int) -> Int {
+  KI[i]
+}
+
+fn main(os: Os) uses (stdio, env) {
+  for i in 0..6 {
+    os.stdio.println("${get(i)} ${geti(i)} ${get(i).to_bits()}")
+  }
+  let j = os.env.args().len() + 5
+  os.stdio.println("${geti(j)}")
+  os.stdio.println("${get(j - 6)}")
+  os.stdio.println("${geti(j - 6 - 1)}")
+}

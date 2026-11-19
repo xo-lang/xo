@@ -148,7 +148,7 @@ struct InlineCost {
 /// INLINE_LEAF_LOOP_INSTRS (InlineCost.lleaf), not for the other rules,
 /// whose costs and code size stay as they were (task #283).
 fn inline_builtin(n: Str) -> Bool {
-  n is "bytes.index" | "list.index" | "list.len" | "Str.len" | "Str.is_empty" | "Int.min" | "Int.max" | "Int.abs" | "Float.min" | "Float.max" | "Float.sqrt" | "Float.floor" | "Float.ceil" | "Float.trunc" | "Float.round" | "Float.abs" | "Float.is_nan" | "Float.fma"
+  n is "bytes.index" | "table.word" | "list.index" | "list.len" | "Str.len" | "Str.is_empty" | "Int.min" | "Int.max" | "Int.abs" | "Float.min" | "Float.max" | "Float.sqrt" | "Float.floor" | "Float.ceil" | "Float.trunc" | "Float.round" | "Float.abs" | "Float.is_nan" | "Float.fma"
 }
 
 fn inline_intrinsic(n: Str) -> Bool {

@@ -1,0 +1,20 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a read of a list
+// constant of Float or Int literals at an index known only at run time
+// (std/random's ziggurat tables, `WE[i]`) loads from the elements kept
+// as data, after one bounds check (compiler/ssa const_table, task #87):
+// no call to the constant's slot (xo_x_const_once), which built the list
+// on the first read and was called on every read after it.
+
+const WF: List[Float] = [0.5, -1.25, 3.0e10, -0.0, 1.0e-300, 2.5, 7.0, 0.125]
+const KI: List[Int] = [7, -9223372036854775808, 9223372036854775807, -1, 0, 42, 3, 5]
+
+fn pick(i: Int) -> Float {
+  // arm64: -"_?xo_x_const_once" "b\.hs"
+  // amd64: -"_xo_x_const_once"
+  WF[i] * Float(KI[i])
+}
+
+fn main(os: Os) uses (stdio, env) {
+  let i = os.env.args().len() + 2
+  os.stdio.println("${pick(i)}")
+}

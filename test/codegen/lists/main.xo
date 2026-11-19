@@ -50,11 +50,12 @@ fn cycle(n: Int) -> Int {
 
 // The length of XS, a literal of constants, is the constant 6 (task
 // #302), so `i % XS.len()` divides by a constant (a multiply, no sdiv or
-// divq). The bounds check then stays: rem_of_len matches a divisor that
-// is a length read of the same list, and no fact says XS holds 6.
+// divq). A read of XS at a run time index is a load from its elements
+// kept as data (task #87, const_table): no call to the constant's slot,
+// and the bounds check against the constant 6 is proven by the remainder.
 fn cycle_lit(n: Int) -> Int {
-  // arm64: "_?xo_x_const_once" -"sdiv" -"bl _?xo_h"
-  // amd64: "_xo_x_const_once" -"divq" -"callq _xo_h"
+  // arm64: -"_?xo_x_const_once" -"sdiv" -"b\.hs" -"bl _?xo_h"
+  // amd64: -"_xo_x_const_once" -"divq" -"callq _xo_h"
   var s = 0
   for i in 0..n {
     s += XS[i % XS.len()]

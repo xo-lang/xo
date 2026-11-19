@@ -17,7 +17,7 @@ fn value_self_faults(f: Func, x: Value) -> Bool {
     CallValue => true
     Call => {
       let name = f.name_of(x)
-      if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "Int.abs" {
+      if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "table.word" | "Int.abs" {
         return has_pos(x.lp)
       }
       faulting_rt(name)
@@ -1343,7 +1343,7 @@ fn cse_op(op: Op) -> Bool {
 /// first byte twice), else "".
 fn cse_call(aux: Aux) -> Str {
   match aux {
-    S(n) => if n is "list.len" | "Str.len" | "bytes.len" | "list.index" | "bytes.index" { n } else { "" }
+    S(n) => if n is "list.len" | "Str.len" | "bytes.len" | "list.index" | "bytes.index" | "table.word" { n } else { "" }
     None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
   }
 }

@@ -348,7 +348,7 @@ fn (var b: Builder) self_faults(v: Int) -> Bool {
         S(s) => s
         None | I(..) | F(..) | B(..) | Bs(..) | P(..) | E(..) => ""
       }
-      if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "Int.abs" {
+      if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "table.word" | "Int.abs" {
         return has_pos(x.lp)
       }
       faulting_rt(name)

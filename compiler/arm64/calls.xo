@@ -1695,6 +1695,35 @@ fn (var g: G) call_op(v: Int) {
       let borrowed = g.inl_str() && bv.op == ssa.Op.Call && g.f.name_is(bv, "rt.str_bytes") && !g.escapes[g.f.arg(x.args, 0)]
       g.set(v, [g.bytes_load(a, g.f.arg(x.args, 1), i, borrowed)])
     }
+    "table.word" => {
+      // word i of a list constant's elements kept as data (ssa
+      // const_table, task #87): list.index's check against the word
+      // count and its fault, then one load
+      let a = g.words(g.f.arg(x.args, 0))
+      let iv = g.f.arg(x.args, 1)
+      let i = g.word(iv)
+      var k = -1
+      if let Some(bs) = const_bytes(g.f.aux(g.f.values[g.f.arg(x.args, 0)])) {
+        k = bs.len() >> 3
+      }
+      // a second read of the same index against the same word count in the
+      // block (std/random's KE[i] and WE[i]) needs no check of its own: the
+      // memo's key for a table is the count as -2 - k (a list's is its
+      // register)
+      let _mc = g.m_()
+      let seen = k >= 0 && g.cm.checked.contains((-2 - k, i))
+      if ssa.has_pos(x.lp) && !seen && !g.proved_index(iv, -1, k) {
+        if k >= 0 {
+          let _md = g.m_()
+          g.cm.checked[(-2 - k, i)] = true
+        }
+        let n = if k >= 0 && k < 65536 { g.def1(false, "mov $d0, #${k}", []) } else { g.def1(false, "lsr $d0, $u0, #3", [g.str_len(a)]) }
+        g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n)] + g.loc_args(g.f.pos_of(x)))
+      }
+      g.index_facts(i)
+      let d = g.str_base_heap(a)
+      g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1, lsl #3]", [d, i])])
+    }
     "Str.len" => g.set(v, [g.str_len(g.words(g.f.arg(x.args, 0)))])
     "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.str_len(g.words(g.f.arg(x.args, 0))))])])
     _ => {

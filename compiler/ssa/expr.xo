@@ -386,7 +386,7 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
       if let RangeExpr(lo: lo, hi: hi, inclusive: inclusive, ..) = index {
         return b.slice(span, x, lo, hi, inclusive)
       }
-      if let Some(v) = b.const_elem(x, index, b.nat_of(e)) {
+      if let Some(v) = b.const_elem(x, index, b.nat_of(e), span) {
         return v
       }
       let l = b.expr(x)
@@ -1081,7 +1081,7 @@ fn (var b: Builder) ident(e: Expr, x: Ident) -> Int {
 /// lowers as before: an index out of range still faults at run time.
 /// Lists of more than CONST_ELEM_MAX elements are left alone, since each
 /// such read checks the whole initializer.
-fn (var b: Builder) const_elem(x: Expr, index: Expr, t: Int) -> Int? {
+fn (var b: Builder) const_elem(x: Expr, index: Expr, t: Int, span: Span) -> Int? {
   if b.m.heap(t) && b.tkind(t) != Kind.Str {
     return None
   }
@@ -1094,11 +1094,17 @@ fn (var b: Builder) const_elem(x: Expr, index: Expr, t: Int) -> Int? {
   if r < 0 || b.c.objs[r].kind != check.ObjKind.Const || b.c.objs[r].decl_file < 0 {
     return None
   }
-  let k = b.c.const_int(b.s.file, index, 0)?
   let f = b.c.objs[r].decl_file
   let value = if let Some(ConstDecl(d)) = b.c.top_decl(f, b.c.objs[r].decl_idx) { d.value } else { return None }
   let es = if let ListLit(elems: es, rest: rest, ..) = value { if rest { return None } else { es } } else { return None }
-  if k < 0 || k >= es.len() || es.len() > CONST_ELEM_MAX || !b.c.is_compile_time(f, value) {
+  if es.len() > CONST_ELEM_MAX || !b.c.is_compile_time(f, value) {
+    return None
+  }
+  let k = match b.c.const_int(b.s.file, index, 0) {
+    Some(k) => k
+    None => return b.const_table(es, f, index, t, span)
+  }
+  if k < 0 || k >= es.len() {
     return None
   }
   if t == b.int_t() {
@@ -1111,6 +1117,60 @@ fn (var b: Builder) const_elem(x: Expr, index: Expr, t: Int) -> Int? {
 
 /// See const_elem.
 const CONST_ELEM_MAX = 1024
+
+/// A read of a list constant at an index known only at run time, `WE[i]`,
+/// when every element is an Int or Float literal: the elements as data,
+/// little endian words, read by table.word(data, i), list.index's bounds
+/// check and fault against the word count and one load (task #87). The constant's read was its slot's load, a null check and a cold
+/// call to build it, then list.index's count check and load (std/random
+/// exp's and normal's ziggurat tables, a read or two each draw). The fault
+/// of an index out of range is list.index's text at the same position.
+/// None for any other list, which reads the constant as before.
+fn (var b: Builder) const_table(es: List[Expr], f: Int, index: Expr, t: Int, span: Span) -> Int? {
+  let ft = t == b.float_t()
+  // wasm reads the constant as before (no table.word there)
+  if (t != b.int_t() && !ft) || es.len() < 2 || b.wasm {
+    return None
+  }
+  var out = BytesBuilder.with_capacity(8 * es.len())
+  for e in es {
+    let n = if ft { lit_float(e)?.to_bits() } else { b.c.const_int(f, e, 0) ?? lit_int_min(e)? }
+    for k in 0..8 {
+      out.write_byte(UInt8((n >> (8 * k)) & 255))
+    }
+  }
+  let it = b.int_t()
+  let i = b.value_as(index, it)
+  let d = b.add(Op.Const, b.str_t(), Aux.Bs(b: out.freeze()), [])
+  let w = b.call("table.word", it, b.pos(span), [d, i])
+  if ft {
+    return Some(b.rt("float_from_bits", t, [w]))
+  }
+  Some(w)
+}
+
+/// Int.min written as a literal, `-9223372036854775808`, which the
+/// checker's const_int refuses (the magnitude alone does not fit; the
+/// UnaryExpr case of lower folds it the same way).
+fn lit_int_min(e: Expr) -> Int? {
+  if let UnaryExpr(op: op, x: x, ..) = e {
+    if let IntLit(value: value, ..) = x {
+      if op == lexer.Kind.Minus && value == b"9223372036854775808" {
+        return Some(-9223372036854775807 - 1)
+      }
+    }
+  }
+  None
+}
+
+/// The value of a Float literal, or a minus and one (const_table).
+fn lit_float(e: Expr) -> Float? {
+  match e {
+    FloatLit(raw: raw, ..) => Float.parse((raw.to_str() ?? "").replace("_", ""))
+    UnaryExpr(op: op, x: x, ..) => if op == lexer.Kind.Minus { Some(-(lit_float(x)?)) } else { None }
+    _ => None
+  }
+}
 
 fn (var b: Builder) variant_name(vr: check.VRef) -> Str {
   check.text(b.c.objs[vr.en].variants[vr.variant].name)

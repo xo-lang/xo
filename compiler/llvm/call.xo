@@ -535,6 +535,23 @@ fn (var g: Gen) call(v: Int) {
       let c = g.def("load i8, ptr ${p}${md}")
       g.set(v, "zext i8 ${c} to i64")
     }
+    "table.word" => {
+      // word i of a list constant's elements kept as data (ssa
+      // const_table, task #87): list.index's check and fault
+      let a0 = g.op(args[0])
+      let (_, d, nb) = g.str_parts(a0)
+      if ssa.has_pos(x.lp) {
+        let n = g.def("lshr i64 ${nb}, 3")
+        let a1 = g.op(args[1])
+        let bad = g.def("icmp uge i64 ${a1}, ${n}")
+        let b1 = g.op(args[1])
+        let l = g.loc(v)
+        g.fault_if(bad, "@xo_x_fault_raise_index(i64 ${b1}, i64 ${n}, ${l})")
+      }
+      let a1 = g.op(args[1])
+      let p = g.def("getelementptr i64, ptr ${d}, i64 ${a1}")
+      g.set(v, "load i64, ptr ${p}, align 1${md}")
+    }
     "Str.len" => {
       let a0 = g.op(args[0])
       if STR_VIEWS {
