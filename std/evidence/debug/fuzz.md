@@ -1,16 +1,16 @@
 kind: fuzz
 module: debug
 result: partial
-commit: 8d8741fe5
+commit: 3ef5fabe6
 source: 9afe6d1ee16f6e52ab6aaf9138c510ceba523439bc55eddef4fdf61872e7df4e
 date: 2026-11-19
-host: linux/arm64 host 3
-command: go run ./scripts/stdproven fuzz -cases 1000000 -hours 8 -batch 5000 -backends arm64,llvm -host "linux/arm64 host 3" debug
-measure: TestDebugFuzz 265000 cases per backend, 2 backends (arm64,llvm), 54m38s in 1 shards, 0 mismatches
-seeds: 2 to 54
-ran: TestDebugFuzz=265000
-elapsed: 3278
-shards: 1
+host: linux/arm64 host 2
+command: go run ./scripts/stdproven fuzz -cases 1000000 -hours 8 -batch 5000 -backends arm64,llvm -host "linux/arm64 host 2" debug
+measure: TestDebugFuzz 585000 cases per backend, 2 backends (arm64,llvm), 1h48m27s in 2 shards, 0 mismatches
+seeds: 2 to 118
+ran: TestDebugFuzz=585000
+elapsed: 6507
+shards: 2
 
 Long fuzz evidence (decision 0616): every harness that names std/debug, against Go's package, with fresh seeds of 5000 cases each.
 
@@ -67,3 +67,67 @@ Long fuzz evidence (decision 0616): every harness that names std/debug, against 
 - TestDebugFuzz seed 52: 5000 cases on arm64,llvm, 1m2s
 - TestDebugFuzz seed 53: 5000 cases on arm64,llvm, 1m2s
 - TestDebugFuzz seed 54: 5000 cases on arm64,llvm, 1m5s
+- TestDebugFuzz seed 55: 5000 cases on arm64,llvm, 53s
+- TestDebugFuzz seed 56: 5000 cases on arm64,llvm, 45s
+- TestDebugFuzz seed 57: 5000 cases on arm64,llvm, 44s
+- TestDebugFuzz seed 58: 5000 cases on arm64,llvm, 45s
+- TestDebugFuzz seed 59: 5000 cases on arm64,llvm, 45s
+- TestDebugFuzz seed 60: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 61: 5000 cases on arm64,llvm, 45s
+- TestDebugFuzz seed 62: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 63: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 64: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 65: 5000 cases on arm64,llvm, 45s
+- TestDebugFuzz seed 66: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 67: 5000 cases on arm64,llvm, 45s
+- TestDebugFuzz seed 68: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 69: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 70: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 71: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 72: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 73: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 74: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 75: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 76: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 77: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 78: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 79: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 80: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 81: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 82: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 83: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 84: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 85: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 86: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 87: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 88: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 89: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 90: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 91: 5000 cases on arm64,llvm, 45s
+- TestDebugFuzz seed 92: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 93: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 94: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 95: 5000 cases on arm64,llvm, 50s
+- TestDebugFuzz seed 96: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 97: 5000 cases on arm64,llvm, 49s
+- TestDebugFuzz seed 98: 5000 cases on arm64,llvm, 52s
+- TestDebugFuzz seed 99: 5000 cases on arm64,llvm, 58s
+- TestDebugFuzz seed 100: 5000 cases on arm64,llvm, 59s
+- TestDebugFuzz seed 101: 5000 cases on arm64,llvm, 57s
+- TestDebugFuzz seed 102: 5000 cases on arm64,llvm, 1m1s
+- TestDebugFuzz seed 103: 5000 cases on arm64,llvm, 51s
+- TestDebugFuzz seed 104: 5000 cases on arm64,llvm, 49s
+- TestDebugFuzz seed 105: 5000 cases on arm64,llvm, 52s
+- TestDebugFuzz seed 106: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 107: 5000 cases on arm64,llvm, 48s
+- TestDebugFuzz seed 108: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 109: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 110: 5000 cases on arm64,llvm, 46s
+- TestDebugFuzz seed 111: 5000 cases on arm64,llvm, 47s
+- TestDebugFuzz seed 112: 5000 cases on arm64,llvm, 1m3s
+- TestDebugFuzz seed 113: 5000 cases on arm64,llvm, 1m13s
+- TestDebugFuzz seed 114: 5000 cases on arm64,llvm, 1m8s
+- TestDebugFuzz seed 115: 5000 cases on arm64,llvm, 1m10s
+- TestDebugFuzz seed 116: 5000 cases on arm64,llvm, 1m13s
+- TestDebugFuzz seed 117: 5000 cases on arm64,llvm, 1m25s
+- TestDebugFuzz seed 118: 5000 cases on arm64,llvm, 1m22s
