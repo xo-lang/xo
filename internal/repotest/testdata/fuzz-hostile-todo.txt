@@ -26,7 +26,6 @@ grpchealthfuzz_test.go
 grpcreflectfuzz_test.go
 heapfuzz_test.go
 hpkefuzz_test.go
-htmlentfuzz_test.go
 httpproxyfuzz_test.go
 httpurlfuzz_test.go
 idnafuzz_test.go
@@ -36,13 +35,11 @@ jpegfuzz_test.go
 jsonrpcfuzz_test.go
 logfuzz_test.go
 lzwfuzz_test.go
-mailfuzz_test.go
 multipartfuzz_test.go
 normfuzz_test.go
 otlpfuzz_test.go
 otpfuzz_test.go
 pathfuzz_test.go
-pemfuzz_test.go
 protobuffuzz_test.go
 regexpfuzz_test.go
 rsafuzz_test.go

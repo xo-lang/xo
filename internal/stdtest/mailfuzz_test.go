@@ -39,6 +39,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // mlCase is one call and Go's answer.
@@ -141,6 +143,20 @@ func mlMutate(r *rand.Rand, s string) string {
 		if len(b) > 0 {
 			b[r.Intn(len(b))] = "<>@,;:\"()\\. ="[r.Intn(13)]
 		}
+	case 2:
+		// the hostile dictionary (task #352): a digit run (a date's day,
+		// year or zone) past Int or at its edges
+		i := strings.IndexAny(s, "0123456789")
+		if i < 0 {
+			break
+		}
+		j := i
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		// chosen by the text, not r, so the cases after it stay as they were
+		ds := hostile.Digits()
+		return s[:i] + ds[(len(s)+i)%len(ds)] + s[j:]
 	}
 	return string(b)
 }

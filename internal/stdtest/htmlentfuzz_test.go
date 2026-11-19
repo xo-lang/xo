@@ -34,6 +34,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // heNames is the names of std/htmlent.xo's ENTITY and ENTITY2 tables.
@@ -117,7 +119,18 @@ func heRef(r *rand.Rand, names []string) string {
 		}
 		return fmt.Sprintf("&#%s%s%x%s", []string{"x", "X"}[r.Intn(2)], z, v, semi)
 	case 4:
+		// the hostile dictionary (task #352): decimal and hex references
+		// past Int and at its edges, and text cut inside a rune
+		switch r.Intn(4) {
+		case 0:
+			return "&#" + hostile.Pick(r, hostile.Digits()) + []string{";", ""}[r.Intn(2)]
+		case 1:
+			return "&#x" + hostile.Pick(r, hostile.Hex()) + []string{";", ""}[r.Intn(2)]
+		}
 		return []string{"&", "&#", "&#x", "&#;", "&;", "&&amp", "&#x;", "&#99999999999999999999;"}[r.Intn(8)]
+	}
+	if r.Intn(20) == 0 {
+		return hostile.Pick(r, hostile.CutUTF8("é日😀"))
 	}
 	return []string{"a", " ", "<", ">", "\"", "'", "日本", "é", "\t"}[r.Intn(9)]
 }

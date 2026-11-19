@@ -34,6 +34,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // pzCerts are a few small certificates (Ed25519, deterministic).
@@ -127,8 +129,18 @@ func pzMutate(r *rand.Rand, in string) string {
 	case 7: // BEGIN not at a line start
 		s := strings.Replace(string(b), "\n-----BEGIN", "\nx-----BEGIN", 1)
 		b = []byte(s)
-	default:
-		return in
+	case 8:
+		// the hostile dictionary (task #352): a header whose key and
+		// value are UTF-8 cut inside a rune or digit runs past Int
+		if r.Intn(2) == 0 {
+			return in
+		}
+		h := "X-" + hostile.Pick(r, hostile.CutUTF8("é日😀")) + ": " + hostile.Pick(r, hostile.UTF8())
+		if r.Intn(2) == 0 {
+			h = "DEK-Info: AES-128-CBC," + hostile.Pick(r, hostile.Digits())
+		}
+		s := strings.Replace(string(b), "-----\n", "-----\n"+h+"\n\n", 1)
+		b = []byte(s)
 	}
 	return string(b)
 }

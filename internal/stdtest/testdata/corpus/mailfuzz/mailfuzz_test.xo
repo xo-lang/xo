@@ -150,7 +150,7 @@ test "mail fuzz 20 addr" {
 }
 
 test "mail fuzz 21 addr" {
-  expect(ml_addr("a@[127.0.0.1]"), "ok |61405b3132372e302e302e315d|3c61405b3132372e302e302e315d3e")
+  expect(ml_addr("a@[99999999999999999999.0.0.1]"), "err mail: missing '@' or angle-addr")
 }
 
 test "mail fuzz 22 list" {
@@ -314,7 +314,7 @@ test "mail fuzz 61 msg" {
 }
 
 test "mail fuzz 62 date" {
-  expect(ml_date("Thu, 13 Feb 1969 23:32:54 -0330"), "ok -27723426000")
+  expect(ml_date("Thu, 9223372036854775808 Feb 1969 23:32:54 -0330"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 63 list" {
@@ -638,7 +638,7 @@ test "mail fuzz 142 list" {
 }
 
 test "mail fuzz 143 date" {
-  expect(ml_date("Tue, 1 Jul 2003 10:52:37 +0200"), "ok 1057049557000")
+  expect(ml_date("Tue, 9223372036854775807 Jul 2003 10:52:37 +0200"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 144 msg" {
@@ -750,7 +750,7 @@ test "mail fuzz 170 addr" {
 }
 
 test "mail fuzz 171 date" {
-  expect(ml_date("2 Jan 06 15:04 GMT"), "ok 1136214240000")
+  expect(ml_date("10000000000000000000 Jan 06 15:04 GMT"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 172 addr" {
@@ -1038,7 +1038,7 @@ test "mail fuzz 242 list" {
 }
 
 test "mail fuzz 243 addr" {
-  expect(ml_addr("=?utf-8?x?y?= <a@b>"), "ok 3d3f7574662d383f783f793f3d|614062|223d3f7574662d383f783f793f3d22203c6140623e")
+  expect(ml_addr("=?utf-18446744073709551616?x?y?= <a@b>"), "ok 3d3f7574662d31383434363734343037333730393535313631363f783f793f3d|614062|223d3f7574662d31383434363734343037333730393535313631363f783f793f3d22203c6140623e")
 }
 
 test "mail fuzz 244 msg" {
@@ -1046,7 +1046,7 @@ test "mail fuzz 244 msg" {
 }
 
 test "mail fuzz 245 date" {
-  expect(ml_date("Mon, 02 Jan 2006 25:04:05 -0700"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 25:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 246 list" {
@@ -1082,7 +1082,7 @@ test "mail fuzz 253 addr" {
 }
 
 test "mail fuzz 254 date" {
-  expect(ml_date("Mon, 32 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 255 date" {
@@ -1250,7 +1250,7 @@ test "mail fuzz 295 addr" {
 }
 
 test "mail fuzz 296 list" {
-  expect(ml_list("\"quoted local\"@x.com,\"q\": =?utf-8?q?Ann_L=C3=A9e?= <ünï@x.com>;,Ann Lee <ünï@x.com>"), "ok |71756f746564206c6f63616c40782e636f6d|3c2271756f746564206c6f63616c2240782e636f6d3e;416e6e204cc3a965|c3bc6ec3af40782e636f6d|3d3f7574662d383f713f416e6e5f4c3d43333d4139653f3d203cc3bc6ec3af40782e636f6d3e;416e6e204c6565|c3bc6ec3af40782e636f6d|22416e6e204c656522203cc3bc6ec3af40782e636f6d3e")
+  expect(ml_list("\"quoted local\"@x.com,\"q\": =?utf-000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000065?q?Ann_L=C3=A9e?= <ünï@x.com>;,Ann Lee <ünï@x.com>"), "err mail: missing word in phrase: charset not supported: \"utf-000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000065\"")
 }
 
 test "mail fuzz 297 msg" {
@@ -1354,7 +1354,7 @@ test "mail fuzz 321 list" {
 }
 
 test "mail fuzz 322 addr" {
-  expect(ml_addr("=?utf-8?x?y?= <a@b.c.>"), "err mail: trailing dot in atom")
+  expect(ml_addr("=?utf-00000000000000000000000000000000000000001?x?y?= <a@b.c.>"), "err mail: trailing dot in atom")
 }
 
 test "mail fuzz 323 msg" {
@@ -1426,7 +1426,7 @@ test "mail fuzz 339 date" {
 }
 
 test "mail fuzz 340 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05.123 -0700"), "ok 1136239445123")
+  expect(ml_date("Mon, 18446744073709551616 Jan 2006 15:04:05.123 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 341 addr" {
@@ -1626,7 +1626,7 @@ test "mail fuzz 389 addr" {
 }
 
 test "mail fuzz 390 date" {
-  expect(ml_date("Sat, 29 Feb 2020 00:00:00 +0000"), "ok 1582934400000")
+  expect(ml_date("Sat, 9223372036854775808 Feb 2020 00:00:00 +0000"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 391 msg" {
@@ -1842,7 +1842,7 @@ test "mail fuzz 443 msg" {
 }
 
 test "mail fuzz 444 addr" {
-  expect(ml_addr("=?utf-8?x?y?= <a@[127.0.0.1]>"), "ok 3d3f7574662d383f783f793f3d|61405b3132372e302e302e315d|223d3f7574662d383f783f793f3d22203c61405b3132372e302e302e315d3e")
+  expect(ml_addr("=?utf-9223372036854775807?x?y?= <a@[127.0.0.1]>"), "ok 3d3f7574662d393232333337323033363835343737353830373f783f793f3d|61405b3132372e302e302e315d|223d3f7574662d393232333337323033363835343737353830373f783f793f3d22203c61405b3132372e302e302e315d3e")
 }
 
 test "mail fuzz 445 addr" {
@@ -1866,7 +1866,7 @@ test "mail fuzz 449 list" {
 }
 
 test "mail fuzz 450 addr" {
-  expect(ml_addr("<a@[127.0.0.1]>"), "ok |61405b3132372e302e302e315d|3c61405b3132372e302e302e315d3e")
+  expect(ml_addr("<a@[10000000000000000000000000000000000000000.0.0.1]>"), "err mail: invalid IP address in domain-literal: \"10000000000000000000000000000000000000000.0.0.1\"")
 }
 
 test "mail fuzz 451 msg" {
@@ -1998,7 +1998,7 @@ test "mail fuzz 482 msg" {
 }
 
 test "mail fuzz 483 list" {
-  expect(ml_list("a@[127.0.0.1],ann@example.com"), "ok |61405b3132372e302e302e315d|3c61405b3132372e302e302e315d3e;|616e6e406578616d706c652e636f6d|3c616e6e406578616d706c652e636f6d3e")
+  expect(ml_list("a@[9999999999999999999999999999999999999999.0.0.1],ann@example.com"), "err mail: missing '@' or angle-addr")
 }
 
 test "mail fuzz 484 list" {
@@ -2054,7 +2054,7 @@ test "mail fuzz 496 msg" {
 }
 
 test "mail fuzz 497 addr" {
-  expect(ml_addr("=?utf-8?q?Ann_L=C3=A9e?= <a..b@c>"), "err mail: double dot in atom")
+  expect(ml_addr("=?utf-18446744073709551615?q?Ann_L=C3=A9e?= <a..b@c>"), "err mail: missing word in phrase: charset not supported: \"utf-18446744073709551615\"")
 }
 
 test "mail fuzz 498 addr" {
@@ -2122,7 +2122,7 @@ test "mail fuzz 513 msg" {
 }
 
 test "mail fuzz 514 date" {
-  expect(ml_date("Mon, 02 Jan 2006 25:04:05 -0700"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 25:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 515 date" {
@@ -2262,7 +2262,7 @@ test "mail fuzz 548 list" {
 }
 
 test "mail fuzz 549 list" {
-  expect(ml_list("a.b+c@sub.example.org;\"q\": a.b+c@sub.example.org;;team: ann@example.com, Ann Lee <a@[127.0.0.1]>"), "err mail: expected comma")
+  expect(ml_list("a.b+c@sub.example.org;\"q\": a.b+c@sub.example.org;;team: ann@example.com, Ann Lee <a@[99999999999999999999.0.0.1]>"), "err mail: expected comma")
 }
 
 test "mail fuzz 550 addr" {
@@ -2334,7 +2334,7 @@ test "mail fuzz 566 addr" {
 }
 
 test "mail fuzz 567 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 +2500"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 +2500"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 568 addr" {
@@ -2394,7 +2394,7 @@ test "mail fuzz 581 list" {
 }
 
 test "mail fuzz 582 list" {
-  expect(ml_list("\"\" <a@[127.0.0.1]>"), "ok |61405b3132372e302e302e315d|3c61405b3132372e302e302e315d3e")
+  expect(ml_list("\"\" <a@[18446744073709551616.0.0.1]>"), "err mail: invalid IP address in domain-literal: \"18446744073709551616.0.0.1\"")
 }
 
 test "mail fuzz 583 list" {
@@ -2566,7 +2566,7 @@ test "mail fuzz 624 list" {
 }
 
 test "mail fuzz 625 date" {
-  expect(ml_date("Mon, 02 Jan 2006 25:04:05 -0700"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 25:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 626 date" {
@@ -2598,7 +2598,7 @@ test "mail fuzz 632 addr" {
 }
 
 test "mail fuzz 633 addr" {
-  expect(ml_addr("=?UTF-8?B?QW5uIEzDqWU=?= <a@b>"), "ok 416e6e204cc3a965|614062|3d3f7574662d383f713f416e6e5f4c3d43333d4139653f3d203c6140623e")
+  expect(ml_addr("=?UTF-9223372036854775808?B?QW5uIEzDqWU=?= <a@b>"), "err mail: missing word in phrase: charset not supported: \"utf-9223372036854775808\"")
 }
 
 test "mail fuzz 634 addr" {
@@ -2706,7 +2706,7 @@ test "mail fuzz 659 date" {
 }
 
 test "mail fuzz 660 list" {
-  expect(ml_list("=?utf-8?q?Ann_L=C3=A9e?= <a.b+c@sub.example.org>, \"Lee, Ann\" <ünï@x.com>, ann@example.com"), "ok 416e6e204cc3a965|612e622b63407375622e6578616d706c652e6f7267|3d3f7574662d383f713f416e6e5f4c3d43333d4139653f3d203c612e622b63407375622e6578616d706c652e6f72673e;4c65652c20416e6e|c3bc6ec3af40782e636f6d|224c65652c20416e6e22203cc3bc6ec3af40782e636f6d3e;|616e6e406578616d706c652e636f6d|3c616e6e406578616d706c652e636f6d3e")
+  expect(ml_list("=?utf--9223372036854775808?q?Ann_L=C3=A9e?= <a.b+c@sub.example.org>, \"Lee, Ann\" <ünï@x.com>, ann@example.com"), "err mail: missing word in phrase: charset not supported: \"utf--9223372036854775808\"")
 }
 
 test "mail fuzz 661 msg" {
@@ -2786,7 +2786,7 @@ test "mail fuzz 679 date" {
 }
 
 test "mail fuzz 680 addr" {
-  expect(ml_addr("=?UTF-8?B?QW5uIEzDqWU=?= <a>"), "err mail: missing @ in addr-spec")
+  expect(ml_addr("=?UTF-10000000000000000000000000000000000000000?B?QW5uIEzDqWU=?= <a>"), "err mail: missing word in phrase: charset not supported: \"utf-10000000000000000000000000000000000000000\"")
 }
 
 test "mail fuzz 681 addr" {
@@ -2846,7 +2846,7 @@ test "mail fuzz 694 msg" {
 }
 
 test "mail fuzz 695 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 CEST"), "ok 1136214245000")
+  expect(ml_date("Mon, 9223372036854775807 Jan 2006 15:04:05 CEST"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 696 date" {
@@ -3058,7 +3058,7 @@ test "mail fuzz 747 addr" {
 }
 
 test "mail fuzz 748 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 GMT+3"), "ok 1136214245000")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 GMT+3"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 749 addr" {
@@ -3322,7 +3322,7 @@ test "mail fuzz 813 msg" {
 }
 
 test "mail fuzz 814 addr" {
-  expect(ml_addr("\"\"<a@[127.0.0.1]>"), "ok |61405b3132372e302e302e315d|3c61405b3132372e302e302e315d3e")
+  expect(ml_addr("\"\"<a@[-9223372036854775809.0.0.1]>"), "err mail: invalid IP address in domain-literal: \"-9223372036854775809.0.0.1\"")
 }
 
 test "mail fuzz 815 list" {
@@ -3382,7 +3382,7 @@ test "mail fuzz 828 msg" {
 }
 
 test "mail fuzz 829 addr" {
-  expect(ml_addr("=?koi8-r?q?x?= <\"a\\\"b\"@x.com>"), "err mail: missing word in phrase: charset not supported: \"koi8-r\"")
+  expect(ml_addr("=?koi10000000000000000000000000000000000000000-r?q?x?= <\"a\\\"b\"@x.com>"), "err mail: missing word in phrase: charset not supported: \"koi10000000000000000000000000000000000000000-r\"")
 }
 
 test "mail fuzz 830 addr" {
@@ -3498,7 +3498,7 @@ test "mail fuzz 857 msg" {
 }
 
 test "mail fuzz 858 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 PDT"), "ok 1136214245000")
+  expect(ml_date("Mon, 10000000000000000000000000000000000000000 Jan 2006 15:04:05 PDT"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 859 addr" {
@@ -3518,7 +3518,7 @@ test "mail fuzz 862 addr" {
 }
 
 test "mail fuzz 863 date" {
-  expect(ml_date("  Mon,  02  Jan  2006  15:04:05  -0700  "), "ok 1136239445000")
+  expect(ml_date("  Mon,  10000000000000000000  Jan  2006  15:04:05  -0700  "), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 864 addr" {
@@ -3622,7 +3622,7 @@ test "mail fuzz 888 date" {
 }
 
 test "mail fuzz 889 addr" {
-  expect(ml_addr("=?utf-8?q?unterminated<ünï@x.com>"), "ok 3d3f7574662d383f713f756e7465726d696e61746564|c3bc6ec3af40782e636f6d|223d3f7574662d383f713f756e7465726d696e6174656422203cc3bc6ec3af40782e636f6d3e")
+  expect(ml_addr("=?utf--99999999999999999999?q?unterminated<ünï@x.com>"), "ok 3d3f7574662d2d39393939393939393939393939393939393939393f713f756e7465726d696e61746564|c3bc6ec3af40782e636f6d|223d3f7574662d2d39393939393939393939393939393939393939393f713f756e7465726d696e6174656422203cc3bc6ec3af40782e636f6d3e")
 }
 
 test "mail fuzz 890 msg" {
@@ -3806,7 +3806,7 @@ test "mail fuzz 934 msg" {
 }
 
 test "mail fuzz 935 date" {
-  expect(ml_date("Mon, 02 Foo 2006 15:04:05 -0700"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Foo 2006 15:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 936 msg" {
@@ -3882,7 +3882,7 @@ test "mail fuzz 953 msg" {
 }
 
 test "mail fuzz 954 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 +3"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 10000000000000000000 Jan 2006 15:04:05 +3"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 955 addr" {
@@ -3930,7 +3930,7 @@ test "mail fuzz 965 list" {
 }
 
 test "mail fuzz 966 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 UT"), "ok 1136214245000")
+  expect(ml_date("Mon, 10000000000000000000 Jan 2006 15:04:05 UT"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 967 msg" {
@@ -3938,7 +3938,7 @@ test "mail fuzz 967 msg" {
 }
 
 test "mail fuzz 968 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05.123 -0700"), "ok 1136239445123")
+  expect(ml_date("Mon, 18446744073709551616 Jan 2006 15:04:05.123 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 969 date" {
@@ -4054,11 +4054,11 @@ test "mail fuzz 996 list" {
 }
 
 test "mail fuzz 997 addr" {
-  expect(ml_addr("=?utf-8?x?y?=<ann@例え.jp>"), "ok 3d3f7574662d383f783f793f3d|616e6e40e4be8be381882e6a70|223d3f7574662d383f783f793f3d22203c616e6e40e4be8be381882e6a703e")
+  expect(ml_addr("=?utf-10000000000000000000000000000000000000000?x?y?=<ann@例え.jp>"), "ok 3d3f7574662d31303030303030303030303030303030303030303030303030303030303030303030303030303030303f783f793f3d|616e6e40e4be8be381882e6a70|223d3f7574662d31303030303030303030303030303030303030303030303030303030303030303030303030303030303f783f793f3d22203c616e6e40e4be8be381882e6a703e")
 }
 
 test "mail fuzz 998 list" {
-  expect(ml_list("Ann Lee <\"quoted local\"@x.com>;<a@[127.0.0.1]>;ünï@x.com"), "err mail: expected comma")
+  expect(ml_list("Ann Lee <\"quoted local\"@x.com>;<a@[10000000000000000000.0.0.1]>;ünï@x.com"), "err mail: expected comma")
 }
 
 test "mail fuzz 999 msg" {
@@ -4146,7 +4146,7 @@ test "mail fuzz 1019 list" {
 }
 
 test "mail fuzz 1020 addr" {
-  expect(ml_addr("=?koi8-r?q?x?=  <a.@c>"), "err mail: missing word in phrase: charset not supported: \"koi8-r\"")
+  expect(ml_addr("=?koi+99999999999999999999-r?q?x?=  <a.@c>"), "err mail: missing word in phrase: charset not supported: \"koi+99999999999999999999-r\"")
 }
 
 test "mail fuzz 1021 list" {
@@ -4174,7 +4174,7 @@ test "mail fuzz 1026 addr" {
 }
 
 test "mail fuzz 1027 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 -0700 (comment (nested))"), "ok 1136239445000")
+  expect(ml_date("Mon, 18446744073709551616 Jan 2006 15:04:05 -0700 (comment (nested))"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1028 date" {
@@ -4306,7 +4306,7 @@ test "mail fuzz 1059 date" {
 }
 
 test "mail fuzz 1060 date" {
-  expect(ml_date("Mon, 32 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1061 date" {
@@ -4466,7 +4466,7 @@ test "mail fuzz 1099 addr" {
 }
 
 test "mail fuzz 1100 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 UT"), "ok 1136214245000")
+  expect(ml_date("Mon, 10000000000000000000 Jan 2006 15:04:05 UT"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1101 msg" {
@@ -4502,7 +4502,7 @@ test "mail fuzz 1108 addr" {
 }
 
 test "mail fuzz 1109 date" {
-  expect(ml_date("Mon, 2 Jan 2006 15:04:05 +0000 (UTC)"), "ok 1136214245000")
+  expect(ml_date("Mon, -99999999999999999999 Jan 2006 15:04:05 +0000 (UTC)"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1110 addr" {
@@ -4578,7 +4578,7 @@ test "mail fuzz 1127 addr" {
 }
 
 test "mail fuzz 1128 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 -0700 (comment (nested))"), "ok 1136239445000")
+  expect(ml_date("Mon, 18446744073709551616 Jan 2006 15:04:05 -0700 (comment (nested))"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1129 list" {
@@ -4658,7 +4658,7 @@ test "mail fuzz 1147 date" {
 }
 
 test "mail fuzz 1148 list" {
-  expect(ml_list("Zoë <\"quoted local\"@x.com>,\"quoted local\"@x.com,\"Lee, Ann\" <a@[127.0.0.1]>"), "ok 5a6fc3ab|71756f746564206c6f63616c40782e636f6d|3d3f7574662d383f713f5a6f3d43333d41423f3d203c2271756f746564206c6f63616c2240782e636f6d3e;|71756f746564206c6f63616c40782e636f6d|3c2271756f746564206c6f63616c2240782e636f6d3e;4c65652c20416e6e|61405b3132372e302e302e315d|224c65652c20416e6e22203c61405b3132372e302e302e315d3e")
+  expect(ml_list("Zoë <\"quoted local\"@x.com>,\"quoted local\"@x.com,\"Lee, Ann\" <a@[10000000000000000000000000000000000000000.0.0.1]>"), "err mail: invalid IP address in domain-literal: \"10000000000000000000000000000000000000000.0.0.1\"")
 }
 
 test "mail fuzz 1149 date" {
@@ -5142,7 +5142,7 @@ test "mail fuzz 1268 date" {
 }
 
 test "mail fuzz 1269 list" {
-  expect(ml_list("Zoë <ann@example.com>, \"Lee, Ann\" <a@[127.0.0.1]>, a.b+c@sub.example.org"), "ok 5a6fc3ab|616e6e406578616d706c652e636f6d|3d3f7574662d383f713f5a6f3d43333d41423f3d203c616e6e406578616d706c652e636f6d3e;4c65652c20416e6e|61405b3132372e302e302e315d|224c65652c20416e6e22203c61405b3132372e302e302e315d3e;|612e622b63407375622e6578616d706c652e6f7267|3c612e622b63407375622e6578616d706c652e6f72673e")
+  expect(ml_list("Zoë <ann@example.com>, \"Lee, Ann\" <a@[-9223372036854775808.0.0.1]>, a.b+c@sub.example.org"), "err mail: invalid IP address in domain-literal: \"-9223372036854775808.0.0.1\"")
 }
 
 test "mail fuzz 1270 date" {
@@ -5326,7 +5326,7 @@ test "mail fuzz 1314 addr" {
 }
 
 test "mail fuzz 1315 list" {
-  expect(ml_list("a@[127.0.0.1]"), "ok |61405b3132372e302e302e315d|3c61405b3132372e302e302e315d3e")
+  expect(ml_list("a@[99999999999999999999.0.0.1]"), "err mail: missing '@' or angle-addr")
 }
 
 test "mail fuzz 1316 addr" {
@@ -5490,7 +5490,7 @@ test "mail fuzz 1355 list" {
 }
 
 test "mail fuzz 1356 list" {
-  expect(ml_list("\"a\\\\b\" <a>,Zoë <a.b+c@sub.example.org>,a@[127.0.0.1]"), "err mail: missing @ in addr-spec")
+  expect(ml_list("\"a\\\\b\" <a>,Zoë <a.b+c@sub.example.org>,a@[9223372036854775808.0.0.1]"), "err mail: missing @ in addr-spec")
 }
 
 test "mail fuzz 1357 msg" {
@@ -5622,7 +5622,7 @@ test "mail fuzz 1388 list" {
 }
 
 test "mail fuzz 1389 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 +2500"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 +2500"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1390 addr" {
@@ -5670,7 +5670,7 @@ test "mail fuzz 1400 msg" {
 }
 
 test "mail fuzz 1401 date" {
-  expect(ml_date("2 Jan 06 15:04 GMT"), "ok 1136214240000")
+  expect(ml_date("10000000000000000000 Jan 06 15:04 GMT"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1402 list" {
@@ -5690,7 +5690,7 @@ test "mail fuzz 1405 addr" {
 }
 
 test "mail fuzz 1406 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 GMT+3"), "ok 1136214245000")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 GMT+3"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1407 addr" {
@@ -5710,7 +5710,7 @@ test "mail fuzz 1410 date" {
 }
 
 test "mail fuzz 1411 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 -07"), "ok 1136214245000")
+  expect(ml_date("Mon, 10000000000000000000000000000000000000000 Jan 2006 15:04:05 -07"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1412 date" {
@@ -5742,7 +5742,7 @@ test "mail fuzz 1418 msg" {
 }
 
 test "mail fuzz 1419 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 +2500"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 +2500"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1420 msg" {
@@ -5854,7 +5854,7 @@ test "mail fuzz 1446 addr" {
 }
 
 test "mail fuzz 1447 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 GMT+3"), "ok 1136214245000")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 GMT+3"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1448 date" {
@@ -5890,7 +5890,7 @@ test "mail fuzz 1455 msg" {
 }
 
 test "mail fuzz 1456 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 ChST"), "ok 1136214245000")
+  expect(ml_date("Mon, 9223372036854775807 Jan 2006 15:04:05 ChST"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1457 msg" {
@@ -5978,11 +5978,11 @@ test "mail fuzz 1477 date" {
 }
 
 test "mail fuzz 1478 date" {
-  expect(ml_date("Mon, 02 Jan 2006"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1479 date" {
-  expect(ml_date("Mon, 32 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1480 list" {
@@ -6118,7 +6118,7 @@ test "mail fuzz 1512 addr" {
 }
 
 test "mail fuzz 1513 date" {
-  expect(ml_date("Mon 02 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
+  expect(ml_date("Mon 10000000000000000000000000000000000000000 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1514 addr" {
@@ -6158,7 +6158,7 @@ test "mail fuzz 1522 addr" {
 }
 
 test "mail fuzz 1523 list" {
-  expect(ml_list("team: \"\" <\"quoted local\"@x.com>, =?utf-8?q?Ann_L=C3=A9e?= <a@[127.0.0.1]>;,,team: a.b+c@sub.example.org (), \"quoted local\"@x.com;"), "ok |71756f746564206c6f63616c40782e636f6d|3c2271756f746564206c6f63616c2240782e636f6d3e;416e6e204cc3a965|61405b3132372e302e302e315d|3d3f7574662d383f713f416e6e5f4c3d43333d4139653f3d203c61405b3132372e302e302e315d3e;|612e622b63407375622e6578616d706c652e6f7267|3c612e622b63407375622e6578616d706c652e6f72673e;|71756f746564206c6f63616c40782e636f6d|3c2271756f746564206c6f63616c2240782e636f6d3e")
+  expect(ml_list("team: \"\" <\"quoted local\"@x.com>, =?utf-10000000000000000000?q?Ann_L=C3=A9e?= <a@[127.0.0.1]>;,,team: a.b+c@sub.example.org (), \"quoted local\"@x.com;"), "err mail: missing word in phrase: charset not supported: \"utf-10000000000000000000\"")
 }
 
 test "mail fuzz 1524 msg" {
@@ -6186,7 +6186,7 @@ test "mail fuzz 1529 addr" {
 }
 
 test "mail fuzz 1530 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 GMT+3"), "ok 1136214245000")
+  expect(ml_date("Mon, 9223372036854775808 Jan 2006 15:04:05 GMT+3"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1531 list" {
@@ -6234,7 +6234,7 @@ test "mail fuzz 1541 date" {
 }
 
 test "mail fuzz 1542 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 ChST"), "ok 1136214245000")
+  expect(ml_date("Mon, 9223372036854775807 Jan 2006 15:04:05 ChST"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1543 msg" {
@@ -6282,7 +6282,7 @@ test "mail fuzz 1553 addr" {
 }
 
 test "mail fuzz 1554 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 PDT"), "ok 1136214245000")
+  expect(ml_date("Mon, 10000000000000000000000000000000000000000 Jan 2006 15:04:05 PDT"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1555 list" {
@@ -6422,7 +6422,7 @@ test "mail fuzz 1588 list" {
 }
 
 test "mail fuzz 1589 addr" {
-  expect(ml_addr("=?iso-8859-1?q?caf=E9?= <a@b.c (comment)>"), "err mail: unclosed angle-addr")
+  expect(ml_addr("=?iso-9999999999999999999999999999999999999999-1?q?caf=E9?= <a@b.c (comment)>"), "err mail: missing word in phrase: charset not supported: \"iso-9999999999999999999999999999999999999999-1\"")
 }
 
 test "mail fuzz 1590 addr" {
@@ -6458,7 +6458,7 @@ test "mail fuzz 1597 list" {
 }
 
 test "mail fuzz 1598 addr" {
-  expect(ml_addr("=?utf-8?q?Ann_L=C3=A9e?=  <ünï@x.com>"), "ok 416e6e204cc3a965|c3bc6ec3af40782e636f6d|3d3f7574662d383f713f416e6e5f4c3d43333d4139653f3d203cc3bc6ec3af40782e636f6d3e")
+  expect(ml_addr("=?utf-9999999999999999999?q?Ann_L=C3=A9e?=  <ünï@x.com>"), "err mail: missing word in phrase: charset not supported: \"utf-9999999999999999999\"")
 }
 
 test "mail fuzz 1599 addr" {
@@ -6622,7 +6622,7 @@ test "mail fuzz 1638 msg" {
 }
 
 test "mail fuzz 1639 addr" {
-  expect(ml_addr("<a@[127.0.0.1]>"), "ok |61405b3132372e302e302e315d|3c61405b3132372e302e302e315d3e")
+  expect(ml_addr("<a@[10000000000000000000000000000000000000000.0.0.1]>"), "err mail: invalid IP address in domain-literal: \"10000000000000000000000000000000000000000.0.0.1\"")
 }
 
 test "mail fuzz 1640 date" {
@@ -6642,7 +6642,7 @@ test "mail fuzz 1643 addr" {
 }
 
 test "mail fuzz 1644 date" {
-  expect(ml_date("02 Jan 2006 15:04:05 -0700"), "ok 1136239445000")
+  expect(ml_date("-99999999999999999999 Jan 2006 15:04:05 -0700"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1645 addr" {
@@ -7050,7 +7050,7 @@ test "mail fuzz 1745 msg" {
 }
 
 test "mail fuzz 1746 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 Z"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 9999999999999999999999999999999999999999 Jan 2006 15:04:05 Z"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1747 list" {
@@ -7150,7 +7150,7 @@ test "mail fuzz 1770 date" {
 }
 
 test "mail fuzz 1771 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 -23"), "ok 1136214245000")
+  expect(ml_date("Mon, 10000000000000000000000000000000000000000 Jan 2006 15:04:05 -23"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1772 addr" {
@@ -7298,7 +7298,7 @@ test "mail fuzz 1807 date" {
 }
 
 test "mail fuzz 1808 date" {
-  expect(ml_date("Thu, 13 Feb 1969 23:32:54 -0330"), "ok -27723426000")
+  expect(ml_date("Thu, 9223372036854775808 Feb 1969 23:32:54 -0330"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1809 list" {
@@ -7502,7 +7502,7 @@ test "mail fuzz 1858 addr" {
 }
 
 test "mail fuzz 1859 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 GMT-24"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, -9223372036854775808 Jan 2006 15:04:05 GMT-24"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1860 addr" {
@@ -7698,7 +7698,7 @@ test "mail fuzz 1907 addr" {
 }
 
 test "mail fuzz 1908 addr" {
-  expect(ml_addr("=?utf-8?x?y?=  <\"a\\\"b\"@x.com>"), "ok 3d3f7574662d383f783f793f3d|61226240782e636f6d|223d3f7574662d383f783f793f3d22203c22615c22622240782e636f6d3e")
+  expect(ml_addr("=?utf-9223372036854775807?x?y?=  <\"a\\\"b\"@x.com>"), "ok 3d3f7574662d393232333337323033363835343737353830373f783f793f3d|61226240782e636f6d|223d3f7574662d393232333337323033363835343737353830373f783f793f3d22203c22615c22622240782e636f6d3e")
 }
 
 test "mail fuzz 1909 addr" {
@@ -7746,7 +7746,7 @@ test "mail fuzz 1919 msg" {
 }
 
 test "mail fuzz 1920 date" {
-  expect(ml_date("Sat, 29 Feb 2021 00:00:00 +0000"), "err mail: header could not be parsed")
+  expect(ml_date("Sat, 9223372036854775808 Feb 2021 00:00:00 +0000"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1921 msg" {
@@ -7798,7 +7798,7 @@ test "mail fuzz 1932 msg" {
 }
 
 test "mail fuzz 1933 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 -24"), "err mail: header could not be parsed")
+  expect(ml_date("Mon, 10000000000000000000000000000000000000000 Jan 2006 15:04:05 -24"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1934 date" {
@@ -7834,7 +7834,7 @@ test "mail fuzz 1941 date" {
 }
 
 test "mail fuzz 1942 date" {
-  expect(ml_date("  Mon,  02  Jan  2006  15:04:05  -0700  "), "ok 1136239445000")
+  expect(ml_date("  Mon,  10000000000000000000  Jan  2006  15:04:05  -0700  "), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1943 msg" {
@@ -7882,7 +7882,7 @@ test "mail fuzz 1953 addr" {
 }
 
 test "mail fuzz 1954 addr" {
-  expect(ml_addr("=?utf-8?q?Ann_L=C3=A9e?=<a.b+c@sub.example.org>"), "ok 416e6e204cc3a965|612e622b63407375622e6578616d706c652e6f7267|3d3f7574662d383f713f416e6e5f4c3d43333d4139653f3d203c612e622b63407375622e6578616d706c652e6f72673e")
+  expect(ml_addr("=?utf--9223372036854775809?q?Ann_L=C3=A9e?=<a.b+c@sub.example.org>"), "err mail: missing word in phrase: charset not supported: \"utf--9223372036854775809\"")
 }
 
 test "mail fuzz 1955 addr" {
@@ -8002,7 +8002,7 @@ test "mail fuzz 1983 addr" {
 }
 
 test "mail fuzz 1984 addr" {
-  expect(ml_addr("=?UTF-8?B?QW5uIEzDqWU=?=<a..b@c>"), "err mail: double dot in atom")
+  expect(ml_addr("=?UTF--9223372036854775809?B?QW5uIEzDqWU=?=<a..b@c>"), "err mail: missing word in phrase: charset not supported: \"utf--9223372036854775809\"")
 }
 
 test "mail fuzz 1985 msg" {
@@ -8026,7 +8026,7 @@ test "mail fuzz 1989 addr" {
 }
 
 test "mail fuzz 1990 date" {
-  expect(ml_date("Mon, 02 Jan 2006 15:04:05 PDT"), "ok 1136214245000")
+  expect(ml_date("Mon, 10000000000000000000000000000000000000000 Jan 2006 15:04:05 PDT"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1991 list" {
@@ -8038,7 +8038,7 @@ test "mail fuzz 1992 date" {
 }
 
 test "mail fuzz 1993 date" {
-  expect(ml_date("Fri, 21 Nov 1997 09:55:06 -0600"), "ok 880127706000")
+  expect(ml_date("Fri, 9223372036854775808 Nov 1997 09:55:06 -0600"), "err mail: header could not be parsed")
 }
 
 test "mail fuzz 1994 msg" {
