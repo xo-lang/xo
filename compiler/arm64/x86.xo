@@ -860,6 +860,7 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
     }
     "scvtf" => {
       let op = if is_w(ops[0]) { "cvtsi2ssq" } else { "cvtsi2sdq" }
+      x86_break_dep(x, xop(ops[0], 8))
       x.lines.push("${op} ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
       true
     }
@@ -869,6 +870,7 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       let d = xop(ops[0], 8)
       let u = xop(ops[1], 8)
       let (cv, ad) = if is_w(ops[0]) { ("cvtsi2ssq", "addss") } else { ("cvtsi2sdq", "addsd") }
+      x86_break_dep(x, d)
       x.lines = x.lines + ["testq ${u}, ${u}", "js 6f", "${cv} ${u}, ${d}", "jmp 7f", "6:", "movq ${u}, %r11", "shrq $1, %r11", "jnc 5f", "orq $1, %r11", "5:", "${cv} %r11, ${d}", "${ad} ${d}, ${d}", "7:"]
       true
     }
@@ -3420,4 +3422,16 @@ fn (var g: G) x86_carry_fuse() {
     }
     g.put_insts(b, ins)
   }
+}
+
+/// cvtsi2sd and cvtsi2ss write only the low lane of their xmm
+/// destination d, so they wait for its last writer: in a loop whose
+/// conversion lands on a register a long divsd chain of the previous
+/// iteration wrote last, the iterations ran one after another (task #407:
+/// gomath erf slower once Floats stayed in registers across calls). d is
+/// zeroed first, as Go and LLVM do; the source is a general register, so
+/// it never shares d. (sqrtsd, roundsd and cvtss2sd have the same false
+/// dependency, but their source may be allocated to d.)
+fn x86_break_dep(var x: XT, d: Str) {
+  x.lines.push("xorpd ${d}, ${d}")
 }

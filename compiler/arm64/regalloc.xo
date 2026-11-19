@@ -838,9 +838,11 @@ fn (var g: G) regalloc() {
       sc_keys.push((c << 20) | i)
     }
     sc_keys = sc_keys.sort()
-    // occ2: occ less the save calls' general registers, the registers a
-    // value saved around them may take (a save call clobbers the floating
-    // point ones in both)
+    // occ2: occ less the save calls' caller saved registers, the
+    // registers a value saved around them may take (floating point ones
+    // too since task #407: x86_64 has no callee saved xmm register, so
+    // every Float live across a call spilled for its whole range; wide
+    // values are never saved around calls)
     var occ2: List[List[Int]] = []
     if !save_calls.is_empty() {
       for r in 0..64 {
@@ -853,7 +855,6 @@ fn (var g: G) regalloc() {
       }
       for r in g.fp_caller_t() {
         push_rng(occ, r, rng(c, c))
-        push_rng(occ2, r, rng(c, c))
       }
     }
     for r in 0..64 {
@@ -984,7 +985,7 @@ fn (var g: G) regalloc() {
         chosen = r
         break
       }
-      if chosen < 0 && !save_calls.is_empty() && !fp && !nc && !wide {
+      if chosen < 0 && !save_calls.is_empty() && !nc && !wide {
         // the save calls the value crosses, each a store and a load,
         // against its uses' and definitions' loads and stores in a slot
         var cost = 0.0
@@ -1007,7 +1008,7 @@ fn (var g: G) regalloc() {
           }
         }
         if cost > 0.0 && cost < weight[v] {
-          for r in save_regs(gp_c) {
+          for r in save_regs(if fp { fp_c } else { gp_c }) {
             if !overlaps_sorted(occ2[r], ranges[v]) && !barred[v].contains(r) {
               chosen = r
               break
@@ -1155,7 +1156,7 @@ fn (var g: G) regalloc() {
     if !save_calls.is_empty() {
       for v in order {
         let r = g.loc[v].reg
-        if r < 0 || r >= FP_BASE || g.is_callee_t(r) {
+        if r < 0 || g.is_callee_t(r) {
           continue
         }
         for rr in ranges[v] {

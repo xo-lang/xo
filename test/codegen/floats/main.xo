@@ -19,7 +19,16 @@ fn unfused(x: Float, y: Float, z: Float) -> Float {
 }
 
 fn main(os: Os) {
-  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)}")
+  // cvtsi2sd writes only the low lane of its xmm destination, so it waits
+  // for the register's last writer: the destination is zeroed first, as
+  // Go and LLVM do (task #407: gomath erf ran its loop iterations one
+  // after another without it).
+  // amd64: "xorpd %xmm[0-9]+, %xmm[0-9]+\n\tcvtsi2sdq %"
+  var t = 0.0
+  for i in 0..100 {
+    t = t + Float(i) / 3.0
+  }
+  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)} ${t}")
 }
 
 // Float.fma's body uses FMA3 when the CPU has it (decision 0385 stage 3).

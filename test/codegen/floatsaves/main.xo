@@ -1,0 +1,34 @@
+// Codegen patterns (decision 0634, `xo dev codegen`): Floats live across
+// a call stay in xmm registers on amd64, stored before the call and
+// loaded after it when their uses outweigh the calls (call_saves, task
+// #407). x86_64 has no callee saved xmm register, so before #407 every Float live across a call took a
+// stack slot for its whole range and each use read or wrote it
+// (`mulsd 0(%rsp), %xmm14`): prelude math ran at 1.6 to 3.3x Go, against
+// 0.8 to 1.33x on LLVM.
+/// halve: recursive, so the call stays a call
+fn halve(x: Float, n: Int) -> Float {
+  if n <= 0 { x } else { halve(x * 0.5, n - 1) + 0.25 }
+}
+
+fn mix(xs: List[Float], a: Float, b: Float, c: Float) -> Float {
+  var s = 0.0
+  var p = a
+  var q = b
+  for x in xs {
+    s = s + x * p - q
+    p = p * c + halve(x, 3)
+    q = q * c + s * a
+  }
+  s + p * q
+}
+
+fn main(os: Os) {
+  // mix inlined: s, p, q and x * p saved around the call to halve, in
+  // xmm registers between calls
+  // amd64: "(movsd %xmm[0-9]+, [0-9]+\(%rsp\)\n(\S+:\n)*\t){3}callq _?xo_f_halve\n(\S+:\n)*\t(movsd [0-9]+\(%rsp\), %xmm[0-9]+\n(\S+:\n)*\t){3}"
+  var xs: List[Float] = []
+  for i in 0..1000 {
+    xs.push(Float(i) * 0.25)
+  }
+  os.stdio.println("${mix(xs, 0.001, 0.5, 0.999)}")
+}
