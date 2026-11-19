@@ -878,6 +878,10 @@ golang.org/x/net v0.62.0 (scripts/stdcorpus/httpproxyoracle,
 TestHttpproxyFuzz) are on all four hosts since 2026-11-18 (the fuzz:sql
 and fuzz:httpproxy runs before failed or skipped on host 2 for want of
 them: "module lookup disabled by GOPROXY=off").
+google.golang.org/grpc v1.79.2 with its requirements (the grpcref
+reference of TestGrpcReflectFuzz, fuzz:grpcreflect) is on all four hosts
+since 2026-11-18 (hosts 1 to 3 at 17:50, host 4 at 19:45; the fuzz run
+before skipped on host 2 for want of it). Last verified: 2026-11-18.
 github.com/mattn/go-sqlite3 v1.14.53 (scripts/stdcorpus/sqliteoracle,
 TestSqliteFuzz of fuzz:sqlite; cgo, so the host's C compiler builds SQLite)
 is on hosts 2 and 3 since 2026-11-18 (the first fuzz:sqlite run on host 3
