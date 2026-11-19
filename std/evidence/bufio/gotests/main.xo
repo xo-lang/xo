@@ -1,0 +1,102 @@
+// The Xo side of std/bufio's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/bufio's result as text, as go/main.go prints package bufio's.
+// Kinds lines and until over Go's bufio scanner tables.
+// See scripts/stdproven/gotests.go.
+use std/bufio
+use std/base64
+
+/// What a test reads from: data in chunks of a size.
+struct Chunks {
+  data: Bytes
+  size: Int
+  pos: Int = 0
+}
+
+struct Fake {
+  st: Mutex[Chunks]
+}
+
+fn (f: Fake) read(max: Int) -> Bytes? ! NetErr uses net {
+  f.st.with(fn(var s: Chunks) -> Bytes? ! NetErr {
+    if s.pos >= s.data.len() {
+      return Ok(None)
+    }
+    var n = if s.size < max { s.size } else { max }
+    if n > s.data.len() - s.pos {
+      n = s.data.len() - s.pos
+    }
+    let out = s.data[s.pos..s.pos + n]
+    s.pos += n
+    Ok(Some(out))
+  })
+}
+
+fn (f: Fake) write(data: Bytes) -> () ! NetErr uses net { Ok(()) }
+
+fn (f: Fake) close() {}
+
+fn hexs(b: Bytes) -> Str {
+  let d = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+  var out = ""
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    out = out + d[c / 16] + d[c % 16]
+  }
+  out
+}
+
+/// lines (read_line to the end) and until (read_until('\n') to the end),
+/// over the input whole or a byte at a time (KIND1).
+fn brun(kind: Str, inp: Bytes) -> Str uses net {
+  let size = if kind.ends_with("1") { 1 } else { 1 << 20 }
+  var r = bufio.reader(Fake{st: Mutex[Chunks].new(Chunks{data: inp, size: size})}, 16)
+  var out: List[Str] = []
+  if kind.starts_with("lines") {
+    while true {
+      match r.read_line() {
+        Ok(Some(s)) => out.push(hexs(s.bytes()))
+        Ok(None) => break
+        Err(e) => {
+          out.push("err ${e.display()}")
+          break
+        }
+      }
+    }
+  } else {
+    while true {
+      match r.read_until('\n') {
+        Ok(Some(b)) => out.push(hexs(b))
+        Ok(None) => break
+        Err(e) => {
+          out.push("err ${e.display()}")
+          break
+        }
+      }
+    }
+  }
+  out.join("|")
+}
+
+fn run(kind: Str, inp: List[Bytes]) -> Str uses net {
+  match kind {
+    "lines" | "lines1" | "until" | "until1" => brun(kind, inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Bytes] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?)
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

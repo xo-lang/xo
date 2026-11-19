@@ -1,0 +1,13 @@
+# Go's bufio test tables (go1.26) run through std/bufio
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# lines reads every line (Scanner's ScanLines; read_line), until every
+# record to a '\n' (ReadBytes; read_until), over the input whole or a
+# byte at a time (KIND1): each piece in hex.
+bufio scan_test.go scanTests .:bytes lines
+bufio scan_test.go scanTests .:bytes lines1
+bufio scan_test.go scanTests .:bytes until
+bufio scan_test.go scanTests .:bytes until1
+bufio scan_test.go wordScanTests .:bytes lines
+bufio scan_test.go wordScanTests .:bytes lines1
+bufio scan_test.go wordScanTests .:bytes until
+bufio scan_test.go wordScanTests .:bytes until1

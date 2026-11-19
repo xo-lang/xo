@@ -117,9 +117,9 @@ pub fn (var r: Reader) read_until(delim: UInt8, limit: Int = 1048576) -> Bytes? 
 }
 
 /// The next line without its "\n" or "\r\n" (Go's ReadString('\n') with the
-/// line ending trimmed, as bufio.Scanner's ScanLines), invalid UTF-8
-/// replaced by U+FFFD; a last line without an ending is a line. None at
-/// the end with nothing left.
+/// line ending trimmed), invalid UTF-8 replaced by U+FFFD; a last line
+/// without an ending is a line, a "\r" at its end kept (bufio.Scanner's
+/// ScanLines and Str.lines drop it). None at the end with nothing left.
 pub fn (var r: Reader) read_line(limit: Int = 1048576) -> Str? ! BufErr uses net {
   let b = match r.read_until('\n', limit)? {
     Some(x) => x
