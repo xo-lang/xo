@@ -1,0 +1,245 @@
+// The Xo side of std/big's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/big's result as text, as go/main.go prints package big's.
+// Integer kinds quo, bitlen, exp, gcd, lsh, rsh, bitwise, tzb, not,
+// modinv and intstr; rational kinds ratcmp, ratbin, ratset, floatstr;
+// float kinds fminprec, fsign, fisint, fint64, ffloat64, fint, frat,
+// fmantexp, fsqrt, fset64, ftext and ftextr.
+// See scripts/stdproven/gotests.go.
+use std/big
+use std/base64
+
+fn ints(inp: List[Str], kind: Str) -> Str {
+  let x = match big.parse(inp[0], 0) {
+    Ok(v) => v
+    Err(_) => return "parse err ${inp[0]}"
+  }
+  var y = big.from_int(0)
+  if inp.len() > 1 && !inp[1].is_empty() {
+    y = match big.parse(inp[1], 0) {
+      Ok(v) => v
+      Err(_) => return "parse err ${inp[1]}"
+    }
+  }
+  match kind {
+    "quo" => {
+      if y.sign() == 0 {
+        return "div0"
+      }
+      let (a, b) = x.quo_rem(y)
+      let (c, d) = x.div_mod(y)
+      "${a} ${b} ${c} ${d}"
+    }
+    "bitlen" => "${x.bit_len()}"
+    "gcd" => "${x.gcd(y)}"
+    "bitwise" => "${x.and(y)} ${x.or(y)} ${x.xor(y)} ${x.and_not(y)}"
+    "tzb" => "${x.trailing_zeros()}"
+    "not" => "${x.not()}"
+    "modinv" => match x.mod_inverse(y) {
+      Some(r) => "${r}"
+      None => "none"
+    }
+    _ => "?"
+  }
+}
+
+fn exp(inp: List[Str]) -> Str {
+  let (x, y) = match (big.parse(inp[0], 0), big.parse(inp[1], 0)) {
+    (Ok(a), Ok(b)) => (a, b)
+    _ => return "parse err"
+  }
+  var m: big.BigInt? = None
+  if !inp[2].is_empty() {
+    m = match big.parse(inp[2], 0) {
+      Ok(v) => Some(v)
+      Err(_) => return "parse err"
+    }
+  }
+  // Go's Exp is nil here; big.exp faults (documented).
+  if let Some(mm) = m {
+    if mm.sign() != 0 && y.sign() < 0 && x.mod_inverse(mm) == None {
+      return "nil"
+    }
+  }
+  "${x.exp(y, m)}"
+}
+
+fn shift(inp: List[Str], left: Bool) -> Str {
+  let x = match big.parse(inp[0], 0) {
+    Ok(v) => v
+    Err(_) => return "parse err"
+  }
+  let n = Int.parse(inp[1]) ?? 0
+  if left { "${x.lsh(n)}" } else { "${x.rsh(n)}" }
+}
+
+fn intstr(inp: List[Str]) -> Str {
+  var b = Int.parse(inp[1]) ?? 0
+  match big.parse(inp[0], b) {
+    Ok(x) => {
+      if b == 0 {
+        b = 10
+      }
+      "ok ${x.text(b)}"
+    }
+    Err(_) => "err"
+  }
+}
+
+fn rs(x: big.BigRat) -> Str { "${x.text()} ${x.rat_text()}" }
+
+fn ratcmp(inp: List[Str]) -> Str {
+  match (big.parse_rat(inp[0]), big.parse_rat(inp[1])) {
+    (Ok(x), Ok(y)) => "${x.cmp(y)}"
+    _ => "parse err"
+  }
+}
+
+fn ratbin(inp: List[Str]) -> Str {
+  let (x, y) = match (big.parse_rat(inp[0]), big.parse_rat(inp[1])) {
+    (Ok(a), Ok(b)) => (a, b)
+    _ => return "parse err"
+  }
+  var s = "${rs(x.add(y))}; ${rs(x.mul(y))}; ${rs(x.sub(y))}"
+  if y.sign() != 0 {
+    s = "${s}; ${rs(x.quo(y))}"
+  }
+  s
+}
+
+fn ratset(inp: List[Str]) -> Str {
+  match big.parse_rat(inp[0]) {
+    Ok(x) => "ok ${rs(x)}"
+    Err(_) => "err"
+  }
+}
+
+fn acc(a: big.Accuracy) -> Str {
+  match a {
+    big.Accuracy.Below => "Below"
+    big.Accuracy.Exact => "Exact"
+    big.Accuracy.Above => "Above"
+  }
+}
+
+fn mode(s: Str) -> big.RoundingMode {
+  match s {
+    "ToNearestAway" => big.RoundingMode.ToNearestAway
+    "ToZero" => big.RoundingMode.ToZero
+    "AwayFromZero" => big.RoundingMode.AwayFromZero
+    "ToNegativeInf" => big.RoundingMode.ToNegativeInf
+    "ToPositiveInf" => big.RoundingMode.ToPositiveInf
+    _ => big.RoundingMode.ToNearestEven
+  }
+}
+
+fn floats(inp0: List[Str], kind: Str) -> Str {
+  var inp = inp0
+  if kind == "fisint" {
+    inp = [inp[0].split(" ")[0]]
+  }
+  if kind == "fsqrt" {
+    var out: List[Str] = []
+    for p in [24, 53, 64, 100, 256] {
+      let x = match big.parse_float(inp[0], 10, p) {
+        Ok(v) => v
+        Err(_) => return "parse err"
+      }
+      out.push(x.sqrt().text(112, 0))
+    }
+    return out.join(" ")
+  }
+  if kind == "fset64" {
+    return match big.parse_float(inp[0], 0, 53) {
+      Ok(x) => "ok ${x.text(112, 0)} ${x.signbit()}"
+      Err(_) => "err"
+    }
+  }
+  if kind == "ftext" || kind == "ftextr" {
+    var m = big.RoundingMode.ToNearestEven
+    if kind == "ftextr" {
+      m = mode(inp[1])
+      inp = [inp[0], inp[2], inp[3], inp[4]]
+    }
+    let f = match big.parse_float(inp[0], 0, Int.parse(inp[1]) ?? 0) {
+      Ok(v) => v
+      Err(_) => return "parse err"
+    }
+    return f.with_mode(m).text(Int.parse(inp[2]) ?? 0, Int.parse(inp[3]) ?? 0)
+  }
+  let x = match big.parse_float(inp[0], 0, 1000) {
+    Ok(v) => v
+    Err(_) => return "parse err"
+  }
+  match kind {
+    "fminprec" => "${x.with_prec(100).min_prec()}"
+    "fsign" => "${x.sign()}"
+    "fisint" => "${x.is_int()}"
+    "fint64" => {
+      let (v, a) = x.to_int()
+      "${v} ${acc(a)}"
+    }
+    "ffloat64" => {
+      let (v, a) = x.to_float()
+      "${v.to_bits()} ${acc(a)}"
+    }
+    "fint" => {
+      let (v, a) = x.to_big()
+      match v {
+        Some(n) => "${n} ${acc(a)}"
+        None => "nil ${acc(a)}"
+      }
+    }
+    "frat" => {
+      let (v, a) = x.with_prec(64).to_rat()
+      match v {
+        Some(r) => "${r.text()} ${acc(a)}"
+        None => "nil ${acc(a)}"
+      }
+    }
+    "fmantexp" => {
+      let (m, e) = x.mant_exp()
+      "${m.text(112, 0)} ${e}"
+    }
+    _ => "?"
+  }
+}
+
+fn floatstr(inp: List[Str]) -> Str {
+  match big.parse_rat(inp[0]) {
+    Ok(x) => x.float_text(Int.parse(inp[1]) ?? 0)
+    Err(_) => "err"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "quo" | "bitlen" | "gcd" | "bitwise" | "tzb" | "not" | "modinv" => ints(inp, kind)
+    "exp" => exp(inp)
+    "lsh" => shift(inp, true)
+    "rsh" => shift(inp, false)
+    "intstr" => intstr(inp)
+    "ratcmp" => ratcmp(inp)
+    "ratbin" => ratbin(inp)
+    "ratset" => ratset(inp)
+    "floatstr" => floatstr(inp)
+    "fminprec" | "fsign" | "fisint" | "fint64" | "ffloat64" | "fint" | "frat" | "fmantexp" | "fsqrt" | "fset64" | "ftext" | "ftextr" => floats(inp, kind)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

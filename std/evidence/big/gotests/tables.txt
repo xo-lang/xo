@@ -1,0 +1,38 @@
+# Go's big test tables (go1.26) run through std/big
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# Integers are read with base 0 (Go's SetString(s, 0), big.parse(s, 0))
+# and printed in base 10; rationals as Go's String and RatString
+# (BigRat.text and rat_text). quo is QuoRem and DivMod of x and y,
+# ratbin the sum, product, difference and quotient.
+math/big int_test.go quoTests x,y quo
+math/big int_test.go bitLenTests in bitlen
+math/big int_test.go expTests x,y,m exp
+math/big int_test.go gcdTests a,b gcd
+math/big int_test.go rshTests in,shift rsh
+math/big int_test.go lshTests in,shift lsh
+math/big int_test.go bitwiseTests x,y bitwise
+math/big int_test.go tzbTests in tzb
+math/big int_test.go notTests in not
+math/big int_test.go modInverseTests element,modulus modinv
+math/big rat_test.go ratCmpTests rat1,rat2 ratcmp
+math/big rat_test.go ratBinTests x,y ratbin
+math/big intconv_test.go stringTests in,base intstr
+math/big ratconv_test.go setStringTests in ratset
+math/big ratconv_test.go floatStringTests in,prec floatstr
+# Floats are read as Go's makeFloat does (ParseFloat(s, 0, 1000,
+# ToNearestEven), big.parse_float(s, 0, 1000)) and printed with Text('p',
+# 0); fsqrt takes the square root at 24, 53, 64, 100 and 256 bits;
+# TestFloatText's rows run in the default mode (ftext) and, where the
+# row names a RoundingMode, in it (ftextr).
+math/big float_test.go TestFloatMinPrec.range x fminprec
+math/big float_test.go TestFloatSign.range x fsign
+math/big float_test.go TestFloatIsInt.range . fisint
+math/big float_test.go TestFloatInt64.range x fint64
+math/big float_test.go TestFloatFloat64.range x ffloat64
+math/big float_test.go TestFloatInt.range x fint
+math/big float_test.go TestFloatRat.range x frat
+math/big float_test.go TestFloatMantExp.range x fmantexp
+math/big sqrt_test.go TestFloatSqrt.range x fsqrt
+math/big floatconv_test.go TestFloatSetFloat64String.range s fset64
+math/big floatconv_test.go TestFloatText.range x,prec,format,digits ftext
+math/big floatconv_test.go TestFloatText.range x,round:const,prec,format,digits ftextr

@@ -33,6 +33,17 @@ func TestLocal(t *testing.T) {
 	_ = tests
 }
 
+func TestRanges(t *testing.T) {
+	for _, n := range []int{1} {
+		_ = n
+	}
+	for _, test := range []struct{ in string }{{"r"}, {"s"}} {
+		_ = test
+	}
+	for range []struct{ in string }{{"u"}} {
+	}
+}
+
 var flags = []struct {
 	pad   byte
 	on    bool

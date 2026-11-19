@@ -29,6 +29,10 @@ func TestGoTableCases(t *testing.T) {
 		{"unkeyed", "0,1", []string{"0 x|y", "1 z|w"}, 0},
 		{"nums", "year,month,z,f", []string{"0 2011|-3|Local|1000000000", "1 16|1000|UTC|2"}, 3},
 		{"TestLocal.tests", "in", []string{"0 p", "1 q"}, 0},
+		// FUNC.rangeN: the Nth literal a for range statement ranges over
+		{"TestRanges.range2", "in", []string{"0 r", "1 s"}, 0},
+		{"TestRanges.range3", "in", []string{"0 u"}, 0},
+		{"TestRanges.range", ".", []string{"0 1"}, 0},
 		// a rune and a bool always; an exported constant (or a | of
 		// them) only in a :const field; a lowercase name never
 		{"flags", "pad,on,flags:const", []string{"0 46|true|Debug", "1 9|false|AlignRight|Debug", "2 39|true|0"}, 2},

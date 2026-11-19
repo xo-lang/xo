@@ -204,6 +204,26 @@ func findTable(f *ast.File, name string) (*ast.CompositeLit, error) {
 				continue
 			}
 			var found *ast.CompositeLit
+			if nth, ok := rangeIndex(local); ok {
+				// FUNC.range (FUNC.rangeN): the Nth literal a for
+				// statement of the function ranges over, in source order.
+				ast.Inspect(d.Body, func(n ast.Node) bool {
+					r, ok := n.(*ast.RangeStmt)
+					if !ok || found != nil {
+						return found == nil
+					}
+					if c, ok := r.X.(*ast.CompositeLit); ok {
+						if nth--; nth == 0 {
+							found = c
+						}
+					}
+					return true
+				})
+				if found != nil {
+					return found, nil
+				}
+				continue
+			}
 			ast.Inspect(d.Body, func(n ast.Node) bool {
 				a, ok := n.(*ast.AssignStmt)
 				if !ok || found != nil {
@@ -224,6 +244,23 @@ func findTable(f *ast.File, name string) (*ast.CompositeLit, error) {
 		}
 	}
 	return nil, fmt.Errorf("no table %s", name)
+}
+
+// rangeIndex reads a table name's local part `range` (1) or `rangeN`
+// (N, from 1).
+func rangeIndex(local string) (int, bool) {
+	rest, ok := strings.CutPrefix(local, "range")
+	if !ok {
+		return 0, false
+	}
+	if rest == "" {
+		return 1, true
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
 }
 
 // structOrder is the field names, in order, of the element type of a
