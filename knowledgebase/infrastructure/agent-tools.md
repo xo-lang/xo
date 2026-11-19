@@ -628,6 +628,18 @@ yourself.
   `-check` names each stale artifact and prints the one command that fixes
   them all. TestStdIndexCurrent and stdgen -check name it in their failure
   messages too.
+- `go run ./scripts/stdadvisories [-db DIR] [-since 1.26.0]` (task #365):
+  the Go vulnerability database's standard library advisories fixed after
+  the Go release std was ported from that no change log
+  (`std/changes/MODULE.md`) or decision 0616 review
+  (`std/evidence/MODULE/review.md`) of the std modules porting the package
+  names by ID. Packages map to modules through std-coverage.md's "Go
+  packages" table; `net/http/internal/http2` counts as net/http. Prints
+  `ID PACKAGE MODULES SUMMARY`, exit 1 when any; fetches vuln.go.dev into
+  the user cache (xo/vulndb) unless `-db` names a local copy. Each listed ID
+  is answered by a change log entry: affected (the fix ported with its
+  test) or not affected (why). 31 listed on 2026-11-19 (go1.26.0 to
+  go1.27.2), opened as tasks. Last verified: 2026-11-19.
 - `go run ./scripts/stdaudit` (2026-11-10): the function level audit of Go's
   standard library against Xo. `-go` lists every exported symbol of the
   std-coverage.md packages (linux/arm64 context), `-xo BIN -std DIR` lists Xo's

@@ -1,0 +1,1 @@
+{"id":"GO-2026-0003","summary":"net/http and its http2","affected":[{"package":{"name":"stdlib"},"ecosystem_specific":{"imports":[{"path":"net/http/internal/http2"},{"path":"net/http"}]}}]}

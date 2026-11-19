@@ -1,0 +1,1 @@
+{"id":"GO-2025-0001","summary":"fixed before the port","affected":[{"package":{"name":"stdlib"},"ecosystem_specific":{"imports":[{"path":"net/http"}]}}]}
