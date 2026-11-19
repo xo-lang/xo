@@ -1525,3 +1525,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [arm64-load-combine-one-block.md](arm64-load-combine-one-block.md): load combining matches one block; inlined halves or a loop built word stay separate loads (write one flat Or)
 - [ab-host-prog-from-each-side.md](ab-host-prog-from-each-side.md): ab-host builds PROG from BASE's and NEW's own trees; a bench change for an --ab goes on both sides (Observed)
 - [std-speedup-measure-every-case.md](std-speedup-measure-every-case.md): a std speedup --ab on its target case hid a 1.84x gray regression in the same bench; --ab every case the change moves, and rebase before an --ab of a fix (Observed)
+- [clock-read-costs-on-amd64.md](clock-read-costs-on-amd64.md): a vDSO clock read per task run (about 140 ns on linux/amd64, cheap cntvct on arm64) was 20% of a small task; site timing samples every 8th run (Observed)

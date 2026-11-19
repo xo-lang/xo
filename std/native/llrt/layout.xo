@@ -272,7 +272,10 @@ pub const W_CSEQ_I = 452
 /// W_CSEQ_I as the monitor's previous tick saw it (pool.xo mon_scan): odd and
 /// unchanged, the worker has been in one C call a tick or more.
 pub const W_CSEEN = 3624
-pub const W_SIZE = 3632
+/// The worker's runs of tasks from small spawn sites (pool.xo site_clock):
+/// every 8th is timed. Only its own thread writes it.
+pub const W_SITE_N = 3632
+pub const W_SIZE = 3640
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after

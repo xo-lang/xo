@@ -131,6 +131,7 @@ const W_NETWAIT = layout.W_NETWAIT
 const W_IDX = layout.W_IDX
 const W_CSEQ_I = layout.W_CSEQ_I
 const W_CSEEN = layout.W_CSEEN
+const W_SITE_N = layout.W_SITE_N
 const P_CEXTRA_I = layout.P_CEXTRA_I
 const MAXW = 4096
 
@@ -274,6 +275,8 @@ const ST_CAP_GROW = 48
 const ST_CAP_SHRINK = 49
 const ST_CAP_HOLD = 50
 const ST_CAP_SEEN = 51
+/// task runs timed for their spawn site's average (site_clock)
+const ST_SITE_TIMED = 52
 
 /// How long a fiber stays in its waker's next before a thief may take
 /// it (xo_rt.c XO_NEXT_GRACE_NS).
@@ -3465,12 +3468,31 @@ pub fn site_prior(pl: Int, t: Int) {
   let _ = rt.slot_cas[Int](pl, a.shr_logical(3), 0, 1, RELAXED)
 }
 
-/// The clock a task's run is timed with (tasks.xo run_claimed).
-pub fn site_clock() -> Int { cpu.ticks() }
+/// The clock a task's run is timed with (tasks.xo run_claimed), or 0 when
+/// the run is not timed. A run from a site already known to be small
+/// (site_small) is timed on every 8th of worker w's such runs only, since
+/// the clock is a vDSO call off arm64: about 140 ns a read on the
+/// linux/amd64 host, two reads a task, 20% of bench/perf/task map's 200,000
+/// tasks of a microsecond (task #419, 2026-11-19). New and long sites time
+/// every run, so a site whose tasks grow is still seen within 8 runs.
+pub fn site_clock(pl: Int, t: Int, w: Int) -> Int {
+  if w != 0 && site_small(pl, t) {
+    let n = rt.mem_load(w, W_SITE_N, 8)
+    rt.mem_store(w, W_SITE_N, n.wrapping_add(1), 8)
+    if (n & 7) != 0 {
+      return 0
+    }
+  }
+  stat(ST_SITE_TIMED)
+  cpu.ticks()
+}
 
 /// Folds the run time of task t, started at t0 (site_clock), into its spawn
-/// site's average (a quarter weight).
+/// site's average (a quarter weight); t0 0 is a run not timed.
 pub fn site_note(pl: Int, t: Int, t0: Int) {
+  if t0 == 0 {
+    return
+  }
   let a = site_slot(t)
   if a == 0 {
     return

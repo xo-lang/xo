@@ -176,6 +176,16 @@ func TestOneThreadSpawnJoin(t *testing.T) {
 	if n, _ := strconv.Atoi(m[1]); n > 5 {
 		t.Fatalf("the worker was woken %d times for 50,000 spawns its spawner joined", n)
 	}
+	// a small site's runs are timed one in 8 (pool.xo site_clock, task
+	// #419): two clock reads a run were 20% of bench/perf/task map on
+	// linux/amd64, where the clock is a vDSO call
+	m = regexp.MustCompile(`\bsite_timed=(\d+)`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no site_timed count: %s", out)
+	}
+	if n, _ := strconv.Atoi(m[1]); n < 1 || n > 12500 {
+		t.Errorf("site_timed=%d for 50,000 runs of one small site (want 1 to 12,500: one in 8)", n)
+	}
 	counts := map[string]int{}
 	for _, k := range []string{"mon_wake", "steal"} {
 		m := regexp.MustCompile(`\b` + k + `=(\d+)`).FindStringSubmatch(out)
