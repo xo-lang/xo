@@ -868,6 +868,21 @@ whole 5 minutes on host 2 and then started on an idle host with no wait
 (159 minutes a day; host 2's queue was `xw jobs`' top wait reason).
 Last verified: 2026-11-15.
 
+Late moves to host 4 (task #441, xw-1, 2026-11-19): `heavyd lease
+-move-late=MIN:SPEC` (offload.sh `OFF_MOVE_LATE`) moves a waiting lease
+to a lane of SPEC that starts it at once, only after MIN minutes and never
+by the early idle move, logged `MOVED late lease NAME` in heavyd.log. A
+plain gate on host 2 gets `OFFGATE_PASS4_MIN` (15; 0 off) for host 4, so
+host 4 stays for whole-host runs until a plain gate has waited 15
+minutes; not for a memory gate (which already starts on host 4 or moves
+there at once), a gate on another host, OFFGATE_REROUTE=0, or a host 4
+that is reserved or already tried. Before it, host 2's leases waited 458
+minutes over 9 jobs on 2026-11-19 while host 4 sat mostly empty (alert
+80418). A raw offload.sh run is not moved: its caller put files on the
+host it named (stdproven's bundle, mainsmall's), so only a caller that
+handles exit 78 may pass OFF_MOVE or OFF_MOVE_LATE. Last verified:
+2026-11-19.
+
 Disk and bundles (offload-gate.sh, task #125, 2026-11-16): before the
 bundle goes up, offload-gate asks the host for OFFGATE_MIN_FREE_GB
 (default 12, 0 skips) free on /work (`offload.sh --has-free GB`, a plain
