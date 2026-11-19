@@ -1,5 +1,6 @@
 // std/image's divide helpers against `/` at every quotient boundary of
-// their ranges (draw_px: a sample times an alpha, times 257 for 65535).
+// their ranges (draw_px: a sample times an alpha, times 257 for 65535),
+// and draw's inlined row loops against draw_px.
 
 test "div65535 is x / 65535 for a sample times an alpha times 257" {
   var x = 0
@@ -20,4 +21,46 @@ test "div255 is x / 255 for a sample times an alpha" {
     expect(div255(x + 254)) == (x + 254) / 255
     x += 255
   }
+}
+
+/// n pseudo random bytes from seed, with the alpha samples (every fourth)
+/// often 0 or 255 when edges.
+fn test_px(seed: Int, n: Int, edges: Bool) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  var x = seed
+  for i in 0..n {
+    x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+    var v = (x >> 33) & 255
+    if edges && i % 4 == 3 && (x >> 20) % 3 == 0 {
+      v = if (x >> 25) % 2 == 0 { 0 } else { 255 }
+    }
+    b.write_be(v, 1)
+  }
+  b.freeze()
+}
+
+test "draw's RGBA over and NRGBA src rows are draw_px's pixels" {
+  for w in 1..8 {
+    for (model, over) in [(Model.RGBA, true), (Model.NRGBA, false), (Model.RGBA, false), (Model.NRGBA, true)] {
+      let src = Image{width: w, height: 3, model: model, pix: test_px(w + 7, w * 12, true)}
+      let before = Image{width: w, height: 3, model: Model.RGBA, pix: test_px(w + 99, w * 12, true)}
+      var dst = before
+      dst.draw(Rect{x0: 0, y0: 0, x1: w, y1: 3}, src, 0, 0, if over { Op.Over } else { Op.Src })
+      let mk = if model == Model.RGBA { 0 } else { 1 }
+      for i in 0..w * 3 {
+        let want = draw_px(before.pix, 4 * i, src.pix, 4 * i, mk, over)
+        let got = Int(dst.pix[4 * i]).wrapping_shl(24) | Int(dst.pix[4 * i + 1]).wrapping_shl(16) | Int(dst.pix[4 * i + 2]).wrapping_shl(8) | Int(dst.pix[4 * i + 3])
+        expect(got) == want
+      }
+    }
+  }
+}
+
+test "an RGBA source sample above its alpha drawn over wraps as Go's uint8" {
+  // pixel 1's red sums to 356: Go stores 100; it must not carry into
+  // pixel 0's alpha (40)
+  var dst = Image{width: 2, height: 1, model: Model.RGBA, pix: b"\x0a\x14\x1e\x28\xff\xff\xff\xff"}
+  let src = Image{width: 2, height: 1, model: Model.RGBA, pix: b"\x00\x00\x00\x00\xc8\x00\x00\x64"}
+  dst.draw(Rect{x0: 0, y0: 0, x1: 2, y1: 1}, src, 0, 0, Op.Over)
+  expect(dst.pix) == b"\x0a\x14\x1e\x28\x64\x9b\x9b\xff"
 }

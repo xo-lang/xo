@@ -1210,7 +1210,9 @@ fn draw_px(dp: Bytes, di: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
     let g = (div65535(Int(dp[di + 1]).wrapping_mul(a)).wrapping_add(sg)) >> 8
     let b = (div65535(Int(dp[di + 2]).wrapping_mul(a)).wrapping_add(sb)) >> 8
     let al = (div65535(da.wrapping_mul(a)).wrapping_add(sa)) >> 8
-    return r.wrapping_shl(24) | g.wrapping_shl(16) | b.wrapping_shl(8) | al
+    // each sample its low 8 bits, as Go's uint8: an RGBA source whose
+    // sample exceeds its alpha (not premultiplied) sums past 255
+    return (r & 255).wrapping_shl(24) | (g & 255).wrapping_shl(16) | (b & 255).wrapping_shl(8) | (al & 255)
   }
   (sr >> 8).wrapping_shl(24) | (sg >> 8).wrapping_shl(16) | (sb >> 8).wrapping_shl(8) | (sa >> 8)
 }
@@ -1258,6 +1260,55 @@ fn draw_rgba_rows(dst: Image, src: Image, x0: Int, y0: Int, x1: Int, y1: Int, sp
       while x + 1 < w {
         b.write_be((Int(spx[si]) * 0x01010100 | 255).wrapping_shl(32) | (Int(spx[si + 1]) * 0x01010100 | 255), 8)
         si += 2
+        di += 8
+        x += 2
+      }
+    }
+    if over && mk == 0 {
+      // Go's drawCopyOver with the pixel math in the loop: draw_px's call
+      // a pixel (its six arguments and the loop's registers saved around
+      // it) made bench/perf/image over 1.13 of Go on the linux/amd64 host
+      while x + 1 < w {
+        var pr = 0
+        for k in 0..2 {
+          let s = si + 4 * k
+          let d = di + 4 * k
+          let sa = Int(spx[s + 3]).wrapping_mul(257)
+          var px = 0
+          if sa == 65535 {
+            px = Int(spx[s]).wrapping_shl(24) | Int(spx[s + 1]).wrapping_shl(16) | Int(spx[s + 2]).wrapping_shl(8) | 255
+          } else {
+            let a = (65535 - sa).wrapping_mul(257)
+            let da = Int(dp[d + 3])
+            let r = (div65535(Int(dp[d]).wrapping_mul(a)).wrapping_add(Int(spx[s]).wrapping_mul(257))) >> 8
+            let g = (div65535(Int(dp[d + 1]).wrapping_mul(a)).wrapping_add(Int(spx[s + 1]).wrapping_mul(257))) >> 8
+            let bl = (div65535(Int(dp[d + 2]).wrapping_mul(a)).wrapping_add(Int(spx[s + 2]).wrapping_mul(257))) >> 8
+            let al = (div65535(da.wrapping_mul(a)).wrapping_add(sa)) >> 8
+            px = (r & 255).wrapping_shl(24) | (g & 255).wrapping_shl(16) | (bl & 255).wrapping_shl(8) | (al & 255)
+          }
+          pr = pr.wrapping_shl(32) | px
+        }
+        b.write_be(pr, 8)
+        si += 8
+        di += 8
+        x += 2
+      }
+    }
+    if !over && mk == 1 {
+      // Go's drawNRGBASrc, the pixel math in the loop as above (1.06 of
+      // Go with draw_px's call)
+      while x + 1 < w {
+        var pr = 0
+        for k in 0..2 {
+          let s = si + 4 * k
+          let sa = Int(spx[s + 3]).wrapping_mul(257)
+          let r = div255(Int(spx[s]).wrapping_mul(sa)) >> 8
+          let g = div255(Int(spx[s + 1]).wrapping_mul(sa)) >> 8
+          let bl = div255(Int(spx[s + 2]).wrapping_mul(sa)) >> 8
+          pr = pr.wrapping_shl(32) | r.wrapping_shl(24) | g.wrapping_shl(16) | bl.wrapping_shl(8) | (sa >> 8)
+        }
+        b.write_be(pr, 8)
+        si += 8
         di += 8
         x += 2
       }

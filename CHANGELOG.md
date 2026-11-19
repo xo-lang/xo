@@ -10,6 +10,8 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Perf (compiler, arm64 native backend; task #87): a Float constant is one `ldr d, label` load from the function's constants, as Go and LLVM do, instead of `movz`, up to three `movk` and `fmov` through a general register. Callgrind instructions on linux/arm64: bench/perf/gomath erf -36.9%, gamma -16.7%, bench/perf/random zipf -30.2%, normal -1.4%; `xo bench --ab` on host 1: zipf 0.953 (0.936 to 0.961), gamma 0.978 (0.966 to 0.996), both under 65 ms a run.
+- Fix (std/image; task #271): `Image.draw` with `Op.Over` of an RGBA source whose color sample exceeds its alpha stores each sample's low 8 bits, as Go does; the excess carried into the neighbouring sample.
+- Perf (std/image; task #271): RGBA Over and NRGBA Src draws into RGBA compute their pixels in the row loop, about 7% and 11% faster on the linux/amd64 host.
 - Perf (compiler, linux/amd64 and darwin/amd64; task #407): a Float constant is one `movsd` load from the function's constants, as Go and LLVM do, instead of `movabsq` into a general register and `movq` into the xmm register. `xo bench --ab` on the linux/amd64 host: bench/perf/gomath gamma 0.963 of the time (better), erfinv 0.512.
 - Perf (std/crypto; task #271): SHA-3 and SHAKE on x86-64 absorb whole blocks inside the Keccak kernel, about 1.4 times faster on long inputs on the linux/amd64 host.
 - Perf (std/crypto; task #271): ChaCha20 without Poly1305 on x86-64 with AVX2 runs eight blocks at a time, about 3.2 times faster on the linux/amd64 host.

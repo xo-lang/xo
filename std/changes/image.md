@@ -1,5 +1,25 @@
 # std/image changes
 
+## 2026-11-19: fix: an RGBA source sample above its alpha drawn Over no longer carries into the next byte
+
+- Kind: fix
+- Commit: this push
+- Found by: task #271 (a test of the new row loops against draw_px with random, not premultiplied, RGBA sources)
+- Go reference: image/draw drawCopyOver (each sample stored as uint8, its low 8 bits)
+- Test: std/image_test.xo "an RGBA source sample above its alpha drawn over wraps as Go's uint8" (pixel 0's alpha read 0x29 before, 0x28 after)
+- Affected: Image.draw with Op.Over of an RGBA source whose red, green or blue exceeds its alpha (not valid premultiplied color): the sample's carry set a bit of the previous sample, and Go and Xo stored different pixels
+- Shipped in: not yet released
+
+## 2026-11-19: perf: RGBA Over and NRGBA Src draws compute pixels in the row loop
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/image over 1.129 and src 1.055 of Go on the linux/amd64 host; draw_px was a call a pixel there)
+- Go reference: image/draw drawCopyOver, drawNRGBASrc
+- Test: std/image_test.xo "draw's RGBA over and NRGBA src rows are draw_px's pixels" (widths 1 to 7, all four model and op pairs); bench/perf/image checksums unchanged
+- Timing: linux/amd64 host, exclusive, 7 runs, medians: over 31 ms to 29 (Go 28), src 28 to 25 (Go 27); the Mac over 48.5 to 46, src flat
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: Over and NRGBA draws carry no overflow checks
 
 - Kind: perf
