@@ -1,5 +1,17 @@
 # std/backoff changes
 
+## 2026-11-18: fix: an interval near Int's largest is Int's largest after jitter, not a fault
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestBackoffFuzz with the hostile dictionary (task #352)
+- Go reference: cenkalti/backoff v4 exponential.go getRandomValueFromInterval and incrementCurrentInterval (MIT license), whose time.Duration(float64) gives Int's largest on arm64
+- Test: std/backoff's "a randomized interval past Int's largest is Int's largest, as cenkalti/backoff's on arm64"; TestBackoffFuzz
+- Shipped in: not yet released
+
+A delay whose randomized interval passed Int's largest nanoseconds (an initial or max interval near 292 years) faulted with
+"out of range for Int"; it is Int's largest now, as Go's conversion on arm64 (amd64's gives Int's smallest, which Xo does not copy).
+
 ## 2026-11-16: behavior: `ticker` takes a `Rand[rand]` and `Ticker.rand` is a `Rand[rand]` (decision 0652)
 
 - Kind: behavior

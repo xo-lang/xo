@@ -5,7 +5,6 @@
 adler32fuzz_test.go
 amqpfuzz_test.go
 amqptestfuzz_test.go
-backofffuzz_test.go
 base32fuzz_test.go
 base64fuzz_test.go
 bcryptfuzz_test.go

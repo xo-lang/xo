@@ -371,7 +371,7 @@ x_L27:
 			if Cmp(float64(Duration_nanos(tk, v_ci)), FDiv(float64(Duration_nanos(tk, v_b.F_max_interval)), v_b.F_multiplier)) >= 0 {
 				x_v28 = v_b.F_max_interval
 			} else {
-				x_v28 = Duration_from_nanos(tk, FloatToInt[int64](float64(float64(Duration_nanos(tk, v_ci))*v_b.F_multiplier), "std/backoff.xo:174:27"))
+				x_v28 = Backoff_nanos(tk, float64(float64(Duration_nanos(tk, v_ci))*v_b.F_multiplier))
 			}
 			var v_next Duration = x_v28
 			_ = v_next
@@ -397,5 +397,18 @@ func Backoff_randomized(tk *Task, v_factor float64, v_r float64, v_ci Duration) 
 	_ = v_lo
 	var v_hi float64 = (v_c + v_delta)
 	_ = v_hi
-	return Duration_from_nanos(tk, FloatToInt[int64]((v_lo+float64(v_r*((v_hi-v_lo)+float64(1.0)))), "std/backoff.xo:194:23"))
+	return Backoff_nanos(tk, (v_lo + float64(v_r*((v_hi-v_lo)+float64(1.0)))))
+}
+
+func Backoff_nanos(tk *Task, v_x float64) Duration {
+	if Float_is_nan(tk, v_x) {
+		return Duration_from_nanos(tk, int64(0))
+	}
+	if Cmp(v_x, float64(9223372036854775807.0)) >= 0 {
+		return Duration_from_nanos(tk, INT_MAX)
+	}
+	if Cmp(v_x, FNeg(float64(9223372036854775808.0))) <= 0 {
+		return Duration_from_nanos(tk, INT_MIN)
+	}
+	return Duration_from_nanos(tk, FloatToInt[int64](v_x, "std/backoff.xo:210:23"))
 }

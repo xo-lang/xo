@@ -27,6 +27,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type boCase struct {
@@ -53,6 +55,12 @@ func boDur(r *rand.Rand, max time.Duration) time.Duration {
 		return time.Duration(1 + r.Intn(1000))
 	case 1:
 		return []time.Duration{time.Nanosecond, time.Millisecond, 500 * time.Millisecond, time.Second, 60 * time.Second, max}[r.Intn(6)]
+	case 2:
+		// the hostile dictionary (task #352): a positive Int edge (2^31,
+		// 2^53, Int's largest, ...) as the interval
+		if v := hostile.Pick(r, hostile.Ints()); v > 0 && r.Intn(3) == 0 {
+			return time.Duration(v)
+		}
 	}
 	return time.Duration(1 + r.Int63n(int64(max)))
 }

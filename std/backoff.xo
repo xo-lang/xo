@@ -171,7 +171,7 @@ fn interval(b: Backoff, attempt: Int) -> Duration {
     let next = if Float(ci.nanos()) >= Float(b.max_interval.nanos()) / b.multiplier {
       b.max_interval
     } else {
-      Duration.from_nanos(Int(Float(ci.nanos()) * b.multiplier))
+      nanos(Float(ci.nanos()) * b.multiplier)
     }
     if next == ci {
       break
@@ -191,5 +191,21 @@ fn randomized(factor: Float, r: Float, ci: Duration) -> Duration {
   let delta = factor * c
   let lo = c - delta
   let hi = c + delta
-  Duration.from_nanos(Int(lo + r * (hi - lo + 1.0)))
+  nanos(lo + r * (hi - lo + 1.0))
+}
+
+/// x nanoseconds as Go's time.Duration(x) on arm64: Int's largest or
+/// smallest past them, 0 for NaN. An interval near Int's largest
+/// randomizes past it (it faulted).
+fn nanos(x: Float) -> Duration {
+  if x.is_nan() {
+    return Duration.from_nanos(0)
+  }
+  if x >= 9223372036854775807.0 {
+    return Duration.from_nanos(Int.max)
+  }
+  if x <= -9223372036854775808.0 {
+    return Duration.from_nanos(Int.min)
+  }
+  Duration.from_nanos(Int(x))
 }

@@ -95,3 +95,24 @@ test "a multiplier below 1 shrinks a capped interval, as cenkalti's incrementCur
   let up = Backoff{initial: 1s, multiplier: 1.5, randomization: 0.0, max_interval: 2s}
   expect([0, 1, 2, 3, 30].map(fn(k: Int) -> Duration { up.delay(k, os.rand) })) == [1s, 1500ms, 2s, 2s, 2s]
 }
+
+/// A Rand whose float() is f.
+struct FixedFloat {
+  f: Float
+}
+
+fn (s: FixedFloat) float() -> Float uses rand { s.f }
+fn (s: FixedFloat) int(lo: Int, hi: Int) -> Int uses rand { fault("int") }
+fn (s: FixedFloat) bool() -> Bool uses rand { fault("bool") }
+fn (s: FixedFloat) bytes(n: Int) -> Bytes uses rand { fault("bytes") }
+fn (s: FixedFloat) shuffle[T](xs: List[T]) -> List[T] uses rand { fault("shuffle") }
+
+// found by internal/stdtest TestBackoffFuzz with the hostile dictionary
+// (task #352): an interval near Int's largest randomizes past it, and Go's
+// time.Duration(float64) on arm64 gives Int's largest (it faulted)
+test "a randomized interval past Int's largest is Int's largest, as cenkalti/backoff's on arm64" {
+  let b = Backoff{initial: Duration.from_nanos(Int.max), multiplier: 1.5, randomization: 0.5, max_interval: Duration.from_nanos(Int.max)}
+  expect(b.delay(0, FixedFloat{f: 0.99}).nanos()) == Int.max
+  expect(b.delay(3, FixedFloat{f: 0.99}).nanos()) == Int.max
+  expect(b.delay(0, FixedFloat{f: 0.0}).nanos()) == 4611686018427387904
+}
