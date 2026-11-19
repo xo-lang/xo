@@ -32,6 +32,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type lgField struct {
@@ -79,7 +81,15 @@ func lgFieldOf(r *rand.Rand) lgField {
 	case 0:
 		return lgField{key, "s", lgStr(r)}
 	case 1:
-		n := []int64{0, 1, -1, 42, math.MaxInt64, math.MinInt64, r.Int63() - r.Int63()}[r.Intn(7)]
+		vals := []int64{0, 1, -1, 42, math.MaxInt64, math.MinInt64, r.Int63() - r.Int63()}
+		i := r.Intn(len(vals))
+		n := vals[i]
+		if i == len(vals)-1 && n%3 == 0 {
+			// the hostile dictionary (task #352), chosen by n so the
+			// cases after it stay as they were
+			is := hostile.Ints()
+			n = is[uint64(n)%uint64(len(is))]
+		}
 		return lgField{key, "i", strconv.FormatInt(n, 10)}
 	case 2:
 		return lgField{key, "f", strconv.FormatInt(int64(math.Float64bits(lgFloat(r))), 10)}

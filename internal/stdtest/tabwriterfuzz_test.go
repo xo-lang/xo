@@ -25,6 +25,8 @@ import (
 	"strings"
 	"testing"
 	"text/tabwriter"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type twCase struct {
@@ -46,6 +48,14 @@ func twText(r *rand.Rand) []byte {
 				if r.Intn(12) == 0 {
 					// an escaped run: tabs and line breaks inside pass through
 					w = "\xff" + w + []string{"\t", "\n", "x"}[r.Intn(3)] + "\xff"
+				}
+				if b.Len()%11 == 5 {
+					// the hostile dictionary (task #352): UTF-8 cut inside
+					// a rune, which a cell's width counts a byte at a time,
+					// chosen by the length so the cases after it stay as
+					// they were
+					cuts := hostile.CutUTF8("é日😀")
+					w = cuts[b.Len()%len(cuts)] + w
 				}
 				b.WriteString(w)
 			}

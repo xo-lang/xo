@@ -31,7 +31,6 @@ imagefuzz_test.go
 jpegencfuzz_test.go
 jpegfuzz_test.go
 jsonrpcfuzz_test.go
-logfuzz_test.go
 lzwfuzz_test.go
 normfuzz_test.go
 otlpfuzz_test.go
@@ -40,7 +39,6 @@ pathfuzz_test.go
 protobuffuzz_test.go
 regexpfuzz_test.go
 rsafuzz_test.go
-tabwriterfuzz_test.go
 templatefuzz_test.go
 tlsfuzz_test.go
 tracefuzz_test.go
