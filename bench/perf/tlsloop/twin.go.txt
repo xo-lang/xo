@@ -1,7 +1,11 @@
 // Go twin of tlsloop/main.xo: a net/http server over TLS 1.3 and its
-// client in one process, N POSTs to /echo on one kept-alive HTTP/1.1
-// connection (HTTP/2 off on both sides, as Xo's ALPN leaves h2 out
-// unless Http2 is set). Reads cert.pem, key.pem and ca.pem from the
+// client in one process, N POSTs to /echo on one HTTP/2 connection:
+// std/http offers ALPN h2 first on both sides over TLS, as net/http's
+// defaults do (ForceAttemptHTTP2 because the Transport has its own
+// TLSClientConfig); the first response must be HTTP/2. Until
+// 2026-11-19 this twin turned h2 off on both sides, on the wrong belief
+// that Xo's ALPN left it out, and timed HTTP/1.1 against Xo's HTTP/2.
+// Reads cert.pem, key.pem and ca.pem from the
 // working directory. Prints `<workload> <bytes received>`.
 package main
 
@@ -52,16 +56,14 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	off := map[string]func(*http.Server, *tls.Conn, http.Handler){}
 	srv := &http.Server{
-		Handler:      mux,
-		TLSConfig:    &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}},
-		TLSNextProto: off,
+		Handler:   mux,
+		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13},
 	}
 	go srv.ServeTLS(l, "", "")
 	c := &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13},
-		TLSNextProto:    map[string]func(string, *tls.Conn) http.RoundTripper{},
+		TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13},
+		ForceAttemptHTTP2: true,
 	}}
 	url := "https://" + l.Addr().String() + "/echo"
 	total := 0
@@ -69,6 +71,9 @@ func main() {
 		resp, err := c.Post(url, "text/plain; charset=utf-8", bytes.NewReader(body))
 		if err != nil {
 			panic(err)
+		}
+		if resp.ProtoMajor != 2 {
+			panic("tlsloop twin: " + resp.Proto + ", not HTTP/2")
 		}
 		b, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
