@@ -1,0 +1,13 @@
+// A word put (width 8, checked and stored in line since 2026-11-19) past
+// len() is the same fault as put_le and put_be of other widths
+// (decision 0399): one byte short of 8 here.
+fn main(os: Os) {
+  var b = BytesBuilder.new()
+  b.write_str("abcdefgh")
+  b.put_be(0, 0x3132333435363738, 8)
+  os.stdio.println(b.freeze().to_str() ?? "")
+  var c = BytesBuilder.new()
+  c.write_str("abcdefgh")
+  c.put_be(1, 7, 8)
+  os.stdio.println("not reached")
+}

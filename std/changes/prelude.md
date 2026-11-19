@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-19: perf: BytesBuilder.put_be and put_le of 8 bytes in line
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/image gray and src profiles on darwin/arm64 (task #271): llrt_rs_put and raw.put under it were 80% of the gray draw and 56% of the NRGBA Src draw
+- Go reference: binary.BigEndian.PutUint64 (inlined by Go)
+- Change: a native put_be or put_le whose width is the constant 8 is now its range check and one store (rt.rs_put_word) at the call (compiler/ssa call.xo). llrt_rs_put's fault call gave it landing pads, so it was never inlined. Other widths and wasm are unchanged; so is the fault and its text
+- Measured: xo bench --ab on the linux/arm64 timing host (host 1), bench/perf/image gray 20 and src 20: wall B/A 0.261 (0.245 to 0.276) and 0.482 (0.476 to 0.486) (this push against its parent ec79bbb58, 4 rounds each). This also fixes ec79bbb58, whose in place draws made gray 1.842 (1.822 to 1.866) of the time before it on host 1 (792 to 1459 ms): gray is now 0.48 of its time before ec79bbb58
+- Test: test/codegen/wordput (no rs_put call in a put loop; fails before), internal/llvm/testdata/golden/bytesbuilder_put_word_fault, internal/arm64 TestImageGrayDrawCost (a ceiling between the 9.92G and 2.68G instructions on the Mac; fails before)
+
 ## 2026-11-19: feature: BytesBuilder.put(at, data)
 
 - Kind: feature

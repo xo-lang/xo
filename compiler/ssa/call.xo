@@ -2628,8 +2628,25 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
         let at = b.io_arg(fo, es, 0, it)
         let v = b.io_arg(fo, es, 1, it)
         let n = b.io_arg(fo, es, 2, it)
+        let (nc, nk) = b.int_const_of(n)
+        if !b.wasm && !b.c.inline_str && nk && nc == 8 {
+          // a word put, the check and the store in line: llrt_rs_put (its
+          // fault call gives it landing pads, so it is never inlined) and
+          // raw.put under it were 80% of std/image's gray draw and 56% of
+          // its NRGBA Src draw on the Mac (2026-11-19). A builder's object
+          // is unique, its count 1 and not a view (Bytes.into_builder
+          // copies any other), and an empty one fails the range check, so
+          // raw.put's count check has nothing left to catch here.
+          b.put_check(cur, at, n, pos)
+          var w = v
+          if fname == "put_be" {
+            w = b.rt("int_wrap", it, [b.cint(7), v, b.cint(0)])
+          }
+          b.place_set(p, b.rt("rs_put_word", st, [cur, at, w]))
+          return Some(b.unit())
+        }
         if b.wasm {
-          b.put_check_wasm(cur, at, n, pos)
+          b.put_check(cur, at, n, pos)
         }
         var cb = cur
         if b.c.inline_str {
@@ -2834,8 +2851,9 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   Some(b.undef(nt))
 }
 
-/// The checks of BytesBuilder.put_le and put_be in the wasm build (decision
-/// 0399; the native prelude's llrt_rs_put and std/rt's put do their own):
+/// The checks of BytesBuilder.put_le and put_be in the wasm build and of a
+/// native word put (decision 0399; the native prelude's llrt_rs_put and
+/// std/rt's put do their own for the rest):
 /// n is 1, 2, 4 or 8 and at..at + n lies within the builder, else the
 /// fault text they raise.
 /// BytesBuilder.write_le's width check in line (0 to 8, llrt_rs_write's
@@ -2856,7 +2874,7 @@ fn (var b: Builder) write_width_check(n: Int, pos: Str) {
   b.s.cur = ok
 }
 
-fn (var b: Builder) put_check_wasm(cur: Int, at: Int, n: Int, pos: Str) {
+fn (var b: Builder) put_check(cur: Int, at: Int, n: Int, pos: Str) {
   let it = b.int_t()
   let bt = b.bool_t()
   let wok = b.new_block()

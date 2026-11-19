@@ -1,0 +1,35 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a BytesBuilder
+// put_be or put_le of 8 bytes (a constant width) is its range check and one
+// store in line, with no call to the native prelude's llrt_rs_put or
+// raw.put (std/image's gray and NRGBA Src draws, 2026-11-19). Faults are
+// unchanged (test golden bytesbuilder_put_word_fault).
+
+fn fill_be(var b: BytesBuilder, n: Int) {
+  // arm64: "rev\s+x" "str\s+x" -"rs__put"
+  var i = 0
+  while i + 8 <= n {
+    b.put_be(i, i, 8)
+    i += 8
+  }
+}
+
+fn fill_le(var b: BytesBuilder, n: Int) {
+  // arm64: "str\s+x" -"rs__put"
+  var i = 0
+  while i + 8 <= n {
+    b.put_le(i, i, 8)
+    i += 8
+  }
+}
+
+fn main(os: Os) {
+  var b = BytesBuilder.new()
+  b.write_str("................")
+  fill_be(b, 16)
+  var c = BytesBuilder.new()
+  c.write_str("................")
+  fill_le(c, 16)
+  let x = b.freeze()
+  let y = c.freeze()
+  os.stdio.println("${x[7]} ${x[15]} ${y[0]} ${y[8]}")
+}
