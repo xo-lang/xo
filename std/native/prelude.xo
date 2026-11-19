@@ -824,7 +824,19 @@ fn bytes_clone(b: Bytes) -> Bytes {
 /// shared object or an inline one is copied into a new object. The
 /// builder's writers (put_le, put_be, the appends) then store into it.
 fn bytes_into_builder(b: Bytes) -> BytesBuilder {
-  rt.cast[Str, BytesBuilder](rt.rs_append(rt.cast[Bytes, Str](b), ""))
+  let s = rt.cast[Bytes, Str](b)
+  let inl = raw.is_inline(s)
+  let o = if inl { 0 } else { rt.obj_addr(s) }
+  // an append of no bytes writes nothing: it returns the object itself
+  // when its count is 1 and it is not a view (obj.reserve), else a copy.
+  // Only an object taken that way can be a mapped file's (decision 0722:
+  // heapos.mapped_obj reads the prefix below a heap object, never below
+  // a literal); a mapped file's bytes are read only, so they are copied
+  let r = rt.rs_append(s, "")
+  if !inl && rt.obj_addr(r) == o && heapos.mapped_obj(o) {
+    return rt.cast[Str, BytesBuilder](str_clone(r))
+  }
+  rt.cast[Str, BytesBuilder](r)
 }
 
 /// BytesBuilder.at (decision 0722): a check and a load, small enough to

@@ -94,8 +94,13 @@ shared (another Image value still holds it) copies once, as today.
   object itself when its count is 1, its capacity is enough and the value
   is not a view (`an >> 32 == 0`); a shared object or a view is copied.
   A read_mapped Bytes is a view at offset 8 (0402 draft 3), so it copies
-  without a check of its own; heapos.mapped_obj (task #414) is the second
-  guard for a later offset 0 value over a mapping. No compiler change.
+  without a check of its own. heapos.mapped_obj (task #414) is the second
+  guard (2026-11-19): after the append, an object that came back at its
+  own address (taken in place, so count 1 and not a view, never a
+  literal) is checked, and a mapped file's is copied. Test: the
+  fs_read_mapped golden's into_builder line on four backends; 2,000
+  into_builder rounds on a 3 MB unique Bytes still take 0 ms. No
+  compiler change.
 - The Go backend's Bytes_into_builder always copies (a Go string cannot
   be written).
 - A field read retains: `img.pix.into_builder()` with img still holding

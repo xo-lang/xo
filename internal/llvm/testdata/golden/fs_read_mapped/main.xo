@@ -26,6 +26,12 @@ fn main(os: Os) ! {
   out.println("slice ${part.to_str() ?? "?"}")
   let grown = (part.to_str() ?? "") + "!"
   out.println("grown ${grown} ${(m[0..4].to_str() ?? "")}")
+  // into_builder of a mapped value nothing else holds copies (decision
+  // 0722: a view at offset 8, and heapos.mapped_obj for one at offset 0):
+  // a write in place would fault on the read only page
+  var bb = read_mapped(root, "big.txt")?.into_builder()
+  bb.put_le(0, 76, 1)
+  out.println("builder ${bb.at(0)} ${bb.len()} ${m[0]} ${root.read("big.txt")?[0]}")
   root.write("next.txt", b"replaced")?
   root.rename("next.txt", "big.txt")?
   out.println("renamed ${root.read_text("big.txt")?} ${m.len()} ${(m[0..6].to_str() ?? "")}")
