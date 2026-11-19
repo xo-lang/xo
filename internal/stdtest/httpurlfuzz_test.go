@@ -34,6 +34,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // ufURL is one raw URL and the answers both parsers must give it.
@@ -116,6 +118,17 @@ func ufAbsolute(r *rand.Rand) string {
 	b.WriteString(ufSchemes[r.Intn(len(ufSchemes))])
 	b.WriteString("://")
 	b.WriteString(ufHosts[r.Intn(len(ufHosts))])
+	// the hostile dictionary (task #352): a port of a digit run past Int
+	// or a host ending in UTF-8 cut inside a rune, chosen by the length so
+	// the cases after it stay as they were
+	switch n := b.Len(); n % 6 {
+	case 1:
+		ds := hostile.Digits()
+		b.WriteString(":" + ds[n%len(ds)])
+	case 4:
+		cuts := hostile.CutUTF8("é日😀")
+		b.WriteString(cuts[n%len(cuts)])
+	}
 	b.WriteString(ufPieces[5][r.Intn(len(ufPieces[5]))])
 	b.WriteString(ufPieces[6][r.Intn(len(ufPieces[6]))])
 	b.WriteString(ufPieces[7][r.Intn(len(ufPieces[7]))])

@@ -37,6 +37,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // utCase is one URL and Go's answers about it.
@@ -79,6 +81,16 @@ func utRaw(r *rand.Rand) string {
 				bs = bs[:i]
 			}
 			s = string(bs)
+		}
+		if len(s)%8 == 5 {
+			// the hostile dictionary (task #352): an escaped UTF-8
+			// sequence cut inside a rune, which decodes to bytes that are
+			// not UTF-8, chosen by the length so the cases after it stay
+			// as they were
+			cuts := hostile.CutUTF8("é日😀")
+			for _, c := range []byte(cuts[len(s)%len(cuts)]) {
+				s += fmt.Sprintf("%%%02X", c)
+			}
 		}
 		if utf8.ValidString(s) {
 			return s

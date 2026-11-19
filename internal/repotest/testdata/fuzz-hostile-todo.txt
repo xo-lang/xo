@@ -22,7 +22,6 @@ grpchealthfuzz_test.go
 grpcreflectfuzz_test.go
 hpkefuzz_test.go
 httpproxyfuzz_test.go
-httpurlfuzz_test.go
 idnafuzz_test.go
 imagefuzz_test.go
 jpegencfuzz_test.go
@@ -39,6 +38,5 @@ tlsfuzz_test.go
 tracefuzz_test.go
 udpfuzz_test.go
 uniclassfuzz_test.go
-urltypefuzz_test.go
 x509fuzz_test.go
 xmlcodecfuzz_test.go
