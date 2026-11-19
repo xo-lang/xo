@@ -354,7 +354,15 @@ clean up /work after each job. Recreated again the same day (owner,
 OFF_SEED). perf runs, but the VM exposes no hardware counters (no
 armv8_pmuv3 under /sys/bus/event_source/devices; instructions and cycles
 are `<not supported>`), so instruction sweeps (bench/perf/sweep.py) run on
-the Mac (Last verified: 2026-10-30). The lead reinstalled the list below
+the Mac (Last verified: 2026-10-30). Its /dev/shm is Docker's default,
+tmpfs with noexec (2 GB), it has no other exec tmpfs, and jobs run as uid
+1000 with no capabilities, so nothing in it can stage a program for
+`xo bench --ab`: since task #382 a staged --ab there exits 2 naming
+XO_BENCH_STAGE (before, every round failed with "permission denied").
+Staged timing on host 1 needs the container created with `--tmpfs
+/dev/shm:rw,exec,nosuid,size=8g` (an owner recreate; /work is a volume
+and survives); until then `--in-place` runs, with the #347 bias of up to
+9% between files written differently (Last verified: 2026-11-18). The lead reinstalled the list below
 (openssh-server first: `apt-get install openssh-server`, `mkdir -p
 /run/sshd`, PermitRootLogin and PasswordAuthentication in
 /etc/ssh/sshd_config.d/, `/usr/sbin/sshd`, which a container restart does

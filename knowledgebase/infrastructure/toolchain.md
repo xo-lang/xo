@@ -1270,7 +1270,13 @@ placement follows the writer; notes/xw-1/347/verdict.md), on tmpfs
 +0.27%. A copied program finds the std beside its original through
 `XO_STD` (unless its side's `--env` sets it); a program named without a
 `/` (found on $PATH) runs in place; `--in-place` runs both where they
-are. Metrics: wall_ms, cpu_ms,
+are. The stage directory must allow exec (task #382, 2026-11-18: host 1's
+offload container mounts /dev/shm noexec, and every staged round failed
+with "permission denied"): `XO_BENCH_STAGE=DIR` if set, else /dev/shm,
+else /run/user/UID, else any other tmpfs mounted rw without noexec (from
+/proc/mounts; Docker's masking mounts under /proc, /sys and /dev are
+skipped); when none is there `--ab` exits 2 with a line naming
+`XO_BENCH_STAGE`, never staging on disk. Metrics: wall_ms, cpu_ms,
 cpu_us_per_op, instructions, instructions_per_op, cycles, cycles_per_op and
 ipc (instructions per cycle, higher is better; these from macOS `time -l`'s
 "instructions retired" and "cycles elapsed" lines, 2026-10-26; on Linux

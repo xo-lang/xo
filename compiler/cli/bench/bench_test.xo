@@ -282,13 +282,36 @@ test "a wall time verdict needs 100 ms samples (task #372)" {
 }
 
 test "--ab copies A and B into one tmpfs directory on Linux only (task #378)" {
-  expect(stage_root("linux", false, true) == "/dev/shm")
-  expect(stage_root("linux", true, true) == "")
-  expect(stage_root("linux", false, false) == "")
-  expect(stage_root("darwin", false, true) == "")
+  let shm = "shm /dev/shm tmpfs rw,nosuid,nodev,relatime 0 0\n"
+  expect(stage_pick("linux", false, "", shm, "1000").root) == "/dev/shm"
+  expect(stage_pick("linux", true, "", shm, "1000").root) == ""
+  expect(stage_pick("darwin", false, "", shm, "1000").root) == ""
   let o = parse_opts(["--ab", "--in-place", "p", "q"]).or_fault("opts")
   expect(o.in_place)
   expect(!parse_opts(["--ab", "p", "q"]).or_fault("opts").in_place)
+}
+
+test "--ab stages only on a tmpfs that allows exec (task #382)" {
+  // host 1's offload container, 2026-11-18: /dev/shm noexec, no other tmpfs
+  let host1 = "overlay / overlay rw,relatime 0 0\nshm /dev/shm tmpfs rw,nosuid,nodev,noexec,relatime,size=2097152k 0 0\n/dev/vda1 /work ext4 rw,relatime 0 0\ntmpfs /proc/interrupts tmpfs rw,nosuid,size=65536k,mode=755 0 0\ntmpfs /proc/kcore tmpfs rw,nosuid,size=65536k,mode=755 0 0\ntmpfs /sys/firmware tmpfs ro,relatime 0 0\ntmpfs /dev tmpfs rw,nosuid,size=65536k,mode=755 0 0\n"
+  let p = stage_pick("linux", false, "", host1, "0")
+  expect(p.root) == ""
+  expect(p.why.contains("XO_BENCH_STAGE") && p.why.contains("/dev/shm noexec"))
+  // XO_BENCH_STAGE wins; --in-place never stages and never refuses
+  expect(stage_pick("linux", false, "/work/stage", host1, "0").root) == "/work/stage"
+  expect(stage_pick("linux", true, "", host1, "0").why) == ""
+  // /run/user/UID next, then any exec tmpfs; ro and noexec ones are skipped
+  let user = host1 + "tmpfs /run/user/1000 tmpfs rw,nosuid,nodev,relatime 0 0\ntmpfs /run/user/1001 tmpfs rw 0 0\n"
+  expect(stage_pick("linux", false, "", user, "1001").root) == "/run/user/1001"
+  let other = host1 + "tmpfs /ro tmpfs ro 0 0\ntmpfs /fast tmpfs rw,nosuid 0 0\n"
+  expect(stage_pick("linux", false, "", other, "0").root) == "/fast"
+  // the last mount of a point is the one in effect
+  let over = "shm /dev/shm tmpfs rw 0 0\nshm /dev/shm tmpfs rw,noexec 0 0\n"
+  expect(stage_pick("linux", false, "", over, "0").root) == ""
+  let back = "shm /dev/shm tmpfs rw,noexec 0 0\nshm /dev/shm tmpfs rw,exec 0 0\n"
+  expect(stage_pick("linux", false, "", back, "0").root) == "/dev/shm"
+  expect(uid_of("Name:\tx\nUid:\t1000\t1000\t1000\t1000\nGid:\t5\n")) == "1000"
+  expect(uid_of("")) == ""
 }
 
 test "a staged xo finds the std beside its original (task #378)" {

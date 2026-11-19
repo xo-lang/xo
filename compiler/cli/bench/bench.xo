@@ -806,13 +806,86 @@ fn inline_fallback(os: Os, prog: Str) -> Str uses fs.read {
 /// on the linux/amd64 host (median of 24 null rounds), two files written
 /// the same way matched, and on tmpfs the same pair read +0.27%
 /// (notes/xw-1/347/verdict.md, 2026-11-18). Copies written the same way
-/// into one tmpfs directory take that out of every pair. Linux only
-/// (shm: /dev/shm is there); --in-place keeps the files as given.
-fn stage_root(goos: Str, in_place: Bool, shm: Bool) -> Str {
-  if in_place || goos != "linux" || !shm {
-    return ""
+/// into one tmpfs directory take that out of every pair. Linux only;
+/// --in-place keeps the files as given. The root must allow exec (task
+/// #382, 2026-11-18: host 1's offload container mounts /dev/shm noexec,
+/// and every staged round failed with a bare "permission denied"), so it
+/// is read from the mount table (stage_pick).
+struct StagePick {
+  /// the directory to stage under, "" to measure in place
+  root: Str
+  /// why --ab cannot stage (exit 2), "" when root is the answer
+  why: Str
+}
+
+/// stage_pick: env_dir (XO_BENCH_STAGE) as given, else the first of
+/// /dev/shm, /run/user/UID and any other tmpfs in mounts (/proc/mounts'
+/// text) that is mounted rw without noexec (none under /proc, /sys or
+/// /dev but /dev/shm, Docker's own tmpfs mounts), the last mount of a point
+/// being the one in effect. When none allows exec, why says so: --ab never
+/// stages on disk, where the #347 bias comes back.
+fn stage_pick(goos: Str, in_place: Bool, env_dir: Str, mounts: Str, uid: Str) -> StagePick {
+  if in_place || goos != "linux" {
+    return StagePick{root: "", why: ""}
   }
-  "/dev/shm"
+  if !env_dir.is_empty() {
+    return StagePick{root: env_dir, why: ""}
+  }
+  let lines = mounts.split("\n")
+  var seen: List[Str] = []
+  var ok: List[Str] = []
+  var noexec: List[Str] = []
+  for k in 0..lines.len() {
+    let f = words(lines[lines.len() - 1 - k])
+    if f.len() < 4 || has(seen, f[1]) {
+      continue
+    }
+    seen.push(f[1])
+    let o = f[3].split(",")
+    // Docker masks /proc and /sys files with rw tmpfs mounts (host 1:
+    // /proc/interrupts, /proc/kcore); they hold no directory to stage in
+    let masked = f[1].starts_with("/proc/") || f[1].starts_with("/sys/") || f[1] == "/dev" || f[1].starts_with("/dev/") && f[1] != "/dev/shm"
+    if f[2] != "tmpfs" || !has(o, "rw") || masked {
+      continue
+    }
+    if has(o, "noexec") {
+      noexec.push(f[1])
+    } else {
+      ok.push(f[1])
+    }
+  }
+  for want in ["/dev/shm", "/run/user/${uid}"] {
+    if has(ok, want) {
+      return StagePick{root: want, why: ""}
+    }
+  }
+  if ok.len() > 0 {
+    return StagePick{root: ok[ok.len() - 1], why: ""}
+  }
+  let which = if noexec.len() > 0 { " (${noexec.join(", ")} noexec)" } else { "" }
+  StagePick{root: "", why: "--ab stages A and B on a tmpfs that allows exec, and none is mounted here${which}; set XO_BENCH_STAGE=DIR to a directory on one (copies on disk read up to 9% apart, task #347), or pass --in-place"}
+}
+
+/// has: whether xs holds x.
+fn has(xs: List[Str], x: Str) -> Bool {
+  for y in xs {
+    if y == x {
+      return true
+    }
+  }
+  false
+}
+
+/// uid_of: the real uid in /proc/self/status' text ("" when absent).
+fn uid_of(status: Str) -> Str {
+  for line in status.split("\n") {
+    if line.starts_with("Uid:") {
+      // tab separated: "Uid:\t1000\t1000\t1000\t1000"
+      let f = line.split("\t")
+      return if f.len() > 1 { f[1].trim() } else { "" }
+    }
+  }
+  ""
 }
 
 /// The base name of a path.
@@ -948,7 +1021,16 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs, proc, 
       }
     }
   }
-  let st = stage(os.fs, stage_root(h.goos, o0.in_place, os.fs.exists("/dev/shm").ok() ?? false), o0, pa, pb)
+  let pick = if h.goos == "linux" && !o0.in_place {
+    stage_pick(h.goos, false, os.env.get("XO_BENCH_STAGE") ?? "", os.fs.read_text("/proc/mounts").ok() ?? "", uid_of(os.fs.read_text("/proc/self/status").ok() ?? ""))
+  } else {
+    StagePick{root: "", why: ""}
+  }
+  if !pick.why.is_empty() {
+    os.stdio.eprintln("xo bench: ${pick.why}")
+    return 2
+  }
+  let st = stage(os.fs, pick.root, o0, pa, pb)
   if !st.note.is_empty() && !o0.json {
     os.stdio.eprintln("xo bench: ${st.note}")
   }
