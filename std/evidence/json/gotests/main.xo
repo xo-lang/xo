@@ -1,0 +1,70 @@
+// The Xo side of std/json's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/json's result as text, as go/main.go prints package json's.
+// Kinds valid, number, syntax, compact and indent over one JSON text.
+// See scripts/stdproven/gotests.go.
+use std/json
+use std/base64
+
+fn number(s: Str) -> Bool {
+  var r = json.tokens(s.bytes())
+  let t = match r.next() {
+    Ok(t) => t
+    Err(_) => return false
+  }
+  let ok = match t {
+    Some(json.Token.Number(text)) => text == s
+    _ => false
+  }
+  ok && match r.next() {
+    Ok(None) => true
+    _ => false
+  }
+}
+
+fn jrun(kind: Str, inp: List[Str]) -> Str {
+  let s = inp[0]
+  match kind {
+    "valid" => match json.parse_value(s) {
+      Ok(_) => "true"
+      Err(_) => "false"
+    }
+    "number" => "${number(s)}"
+    "syntax" => match json.parse_value(s) {
+      Ok(_) => "ok"
+      Err(e) => "err ${e.go_text()}"
+    }
+    "compact" => match json.compact(s) {
+      Ok(t) => t
+      Err(e) => "err ${e.go_text()}"
+    }
+    "indent" => match json.indent(s, "", "\t") {
+      Ok(t) => t
+      Err(e) => "err ${e.go_text()}"
+    }
+    _ => "?"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "valid" | "number" | "syntax" | "compact" | "indent" => jrun(kind, inp)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

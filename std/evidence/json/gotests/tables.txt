@@ -1,0 +1,15 @@
+# Go's json test tables (go1.26) run through std/json
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# valid is Valid (parse_value); number is a text that is one JSON
+# number (Go's isValidNumber, through a Decoder with UseNumber; Xo's
+# tokens); syntax is Unmarshal's error (go_text); compact and indent are
+# Compact and Indent with a tab, each over both columns.
+encoding/json scanner_test.go TestValid.tests data valid
+encoding/json number_test.go TestNumberIsValid.validTests . number
+encoding/json number_test.go TestNumberIsValid.invalidTests . number
+encoding/json decode_test.go TestUnmarshalSyntax.tests in syntax
+encoding/json scanner_test.go TestIndentErrors.tests in syntax
+encoding/json scanner_test.go TestCompactAndIndent.tests compact compact
+encoding/json scanner_test.go TestCompactAndIndent.tests indent compact
+encoding/json scanner_test.go TestCompactAndIndent.tests compact indent
+encoding/json scanner_test.go TestCompactAndIndent.tests indent indent
