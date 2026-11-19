@@ -443,17 +443,14 @@ pub fn bytes_wiped() -> Int {
 /// `rand.int(lo, hi)`: uniform in [lo, hi) by rejection (std/rt's
 /// randRange); faults on an empty range at the position at.
 pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
-  if hi <= lo {
-    rt.fault_raise("rand.int(${lo}, ${hi}): the range is empty", at)
-  }
-  // as UInt64s: span = hi - lo, limit = MAX - MAX % span; draws at or
-  // above limit are rejected. The limit is at least 2^64 - span, so a draw
-  // below that is kept without computing it (its division was 36% of
-  // random.normal's time); the same draws are kept as before.
   if lo == Int.min && hi == Int.max {
     // the whole word but one value (random.normal's and exp's draw, one a
     // try as Go's Uint64): the general path's result, Int.min + v with v
-    // = 2^64 - 1 rejected, without its division per draw (task #87)
+    // = 2^64 - 1 rejected, without its division per draw (task #87). This
+    // test and the draw stay small so a call with constant bounds inlines
+    // to the buffer read alone; every other range is next_int_span's
+    // (bench/perf/random exp on linux/amd64, 2026-11-19: next_int was a
+    // call with five saved registers a draw)
     while true {
       let v = next_u64()
       if v != -1 {
@@ -461,6 +458,18 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
       }
     }
   }
+  next_int_span(lo, hi, at)
+}
+
+/// next_int for any range but the whole word.
+fn next_int_span(lo: Int, hi: Int, at: Str) -> Int {
+  if hi <= lo {
+    rt.fault_raise("rand.int(${lo}, ${hi}): the range is empty", at)
+  }
+  // as UInt64s: span = hi - lo, limit = MAX - MAX % span; draws at or
+  // above limit are rejected. The limit is at least 2^64 - span, so a draw
+  // below that is kept without computing it (its division was 36% of
+  // random.normal's time); the same draws are kept as before.
   let span = hi.wrapping_sub(lo)
   if span > 0 && span <= 4294967295 {
     // a span below 2^32 from the worker's buffer (decision 0696): Lemire's

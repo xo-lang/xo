@@ -1,0 +1,20 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a draw of the whole
+// word, `r.int(Int.min, Int.max)` (std/random's normal and exp), inlines
+// to the worker buffer's read (std/native/llrt/rand.xo next_int, task
+// #87): no call to next_int_span, which every other range takes.
+
+fn draw(r: Rand, n: Int) -> Int {
+  var s = 0
+  var k = 0
+  while k < n {
+    s = s ^ r.int(Int.min, Int.max)
+    k += 1
+  }
+  s
+}
+
+fn main(os: Os) uses stdio, rand {
+  // arm64: -"bl _?xo_f_rand_2enext__int__span\n" -"bl _?xo_f_rand_2enext__int\n"
+  let s = draw(os.rand, 1000)
+  os.stdio.println("${s != 7}")
+}
