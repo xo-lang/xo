@@ -3949,10 +3949,13 @@ column then looks the rows up instead of scanning, in the scan's order;
 `CREATE UNIQUE INDEX` is not supported, declare the column `UNIQUE`),
 `DROP INDEX [IF EXISTS] name`,
 `INSERT ... VALUES` (several tuples), `SELECT` of `*`, expressions with `AS`,
-or `COUNT(*)` from one table with `WHERE`, `ORDER BY` (several keys, `ASC`/`DESC`),
+or aggregates (`COUNT(*)`, and `count`, `sum`, `avg`, `min`, `max` of an
+expression, as SQLite's: NULLs skipped, `sum` an `Integer` until a `Real`,
+`avg` a `Real`, NULL over no rows but `count`'s 0; not mixed with plain
+columns, and `LIMIT`/`OFFSET` apply to the one result row) from one table with `WHERE`, `ORDER BY` (several keys, `ASC`/`DESC`),
 `LIMIT`/`OFFSET`, `UPDATE ... SET ... WHERE`, and `DELETE ... WHERE`.
 `INSERT`, `UPDATE`, and `DELETE` take `RETURNING` with the items of
-`SELECT` (`*`, expressions, `AS`; not `COUNT(*)`), yielding the inserted
+`SELECT` (`*`, expressions, `AS`; no aggregates), yielding the inserted
 rows, the updated rows with their new values, or the deleted rows, in table
 order; generated keys and defaults are filled in.
 Expressions: columns, literals, `$n`, `+ - * /`, `= != <> < <= > >=`, `AND`,
@@ -4023,7 +4026,9 @@ scale for numeric, nullable None. sqlite reports the declared type upper
 cased (mattn's `ColumnTypeDatabaseTypeName`, `""` for an expression) and
 nothing else, since a column's values may be of any storage class. The
 in memory database reports a table column's declared type, its `NOT
-NULL` as nullable and its kind; `COUNT(*)` an `Integer` never null. On
+NULL` as nullable and its kind; `COUNT(*)` and `count` an `Integer`
+never null, `avg` a nullable `Real`, and `sum`, `min` and `max` of a
+column its kind, nullable. On
 the Go backend a driver bound with `use go` reports none.
 
 - The effect parameter (decision 0534): a driver's operations may perform

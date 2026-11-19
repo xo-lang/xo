@@ -410,3 +410,40 @@ test "Numeric's JSON: a bare number keeping the scale (pgx's MarshalJSON); NaN a
   expect(json.decode_str[sql.Numeric?]("null")) == Ok(None)
   expect(json.decode_str[sql.Numeric]("\"NaN\"").is_err()) == true
 }
+
+test "count, sum, avg, min and max over the selected rows, as SQLite's (task #397)" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT, n INT, r REAL)")?
+  db.exec("INSERT INTO t (name, n, r) VALUES ('b', 3, 1.5), ('a', NULL, NULL), ('c', 4, 2.0), ('d', 5, NULL)")?
+  let a = db.query_one("SELECT count(n) AS c, sum(n) AS s, avg(n) AS v, min(n) AS lo, max(n) AS hi, count(*) AS k FROM t")?
+  expect(a.int("c")?) == 3
+  expect(a.int("s")?) == 12
+  expect(a.float("v")?) == 4.0
+  expect(a.int("lo")?) == 3
+  expect(a.int("hi")?) == 5
+  expect(a.int("k")?) == 4
+  // a Real makes the sum Real; min and max of text; names without AS
+  let b = db.query_one("SELECT sum(r), min(name), max(name) FROM t")?
+  expect(b.columns()) == ["sum", "min", "max"]
+  expect(b.float("sum")?) == 3.5
+  expect(b.str("min")?) == "a"
+  expect(b.str("max")?) == "d"
+  // WHERE first; no rows: count 0, the others NULL
+  expect(db.query_one("SELECT sum(n) AS s FROM t WHERE n > 3")?.int("s")?) == 9
+  let e = db.query_one("SELECT count(n) AS c, sum(n) AS s, avg(n) AS v, max(n) AS m FROM t WHERE n > 9")?
+  expect(e.int("c")?) == 0
+  expect(e.int_opt("s")?) == None
+  expect(e.float_opt("v")?) == None
+  expect(e.int_opt("m")?) == None
+  // LIMIT and OFFSET apply to the one result row, not the rows counted
+  expect(db.query_one("SELECT count(*) AS k FROM t LIMIT 1")?.int("k")?) == 4
+  expect(db.query_one("SELECT sum(n) AS s FROM t LIMIT 1")?.int("s")?) == 12
+  expect(db.query("SELECT count(*) FROM t LIMIT 1 OFFSET 1")?.len()) == 0
+  // errors: a mix with a plain column, sum of text, an aggregate in WHERE,
+  // overflow
+  expect(db.query("SELECT name, sum(n) FROM t").is_err()) == true
+  expect(db.query("SELECT sum(name) FROM t").is_err()) == true
+  expect(db.query("SELECT id FROM t WHERE sum(n) > 1").is_err()) == true
+  db.exec("INSERT INTO t (name, n) VALUES ('big', 9223372036854775807)")?
+  expect(db.query("SELECT sum(n) FROM t").is_err()) == true
+  expect(db.query_one("SELECT max(n) AS m FROM t")?.int("m")?) == 9223372036854775807
+}

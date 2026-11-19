@@ -3241,7 +3241,7 @@ fn eq_leaves(t: Table, n: Node, args: List[sql.SqlValue], var out: List[(Int, sq
           }
           args[i - 1]
         }
-        Col(_) | Count | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => return false
+        Col(_) | Count | Agg(_, _) | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => return false
       }
       let ci = t.index(c)
       if ci < 0 {
@@ -3522,6 +3522,9 @@ enum Node {
   Param(n: Int)
   Col(name: Str)
   Count
+  /// count, sum, avg, min or max of x over the selected rows (SQLite's
+  /// aggregate functions)
+  Agg(f: Str, x: Node)
   Bin(op: Str, l: Node, r: Node)
   Not(x: Node)
   IsNull(x: Node, neg: Bool)
@@ -3733,11 +3736,15 @@ fn (var p: Parser) primary() -> Node ! sql.SqlErr {
     if t.s == "false" {
       return Node.Lit(v: sql.SqlValue.Flag(b: false))
     }
-    if p.is_sym("(") && t.s == "count" {
+    if p.is_sym("(") && (t.s is "count" | "sum" | "avg" | "min" | "max") {
       p.i += 1
-      p.expect_sym("*")?
+      if t.s == "count" && p.accept_sym("*") {
+        p.expect_sym(")")?
+        return Node.Count
+      }
+      let x = p.expr()?
       p.expect_sym(")")?
-      return Node.Count
+      return Node.Agg(f: t.s, x: x)
     }
     if p.accept_sym(".") {
       // table.column: the table is ignored
@@ -3874,6 +3881,7 @@ fn (e: EvalEnv) eval(n: Node) -> sql.SqlValue ! sql.SqlErr {
       return Err(syntax("no such column ${name}"))
     }
     Count => return Err(syntax("COUNT(*) is only allowed in the select list"))
+    Agg(f, _) => return Err(syntax("${f}() is only allowed in the select list"))
     Not(x) => {
       return match e.eval(x)? {
         Flag(b) => sql.SqlValue.Flag(b: !b)
@@ -4818,8 +4826,8 @@ fn (var p: Parser) returning() -> (List[SelItem], Bool) ! sql.SqlErr {
   }
   let items = p.sel_items()?
   for it in items {
-    if !it.star && it.e is Count {
-      return Err(syntax("RETURNING cannot use COUNT(*)"))
+    if !it.star && (it.e is Count | Agg(_, _)) {
+      return Err(syntax("RETURNING cannot use an aggregate"))
     }
   }
   (items, true)
@@ -4845,8 +4853,8 @@ fn (var p: Parser) sel_items() -> List[SelItem] ! sql.SqlErr {
   items
 }
 
-/// The result column names of items over t, and the count of COUNT(*)
-/// items.
+/// The result column names of items over t, and the count of aggregate
+/// items (COUNT(*) and Agg).
 fn sel_cols(t: Table, items: List[SelItem]) -> (List[Str], Int) {
   var cols: List[Str] = []
   var counts = 0
@@ -4857,7 +4865,7 @@ fn sel_cols(t: Table, items: List[SelItem]) -> (List[Str], Int) {
       }
     } else if it.alias != "" {
       cols.push(it.alias)
-      if it.e is Count {
+      if it.e is Count | Agg(_, _) {
         counts += 1
       }
     } else {
@@ -4865,6 +4873,10 @@ fn sel_cols(t: Table, items: List[SelItem]) -> (List[Str], Int) {
         Col(name) => cols.push(name)
         Count => {
           cols.push("count")
+          counts += 1
+        }
+        Agg(f, _) => {
+          cols.push(f)
           counts += 1
         }
         Lit(_) | Param(_) | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => cols.push("?column?")
@@ -4912,6 +4924,7 @@ fn sel_types(t: Table, items: List[SelItem]) -> List[sql.ColumnType] {
       match it.e {
         Col(n) => n
         Count => "count"
+        Agg(f, _) => f
         Lit(_) | Param(_) | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => "?column?"
       }
     }
@@ -4927,6 +4940,25 @@ fn sel_types(t: Table, items: List[SelItem]) -> List[sql.ColumnType] {
         out.push(ct)
       }
       Count => out.push(sql.ColumnType{name: name, nullable: Some(false), kind: "Integer"})
+      Agg(f, x) => {
+        if f == "count" {
+          out.push(sql.ColumnType{name: name, nullable: Some(false), kind: "Integer"})
+        } else if f == "avg" {
+          out.push(sql.ColumnType{name: name, nullable: Some(true), kind: "Real"})
+        } else {
+          // sum, min and max of a column: its kind, NULL over no rows
+          var ct = sql.ColumnType{name: name, nullable: Some(true)}
+          if let Col(n) = x {
+            for c in t.cols {
+              if c.name == n {
+                ct = col_type(c, name) with {nullable: Some(true)}
+                break
+              }
+            }
+          }
+          out.push(ct)
+        }
+      }
       Lit(_) | Param(_) | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => out.push(sql.ColumnType{name: name})
     }
   }
@@ -5145,6 +5177,22 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
       rows = sorted
     }
   }
+  // aggregates: one row over every filtered row; OFFSET and LIMIT apply
+  // to that row, as SQLite's
+  let (cols, counts) = sel_cols(t, items)
+  if counts > 0 {
+    if counts != items.len() {
+      return Err(syntax("an aggregate cannot be mixed with other columns"))
+    }
+    var out: List[sql.SqlValue] = []
+    for it in items {
+      out.push(match it.e {
+        Agg(f, x) => agg_value(env, f, x, rows)?
+        _ => sql.SqlValue.Integer(n: rows.len())
+      })
+    }
+    rows = [out]
+  }
   // offset, limit
   if let Some(o) = offset {
     var k = int_arg(o, args)?
@@ -5159,19 +5207,65 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
       rows = rows[0..k]
     }
   }
-  // project
-  let (cols, counts) = sel_cols(t, items)
   if counts > 0 {
-    if counts != items.len() {
-      return Err(syntax("COUNT(*) cannot be mixed with other columns"))
-    }
-    var out: List[sql.SqlValue] = []
-    for _ in items {
-      out.push(sql.SqlValue.Integer(n: rows.len()))
-    }
-    return MemRows{cols: cols, rows: [out], types: sel_types(t, items)}
+    return MemRows{cols: cols, rows: rows, types: sel_types(t, items)}
   }
   project(t, items, rows, args)
+}
+
+/// An aggregate over rows, as SQLite's: count the non-NULL values; sum an
+/// Integer while every value is one (integer overflow is an error) and a
+/// Real once one is Real; avg a Real; min and max by the engine's order;
+/// NULL over no values except count's 0. Text and other values are an
+/// error in sum and avg.
+fn agg_value(var env: EvalEnv, f: Str, x: Node, rows: List[List[sql.SqlValue]]) -> sql.SqlValue ! sql.SqlErr {
+  var n = 0
+  var isum = 0
+  var fsum = 0.0
+  var real = false
+  var best: sql.SqlValue? = None
+  for row in rows {
+    env.row = row
+    let v = env.eval(x)?
+    if v is Null {
+      continue
+    }
+    n += 1
+    if f is "sum" | "avg" {
+      match v {
+        Integer(k) => {
+          fsum += Float(k)
+          if !real {
+            isum = match isum.checked_add(k) {
+              Some(m) => m
+              None => if f == "sum" { return Err(syntax("integer overflow")) } else { 0 }
+            }
+          }
+        }
+        Real(r) => {
+          real = true
+          fsum += r
+        }
+        other => return Err(syntax("${f}() of ${type_name(other)}"))
+      }
+    } else if f is "min" | "max" {
+      match best {
+        None => best = Some(v)
+        Some(b) => {
+          let c = sql_cmp(b, v)?
+          if (f == "min" && c > 0) || (f == "max" && c < 0) {
+            best = Some(v)
+          }
+        }
+      }
+    }
+  }
+  match f {
+    "count" => sql.SqlValue.Integer(n: n)
+    "sum" => if n == 0 { sql.SqlValue.Null } else if real { sql.SqlValue.Real(f: fsum) } else { sql.SqlValue.Integer(n: isum) }
+    "avg" => if n == 0 { sql.SqlValue.Null } else { sql.SqlValue.Real(f: fsum / Float(n)) }
+    _ => best ?? sql.SqlValue.Null
+  }
 }
 
 // sql.named: pgx v5.12.0 named_args.go (NamedArgs and StrictNamedArgs

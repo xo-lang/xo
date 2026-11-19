@@ -15,6 +15,33 @@ column as a UTC time.Civil: a Time as its civil in UTC, and the text a driver ke
 moved to UTC by its offset (no offset is UTC). infinity and -infinity are Mismatch in civil and
 Bound variants in civil_bound; MySQL's zero date and malformed text are Mismatch.
 
+## 2026-11-19: feature: the in memory database's count, sum, avg, min and max
+
+- Kind: feature
+- Commit: this commit
+- Found by: writing std/testing evidence (2026-11-19): `SELECT sum(n) FROM t` on testing.fake_db was "syntax error: expected FROM, found ("
+- Go reference: none (SQLite's aggregate functions, lang_aggfunc.html; the in memory database is Xo's)
+- Test: std/native/sql_test.xo "count, sum, avg, min and max over the selected rows, as SQLite's (task #397)" (fails before: syntax error)
+- Timing: none
+
+sql.memory (and testing.fake_db) takes count, sum, avg, min and max of an expression in the select
+list, as SQLite's: NULLs skipped; sum an Integer while every value is one (overflow is an error) and
+a Real once one is Real; avg a Real; min and max by the engine's order; NULL over no rows except
+count's 0. An aggregate cannot be mixed with a plain column, in WHERE, or in RETURNING.
+
+## 2026-11-19: fix: the in memory database's LIMIT and OFFSET apply to an aggregate's row
+
+- Kind: fix
+- Commit: this commit
+- Found by: the aggregate test above (task #397)
+- Go reference: none (SQLite applies LIMIT and OFFSET to the result rows)
+- Test: the same test's `SELECT count(*) AS k FROM t LIMIT 1` (1 before, 4 after)
+- Affected: Xo 0.54.0 and earlier
+- Timing: none
+
+`SELECT count(*) FROM t LIMIT 1` cut the rows to one before counting them and answered 1; LIMIT and
+OFFSET now apply to the aggregate's one result row, as SQLite's.
+
 ## 2026-11-18: fix: MySQL names a VECTOR column VECTOR
 
 - Kind: fix
