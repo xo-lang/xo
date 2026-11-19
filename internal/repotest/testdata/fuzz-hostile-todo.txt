@@ -17,7 +17,6 @@ jsonrpcfuzz_test.go
 lzwfuzz_test.go
 otlpfuzz_test.go
 rsafuzz_test.go
-templatefuzz_test.go
 tlsfuzz_test.go
 tracefuzz_test.go
 udpfuzz_test.go

@@ -1,5 +1,17 @@
 # std/template changes
 
+## 2026-11-18: fix: a number literal in UInt64's range past Int parses, as Go's ParseUint reads it (native)
+
+- Kind: fix
+- Commit: this push
+- Found by: task #352 (the template fuzz harness given the hostile dictionary's numbers as literals, seed 2)
+- Go reference: text/template/parse node.go newNumber (strconv.ParseUint(text, 0, 64) before ParseInt), go1.26.1
+- Test: std/template_test.xo "a literal in UInt64's range past Int parses, as Go's ParseUint reads it, and fails where an int is wanted" (it failed before), TestTemplateFuzz seeds 2 to 5
+- Timing: none (only a literal past Int takes the new path)
+- Shipped in: not yet released
+
+`{{print 18446744073709551615}}` was a parse error (`integer overflow`), because the uint test read the digits as a Float, which rounds 2^64 - 1 to 2^64, and `0xFFFFFFFFFFFFFFFF`, `0x8000000000000000`, octal and binary were `illegal number syntax`, since only decimal digits were tried. A literal is now a uint when Go's ParseUint(text, 0, 64) takes it (no sign, a base prefix, _ between digits), so it parses and fails where an int is wanted (`... overflows int`), as Go's does; a signed one and one past UInt64 are still parse errors.
+
 ## 2026-11-16: fix: add can redefine a template of the set, as Go's Parse does (native)
 
 - Kind: fix

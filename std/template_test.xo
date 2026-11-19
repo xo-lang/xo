@@ -73,6 +73,20 @@ test "a function's error and the parse errors are Go's text" {
   expect(text("{{.name")) == "err template: t:1: unclosed action"
 }
 
+test "a literal in UInt64's range past Int parses, as Go's ParseUint reads it, and fails where an int is wanted" {
+  // task #352: 2^64 - 1 rounds to 2^64 as a Float, and hex, octal and
+  // binary were never read as a uint, so these were parse errors
+  let over = fn(lit: Str, col: Int) -> Str { "err template: t:1:${col}: executing \"t\" at <${lit}>: ${lit} overflows int" }
+  for lit in ["18446744073709551615", "0xFFFFFFFFFFFFFFFF", "0x8000000000000000", "18_446_744_073_709_551_615", "1844674407370955161_5", "0b1111111111111111111111111111111111111111111111111111111111111111", "01777777777777777777777", "0o1777777777777777777777", "9223372036854775808"] {
+    expect(text("{{print ${lit}}}")) == over(lit, 8)
+    expect(text("{{len ${lit}}}")) == over(lit, 6)
+  }
+  // ParseUint takes no sign, and past UInt64 is an overflow at parse
+  expect(text("{{print +18446744073709551615}}")) == "err template: t:1: integer overflow: \"+18446744073709551615\""
+  expect(text("{{print 18446744073709551616}}")) == "err template: t:1: integer overflow: \"18446744073709551616\""
+  expect(text("{{print 0x1_0000_0000_0000_0000}}")) == "err template: t:1: illegal number syntax: \"0x1_0000_0000_0000_0000\""
+}
+
 test "a missing key is <no value>, or an error with missing_key(true)" {
   expect(text("{{.nothere}}")) == "<no value>"
   expect(text("{{.m.nothere}}")) == "<no value>"

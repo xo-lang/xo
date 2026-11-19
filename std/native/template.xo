@@ -1311,6 +1311,63 @@ fn (var p: Parser) term() -> Arg? {
   None
 }
 
+/// strconv.ParseUint(text, 0, 64): no sign; a 0x, 0o, 0b or 0 prefix
+/// picks the base; _ only between digits or after a prefix (Go's
+/// underscoreOK, which Int.parse_base checks on the same text with its
+/// digits zeroed); None past UInt64's largest. Task #352: the Float test it
+/// replaces refused 2^64 - 1 (which rounds to 2^64) and every prefix.
+fn parse_uint64(text: Str) -> UInt64? {
+  let bs = text.bytes()
+  if bs.is_empty() || bs[0] == '+' || bs[0] == '-' {
+    return None
+  }
+  var base = 10
+  var i = 0
+  if bs.len() > 1 && bs[0] == '0' {
+    let c = bs[1] | 0x20
+    if c == 'x' {
+      base = 16
+      i = 2
+    } else if c == 'o' {
+      base = 8
+      i = 2
+    } else if c == 'b' {
+      base = 2
+      i = 2
+    } else {
+      base = 8
+      i = 1
+    }
+  }
+  var zeroed = text[0..i]
+  var v: UInt64 = 0
+  var any = false
+  while i < bs.len() {
+    let c = bs[i]
+    i += 1
+    if c == '_' {
+      zeroed += "_"
+      continue
+    }
+    let d = if c >= '0' && c <= '9' { Int(c - '0') } else if (c | 0x20) >= 'a' && (c | 0x20) <= 'z' { Int((c | 0x20) - 'a') + 10 } else { 99 }
+    if d >= base {
+      return None
+    }
+    let ub = UInt64(base)
+    if v > (UInt64.max - UInt64(d)) / ub {
+      return None
+    }
+    v = v * ub + UInt64(d)
+    zeroed += "0"
+    any = true
+  }
+  if !any && base != 8 {
+    return None
+  }
+  Int.parse_base(zeroed, 0)?
+  Some(v)
+}
+
 /// parse.NumberNode (newNumber): a number's int, uint, and float
 /// readings; a uint beyond Int's range keeps only is_uint and its float.
 fn new_number(text: Str, typ: Int) -> Num ! Str {
@@ -1381,19 +1438,14 @@ fn new_number(text: Str, typ: Int) -> Num ! Str {
     None => {}
   }
   // a uint above Int's range (ParseUint succeeds, ParseInt fails)
-  let digits = text.trim_prefix("+")
-  if !digits.is_empty() && digits.runes().all(fn(r) { (r >= '0' && r <= '9') || r == '_' }) {
-    match Float.parse(digits) {
-      Some(f) => {
-        if f < 18446744073709551616.0 {
-          n.is_uint = true
-          n.is_float = true
-          n.float = f
-          return Ok(n)
-        }
-      }
-      None => {}
+  match parse_uint64(text) {
+    Some(u) => {
+      n.is_uint = true
+      n.is_float = true
+      n.float = Float(u)
+      return Ok(n)
     }
+    None => {}
   }
   match Float.parse(text) {
     Some(f) => {

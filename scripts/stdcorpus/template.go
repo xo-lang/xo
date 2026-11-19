@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"text/template"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // tmplData is the data every template runs on (as JSON).
@@ -156,10 +158,46 @@ func tmplRun(src string, data any, missingErr bool) string {
 var tmplFields = []string{".s", ".e", ".i", ".neg", ".z", ".f", ".big", ".small", ".t", ".fa", ".n", ".list", ".strs", ".empty", ".mixed", ".m", ".em", ".nested.a.b.c", ".nested.arr", ".html", ".uni", ".num_str", ".url", ".missing", ".m.one", ".m.four", ".s.x", ".", "$", "$.i", ".nested.a"}
 
 // tmplArg is an operand: a field, a literal, or a variable.
+// tmplHostile is the hostile dictionary's numbers as template literals
+// (task #352): digit runs past Int, long hex, Int's edges. Nil for seed 0,
+// so the committed corpus stays as it was; a fresh seed puts one in every
+// third literal "1", counted by tmplHostileN, so the random stream is the
+// same.
+var (
+	tmplHostile  []string
+	tmplHostileN int
+)
+
+func tmplHostileLits() []string {
+	vs := hostile.Digits()
+	for _, h := range hostile.Hex() {
+		vs = append(vs, "0x"+h)
+	}
+	for _, v := range hostile.Ints() {
+		vs = append(vs, strconv.FormatInt(v, 10))
+	}
+	return vs
+}
+
+// tmplRangeArg is tmplArg with no hostile literal: range over an Int
+// counts to it (2^63 - 1 iterations filled 32 GB on seed 3).
+func tmplRangeArg(r *rand.Rand, vars []string) string {
+	h := tmplHostile
+	tmplHostile = nil
+	defer func() { tmplHostile = h }()
+	return tmplArg(r, vars)
+}
+
 func tmplArg(r *rand.Rand, vars []string) string {
 	switch r.Intn(6) {
 	case 0:
-		return []string{"1", "0", "-2", "3.5", "1e3", "0x1F", "'a'", `"x"`, "`raw`", "true", "false", "nil", "2i"}[r.Intn(13)]
+		k := r.Intn(13)
+		if k == 0 && tmplHostile != nil {
+			if tmplHostileN++; tmplHostileN%3 == 0 {
+				return tmplHostile[(tmplHostileN/3)%len(tmplHostile)]
+			}
+		}
+		return []string{"1", "0", "-2", "3.5", "1e3", "0x1F", "'a'", `"x"`, "`raw`", "true", "false", "nil", "2i"}[k]
 	case 1:
 		if len(vars) > 0 {
 			return vars[r.Intn(len(vars))]
@@ -238,9 +276,9 @@ func tmplBody(r *rand.Rand, b *strings.Builder, vars []string, depth int, inRang
 			rv := vars
 			switch r.Intn(3) {
 			case 0:
-				b.WriteString("{{range " + tmplArg(r, vars) + "}}")
+				b.WriteString("{{range " + tmplRangeArg(r, vars) + "}}")
 			case 1:
-				b.WriteString("{{range $k, $e := " + tmplArg(r, vars) + "}}")
+				b.WriteString("{{range $k, $e := " + tmplRangeArg(r, vars) + "}}")
 				rv = append(append([]string{}, vars...), "$k", "$e")
 			default:
 				b.WriteString("{{range " + []string{"3", "0", "-1", ".i"}[r.Intn(4)] + "}}")
@@ -307,6 +345,10 @@ func templateFuzz() (int64, int) {
 func templateCorpus() string {
 	seed, n := templateFuzz()
 	r := rand.New(rand.NewSource(8 + seed))
+	tmplHostile, tmplHostileN = nil, 0
+	if seed != 0 {
+		tmplHostile = tmplHostileLits()
+	}
 	dec := json.NewDecoder(bytes.NewReader([]byte(tmplData)))
 	dec.UseNumber()
 	var raw any
