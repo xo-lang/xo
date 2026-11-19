@@ -1,9 +1,35 @@
 // Tests of tls12srv.xo: `xo test --std-module=native/llrt/tls12srv`,
 // run by internal/stdtest.
 
+use native/llrt/asn1
+use native/llrt/tls12
+
 test "RSA-key-exchange AES-GCM suites are known to Go but not AES-GCM preferred (Go's aesgcmCiphers)" {
   expect(aes_preferred([0x009c, 0xc02b])) == false
   expect(aes_preferred([0x009d, 0x1301])) == false
   expect(aes_preferred([0xc030, 0x009c])) == true
   expect(aes_preferred([0xc027, 0xc02b])) == false
+}
+
+/// b with its first `from` replaced by `to` (the same length).
+fn swap_once(b: Bytes, from: Bytes, to: Bytes) -> Bytes {
+  var i = 0
+  while i + from.len() <= b.len() {
+    if b[i..i + from.len()] == from {
+      return asn1.cat([b[0..i], to, b[i + from.len()..b.len()]])
+    }
+    i += 1
+  }
+  fault("swap_once: not found")
+}
+
+test "an ALPN mismatch quotes the client's protocols as Go's %q, control and invalid bytes escaped (GO-2025-4008, CVE-2025-58189)" {
+  var cf = tls12.conf("x.test", [], 1800000000)
+  cf.alpn = ["a\r\nb", "q\"z", "a~b"]
+  var c = tls12.client(cf)
+  var sc = conf([], b"")
+  sc.alpn = ["h2"]
+  var s = server(sc)
+  feed(s, swap_once(tls12.take(c), b"a~b", b"a\xffb"))
+  expect(s.err) == "tls: client requested unsupported application protocols ([\"a\\r\\nb\" \"q\\\"z\" \"a\\xffb\"])"
 }

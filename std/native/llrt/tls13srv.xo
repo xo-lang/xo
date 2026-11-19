@@ -21,6 +21,7 @@ use native/llrt/tlsneg
 use std/hpke
 use native/llrt/tlsech
 use native/llrt/tlsname
+use native/llrt/unicode
 use native/llrt/tlsrec
 use native/llrt/tlssign
 use native/llrt/tlsticket
@@ -653,6 +654,8 @@ struct Hello {
   groups: List[Int]
   algs: List[Int]
   alpn: List[Str]
+  /// Each offered protocol as Go's %q of its bytes (Go's error text).
+  alpn_q: List[Str]
   versions: List[Int]
   shares: List[Int]
   share_keys: List[Bytes]
@@ -678,7 +681,7 @@ struct Hello {
 }
 
 fn no_hello() -> Hello {
-  Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comp: b"", name: "", groups: [], algs: [], alpn: [], versions: [], shares: [], share_keys: [], early: false, reneg: b"", quic: false, kept: b"", raw: b"", psk_modes: b"", ids: [], binders: [], binders_len: 0}
+  Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comp: b"", name: "", groups: [], algs: [], alpn: [], alpn_q: [], versions: [], shares: [], share_keys: [], early: false, reneg: b"", quic: false, kept: b"", raw: b"", psk_modes: b"", ids: [], binders: [], binders_len: 0}
 }
 
 /// Go's clientHelloMsg.unmarshal: ok false when it does not decode.
@@ -836,6 +839,7 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
         return false
       }
       h.alpn.push(d[q + 1..q + 1 + k].to_str() ?? "\u{FFFD}")
+      h.alpn_q.push(unicode.quote(d[q + 1..q + 1 + k]))
       q += 1 + k
     }
     return true
@@ -1155,7 +1159,7 @@ fn respond(var s: Server, h: Hello) {
     fail(s, ALERT_NO_APPLICATION_PROTOCOL, "tls: client did not request an application protocol")
     return
   }
-  match negotiate_alpn(s.conf.alpn, h.alpn) {
+  match negotiate_alpn(s.conf.alpn, h.alpn, h.alpn_q) {
     Ok(p) => s.alpn = p
     Err(e) => {
       fail(s, ALERT_NO_APPLICATION_PROTOCOL, e)
@@ -1812,7 +1816,7 @@ fn aes_preferred(suites: List[Int]) -> Bool { tlsneg.aes_preferred(suites) }
 /// Go's negotiateALPN: the server's first protocol the client offers;
 /// none when either side has none, or when the client offers http/1.1 to
 /// a server of h2; else Go's error.
-fn negotiate_alpn(server: List[Str], client: List[Str]) -> Result[Str, Str] {
+fn negotiate_alpn(server: List[Str], client: List[Str], quoted: List[Str]) -> Result[Str, Str] {
   if server.is_empty() || client.is_empty() {
     return Ok("")
   }
@@ -1830,11 +1834,7 @@ fn negotiate_alpn(server: List[Str], client: List[Str]) -> Result[Str, Str] {
   if fallback {
     return Ok("")
   }
-  var qs: List[Str] = []
-  for cp in client {
-    qs.push(quote(cp))
-  }
-  Err("tls: client requested unsupported application protocols ([${qs.join(" ")}])")
+  Err("tls: client requested unsupported application protocols ([${quoted.join(" ")}])")
 }
 
 fn has(xs: List[Int], x: Int) -> Bool {
@@ -1871,18 +1871,6 @@ fn hex(x: Int) -> Str {
     i -= 4
   }
   s
-}
-
-/// Go's %q of a printable string: in double quotes, with \" and \\.
-fn quote(x: Str) -> Str {
-  var s = rt.rs_push_byte(rt.rs_with_cap(x.len() + 2), 34)
-  for b in x.bytes() {
-    if b == 34 || b == 92 {
-      s = rt.rs_push_byte(s, 92)
-    }
-    s = rt.rs_push_byte(s, Int(b))
-  }
-  rt.rs_push_byte(s, 34)
 }
 
 // ---------------------------------------------------------------------------

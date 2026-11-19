@@ -1,5 +1,19 @@
 # std/tls changes
 
+## 2026-11-18: security: a server's unsupported-ALPN error quotes the client's protocols as Go's %q
+
+- Kind: security
+- Commit: this commit
+- Found by: xo-lang-3 (task #384, the Go vulnerability sweep of decision 0616's checklist)
+- Go reference: GO-2025-4008 (CVE-2025-58189), crypto/tls handshake_server.go negotiateALPN (`%q` of the client's protocols)
+- Test: std/native/llrt tls12srv_test.xo and tls13srv_test.xo (an ALPN mismatch quotes the client's protocols as Go's %q)
+- Shipped in: not yet released
+
+When no protocol matched, the TLS 1.2 server put the client's protocol names into its error text unescaped, and
+the TLS 1.3 server escaped only `"` and `\`; a name that was not valid UTF-8 became "" or U+FFFD. A client could
+put newlines and other control bytes into the server's error, and so into logs that print it. Both servers now
+quote each name's bytes as Go's strconv.Quote (`["a\r\nb" "a\xffb"]`), the text Go 1.25.2 and later give.
+
 ## 2026-11-17: fix: a TLS 1.3 server answers a handshake message Go cannot decode with decode_error, as Go does
 
 - Kind: fix

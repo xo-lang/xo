@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Security (std/tls, std/http; task #384, GO-2025-4008): a server's "unsupported application protocols" error quotes the client's ALPN names as Go's %q (control and invalid bytes escaped); the names were put into the error text unescaped, so a client could write newlines into server logs. Affected: 0.51.1 and earlier.
 - Perf: Poly1305 (std/crypto, ChaCha20-Poly1305) adds its carries with one adc on x86-64: 0.74 of the time before, below Go's.
 - Fix (std/jsonrpc; task #352): a number id past Int's range (1e19) faulted; it is read as the go-sdk reads it, through a Float and bounded to Int.min..Int.max. A message whose objects and arrays nest past 1000 levels is now a parse error, as the SDK's.
 - Fix (std/regexp; task #352): a pattern past Go's program size or rune limits is the error "expression too large", at Go's thresholds; deeply nested or repeated patterns compiled here.

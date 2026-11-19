@@ -259,3 +259,28 @@ test "a first message of a type Go parses but cannot decode is decode_error, an 
   expect(first_message_alert(20, b"\x01")) == 10
   expect(first_message_alert(3, b"\x01")) == 10
 }
+
+/// b with its first `from` replaced by `to` (the same length).
+fn swap_once(b: Bytes, from: Bytes, to: Bytes) -> Bytes {
+  var i = 0
+  while i + from.len() <= b.len() {
+    if b[i..i + from.len()] == from {
+      return asn1.cat([b[0..i], to, b[i + from.len()..b.len()]])
+    }
+    i += 1
+  }
+  fault("swap_once: not found")
+}
+
+test "an ALPN mismatch quotes the client's protocols as Go's %q, control and invalid bytes escaped (GO-2025-4008, CVE-2025-58189)" {
+  let der = Bytes.from_hex(CERT_HEX) ?? fault("cert")
+  let p = x509.parse(der)
+  var cf = tls13.conf("x.test", [p.cert], 1800000000)
+  cf.alpn = ["a\r\nb", "q\"z", "a~b"]
+  var c = tls13.client(cf)
+  var sc = conf([der], Bytes.from_hex(SEED_HEX) ?? fault("seed"))
+  sc.alpn = ["h2"]
+  var s = server(sc)
+  feed(s, swap_once(tls13.take(c), b"a~b", b"a\xffb"))
+  expect((s.alert, s.err)) == (ALERT_NO_APPLICATION_PROTOCOL, "tls: client requested unsupported application protocols ([\"a\\r\\nb\" \"q\\\"z\" \"a\\xffb\"])")
+}

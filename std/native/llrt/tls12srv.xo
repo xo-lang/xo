@@ -25,6 +25,7 @@ use native/llrt/tlsneg
 use native/llrt/tls13
 use native/llrt/tlsticket
 use native/llrt/tlsname
+use native/llrt/unicode
 use native/llrt/x509cert as x509
 use native/llrt/x509verify
 
@@ -470,6 +471,8 @@ pub struct Hello {
   pub reneg: Bytes
   pub ems: Bool
   pub alpn: List[Str]
+  /// Each offered protocol as Go's %q of its bytes (Go's error text).
+  pub alpn_q: List[Str]
   pub versions: List[Int]
   pub has_ticket: Bool
   pub ticket: Bytes
@@ -669,7 +672,7 @@ fn cert_request_decodes(m0: Bytes, sig: Bool) -> Bool {
 
 /// Go's clientHelloMsg.unmarshal.
 pub fn parse_hello(m: Bytes) -> Hello {
-  var h = Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comps: b"", sni: "", has_sni: false, curves: [], points: b"", sigalgs: [], reneg_ok: false, reneg: b"", ems: false, alpn: [], versions: [], has_ticket: false, ticket: b""}
+  var h = Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comps: b"", sni: "", has_sni: false, curves: [], points: b"", sigalgs: [], reneg_ok: false, reneg: b"", ems: false, alpn: [], alpn_q: [], versions: [], has_ticket: false, ticket: b""}
   var p = 4
   if m.len() < p + 35 {
     return h
@@ -820,6 +823,7 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
         return false
       }
       h.alpn.push(d[q + 1..q + 1 + l].to_str() ?? "")
+      h.alpn_q.push(unicode.quote(d[q + 1..q + 1 + l]))
       q += 1 + l
     }
     return true
@@ -907,15 +911,6 @@ fn hex_list(xs: List[Int]) -> Str {
   "[${parts.join(" ")}]"
 }
 
-/// Go's %q of a []string.
-fn quote_list(xs: List[Str]) -> Str {
-  var parts: List[Str] = []
-  for x in xs {
-    // (ALPN protocols are printable; Go would escape quotes)
-    parts.push("\"${x}\"")
-  }
-  "[${parts.join(" ")}]"
-}
 
 /// Go's isAESGCMPreferred (tlsneg.aes_preferred).
 fn aes_preferred(suites: List[Int]) -> Bool { tlsneg.aes_preferred(suites) }
@@ -942,7 +937,7 @@ pub fn default_suites() -> List[Int] { preference(true) }
 /// Go's negotiateALPN: the server's first protocol the client offers;
 /// none when either has none or the server offers h2 and the client
 /// http/1.1; an error's text otherwise.
-fn negotiate_alpn(server: List[Str], client: List[Str]) -> (Str, Str) {
+fn negotiate_alpn(server: List[Str], client: List[Str], quoted: List[Str]) -> (Str, Str) {
   if server.is_empty() || client.is_empty() {
     return ("", "")
   }
@@ -960,7 +955,7 @@ fn negotiate_alpn(server: List[Str], client: List[Str]) -> (Str, Str) {
   if fallback {
     return ("", "")
   }
-  ("", "tls: client requested unsupported application protocols (${quote_list(client)})")
+  ("", "tls: client requested unsupported application protocols ([${quoted.join(" ")}])")
 }
 
 /// Go's readClientHello and processClientHello, pickCipherSuite, then the
@@ -1000,7 +995,7 @@ fn client_hello(var s: Server, msg: Bytes) {
     fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: initial handshake had non-empty renegotiation extension")
     return
   }
-  let (proto, perr) = negotiate_alpn(cf.alpn, h.alpn)
+  let (proto, perr) = negotiate_alpn(cf.alpn, h.alpn, h.alpn_q)
   if perr != "" {
     fail(s, tls12.ALERT_NO_APPLICATION_PROTOCOL, perr)
     return
