@@ -97,11 +97,14 @@ in another worktree. Only an empty queue stops you; then ask the lead.
   report. Message the lead only for results, blocks, decisions, and
   approvals; status is your tasks' states in xw (heavy.sh, pushq and
   offload-gate record jobs, gates and pushes themselves).
-- No polling (owner, 2026-11-15: polls were about 30% of agent calls,
-  each re-reading the whole context): wait with `heavy.sh --wait NAME`,
-  `pushq.sh --wait WT` or `offload-gate.sh --wait WT` under
-  run_in_background and act on the notification (agent-tools.md
-  "Waiting"); never a sleep loop or repeated tail or status checks;
+- No polling and no waits (owner, 2026-11-15: polls were about 30% of
+  agent calls, each re-reading the whole context; waits retired
+  2026-11-18, xw decision #165): start the job, work your next item, and
+  act on the xw message its end brings (verdict, failing lines, next
+  action; agent-tools.md "Waiting"). ccguard blocks a command that only
+  waits (`heavy.sh`, `pushq.sh` or `offload-gate.sh --wait`, `sleep`),
+  even in the background; a chain that waits and then pushes or gates
+  still runs. Never a sleep loop or repeated tail or status checks;
   outside CI and registries at most once a day.
 - After each finished task: update your resume note (open branches and
   worktrees, queued gates and jobs, next item, key paths), mark the task
