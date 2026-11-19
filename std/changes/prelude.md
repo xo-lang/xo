@@ -1,5 +1,13 @@
 # prelude changes
 
+## 2026-11-19: perf: a List.filled list of 64 or more elements is no longer marked shared
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/brotli enc1 profile on darwin/arm64 (task #271): obj_rl_copy_n, the out of line copy-on-write check, was 13% of the time, 72% of it from write_bits storing into a zero_bytes buffer
+- Go reference: none (Go has no reference counts)
+- Change: std/native/prelude words_filled built a List[UInt8], List[Int] or List[UInt32] and returned it through rt.any_of and rt.any_get, and an Any marks a list shared (count -1), so every later write to a filled list called the slow check; it now builds a List[T] and passes only the fill value through Any. bench/perf/brotli enc1 0.51 s to 0.43 s user on the Mac (2,000 encodes of the html input, 4 runs each)
+
 ## 2026-11-19: feature: Bytes.into_builder and BytesBuilder.at, get_le and get_be
 
 - Kind: feature

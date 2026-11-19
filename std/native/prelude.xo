@@ -2202,20 +2202,24 @@ fn list_filled[T](n: Int, x: T) -> List[T] {
 }
 
 /// list_filled's bulk path when T is UInt8, Int or UInt32, else None.
+/// Only x goes through Any to learn T: the list is made as a List[T], since
+/// a list put in an Any is marked shared (decision 0334), and a shared list
+/// took the out of line copy-on-write check on every later write (13% of
+/// brotli enc1, 2026-11-19).
 fn words_filled[T](n: Int, x: T) -> List[T]? {
   if let Some(v) = rt.any_get[UInt8](rt.any_of[T](x)) {
     heapos.fresh_reset()
-    let out = List[UInt8].with_capacity(n)
+    let out: List[T] = List.with_capacity(n)
     // a block from a new mapping is zero already (heapos.fresh)
     if !(v == 0 && heapos.fresh(rt.obj_addr(out))) {
       rt.mem_set(rt.obj_addr(out).wrapping_add(rt.layout(2)), Int(v), n)
     }
     raw_list_set_len(rt.obj_addr(out), n)
-    return rt.any_get[List[T]](rt.any_of[List[UInt8]](out))
+    return Some(out)
   }
   if let Some(v) = rt.any_get[Int](rt.any_of[T](x)) {
     heapos.fresh_reset()
-    let out = List[Int].with_capacity(n)
+    let out: List[T] = List.with_capacity(n)
     let a = rt.obj_addr(out).wrapping_add(rt.layout(2))
     if v == 0 {
       if !heapos.fresh(rt.obj_addr(out)) {
@@ -2227,13 +2231,13 @@ fn words_filled[T](n: Int, x: T) -> List[T]? {
       }
     }
     raw_list_set_len(rt.obj_addr(out), n)
-    return rt.any_get[List[T]](rt.any_of[List[Int]](out))
+    return Some(out)
   }
   if let Some(v) = rt.any_get[UInt32](rt.any_of[T](x)) {
     // packed four bytes an element on the native targets (the caller
     // skips wasm, where an element takes a word)
     heapos.fresh_reset()
-    let out = List[UInt32].with_capacity(n)
+    let out: List[T] = List.with_capacity(n)
     let a = rt.obj_addr(out).wrapping_add(rt.layout(2))
     if v == 0 {
       if !heapos.fresh(rt.obj_addr(out)) {
@@ -2246,7 +2250,7 @@ fn words_filled[T](n: Int, x: T) -> List[T]? {
       }
     }
     raw_list_set_len(rt.obj_addr(out), n)
-    return rt.any_get[List[T]](rt.any_of[List[UInt32]](out))
+    return Some(out)
   }
   None
 }

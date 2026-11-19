@@ -187,6 +187,25 @@ test "List.filled: zero fill of a reused large block is all zero" {
   }
 }
 
+// The bulk path made its list through rt.any_of, which marks a list
+// shared (count -1): every later write then called the out of line
+// copy-on-write check, 13% of brotli enc1 (2026-11-19). A filled list is
+// the caller's alone: its count, its object's first word, is 1.
+test "List.filled: a bulk filled list is unique, not shared" {
+  for n in [10, 64, 1000, 200000] {
+    let a = List[UInt8].filled(n, 0)
+    let b = List[UInt8].filled(n, 7)
+    let c = List[Int].filled(n, 0)
+    let d = List[Int].filled(n, -1)
+    let e = List[UInt32].filled(n, 5)
+    expect(rt.slot_load(rt.obj_addr(a), 0, 0) == 1)
+    expect(rt.slot_load(rt.obj_addr(b), 0, 0) == 1)
+    expect(rt.slot_load(rt.obj_addr(c), 0, 0) == 1)
+    expect(rt.slot_load(rt.obj_addr(d), 0, 0) == 1)
+    expect(rt.slot_load(rt.obj_addr(e), 0, 0) == 1)
+  }
+}
+
 test "list_swap: packed Float32 elements keep their values" {
   var xs: List[Float32] = [1.5, -2.25, 0.75]
   rt.list_swap(xs, 0, 1)

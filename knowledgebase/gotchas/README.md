@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [any-of-shares-lists.md](any-of-shares-lists.md): rt.any_of marks a list shared for good, so every later write takes the slow copy-on-write check (List.filled, concat, sort)
 - [deadline-wait-reported-deadlock.md](deadline-wait-reported-deadlock.md): Observed 2026-11-18: tasks waiting on a channel inside task.with_timeout faulted XO-F001 though the deadline would end the wait (the grpc fuzz's intermittent deadlock); the FN_SCOPE timer now holds DLK_UNCOUNTED
 - [raise-location-copy-leaked.md](raise-location-copy-leaked.md): Observed 2026-11-17: every fault with a location caught by task.isolate leaked ~60 B (the heap copy of the location passed to a never-returning fire); max_rss shows it, mem_mapped does not
 - [lead-scripts-bsd-calls-on-linux.md](lead-scripts-bsd-calls-on-linux.md): Observed 2026-11-17: test-heavy.sh failed or hung 14 of 19 scenarios on Linux: GNU `stat -f` is file system info, `date -r` takes a file, `sysctl | awk || /proc` never falls back (awk exits 0), no lsof; GNU forms first, check captured values
