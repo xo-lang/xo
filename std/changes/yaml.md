@@ -1,5 +1,38 @@
 # std/yaml changes
 
+## 2026-11-19: fix: an alias inside its own anchor no longer overflows the stack in parse
+
+- Kind: fix
+- Commit: this push
+- Found by: Go's TestNodeRoundtrip and TestUnmarshalErrors tables run through std/yaml (stdproven gotests, task #403)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (parser.alias points the alias at the anchored node, a pointer cycle)
+- Test: std/yaml_test.xo "an alias to an enclosing anchor parses and encodes as yaml.v3's" (a stack overflow before), std/evidence/yaml/gotests
+- Shipped in: not yet released
+
+`parse("a: &a\n  b: *a\n")` recursed until the stack ran out. yaml.v3 builds a Node whose alias points back at the enclosing node; a Node is a value, so the alias's `alias` is now None, and `encode_node` writes it back as yaml.v3 does (`*a`).
+
+## 2026-11-19: fix: a sequence or mapping as a key ends to_json with yaml.v3's invalid map key
+
+- Kind: fix
+- Commit: this push
+- Found by: Go's TestUnmarshalErrors table run through std/yaml (stdproven gotests, task #403)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (mapping: failf("invalid map key: %#v", k) for a slice or map key)
+- Test: std/yaml_test.xo "a collection key ends to_json as yaml.v3's invalid map key" (each case failed before), std/evidence/yaml/gotests
+- Shipped in: not yet released
+
+`to_json("{[.]}")` said ``unmarshal errors:\n  line 1: cannot unmarshal !!seq into string``, the typed decode's text. It now ends with yaml.v3's `invalid map key: []interface {}{"."}`, the key as Go's %#v prints it.
+
+## 2026-11-19: fix: the emitter names an unexpected event as yaml.v3 does
+
+- Kind: fix
+- Commit: this push
+- Found by: Go's TestUnmarshal table run through std/yaml (stdproven gotests, task #403)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 yamlh.go (eventStrings)
+- Test: std/yaml_test.xo "an empty document encodes to yaml.v3's error" (failed before)
+- Shipped in: not yet released
+
+`encode_node` of an empty Document failed with `... but got 4`; it now says `... but got document end`, as yaml.v3's Marshal of that Node.
+
 ## 2026-11-16: fix: a key with an explicit tag yaml.v3 cannot resolve is an error
 
 - Kind: fix

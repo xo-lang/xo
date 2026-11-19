@@ -29,6 +29,8 @@ func TestGoTableCases(t *testing.T) {
 		{"unkeyed", "0,1", []string{"0 x|y", "1 z|w"}, 0},
 		{"nums", "year,month,z,f", []string{"0 2011|-3|Local|1000000000", "1 16|1000|UTC|2"}, 3},
 		{"TestLocal.tests", "in", []string{"0 p", "1 q"}, 0},
+		// `var NAME = ...` in a function, as robfig/cron's tests write
+		{"TestLocalVar.tests", "in", []string{"0 v", "1 w"}, 0},
 		// FUNC.rangeN: the Nth literal a for range statement ranges over
 		{"TestRanges.range2", "in", []string{"0 r", "1 s"}, 0},
 		{"TestRanges.range3", "in", []string{"0 u"}, 0},

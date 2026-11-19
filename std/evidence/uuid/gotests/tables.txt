@@ -1,0 +1,7 @@
+# Go's google/uuid test tables (github.com/google/uuid v1.6.0, the version go/go.mod requires) run through std/uuid
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# parse: Parse's UUID, version and variant or its error text; parseup:
+# the same of the upper case input (Go's TestUUID, TestValidate's inputs).
+github.com/google/uuid uuid_test.go tests in parse
+github.com/google/uuid uuid_test.go tests in parseup
+github.com/google/uuid uuid_test.go TestValidate.testCases input parse

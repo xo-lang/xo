@@ -1,0 +1,73 @@
+// The Xo side of std/yaml's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/yaml's result as text, as go/main.go prints package yaml's.
+// Kinds json, node and reenc over yaml.v3's tables.
+// See scripts/stdproven/gotests.go.
+use std/yaml
+use std/base64
+fn kind_name(k: yaml.NodeKind) -> Str {
+  match k {
+    Document => "doc"
+    Sequence => "seq"
+    Mapping => "map"
+    Scalar => "scalar"
+    Alias => "alias"
+  }
+}
+
+// dump is a node tree as text, one node a line, as go/main.go's dump
+fn dump(n: yaml.Node, depth: Int, var out: List[Str]) {
+  out.push("${" ".repeat(depth)}${kind_name(n.kind)} ${n.style} ${n.tag.quote()} ${n.value.quote()} ${n.anchor.quote()} ${n.head_comment.quote()} ${n.line_comment.quote()} ${n.foot_comment.quote()} ${n.line}:${n.column}")
+  for c in n.content {
+    dump(c, depth + 1, out)
+  }
+}
+
+fn node(text: Str) -> Str {
+  match yaml.parse(text) {
+    Ok(n) => {
+      var out: List[Str] = []
+      dump(n, 0, out)
+      out.join("\n")
+    }
+    Err(e) => "err ${e}"
+  }
+}
+
+fn reenc(text: Str) -> Str {
+  match yaml.parse(text) {
+    Ok(n) => match yaml.encode_node(n) {
+      Ok(s) => s
+      Err(e) => "err ${e}"
+    }
+    Err(e) => "err ${e}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "json" => match yaml.to_json(inp[0]) {
+      Ok(s) => s
+      Err(e) => "err ${e}"
+    }
+    "node" => node(inp[0])
+    "reenc" => reenc(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

@@ -1,0 +1,58 @@
+// An alias inside the node its anchor names (yaml.v3 builds a pointer
+// cycle; a Node is a value, so the alias's `alias` is None). parse used to
+// recurse until the stack ran out. The texts are gopkg.in/yaml.v3 v3.0.1's
+// Marshal of the parsed Node.
+test "an alias to an enclosing anchor parses and encodes as yaml.v3's" {
+  let cases: List[(Str, Str)] = [
+    ("a: &a\n  b: *a\n", "a: &a\n    b: *a\n"),
+    ("- &x [1, *x]\n", "- &x [1, *x]\n"),
+  ]
+  for (text, want) in cases {
+    let n = parse(text) ?? e => fault("parse ${text.quote()}: ${e}")
+    expect(encode_node(n) ?? e => "err ${e}") == want
+  }
+  let d = parse("a: &a\n  b: *a\n") ?? e => fault("parse: ${e}")
+  let inner = d.content[0].content[1]
+  expect(inner.anchor) == "a"
+  let al = inner.content[1]
+  expect(al.kind == NodeKind.Alias) == true
+  expect(al.value) == "a"
+  expect(al.alias.is_none()) == true
+}
+
+// An alias to an anchor outside it still carries the node it names.
+test "an alias to an earlier anchor carries its node" {
+  let d = parse("a: &x 1\nb: *x\n") ?? e => fault("parse: ${e}")
+  let al = d.content[0].content[3]
+  expect(al.kind == NodeKind.Alias) == true
+  expect(al.alias.is_some()) == true
+}
+
+// The emitter names the event it did not expect as yaml.v3's eventStrings do
+// (it wrote the event's number, "but got 4").
+test "an empty document encodes to yaml.v3's error" {
+  let d = parse("") ?? e => fault("parse: ${e}")
+  match encode_node(d) {
+    Ok(s) => fault("encoded ${s.quote()}")
+    Err(e) => expect("${e}") == "yaml: expected SCALAR, SEQUENCE-START, MAPPING-START, or ALIAS, but got document end"
+  }
+}
+
+// A sequence or mapping as a key ends to_json with yaml.v3's error, the key
+// written as Go's %#v of it (it was the typed decode's "cannot unmarshal
+// !!seq into string"). The texts are yaml.v3 v3.0.1's.
+test "a collection key ends to_json as yaml.v3's invalid map key" {
+  let cases: List[(Str, Str)] = [
+    ("{[.]}", "yaml: invalid map key: []interface {}{\".\"}"),
+    ("{{.}}", "yaml: invalid map key: map[string]interface {}{\".\":interface {}(nil)}"),
+    ("? [1, [a], {b: ~}, 1.5, true]\n: x\n", "yaml: invalid map key: []interface {}{1, []interface {}{\"a\"}, map[string]interface {}{\"b\":interface {}(nil)}, 1.5, true}"),
+    ("a: 1\n? {z: 2, y: [x]}\n: 3\n", "yaml: invalid map key: map[string]interface {}{\"y\":[]interface {}{\"x\"}, \"z\":2}"),
+    ("? []\n: 1\n", "yaml: invalid map key: []interface {}{}"),
+  ]
+  for (text, want) in cases {
+    match to_json(text) {
+      Ok(s) => fault("${text.quote()} gave ${s}")
+      Err(e) => expect("${e}") == want
+    }
+  }
+}

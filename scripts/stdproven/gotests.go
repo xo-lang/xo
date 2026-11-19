@@ -10,8 +10,8 @@ package main
 //
 //   - tables.txt: one table a line, `PKG FILE VAR FIELDS KIND`: the Go
 //     package (net/url), its test file (url_test.go), the table variable
-//     (a package level var, or FUNC.NAME for a `NAME := []T{...}` inside
-//     func FUNC), the input fields (comma separated: a field name, or a
+//     (a package level var, or FUNC.NAME for a `NAME := []T{...}` or
+//     `var NAME = []T{...}` inside func FUNC), the input fields (comma separated: a field name, or a
 //     position for an unkeyed element; a field written NAME:const also
 //     takes an exported constant of the package, or a | of them, as its
 //     name, "Debug|AlignRight", for the adapters to map; a field written
@@ -195,7 +195,7 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 }
 
 // findTable is the composite literal of a package level var NAME, or of
-// `NAME := ...` inside func FUNC for FUNC.NAME.
+// `NAME := ...` or `var NAME = ...` inside func FUNC for FUNC.NAME.
 func findTable(f *ast.File, name string) (*ast.CompositeLit, error) {
 	fn, local, inFunc := strings.Cut(name, ".")
 	for _, d := range f.Decls {
@@ -240,9 +240,23 @@ func findTable(f *ast.File, name string) (*ast.CompositeLit, error) {
 				continue
 			}
 			ast.Inspect(d.Body, func(n ast.Node) bool {
-				a, ok := n.(*ast.AssignStmt)
-				if !ok || found != nil {
+				if found != nil {
+					return false
+				}
+				// `var NAME = ...` in the function as well as `NAME := ...`
+				if vs, ok := n.(*ast.ValueSpec); ok {
+					for i, id := range vs.Names {
+						if id.Name == local && i < len(vs.Values) {
+							if c, ok := vs.Values[i].(*ast.CompositeLit); ok {
+								found = c
+							}
+						}
+					}
 					return found == nil
+				}
+				a, ok := n.(*ast.AssignStmt)
+				if !ok {
+					return true
 				}
 				for i, l := range a.Lhs {
 					if id, ok := l.(*ast.Ident); ok && id.Name == local && i < len(a.Rhs) {

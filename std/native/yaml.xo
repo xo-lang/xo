@@ -4736,7 +4736,16 @@ fn emit_node(var e: Emitter, ev0: Event, root: Bool, sequence: Bool, mapping: Bo
     }
     return true
   }
-  em_error(e, "expected SCALAR, SEQUENCE-START, MAPPING-START, or ALIAS, but got ${t}")
+  em_error(e, "expected SCALAR, SEQUENCE-START, MAPPING-START, or ALIAS, but got ${event_name(t)}")
+}
+
+/// An event type's name, as yaml.v3's yaml_event_type_t.String.
+fn event_name(t: Int) -> Str {
+  let names = ["none", "stream start", "stream end", "document start", "document end", "alias", "scalar", "sequence start", "sequence end", "mapping start", "mapping end", "tail comment"]
+  if t < 0 || t >= names.len() {
+    return "unknown event ${t}"
+  }
+  names[t]
 }
 
 fn emit_scalar(var e: Emitter, ev0: Event) -> Bool {
@@ -5951,7 +5960,10 @@ fn node_kind(k: Int) -> yaml.NodeKind {
 }
 
 /// The public Node of arena node i; a node reached again through an alias is built once.
-fn to_node(d: yaml.Doc, i: Int, var memo: Map[Int, yaml.Node]) -> yaml.Node {
+/// An alias inside the node its anchor names (yaml.v3 makes a pointer cycle) has no
+/// `alias`: a Node is a value and cannot contain itself.
+/// `building` holds the anchored nodes being built (the ones enclosing node i).
+fn to_node(d: yaml.Doc, i: Int, var memo: Map[Int, yaml.Node], var building: List[Int]) -> yaml.Node {
   let r = d.nodes[i]
   // only an alias target is built twice, so a document without aliases keeps no memo
   if r.anchor != "" {
@@ -5961,11 +5973,19 @@ fn to_node(d: yaml.Doc, i: Int, var memo: Map[Int, yaml.Node]) -> yaml.Node {
   }
   var alias: yaml.Node? = None
   if r.kind == K_ALIAS {
-    alias = Some(to_node(d, r.alias, memo))
+    if !building.contains(r.alias) {
+      alias = Some(to_node(d, r.alias, memo, building))
+    }
+  }
+  if r.anchor != "" {
+    building.push(i)
   }
   var content: List[yaml.Node] = []
   for c in r.content {
-    content.push(to_node(d, c, memo))
+    content.push(to_node(d, c, memo, building))
+  }
+  if r.anchor != "" {
+    let _ = building.pop()
   }
   let n = yaml.Node{kind: node_kind(r.kind), style: r.style, tag: r.tag, value: r.value, anchor: r.anchor, alias: alias, content: content, line: r.line, column: r.column, head_comment: r.head_comment, line_comment: r.line_comment, foot_comment: r.foot_comment}
   if r.anchor != "" {
@@ -5979,7 +5999,8 @@ fn doc_node(d: yaml.Doc) -> yaml.Node {
     return yaml.Node{kind: yaml.NodeKind.Document, style: 0, tag: "", value: "", anchor: "", alias: None, content: [], line: 0, column: 0, head_comment: "", line_comment: "", foot_comment: ""}
   }
   var memo: Map[Int, yaml.Node] = {}
-  to_node(d, d.root, memo)
+  var building: List[Int] = []
+  to_node(d, d.root, memo, building)
 }
 
 fn parse(text: Str) -> yaml.Node ! yaml.YamlErr {
@@ -6145,6 +6166,26 @@ fn encode_node(n: yaml.Node, indent: Int) -> Str ! yaml.YamlErr {
 
 /// The JSON value of node i0 (yaml.v3 decoding into an any, then json.Marshal): a
 /// timestamp is its text, a key is its text, and a NaN or an infinity is an error.
+/// v as Go's %#v prints the value yaml.v3 decodes into an interface{}.
+fn go_repr(v: js.Value) -> Str {
+  match v {
+    Null => "interface {}(nil)"
+    Bool(b) => "${b}"
+    Int(n) => "${n}"
+    Num(n) => "${n}"
+    Str(s) => s.quote()
+    List(items) => "[]interface {}{${items.map(go_repr).join(", ")}}"
+    Object(fields) => {
+      var parts: List[Str] = []
+      for (k, x) in fields {
+        parts.push("${k.quote()}:${go_repr(x)}")
+      }
+      "map[string]interface {}{${parts.join(", ")}}"
+    }
+    _ => "${v.encode()}"
+  }
+}
+
 fn json_of(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> js.Value ! yaml.YamlErr {
   let entered = tick(d, i0, st)?
   let r = json_of_body(d, i0, st)
@@ -6168,6 +6209,12 @@ fn json_of_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> js.Value ! yaml.YamlE
     if ok {
       for (k, v, _) in ps {
         if v < 0 {
+          // a sequence or mapping key: yaml.v3's map with interface keys
+          // cannot hold it, and the decode ends there
+          if v != MERGE_FAIL && v > PRE_FAIL && d.nodes[res(d, -1 - v)].kind != K_SCALAR {
+            let kv = json_of(d, -1 - v, st)?
+            return Err(yaml.YamlErr{line: 0, msg: "invalid map key: ${go_repr(kv)}"})
+          }
           let _ = bad_key(d, v, st)?
           continue
         }
@@ -6250,7 +6297,8 @@ fn put_node(var w: yaml.Enc, n: yaml.Node) {
 
 fn to_node_field(d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, yaml.Node) ! yaml.YamlErr {
   var memo: Map[Int, yaml.Node] = {}
-  Ok((true, to_node(d, i, memo)))
+  var building: List[Int] = []
+  Ok((true, to_node(d, i, memo, building)))
 }
 
 fn zero_node() -> yaml.Node {

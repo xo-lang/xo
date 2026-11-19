@@ -133,3 +133,11 @@ var cfgs = []struct {
 	{cfg: config{"x", "y", false}},
 	{cfg: config{A: someVar}},
 }
+
+func TestLocalVar(t *testing.T) {
+	var tests = []struct{ in string }{
+		{"v"},
+		{"w"},
+	}
+	_ = tests
+}

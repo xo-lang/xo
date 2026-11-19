@@ -1,0 +1,12 @@
+# Go's robfig/cron test tables (github.com/robfig/cron/v3 v3.0.1, the version go/go.mod requires) run through std/cron
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# act: ParseStandard's next activation from a second before the time
+# (TestActivation); next: secondParser's from the time (TestNext);
+# nextstd: ParseStandard's (TestNextWithTz); perr: secondParser's parse
+# error (TestParseScheduleErrors). Times are read as the tests' getTime
+# with Local set to UTC, and the next time is printed in the input's zone
+# (Xo's Time has no zone: its adapter passes the input's zone).
+github.com/robfig/cron/v3 spec_test.go TestActivation.tests time,spec act
+github.com/robfig/cron/v3 spec_test.go TestNext.runs time,spec next
+github.com/robfig/cron/v3 spec_test.go TestNextWithTz.runs time,spec nextstd
+github.com/robfig/cron/v3 parser_test.go TestParseScheduleErrors.tests expr perr

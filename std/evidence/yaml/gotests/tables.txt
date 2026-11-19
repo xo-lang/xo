@@ -1,0 +1,19 @@
+# Go's gopkg.in/yaml.v3 test tables (gopkg.in/yaml.v3 v3.0.1, the version go/go.mod requires) run through std/yaml
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# json: the document as JSON (yaml.v3's Unmarshal into an interface{}
+# and json.Marshal of it, Xo's to_json); node: the Node tree, a line a
+# node (kind, style, tag, value, anchor, comments, line:column); reenc:
+# the Node written back (Marshal of the Node, Xo's encode_node). The
+# inputs of Go's TestUnmarshal, TestUnmarshalErrors and TestNodeRoundtrip
+# tables. json runs on the error table only: on TestUnmarshal's values
+# to_json's documented rules differ from json.Marshal's (a timestamp as its
+# text, no integer above Int, keys of any scalar, < > & unescaped), and
+# internal/stdtest's yaml corpus compares them through yamloracle's
+# jsonSafe filter.
+gopkg.in/yaml.v3 decode_test.go unmarshalTests data node
+gopkg.in/yaml.v3 decode_test.go unmarshalTests data reenc
+gopkg.in/yaml.v3 decode_test.go unmarshalErrorTests data node
+gopkg.in/yaml.v3 decode_test.go unmarshalErrorTests data reenc
+gopkg.in/yaml.v3 node_test.go nodeTests yaml node
+gopkg.in/yaml.v3 node_test.go nodeTests yaml reenc
+gopkg.in/yaml.v3 decode_test.go unmarshalErrorTests data json

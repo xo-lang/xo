@@ -1,0 +1,94 @@
+// The Xo side of std/cron's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/cron's result as text, as go/main.go prints package cron's.
+// Kinds act, next, nextstd and perr over robfig/cron's tables.
+// See scripts/stdproven/gotests.go.
+use std/cron
+use std/base64
+use std/time
+use std/timego
+
+const SECOND_PARSER: Int = cron.SECOND | cron.MINUTE | cron.HOUR | cron.DOM | cron.MONTH | cron.DOW_OPTIONAL | cron.DESCRIPTOR
+const ISO: Str = "2006-01-02T15:04:05-0700"
+
+// zone_of is the zone a test time is read in, as Go's getTime with Local
+// set to UTC: a TZ= prefix's zone, a trailing offset's fixed zone, or UTC
+fn zone_of(v: Str) -> (time.Zone, Str) {
+  if v.starts_with("TZ=") {
+    let i = v.find(" ") ?? 0
+    return (time.zone(v[3..i]).ok() ?? time.utc(), v[i + 1..])
+  }
+  let n = v.len()
+  if n > 5 && (v[n - 5..n - 4] == "+" || v[n - 5..n - 4] == "-") {
+    let h = Int.parse(v[n - 4..n - 2]) ?? 0
+    let m = Int.parse(v[n - 2..n]) ?? 0
+    var secs = h * 3600 + m * 60
+    if v[n - 5..n - 4] == "-" {
+      secs = -secs
+    }
+    return (time.fixed("", Duration.from_secs_int(secs)), v)
+  }
+  (time.utc(), v)
+}
+
+fn get_time(z: time.Zone, v: Str) -> Time? {
+  for l in ["Mon Jan 2 15:04 2006", "Mon Jan 2 15:04:05 2006", ISO] {
+    match timego.parse(v, l, z) {
+      Ok(t) => return Some(t)
+      Err(_) => {}
+    }
+  }
+  None
+}
+
+// next is the schedule's next activation after the time, in the time's
+// zone, as ISO text (Go's Next keeps the time's location)
+fn next(p: cron.Parser, tv: Str, spec: Str, back: Bool) -> Str {
+  let (z, v) = zone_of(tv)
+  let t = match get_time(z, v) {
+    Some(t) => t
+    None => return "bad time"
+  }
+  let s = match p.parse(spec, z) {
+    Ok(s) => s
+    Err(e) => return "err ${e}"
+  }
+  let from = if back { t - Duration.from_secs_int(1) } else { t }
+  match s.next(from) {
+    Some(n) => timego.format(n, z, ISO)
+    None => "zero"
+  }
+}
+
+fn perr(spec: Str) -> Str {
+  match cron.parser(SECOND_PARSER).parse(spec) {
+    Ok(_) => "ok"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "act" => next(cron.parser(cron.MINUTE | cron.HOUR | cron.DOM | cron.MONTH | cron.DOW | cron.DESCRIPTOR), inp[0], inp[1], true)
+    "next" => next(cron.parser(SECOND_PARSER), inp[0], inp[1], false)
+    "nextstd" => next(cron.parser(cron.MINUTE | cron.HOUR | cron.DOM | cron.MONTH | cron.DOW | cron.DESCRIPTOR), inp[0], inp[1], false)
+    "perr" => perr(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
