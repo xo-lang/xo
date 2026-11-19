@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (Go backend runtime, std/rt; task #419): checked Int `+` tests the sum against its first operand by the sign of the second, which frees two registers the sign test held; bench/perf/gobridge none 15.0 to 13.0 ms, str 32.6 to 31.9 ms, bytes 28.3 to 27.6 ms (10,000,000 `use go` calls, linux/amd64)
 - Perf (compiler, arm64; task #418): a small function that updates a `var` List parameter's elements in place (`d[i] = d[j]`) is inlined like one without landing pads, at calls that hold counted values too; std/brotli's gs_swap and add_match are inlined in more loops (bench/perf/brotli enc1 0.85% fewer instructions, callgrind, linux/arm64)
 - Fix (runtime, native targets; task #416, decision 0723): a program whose `main` is still running 1 s after the stop cancel (the grace period's end or a second SIGINT or SIGTERM) exits with status 130, its output flushed; a CPU loop that got one SIGTERM ran on forever before. Under `testing.run_main` nothing changes. Cleanup after the cancel that needs longer than 1 s now has to finish within it (a shielded `defer` too, whose own limit is 5 s).
 - Perf (runtime, native; task #87): `Rand.int(Int.min, Int.max)`, the whole word std/random's normal and exp draw, inlines to the worker buffer's read; every other range is a call as before (bench/perf/random exp 20.2% and normal 18.6% fewer instructions, callgrind, linux/arm64; wall 0.941 and 0.968 of before, xo bench --ab)
