@@ -767,7 +767,7 @@ func evidence(m string) map[string]evFile {
 			}
 			hdr[mm[1]] = strings.TrimSpace(strings.SplitN(mm[2], "  #", 2)[0])
 		}
-		if hdr["result"] != "pass" {
+		if !evCounts(k, hdr) {
 			continue
 		}
 		if !have {
@@ -779,6 +779,17 @@ func evidence(m string) map[string]evFile {
 		}
 	}
 	return out
+}
+
+// evCounts: whether an evidence file's result lets it count. Every kind
+// needs `result: pass`, except perf: stdproven writes `result: fail` for a
+// timing over 1.05, which is still the module's committed row against Go
+// (Solid or Early by its worst case, perf below), not a missing one.
+func evCounts(kind string, hdr map[string]string) bool {
+	if hdr["result"] == "pass" {
+		return true
+	}
+	return kind == "perf" && hdr["result"] == "fail" && reWorst.MatchString(hdr["measure"])
 }
 
 // fresh: decision 0616 section 3. Evidence counts while its source hash

@@ -203,6 +203,7 @@ func TestFeatAudit(t *testing.T) {
 // host 1 row (or an unlabelled linux/arm64 one, as json's and time's were)
 // dated on or before 2026-11-17 that meets the bar stays; a newer host 1 row,
 // and any row from hosts 3 or 4 (containers on the Mac Studio) or the Mac,
+// (TestEvCounts covers which results count.)
 // does not count. serverperf's measure line ("worst Xo / Go cost N") counts
 // as perf's does ("worst Xo / Go N").
 func TestPerfEvidenceHosts(t *testing.T) {
@@ -301,5 +302,28 @@ func TestGotestsEvidence(t *testing.T) {
 	}
 	if got := missing("zzf", mark{level: "Proven"}, mark{level: "Solid"}, mark{level: "Proven"})["testing"]; !reflect.DeepEqual(got, []string{"gotests evidence"}) {
 		t.Errorf("missing(zzf) testing = %v, want [gotests evidence]", got)
+	}
+}
+
+// TestEvCounts: a perf row over 1.05 (stdproven writes result: fail) is the
+// module's committed row and counts, so stdcov reports its worst case
+// instead of "no committed row against Go" (brotli 1.555 and random 1.591,
+// 2026-11-19); a failed run of any other kind does not count.
+func TestEvCounts(t *testing.T) {
+	const slow = "7 cases of 1 twin directories, worst Xo / Go 1.555 over the cases above 5 ms (Proven at or under 1.05), 11s"
+	for _, c := range []struct {
+		kind, result, measure string
+		want                  bool
+	}{
+		{"perf", "pass", "", true},
+		{"perf", "fail", slow, true},
+		{"perf", "fail", "build failed", false},
+		{"fuzz", "fail", slow, false},
+		{"race", "pass", "", true},
+		{"stress", "", "", false},
+	} {
+		if got := evCounts(c.kind, map[string]string{"result": c.result, "measure": c.measure}); got != c.want {
+			t.Errorf("evCounts(%s, result %q, measure %q) = %v, want %v", c.kind, c.result, c.measure, got, c.want)
+		}
 	}
 }
