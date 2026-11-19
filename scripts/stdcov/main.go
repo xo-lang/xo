@@ -986,9 +986,16 @@ func perf(m string) mark {
 	if p, ok := e["perf"]; ok && perfHostWhy(p.hdr, p.path) == "" {
 		meas := p.hdr["measure"]
 		if mm := reWorst.FindStringSubmatch(meas); mm != nil {
-			if v, _ := strconv.ParseFloat(mm[1], 64); v <= 1.05 {
-				return mark{"Proven", fmt.Sprintf("worst case %s of Go's wall over %s (%s)", mm[1], strings.Split(meas, ",")[0], p.hdr["date"]), p.path}
+			v, _ := strconv.ParseFloat(mm[1], 64)
+			// a committed row over 1.05 is still a row: Solid up to 1.5 as
+			// bench/results rows are, else Early, never "no committed row"
+			lvl := "Early"
+			if v <= 1.05 {
+				lvl = "Proven"
+			} else if v <= 1.5 {
+				lvl = "Solid"
 			}
+			return mark{lvl, fmt.Sprintf("worst case %s of Go's wall over %s (%s)", mm[1], strings.Split(meas, ",")[0], p.hdr["date"]), p.path}
 		}
 	}
 	if pr, ok := perfRows[m]; ok {

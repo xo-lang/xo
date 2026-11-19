@@ -232,7 +232,9 @@ func TestPerfEvidenceHosts(t *testing.T) {
 		{"zz-host4-old", "linux/arm64 host 4", "2026-11-13", pm, old, "Early"},
 		{"zz-mac", "darwin/arm64", "2026-11-18", pm, at03, "Early"},
 		{"zz-serverperf-amd64", "linux/amd64 host", "2026-11-18", "6 workload and backend figures, worst Xo / Go cost 1.040 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", at03, "Proven"},
-		{"zz-serverperf-slow", "linux/amd64 host", "2026-11-18", "6 workload and backend figures, worst Xo / Go cost 1.200 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", at03, "Early"},
+		{"zz-serverperf-slow", "linux/amd64 host", "2026-11-18", "6 workload and backend figures, worst Xo / Go cost 1.200 (the worse of throughput and CPU or wall per figure; Proven at or under 1.05), 9m0s", at03, "Solid"},
+		{"zz-amd64-slow", "linux/amd64 host", "2026-11-19", "4 cases of 1 twin directories, worst Xo / Go 1.409 over the cases above 5 ms (Proven at or under 1.05), 3m0s", at03, "Solid"},
+		{"zz-host2-veryslow", "linux/arm64 host 2", "2026-11-19", "4 cases of 1 twin directories, worst Xo / Go 1.591 over the cases above 5 ms (Proven at or under 1.05), 3m0s", at03, "Early"},
 	} {
 		path := "std/evidence/" + c.m + "/perf.md"
 		evCommitted = func(p string) int64 {
@@ -245,7 +247,7 @@ func TestPerfEvidenceHosts(t *testing.T) {
 		if got := perf(c.m); got.level != c.want {
 			t.Errorf("%s (%s, %s): perf = %s %q, want %s", c.m, c.host, c.date, got.level, got.text, c.want)
 		}
-		if c.want == "Early" && c.host != "linux/amd64 host" {
+		if c.want == "Early" && c.host != "linux/amd64 host" && c.host != "linux/arm64 host 2" {
 			if xs := missing(c.m, mark{level: "Proven"}, mark{level: "Proven"}, perf(c.m))["performance"]; len(xs) == 0 || !strings.Contains(xs[0], "ADR 0712") {
 				t.Errorf("%s: missing performance = %q, want the host named against ADR 0712", c.m, xs)
 			}
