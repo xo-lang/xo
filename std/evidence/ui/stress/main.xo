@@ -286,7 +286,8 @@ fn rss_kib(os: Os) -> Int {
 
 /// The resident set early and late, in KiB (decision 0616 as amended
 /// 2026-11-17, owner): the median of the samples in the 2 minutes after
-/// the mark and the median of the last 3 minutes' samples, 10 s apart; a
+/// the mark (minutes 15 to 17 of a 30 minute run, decision 0717) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
 /// short run takes a third of its samples each. (0, 0) when none.
 fn rss_medians(xs: List[Int]) -> (Int, Int) {
   if xs.is_empty() {

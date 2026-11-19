@@ -24,6 +24,14 @@ import (
 // stressMark0717: the mark every stress program takes (decision 0717).
 const stressMark0717 = "  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run\n  let mark = start + Duration.from_secs(Float(mark_s))\n"
 
+// stressMarkHalfway: the mark of a program that also runs task #330's
+// level-off guard (60 minutes, 5%): half way through any run, which is
+// still minute 15 of a 30 minute run.
+const stressMarkHalfway = "  let mark_s = minutes * 30\n  let bound = if minutes > 30 { 5.0 } else { 10.0 }\n  let mark = start + Duration.from_secs(Float(mark_s))\n"
+
+// stressHalfway: the programs that take stressMarkHalfway's mark.
+var stressHalfway = map[string]bool{"grpcreflect": true}
+
 func TestStressRssMedians(t *testing.T) {
 	root, err := xotool.Root()
 	if err != nil {
@@ -45,7 +53,11 @@ func TestStressRssMedians(t *testing.T) {
 			t.Errorf("%s: no rss_medians (decision 0616's median rule)", p)
 			continue
 		}
-		if !strings.Contains(s, stressMark0717) {
+		if mod := filepath.Base(filepath.Dir(filepath.Dir(p))); stressHalfway[mod] {
+			if !strings.Contains(s, stressMarkHalfway) {
+				t.Errorf("%s: its mark is not the level-off guard's half way mark (task #330)", p)
+			}
+		} else if !strings.Contains(s, stressMark0717) {
 			t.Errorf("%s: its mark is not decision 0717's (minute 15 of a 30 minute run)", p)
 		}
 		h := s[i:]
