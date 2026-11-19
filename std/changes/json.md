@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-11-19: fix: -0 into a sized unsigned field is refused natively
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b44 (task #241)
+- Go reference: encoding/json literalStore, strconv.ParseUint (Go 1.26)
+- Test: std/native/json_test.xo "-0 into a sized unsigned field is refused"
+- Timing: none
+
+`-0` into a `UInt8`, `UInt16` or `UInt32` decoded as 0 on the native
+backends; it is "expected non negative integer" (decode_go: Go's
+"cannot unmarshal number -0 into ... of type uint8"), as on the Go
+backend and in Go.
+
 ## 2026-11-19: security: a Map key in an error path is quoted (decision 0725)
 
 - Kind: security

@@ -3532,3 +3532,19 @@ test "error paths keep their segments in order through deep and non-ASCII docume
     }
   }
 }
+
+struct NegZeroU {
+  v: UInt8
+  w: UInt32
+} derive Json
+
+test "-0 into a sized unsigned field is refused, as Go's ParseUint and the Go backend (b44 of the owner's v0.51.1 evaluation)" {
+  let g = json.decode_go_str[NegZeroU]("{\"v\":-0,\"w\":1}").err() ?? fault("g")
+  expect(g.msg) == "json: cannot unmarshal number -0 into Go struct field NegZeroU.v of type uint8"
+  let st = json.decode_str[NegZeroU]("{\"v\":1,\"w\":-0}").err() ?? fault("st")
+  expect("${st}") == "at $.w: expected non negative integer"
+  let ok = json.decode_str[NegZeroU]("{\"v\":255,\"w\":4294967295}").ok() ?? fault("ok")
+  expect(ok.v) == 255
+  let big = json.decode_str[NegZeroU]("{\"v\":1,\"w\":18446744073709551615}").err() ?? fault("big")
+  expect("${big}") == "at $.w: expected non negative integer"
+}

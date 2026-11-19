@@ -1245,7 +1245,9 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       let unsigned = b.m.types[t].unsigned
       let msg = if unsigned { "expected non negative integer" } else { "expected integer" }
       let wide = b.m.is_u64(t)
-      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt(if wide { "json_uint_ok" } else { "json_int_ok" }, bt, [d.src, d.tape, i])]))
+      // every unsigned type reads digits only, as Go's ParseUint: -0 is
+      // refused (b44 of the owner's v0.51.1 evaluation; it read as 0)
+      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt(if unsigned { "json_uint_ok" } else { "json_int_ok" }, bt, [d.src, d.tape, i])]))
       b.dec_fail(d, if sized { msg } else { "expected integer" })
       b.if_then_end(no, join)
       let n = b.json_rt("json_int", it, [d.src, d.tape, i])
