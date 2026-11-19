@@ -1115,6 +1115,10 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   hit 2026-11-04 and 2026-11-08); those modes warn without it (lead,
   2026-11-08). A pass change (a compiler/ source the xo runs) needs no
   stage2: the seed compiles the new pass code into xo.
+  `AB_DRIVER=REV` builds a third xo at REV that runs `xo bench --ab`
+  instead of NEW's: use `AB_DRIVER=origin/main` to rerun an old pair,
+  whose own xo bench is older than the round-order fix (4bd89c76b, task
+  #373; 2026-11-18).
   One --ab per agent (#171): a second ab-host.sh from the same Claude
   session while its first is live or queued is refused, exit 2 (read
   the first result, then queue the next; `AB_HOST_MULTI_OK=1` skips it).
