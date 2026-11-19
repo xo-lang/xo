@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: the encoder's match probes compute each offset once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (enc11 line profile on the Mac: update_nodes' distance cache probe, brotli.xo line 5112, 12.5% flat; its disassembly computed `cur_m + best_len` as a checked add three times per probe, as the compiler does not reuse a checked add)
+- Go reference: andybalholm/brotli backward_references_hq.go updateNodes and h5.go FindLongestMatch (same probes)
+- Measured: callgrind on linux/arm64 (423898b0b against this change): bench/perf/brotli enc11 2.39% fewer instructions, enc6 1.27% fewer; `xo bench --ab` on linux/arm64 host 1 (4 rounds each): enc11 0.978 (95% 0.953 to 0.985, 289.0 to 282.7 ms, better), enc6 (5 repeats) 0.991 (within noise); max RSS unchanged
+- Test: brotli module tests (encoder round trips; bench output unchanged: enc11 13312 both)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: the encoder's bit writer stores 8 bytes at once
 
 - Kind: perf

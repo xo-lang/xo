@@ -5101,7 +5101,8 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
     var j = 0
     while j < 16 && best_len < max_len {
       let backward = q.dc[4 * qi + dci[j]] + dco[j]
-      if cur_m + best_len > mask {
+      let cb = cur_m + best_len
+      if cb > mask {
         break
       }
       if backward <= 0 || backward > max_distance {
@@ -5109,7 +5110,8 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
         continue
       }
       let prev = (cur_ix - backward) & mask
-      if prev + best_len > mask || b[cur_m + best_len] != b[prev + best_len] {
+      let pb = prev + best_len
+      if pb > mask || b[cb] != b[pb] {
         j += 1
         continue
       }
@@ -6337,7 +6339,9 @@ fn find_longest_h5(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, 
       break
     }
     let prev = p0 & mask
-    if cur_m + best_len > mask || prev + best_len > mask || e.rb.buf[cur_m + best_len] != e.rb.buf[prev + best_len] {
+    let cb = cur_m + best_len
+    let pb = prev + best_len
+    if cb > mask || pb > mask || e.rb.buf[cb] != e.rb.buf[pb] {
       continue
     }
     let len = rb_match(e.rb.buf, prev, cur_m, max_length)
