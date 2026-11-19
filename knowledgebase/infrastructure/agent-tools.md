@@ -1941,7 +1941,11 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     lease-blocked go to `xw digest` only (stored acked by digest; `xw
     alerts --all` shows them); a wait past 90 min still alerts, and
     wait-rising does when a lane's hourly median wait rises three hours
-    running to past 15 min. host-disk-low: an offload host's /work under
+    running to past 15 min. Since #386 (2026-11-18) long-wait, waiting
+    and hang raise only for an avoidable wait: another lane that takes
+    the run (pass2 to pass4 take each other's) has a free slot; a run
+    still queued is not a hang, and one wait raises one alert.
+    host-disk-low: an offload host's /work under
     15 GB free after a job's prune (offload.sh reports it in each job's
     output as OFFLOAD-FREE-MB, xwhook.sh's xw_host_disk sends it).
     retry-storm: one lease name (not a .sh default) started over 5 times
