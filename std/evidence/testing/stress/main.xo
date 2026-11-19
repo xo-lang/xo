@@ -1,0 +1,230 @@
+// std/testing stress program (decision 0616 section 2). The fakes live
+// only in tests, so this program writes a test file (TEST below) to a
+// temporary directory and runs it with `xo test` ($XO_CLI, else bin/xo,
+// from the checkout stdproven runs in, on its default backend: the
+// program is built per backend, the fakes run where xo test runs them).
+// The file has two tests, both
+// with TASKS tasks per round on one TestOs:
+//
+// - every fake at once, 400 rounds: each task works its own MemFs
+//   directory (write, append, read, rename, list, remove_all, its view
+//   checked after every step), sleeps on the FakeClock, sets and reads
+//   the FakeEnv, prints to the FakeStdio and runs a command on the
+//   FakeProc; the fakes' totals (lines printed, sleeps and runs
+//   recorded) are checked. These fakes record their history by design,
+//   so their memory grows with the rounds and is not judged.
+// - MemFs and FakeEnv alone for LONG rounds, which keep no history: the
+//   resident set, sampled 30 times, must level off (the median of the 3
+//   samples from half way against the median of the last 3: under 10%
+//   or 4 MB of growth; minute 15 of a 30 minute run is the mark).
+//
+// A first run with LONG = 1000 times the rounds; LONG is then set so the
+// second run takes MINUTES (0: the first run only).
+//
+//   main [MINUTES (30)] [TASKS (16)]
+
+/// The test file with TASKS and LONG filled in.
+fn test_file(tasks: Int, long: Int) -> Str {
+  TEST.replace("@TEST@", "test").replace("@TASKS@", "${tasks}").replace("@LONG@", "${long}")
+}
+
+/// Runs the test file in dir with xo: its wall time in milliseconds.
+fn run(os: Os, xo: Str, dir: Str, what: Str) -> Int ! {
+  let t0 = os.clock.now()
+  let out = os.proc.run(xo, ["test", "--count=1", dir])?
+  let ms = (os.clock.now() - t0).millis()
+  let text = out.stdout.to_str_lossy() + out.stderr.to_str_lossy()
+  if out.code != 0 || !text.contains("ok: 2 passed, 0 failed") {
+    return Err("the ${what} run: exit ${out.code}\n${text}")
+  }
+  ms
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 16 } else { 16 }
+  let xo = os.env.get("XO_CLI") ?? "bin/xo"
+  let dir = "${temp_dir(os.env)}/xo-testing-stress-${os.proc.pid()}"
+  os.fs.create_dir_all(dir)?
+  let file = "${dir}/fakes_test.xo"
+  var long = 1020
+  os.fs.write(file, test_file(tasks, long).bytes())?
+  // the first run builds the test: the second times 1020 rounds
+  let r1 = run(os, xo, dir, "first")
+  let r2 = if r1.is_ok() { run(os, xo, dir, "timing") } else { r1 }
+  var ms = r2.ok() ?? 0
+  var r = r2.map(fn(_m: Int) {})
+  if r.is_ok() && minutes > 0 {
+    long = Int(Float(1020) * Float(minutes * 60000) / Float(if ms > 0 { ms } else { 1 }))
+    long = (long / 30 + 1) * 30
+    os.fs.write(file, test_file(tasks, long).bytes())?
+    let r3 = run(os, xo, dir, "long")
+    ms = r3.ok() ?? 0
+    r = r3.map(fn(_m: Int) {})
+  }
+  os.fs.remove_all(dir)?
+  r?
+
+  os.stdio.println("testing stress: 400 rounds of every fake, then ${long} rounds of MemFs and FakeEnv (${long * tasks} task rounds) by ${tasks} tasks in ${ms / 1000} s, 0 mismatches, memory level from half way, pass")
+}
+
+/// The test each run executes (std/testing's fakes under TASKS tasks).
+const TEST: Str = r#"// std/testing stress round, written by std/evidence/testing/stress/main.xo.
+const TASKS: Int = @TASKS@
+const ROUNDS: Int = 400
+const LONG: Int = @LONG@
+
+/// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
+fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
+
+/// One task's round on the shared MemFs: its own directory, files
+/// written, appended, renamed, copied, listed and removed; the answer is
+/// the number of checks made, or a fault on the first wrong one.
+fn fs_round(fs: Fs, t: Int, r: Int, seed: Int) -> Int uses fs {
+  let dir = "t${t}/r${r % 4}"
+  var x = seed
+  var checks = 0
+  fs.create_dir_all(dir) ?? e => fault("create_dir_all ${dir}: ${e}")
+  var want: Map[Str, Str] = {}
+  for i in 0..16 {
+    x = next(x)
+    let name = "${dir}/f${x % 8}"
+    let text = "${t}.${r}.${i}.${x % 1000}"
+    match x.shr_logical(20) % 4 {
+      0 => {
+        fs.write(name, text.bytes()) ?? e => fault("write ${name}: ${e}")
+        want[name] = text
+      }
+      1 => {
+        fs.append(name, text.bytes()) ?? e => fault("append ${name}: ${e}")
+        want[name] = (want.get(name) ?? "") + text
+      }
+      2 => {
+        match want.get(name) {
+          Some(w) => {
+            let got = fs.read_text(name) ?? e => fault("read ${name}: ${e}")
+            if got != w {
+              fault("read ${name}: got ${got.len()} bytes, want ${w.len()}")
+            }
+            checks += 1
+          }
+          None => {
+            if fs.exists(name) ?? e => fault("exists ${name}: ${e}") {
+              fault("${name} exists, never written")
+            }
+            checks += 1
+          }
+        }
+      }
+      _ => {
+        if want.get(name).is_some() {
+          let to = "${dir}/g${x % 3}"
+          fs.rename(name, to) ?? e => fault("rename ${name}: ${e}")
+          let moved = want.get(name) ?? ""
+          want.remove(name)
+          want[to] = moved
+        }
+      }
+    }
+  }
+  var names: List[Str] = []
+  for (k, _) in want {
+    names.push(k.trim_prefix("${dir}/"))
+  }
+  let listed = (fs.read_dir(dir) ?? e => fault("read_dir ${dir}: ${e}")).map(fn(i: FileInfo) -> Str { i.name })
+  if listed.sort() != names.sort() {
+    fault("read_dir ${dir}: ${listed.join(",")}, want ${names.sort().join(",")}")
+  }
+  checks += 1
+  fs.remove_all(dir) ?? e => fault("remove_all ${dir}: ${e}")
+  if fs.exists(dir) ?? e => fault("exists ${dir}: ${e}") {
+    fault("${dir} left after remove_all")
+  }
+  checks + 1
+}
+
+@TEST@ "the fakes stand up to TASKS tasks at once" {
+  var ops = 0
+  os.proc.on_run("echo", ProcOutput{code: 0, stdout: b"hi\n", stderr: b""})
+  for r in 0..ROUNDS {
+    var tasks: List[Task[Int, Never]] = []
+    for t in 0..TASKS {
+      let fs = os.fs.cwd()
+      let clock = os.clock
+      let env = os.env
+      let stdio = os.stdio
+      let proc = os.proc
+      let seed = next(r * 1000 + t)
+      tasks.push(os.tasks.spawn(fn() -> Int ! Never uses (fs, clock, env, stdio, proc) {
+        var n = fs_round(fs, t, r, seed)
+        clock.sleep(Duration.from_millis(t + 1))
+        env.set("T${t}", "${r}")
+        if env.get("T${t}") != Some("${r}") {
+          fault("env T${t}")
+        }
+        stdio.println("${t} ${r}")
+        let out = proc.run("echo", ["${t}"]) ?? e => fault("run: ${e}")
+        if out.stdout != b"hi\n" {
+          fault("run echo: ${out.stdout.len()} bytes")
+        }
+        n + 4
+      }))
+    }
+    for h in tasks {
+      ops += h.await
+    }
+  }
+  let lines = os.stdio.output().split("\n").len() - 1
+  expect(lines) == ROUNDS * TASKS
+  expect(os.clock.sleeps().len()) == ROUNDS * TASKS
+  expect(os.proc.runs().len()) == ROUNDS * TASKS
+  expect(ops) >= ROUNDS * TASKS * 5
+}
+
+/// The median of xs[from..to].
+fn median(xs: List[Int], from: Int, to: Int) -> Int {
+  var part: List[Int] = []
+  for i in from..to { part.push(xs[i]) }
+  let s = part.sort()
+  s[s.len() / 2]
+}
+
+@TEST@ "MemFs and FakeEnv hold their memory over LONG rounds" {
+  // the fakes that keep no history, so the resident set must level off:
+  // 30 samples, the median of the 3 from half way against the median of
+  // the last 3 (decision 0616: under 10% or 4 MB of growth)
+  var rss: List[Int] = []
+  var ops = 0
+  for r in 0..LONG {
+    var tasks: List[Task[Int, Never]] = []
+    for t in 0..TASKS {
+      let fs = os.fs.cwd()
+      let env = os.env
+      let seed = next(r * 1000 + t)
+      tasks.push(os.tasks.spawn(fn() -> Int ! Never uses (fs, env) {
+        let n = fs_round(fs, t, r, seed)
+        env.set("T${t}", "${r}")
+        if env.get("T${t}") != Some("${r}") {
+          fault("env T${t}")
+        }
+        n + 1
+      }))
+    }
+    for h in tasks {
+      ops += h.await
+    }
+    if (r + 1) % (LONG / 30) == 0 && rss.len() < 30 {
+      rss.push(os.proc.usage().max_rss)
+    }
+  }
+  expect(rss.len()) == 30
+  let mark = median(rss, 15, 18)
+  let last = median(rss, 27, 30)
+  let mb = fn(b: Int) -> Int { b / 1048576 }
+  if last - mark > mark / 10 && last - mark > 4 * 1048576 {
+    fault("MEMORY ${mb(mark)} MB half way, ${mb(last)} MB at the end")
+  }
+  expect(ops) >= LONG * TASKS * 3
+}
+"#

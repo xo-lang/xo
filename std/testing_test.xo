@@ -1,0 +1,195 @@
+// std/testing's fakes checked as the capabilities they stand in for
+// (spec/std.md 8): MemFs answers as Go's os on a real directory, FakeClock
+// moves only when told, FakeEnv, FakeStdio and FakeProc record what code
+// did with them.
+
+test "MemFs writes, reads, lists and walks as a real file system" {
+  os.fs.create_dir_all("a/b/c") ?? e => fault("${e}")
+  os.fs.write("a/x.txt", b"hello") ?? e => fault("${e}")
+  os.fs.write("a/b/y.txt", b"") ?? e => fault("${e}")
+  os.fs.append("a/x.txt", b" world") ?? e => fault("${e}")
+  same((os.fs.read_text("a/x.txt") ?? e => fault("${e}")) == "hello world", "line 11")
+  let names = (os.fs.read_dir("a") ?? e => fault("${e}")).map(fn(i: FileInfo) -> Str { i.name })
+  same(names == ["b", "x.txt"], "line 13")
+  let walked = (os.fs.walk("a") ?? e => fault("${e}")).map(fn(i: FileInfo) -> Str { i.path })
+  same(walked.len() >= 4, "line 15")
+  same((os.fs.exists("a/b/c") ?? e => fault("${e}")) == true, "line 16")
+  same((os.fs.exists("a/nope") ?? e => fault("${e}")) == false, "line 17")
+  same(((os.fs.stat("a/x.txt") ?? e => fault("${e}")).is_some()) == true, "line 18")
+  same(((os.fs.stat("a/nope") ?? e => fault("${e}")).is_some()) == false, "line 19")
+}
+
+test "MemFs errors are the ones the OS gives" {
+  os.fs.create_dir_all("d/e") ?? e => fault("${e}")
+  os.fs.write("d/f", b"1") ?? e => fault("${e}")
+  same(os.fs.read("missing") == Err(FsErr.NotFound(path: "missing")), "line 25")
+  same(os.fs.read_dir("d/f").is_ok() == false, "line 26")
+  same(os.fs.remove("d").is_ok() == false, "line 27")
+  same(os.fs.create_new("d/f").is_ok() == false, "line 28")
+  os.fs.remove_all("d") ?? e => fault("${e}")
+  same((os.fs.exists("d") ?? e => fault("${e}")) == false, "line 30")
+  os.fs.remove_all("d") ?? e => fault("remove_all of a missing path is no error, as Go's: ${e}")
+}
+
+test "MemFs rename, copy and glob" {
+  os.fs.write("r/one.txt", b"1") ?? e => fault("${e}")
+  os.fs.write("r/two.txt", b"22") ?? e => fault("${e}")
+  os.fs.write("r/three.md", b"333") ?? e => fault("${e}")
+  os.fs.rename("r/one.txt", "r/uno.txt") ?? e => fault("${e}")
+  same((os.fs.exists("r/one.txt") ?? e => fault("${e}")) == false, "line 39")
+  os.fs.copy("r/two.txt", "r/dos.txt") ?? e => fault("${e}")
+  same((os.fs.read_text("r/dos.txt") ?? e => fault("${e}")) == "22", "line 41")
+  same((os.fs.glob("r/*.txt") ?? e => fault("${e}")) == ["r/dos.txt", "r/two.txt", "r/uno.txt"], "line 42")
+  same((os.fs.glob("r/*.md") ?? e => fault("${e}")) == ["r/three.md"], "line 43")
+}
+
+test "MemFs fail_next fails the next matching operation once" {
+  os.fs.write("p", b"x") ?? e => fault("${e}")
+  os.fs.fail_next(FsOp.Read, "p", FsErr.Io(path: "p", msg: "disk on fire"))
+  same(os.fs.read("p") == Err(FsErr.Io(path: "p", msg: "disk on fire")), "line 49")
+  same(os.fs.read("p").is_ok() == true, "line 50")
+}
+
+test "MemFs sub and read_only confine and refuse" {
+  os.fs.write("top/in.txt", b"in") ?? e => fault("${e}")
+  os.fs.write("out.txt", b"out") ?? e => fault("${e}")
+  let sub = os.fs.sub("top")
+  same((sub.read_text("in.txt") ?? e => fault("${e}")) == "in", "line 57")
+  same(sub.read_text("../out.txt").is_ok() == false, "line 58")
+  let ro = os.fs.read_only()
+  same((ro.read_text("out.txt") ?? e => fault("${e}")) == "out", "line 60")
+  same(ro.write("out.txt", b"no").is_ok() == false, "line 61")
+  same((os.fs.read_text("out.txt") ?? e => fault("${e}")) == "out", "line 62")
+}
+
+test "MemFs keeps nothing of a closed file" {
+  // before 2026-11-19 a closed file's record stayed, and an opened
+  // file's view held its bytes: 200 files of 1 MB opened, read, closed
+  // and removed kept 200 MB
+  let fs = os.fs.cwd()
+  let before = os.proc.usage().max_rss
+  for i in 0..200 {
+    fs.write("big", Bytes.from_list([UInt8(i % 251)]).repeat(1 << 20)) ?? e => fault("write: ${e}")
+    let f = fs.open("big") ?? e => fault("open: ${e}")
+    let got = f.read(16) ?? e => fault("read: ${e}")
+    same((got ?? b"").len() == 16, "read 16 bytes")
+    f.close() ?? e => fault("close: ${e}")
+    same(f.read(1).is_err(), "a closed file reads an error")
+    fs.remove("big") ?? e => fault("remove: ${e}")
+  }
+  let grew = (os.proc.usage().max_rss - before) / (1 << 20)
+  same(grew < 64, "the resident set grew ${grew} MB, want under 64")
+}
+
+test "MemFs files lists every file's bytes" {
+  os.fs.write("m/a", b"A") ?? e => fault("${e}")
+  os.fs.write("m/b", b"BB") ?? e => fault("${e}")
+  let files = os.fs.files()
+  same(files.get("m/a") == Some(b"A"), "line 69")
+  same(files.get("m/b") == Some(b"BB"), "line 70")
+}
+
+test "FakeClock moves only when told, and records sleeps" {
+  let t0 = os.clock.now()
+  os.clock.sleep(Duration.from_secs_int(3))
+  same(os.clock.since(t0) == Duration.from_secs_int(3), "line 76")
+  os.clock.advance(Duration.from_millis(250))
+  same(os.clock.since(t0) == Duration.from_millis(3250), "line 78")
+  same(os.clock.sleeps() == [Duration.from_secs_int(3)], "line 79")
+  let t1 = t0 + Duration.from_secs_int(3600)
+  os.clock.set(t1)
+  same(os.clock.now() == t1, "line 82")
+}
+
+test "FakeEnv answers what was set and nothing else" {
+  same(os.env.get("XO_TESTING_NOPE") == None, "line 86")
+  os.env.set("XO_TESTING_A", "1")
+  same(os.env.get("XO_TESTING_A") == Some("1"), "line 88")
+  same(os.env.vars().get("XO_TESTING_A") == Some("1"), "line 89")
+  os.env.set_args(["-v", "x"])
+  same(os.env.args() == ["-v", "x"], "line 91")
+  same(os.env.hostname() == "test", "line 92")
+  os.env.set("HOSTNAME", "box")
+  same(os.env.hostname() == "box", "line 94")
+  let only = os.env.only(["XO_TESTING_A"])
+  same(only.get("HOSTNAME") == None, "line 96")
+  same(only.get("XO_TESTING_A") == Some("1"), "line 97")
+}
+
+test "FakeStdio captures output and serves input" {
+  os.stdio.print("a")
+  os.stdio.println("b")
+  os.stdio.eprintln("err")
+  same(os.stdio.output() == "ab\n", "line 104")
+  same(os.stdio.errors() == "err\n", "line 105")
+  os.stdio.set_input("one\ntwo\n")
+  same((os.stdio.read_line() ?? e => fault("${e}")) == Some("one"), "line 107")
+  same((os.stdio.read_line() ?? e => fault("${e}")) == Some("two"), "line 108")
+  same((os.stdio.read_line() ?? e => fault("${e}")) == None, "line 109")
+  same(os.stdio.stdout_is_tty() == false, "line 110")
+  os.stdio.set_tty(80)
+  same(os.stdio.width() == Some(80), "line 112")
+}
+
+test "FakeProc runs only what on_run answers, and records runs and kills" {
+  os.proc.on_run("git", ProcOutput{code: 0, stdout: b"main\n", stderr: b"", usage: ProcUsage{user: Duration.from_nanos(0), system: Duration.from_nanos(0), max_rss: 0}})
+  let out = os.proc.run("git", ["branch", "--show-current"]) ?? e => fault("${e}")
+  same(out.stdout.to_str() == "main\n", "line 118")
+  same(os.proc.run("make", ["my sub"]).is_ok() == false, "line 119")
+  same(os.proc.runs() == ["git branch --show-current", "make \"my sub\""], "line 120")
+  os.proc.kill(42) ?? e => fault("${e}")
+  os.proc.kill(7, signal: "KILL") ?? e => fault("${e}")
+  same(os.proc.killed() == ["TERM 42", "KILL 7"], "line 123")
+  same(os.proc.pid() == 1, "line 124")
+  same(os.proc.ppid() == 0, "ppid")
+  same(os.proc.exit_code() == None, "line 125")
+}
+
+fn tool_main(os: Os) -> () ! Error uses (env, proc, stdio) {
+  let name = os.env.args().get(0) ?? "nobody"
+  if name == "fail" {
+    return Err("asked to fail")
+  }
+  if name == "exit" {
+    os.proc.exit(3)
+  }
+  os.stdio.println("hello ${name}")
+  Ok(())
+}
+
+test "run_main gives main the fakes and returns its status" {
+  same(run_main(tool_main, os, args: ["ana"]) == 0, "line 141")
+  same(os.stdio.output() == "hello ana\n", "line 142")
+  same(run_main(tool_main, os, args: ["fail"]) == 1, "line 143")
+  same(run_main(tool_main, os, args: ["exit"]) == 3, "line 144")
+}
+
+test "gen is the same for a seed and differs across seeds" {
+  let a: List[Int] = gen(7)
+  let b: List[Int] = gen(7)
+  same(a == b, "line 150")
+  var differ = false
+  for s in 0..20 {
+    let c: Str = gen(s)
+    let d: Str = gen(s + 1000)
+    if c != d {
+      differ = true
+    }
+  }
+  same(differ == true, "line 159")
+}
+
+test "fake_db is an in memory database" {
+  let db = fake_db("CREATE TABLE t (n INTEGER)") ?? e => fault("${e}")
+  db.exec("INSERT INTO t VALUES (1), (2), (3)", []) ?? e => fault("${e}")
+  let rows = db.query("SELECT n FROM t WHERE n > 1", []) ?? e => fault("${e}")
+  same(rows.len() == 2, "line 166")
+}
+
+/// The check a test of std/testing itself makes: `expect` is this
+/// module's own declaration here, which the checker does not lower.
+fn same(ok: Bool, what: Str) {
+  if !ok {
+    fault("std/testing_test.xo: ${what} does not hold")
+  }
+}

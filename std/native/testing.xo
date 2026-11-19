@@ -1085,9 +1085,13 @@ fn memfile_sync(f: File) -> () ! FsErr {
 
 fn memfile_close(f: File) -> () ! FsErr {
   var st = memfs_load()
-  if let Some(mf) = memfs_hs(st).files.get(rt.mem_file_id(f)) {
-    memfs_set_file(st, rt.mem_file_id(f), mf with {closed: true})
-  }
+  // the record goes: every lookup takes a missing one as closed. Kept
+  // with closed set, each open, create and append left a record behind,
+  // and an open file's view held its bytes after the file was removed
+  // (std/evidence/testing stress, 2026-11-19)
+  var h = memfs_hs(st)
+  let _old = h.files.remove(rt.mem_file_id(f))
+  st.hs = [h]
   memfs_store(st)
 }
 

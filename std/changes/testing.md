@@ -1,5 +1,29 @@
 # std/testing changes
 
+## 2026-11-19: fix: MemFs keeps nothing of a closed file natively
+
+- Kind: fix (memory)
+- Commit: this push
+- Found by: std/evidence/testing/stress (task #389, Proven evidence): the resident set grew about 190 bytes per append
+- Go reference: none (the Go backend's handle is collected with the File)
+- Test: std/testing_test.xo "MemFs keeps nothing of a closed file" on arm64 and LLVM (fails before: 203 MB for 200 files of 1 MB); the stress program's "MemFs and FakeEnv hold their memory" (35 MB to 50 MB in a minute before, level after)
+- Timing: none
+- Shipped in: not yet released
+
+On the native backends a closed MemFs file's record stayed in the test's file table, so every `open`, `create`, `append` and `write` through a File kept some memory for the rest of the test, and a file opened for reading kept its bytes alive after it was removed. Closing a file now drops its record; a closed file still answers "file already closed".
+
+## 2026-11-18: fix: FakeEnv.hostname and FakeProc.pid and ppid answer the fake's values natively
+
+- Kind: fix (behavior change)
+- Commit: this push
+- Found by: std/testing's module tests (task #389, Proven evidence)
+- Go reference: none (std/testing.xo: "test" or HOSTNAME, pid 1, ppid 0; the Go backend already did)
+- Test: std/testing_test.xo "FakeEnv answers what was set and nothing else", "FakeProc runs only what on_run answers, and records runs and kills" on arm64 and LLVM (fail before)
+- Timing: none
+- Shipped in: not yet released
+
+On the native backends a test's `os.env.hostname()` gave the machine's host name and `os.proc.pid()` and `ppid()` the test process's, so a test that printed them passed on one machine only. They now answer as std/testing.xo says: "test", or the FakeEnv's HOSTNAME; 1; 0.
+
 ## 2026-11-17: fix: of the FakeNet patterns a request matches, ServeMux's most specific wins
 
 - Kind: fix (behavior change)
