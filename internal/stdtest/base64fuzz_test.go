@@ -31,6 +31,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // bxCase is one case of the base32 and base64 harnesses: the encoding
@@ -108,6 +110,14 @@ func baseText(r *rand.Rand, enc, alphabet, other, next string, padded bool) stri
 		}
 		k := r.Intn(len(enc))
 		repl := []string{string(other[r.Intn(len(other))]), "=", " ", "\t", "\x00", ".", "é", "日", "ÿ"}[r.Intn(9)]
+		if k%4 == 0 {
+			// the hostile dictionary (task #352): a long hex run, symbols
+			// of the alphabet or just outside it, chosen by k so the cases
+			// after it stay as they were (not UTF-8 cut inside a rune:
+			// decode takes a Str, which cannot hold it)
+			hs := hostile.Hex()
+			repl = hs[(k/4+len(enc))%len(hs)]
+		}
 		return enc[:k] + repl + enc[k+1:]
 	case 5: // padding dropped, added or doubled
 		if padded && strings.HasSuffix(enc, "=") {

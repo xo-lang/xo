@@ -40,6 +40,8 @@ import (
 
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type mpfCase struct {
@@ -72,6 +74,14 @@ func mpfDisposition(r *rand.Rand) string {
 		d += "; filename=" + mpfPick(r, files)
 	case 2:
 		d += "; filename*=UTF-8''%e2%82%ac%20rates.txt"
+	case 3:
+		// the hostile dictionary (task #352): RFC 2231 continuation
+		// indexes past Int and at its edges
+		idx := hostile.Pick(r, hostile.Digits())
+		if r.Intn(2) == 0 {
+			idx = strconv.FormatInt(hostile.Pick(r, hostile.Ints()), 10)
+		}
+		d += "; filename*0=a; filename*" + idx + "=b"
 	}
 	if r.Intn(20) == 0 {
 		d += "; name=dup"

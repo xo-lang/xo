@@ -6,7 +6,6 @@ adler32fuzz_test.go
 amqpfuzz_test.go
 amqptestfuzz_test.go
 base32fuzz_test.go
-base64fuzz_test.go
 bcryptfuzz_test.go
 bigfuzz_test.go
 bufiofuzz_test.go
@@ -34,7 +33,6 @@ jpegfuzz_test.go
 jsonrpcfuzz_test.go
 logfuzz_test.go
 lzwfuzz_test.go
-multipartfuzz_test.go
 normfuzz_test.go
 otlpfuzz_test.go
 otpfuzz_test.go
