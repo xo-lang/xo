@@ -1065,6 +1065,15 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
 /// was not the loop bound's and its bounds check stayed). False when
 /// nothing changed.
 pub fn cse(var f: Func, m: Module) -> Bool {
+  cse_at(f, m, true)
+}
+
+/// cse; unl: whether a checked operation with a landing may merge with
+/// its dominating twin (unland). When one did and a landing left after
+/// the pruning is not a check (a pad cut off held a landing that code
+/// still reached lands on: winx18's prof.trace_text_at, task #438), the
+/// function is restored and the pass runs again without it.
+fn cse_at(var f: Func, m: Module, unl: Bool) -> Bool {
   if f.blocks.is_empty() {
     return false
   }
@@ -1085,6 +1094,9 @@ pub fn cse(var f: Func, m: Module) -> Bool {
   // binding (the inliner's for a callee parameter) names a borrow
   var bound: Map[Int, Bool] = {}
   var scanned = false
+  // a landing op replaced: its block now jumps past its pad
+  var unlanded = false
+  var saved: List[Func] = []
   var i = post.len() - 1
   while i >= 0 {
     let b = post[i]
@@ -1160,9 +1172,19 @@ pub fn cse(var f: Func, m: Module) -> Bool {
           break
         }
       }
+      if unl && hit >= 0 && lands && saved.is_empty() {
+        saved.push(f)
+      }
       if hit >= 0 && !lands {
         repl[v] = hit
         dead[v] = true
+      } else if unl && hit >= 0 && past_twin_landing(f, idom, hit, b) && unland(f, v) {
+        // the twin did not fault, so this one cannot (task #438: brotli's
+        // update_nodes, a function with cleanups, computed cur_m +
+        // best_len three times, each with its own overflow landing)
+        repl[v] = hit
+        dead[v] = true
+        unlanded = true
       } else if hit < 0 {
         var next = prev
         next.push(v)
@@ -1194,6 +1216,109 @@ pub fn cse(var f: Func, m: Module) -> Bool {
   for k in 0..f.dbinds.len() {
     f.dbinds[k].value = find_repl(repl, f.dbinds[k].value)
   }
+  if unlanded {
+    prune_func(f)
+    if !landings_ok(f) && !saved.is_empty() {
+      f = saved[0]
+      return cse_at(f, m, false)
+    }
+  }
+  true
+}
+
+/// Whether every value with a landing lands on a check: an rt.landing
+/// or rt.unwinding call that a branch on it ends its block with (what
+/// verify asks).
+fn landings_ok(f: Func) -> Bool {
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let p = pad_of(f.values[v].pi)
+      if p < 0 {
+        continue
+      }
+      let x = f.values[p]
+      let pb = block_of(x.tb)
+      if x.op != Op.Call || !(f.name_is(x, "rt.landing") || f.name_is(x, "rt.unwinding")) || pb < 0 || pb >= f.blocks.len() {
+        return false
+      }
+      let t = f.term(pb)
+      if t < 0 || f.values[t].op != Op.Branch || f.arg(f.values[t].args, 0) != p {
+        return false
+      }
+      var found = false
+      for w in f.blocks[pb].instrs {
+        if w == p {
+          found = true
+        }
+      }
+      if !found {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// Whether block b is reached only past the landing of twin, when twin
+/// has one (its value is defined on its normal edge only).
+fn past_twin_landing(f: Func, idom: List[Int], twin: Int, b: Int) -> Bool {
+  let l = pad_of(f.values[twin].pi)
+  if l < 0 {
+    return true
+  }
+  let tb = block_of(f.values[twin].tb)
+  let t = f.term(tb)
+  if t < 0 || f.values[t].op != Op.Branch || f.arg(f.values[t].args, 0) != l {
+    return false
+  }
+  let normal = f.edges[succ(f.values[t], 1)].to
+  dominates(idom, normal, b)
+}
+
+/// Drops the landing of v, the last operation of its block before the
+/// landing's `br L, pad, normal`, which becomes `jump normal` (as
+/// prune_landings does); false, changing nothing, when v's block has
+/// another shape.
+fn unland(var f: Func, v: Int) -> Bool {
+  let l = pad_of(f.values[v].pi)
+  let bl = block_of(f.values[v].tb)
+  if l < 0 || block_of(f.values[l].tb) != bl || f.values[l].op != Op.Call || !f.name_is(f.values[l], "rt.landing") {
+    return false
+  }
+  let t = f.term(bl)
+  if t < 0 || f.values[t].op != Op.Branch || f.arg(f.values[t].args, 0) != l {
+    return false
+  }
+  // other checks may land on l too, in this block or another (the
+  // inliner's, after a call's landing was shared): l stays for them
+  for bk in f.blocks {
+    for w in bk.instrs {
+      if w != v && pad_of(f.values[w].pi) == l {
+        return false
+      }
+    }
+  }
+  let pad = succ(f.values[t], 0)
+  let normal = succ(f.values[t], 1)
+  let pto = f.edges[pad].to
+  var preds: List[Int] = []
+  for e in f.blocks[pto].preds {
+    if e != pad {
+      preds.push(e)
+    }
+  }
+  f.blocks[pto].preds = preds
+  f.values[t].op = Op.Jump
+  f.set_args(t, [])
+  f.values[t].set_succs([normal])
+  var ins: List[Int] = []
+  for w in f.blocks[bl].instrs {
+    if w != l {
+      ins.push(w)
+    }
+  }
+  f.blocks[bl].instrs = ins
+  f.values[v].pi = with_pad(f.values[v].pi, -1)
   true
 }
 

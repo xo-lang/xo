@@ -1529,3 +1529,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-bigfloat-setmantexp-precision.md](go-bigfloat-setmantexp-precision.md): math/big SetMantExp takes its argument's precision (53 from NewFloat); set the precision after it
 - [random-bit-branch-select.md](random-bit-branch-select.md): a branch on a random bit (random.normal) is mispredicted half the time; a broader select_branch slowed predictable tests, so write the source branch free
 - [cancel-file-cancels-the-rerun.md](cancel-file-cancels-the-rerun.md): a cancel file its lease never took cancelled the next run with the same name; since #440 a run takes only a file filed after it began (Observed)
+- [shared-landing-cse-unland.md](shared-landing-cse-unland.md): dropping a landing with cleanup code can strand other landings (shared, or nested in the pruned pad); cse unland checks and falls back (task #438)

@@ -1,0 +1,35 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): cse of a checked
+// operation with an overflow landing (task #438). In a function with
+// cleanups, here the List `keep`, each checked add ends its block with a
+// landing that releases them; a repeated `cur + n` is still the first
+// one's value, since the first one already trapped on overflow (brotli's
+// update_nodes computed cur_m + best_len three times a probe).
+
+// The index `cur + n` is the bound test's: no add after the byte read.
+fn twin(b: Bytes, cur: Int, n: Int) -> Int {
+  // arm64: "\tadds " -"(?s)ldrb.*\tadds "
+  var keep: List[Int] = [n]
+  keep.push(cur)
+  if cur + n >= b.len() || cur + n < 0 {
+    return keep.len()
+  }
+  let c = Int(b[0])
+  (c ^ Int(b[cur + n])) | keep.len()
+}
+
+// Without the dominating add, the index's add stays.
+fn single(b: Bytes, cur: Int, n: Int) -> Int {
+  // arm64: "(?s)ldrb.*\tadds "
+  var keep: List[Int] = [n]
+  keep.push(cur)
+  if cur >= b.len() || cur < 0 {
+    return keep.len()
+  }
+  let c = Int(b[cur])
+  (c ^ Int(b[c + n])) | keep.len()
+}
+
+fn main(os: Os) {
+  let b = "hello, world".bytes()
+  os.stdio.println("${twin(b, 3, 4)} ${single(b, 1, 2)}")
+}
