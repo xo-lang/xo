@@ -1,0 +1,10 @@
+# Go's compress test tables (go1.26) run through std/compress
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# zlib, gunzip, inflate and lzw read a whole stream (Go's readers and
+# io.ReadAll): the bytes or the error text; deflate is a Writer at the
+# level, written and closed.
+compress/zlib reader_test.go zlibTests compressed,dict zlib
+compress/gzip gunzip_test.go gunzipTests gzip gunzip
+compress/flate inflate_test.go TestReaderTruncated.vectors input inflate
+compress/flate deflate_test.go deflateTests in,level deflate
+compress/lzw reader_test.go lzwTests desc,compressed lzw

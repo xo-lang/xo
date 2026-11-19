@@ -1,0 +1,77 @@
+// The Xo side of std/compress's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/compress's result as text, as go/main.go prints package compress's.
+// Kinds zlib, gunzip, inflate, deflate and lzw.
+// See scripts/stdproven/gotests.go.
+use std/compress
+use std/base64
+
+fn bytes_of(s: Str) -> Bytes {
+  var b = BytesBuilder.with_capacity(16)
+  if !s.is_empty() {
+    for p in s.split(",") {
+      b.write_byte(UInt8(Int.parse(p) ?? 0))
+    }
+  }
+  b.freeze()
+}
+
+fn bytes_text(b: Bytes) -> Str {
+  var out = ""
+  for i in 0..b.len() {
+    if i > 0 {
+      out = out + ","
+    }
+    out = out + "${Int(b[i])}"
+  }
+  out
+}
+
+fn out(r: Result[Bytes, compress.CompressErr]) -> Str {
+  match r {
+    Ok(b) => "ok ${bytes_text(b)}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn level(n: Int) -> compress.Level {
+  if n == -1 { compress.Level.Default } else { compress.Level.Of(n) }
+}
+
+fn crun(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "zlib" => out(compress.unzlib(bytes_of(inp[0]), dict: bytes_of(inp[1])))
+    "gunzip" => out(compress.gunzip(bytes_of(inp[0])))
+    "inflate" => out(compress.inflate(inp[0].bytes()))
+    "deflate" => "ok ${bytes_text(compress.deflate(bytes_of(inp[0]), level: level(Int.parse(inp[1]) ?? 0)))}"
+    "lzw" => {
+      let p = inp[0].split(";")
+      let order = if p[1] == "MSB" { compress.LzwOrder.MSB } else { compress.LzwOrder.LSB }
+      out(compress.lzw_decode(inp[1].bytes(), order, Int.parse(p[2]) ?? 0))
+    }
+    _ => "?"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "zlib" | "gunzip" | "inflate" | "deflate" | "lzw" => crun(kind, inp)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
