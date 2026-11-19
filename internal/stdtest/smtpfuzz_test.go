@@ -40,6 +40,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -80,6 +81,10 @@ func smfText(r *rand.Rand) string {
 		w = append(w, "café ☃")
 	case 4:
 		return ""
+	case 5:
+		// the hostile dictionary (task #352): digit runs past Int and
+		// Int's edges, as a reply's text (EHLO SIZE reads a number)
+		w = append(w, hostile.Pick(r, hostile.Digits()), strconv.FormatInt(hostile.Pick(r, hostile.Ints()), 10))
 	}
 	return strings.Join(w, " ")
 }
@@ -198,7 +203,12 @@ func smfGen(r *rand.Rand, i int) smfCase {
 	} else {
 		lines := []string{"mail.test greets localhost"}
 		for k := r.Intn(6); k > 0; k-- {
-			lines = append(lines, smfExts[r.Intn(len(smfExts))])
+			if r.Intn(8) == 0 {
+				// SIZE with a hostile number (task #352)
+				lines = append(lines, "SIZE "+hostile.Pick(r, hostile.Digits()))
+			} else {
+				lines = append(lines, smfExts[r.Intn(len(smfExts))])
+			}
 		}
 		if c.auth != "none" && r.Intn(4) != 0 {
 			lines = append(lines, "AUTH PLAIN CRAM-MD5")

@@ -32,6 +32,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -184,6 +185,18 @@ func ssePick(r *rand.Rand, xs ...string) string { return xs[r.Intn(len(xs))] }
 func sseEnd(r *rand.Rand) string { return ssePick(r, "\n", "\n", "\r\n", "\r") }
 
 func sseValue(r *rand.Rand) string {
+	if r.Intn(6) == 0 {
+		// the hostile dictionary (task #352): digit runs past Int, Int's
+		// edges, and UTF-8 cut inside a rune
+		switch r.Intn(3) {
+		case 0:
+			return hostile.Pick(r, hostile.Digits())
+		case 1:
+			return strconv.FormatInt(hostile.Pick(r, hostile.Ints()), 10)
+		default:
+			return hostile.Pick(r, append(hostile.UTF8(), hostile.CutUTF8("é日😀")...))
+		}
+	}
 	return ssePick(r, "", "x", " lead", "  two", "a:b", "日本", "\xff", "\xe2\x80", "\xf0\x9f\x98", "\xef\xbb\xbf", "a\x00b", "123",
 		"007", "99999999999999999999999", "-5", "1 2", "😀", "\xc3", "\xed\xa0\x80", "\xf4\x90\x80\x80")
 }
@@ -203,7 +216,7 @@ func sseField(r *rand.Rand) string {
 	case 7:
 		return "id" + ssePick(r, ":", ": ") + sseValue(r)
 	case 8:
-		return "retry" + ssePick(r, ":", ": ") + ssePick(r, "1000", "0", "x", "", "18446744073709551616", "9223372036854775807", sseValue(r))
+		return "retry" + ssePick(r, ":", ": ") + ssePick(r, "1000", "0", "x", "", "18446744073709551616", "9223372036854775807", hostile.Pick(r, hostile.Digits()), strconv.FormatUint(hostile.Pick(r, hostile.Uints()), 10), sseValue(r))
 	default:
 		return "data: " + strings.Repeat(ssePick(r, "ab", "é", "\xe2"), r.Intn(20))
 	}

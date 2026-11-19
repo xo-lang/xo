@@ -37,6 +37,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -84,9 +85,17 @@ func tpfLine(r *rand.Rand) string {
 	case 5:
 		return ""
 	case 6:
+		if r.Intn(3) == 0 {
+			// UTF-8 cut inside a rune, in a key and a value (task #352)
+			return "Key" + hostile.Pick(r, hostile.CutUTF8("é日😀")) + ": v" + hostile.Pick(r, hostile.UTF8())
+		}
 		return tpfPick(r, []string{"NoColon", "no colon here", ":empty key", "\x00", "a\x00: b", "Key\x80: v"})
 	case 7, 8:
 		code := tpfPick(r, []string{"250", "220", "354", "500", "550", "099", "25", "2500", "abc", "1x0", "999", "100", "251"})
+		if r.Intn(4) == 0 {
+			// the hostile dictionary (task #352): digit runs past Int
+			code = hostile.Pick(r, hostile.Digits())
+		}
 		return code + tpfPick(r, []string{" ", "-", "", "x", "  "}) + tpfPick(r, []string{"ok", "hello there", "", "PIPELINING", "multi\xffbyte"})
 	case 9:
 		return "."

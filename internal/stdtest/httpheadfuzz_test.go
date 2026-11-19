@@ -28,8 +28,11 @@ import (
 	"net/http"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // headCase is one raw request head and the answer both sides must give.
@@ -97,6 +100,15 @@ func hfField(r *rand.Rand, b *strings.Builder) {
 		name = strings.ToUpper(name[:1]) + strings.ToLower(name[1:])
 	}
 	value := hfValues[r.Intn(len(hfValues))]
+	if r.Intn(8) == 0 {
+		// the hostile dictionary (task #352): digit runs past Int and Int's
+		// edges (valid UTF-8, as every value here)
+		if r.Intn(2) == 0 {
+			value = hostile.Pick(r, hostile.Digits())
+		} else {
+			value = strconv.FormatInt(hostile.Pick(r, hostile.Ints()), 10)
+		}
+	}
 	eol := "\r\n"
 	if r.Intn(8) == 0 {
 		eol = "\n"

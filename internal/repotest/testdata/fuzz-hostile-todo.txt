@@ -28,7 +28,6 @@ grpcreflectfuzz_test.go
 heapfuzz_test.go
 hpkefuzz_test.go
 htmlentfuzz_test.go
-httpheadfuzz_test.go
 httpproxyfuzz_test.go
 httpurlfuzz_test.go
 idnafuzz_test.go
@@ -41,7 +40,6 @@ lzwfuzz_test.go
 mailfuzz_test.go
 mimefuzz_test.go
 multipartfuzz_test.go
-netipfuzz_test.go
 normfuzz_test.go
 otlpfuzz_test.go
 otpfuzz_test.go
@@ -50,11 +48,8 @@ pemfuzz_test.go
 protobuffuzz_test.go
 regexpfuzz_test.go
 rsafuzz_test.go
-smtpfuzz_test.go
-ssefuzz_test.go
 tabwriterfuzz_test.go
 templatefuzz_test.go
-textprotofuzz_test.go
 tlsfuzz_test.go
 tracefuzz_test.go
 udpfuzz_test.go

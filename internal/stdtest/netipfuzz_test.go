@@ -31,6 +31,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/xo-lang/xo/internal/hostile"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -67,6 +68,9 @@ func nifV4(r *rand.Rand) string {
 			f[i] = "+1"
 		case 4:
 			f[i] = "00"
+		case 5:
+			// the hostile dictionary (task #352): digit runs past Int
+			f[i] = hostile.Pick(r, hostile.Digits())
 		default:
 			f[i] = strconv.Itoa(r.Intn(256))
 		}
@@ -169,6 +173,12 @@ func nifChange(r *rand.Rand, s string) string {
 
 func nifBits(r *rand.Rand) string {
 	switch r.Intn(12) {
+	case 11:
+		// the hostile dictionary (task #352): Int's edges and digit runs
+		if r.Intn(2) == 0 {
+			return strconv.FormatInt(hostile.Pick(r, hostile.Ints()), 10)
+		}
+		return hostile.Pick(r, hostile.Digits())
 	case 0:
 		return "0" + strconv.Itoa(r.Intn(10))
 	case 1:
