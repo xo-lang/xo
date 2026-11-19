@@ -16,6 +16,7 @@
 - Found by: bench/perf/brotli enc1 profile on darwin/arm64 (task #271): obj_rl_copy_n, the out of line copy-on-write check, was 13% of the time, 72% of it from write_bits storing into a zero_bytes buffer
 - Go reference: none (Go has no reference counts)
 - Change: std/native/prelude words_filled built a List[UInt8], List[Int] or List[UInt32] and returned it through rt.any_of and rt.any_get, and an Any marks a list shared (count -1), so every later write to a filled list called the slow check; it now builds a List[T] and passes only the fill value through Any. bench/perf/brotli enc1 0.51 s to 0.43 s user on the Mac (2,000 encodes of the html input, 4 runs each)
+- Measured: xo bench --ab on the linux/arm64 timing host (host 1), bench/perf/brotli enc1 8 (800 quality 1 encodes of the html input), c3aff2e1c against 4e07d4abe, each with the bench's repeat argument: wall 241.2 to 201.3 ms, B/A 0.835 (95% 0.826 to 0.844), 4 rounds, max RSS the same
 
 ## 2026-11-19: feature: Bytes.into_builder and BytesBuilder.at, get_le and get_be
 

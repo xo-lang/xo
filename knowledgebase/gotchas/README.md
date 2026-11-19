@@ -1523,3 +1523,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [mawk-pipe-reader-buffers.md](mawk-pipe-reader-buffers.md): mawk reads a pipe in 4 KB blocks, so an awk meant to exit at a line waits for EOF (Observed)
 - [dense-thp-pool-run-drops-half.md](dense-thp-pool-run-drops-half.md): Observed 2026-11-19: under XO_THP=dense a pooled run taken before the record's reserved half dropped the half, and the next chunk advised huge pages over 4 MB of another chunk's given-back units (grpcreflect stress grew 7 to 10% in 60 min)
 - [arm64-load-combine-one-block.md](arm64-load-combine-one-block.md): load combining matches one block; inlined halves or a loop built word stay separate loads (write one flat Or)
+- [ab-host-prog-from-each-side.md](ab-host-prog-from-each-side.md): ab-host builds PROG from BASE's and NEW's own trees; a bench change for an --ab goes on both sides (Observed)

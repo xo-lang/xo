@@ -24,7 +24,10 @@ fn main(os: Os) uses stdio, env {
   let q = if w == "enc1" { 1 } else if w == "enc6" { 6 } else if w == "enc11" { 11 } else { -1 }
   if q >= 0 {
     let input = brotli.decode(stream("html")).or_fault("html")
-    let n = if q == 1 { 100 } else if q == 6 { 20 } else { 2 }
+    // an optional second argument repeats the encodes (an --ab run
+    // needs over 100 ms per run: "too short" otherwise)
+    let rep = Int.parse(os.env.args().get(1) ?? "1") ?? 1
+    let n = rep * (if q == 1 { 100 } else if q == 6 { 20 } else { 2 })
     for i in 0..n {
       let out = brotli.encode(input, q)
       sum += out.len() + Int(out[i % out.len()])
