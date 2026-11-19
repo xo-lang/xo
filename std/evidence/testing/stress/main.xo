@@ -29,9 +29,11 @@ fn test_file(tasks: Int, long: Int) -> Str {
 }
 
 /// Runs the test file in dir with xo: its wall time in milliseconds.
-fn run(os: Os, xo: Str, dir: Str, what: Str) -> Int ! {
+/// minutes bounds the run (xo test's own limit is 1 minute of real time
+/// a test, shorter than the long run).
+fn run(os: Os, xo: Str, dir: Str, what: Str, minutes: Int) -> Int ! {
   let t0 = os.clock.now()
-  let out = os.proc.run(xo, ["test", "--count=1", dir])?
+  let out = os.proc.run(xo, ["test", "--count=1", "--timeout=${minutes}m", dir])?
   let ms = (os.clock.now() - t0).millis()
   let text = out.stdout.to_str_lossy() + out.stderr.to_str_lossy()
   if out.code != 0 || !text.contains("ok: 2 passed, 0 failed") {
@@ -51,15 +53,15 @@ fn main(os: Os) ! {
   var long = 1020
   os.fs.write(file, test_file(tasks, long).bytes())?
   // the first run builds the test: the second times 1020 rounds
-  let r1 = run(os, xo, dir, "first")
-  let r2 = if r1.is_ok() { run(os, xo, dir, "timing") } else { r1 }
+  let r1 = run(os, xo, dir, "first", 10)
+  let r2 = if r1.is_ok() { run(os, xo, dir, "timing", 10) } else { r1 }
   var ms = r2.ok() ?? 0
   var r = r2.map(fn(_m: Int) {})
   if r.is_ok() && minutes > 0 {
     long = Int(Float(1020) * Float(minutes * 60000) / Float(if ms > 0 { ms } else { 1 }))
     long = (long / 30 + 1) * 30
     os.fs.write(file, test_file(tasks, long).bytes())?
-    let r3 = run(os, xo, dir, "long")
+    let r3 = run(os, xo, dir, "long", minutes * 2 + 10)
     ms = r3.ok() ?? 0
     r = r3.map(fn(_m: Int) {})
   }
