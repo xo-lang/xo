@@ -3960,3 +3960,26 @@ test "go math, second set (task #383): every function's bits on special and rand
   }
   expect((by, bad)) == ({}, [])
 }
+
+test "trunc and modf: Go's trunc.go bits (signed zeros, halves, 2^52 and up, NaN, infinities)" {
+  // (x, Go's math.Trunc(x) bits): trunc is Float.trunc's one instruction
+  // (task #406); these are trunc.go's answers
+  let cases: List[(Float, Int)] = [
+    (0.5, 0), (-0.5, -9223372036854775807 - 1), (-0.0, -9223372036854775807 - 1),
+    (1.0, 4607182418800017408), (-3.7, -4609434218613702656),
+    (4503599627370495.5, 4841369599423283198), (4503599627370497.0, 4841369599423283201),
+    (1.0e300, 9094988921128908188), (inf(1), 9218868437227405312),
+    (inf(-1), -4503599627370496),
+  ]
+  var bad: List[Str] = []
+  for (x, want) in cases {
+    if rt.float_bits(trunc(x)) != want {
+      bad.push("trunc(${x}) bits ${rt.float_bits(trunc(x))}, want ${want}")
+    }
+  }
+  expect(bad) == []
+  expect(is_nan(trunc(nan()))) == true
+  let (i0, f0) = modf(-0.75)
+  expect((rt.float_bits(i0), f0)) == (-9223372036854775807 - 1, -0.75)
+  expect(modf(-2.25)) == (-2.0, -0.25)
+}

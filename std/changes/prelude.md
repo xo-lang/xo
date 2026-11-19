@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-19: perf: Float.pow, Float.trunc and modf truncate in one instruction
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/gomath (task #406): pow at 1.142 of Go's portable pow (decision 0721) on linux/amd64
+- Go reference: math trunc.go and pow.go (Go 1.26; Trunc is one instruction on amd64 and arm64 in Go's assembly)
+- Change: std/native/llrt gomath trunc is Float.trunc (frintz, roundsd, f64.trunc) instead of the bit masking loop; modf and pow call it. Same bits as Go's trunc.go (the new llrt test: signed zeros, halves, 2^52 and up, infinities, NaN)
+- Measured: xo bench --ab bench/perf/gomath pow on linux/amd64 host 1: 0.923 wall (0.92 to 0.925, n=4)
+- Test: std/native/llrt gomath_test.xo "trunc and modf" (Go's trunc.go bits)
+- Affected: Xo 0.54.0 and earlier (speed only)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: Float.lgamma's coefficient reads are folded to constants
 
 - Kind: perf

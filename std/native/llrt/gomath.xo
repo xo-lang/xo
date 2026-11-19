@@ -109,21 +109,11 @@ pub fn ldexp(frac0: Float, exp0: Int) -> Float {
   m * from_bits(x)
 }
 
-/// Go's trunc and Modf (the integer part rounded toward zero).
-pub fn trunc(x: Float) -> Float {
-  if abs(x) < 1.0 {
-    return copysign(0.0, x)
-  }
-  if is_nan(x) || is_inf(x, 0) {
-    return x
-  }
-  var b = bits(x)
-  let e = (b.shr_logical(SHIFT) & MASK) - BIAS
-  if e < 64 - 12 {
-    b = b & ~((1).wrapping_shl(64 - 12 - e) - 1)
-  }
-  from_bits(b)
-}
+/// Go's Trunc and Modf (the integer part rounded toward zero). Float.trunc
+/// is one instruction (frintz, roundsd, f64.trunc), exact as Go's
+/// trunc.go and as package math's assembly: the same bits for every input,
+/// a signed zero for |x| < 1 and x itself for NaN and the infinities.
+pub fn trunc(x: Float) -> Float { x.trunc() }
 
 pub fn modf(f: Float) -> (Float, Float) {
   let i = trunc(f)
