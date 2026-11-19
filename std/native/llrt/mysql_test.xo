@@ -104,6 +104,18 @@ test "text values convert as go-sql-driver's" {
   expect(w.parse_text_row(b"\x01a\x99", 1).is_err()) == true
 }
 
+// found by the sql fuzz evidence (TestMysqlFuzz seed 46 case 1519,
+// task #90): MySQL 9's VECTOR (0xf2) had no name; go-sql-driver v1.10.1's
+// DatabaseTypeName is "VECTOR"
+test "column type names are go-sql-driver's DatabaseTypeName" {
+  expect(type_name(col(242, 63, 0))) == "VECTOR"
+  expect(type_name(col(242, 33, 0))) == "VECTOR"
+  expect(type_name(col(1, 63, 32))) == "UNSIGNED TINYINT"
+  expect(type_name(col(15, 63, 0))) == "VARBINARY"
+  expect(type_name(col(254, 63, 256))) == "ENUM"
+  expect(type_name(col(244, 63, 0))) == ""
+}
+
 test "literals and interpolation" {
   expect(quote_bytes(b"a'b\"c\\d\x00\n\r\x1a", false)) == "'a\\'b\\\"c\\\\d\\0\\n\\r\\Z'"
   expect(quote_bytes(b"it's", true)) == "'it''s'"

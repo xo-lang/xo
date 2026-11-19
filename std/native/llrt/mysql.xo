@@ -1698,6 +1698,7 @@ pub fn type_name(c: w.Column) -> Str {
     13 => "YEAR"
     15 | 253 => if binary { "VARBINARY" } else { "VARCHAR" }
     16 => "BIT"
+    242 => "VECTOR"
     245 => "JSON"
     247 => "ENUM"
     248 => "SET"

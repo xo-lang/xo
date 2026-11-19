@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-18: fix: MySQL names a VECTOR column VECTOR
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestMysqlFuzz seed 46 case 1519 (sql fuzz evidence, task #90, linux/arm64 host 3)
+- Go reference: go-sql-driver/mysql v1.10.1 fields.go typeDatabaseName (fieldTypeVector, 0xf2; MPL-2.0)
+- Test: native/llrt/mysql's "column type names are go-sql-driver's DatabaseTypeName" on arm64; TestMysqlFuzz seed 46
+
+A column of MySQL 9's VECTOR type (0xf2) had an empty type name; it is "VECTOR", as go-sql-driver's
+DatabaseTypeName. Its values were already go-sql-driver's.
+
 ## 2026-11-18: fix: Postgres checks the copy, function call and bodiless messages as pgproto3
 
 - Kind: fix
