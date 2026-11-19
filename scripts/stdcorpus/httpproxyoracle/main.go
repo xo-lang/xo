@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/http/httpproxy"
+	"stdcorpus/httpproxyoracle/hostile"
 )
 
 var hosts = []string{
@@ -87,6 +88,12 @@ func noProxy(r *rand.Rand) string {
 	for i := 0; i < n; i++ {
 		items = append(items, mutate(r, pick(r, noProxyItems)))
 	}
+	if n == 4 {
+		// a CIDR whose prefix length is a hostile digit run (task #352),
+		// chosen by the first item's length so the stream stays as it was
+		ds := hostile.Digits()
+		items = append(items, "10.0.0.0/"+ds[len(items[0])%len(ds)])
+	}
 	return strings.Join(items, pick(r, []string{",", ",", ", ", " ,"}))
 }
 
@@ -95,7 +102,14 @@ func reqURL(r *rand.Rand) string {
 	if r.Intn(2) == 0 {
 		scheme = "https"
 	}
-	return scheme + "://" + pick(r, hosts) + pick(r, ports) + pick(r, paths)
+	h, p := pick(r, hosts), pick(r, ports)
+	if len(h)%7 == 3 {
+		// a port that is a hostile digit run (task #352): past 65535 and
+		// past Int, chosen by the host's length
+		ds := hostile.Digits()
+		p = ":" + strings.TrimPrefix(ds[len(h)%len(ds)], "+")
+	}
+	return scheme + "://" + h + p + pick(r, paths)
 }
 
 func hx(s string) string { return hex.EncodeToString([]byte(s)) }

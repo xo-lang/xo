@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
+
+	"stdcorpus/normoracle/hostile"
 )
 
 func hexs(s string) string {
@@ -227,6 +229,14 @@ func fuzzMain(seed int64, n int) {
 	for i := 0; i < n; i++ {
 		var rs []rune
 		k := rg.Intn(81)
+		if k == 80 {
+			// a run of non-starters at a hostile depth (task #352), past
+			// the 30 a segment holds, chosen by the case's place so the
+			// stream stays as it was
+			ds := hostile.Depths()
+			rs = append(rs, pick())
+			rs = append(rs, []rune(hostile.Nest(string(marks[i%len(marks)]), "", ds[i%len(ds)]))...)
+		}
 		for len(rs) < k {
 			if rg.Intn(12) == 0 { // a long run of non-starters
 				for m := 1 + rg.Intn(40); m > 0; m-- {
