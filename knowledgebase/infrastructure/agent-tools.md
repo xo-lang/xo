@@ -1375,6 +1375,13 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
 - A measurement needing a quiet machine runs with HEAVY_CLASS=measure
   (above); inside a window the lead opened by hand, it waits with
   `~/xo-lead/agents/quiet.sh wait [LOAD]`.
+  A drain yields to waiting gates after HEAVY_MEASURE_YIELD_S (300) and
+  drains again, but its HEAVY_MEASURE_DRAIN cap (30 min) runs from the
+  first drain through every yield: at the cap it is refused (exit 75)
+  with a line that says to run it on host 1 (#415, 2026-11-19:
+  l1-87-mvar drained 06:44 to past 08:18, the cap restarting on each of
+  18 re-drains, at a load the host 3/4 VMs keep near 13 to 22).
+  Last verified: 2026-11-19.
 - Gate before measuring a runtime or allocator change (lead, 2026-10-26:
   a threshold allocator was measured twice and its self-build footprint
   taken before its fixed point from the seed showed a race that crashed
