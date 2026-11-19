@@ -1,0 +1,79 @@
+// The Xo side of std/timego's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/timego's result as text, as go/main.go prints package timego's.
+// Kinds format, parse, ansic, month and rfc3339 over Go's layouts.
+// See scripts/stdproven/gotests.go.
+use std/timego
+use std/time
+use std/base64
+
+/// A layout constant's text, or the layout as written.
+fn layout_of(s: Str) -> Str {
+  match s {
+    "Layout" => "01/02 03:04:05PM '06 -0700"
+    "ANSIC" => timego.ANSIC
+    "UnixDate" => timego.UNIX_DATE
+    "RubyDate" => timego.RUBY_DATE
+    "RFC822" => timego.RFC822
+    "RFC822Z" => timego.RFC822Z
+    "RFC850" => timego.RFC850
+    "RFC1123" => timego.RFC1123
+    "RFC1123Z" => timego.RFC1123Z
+    "RFC3339" => timego.RFC3339
+    "RFC3339Nano" => timego.RFC3339_NANO
+    "Kitchen" => timego.KITCHEN
+    "Stamp" => timego.STAMP
+    "StampMilli" => timego.STAMP_MILLI
+    "StampMicro" => timego.STAMP_MICRO
+    "StampNano" => timego.STAMP_NANO
+    "DateTime" => timego.DATE_TIME
+    "DateOnly" => timego.DATE_ONLY
+    "TimeOnly" => timego.TIME_ONLY
+    _ => s
+  }
+}
+
+fn trun(kind: Str, inp: List[Str]) -> Str {
+  // Local in Go's time tests (ForceUSPacificForTesting)
+  let pacific = time.zone("America/Los_Angeles") ?? _ => time.utc()
+  let (layout, value) = match kind {
+    "format" => return timego.format(Time.from_unix_nanos(1233810057012345600), pacific, layout_of(inp[0]))
+    "parse" => (layout_of(inp[0]), inp[1])
+    "ansic" => (timego.ANSIC, inp[0])
+    "month" => ("01-02", inp[0])
+    _ => (timego.RFC3339, inp[0])
+  }
+  match timego.parse(value, layout, pacific) {
+    Ok(t) => "${t.unix_nanos()}"
+    Err(e) => {
+      let g = timego.go_text(e)
+      match g.find(": range: ") {
+        Some(_) => "err range"
+        None => "err ${g}"
+      }
+    }
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "format" | "parse" | "ansic" | "month" | "rfc3339" => trun(kind, inp)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

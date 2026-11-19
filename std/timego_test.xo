@@ -20,6 +20,24 @@ test "format matches Go" {
   expect(format(t, z, "{x}")) == "{x}"
 }
 
+test "MST writes the zone's abbreviation, as Go's (Go's TestFormat in Local, America/Los_Angeles)" {
+  let z = time.zone("America/Los_Angeles").or_fault("zone")
+  let t = Time.from_unix_nanos(1233810057012345600)
+  expect(format(t, z, UNIX_DATE)) == "Wed Feb  4 21:00:57 PST 2009"
+  expect(format(t, z, RFC1123)) == "Wed, 04 Feb 2009 21:00:57 PST"
+  expect(format(t + Duration.from_secs_int(180 * 86400), z, RFC822)) == "03 Aug 09 22:00 PDT"
+  expect(format(t, time.fixed("XYZ", Duration.from_secs_int(3600)), "15:04 MST")) == "06:00 XYZ"
+}
+
+test "a zone name not in effect reads as Go's ParseInLocation (Go's parseTests in Local, America/Los_Angeles)" {
+  let z = time.zone("America/Los_Angeles").or_fault("zone")
+  // PDT in February: the zone's PDT offset, -0700
+  expect(parse("Thu, 04 Feb 2010 22:00:57 PDT", RFC1123, z).or_fault("pdt").unix()) == 1265346057
+  // GMT-8 and an unknown name: the wall clock read as UTC
+  expect(parse("Fri Feb  5 05:00:57 GMT-8 2010", UNIX_DATE, z).or_fault("gmt").unix()) == 1265346057
+  expect(parse("Fri Feb  5 05:00:57 XYZ 2010", UNIX_DATE, z).or_fault("xyz").unix()) == 1265346057
+}
+
 test "layout is scanned once" {
   let l = layout("2006-01-02T15:04:05Z07:00")
   let t = sample()

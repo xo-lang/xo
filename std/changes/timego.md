@@ -1,5 +1,21 @@
 # std/timego changes
 
+## 2026-11-19: fix: MST writes the zone's abbreviation, and a zone name parses as Go's does
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #403, gotests from Go's time/format_test.go (formatTests, parseTests in Local, America/Los_Angeles)
+- Go reference: time.Time.Format stdTZ (the zone's abbreviation); time.parse's zone name branch (Location.lookupName, then FixedZone without moving the instant)
+- Test: std/timego_test.xo "MST writes the zone's abbreviation, as Go's" and "a zone name not in effect reads as Go's ParseInLocation" (both failed before on arm64)
+- Shipped in: not yet released
+
+`MST` in a layout wrote the zone's name (`America/Los_Angeles`) where Go
+writes its abbreviation (`PST`). In parse, a zone abbreviation not in
+effect at the time (`PDT` in February) read as offset zero; it now takes
+the offset of a period of the zone with that name, as Go's lookupName
+does. `GMT-8` and other names the zone does not use keep the wall clock
+as the instant, as Go's fixed zone does (it was moved by the GMT hour).
+
 ## 2026-11-16: fix: parse checks a day of year's range after the text, as Go does
 
 - Kind: fix

@@ -166,8 +166,11 @@ pub fn (l: Layout) format(t: Time, z: time.Zone) -> Str {
     } else if k == PM_LO {
       out.write(if hour >= 12 { b"pm" } else { b"am" })
     } else if k == TZ_NAME {
-      if c.zone != "" {
-        out.write(c.zone.bytes())
+      // the zone's abbreviation then (PST, CEST), as Go's; a zone without
+      // one writes its offset
+      let abbr = z.abbreviation_at(t)
+      if abbr != "" {
+        out.write(abbr.bytes())
       } else {
         var zone = offset / 60
         if zone < 0 {
@@ -584,8 +587,10 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
     return Ok(t - Duration.from_secs_int(off))
   }
   if zname != "" {
-    // a zone name: the zone's own offset when it was in effect, else a fixed zone with an unknown offset (GMT+N
-    // reads its hour)
+    // a zone name: the zone's own offset when it was in effect; else the offset of a period of the zone with that
+    // name (Go's lookupName: PDT read in February is -0700), looked for a year either side; else Go's fixed zone
+    // with an unknown offset, whose instant is the wall clock read as UTC (GMT-8 too: Go keeps its hour in the
+    // zone, not the instant)
     let t = match time.instant(d, clock, time.utc(), time.Ambiguity.Earlier) {
       Ok(t) => t
       Err(e) => return Err(perr(s, l.text, p, "range: " + e.display()))
@@ -593,22 +598,18 @@ pub fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr {
     if z.abbreviation_at(t) == zname {
       return Ok(t - z.offset_at(t))
     }
-    var secs = 0
-    if zname.len() > 3 && zname.starts_with("GMT") {
-      let zb = zname.bytes()
-      var q = 3
-      let neg = Int(zb[q]) == 45
-      if Int(zb[q]) == 45 || Int(zb[q]) == 43 {
-        q += 1
+    var k = 1
+    while k <= 24 {
+      let step = Duration.from_secs_int(k * 15 * 86400)
+      if z.abbreviation_at(t + step) == zname {
+        return Ok(t - z.offset_at(t + step))
       }
-      var x = 0
-      while digit_at(zb, q) {
-        x = x * 10 + Int(zb[q]) - 48
-        q += 1
+      if z.abbreviation_at(t - step) == zname {
+        return Ok(t - z.offset_at(t - step))
       }
-      secs = (if neg { -x } else { x }) * 3600
+      k += 1
     }
-    return Ok(t - Duration.from_secs_int(secs))
+    return Ok(t)
   }
   match time.instant(d, clock, z, time.Ambiguity.Earlier) {
     Ok(t) => Ok(t)

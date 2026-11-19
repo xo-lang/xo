@@ -1,0 +1,17 @@
+# Go's timego test tables (go1.26) run through std/timego
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# format is TestFormat's time in Local (America/Los_Angeles, as Go's
+# time tests set it) through each layout; parse, ansic (ANSIC), month
+# ("01-02") and rfc3339 (RFC3339) are ParseInLocation in Local, as
+# timego.parse: the instant in nanoseconds, or Go's error text
+# (timego.go_text), or "err range" for a time outside 1677 to 2262
+# (Go's UnixNano wraps; a Time cannot hold it). A layout constant reads
+# as its name.
+time format_test.go formatTests format:const format
+time format_test.go parseTests format:const,value parse
+time format_test.go rubyTests format:const,value parse
+time format_test.go parseErrorTests format:const,value parse
+time format_test.go secondsTimeZoneOffsetTests format:const,value parse
+time format_test.go dayOutOfRangeTests date ansic
+time format_test.go monthOutOfRangeTests value month
+time format_test.go longFractionalDigitsTests value rfc3339
