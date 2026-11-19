@@ -1,0 +1,44 @@
+// The Xo side of std/path's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/path's result as text, as go/main.go prints package path's.
+// Kinds clean, split, ext, base, dir, abs and match: path's functions
+// against Go's (is_match against Match, an error as its text).
+// See scripts/stdproven/gotests.go.
+use std/path
+use std/base64
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "clean" => path.clean(inp[0])
+    "split" => {
+      let (d, f) = path.split(inp[0])
+      "${d}|${f}"
+    }
+    "ext" => path.ext(inp[0])
+    "base" => path.base(inp[0])
+    "dir" => path.dir(inp[0])
+    "abs" => "${path.is_abs(inp[0])}"
+    "match" => match path.is_match(inp[0], inp[1]) {
+      Ok(b) => "${b}"
+      // PathErr is Go's ErrBadPattern; its display also names the pattern
+      Err(e) => "err bad pattern ${e.pattern}"
+    }
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

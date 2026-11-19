@@ -1,0 +1,12 @@
+# Go's path test tables (go1.26) run through std/path
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# jointests' elements are a []string for Go's variadic Join (Xo's join
+# takes two), so they are not read.
+path path_test.go cleantests path clean
+path path_test.go cleantests result clean
+path path_test.go splittests path split
+path path_test.go exttests path ext
+path path_test.go basetests path base
+path path_test.go dirtests path dir
+path path_test.go isAbsTests path abs
+path match_test.go matchTests pattern,s match
