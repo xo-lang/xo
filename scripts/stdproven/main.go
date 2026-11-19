@@ -415,13 +415,16 @@ func fuzz(args []string) error {
 	hours := fs.Float64("hours", 8, "time limit, over every shard")
 	minutes := fs.Float64("minutes", 0, "this shard's time limit (0: none): stop at a seed boundary and write result: partial, which the next run resumes")
 	batch := fs.Int("batch", 5000, "cases a seed")
-	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm)")
+	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm; go for a `use go` module)")
 	hostLabel := fs.String("host", "", "the host's name in the evidence (no network names: e.g. \"linux/arm64 host 2\")")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
 		usage()
 	}
 	module := fs.Arg(0)
+	if !flagSet(fs, "backends") {
+		*backends = moduleBackends(".", module, runtime.GOARCH)
+	}
 	hs := harnesses[module]
 	if len(hs) == 0 {
 		return fmt.Errorf("no fuzz harness names %s (scripts/stdproven harnesses)", module)
@@ -705,7 +708,7 @@ func gitOut(args ...string) (string, error) {
 func timing(args []string) error {
 	fs := flag.NewFlagSet("timing", flag.ExitOnError)
 	n := fs.Int("n", 1000000, "measurements per pair")
-	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm)")
+	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm; go for a `use go` module)")
 	pairs := fs.String("pairs", "", "class pairs A:B, comma separated")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	fs.Parse(args)
@@ -1154,7 +1157,7 @@ func stress(args []string) error {
 	fs := flag.NewFlagSet("stress", flag.ExitOnError)
 	minutes := fs.Int("minutes", 30, "run time per backend")
 	tasks := fs.Int("tasks", 64, "concurrent tasks")
-	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm)")
+	backends := fs.String("backends", defaultBackends(runtime.GOARCH), "backends, comma separated (default: this host's native backend and llvm; go for a `use go` module)")
 	checkMin := fs.Int("check-minutes", 5, "minutes of a further native backend run built with --check=all (decision 0638: use after free and overruns fault, a leak fails the run; 0 skips it)")
 	checkOnly := fs.Bool("check-only", false, "run only the --check=all run and add it to the module's stress.md, which must pass at the current source hash")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
@@ -1167,6 +1170,15 @@ func stress(args []string) error {
 	dir := filepath.Join("std", "evidence", module, "stress")
 	if _, err := os.Stat(filepath.Join(dir, "main.xo")); err != nil {
 		return err
+	}
+	if !flagSet(fs, "backends") {
+		*backends = moduleBackends(".", module, runtime.GOARCH)
+	}
+	if *backends == "go" && *checkMin > 0 {
+		// --check=all is the native backends' memory check (decision
+		// 0638); a Go backend program is Go's memory safe code
+		fmt.Println("stdproven stress: no --check=all run: " + module + " builds only with the Go backend")
+		*checkMin = 0
 	}
 	if *checkOnly {
 		host := *hostLabel
@@ -1751,4 +1763,53 @@ func nativeBackend(goarch string) string {
 // default, the host's native backend and llvm (decision 0708).
 func defaultBackends(goarch string) string {
 	return nativeBackend(goarch) + ",llvm"
+}
+
+// goOnly reports whether module's evidence builds only with the Go
+// backend: module is std/go (the `use go` interop module) or its source or
+// stress program imports a Go package (`use go "..."`), which the native
+// backends refuse (decision 0248; #152, lead 2026-11-18: the runner builds
+// such a module's stress and fuzz evidence with the Go backend rather than
+// lowering 0616's bar). root is the repository root.
+func goOnly(root, module string) bool {
+	if module == "go" {
+		return true
+	}
+	files := []string{filepath.Join(root, "std", module+".xo"), filepath.Join(root, "std", "native", module+".xo")}
+	if ms, _ := filepath.Glob(filepath.Join(root, "std", "evidence", module, "stress", "*.xo")); len(ms) > 0 {
+		files = append(files, ms...)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "use go \"") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// moduleBackends is the backends a fuzz or stress run of module takes when
+// -backends is not given: "go" for a goOnly module, else the host's native
+// backend and llvm.
+func moduleBackends(root, module, goarch string) string {
+	if goOnly(root, module) {
+		return "go"
+	}
+	return defaultBackends(goarch)
+}
+
+// flagSet says whether the flag name was given on the command line.
+func flagSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
 }

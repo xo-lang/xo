@@ -707,3 +707,57 @@ func TestCheckFailureNamesModuleAndTrap(t *testing.T) {
 		t.Errorf("got %q, want prefix %q", got[:min(len(got), 300)], want)
 	}
 }
+
+// TestGoOnlyModule: a planted module whose source imports a Go package
+// builds its evidence with the Go backend (#152), and a native module and
+// a module whose stress program alone imports Go are told apart. With a
+// built bin/xo it also checks the planted program is one the native
+// backend refuses.
+func TestGoOnlyModule(t *testing.T) {
+	root := t.TempDir()
+	write := func(p, text string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, p), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("std/plantgo.xo", "// planted\nuse go \"strings\"\n\npub fn index(s: Str, sub: Str) -> Int { strings.index(s, sub) }\n")
+	write("std/plainmod.xo", "// use go \"strings\" in a comment is not an import\npub fn one() -> Int { 1 }\n")
+	write("std/stressgo.xo", "pub fn one() -> Int { 1 }\n")
+	write("std/evidence/stressgo/stress/main.xo", "use go \"strconv\"\n\nfn main(os: Os) { os.stdio.println(strconv.itoa(1)) }\n")
+	for _, c := range []struct {
+		module, want string
+	}{
+		{"plantgo", "go"},
+		{"go", "go"},
+		{"stressgo", "go"},
+		{"plainmod", "arm64,llvm"},
+		{"missing", "arm64,llvm"},
+	} {
+		if got := moduleBackends(root, c.module, "arm64"); got != c.want {
+			t.Errorf("moduleBackends(%s) = %q, want %q", c.module, got, c.want)
+		}
+	}
+	if got := moduleBackends(".", "heap", "amd64"); got != "amd64,llvm" {
+		t.Errorf("moduleBackends(heap) = %q, want amd64,llvm", got)
+	}
+	xo, err := filepath.Abs(filepath.Join("bin", "xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(xo); err != nil {
+		t.Skip("no bin/xo: the native refusal is not checked")
+	}
+	prog := filepath.Join(root, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write("prog/main.xo", "use go \"strings\"\n\nfn main(os: Os) { os.stdio.println(\"${strings.index(\"abc\", \"c\")}\") }\n")
+	out, err := exec.Command(xo, "build", "--backend="+nativeBackend(runtime.GOARCH), "-o", filepath.Join(root, "p"), prog).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "XO1201") {
+		t.Fatalf("the native backend did not refuse a `use go` program with XO1201 (err %v); goOnly's premise (decision 0248) no longer holds:\n%s", err, out)
+	}
+}
