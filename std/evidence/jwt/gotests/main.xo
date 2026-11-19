@@ -1,0 +1,124 @@
+// The Xo side of std/jwt's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/jwt's result as text, as go/main.go prints golang-jwt v5's. Kind
+// verify over golang-jwt's signing tables: the token verified with only
+// its table's alg allowed and golang-jwt's test key of that alg (test/,
+// MIT), the clock before the tables' exp; "ok" and the claims as sorted
+// JSON, or the error's category. See scripts/stdproven/gotests.go.
+use std/jwt
+use std/crypto
+use std/base64
+use std/json
+
+const HMAC_KEY_B64: Str = "AyM1SysPpbyDfgZld3umj1qzKObwVMkoqQ+EstJQLr/T+1qS0gZH75aKtMN3Yj0iPS4hcgUuTwjAzZr1Z9CAow=="
+
+const PEMS: List[(Str, Str)] = [
+  ("rsa", "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4f5wg5l2hKsTeNem/V41\nfGnJm6gOdrj8ym3rFkEU/wT8RDtnSgFEZOQpHEgQ7JL38xUfU0Y3g6aYw9QT0hJ7\nmCpz9Er5qLaMXJwZxzHzAahlfA0icqabvJOMvQtzD6uQv6wPEyZtDTWiQi9AXwBp\nHssPnpYGIn20ZZuNlX2BrClciHhCPUIIZOQn/MmqTD31jSyjoQoV7MhhMTATKJx2\nXrHhR+1DcKJzQBSTAGnpYVaqpsARap+nwRipr3nUTuxyGohBTSmjJ2usSeQXHI3b\nODIRe1AuTyHceAbewn8b462yEWKARdpd9AjQW5SIVPfdsz5B6GlYQ5LdYKtznTuy\n7wIDAQAB\n-----END PUBLIC KEY-----\n"),
+  ("ec256", "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYD54V/vp+54P9DXarYqx4MPcm+HK\nRIQzNasYSoRQHQ/6S6Ps8tpMcT+KvIIC8W/e9k0W7Cm72M1P9jU7SLf/vg==\n-----END PUBLIC KEY-----\n"),
+  ("ec384", "-----BEGIN PUBLIC KEY-----\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE2Gu6yWlO33izKqwMemnWRTUDqWlB/1Mp\nW2S64jizjeWBVcLVVKTtRXxF2VCEKabUT7XOYsSD2OufMoQUm+oq3yCVEj/WmE35\nSRipP5g5CuLfJlgc4Yg+Qeo4PXBBoRoA\n-----END PUBLIC KEY-----\n"),
+  ("ec512", "-----BEGIN PUBLIC KEY-----\nMIGbMBAGByqGSM49AgEGBSuBBAAjA4GGAAQACVyLsNdjFM6R4IImvTzgRWF0sWjh\nihmzIyMgyPuqu8IuyzMNx4G2jpoCKhRu9qPCQUMGDeCG1x3/n/OgkWNQANsB82x7\n7eiIZAl0zcQRH32tcjFILvJ/XCihdoi4MkCnCqlt9/HxjsP590ZtmHfxAeertq5w\n9vakvpzjPXhkvoMt/Tk=\n-----END PUBLIC KEY-----\n"),
+  ("ed25519", "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAWH7z6hpYqvPns2i4n9yymwvB3APhi4LyQ7iHOT6crtE=\n-----END PUBLIC KEY-----\n"),
+]
+
+fn key_name(alg: Str) -> Str {
+  if alg.starts_with("HS") {
+    return "hmac"
+  }
+  if alg.starts_with("RS") || alg.starts_with("PS") {
+    return "rsa"
+  }
+  match alg {
+    "ES256" => "ec256"
+    "ES384" => "ec384"
+    "ES512" => "ec512"
+    _ => "ed25519"
+  }
+}
+
+fn key(alg: Str) -> jwt.Key {
+  let name = key_name(alg)
+  if name == "hmac" {
+    return jwt.Key.Hmac(secret: Secret.new(base64.decode(HMAC_KEY_B64).ok() ?? fault("hmac key")))
+  }
+  for (n, pem) in PEMS {
+    if n == name {
+      let der = crypto.pem_decode(pem)[0].bytes
+      return jwt.Key.Public(key: crypto.parse_public_key(der).ok() ?? fault("public key"))
+    }
+  }
+  fault("no key ${name}")
+}
+
+fn alg_of(s: Str) -> jwt.Alg? {
+  match s {
+    "HS256" => Some(jwt.Alg.HS256)
+    "HS384" => Some(jwt.Alg.HS384)
+    "HS512" => Some(jwt.Alg.HS512)
+    "RS256" => Some(jwt.Alg.RS256)
+    "RS384" => Some(jwt.Alg.RS384)
+    "RS512" => Some(jwt.Alg.RS512)
+    "PS256" => Some(jwt.Alg.PS256)
+    "PS384" => Some(jwt.Alg.PS384)
+    "PS512" => Some(jwt.Alg.PS512)
+    "ES256" => Some(jwt.Alg.ES256)
+    "ES384" => Some(jwt.Alg.ES384)
+    "ES512" => Some(jwt.Alg.ES512)
+    "EdDSA" => Some(jwt.Alg.EdDSA)
+    _ => None
+  }
+}
+
+fn verify(token: Str, alg: Str) -> Str {
+  let a = alg_of(alg) ?? return "alg"
+  let parts = token.split(".")
+  if parts.len() == 3 {
+    match base64.decode(parts[0], base64.Base64.RawUrl) {
+      Ok(hb) => match json.parse_value(hb.to_str() ?? "") {
+        Ok(h) => match h.get("alg") {
+          Some(json.Value.Str(name)) => if name != alg {
+            return "alg"
+          }
+          _ => return "alg"
+        }
+        Err(_) => {}
+      }
+      Err(_) => {}
+    }
+  }
+  let opts = jwt.Options { algs: [a], now: Time.UNIX_EPOCH + Duration.from_secs_int(1300000000), require_exp: false }
+  match jwt.verify_with[Map[Str, json.Value]](token, key(alg), opts) {
+    Ok(m) => "ok ${json.encode(m).to_str() ?? ""}"
+    Err(e) => match e {
+      Expired(_) => "expired"
+      NotYetValid(_) => "notyet"
+      Signature => "signature"
+      Alg(_) => "alg"
+      Malformed(_) => "malformed"
+      Claim(_) => "claim"
+      _ => "other: ${e.display()}"
+    }
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "verify" => verify(inp[0], inp[1])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

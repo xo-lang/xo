@@ -1,0 +1,6 @@
+# std/jwt gotests (decision 0720, task #403): golang-jwt v5's signing tables
+github.com/golang-jwt/jwt/v5 hmac_test.go hmacTestData tokenString,alg verify
+github.com/golang-jwt/jwt/v5 rsa_test.go rsaTestData tokenString,alg verify
+github.com/golang-jwt/jwt/v5 rsa_pss_test.go rsaPSSTestData tokenString,alg verify
+github.com/golang-jwt/jwt/v5 ecdsa_test.go ecdsaTestData tokenString,alg verify
+github.com/golang-jwt/jwt/v5 ed25519_test.go ed25519TestData tokenString,alg verify
