@@ -122,9 +122,19 @@ measurement: the decryption and MAC read stage timed alone (the stage
 isolating experiment that found the cause), without DIT; with DIT that
 stage read 0.7 to 1.6.
 
-These results are linux/arm64 only (arm64 and LLVM backends). x86-64 has
-no DIT and was not measured; the CBC path there rests on the mask based
-code alone, and a dudect run on the linux/amd64 host is still to do.
+x86-64 has no DIT, so the CBC path there rests on the mask based code
+alone. It was measured on the linux/amd64 host on 2026-11-19 (ce4d4fdcd,
+task #402; tls12.xo and the ct code are unchanged since), 10^6
+measurements, one run per backend:
+
+| Backend | ok1 vs ok256 | badmac vs badpad | ok1 vs ok1 | badpad vs badpad | control |
+|---|---|---|---|---|---|
+| x86-64 (native) | 1.39 | 1.34 | 1.64 | 1.08 | 302713 |
+| LLVM | 1.45 | 1.19 | 0.64 | 0.67 | 121420 |
+
+Every pair is under the 4.5 threshold, at the level of the A/A pairs,
+and the control fires on both, so no padding or MAC failure timing
+difference shows on x86-64.
 
 ## 4. Fault behaviour
 
@@ -169,4 +179,5 @@ bytes_equal sites, the 3 fault sites, the renegotiation refusal
 (no_renegotiation alert), the Verify.None refusal, and open_cbc's DIT wrap
 and masked mac_cbc_ct/mac_at (loop bounds from dec.len() only) match the
 text. dudect was not rerun. Its notes (the compare sites named, the 278
-figure placed, x86-64 not measured) are folded in above.
+figure placed, x86-64 not measured) are folded in above; x86-64 was
+measured afterwards (task #402, section 3).
