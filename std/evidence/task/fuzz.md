@@ -1,16 +1,16 @@
 kind: fuzz
 module: task
-result: partial
-commit: f547ced7d
+result: pass
+commit: (private commit)
 source: ad80318929b903120251a1ccac0703c27d3cdff228b2c975974b31d113840193
 date: 2026-11-19
 host: linux/arm64 host 3
 command: go run ./scripts/stdproven fuzz -cases 1000000 -hours 8 -batch 5000 -backends arm64,llvm -host "linux/arm64 host 3" task
-measure: TestTaskFuzz 925000 cases per backend, 2 backends (arm64,llvm), 3h36m22s in 4 shards, 0 mismatches
-seeds: 2 to 186
-ran: TestTaskFuzz=925000
-elapsed: 12981
-shards: 4
+measure: TestTaskFuzz 1000000 cases per backend, 2 backends (arm64,llvm), 3h52m58s in 5 shards, 0 mismatches
+seeds: 2 to 201
+ran: TestTaskFuzz=1000000
+elapsed: 13978
+shards: 5
 
 Long fuzz evidence (decision 0616): every harness that names std/task, against Go's package, with fresh seeds of 5000 cases each.
 
@@ -199,3 +199,18 @@ Long fuzz evidence (decision 0616): every harness that names std/task, against G
 - TestTaskFuzz seed 184: 5000 cases on arm64,llvm, 1m12s
 - TestTaskFuzz seed 185: 5000 cases on arm64,llvm, 1m15s
 - TestTaskFuzz seed 186: 5000 cases on arm64,llvm, 1m13s
+- TestTaskFuzz seed 187: 5000 cases on arm64,llvm, 1m19s
+- TestTaskFuzz seed 188: 5000 cases on arm64,llvm, 56s
+- TestTaskFuzz seed 189: 5000 cases on arm64,llvm, 1m6s
+- TestTaskFuzz seed 190: 5000 cases on arm64,llvm, 1m4s
+- TestTaskFuzz seed 191: 5000 cases on arm64,llvm, 55s
+- TestTaskFuzz seed 192: 5000 cases on arm64,llvm, 59s
+- TestTaskFuzz seed 193: 5000 cases on arm64,llvm, 1m6s
+- TestTaskFuzz seed 194: 5000 cases on arm64,llvm, 1m11s
+- TestTaskFuzz seed 195: 5000 cases on arm64,llvm, 1m6s
+- TestTaskFuzz seed 196: 5000 cases on arm64,llvm, 1m6s
+- TestTaskFuzz seed 197: 5000 cases on arm64,llvm, 1m0s
+- TestTaskFuzz seed 198: 5000 cases on arm64,llvm, 1m19s
+- TestTaskFuzz seed 199: 5000 cases on arm64,llvm, 1m22s
+- TestTaskFuzz seed 200: 5000 cases on arm64,llvm, 1m2s
+- TestTaskFuzz seed 201: 5000 cases on arm64,llvm, 1m7s
