@@ -1518,7 +1518,10 @@ with the next item, and act on the xw message its end brings (xw
 delivers job, gate and push ends to the agent's session; 1769 of 1822 in
 the 24 h before the switch, 0 failed; since 2026-11-19 also the end of an
 offload run of 2 minutes or more, an ab-host.sh --ab included, as
-`offload NAME: pass`, #420). ccguard blocks a command that only
+`offload NAME: pass`, #420, and of a stdproven-offload.sh run of 2
+minutes or more as `stdproven NAME: pass`, #422; a lease hand-off,
+rc 5 or 78 with `next=1`, is not sent, nor its inner offload.sh's
+`offload stdproven-remote.sh` end). ccguard blocks a command that only
 waits (`heavy.sh`, `pushq.sh` or `offload-gate.sh --wait`, or a sleep),
 in the background too. `xw notify [--since 1d]` counts the deliveries by
 outcome. The waits below stay for scripts and the lead's tools.
