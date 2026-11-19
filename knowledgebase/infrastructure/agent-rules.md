@@ -111,6 +111,15 @@ the alert pass starts it when due, its output is `xw/sched/NAME.out`
 (the row's evidence), and a run that exits nonzero is a sched-failed
 alert carrying its last `SCHED-TRAP: ` line.
 
+A schedule or loop stopped on purpose is paused in xw, not left to
+alert: `XW_AS=lead xw schedule pause NAME --until TEXT` (NAME a row
+below, a loop beat, or an xw schedule job), `xw schedule resume NAME`,
+`xw schedule list` (#325, 2026-11-19). A paused NAME raises no
+schedule-missed (its row, or a row whose Waits on is `beat:NAME`), no
+loop-stale, and its alerts are left out of rule-gap's count; a paused
+xw schedule job does not start. Mainwatch and ctier, paused by the owner
+on 2026-11-17 until std is Proven, are paused this way.
+
 | Schedule | Runs | Every (min) | Evidence | Waits on |
 |---|---|---|---|---|
 | mainwatch | launchd org.xolang.mainwatch: hourly.sh, diskguard.sh | 120 | `beat:mainwatch` | |
