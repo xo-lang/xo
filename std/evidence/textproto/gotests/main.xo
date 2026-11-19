@@ -1,0 +1,42 @@
+// The Xo side of std/textproto's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/textproto's result as text, as go/main.go prints package textproto's.
+// Kinds: canonical (canonical_key of the input), response (read_response
+// with the expected code, then the next line).
+// See scripts/stdproven/gotests.go.
+use std/textproto
+use std/base64
+
+/// The reply read from s and the line after it, as Go's TestRFC959Lines
+/// reads it: "CODE|MSG", or "err TEXT".
+fn response(s: Str, code: Str) -> Str {
+  var r = textproto.reader((s + "\nFOLLOWING DATA").bytes())
+  match r.read_response(Int.parse(code) ?? 0) {
+    Ok((c, msg)) => "${c}|${msg}|${r.read_line().ok() ?? "-"}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "canonical" => textproto.canonical_key(inp[0])
+    "response" => response(inp[0], inp[1])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

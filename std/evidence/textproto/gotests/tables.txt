@@ -1,0 +1,4 @@
+# Go's net/textproto test tables (go1.26) run through std/textproto
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+net/textproto header_test.go canonicalHeaderKeyTests in canonical
+net/textproto reader_test.go readResponseTests in,inCode response
