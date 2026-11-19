@@ -47,7 +47,8 @@ pub fn get_u32_le(b: Bytes, at: Int) -> Int {
 
 pub fn get_u64_le(b: Bytes, at: Int) -> Int {
   check_at(b, at, 8)
-  get_u32_le(b, at) | get_u32_le(b, at + 4).wrapping_shl(32)
+  // one Or of the eight bytes: arm64 loads it with one ldr (task #417)
+  Int(b[at]) | Int(b[at + 1]) << 8 | Int(b[at + 2]) << 16 | Int(b[at + 3]) << 24 | Int(b[at + 4]) << 32 | Int(b[at + 5]) << 40 | Int(b[at + 6]) << 48 | Int(b[at + 7]).wrapping_shl(56)
 }
 
 /// The same, sign extended (Go's int16(binary.BigEndian.Uint16(b))).

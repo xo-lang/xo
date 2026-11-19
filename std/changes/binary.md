@@ -1,5 +1,16 @@
 # std/binary changes
 
+## 2026-11-19: perf: get_u64_le is one Or of its eight bytes
+
+- Kind: perf
+- Commit: this push
+- Found by: task #417 (arm64 load combining works within one block; get_u64_le's two inlined get_u32_le halves joined in another)
+- Go reference: encoding/binary LittleEndian.Uint64 (go1.26.1), unchanged
+- Measured: one ldr on arm64 where it was two (test/codegen/ldcomb pattern on the Or form)
+- Test: golden binary_basic; `xo test --std-module=binary`
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-10: perf: written with prelude operations, merged with its implementation
 
 - Kind: perf

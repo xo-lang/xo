@@ -365,6 +365,10 @@ struct G {
   end_memo: List[Int] = []
   /// compares lowered into the branch that uses them
   lazy: List[Bool] = []
+  /// the combined byte loads (ldcomb.xo, task #417) by root, and the
+  /// values they absorb
+  ldcs: Map[Int, LdComb] = {}
+  ldc_skip: List[Bool] = []
   /// SSA blocks an if-conversion left unreachable (select_branch
   /// selected their instructions into their one predecessor; range_and,
   /// range_branch, logic_value jumped past them): selected as a trap
@@ -633,6 +637,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.escapes = []
   g.users = []
   g.lazy = []
+  g.ldcs = {}
+  g.ldc_skip = []
   g.spec = {}
   g.cancel = []
   for _ in 0..nv {
@@ -642,6 +648,7 @@ fn (var g: G) begin_func(fi: Int) {
     g.escapes.push(false)
     g.users.push(-1)
     g.lazy.push(false)
+    g.ldc_skip.push(false)
     g.cancel.push(false)
   }
   g.bmap = []

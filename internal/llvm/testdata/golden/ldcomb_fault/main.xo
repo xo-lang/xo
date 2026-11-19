@@ -1,0 +1,17 @@
+// Load combining (task #417): one load for the four bytes, and a fault
+// past the end names the first byte out of range (index 12, the third
+// byte b[i + 2]) at that byte's position, as the four byte loads did.
+fn ld32(b: Bytes, i: Int) -> Int {
+  Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
+}
+
+fn ld16(b: Bytes, i: Int) -> Int {
+  Int(b[i]) | Int(b[i + 1]) << 8
+}
+
+fn main(os: Os) {
+  let b = b"\x81\x92\xa3\xb4\xc5\xd6\xe7\xf8\x09\x1a\x2b\x3c"
+  let n = os.env.args().len()
+  os.stdio.println("${ld32(b, n)} ${ld32(b, n + 8)} ${ld16(b, n + 10)}")
+  os.stdio.println("${ld32(b, n + 10)}")
+}

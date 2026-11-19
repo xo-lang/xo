@@ -1,0 +1,288 @@
+// Load combining (task #417, 2026-11-19): an Or tree of the bytes of one
+// Bytes value at consecutive indices, each shifted to its place in a
+// little endian word, `Int(b[j]) | Int(b[j + 1]) << 8 | ...` (2, 4 or 8
+// bytes), becomes one ldrh or ldr. The bounds checks of the bytes become
+// two compares on the hot path: the first index and the last below the
+// length; when either fails, a cold block runs each byte's own check in
+// the order the program has them, so a fault names the same byte and
+// position as before, and jumps back to the load when every byte is in
+// range (an index the two compares refused that is still in range: the
+// first index negative with a positive offset). arm64 only (x86 keeps
+// its byte loads: its retarget of the addressing forms is not checked).
+// std/brotli's ld32 and std/binary's get_u32_le were four ldrb, three
+// lsl and orr pairs and four checks (Xo Lang 2's brotli enc1 callgrind).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// A combined load: the Bytes value, the index base (-1 for a constant
+/// index), the smallest constant offset, the width in bytes, and the byte
+/// loads (bytes.index values) in the order of their block.
+struct LdComb {
+  b: Int
+  j: Int
+  c0: Int
+  n: Int
+  leaves: List[Int]
+}
+
+/// A byte of the tree: its bytes.index value and its shift.
+struct LdTerm {
+  leaf: Int
+  shift: Int
+}
+
+/// Finds the combined loads of the function: each root in g.ldcs, the
+/// values it absorbs (its inner Ors, shifts, conversions and byte loads)
+/// marked in g.ldc_skip.
+fn (var g: G) find_ld_combs() {
+  if g.x86 {
+    return
+  }
+  for (bi, bl) in g.f.blocks.indexed() {
+    var k = bl.instrs.len() - 1
+    while k >= 0 {
+      let v = bl.instrs[k]
+      k -= 1
+      if g.ldc_skip[v] || g.f.values[v].op != ssa.Op.Or {
+        continue
+      }
+      var terms: List[LdTerm] = []
+      var inner: List[Int] = []
+      if !g.ld_flatten(v, v, bi, 0, terms, inner) || terms.len() > 8 {
+        continue
+      }
+      if let Some(c) = g.ld_match(v, bi, terms) {
+        for u in inner {
+          g.ldc_skip[u] = true
+        }
+        g.ldcs[v] = c
+      }
+    }
+  }
+}
+
+/// The largest number of bits value v of a tree has (ld_flatten).
+fn (g: G) ld_bits(v: Int) -> Int {
+  let x = g.f.values[v]
+  match x.op {
+    Or => {
+      let a = g.ld_bits(g.f.arg(x.args, 0))
+      let b = g.ld_bits(g.f.arg(x.args, 1))
+      if a > b { a } else { b }
+    }
+    Shl => g.ld_bits(g.f.arg(x.args, 0)) + g.const_int(g.f.arg(x.args, 1)).0
+    IntConv => 8
+    _ => 64
+  }
+}
+
+/// Collects the bytes of the tree at v (root r, block bi) shifted by sh
+/// into terms and its values but r into inner; false when v is not such
+/// a tree: every value of it is read once, in the root's block, under
+/// the root's landing pad, and a checked shift never overflows.
+fn (var g: G) ld_flatten(r: Int, v: Int, bi: Int, sh: Int, var terms: List[LdTerm], var inner: List[Int]) -> Bool {
+  if terms.len() > 8 || inner.len() > 40 {
+    return false
+  }
+  let x = g.f.values[v]
+  if ssa.block_of(x.tb) != bi || ssa.pad_of(x.pi) != ssa.pad_of(g.f.values[r].pi) {
+    return false
+  }
+  if v != r {
+    if g.nuses[v] != 1 {
+      return false
+    }
+    inner.push(v)
+  }
+  match x.op {
+    Or => {
+      if x.args.len() != 2 {
+        return false
+      }
+      g.ld_flatten(r, g.f.arg(x.args, 0), bi, sh, terms, inner) && g.ld_flatten(r, g.f.arg(x.args, 1), bi, sh, terms, inner)
+    }
+    Shl => {
+      let (k, kc) = g.const_int(g.f.arg(x.args, 1))
+      let a = g.f.arg(x.args, 0)
+      if !kc || k <= 0 || k >= 64 || (ssa.has_pos(x.lp) && g.ld_bits(a) + k > 63) {
+        return false
+      }
+      g.ld_flatten(r, a, bi, sh + k, terms, inner)
+    }
+    Call => {
+      // wrapping_shl (rt.int_wrap 3)
+      if !g.f.name_is(x, "rt.int_wrap") || x.args.len() != 3 {
+        return false
+      }
+      let (op, ok) = g.const_int(g.f.arg(x.args, 0))
+      let (k, kc) = g.const_int(g.f.arg(x.args, 2))
+      if !ok || op != 3 || !kc || k <= 0 || k >= 64 {
+        return false
+      }
+      g.ld_flatten(r, g.f.arg(x.args, 1), bi, sh + k, terms, inner)
+    }
+    IntConv => {
+      let l = g.f.arg(x.args, 0)
+      let lx = g.f.values[l]
+      if lx.op != ssa.Op.Call || !g.f.name_is(lx, "bytes.index") || g.nuses[l] != 1 || ssa.block_of(lx.tb) != bi || ssa.pad_of(lx.pi) != ssa.pad_of(g.f.values[r].pi) {
+        return false
+      }
+      inner.push(l)
+      terms.push(LdTerm{leaf: l, shift: sh})
+      true
+    }
+    _ => false
+  }
+}
+
+/// The index of bytes.index value l as (base, constant offset): base -1
+/// for a constant index.
+fn (g: G) ld_index(l: Int) -> (Int, Int) {
+  var v = g.f.arg(g.f.values[l].args, 1)
+  var c = 0
+  var n = 0
+  while n < 4 {
+    n += 1
+    let (k, kc) = g.const_int(v)
+    if kc {
+      return (-1, c + k)
+    }
+    let x = g.f.values[v]
+    if x.op != ssa.Op.Add || x.args.len() != 2 {
+      break
+    }
+    let (d, dc) = g.const_int(g.f.arg(x.args, 1))
+    if !dc {
+      break
+    }
+    c += d
+    v = g.f.arg(x.args, 0)
+  }
+  (v, c)
+}
+
+/// The combined load of root r's terms: one Bytes value and base, byte
+/// offsets c0 to c0 + n - 1 each shifted 8 bits a byte, n 2, 4 or 8.
+fn (g: G) ld_match(r: Int, bi: Int, terms: List[LdTerm]) -> LdComb? {
+  let n = terms.len()
+  if n != 2 && n != 4 && n != 8 {
+    return None
+  }
+  let b = g.f.arg(g.f.values[terms[0].leaf].args, 0)
+  let (j, _) = g.ld_index(terms[0].leaf)
+  var c0 = 1 << 40
+  for t in terms {
+    let (tj, tc) = g.ld_index(t.leaf)
+    if g.f.arg(g.f.values[t.leaf].args, 0) != b || tj != j {
+      return None
+    }
+    if tc < c0 {
+      c0 = tc
+    }
+  }
+  if c0 < 0 || c0 + n > 4096 {
+    return None
+  }
+  var seen = [false, false, false, false, false, false, false, false]
+  for t in terms {
+    let (_, tc) = g.ld_index(t.leaf)
+    let o = tc - c0
+    if o >= n || seen[o] || t.shift != 8 * o {
+      return None
+    }
+    seen[o] = true
+  }
+  // the byte loads in the order the block has them (the cold checks)
+  var leaves: List[Int] = []
+  for v in g.f.blocks[bi].instrs {
+    for t in terms {
+      if t.leaf == v {
+        leaves.push(v)
+      }
+    }
+  }
+  Some(LdComb{b: b, j: j, c0: c0, n: n, leaves: leaves})
+}
+
+/// Lowers root v of combined load c (find_ld_combs).
+fn (var g: G) ld_comb(v: Int, c: LdComb) {
+  let a = g.words(c.b)
+  var k = -1
+  let y = g.f.values[c.b]
+  if y.op == ssa.Op.Const {
+    if let Some(bs) = const_bytes(g.f.aux(y)) {
+      k = bs.len()
+    }
+  }
+  let alen = g.str_len(a)
+  // a byte's check stays where bytes.index would keep it
+  var checks = false
+  for l in c.leaves {
+    let lx = g.f.values[l]
+    let iv = g.f.arg(lx.args, 1)
+    let short = g.proof.div_of_len(g.f, ssa.block_of(lx.tb), iv, c.b)
+    if ssa.has_pos(lx.lp) && !short && !g.proved_index(iv, alen, k) && !g.proof.proven(g.f, ssa.block_of(lx.tb), iv, c.b) {
+      checks = true
+    }
+  }
+  let jw = if c.j >= 0 { g.word(c.j) } else { 0 }
+  if checks {
+    let lo = if c.j < 0 {
+      g.def1(false, "mov $d0, #${c.c0}", [])
+    } else if c.c0 == 0 {
+      jw
+    } else {
+      g.ld_add(jw, c.c0)
+    }
+    let hi = g.ld_add(lo, c.n - 1)
+    let before = g.m_()
+    let cold = g.new_block(true)
+    let mid = g.new_block(false)
+    let ld = g.new_block(false)
+    let _b1 = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [lo, alen], cond: "hs", targets: [cold, mid]})
+    g.cur = mid
+    let _b2 = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [hi, alen], cond: "hs", targets: [cold, ld]})
+    // each byte's own check, in the program's order: the fault it raises
+    // is the one the byte loads raised
+    g.cur = cold
+    for l in c.leaves {
+      let lx = g.f.values[l]
+      if !ssa.has_pos(lx.lp) {
+        continue
+      }
+      let (_, tc) = g.ld_index(l)
+      let ix = if c.j < 0 { g.def1(false, "mov $d0, #${tc}", []) } else if tc == 0 { jw } else { g.ld_add(jw, tc) }
+      g.check("cmp $u0, $u1", [ix, alen], "hs", "xo_fault_bytes_index", [rsrc(ix), rsrc(alen)] + g.loc_args(g.f.pos_of(lx)))
+    }
+    let _j = g.add(Inst{kind: K_JUMP, targets: [ld]})
+    g.cur = ld
+    g.inherit(before)
+  }
+  for l in c.leaves {
+    g.less_fact(g.f.arg(g.f.values[l].args, 1), alen)
+  }
+  let bv = g.f.values[c.b]
+  let borrowed = g.inl_str() && bv.op == ssa.Op.Call && g.f.name_is(bv, "rt.str_bytes") && !g.escapes[c.b]
+  let d = if borrowed { g.str_base_inl(a) } else { g.str_base_heap(a) }
+  let ins = match c.n {
+    2 => "ldrh $wd0"
+    4 => "ldr $wd0"
+    _ => "ldr $d0"
+  }
+  if c.j >= 0 && c.c0 == 0 {
+    g.set(v, [g.def1(false, "${ins}, [$u0, $u1]", [d, jw])])
+    return
+  }
+  // base + c0: a scaled displacement when c0 is a multiple of the width
+  let t = if c.j < 0 { d } else { g.def1(false, "add $d0, $u0, $u1", [d, jw]) }
+  if c.c0 % c.n == 0 {
+    g.set(v, [g.def1(false, "${ins}, [$u0, #${c.c0}]", [t])])
+    return
+  }
+  g.set(v, [g.def1(false, "${ins}, [$u0]", [g.ld_add(t, c.c0)])])
+}
+
+/// r + c as a new register (c from 1 to 4095).
+fn (var g: G) ld_add(r: Int, c: Int) -> Int {
+  g.def1(false, "add $d0, $u0, #${c}", [r])
+}

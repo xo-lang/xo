@@ -52,7 +52,7 @@ func Binary_get_u32_le(tk *Task, v_b Bytes, v_at int64) int64 {
 
 func Binary_get_u64_le(tk *Task, v_b Bytes, v_at int64) int64 {
 	Binary_check_at(tk, v_b, v_at, int64(8))
-	return (Binary_get_u32_le(tk, v_b, v_at) | Int_wrapping_shl(tk, Binary_get_u32_le(tk, v_b, AddIUp(v_at, int64(4), "std/binary.xo:50:37")), int64(32)))
+	return (((((((int64(BytesAt(v_b, v_at, "std/binary.xo:51:7")) | Shl(int64(BytesAt(v_b, AddIUp(v_at, int64(1), "std/binary.xo:51:22"), "std/binary.xo:51:20")), int64(8), "std/binary.xo:51:16")) | Shl(int64(BytesAt(v_b, AddIUp(v_at, int64(2), "std/binary.xo:51:44"), "std/binary.xo:51:42")), int64(16), "std/binary.xo:51:38")) | Shl(int64(BytesAt(v_b, AddIUp(v_at, int64(3), "std/binary.xo:51:67"), "std/binary.xo:51:65")), int64(24), "std/binary.xo:51:61")) | Shl(int64(BytesAt(v_b, AddIUp(v_at, int64(4), "std/binary.xo:51:90"), "std/binary.xo:51:88")), int64(32), "std/binary.xo:51:84")) | Shl(int64(BytesAt(v_b, AddIUp(v_at, int64(5), "std/binary.xo:51:113"), "std/binary.xo:51:111")), int64(40), "std/binary.xo:51:107")) | Shl(int64(BytesAt(v_b, AddIUp(v_at, int64(6), "std/binary.xo:51:136"), "std/binary.xo:51:134")), int64(48), "std/binary.xo:51:130")) | Int_wrapping_shl(tk, int64(BytesAt(v_b, AddIUp(v_at, int64(7), "std/binary.xo:51:159"), "std/binary.xo:51:157")), int64(56)))
 }
 
 func Binary_get_i16_be(tk *Task, v_b Bytes, v_at int64) int64 {
@@ -82,12 +82,12 @@ func Binary_uvarint(tk *Task, v_n int64) Bytes {
 			break
 		}
 		{
-			v_out.M_write_byte(tk, ConvS_uint8(((v_x&int64(127))|int64(128)), "std/binary.xo:68:20"))
+			v_out.M_write_byte(tk, ConvS_uint8(((v_x&int64(127))|int64(128)), "std/binary.xo:69:20"))
 			x_a3 := int64(7)
 			v_x = Int_shr_logical(tk, v_x, x_a3)
 		}
 	}
-	v_out.M_write_byte(tk, ConvS_uint8(v_x, "std/binary.xo:71:18"))
+	v_out.M_write_byte(tk, ConvS_uint8(v_x, "std/binary.xo:72:18"))
 	return v_out.M_freeze(tk)
 }
 
@@ -107,14 +107,14 @@ func Binary_get_uvarint(tk *Task, v_b Bytes, v_at int64) Option[Tuple2[int64, in
 	var v_i int64 = int64(0)
 	_ = v_i
 	for {
-		if !(AddS(v_at, v_i, "std/binary.xo:90:9") < Bytes_len(tk, v_b)) {
+		if !(AddS(v_at, v_i, "std/binary.xo:91:9") < Bytes_len(tk, v_b)) {
 			break
 		}
 		{
 			if v_i == int64(10) {
 				return None[Tuple2[int64, int64]]()
 			}
-			var v_c int64 = int64(BytesAt(v_b, AddS(v_at, v_i, "std/binary.xo:94:19"), "std/binary.xo:94:17"))
+			var v_c int64 = int64(BytesAt(v_b, AddS(v_at, v_i, "std/binary.xo:95:19"), "std/binary.xo:95:17"))
 			_ = v_c
 			if v_c < int64(128) {
 				if (v_i == int64(9)) && (v_c > int64(1)) {
@@ -122,11 +122,11 @@ func Binary_get_uvarint(tk *Task, v_b Bytes, v_at int64) Option[Tuple2[int64, in
 				}
 				x_a7 := v_x
 				x_a6 := v_s
-				return Some[Tuple2[int64, int64]](Tuple2[int64, int64]{F0: (x_a7 | Int_wrapping_shl(tk, v_c, x_a6)), F1: AddIUp(v_i, int64(1), "std/binary.xo:99:43")})
+				return Some[Tuple2[int64, int64]](Tuple2[int64, int64]{F0: (x_a7 | Int_wrapping_shl(tk, v_c, x_a6)), F1: AddIUp(v_i, int64(1), "std/binary.xo:100:43")})
 			}
 			v_x = (v_x | Int_wrapping_shl(tk, (v_c&int64(127)), v_s))
-			v_s = AddIUp(v_s, int64(7), "std/binary.xo:102:5")
-			v_i = AddIUp(v_i, int64(1), "std/binary.xo:103:5")
+			v_s = AddIUp(v_s, int64(7), "std/binary.xo:103:5")
+			v_i = AddIUp(v_i, int64(1), "std/binary.xo:104:5")
 		}
 	}
 	return None[Tuple2[int64, int64]]()
@@ -153,8 +153,8 @@ func Binary_get_varint(tk *Task, v_b Bytes, v_at int64) Option[Tuple2[int64, int
 }
 
 func Binary_check_at(tk *Task, v_b Bytes, v_at int64, v_size int64) {
-	if (v_at < int64(0)) || (AddS(v_at, v_size, "std/binary.xo:118:16") > Bytes_len(tk, v_b)) {
-		Fault(tk, ("binary: " + IntStr(v_size) + " bytes at " + IntStr(v_at) + " out of range for Bytes of length " + IntStr(Bytes_len(tk, v_b))), "std/binary.xo:119:5")
+	if (v_at < int64(0)) || (AddS(v_at, v_size, "std/binary.xo:119:16") > Bytes_len(tk, v_b)) {
+		Fault(tk, ("binary: " + IntStr(v_size) + " bytes at " + IntStr(v_at) + " out of range for Bytes of length " + IntStr(Bytes_len(tk, v_b))), "std/binary.xo:120:5")
 	}
 	{
 		return
@@ -162,11 +162,11 @@ func Binary_check_at(tk *Task, v_b Bytes, v_at int64, v_size int64) {
 }
 
 func Binary_swap16(tk *Task, v_n int64) int64 {
-	return (Shl((v_n&int64(255)), int64(8), "std/binary.xo:123:29") | ((v_n >> int64(8)) & int64(255)))
+	return (Shl((v_n&int64(255)), int64(8), "std/binary.xo:124:29") | ((v_n >> int64(8)) & int64(255)))
 }
 
 func Binary_swap32(tk *Task, v_n int64) int64 {
-	return (Shl(Binary_swap16(tk, v_n), int64(16), "std/binary.xo:125:29") | Binary_swap16(tk, (v_n>>int64(16))))
+	return (Shl(Binary_swap16(tk, v_n), int64(16), "std/binary.xo:126:29") | Binary_swap16(tk, (v_n>>int64(16))))
 }
 
 func Binary_swap64(tk *Task, v_n int64) int64 {
@@ -190,10 +190,10 @@ func Binary_be(tk *Task, v_n int64, v_size int64) Bytes {
 }
 
 func Binary_signed(tk *Task, v_v int64, v_bits int64) int64 {
-	var v_top int64 = Shl(int64(1), SubIDown(v_bits, int64(1), "std/binary.xo:142:19"), "std/binary.xo:142:13")
+	var v_top int64 = Shl(int64(1), SubIDown(v_bits, int64(1), "std/binary.xo:143:19"), "std/binary.xo:143:13")
 	_ = v_top
 	if v_v >= v_top {
-		return SubS(v_v, Shl(v_top, int64(1), "std/binary.xo:143:22"), "std/binary.xo:143:17")
+		return SubS(v_v, Shl(v_top, int64(1), "std/binary.xo:144:22"), "std/binary.xo:144:17")
 	} else {
 		return v_v
 	}

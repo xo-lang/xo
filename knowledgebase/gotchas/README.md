@@ -1519,3 +1519,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [wrapping-add-slower-than-checked.md](wrapping-add-slower-than-checked.md): Observed 2026-11-19: wrapping_add/wrapping_sub in place of checked += in pow's loop made bench/perf/gomath pow 1.026 and gamma 1.048 slower on amd64; measure before trading.
 - [mawk-pipe-reader-buffers.md](mawk-pipe-reader-buffers.md): mawk reads a pipe in 4 KB blocks, so an awk meant to exit at a line waits for EOF (Observed)
 - [dense-thp-pool-run-drops-half.md](dense-thp-pool-run-drops-half.md): Observed 2026-11-19: under XO_THP=dense a pooled run taken before the record's reserved half dropped the half, and the next chunk advised huge pages over 4 MB of another chunk's given-back units (grpcreflect stress grew 7 to 10% in 60 min)
+- [arm64-load-combine-one-block.md](arm64-load-combine-one-block.md): load combining matches one block; inlined halves or a loop built word stay separate loads (write one flat Or)

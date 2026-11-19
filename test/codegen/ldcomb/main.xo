@@ -1,0 +1,38 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): load combining
+// (task #417, 2026-11-19). An Or of the bytes of one Bytes value at
+// consecutive indices, each shifted to its place in a little endian
+// word, is one ldrh or ldr on arm64, its bounds checks two compares
+// (std/brotli ld32, std/binary get_u32_le). Faults are unchanged: a cold
+// block repeats each byte's check (test/golden ldcomb_faults).
+
+fn ld16(b: Bytes, i: Int) -> Int {
+  // arm64: "ldrh\s+w" -"ldrb"
+  Int(b[i]) | Int(b[i + 1]) << 8
+}
+
+fn ld32(b: Bytes, i: Int) -> Int {
+  // arm64: "ldr\s+w" -"ldrb"
+  Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
+}
+
+// Any order of the terms; offsets need not start at the index.
+fn ld32r(b: Bytes, i: Int) -> Int {
+  // arm64: "ldr\s+w" -"ldrb"
+  (Int(b[i + 4]) << 24) | (Int(b[i + 3]) << 16) | (Int(b[i + 2]) << 8) | Int(b[i + 1])
+}
+
+fn ld64(b: Bytes, i: Int) -> Int {
+  // arm64: "ldr\s+x" -"ldrb"
+  Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 2]) << 16 | Int(b[i + 3]) << 24 | Int(b[i + 4]) << 32 | Int(b[i + 5]) << 40 | Int(b[i + 6]) << 48 | Int(b[i + 7]).wrapping_shl(56)
+}
+
+// A gap (byte 2 missing) stays byte loads.
+fn gap(b: Bytes, i: Int) -> Int {
+  // arm64: "ldrb"
+  Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 3]) << 24 | Int(b[i + 4]) << 32
+}
+
+fn main(os: Os) {
+  let b = "abcdefghijkl".bytes()
+  os.stdio.println("${ld16(b, 1)} ${ld32(b, 2)} ${ld32r(b, 3)} ${ld64(b, 4)} ${gap(b, 0)}")
+}

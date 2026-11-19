@@ -736,6 +736,7 @@ fn (var g: G) isel() {
       }
     }
   }
+  g.find_ld_combs()
   // a branch on a negated Bool read only there branches on the Bool with
   // its targets swapped (2026-10-20: portable checked's `?? 1` and
   // checked_add tested `!fits`, a compare made into a word, an xor, and
@@ -1457,6 +1458,13 @@ fn (g: G) rot_operand(c: Int, shifts: Bool) -> (Int, Int, Str) {
 }
 
 fn (var g: G) instr1(v: Int) {
+  if g.ldc_skip[v] {
+    return // a byte of a combined load (ldcomb.xo)
+  }
+  if let Some(c) = g.ldcs.get(v) {
+    g.ld_comb(v, c)
+    return
+  }
   let x = g.f.values[v]
   match x.op {
     Const | Cap => {}
