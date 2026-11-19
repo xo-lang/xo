@@ -34,8 +34,12 @@ const bigReuseProg = `fn main(os: Os) {
 // faulting in every page afresh. bench/perf/repeat/byte1 (160 MiB blocks)
 // ran 3.2 of Go on linux/amd64 and 0.29 s against Go's 0.12 s on the Mac
 // with 205,239 page reclaims (Go 21,210); with the rule, 0.08 s and 41,383.
-// Here the blocks' pages are 10 x 96 MiB without reuse and about 2 x 96
-// MiB with it; the ceiling is 4 x 96 MiB of minor faults.
+// Here a round's blocks are 96 MiB of pages: 10 x 96 MiB without reuse,
+// one round's with it; the ceiling is 1.5 x 96 MiB of minor faults. The
+// first round's blocks went back to the system before the want ring held
+// their size, so the second round faulted in again (Mac 13,159 faults of
+// 16 KiB, 2.1 rounds; 7,015 once take made the table on a program's first
+// large request, 2026-11-19).
 func TestBigBlockReuse(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program")
@@ -70,7 +74,7 @@ func TestBigBlockReuse(t *testing.T) {
 	if !ok {
 		t.Skip("no rusage")
 	}
-	limit := int64(4 * 96 << 20 / os.Getpagesize())
+	limit := int64(3 * 48 << 20 / os.Getpagesize())
 	t.Logf("%d minor faults (ceiling %d)", ru.Minflt, limit)
 	if int64(ru.Minflt) > limit {
 		t.Errorf("%d minor faults, over %d: a freed large block of a size the program asks for again went back to the system (heapos.xo keep, decision 0713)", ru.Minflt, limit)

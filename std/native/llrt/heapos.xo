@@ -431,18 +431,25 @@ pub fn release(b: Int) {
   }
 }
 
-/// Puts the mapping m of size bytes in the cache: whether it went there.
-fn keep(m: Int, size: Int) -> Bool {
-  let w = rt.static_word(W_CACHE)
-  clock_take()
+/// The cache's table, mapped on first use (under the cache's lock, at
+/// the static word w).
+fn table(w: Int) -> Int {
   var t = rt.mem_load(w, 0, 8)
   if t == 0 {
     // the table: a mapping of its own, kept for good
     t = map(GRAIN)
     rt.mem_store(t, 0, GRAIN, 8)
-    // released: take reads the word before it takes the lock
+    // released: cache_count and the age pass read the word without the lock
     rt.slot_store(w, 0, t, RELEASE)
   }
+  t
+}
+
+/// Puts the mapping m of size bytes in the cache: whether it went there.
+fn keep(m: Int, size: Int) -> Bool {
+  let w = rt.static_word(W_CACHE)
+  clock_take()
+  let t = table(w)
   let bytes = rt.mem_load(t, 8, 8)
   let k = rt.mem_load(t, 16, 8)
   // and at most a quarter of the bytes the program has in use (decision
@@ -573,13 +580,14 @@ fn advise_on() -> Bool {
 /// back first; 0 when there is none.
 fn take(need: Int) -> Int {
   let w = rt.static_word(W_CACHE)
-  // no table yet: nothing to take, without the lock (an atomic load, as
-  // keep's store; a plain read raced it under --race, http_h2c 2026-10-30)
-  if rt.slot_load(w, 0, ACQUIRE) == 0 {
-    return 0
-  }
   clock_take()
-  let t = rt.mem_load(w, 0, 8)
+  // the table even when nothing was ever kept: the program's first
+  // requests go in the want ring too, or keep found their blocks
+  // unwanted and unmapped them (bench/perf/repeat on linux/amd64: the
+  // first round's 150 MB Str and Bytes, so the second round mapped and
+  // faulted both in again, 146,688 faults against Go's 75,697, 1.13 to
+  // 1.15 of Go)
+  let t = table(w)
   let wi = rt.mem_load(t, CACHE_WANT_AT, 8)
   rt.mem_store(t, CACHE_WANT + 8 * wi, need, 8)
   rt.mem_store(t, CACHE_WANT_AT, (wi + 1) % WANT_N, 8)

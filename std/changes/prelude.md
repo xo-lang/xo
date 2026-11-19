@@ -11,6 +11,18 @@
 - Test: internal/llvm/testdata/golden/bytes_into_builder (reads, a shared Bytes and a slice left alone, an append after, the range fault)
 - Affected: new API
 
+## 2026-11-19: perf: a program's first large Str or Bytes is kept for reuse when freed
+
+- Kind: perf
+- Commit: this push
+- Found by: std/evidence/prelude perf (task #406): bench/perf/repeat byte3 at 1.128 and byte100 at 1.153 of Go on linux/amd64
+- Go reference: none (Go's heap keeps freed spans; the runtime's large block cache is Xo's, decisions 0492 and 0713)
+- Change: std/native/llrt heapos take maps the large block cache's table on a program's first large request, so that request's size enters the want ring; before, the table came with the first free, the first blocks freed (bench/perf/repeat's first round, 150 to 160 MB each) were not wanted and went back to the system, and the second round mapped and faulted them in again
+- Measured: bench/perf/repeat on linux/amd64 host 1, 3 runs each: byte3 0.32 to 0.39 s to 0.23 s (Go 0.24), byte100 0.34 to 0.35 s to 0.24 to 0.25 s (Go 0.26), byte1 0.36 to 0.45 s to 0.26 to 0.30 s (Go 0.27); minor faults 146,688 to 73,444 (Go 75,605 to 79,411), max RSS unchanged
+- Test: internal/arm64 TestBigBlockReuse, ceiling 1.5 rounds of pages (Mac 13,174 faults before, 7,005 after)
+- Affected: Xo 0.54.0 and earlier (speed only)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: Float.frexp, Float.ldexp and pow take a bit fast path for normal values
 
 - Kind: perf
