@@ -10,6 +10,16 @@
 - Measured: xo bench --ab on the linux/arm64 offload host, bench/perf/gomath gamma 20 (native arm64): wall 1234 to 1156 ms, B/A 0.936 (95% 0.903 to 0.952), 4 rounds
 - Test: bench/perf/gomath twincheck (gamma's sum equals Go's); the existing math goldens
 - Affected: Xo 0.54.0 and earlier (speed only)
+
+## 2026-11-19: perf: "${n}" of a 9 to 16 digit Int is one rs_push_words again (2026-11-08 entry reverted)
+
+- Kind: perf
+- Commit: this push
+- Found by: xw-1's speed claim audit (task #373, then #408): the 2026-11-08 change's --ab 0.983 did not reproduce (1.005, 0.935 to 1.027) and callgrind counted 3.62% more instructions
+- Go reference: strconv.FormatInt
+- Change: num.append_int sends 10^8 <= |v| < 10^16 to append_wide again (one rs_push_words), not two rs_push_word calls; one push of both words in append_int itself (no append_wide call) counted 2.31% fewer, the plain revert 3.67% fewer
+- Test: std/native/llrt/num_test.xo (unchanged: each side of append_int's cases, -10^7 and MIN_INT included); the scheduled callgrind check's strconv_itoa row (scripts/lead/cgcheck-set.txt, 3% bar) is the guard
+- Timing: bench/perf/strconv itoa on linux/arm64: callgrind 1,274,638,047 to 1,227,800,246 instructions (-3.67%); xo bench --ab on host 1 against 15cc6f893: 1.01 (0.997 to 1.068, n=12; within noise)
 - Shipped in: not yet released
 
 ## 2026-11-19: security: a NUL byte in a dialed, listened or looked up host or port fails the call (GO-2026-4971 class)
