@@ -1,0 +1,20 @@
+# Go's xml test tables (go1.26) run through std/xml
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# tok reads every token (Decoder.Token, tokens), raw every raw token
+# (RawToken, raw_tokens), until the end: the count, or the error text.
+encoding/xml xml_test.go TestIssue12417.testCases s tok
+encoding/xml xml_test.go TestIssue20396.testCases s tok
+encoding/xml xml_test.go TestIssue20685.testCases s tok
+encoding/xml xml_test.go TestParseErrors.tests src tok
+encoding/xml xml_test.go TestIssue11405.testCases . tok
+encoding/xml read_test.go TestMalformedComment.testData . tok
+encoding/xml xml_test.go characterTests in tok
+encoding/xml xml_test.go xmlInput . tok
+encoding/xml xml_test.go TestIssue12417.testCases s raw
+encoding/xml xml_test.go TestIssue20396.testCases s raw
+encoding/xml xml_test.go TestIssue20685.testCases s raw
+encoding/xml xml_test.go TestParseErrors.tests src raw
+encoding/xml xml_test.go TestIssue11405.testCases . raw
+encoding/xml read_test.go TestMalformedComment.testData . raw
+encoding/xml xml_test.go characterTests in raw
+encoding/xml xml_test.go xmlInput . raw
