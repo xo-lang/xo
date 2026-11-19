@@ -27,6 +27,8 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // crCase is one input, its split and chunk, and Go's two checksums.
@@ -34,6 +36,11 @@ type crCase struct {
 	data         []byte
 	split, chunk int
 	ieee, cast   uint32
+	// hostile, when set: update from start (a hostile Int, its low 32
+	// bits the crc Go's Update takes) gives startIeee and startCast
+	hostile              bool
+	start                int64
+	startIeee, startCast uint32
 }
 
 var crCastagnoli = crc32.MakeTable(crc32.Castagnoli)
@@ -58,7 +65,11 @@ func crData(r *rand.Rand, n int) []byte {
 	return b[:n]
 }
 
-func crCases(r *rand.Rand, n, longMax int) []crCase {
+// crCases: with hostileStarts, every eighth case also updates from a
+// hostile start (task #352), chosen by the case's index so the random
+// stream, and the seed 1 corpus, are unchanged.
+func crCases(r *rand.Rand, n, longMax int, hostileStarts bool) []crCase {
+	starts := append(hostile.Ints(), 0xffffffff, 0x80000000, 0x7fffffff)
 	cs := make([]crCase, 0, n)
 	for len(cs) < n {
 		k := r.Intn(601)
@@ -79,6 +90,12 @@ func crCases(r *rand.Rand, n, longMax int) []crCase {
 		}
 		if hi.Sum32() != c.ieee || hc.Sum32() != c.cast {
 			panic("hash/crc32: chunked Write differs from the checksum")
+		}
+		if hostileStarts && len(cs)%8 == 7 {
+			c.hostile = true
+			c.start = starts[(len(cs)/8)%len(starts)]
+			c.startIeee = crc32.Update(uint32(c.start), crc32.IEEETable, d)
+			c.startCast = crc32.Update(uint32(c.start), crCastagnoli, d)
 		}
 		cs = append(cs, c)
 	}
@@ -139,8 +156,39 @@ func crXoFile(seed int64, cases []crCase) string {
 		fmt.Fprintf(&b, "  (%q, %d, %d, %d, %d),\n", hex.EncodeToString(c.data), c.split, c.chunk, c.ieee, c.cast)
 	}
 	b.WriteString("]\n")
+	var hs []crCase
+	for _, c := range cases {
+		if c.hostile {
+			hs = append(hs, c)
+		}
+	}
+	if len(hs) > 0 {
+		b.WriteString(crHostileXo)
+		b.WriteString("\n/// (start, input hex, Go's Update from the start's low 32 bits: IEEE, Castagnoli)\nconst STARTS: List[(Int, Str, Int, Int)] = [\n")
+		for _, c := range hs {
+			fmt.Fprintf(&b, "  (%d, %q, %d, %d),\n", c.start, hex.EncodeToString(c.data), c.startIeee, c.startCast)
+		}
+		b.WriteString("]\n")
+	}
 	return b.String()
 }
+
+// crHostileXo checks update from a hostile start (task #352): Int's edges
+// and the 32 bit ones.
+const crHostileXo = `
+test "std/crc32 updates from a hostile start as Go's Update from its low 32 bits" {
+  var bad: List[Str] = []
+  for (start, h, ieee, cast) in STARTS {
+    let d = Bytes.from_hex(h).or_fault("hex")
+    if crc32.update(start, d) != ieee || crc32.update(start, d, crc32.Poly.Castagnoli) != cast {
+      bad.push("from ${start}, ${d.len()} bytes ${h}")
+    }
+  }
+  if !bad.is_empty() {
+    fault("${bad.len()} of ${STARTS.len()} updates from a hostile start differ, first: ${bad[0]}")
+  }
+}
+`
 
 // crCoverage fails when the cases stop reaching empty, short and long
 // inputs (past Castagnoli's 4,032 byte blocks) and splits at both ends.
@@ -175,7 +223,7 @@ const crCorpus = "testdata/corpus/crc32fuzz/crc32fuzz_test.xo"
 // Its long inputs stop at 5,000 bytes, past the 4,032 byte block, to keep
 // the file small.
 func TestCrc32FuzzCorpusCurrent(t *testing.T) {
-	cases := crCases(rand.New(rand.NewSource(1)), 300, 5000)
+	cases := crCases(rand.New(rand.NewSource(1)), 300, 5000, false)
 	crCoverage(t, cases, 4032)
 	bxCorpusCurrent(t, crCorpus, "XO_CRC32FUZZ_WRITE", crXoFile(1, cases))
 }
@@ -187,6 +235,6 @@ func TestCrc32Fuzz(t *testing.T) {
 	}
 	seed := int64(envInt(t, "XO_CRC32FUZZ_SEED", 2))
 	n := envInt(t, "XO_CRC32FUZZ_N", 2000)
-	cases := crCases(rand.New(rand.NewSource(seed)), n, 9000)
+	cases := crCases(rand.New(rand.NewSource(seed)), n, 9000, seed != 1)
 	runFuzzDir(t, "crc32fuzz_test.xo", crXoFile(seed, cases), envBackends("XO_CRC32FUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
 }

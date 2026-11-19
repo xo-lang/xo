@@ -21,12 +21,16 @@
 package stdtest
 
 import (
+	"encoding"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"hash/adler32"
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // adCase is one input, its split and chunk, and Go's checksum.
@@ -34,9 +38,30 @@ type adCase struct {
 	data         []byte
 	split, chunk int
 	sum          uint32
+	// hostile, when set: update from start (a hostile Int, its low 32
+	// bits the digest Go's UnmarshalBinary restores) gives startSum
+	hostile  bool
+	start    int64
+	startSum uint32
 }
 
-func adCases(r *rand.Rand, n, longMax int) []adCase {
+// adFromState is Go's Write on a digest restored to state, unchecked as
+// UnmarshalBinary takes it (halves at or past 65521 included).
+func adFromState(state uint32, p []byte) uint32 {
+	h := adler32.New()
+	b := binary.BigEndian.AppendUint32([]byte("adl\x01"), state)
+	if err := h.(encoding.BinaryUnmarshaler).UnmarshalBinary(b); err != nil {
+		panic(err)
+	}
+	h.Write(p)
+	return h.Sum32()
+}
+
+// adCases: with hostileStarts, every eighth case also updates from a
+// hostile start (task #352), chosen by the case's index so the random
+// stream, and the seed 1 corpus, are unchanged.
+func adCases(r *rand.Rand, n, longMax int, hostileStarts bool) []adCase {
+	starts := append(hostile.Ints(), 0xffff, 0xffff0000, 0xfff1fff1, 0xfff0fff0, 0xffffffff)
 	cs := make([]adCase, 0, n)
 	for len(cs) < n {
 		k := r.Intn(601)
@@ -61,6 +86,11 @@ func adCases(r *rand.Rand, n, longMax int) []adCase {
 		}
 		if h.Sum32() != c.sum {
 			panic("hash/adler32: chunked Write differs from the checksum")
+		}
+		if hostileStarts && len(cs)%8 == 7 {
+			c.hostile = true
+			c.start = starts[(len(cs)/8)%len(starts)]
+			c.startSum = adFromState(uint32(c.start), d)
 		}
 		cs = append(cs, c)
 	}
@@ -116,8 +146,39 @@ func adXoFile(seed int64, cases []adCase) string {
 		fmt.Fprintf(&b, "  (%q, %d, %d, %d),\n", hex.EncodeToString(c.data), c.split, c.chunk, c.sum)
 	}
 	b.WriteString("]\n")
+	var hs []adCase
+	for _, c := range cases {
+		if c.hostile {
+			hs = append(hs, c)
+		}
+	}
+	if len(hs) > 0 {
+		b.WriteString(adHostileXo)
+		b.WriteString("\n/// (start, input hex, Go's Write from the start's low 32 bits)\nconst STARTS: List[(Int, Str, Int)] = [\n")
+		for _, c := range hs {
+			fmt.Fprintf(&b, "  (%d, %q, %d),\n", c.start, hex.EncodeToString(c.data), c.startSum)
+		}
+		b.WriteString("]\n")
+	}
 	return b.String()
 }
+
+// adHostileXo checks update from a hostile start (task #352): Int's edges
+// and digests whose halves are at or past the modulus.
+const adHostileXo = `
+test "std/adler32 updates from a hostile start as Go's Write on that digest" {
+  var bad: List[Str] = []
+  for (start, h, sum) in STARTS {
+    let d = Bytes.from_hex(h).or_fault("hex")
+    if adler32.update(start, d) != sum {
+      bad.push("from ${start}, ${d.len()} bytes ${h}")
+    }
+  }
+  if !bad.is_empty() {
+    fault("${bad.len()} of ${STARTS.len()} updates from a hostile start differ, first: ${bad[0]}")
+  }
+}
+`
 
 // adCoverage fails when the cases stop reaching empty, short and long
 // inputs (past 5,552 bytes) and splits at both ends.
@@ -152,7 +213,7 @@ const adCorpus = "testdata/corpus/adler32fuzz/adler32fuzz_test.xo"
 // writes. Its long inputs stop at 6,000 bytes, past the 5,552 byte block,
 // to keep the file small.
 func TestAdler32FuzzCorpusCurrent(t *testing.T) {
-	cases := adCases(rand.New(rand.NewSource(1)), 300, 6000)
+	cases := adCases(rand.New(rand.NewSource(1)), 300, 6000, false)
 	adCoverage(t, cases, 5552)
 	bxCorpusCurrent(t, adCorpus, "XO_ADLER32FUZZ_WRITE", adXoFile(1, cases))
 }
@@ -164,6 +225,6 @@ func TestAdler32Fuzz(t *testing.T) {
 	}
 	seed := int64(envInt(t, "XO_ADLER32FUZZ_SEED", 2))
 	n := envInt(t, "XO_ADLER32FUZZ_N", 2000)
-	cases := adCases(rand.New(rand.NewSource(seed)), n, 12000)
+	cases := adCases(rand.New(rand.NewSource(seed)), n, 12000, seed != 1)
 	runFuzzDir(t, "adler32fuzz_test.xo", adXoFile(seed, cases), envBackends("XO_ADLER32FUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
 }

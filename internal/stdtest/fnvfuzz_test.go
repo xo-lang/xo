@@ -17,6 +17,8 @@
 package stdtest
 
 import (
+	"encoding"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"hash"
@@ -26,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // fvCase is one input, its split, and Go's six sums.
@@ -35,6 +39,28 @@ type fvCase struct {
 	s32, s32a                uint32
 	s64, s64a                uint64
 	s128, s128a, part, parta string // hex; part and parta: New128 and New128a over data[:split]
+	// hostile, when set: each update from a hostile state (start, its
+	// low 32 bits for the 32 bit sums; state128, 16 bytes hex) gives
+	// Go's Write on the hash restored to it
+	hostile     bool
+	start       int64
+	state128    string
+	f32, f32a   uint32
+	f64, f64a   uint64
+	f128, f128a string
+}
+
+// fvFrom is Go's Write of p on a fresh h restored (UnmarshalBinary, with
+// h's own magic) to state.
+func fvFrom(h hash.Hash, state, p []byte) string {
+	m, err := h.(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		panic(err)
+	}
+	if err := h.(encoding.BinaryUnmarshaler).UnmarshalBinary(append(m[:4:4], state...)); err != nil {
+		panic(err)
+	}
+	return fvSum(h, p)
 }
 
 func fvData(r *rand.Rand) []byte {
@@ -66,7 +92,12 @@ func fvSum(h hash.Hash, b []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func fvCases(r *rand.Rand, n int) []fvCase {
+// fvCases: with hostileStarts, every eighth case also updates from a
+// hostile state (task #352), chosen by the case's index so the random
+// stream, and the seed 1 corpus, are unchanged.
+func fvCases(r *rand.Rand, n int, hostileStarts bool) []fvCase {
+	starts := hostile.Ints()
+	us := hostile.Uints()
 	cs := make([]fvCase, 0, n)
 	for len(cs) < n {
 		d := fvData(r)
@@ -79,6 +110,27 @@ func fvCases(r *rand.Rand, n int) []fvCase {
 		c.s32, c.s32a, c.s64, c.s64a = h32.Sum32(), h32a.Sum32(), h64.Sum64(), h64a.Sum64()
 		c.s128, c.s128a = fvSum(fnv.New128(), d), fvSum(fnv.New128a(), d)
 		c.part, c.parta = fvSum(fnv.New128(), d[:c.split]), fvSum(fnv.New128a(), d[:c.split])
+		if hostileStarts && len(cs)%8 == 7 {
+			i := len(cs) / 8
+			c.hostile = true
+			c.start = starts[i%len(starts)]
+			s32 := binary.BigEndian.AppendUint32(nil, uint32(c.start))
+			s64 := binary.BigEndian.AppendUint64(nil, uint64(c.start))
+			s128 := binary.BigEndian.AppendUint64(binary.BigEndian.AppendUint64(nil, us[i%len(us)]), uint64(c.start))
+			c.state128 = hex.EncodeToString(s128)
+			word := func(h string) uint64 {
+				b, _ := hex.DecodeString(h)
+				for len(b) < 8 {
+					b = append([]byte{0}, b...)
+				}
+				return binary.BigEndian.Uint64(b)
+			}
+			c.f32 = uint32(word(fvFrom(fnv.New32(), s32, d)))
+			c.f32a = uint32(word(fvFrom(fnv.New32a(), s32, d)))
+			c.f64 = word(fvFrom(fnv.New64(), s64, d))
+			c.f64a = word(fvFrom(fnv.New64a(), s64, d))
+			c.f128, c.f128a = fvFrom(fnv.New128(), s128, d), fvFrom(fnv.New128a(), s128, d)
+		}
 		cs = append(cs, c)
 	}
 	return cs
@@ -130,6 +182,20 @@ func fvXoFile(seed int64, cases []fvCase) string {
 		fmt.Fprintf(&b, "  (%q, %d, %d, %d, %d, %d, %q, %q, %q, %q),\n", hex.EncodeToString(c.data), c.split, c.s32, c.s32a, int64(c.s64), int64(c.s64a), c.s128, c.s128a, c.part, c.parta)
 	}
 	b.WriteString("]\n")
+	var hs []fvCase
+	for _, c := range cases {
+		if c.hostile {
+			hs = append(hs, c)
+		}
+	}
+	if len(hs) > 0 {
+		b.WriteString(fvHostileXo)
+		b.WriteString("\n/// (start, 128 bit state hex, input hex, Go's Write from each state: 32, 32a, 64, 64a, 128, 128a)\nconst STARTS: List[(Int, Str, Str, Int, Int, Int, Int, Str, Str)] = [\n")
+		for _, c := range hs {
+			fmt.Fprintf(&b, "  (%d, %q, %q, %d, %d, %d, %d, %q, %q),\n", c.start, c.state128, hex.EncodeToString(c.data), c.f32, c.f32a, int64(c.f64), int64(c.f64a), c.f128, c.f128a)
+		}
+		b.WriteString("]\n")
+	}
 	return b.String()
 }
 
@@ -164,7 +230,7 @@ const fvCorpus = "testdata/corpus/fnvfuzz/fnvfuzz_test.xo"
 
 // TestFnvFuzzCorpusCurrent: the committed corpus is what seed 1 writes.
 func TestFnvFuzzCorpusCurrent(t *testing.T) {
-	cases := fvCases(rand.New(rand.NewSource(1)), 500)
+	cases := fvCases(rand.New(rand.NewSource(1)), 500, false)
 	fvCoverage(t, cases)
 	text := fvXoFile(1, cases)
 	if os.Getenv("XO_FNVFUZZ_WRITE") == "1" {
@@ -192,6 +258,26 @@ func TestFnvFuzz(t *testing.T) {
 	}
 	seed := int64(envInt(t, "XO_FNVFUZZ_SEED", 2))
 	n := envInt(t, "XO_FNVFUZZ_N", 2000)
-	cases := fvCases(rand.New(rand.NewSource(seed)), n)
+	cases := fvCases(rand.New(rand.NewSource(seed)), n, seed != 1)
 	runFuzzDir(t, "fnvfuzz_test.xo", fvXoFile(seed, cases), envBackends("XO_FNVFUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
 }
+
+// fvHostileXo checks each update from a hostile state (task #352): Int's
+// edges, whose high bits the 32 bit sums drop, and 128 bit states with
+// the top bit set.
+const fvHostileXo = `
+test "std/fnv updates from a hostile state as Go's Write on the restored hash" {
+  var bad: List[Str] = []
+  for (start, st, h, s32, s32a, s64, s64a, s128, s128a) in STARTS {
+    let d = Bytes.from_hex(h).or_fault("hex")
+    let s = Bytes.from_hex(st).or_fault("hex")
+    let ok = fnv.update32(start, d) == s32 && fnv.update32a(start, d) == s32a && fnv.update64(start, d) == s64 && fnv.update64a(start, d) == s64a
+    if !ok || fnv.update128(s, d).to_hex() != s128 || fnv.update128a(s, d).to_hex() != s128a {
+      bad.push("from ${start} (${st}), ${d.len()} bytes ${h}")
+    }
+  }
+  if !bad.is_empty() {
+    fault("${bad.len()} of ${STARTS.len()} updates from a hostile state differ, first: ${bad[0]}")
+  }
+}
+`

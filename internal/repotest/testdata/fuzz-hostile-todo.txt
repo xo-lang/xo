@@ -2,7 +2,6 @@
 # hostile dictionary (hostilevals_test.go, task #352). TestFuzzHarnessUsesHostile
 # fails on a harness missing from here that never calls it, and on one
 # listed here that does: convert a harness, then drop its line.
-adler32fuzz_test.go
 amqpfuzz_test.go
 amqptestfuzz_test.go
 base32fuzz_test.go
@@ -10,10 +9,7 @@ bcryptfuzz_test.go
 clifuzz_test.go
 compressfuzz_test.go
 corpusfuzz_test.go
-crc32fuzz_test.go
-crc64fuzz_test.go
 debugfuzz_test.go
-fnvfuzz_test.go
 giffuzz_test.go
 grpcfuzz_test.go
 grpchealthfuzz_test.go

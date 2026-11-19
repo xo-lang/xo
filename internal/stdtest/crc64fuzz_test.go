@@ -27,6 +27,8 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // c6Case is one input, its split and chunk, and Go's checksum.
@@ -34,11 +36,23 @@ type c6Case struct {
 	data            []byte
 	split, chunk    int
 	iso, ecma, nvme uint64
+	// hostile, when set: update from start (a hostile Int, its bits the
+	// crc Go's Update takes) gives starts' sums, ISO, ECMA and NVMe
+	hostile bool
+	start   int64
+	fromS   [3]uint64
 }
 
 var c6Tables = []*crc64.Table{crc64.MakeTable(crc64.ISO), crc64.MakeTable(crc64.ECMA), crc64.MakeTable(0x9a6c9329ac4bc9b5)}
 
-func c6Cases(r *rand.Rand, n, longMax int) []c6Case {
+// c6Cases: with hostileStarts, every eighth case also updates from a
+// hostile start (task #352), chosen by the case's index so the random
+// stream, and the seed 1 corpus, are unchanged.
+func c6Cases(r *rand.Rand, n, longMax int, hostileStarts bool) []c6Case {
+	starts := hostile.Ints()
+	for _, u := range hostile.Uints() {
+		starts = append(starts, int64(u))
+	}
 	cs := make([]c6Case, 0, n)
 	for len(cs) < n {
 		k := r.Intn(601)
@@ -59,6 +73,13 @@ func c6Cases(r *rand.Rand, n, longMax int) []c6Case {
 			}
 			if h.Sum64() != *sums[j] {
 				panic("hash/crc64: chunked Write differs from the checksum")
+			}
+		}
+		if hostileStarts && len(cs)%8 == 7 {
+			c.hostile = true
+			c.start = starts[(len(cs)/8)%len(starts)]
+			for j, tb := range c6Tables {
+				c.fromS[j] = crc64.Update(uint64(c.start), tb, d)
 			}
 		}
 		cs = append(cs, c)
@@ -119,8 +140,39 @@ func c6XoFile(seed int64, cases []c6Case) string {
 		fmt.Fprintf(&b, "  (%q, %d, %d, %d, %d, %d),\n", hex.EncodeToString(c.data), c.split, c.chunk, int64(c.iso), int64(c.ecma), int64(c.nvme))
 	}
 	b.WriteString("]\n")
+	var hs []c6Case
+	for _, c := range cases {
+		if c.hostile {
+			hs = append(hs, c)
+		}
+	}
+	if len(hs) > 0 {
+		b.WriteString(c6HostileXo)
+		b.WriteString("\n/// (start, input hex, Go's Update from the start: ISO, ECMA, NVMe)\nconst STARTS: List[(Int, Str, Int, Int, Int)] = [\n")
+		for _, c := range hs {
+			fmt.Fprintf(&b, "  (%d, %q, %d, %d, %d),\n", c.start, hex.EncodeToString(c.data), int64(c.fromS[0]), int64(c.fromS[1]), int64(c.fromS[2]))
+		}
+		b.WriteString("]\n")
+	}
 	return b.String()
 }
+
+// c6HostileXo checks update from a hostile start (task #352): Int's edges
+// and the unsigned ones with the top bit set.
+const c6HostileXo = `
+test "std/crc64 updates from a hostile start as Go's Update" {
+  var bad: List[Str] = []
+  for (start, h, iso, ecma, nvme) in STARTS {
+    let d = Bytes.from_hex(h).or_fault("hex")
+    if crc64.update(start, d) != iso || crc64.update(start, d, crc64.Poly.Ecma) != ecma || crc64.update(start, d, crc64.Poly.Nvme) != nvme {
+      bad.push("from ${start}, ${d.len()} bytes ${h}")
+    }
+  }
+  if !bad.is_empty() {
+    fault("${bad.len()} of ${STARTS.len()} updates from a hostile start differ, first: ${bad[0]}")
+  }
+}
+`
 
 // c6Coverage fails when the cases stop reaching empty, short and long
 // inputs (past 4,096 bytes) and splits at both ends.
@@ -154,7 +206,7 @@ const c6Corpus = "testdata/corpus/crc64fuzz/crc64fuzz_test.xo"
 // TestCrc64FuzzCorpusCurrent: the committed corpus is what seed 1
 // writes. Its long inputs stop at 5,000 bytes to keep the file small.
 func TestCrc64FuzzCorpusCurrent(t *testing.T) {
-	cases := c6Cases(rand.New(rand.NewSource(1)), 300, 5000)
+	cases := c6Cases(rand.New(rand.NewSource(1)), 300, 5000, false)
 	c6Coverage(t, cases, 4096)
 	bxCorpusCurrent(t, c6Corpus, "XO_CRC64FUZZ_WRITE", c6XoFile(1, cases))
 }
@@ -166,6 +218,6 @@ func TestCrc64Fuzz(t *testing.T) {
 	}
 	seed := int64(envInt(t, "XO_CRC64FUZZ_SEED", 2))
 	n := envInt(t, "XO_CRC64FUZZ_N", 2000)
-	cases := c6Cases(rand.New(rand.NewSource(seed)), n, 9000)
+	cases := c6Cases(rand.New(rand.NewSource(seed)), n, 9000, seed != 1)
 	runFuzzDir(t, "crc64fuzz_test.xo", c6XoFile(seed, cases), envBackends("XO_CRC64FUZZ_BACKENDS", []string{"arm64", "llvm"}), len(cases))
 }
