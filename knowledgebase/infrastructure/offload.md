@@ -160,6 +160,19 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   minutes, then it waits only for the runs already going (lead,
   2026-11-18, #317: amd64 perf runs waited 29 to 82 min while each x86
   gate sample started 0 s after the last; TestExclStarveStopsBackfill).
+  A timing lane (HEAVYD_TIMING_LANES, default arm64 and amd64: host 1
+  and the linux/amd64 host) takes a plain (non-exclusive) lease only
+  with a -max of HEAVYD_TIMING_PLAIN_MAX_MIN (45) or less (task #379,
+  2026-11-18: a 2h9m stdproven lease on amd64 held two exclusive
+  timings for 2 hours). A longer one, or one with no -max, is refused
+  with exit 79 and the reason (split it with SP_SHARD_MIN, or run it on
+  hosts 2 to 4); a spec of several lanes (`arm64|pass2`) is refused only
+  when every lane refuses, and runs in one that takes it. offload.sh
+  defaults OFF_MAX_MIN to 45 for a plain job on those two hosts, and
+  stdproven-offload.sh picks the amd64 host for a plain run only with
+  OFF_MAX_MIN of 45 or less (TestScenarioTimingLaneCap,
+  stdproven_offload_test.sh). Exclusive leases and leases back after a
+  heavyd restart are not capped. Last verified: 2026-11-18.
   A stdproven perf or serverperf timing on host 2 offers heavyd a move
   to the amd64 lane after SP_MOVE_MIN (5) minutes in pass2's queue (ADR
   0712 takes either host), relabelled there (`-host`, `-backends`) so
