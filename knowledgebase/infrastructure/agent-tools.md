@@ -1148,6 +1148,10 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   instead of NEW's: use `AB_DRIVER=origin/main` to rerun an old pair,
   whose own xo bench is older than the round-order fix (4bd89c76b, task
   #373; 2026-11-18).
+  Its end reaches the agent from xw as `offload ab-host-NAME: pass` (or
+  `FAIL rc N`): ab-host.sh records offload.start and offload.end itself,
+  in heavyd's lease too, where offload.sh records none (#420,
+  scripts/lead/ab_host_events_test.sh).
   One --ab per agent (#171): a second ab-host.sh from the same Claude
   session while its first is live or queued is refused, exit 2 (read
   the first result, then queue the next; `AB_HOST_MULTI_OK=1` skips it).
@@ -1506,7 +1510,9 @@ Since 2026-11-18 an agent does not wait at all: start the job (a
 heavy.sh run, `pushq.sh WT --gated`, `offload-gate.sh WT STEPS`), go on
 with the next item, and act on the xw message its end brings (xw
 delivers job, gate and push ends to the agent's session; 1769 of 1822 in
-the 24 h before the switch, 0 failed). ccguard blocks a command that only
+the 24 h before the switch, 0 failed; since 2026-11-19 also the end of an
+offload run of 2 minutes or more, an ab-host.sh --ab included, as
+`offload NAME: pass`, #420). ccguard blocks a command that only
 waits (`heavy.sh`, `pushq.sh` or `offload-gate.sh --wait`, or a sleep),
 in the background too. `xw notify [--since 1d]` counts the deliveries by
 outcome. The waits below stay for scripts and the lead's tools.
