@@ -5,6 +5,7 @@
 // branches on or indexes by the data.
 use native/llrt/cpu
 use native/llrt/obj
+use native/llrt/raw
 use native/rt
 
 /// A sponge: the 25 lanes, its rate in bytes, its domain separator
@@ -1231,6 +1232,14 @@ fn permute(var a: List[Int]) {
   keccak(a)
 }
 
+/// Whether whole blocks of rate bytes go through cpu.keccak_absorb: on
+/// x86-64 (its kernel XORs a block in as it copies the state in; sha3
+/// big on a Zen 5: 87 ms with the lane loop then keccak_f1600, 61 with
+/// it, Go 82; 2026-11-19), for a rate of 9 to 21 words.
+fn fused(rate: Int) -> Bool {
+  target.arch == TargetArch.Amd64 && (cpu.hw() & cpu.HW_KECCAK) != 0 && (rate & 7) == 0 && rate >= 72 && rate <= 168
+}
+
 /// Keccak-f[1600] on the 25 lanes at la (raw memory), as permute.
 fn permute_at(la: Int) {
   if (cpu.hw() & cpu.HW_KECCAK) != 0 {
@@ -1253,6 +1262,20 @@ pub fn write(var s: Sponge, data: Bytes) {
   var i = 0
   let n = data.len()
   while i < n {
+    if s.pos == 0 && n - i >= s.rate && fused(s.rate) && s.lanes.len() == 25 {
+      // whole blocks XORed in by the x86-64 kernel (cpu.keccak_absorb);
+      // a write first makes the lanes this call's own
+      s.lanes[0] = s.lanes[0]
+      let sa = rt.obj_addr(s.lanes).wrapping_add(rt.layout(2))
+      let da = raw.bytes_addr(data)
+      let rc = rt.obj_addr(RCS).wrapping_add(rt.layout(2))
+      while n - i >= s.rate {
+        cpu.keccak_absorb(sa, da + i, s.rate / 8, rc)
+        i += s.rate
+      }
+      raw.alive(data)
+      continue
+    }
     if s.pos == 0 && n - i >= s.rate {
       // a whole block, a lane at a time
       for l in 0..s.rate / 8 {
@@ -1358,6 +1381,17 @@ pub fn sum_once(rate: Int, dsbyte: Int, data: Bytes, n: Int) -> Bytes {
   }
   let len = data.len()
   var i = 0
+  if len - i >= rate && fused(rate) {
+    // whole blocks XORed in by the x86-64 kernel as it copies the state
+    // in (cpu.keccak_absorb)
+    let da = raw.bytes_addr(data)
+    let rc = rt.obj_addr(RCS).wrapping_add(rt.layout(2))
+    while len - i >= rate {
+      cpu.keccak_absorb(la, da + i, rate / 8, rc)
+      i += rate
+    }
+    raw.alive(data)
+  }
   while len - i >= rate {
     // a whole block, a lane at a time
     for l in 0..rate / 8 {

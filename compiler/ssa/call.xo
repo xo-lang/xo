@@ -328,6 +328,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // the general registers on amd64 (ssa x86keccak.xo); wasm runs the
     // body (sha3.xo calls it only with HW_KECCAK)
     "keccak_f1600" => if b.goarch == "arm64" || b.goarch == "amd64" { "keccak_f1600" } else { "" }
+    // a block absorbed into Keccak's state as the x86-64 lines copy it
+    // in (ssa keccak_absorb_x86_lines); arm64 and wasm run the body
+    "keccak_absorb" => if b.goarch == "amd64" { "keccak_absorb" } else { "" }
     "ghash_blocks" => if b.goarch == "arm64" { "ghash_blocks" } else { "" }
     // SSE2 on amd64 (x86mlkem.xo), NEON on arm64 (a64mlkem.xo)
     "mlkem_ntt" | "mlkem_inverse_ntt" | "mlkem_mul_acc" => if b.goarch == "amd64" || b.goarch == "arm64" { b.obj_name(fo) } else { "" }

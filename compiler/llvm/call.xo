@@ -987,6 +987,16 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, ptr ${g.raw_ptr(g.f.arg(x.args, 2))}, ptr ${g.raw_ptr(g.f.arg(x.args, 3))}, i64 ${g.op(g.f.arg(x.args, 4))}, ptr ${g.raw_ptr(g.f.arg(x.args, 5))}, ptr ${g.raw_ptr(g.f.arg(x.args, 6))})")
     }
+    "rt.keccak_absorb" => {
+      // amd64 only (ssa call.xo): ssa.keccak_absorb_x86_lines as inline
+      // asm; its operands in registers the lines do not write, rbx and
+      // r12 to r15 restored by them
+      var t: List[Str] = []
+      for l in ssa.keccak_absorb_x86_lines("@0@", "@1@", "@2@") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2"))
+      }
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"r,r,r,~{rax},~{rcx},~{rdx},~{rsi},~{rdi},~{r8},~{r9},~{r10},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(ptr ${g.raw_ptr(g.f.arg(x.args, 0))}, ptr ${g.raw_ptr(g.f.arg(x.args, 1))}, i64 ${g.op(g.f.arg(x.args, 2))})")
+    }
     "rt.keccak_f1600" if g.arch() == "amd64" => {
       // ssa.keccak_x86_lines as inline asm: the state in rdi, which holds
       // it again at the end; rbx and r12 to r15 restored by the lines,

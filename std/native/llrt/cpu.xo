@@ -186,6 +186,19 @@ fn detect() -> Int {
 /// the reference.
 pub fn keccak_f1600(st: Int, rc: Int) { keccak_f1600_soft(st, rc) }
 
+/// The nl words at data (any alignment) XORed into the first nl lanes at
+/// st, then keccak_f1600: a sponge's block (nl 9 to 21, FIPS 202's rates
+/// in words). On x86-64 the kernel XORs them as it copies the state in
+/// (ssa keccak_absorb_x86_lines), so the state is not written and read
+/// back between permutations. Call it only when hw() has HW_KECCAK; the
+/// body is the reference.
+pub fn keccak_absorb(st: Int, data: Int, nl: Int, rc: Int) {
+  for l in 0..nl {
+    rt.mem_store(st, 8 * l, rt.mem_load(st, 8 * l, 8) ^ rt.mem_load(data, 8 * l, 8), 8)
+  }
+  keccak_f1600(st, rc)
+}
+
 /// keccak_f1600 a step at a time (FIPS 202 3.3): theta, rho and pi, chi,
 /// iota on lanes loaded from st and stored back.
 pub fn keccak_f1600_soft(st: Int, rc: Int) {

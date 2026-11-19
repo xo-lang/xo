@@ -313,3 +313,41 @@ test "chacha_stream8 is chacha_stream4's body (AVX2, 512 byte groups and a 256 b
     }
   }
 }
+
+test "keccak_absorb is its body (the x86-64 kernel XORs the block as it copies the state in)" {
+  // every FIPS 202 rate in words (9 to 21) and the ones between, blocks at
+  // 0 to 7 bytes past a word, states and blocks from a seeded walk
+  var x = 88172645463325252
+  for nl in 9..22 {
+    for off in 0..8 {
+      var a = List[Int].with_capacity(25)
+      var d = List[Int].with_capacity(23)
+      for k in 0..48 {
+        x = x ^ x.wrapping_shl(13)
+        x = x ^ x.shr_logical(7)
+        x = x ^ x.wrapping_shl(17)
+        if k < 25 {
+          a.push(x)
+        } else {
+          d.push(x)
+        }
+      }
+      var b = List[Int].with_capacity(25)
+      for v in a {
+        b.push(v)
+      }
+      let da = lanes_addr(d) + off
+      for l in 0..nl {
+        a[l] = a[l] ^ rt.mem_load(da, 8 * l, 8)
+      }
+      keccak_f1600_soft(lanes_addr(a), lanes_addr(TEST_RCS))
+      if (hw() & HW_KECCAK) != 0 {
+        keccak_absorb(lanes_addr(b), da, nl, lanes_addr(TEST_RCS))
+        for i in 0..25 {
+          expect(b[i]) == a[i]
+        }
+      }
+      expect(d.len()) == 23
+    }
+  }
+}

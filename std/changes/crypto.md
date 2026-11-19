@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-19: perf: SHA-3 and SHAKE on x86-64 absorb whole blocks in the Keccak kernel, 1.4 times faster
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (bench/perf/sha3 big on linux/amd64: 1.061 of Go's crypto/sha3)
+- Go reference: crypto/internal/fips140/sha3 (keccakF1600 on amd64, its state XORed in by the Go caller)
+- Measured: linux/amd64 host, exclusive, 5 runs of the sha3 program: big (1 MiB hashed 40 times) 87 to 89 ms before, 61 to 64 after, Go 81 to 83; small (200,000 messages of 0 to 149 bytes) 71 to 72 before and after, Go 68 to 69; checksums equal. Two causes: the block's lanes XORed into the state then reloaded by the kernel (87 ms with the kernel aligned, 61 with the block absorbed in the kernel's copy), and the unrolled rounds' place in a 64 byte line (88 ms at 43 or 57 bytes past one; now aligned)
+- Test: cpu tests (keccak_absorb against its body for 9 to 21 lanes, blocks at 0 to 7 bytes past a word) and crypto tests on the linux/amd64 host, both backends; compiler/ssa x86keccak_test.xo (the rounds start aligned)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: ChaCha20 alone on x86-64 with AVX2 runs eight blocks at a time, 3.2 times faster
 
 - Kind: perf

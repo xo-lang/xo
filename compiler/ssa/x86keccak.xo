@@ -104,19 +104,66 @@ fn imm_rax(rc: Int) -> Str {
 /// at st + 8 i, little endian words): st is a general register (any but
 /// rsp and rbp), read before any register is written.
 pub fn keccak_x86_lines(st: Str) -> List[Str] {
-  var t: List[Str] = [
+  keccak_x86_with([
     "movq ${st}, %rax",
     "leaq -${128 + KX_FRAME}(%rsp), %rsp",
     "movq %rax, ${KX_ADDR}(%rsp)",
+  ], false)
+}
+
+/// keccak_x86_lines with a block absorbed first (cpu.keccak_absorb): the
+/// nl words at dt (any alignment) XORed into the state's first nl lanes
+/// as the lines copy it in, so a sponge's state is not written between
+/// permutations: sha3 big on a Zen 5 took 87 ms with sum_once's lane
+/// loop (a store of each lane, then the lines' reload), 61 with this, Go
+/// 82 (2026-11-19). nl is 9 to
+/// 21 (FIPS 202's rates, 72 to 168 bytes); lanes 0 to 8 are always
+/// absorbed. st, dt and nl are general registers (any but rsp and rbp),
+/// all read before any register is written: pushed, then popped into
+/// rax, rdx and rsi.
+pub fn keccak_absorb_x86_lines(st: Str, dt: Str, nl: Str) -> List[Str] {
+  keccak_x86_with([
+    "leaq -${128 + KX_FRAME}(%rsp), %rsp",
+    "pushq ${st}",
+    "pushq ${dt}",
+    "pushq ${nl}",
+    "popq %rsi",
+    "popq %rdx",
+    "popq %rax",
+    "movq %rax, ${KX_ADDR}(%rsp)",
+  ], true)
+}
+
+/// The lines after their start (the state's address in rax and at
+/// KX_ADDR; when absorbing, the block's in rdx and its lane count in rsi).
+fn keccak_x86_with(start: List[Str], absorb: Bool) -> List[Str] {
+  var t = start
+  // the unrolled rounds (22 KB, about 5,300 instructions) from a 64 byte
+  // boundary: placed at 43 or 57 bytes past one, sha3 big took 88 ms on
+  // a Zen 5, at 0 to 25 bytes 56 to 62 (Go 82), the same code in five
+  // programs (2026-11-19); the long NOPs run once a call
+  for l in [
+    ".p2align 6",
     "movq %rbx, ${KX_SAVES}(%rsp)",
     "movq %r12, ${KX_SAVES + 8}(%rsp)",
     "movq %r13, ${KX_SAVES + 16}(%rsp)",
     "movq %r14, ${KX_SAVES + 24}(%rsp)",
     "movq %r15, ${KX_SAVES + 32}(%rsp)",
-  ]
-  // the user state into the internal one (Go's first NOTQs)
+  ] {
+    t.push(l)
+  }
+  // the user state into the internal one (Go's first NOTQs), with the
+  // block XORed in when absorbing
   for i in 0..25 {
     t.push("movq ${8 * i}(%rax), %rcx")
+    if absorb && i < 9 {
+      t.push("xorq ${8 * i}(%rdx), %rcx")
+    } else if absorb && i < 21 {
+      t.push("cmpq $${i}, %rsi")
+      t.push("jbe 7f")
+      t.push("xorq ${8 * i}(%rdx), %rcx")
+      t.push("7:")
+    }
     if keccak_x86_inverted(i) {
       t.push("notq %rcx")
     }

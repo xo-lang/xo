@@ -1,0 +1,32 @@
+// The x86-64 Keccak lines (x86keccak.xo): where the unrolled rounds
+// start, and the absorbing start's register moves.
+
+test "the Keccak rounds start at a 64 byte boundary" {
+  // sha3 big on a Zen 5: 88 ms with the rounds 43 or 57 bytes past a
+  // boundary, 56 to 62 at 0 to 25 (Go 82; 2026-11-19)
+  for t in [keccak_x86_lines("%rdi"), keccak_absorb_x86_lines("%rdi", "%rsi", "%rdx")] {
+    var at = -1
+    var save = -1
+    for i in 0..t.len() {
+      if t[i] == ".p2align 6" && at < 0 {
+        at = i
+      }
+      if t[i].starts_with("movq %rbx, ") && save < 0 {
+        save = i
+      }
+    }
+    expect(at >= 0) == true
+    expect(save) == at + 1
+  }
+}
+
+test "the absorbing start reads every operand before it writes a register" {
+  // operands in the registers it loads (rax, rdx, rsi) in any order
+  let t = keccak_absorb_x86_lines("%rsi", "%rax", "%rdx")
+  expect(t[1]) == "pushq %rsi"
+  expect(t[2]) == "pushq %rax"
+  expect(t[3]) == "pushq %rdx"
+  expect(t[4]) == "popq %rsi"
+  expect(t[5]) == "popq %rdx"
+  expect(t[6]) == "popq %rax"
+}

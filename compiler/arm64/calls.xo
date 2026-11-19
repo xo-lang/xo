@@ -2269,6 +2269,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.keccak_absorb" if g.x86 => {
+      // a block absorbed, then Keccak-f[1600] (ssa.keccak_absorb_x86_lines):
+      // $u0 the state, $u1 the block, $u2 its lane count, all read first
+      // (IF_CLOB_MID); the registers as rt.keccak_f1600's
+      var cl: List[Int] = []
+      for r in ssa.keccak_x86_gprs() {
+        cl.push(r)
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.keccak_absorb_x86_lines("$u0", "$u1", "$u2").join("\n"), us: [g.real(g.word(g.f.arg(x.args, 0))), g.real(g.word(g.f.arg(x.args, 1))), g.real(g.word(g.f.arg(x.args, 2)))], fl: IF_X86 | IF_CLOB_MID, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.keccak_f1600" => {
       // Keccak-f[1600] with the SHA3 extension (ssa.keccak_neon_lines,
       // Go's keccakF1600NEON): x9 and x10 its constants' cursor and the
