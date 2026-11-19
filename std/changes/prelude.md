@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-19: perf: Float.frexp, Float.ldexp and pow take a bit fast path for normal values
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/gomath (task #406): pow at 1.057 of Go's portable pow on linux/amd64; split rows put frexp and ldexp at 1.245 of Go's
+- Go reference: math frexp.go and ldexp.go (Go 1.26)
+- Change: std/native/llrt gomath frexp and ldexp read a normal finite value's exponent field from its bits first (as log does since task #87), with no is_inf, is_nan or normalize, whose Float compares take Xo's total order; other values take the old path. Same bits as Go's
+- Measured: xo bench --ab bench/perf/gomath on linux/amd64 host 1: pow 0.933 wall (0.93 to 0.935, n=4), gamma 0.785 (0.785 to 0.785, n=4)
+- Test: std/native/llrt gomath_test.xo "frexp and ldexp" (Go's bits at the exponent edges, subnormals, wrapping exponents, infinities, NaN)
+- Affected: Xo 0.54.0 and earlier (speed only)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: Float.pow, Float.trunc and modf truncate in one instruction
 
 - Kind: perf

@@ -71,6 +71,16 @@ fn normalize(x: Float) -> (Float, Int) {
 }
 
 pub fn frexp(f0: Float) -> (Float, Int) {
+  // the common case first, on the bits as log does (task #87): a normal
+  // finite f0 (its exponent field between 1 and 2046) needs no is_inf,
+  // is_nan or normalize, whose Float compares take Xo's total order
+  // (task #406: frexp and ldexp at 1.245 of Go's on linux/amd64). The same
+  // bits follow.
+  let fb = bits(f0)
+  let fe = fb.shr_logical(SHIFT) & MASK
+  if fe != 0 && fe != MASK {
+    return (from_bits((fb & ~MASK.wrapping_shl(SHIFT)) | (BIAS - 1).wrapping_shl(SHIFT)), fe - BIAS + 1)
+  }
   if f0 == 0.0 || is_inf(f0, 0) || is_nan(f0) {
     return (f0, 0)
   }
@@ -83,6 +93,17 @@ pub fn frexp(f0: Float) -> (Float, Int) {
 }
 
 pub fn ldexp(frac0: Float, exp0: Int) -> Float {
+  // the common case first, on the bits (task #406): frac0 normal and
+  // finite and the result's exponent normal; the same wrapping exponent
+  // sum as below, and the same bits
+  let fb = bits(frac0)
+  let fe = fb.shr_logical(SHIFT) & MASK
+  if fe != 0 && fe != MASK {
+    let e1 = exp0.wrapping_add(fe - BIAS)
+    if e1 >= -1022 && e1 <= 1023 {
+      return from_bits((fb & ~MASK.wrapping_shl(SHIFT)) | (e1 + BIAS).wrapping_shl(SHIFT))
+    }
+  }
   if frac0 == 0.0 || is_inf(frac0, 0) || is_nan(frac0) {
     return frac0
   }

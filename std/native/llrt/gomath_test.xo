@@ -3983,3 +3983,52 @@ test "trunc and modf: Go's trunc.go bits (signed zeros, halves, 2^52 and up, NaN
   expect((rt.float_bits(i0), f0)) == (-9223372036854775807 - 1, -0.75)
   expect(modf(-2.25)) == (-2.0, -0.25)
 }
+
+test "frexp and ldexp: Go's bits at the exponent edges (normal, subnormal, -1022 and 1023, wrapping, infinities, NaN)" {
+  // (x, Go's Frexp(x) fraction bits, exponent) and (frac, exp, Go's
+  // Ldexp(frac, exp) bits): Go 1.26 math, pure Go on every target. The
+  // bit fast paths of frexp and ldexp (task #406) must give the same.
+  let fr: List[(Float, Int, Int)] = [
+    (1.0, 4602678819172646912, 1),
+    (-3.5, -4617315517961601024, 2),
+    (5e-324, 4602678819172646912, -1073),
+    (-2.2250738585072014e-308, -4620693217682128896, -1021),
+    (1.7976931348623157e+308, 4607182418800017407, 1024),
+    (0.75, 4604930618986332160, 0),
+    (0.0, 0, 0),
+    (-0.0, -9223372036854775807 - 1, 0),
+    (inf(1), 9218868437227405312, 0),
+    (inf(-1), -4503599627370496, 0),
+  ]
+  var bad: List[Str] = []
+  for (x, wf, we) in fr {
+    let (f, e) = frexp(x)
+    if rt.float_bits(f) != wf || e != we {
+      bad.push("frexp(${x}) = (${rt.float_bits(f)}, ${e}), want (${wf}, ${we})")
+    }
+  }
+  let ld: List[(Float, Int, Int)] = [
+    (0.5, -1021, 4503599627370496),
+    (0.5, -1022, 2251799813685248),
+    (0.5, -1074, 0),
+    (0.5, -1075, 0),
+    (0.5, 1024, 9214364837600034816),
+    (0.5, 1025, 9218868437227405312),
+    (-0.75, 1024, -6755399441055744),
+    (1.5, -1023, 3377699720527872),
+    (5e-324, 1, 2),
+    (5e-324, 1100, 4724276009111650304),
+    (0.5, 9223372036854775807, 9218868437227405312),
+    (0.5, -9223372036854775807 - 1, 9218868437227405312),
+    (inf(-1), 3, -4503599627370496),
+    (0.0, 5, 0),
+  ]
+  for (f, e, want) in ld {
+    if rt.float_bits(ldexp(f, e)) != want {
+      bad.push("ldexp(${f}, ${e}) bits ${rt.float_bits(ldexp(f, e))}, want ${want}")
+    }
+  }
+  expect(bad) == []
+  expect(is_nan(frexp(nan()).0)) == true
+  expect(is_nan(ldexp(nan(), 4))) == true
+}
