@@ -106,6 +106,12 @@ var nativeOnlyCorpora = map[string]string{
 	"sqlite": "std/sqlite calls SQLite's C code, which the Go backend refuses (XO1201)",
 }
 
+// goOnlyCorpora are the corpora that call Go packages (`use go`), which
+// the native backends refuse (XO1201): the reason each skips there.
+var goOnlyCorpora = map[string]string{
+	"gofuzz": "std/go's corpus calls Go packages (use go), which the native backends refuse (XO1201)",
+}
+
 // jobs is how many xo test processes run at once.
 func jobs() int {
 	if v, err := strconv.Atoi(os.Getenv("XO_STDTEST_JOBS")); err == nil && v > 0 {
@@ -200,6 +206,9 @@ func TestStdCorpora(t *testing.T) {
 			}
 			t.Run(b+"/"+filepath.Base(d), func(t *testing.T) {
 				if why, ok := nativeOnlyCorpora[filepath.Base(d)]; ok && b == "go" {
+					t.Skip(why)
+				}
+				if why, ok := goOnlyCorpora[filepath.Base(d)]; ok && b != "go" {
 					t.Skip(why)
 				}
 				t.Parallel()

@@ -122,20 +122,6 @@ fn main(os: Os) ! {
   }
 }
 
-fn rss_medians(xs: List[Int]) -> (Int, Int) {
-  if xs.is_empty() {
-    return (0, 0)
-  }
-  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
-  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
-  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
-}
-
-fn rss_median(xs: List[Int]) -> Int {
-  let s = xs.sort()
-  s[s.len() / 2]
-}
-
 fn mix(x: Int) -> Int { (x % 1000003) * 2654435761 % 1000003 }
 
 /// An item's work: spin, then Err(x / 2 + 7) when it fails, else Ok(mix(x)).
@@ -335,3 +321,22 @@ const CASES: List[(Int, Int, List[(Int, Bool, Int)], List[(Bool, Int)], Str)] = 
   (1, 5, [(157008, false, 0), (-203264, false, 2000), (624894, false, 2000), (122274, false, 0), (128, false, 2000), (-666145, false, 0)], [(true, 663891), (true, -875071), (true, 226322), (true, 538002), (true, 758110), (true, -309930)], ""),
   (0, 34, [(4611686018427387903, false, 0), (2147483647, false, 0), (-32767, true, 0), (-755249, false, 0), (-869336, false, 0), (127, false, 0), (-678469, false, 10), (867573, false, 2000), (476974, true, 0), (-478822, false, 10), (-200431, true, 2000), (-209876, false, 0), (-392158, false, 0), (-594327, true, 2000), (-573421, false, 0), (2147483649, true, 200), (804660, false, 2000), (-143125, false, 200), (108780, true, 0), (870564, false, 2000), (798149, false, 10), (9223372036854775807, false, 0), (4611686018427387904, false, 10), (14676, false, 2000), (-129, true, 2000), (156198, true, 10), (-394226, false, 0), (352215, false, 0), (-4294967297, true, 0), (-562916, true, 200), (505974, false, 0), (-338033, true, 10), (853379, false, 200), (65535, false, 10)], [(true, 596665), (true, 637153), (false, -16376), (true, -797672), (true, -955767), (true, 330311), (true, -488990), (true, 748392), (false, 238494), (true, -958264), (false, -100208), (true, -473572), (true, -296950), (false, -297156), (true, -194455), (false, 1073741831), (true, 710647), (true, -548191), (false, 54397), (true, 291361), (true, 319713), (true, 621126), (true, 24461), (true, 359290), (false, -57), (false, 78106), (true, -982630), (true, 772757), (false, -2147483641), (false, -281451), (true, 521864), (false, -169009), (true, 587602), (true, 723360)], ""),
 ]
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 15 to 17 of a 30 minute run, decision 0717) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}

@@ -1,0 +1,312 @@
+// go stress program (decision 0616 section 2): 64 tasks replay the seed 1
+// cases of internal/stdtest/gofuzz_test.go at once (Ints, Strs, Bytes,
+// Floats, Lists and Maps through go.any and back, strconv, strings, fmt and
+// encoding/json calls, go.Error values), each report checked against the
+// one Go's own packages give, for a fixed time, so every task crosses the
+// Go boundary (goroutine handoff, value conversion) concurrently. std/go
+// builds only on the Go backend (decision 0248), so stdproven runs this
+// there alone (#152). A background task samples the resident set every 10 s
+// (Linux /proc/self/status). Pass: no mismatch, no fault, and the resident
+// set at the end within 10% or 4 MB of its median at the mark.
+//
+//   main [MINUTES (30)] [TASKS (64)]
+use go "encoding/json"
+use go "fmt"
+use go "strconv"
+use go "strings"
+use std/go
+
+
+/// One pass over the cases from offset start: the reports checked, or the
+/// first mismatch.
+fn pass(start: Int) -> Int ! Str {
+  for k in 0..CASES.len() {
+    let i = (start + k) % CASES.len()
+    let (kind, x, s, sub, b, li, keys, want) = CASES[i]
+    let got = report(kind, x, s, sub, b, li, keys)
+    if got != want {
+      return Err("case ${i} (kind ${kind}): got ${got.debug()}, want ${want.debug()}")
+    }
+  }
+  CASES.len()
+}
+
+fn rss_kib(os: Os) -> Int {
+  // stdproven sets XO_STRESS_CHECK=1 for the --check=all run, whose leak
+  // report judges memory there: the resident set is not sampled
+  if (os.env.get("XO_STRESS_CHECK") ?? "") == "1" { return 0 }
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run
+  let mark = start + Duration.from_secs(Float(mark_s))
+  let none_yet: List[Int] = []
+  let samples = Mutex.new((none_yet, 0))   // (every rss after the mark, peak)
+  let checks = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let now_marked = !marked && clock.now() >= mark
+        let after_mark = marked || now_marked
+        samples.with(fn(var t) {
+          var (m, p) = t
+          if after_mark && r > 0 { m.push(r) }
+          t = (m, if r > p { r } else { p })
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += pass(i)?
+          i += 1
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (rss_after, peak) = samples.with_read(fn(t) { t })
+  let (at_mark, last) = rss_medians(rss_after)
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes ${mark_s / 60} to ${mark_s / 60 + 2}), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("go stress: ${checks} checks by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
+}
+
+fn opt(o: Str?) -> Str {
+  match o {
+    Some(v) => "some ${v}"
+    None => "none"
+  }
+}
+
+fn join(xs: List[Int]) -> Str { xs.map(fn(x: Int) -> Str { "${x}" }).join(",") }
+
+/// A case's report, built from what std/go and the Go calls give back; the
+/// generator builds the same report from Go's answers.
+fn report(kind: Int, x: Int, s: Str, sub: Str, b: Bytes, li: List[Int], keys: List[Str]) -> Str {
+  if kind == 0 {
+    let a = go.any(x)
+    let i = match a.as_int() {
+      Some(v) => "some ${v}"
+      None => "none"
+    }
+    return "${a.type_name()}|${a.display()}|${i}|${opt(a.as_str())}|${strconv.itoa(x)}|${fmt.sprintf("%x %d", [x, x])}"
+  }
+  if kind == 1 {
+    let a = go.any(s)
+    let f = if a.as_float() == None { "none" } else { "some" }
+    return "${a.type_name()}|${a.display()}|${opt(a.as_str())}|${f}|${strings.index(s, sub)}|${strconv.quote(s)}"
+  }
+  if kind == 2 {
+    let a = go.any(b)
+    return "${a.type_name()}|${a.display()}|${a.as_bytes() == Some(b)}|${opt(a.as_str())}|${fmt.sprintf("%x", [b])}"
+  }
+  if kind == 3 {
+    let f = Float.from_bits(x)
+    let a = go.any(f)
+    return "${a.type_name()}|${a.display()}|${a.as_float() == Some(f)}|${strconv.format_float(f, 103, -1, 64)}"
+  }
+  if kind == 4 {
+    return match strconv.atoi(s) {
+      Ok(v) => "ok ${v}"
+      Err(e) => "err ${e.display()}|${e.go_type()}"
+    }
+  }
+  if kind == 5 {
+    let a = go.any(li)
+    let back = (a.as_list() ?? []).map(fn(e: go.Any) -> Int { e.as_int() ?? -424242 })
+    return "${a.type_name()}|${a.display()}|${join(back)}"
+  }
+  if kind == 6 {
+    var m: Map[Str, Int] = {}
+    for (i, k) in keys.indexed() {
+      m.put(k, i + 1)
+    }
+    let a = go.any(m)
+    let back = a.as_map() ?? {}
+    let es = back.keys().sort().map(fn(k: Str) -> Str { "${k}=${back.get(k).map(fn(e: go.Any) -> Int { e.as_int() ?? -424242 }) ?? -1}" })
+    return "${a.type_name()}|${a.display()}|${es.join(",")}"
+  }
+  if kind == 7 {
+    let l = go.out[List[Int]]()
+    return match json.unmarshal(s.bytes(), l.any()) {
+      Ok(_) => "ok ${join(l.get())}"
+      Err(e) => "err ${e.display()}|${e.go_type()}"
+    }
+  }
+  let e = go.error(s)
+  "${e.message()}|${e.display()}|${e.go_type()}"
+}
+
+/// The seed 1 corpus's first 120 cases (kind, Int or Float bits, Str, substring, Bytes, List, Map keys, the report)
+const CASES: List[(Int, Int, Str, Str, Bytes, List[Int], List[Str], Str)] = [
+  (5, 0, "", "", b"", [120611177947896114, -4294967297, -1881036091297162233, 5528268653379177713, -1391176612626737358, -9223372036854775808, 141727957528575058], [], "[]int64|[120611177947896114 -4294967297 -1881036091297162233 5528268653379177713 -1391176612626737358 -9223372036854775808 141727957528575058]|120611177947896114,-4294967297,-1881036091297162233,5528268653379177713,-1391176612626737358,-9223372036854775808,141727957528575058"),
+  (0, 5251577679361649259, "", "", b"", [], [], "int64|5251577679361649259|some 5251577679361649259|none|5251577679361649259|48e15a1348b8aa6b 5251577679361649259"),
+  (7, 0, "", "", b"", [], [], "err unexpected end of JSON input|*json.SyntaxError"),
+  (6, 0, "", "", b"", [], ["\u{800}\u{7ff}\\", "\u{800}\u{10ffff}\u{7f}", "\u{a}0", "0", "9\$"], "map[string]int64|map[\u{a}0:3 0:4 9\$:5 \u{800}\u{7ff}\\:1 \u{800}\u{10ffff}\u{7f}:2]|\u{a}0=3,0=4,9\$=5,\u{800}\u{7ff}\\=1,\u{800}\u{10ffff}\u{7f}=2"),
+  (3, 4886405595696988160, "", "", b"", [], [], "float64|4.611686018427388e+18|true|4.611686018427388e+18"),
+  (0, -4294967297, "", "", b"", [], [], "int64|-4294967297|some -4294967297|none|-4294967297|-100000001 -4294967297"),
+  (7, 0, "[2147483649,176164071031", "", b"", [], [], "err unexpected end of JSON input|*json.SyntaxError"),
+  (1, 0, "\u{fffd}z\u{10000}z\u{2028}az\u{e9}", "", b"", [], [], "string|\u{fffd}z\u{10000}z\u{2028}az\u{e9}|some \u{fffd}z\u{10000}z\u{2028}az\u{e9}|none|0|\"\u{fffd}z\u{10000}z\\u2028az\u{e9}\""),
+  (1, 0, "9\u{7ff}\u{65e5}\\b\u{7f}\u{fffd}", "\u{9}\u{9}", b"", [], [], "string|9\u{7ff}\u{65e5}\\b\u{7f}\u{fffd}|some 9\u{7ff}\u{65e5}\\b\u{7f}\u{fffd}|none|-1|\"9\u{7ff}\u{65e5}\\\\b\\x7f\u{fffd}\""),
+  (1, 0, "\u{1f600}\u{10ffff}", "", b"", [], [], "string|\u{1f600}\u{10ffff}|some \u{1f600}\u{10ffff}|none|0|\"\u{1f600}\\U0010ffff\""),
+  (4, 0, "10000000000000000000", "", b"", [], [], "err strconv.Atoi: parsing \"10000000000000000000\": value out of range|*strconv.NumError"),
+  (7, 0, "[\"x\",-2147483647,4294967295]", "", b"", [], [], "err json: cannot unmarshal string into Go value of type int64|*json.UnmarshalTypeError"),
+  (2, 0, "", "", b"\xca\xac\x6e\x33\xfe", [], [], "[]uint8|[202 172 110 51 254]|true|none|caac6e33fe"),
+  (1, 0, "b\$\u{e9}ab\u{9}", "", b"", [], [], "string|b\$\u{e9}ab\u{9}|some b\$\u{e9}ab\u{9}|none|0|\"b\$\u{e9}ab\\t\""),
+  (0, 5293297313710319492, "", "", b"", [], [], "int64|5293297313710319492|some 5293297313710319492|none|5293297313710319492|497591dc9a3ba784 5293297313710319492"),
+  (3, -4721941553990160419, "", "", b"", [], [], "float64|-9.050090105333552e-08|true|-9.050090105333552e-08"),
+  (4, 0, "1\u{e9}127", "", b"", [], [], "err strconv.Atoi: parsing \"1\u{e9}127\": invalid syntax|*strconv.NumError"),
+  (7, 0, "[\"x\",-4391833918474700776,-9007199254740992]", "", b"", [], [], "err json: cannot unmarshal string into Go value of type int64|*json.UnmarshalTypeError"),
+  (7, 0, "[1e400,-3138054485431128162,1630818137849007334]", "", b"", [], [], "err json: cannot unmarshal number 1e400 into Go value of type int64|*json.UnmarshalTypeError"),
+  (7, 0, "[\"x\",-6231806924222736865,127,791221175916808230,-480]", "", b"", [], [], "err json: cannot unmarshal string into Go value of type int64|*json.UnmarshalTypeError"),
+  (0, 255, "", "", b"", [], [], "int64|255|some 255|none|255|ff 255"),
+  (6, 0, "", "", b"", [], ["|\u{10000}", "", "", "b\u{65e5}"], "map[string]int64|map[:3 b\u{65e5}:4 |\u{10000}:1]|=3,b\u{65e5}=4,|\u{10000}=1"),
+  (3, 4775455749600429994, "", "", b"", [], [], "float64|1.8749219406355988e+11|true|1.8749219406355988e+11"),
+  (7, 0, "[\"x\",31052242382902460,-4611686018427387905,591]", "", b"", [], [], "err json: cannot unmarshal string into Go value of type int64|*json.UnmarshalTypeError"),
+  (5, 0, "", "", b"", [], [], "[]interface {}|[]|"),
+  (6, 0, "", "", b"", [], ["\u{10ffff}\"\"", "\u{0}", "b\u{e9}\"", "\u{10ffff}\$\u{0}"], "map[string]int64|map[\u{0}:2 b\u{e9}\":3 \u{10ffff}\"\":1 \u{10ffff}\$\u{0}:4]|\u{0}=2,b\u{e9}\"=3,\u{10ffff}\"\"=1,\u{10ffff}\$\u{0}=4"),
+  (1, 0, "\u{10000}a\u{ffff}", "", b"", [], [], "string|\u{10000}a\u{ffff}|some \u{10000}a\u{ffff}|none|0|\"\u{10000}a\\uffff\""),
+  (4, 0, "9999999999999999999", "", b"", [], [], "err strconv.Atoi: parsing \"9999999999999999999\": value out of range|*strconv.NumError"),
+  (1, 0, "\u{2028}\u{fffd}\\\u{ffff}9", "", b"", [], [], "string|\u{2028}\u{fffd}\\\u{ffff}9|some \u{2028}\u{fffd}\\\u{ffff}9|none|0|\"\\u2028\u{fffd}\\\\\\uffff9\""),
+  (5, 0, "", "", b"", [65536, 572], [], "[]int64|[65536 572]|65536,572"),
+  (2, 0, "", "", b"\xc0\xaf", [], [], "[]uint8|[192 175]|true|none|c0af"),
+  (6, 0, "", "", b"", [], [" ", "", ""], "map[string]int64|map[:3  :1]|=3, =1"),
+  (2, 0, "", "", b"\xaa\x32\x62", [], [], "[]uint8|[170 50 98]|true|none|aa3262"),
+  (1, 0, " ", "\u{e9}a", b"", [], [], "string| |some  |none|-1|\" \""),
+  (8, 0, "", "", b"", [], [], "||*errors.errorString"),
+  (3, 9218868437227405311, "", "", b"", [], [], "float64|1.7976931348623157e+308|true|1.7976931348623157e+308"),
+  (2, 0, "", "", b"\xc0\x80", [], [], "[]uint8|[192 128]|true|none|c080"),
+  (3, -4471694873707683462, "", "", b"", [], [], "float64|-4.656940363492548e+09|true|-4.656940363492548e+09"),
+  (4, 0, "-9223372036854775808", "", b"", [], [], "ok -9223372036854775808"),
+  (7, 0, "[\"x\",-32769,9007199254740991,-9007199254740991]", "", b"", [], [], "err json: cannot unmarshal string into Go value of type int64|*json.UnmarshalTypeError"),
+  (7, 0, "[1e400,]", "", b"", [], [], "err invalid character ']' looking for beginning of value|*json.SyntaxError"),
+  (2, 0, "", "", b"\xe9\xb9\x48\xc9\x18", [], [], "[]uint8|[233 185 72 201 24]|true|none|e9b948c918"),
+  (4, 0, "-1168463471369533424", "", b"", [], [], "ok -1168463471369533424"),
+  (6, 0, "", "", b"", [], [" |0", "\"a\u{1f600}", "\u{ffff}"], "map[string]int64|map[ |0:1 \"a\u{1f600}:2 \u{ffff}:3]| |0=1,\"a\u{1f600}=2,\u{ffff}=3"),
+  (4, 0, "-6133026173403430499", "", b"", [], [], "ok -6133026173403430499"),
+  (0, 255, "", "", b"", [], [], "int64|255|some 255|none|255|ff 255"),
+  (0, -65537, "", "", b"", [], [], "int64|-65537|some -65537|none|-65537|-10001 -65537"),
+  (6, 0, "", "", b"", [], ["\u{ffff}", "\u{2028}z\$", "", "", "\u{7f}\u{0}"], "map[string]int64|map[:4 \u{7f}\u{0}:5 \u{2028}z\$:2 \u{ffff}:1]|=4,\u{7f}\u{0}=5,\u{2028}z\$=2,\u{ffff}=1"),
+  (3, -4912117465606740954, "", "", b"", [], [], "float64|-1.7493846052822198e-20|true|-1.7493846052822198e-20"),
+  (7, 0, "[251,-498,-", "", b"", [], [], "err invalid character ' ' in numeric literal|*json.SyntaxError"),
+  (1, 0, "a\\\u{800}\u{7ff}\u{800}\u{10ffff}\u{0}\u{65e5}", "", b"", [], [], "string|a\\\u{800}\u{7ff}\u{800}\u{10ffff}\u{0}\u{65e5}|some a\\\u{800}\u{7ff}\u{800}\u{10ffff}\u{0}\u{65e5}|none|0|\"a\\\\\u{800}\u{7ff}\u{800}\\U0010ffff\\x00\u{65e5}\""),
+  (2, 0, "", "", b"\xed\xa0\xbd\xed\xb8\x80", [], [], "[]uint8|[237 160 189 237 184 128]|true|none|eda0bdedb880"),
+  (3, 9218868437227405311, "", "", b"", [], [], "float64|1.7976931348623157e+308|true|1.7976931348623157e+308"),
+  (3, 4751297606875873280, "", "", b"", [], [], "float64|4.294967296e+09|true|4.294967296e+09"),
+  (4, 0, "10000000000000000000", "", b"", [], [], "err strconv.Atoi: parsing \"10000000000000000000\": value out of range|*strconv.NumError"),
+  (3, 4746794007248502784, "", "", b"", [], [], "float64|2.147483648e+09|true|2.147483648e+09"),
+  (4, 0, "9999999999999999999999999999999999999999", "", b"", [], [], "err strconv.Atoi: parsing \"9999999999999999999999999999999999999999\": value out of range|*strconv.NumError"),
+  (1, 0, "\\\u{9}|z\u{0}\u{9}\u{0}\u{800}", "", b"", [], [], "string|\\\u{9}|z\u{0}\u{9}\u{0}\u{800}|some \\\u{9}|z\u{0}\u{9}\u{0}\u{800}|none|0|\"\\\\\\t|z\\x00\\t\\x00\u{800}\""),
+  (7, 0, "[-452860983128", "", b"", [], [], "err unexpected end of JSON input|*json.SyntaxError"),
+  (3, -4617066008493016000, "", "", b"", [], [], "float64|-0.9027011156885081|true|-0.9027011156885081"),
+  (7, 0, "[1e400,166,2147483649,-2253686442079891474,2267937159752067197,2147483647]", "", b"", [], [], "err json: cannot unmarshal number 1e400 into Go value of type int64|*json.UnmarshalTypeError"),
+  (1, 0, "\u{800}", "99", b"", [], [], "string|\u{800}|some \u{800}|none|-1|\"\u{800}\""),
+  (6, 0, "", "", b"", [], [" \\", "\u{10000}\u{7ff} ", "\u{10ffff}a"], "map[string]int64|map[ \\:1 \u{10000}\u{7ff} :2 \u{10ffff}a:3]| \\=1,\u{10000}\u{7ff} =2,\u{10ffff}a=3"),
+  (3, -4420136066756879406, "", "", b"", [], [], "float64|-1.348118544593391e+13|true|-1.348118544593391e+13"),
+  (8, 0, "", "", b"", [], [], "||*errors.errorString"),
+  (5, 0, "", "", b"", [2884864564329689417, -842699932760884950, -391], [], "[]int64|[2884864564329689417 -842699932760884950 -391]|2884864564329689417,-842699932760884950,-391"),
+  (1, 0, "\$\u{10ffff}\u{fffd}\u{9}\u{e9}\u{10ffff}", "\u{7f}", b"", [], [], "string|\$\u{10ffff}\u{fffd}\u{9}\u{e9}\u{10ffff}|some \$\u{10ffff}\u{fffd}\u{9}\u{e9}\u{10ffff}|none|-1|\"\$\\U0010ffff\u{fffd}\\t\u{e9}\\U0010ffff\""),
+  (6, 0, "", "", b"", [], ["", "\\9", "9", "0\u{ffff}"], "map[string]int64|map[:1 0\u{ffff}:4 9:3 \\9:2]|=1,0\u{ffff}=4,9=3,\\9=2"),
+  (0, 47, "", "", b"", [], [], "int64|47|some 47|none|47|2f 47"),
+  (2, 0, "", "", b"\xbb\xfd\x75\xcf\x64\xc1", [], [], "[]uint8|[187 253 117 207 100 193]|true|none|bbfd75cf64c1"),
+  (7, 0, "null", "", b"", [], [], "ok "),
+  (1, 0, "\u{2028}a\u{a}\u{a}\u{1f600}\u{7ff}0z0z", "", b"", [], [], "string|\u{2028}a\u{a}\u{a}\u{1f600}\u{7ff}0z0z|some \u{2028}a\u{a}\u{a}\u{1f600}\u{7ff}0z0z|none|0|\"\\u2028a\\n\\n\u{1f600}\u{7ff}0z0z\""),
+  (1, 0, "\u{65e5}\u{e9}", "\u{800}", b"", [], [], "string|\u{65e5}\u{e9}|some \u{65e5}\u{e9}|none|-1|\"\u{65e5}\u{e9}\""),
+  (6, 0, "", "", b"", [], ["", "", "", "", "\u{e9}\u{0} "], "map[string]int64|map[:4 \u{e9}\u{0} :5]|=4,\u{e9}\u{0} =5"),
+  (4, 0, "99999999999999999999", "", b"", [], [], "err strconv.Atoi: parsing \"99999999999999999999\": value out of range|*strconv.NumError"),
+  (4, 0, "-81", "", b"", [], [], "ok -81"),
+  (5, 0, "", "", b"", [-219, -904, 602], [], "[]int64|[-219 -904 602]|-219,-904,602"),
+  (3, -4472074429980999680, "", "", b"", [], [], "float64|-4.294967295e+09|true|-4.294967295e+09"),
+  (0, 5041498483550260394, "", "", b"", [], [], "int64|5041498483550260394|some 5041498483550260394|none|5041498483550260394|45f70028e7af0caa 5041498483550260394"),
+  (4, 0, "10000000000000000000000000000000000000000", "", b"", [], [], "err strconv.Atoi: parsing \"10000000000000000000000000000000000000000\": value out of range|*strconv.NumError"),
+  (5, 0, "", "", b"", [129, 3227737119829521679, 1376246959844374287, -257, -719827613415662943, 281, -145], [], "[]int64|[129 3227737119829521679 1376246959844374287 -257 -719827613415662943 281 -145]|129,3227737119829521679,1376246959844374287,-257,-719827613415662943,281,-145"),
+  (2, 0, "", "", b"\xed\xa0\x80", [], [], "[]uint8|[237 160 128]|true|none|eda080"),
+  (1, 0, "|\u{10000}zb", "", b"", [], [], "string||\u{10000}zb|some |\u{10000}zb|none|0|\"|\u{10000}zb\""),
+  (1, 0, "", "0", b"", [], [], "string||some |none|-1|\"\""),
+  (1, 0, "|z\u{e9}\\z\u{ffff}\u{a}|", "\\z\u{ffff}\u{a}", b"", [], [], "string||z\u{e9}\\z\u{ffff}\u{a}||some |z\u{e9}\\z\u{ffff}\u{a}||none|4|\"|z\u{e9}\\\\z\\uffff\\n|\""),
+  (1, 0, "\"z0\u{2028}b", "", b"", [], [], "string|\"z0\u{2028}b|some \"z0\u{2028}b|none|0|\"\\\"z0\\u2028b\""),
+  (1, 0, "\u{fffd}\u{ffff}\\z\u{ffff}\\", "\u{e9}\u{1f600}", b"", [], [], "string|\u{fffd}\u{ffff}\\z\u{ffff}\\|some \u{fffd}\u{ffff}\\z\u{ffff}\\|none|-1|\"\u{fffd}\\uffff\\\\z\\uffff\\\\\""),
+  (8, 0, "\u{fffd}\u{1f600}\u{0}b\u{10ffff}", "", b"", [], [], "\u{fffd}\u{1f600}\u{0}b\u{10ffff}|\u{fffd}\u{1f600}\u{0}b\u{10ffff}|*errors.errorString"),
+  (7, 0, "[-130675664712892768,148173068924505194", "", b"", [], [], "err unexpected end of JSON input|*json.SyntaxError"),
+  (5, 0, "", "", b"", [], [], "[]interface {}|[]|"),
+  (4, 0, "9223372036854775808", "", b"", [], [], "err strconv.Atoi: parsing \"9223372036854775808\": value out of range|*strconv.NumError"),
+  (3, 4906019910204099648, "", "", b"", [], [], "float64|1e+20|true|1e+20"),
+  (4, 0, "-3612205455692194672", "", b"", [], [], "ok -3612205455692194672"),
+  (2, 0, "", "", b"\xae\xc9", [], [], "[]uint8|[174 201]|true|none|aec9"),
+  (1, 0, "\u{800}", "", b"", [], [], "string|\u{800}|some \u{800}|none|0|\"\u{800}\""),
+  (4, 0, "-9223372036854775809", "", b"", [], [], "err strconv.Atoi: parsing \"-9223372036854775809\": value out of range|*strconv.NumError"),
+  (5, 0, "", "", b"", [630], [], "[]int64|[630]|630"),
+  (1, 0, "", "\u{e9}\\", b"", [], [], "string||some |none|-1|\"\""),
+  (6, 0, "", "", b"", [], [], "map[interface {}]interface {}|map[]|"),
+  (1, 0, "", "", b"", [], [], "string||some |none|0|\"\""),
+  (7, 0, "null", "", b"", [], [], "ok "),
+  (8, 0, "\$\$99\u{9}", "", b"", [], [], "\$\$99\u{9}|\$\$99\u{9}|*errors.errorString"),
+  (3, -4647628128221553265, "", "", b"", [], [], "float64|-0.007962878363925422|true|-0.007962878363925422"),
+  (1, 0, "\u{2028}\u{10000}\u{fffd}\u{10000}\u{1f600}z \u{0}\u{9}\"", "", b"", [], [], "string|\u{2028}\u{10000}\u{fffd}\u{10000}\u{1f600}z \u{0}\u{9}\"|some \u{2028}\u{10000}\u{fffd}\u{10000}\u{1f600}z \u{0}\u{9}\"|none|0|\"\\u2028\u{10000}\u{fffd}\u{10000}\u{1f600}z \\x00\\t\\\"\""),
+  (1, 0, "9\u{9}\u{2028}\$\u{9}", "", b"", [], [], "string|9\u{9}\u{2028}\$\u{9}|some 9\u{9}\u{2028}\$\u{9}|none|0|\"9\\t\\u2028\$\\t\""),
+  (6, 0, "", "", b"", [], [], "map[interface {}]interface {}|map[]|"),
+  (4, 0, "-3792730829718722562", "", b"", [], [], "ok -3792730829718722562"),
+  (0, 89, "", "", b"", [], [], "int64|89|some 89|none|89|59 89"),
+  (2, 0, "", "", b"\x93\xbd\x29\x6c\xd5\xf4\x8c\x9d", [], [], "[]uint8|[147 189 41 108 213 244 140 157]|true|none|93bd296cd5f48c9d"),
+  (2, 0, "", "", b"\xf0\x22\xb6\xc8\x2b", [], [], "[]uint8|[240 34 182 200 43]|true|none|f022b6c82b"),
+  (3, 4906019910204099648, "", "", b"", [], [], "float64|1e+20|true|1e+20"),
+  (2, 0, "", "", b"\xb7\x47\x03", [], [], "[]uint8|[183 71 3]|true|none|b74703"),
+  (1, 0, "b\u{e9}\u{1f600}\"9\u{7f}\$b\u{10ffff}\u{10000}9", "", b"", [], [], "string|b\u{e9}\u{1f600}\"9\u{7f}\$b\u{10ffff}\u{10000}9|some b\u{e9}\u{1f600}\"9\u{7f}\$b\u{10ffff}\u{10000}9|none|0|\"b\u{e9}\u{1f600}\\\"9\\x7f\$b\\U0010ffff\u{10000}9\""),
+  (3, 4808396041027541874, "", "", b"", [], [], "float64|2.9526711916379445e+13|true|2.9526711916379445e+13"),
+  (7, 0, "[]", "", b"", [], [], "ok "),
+  (4, 0, "9999999999999999999999999999999999999999", "", b"", [], [], "err strconv.Atoi: parsing \"9999999999999999999999999999999999999999\": value out of range|*strconv.NumError"),
+  (6, 0, "", "", b"", [], [], "map[interface {}]interface {}|map[]|"),
+  (3, -4580160821035794432, "", "", b"", [], [], "float64|-256|true|-256"),
+  (0, 127, "", "", b"", [], [], "int64|127|some 127|none|127|7f 127"),
+  (2, 0, "", "", b"\x14\x4b\xd6\xd7\xfe\xc2\x3a\xaa\xa3", [], [], "[]uint8|[20 75 214 215 254 194 58 170 163]|true|none|144bd6d7fec23aaaa3"),
+]
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 15 to 17 of a 30 minute run, decision 0717) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}
