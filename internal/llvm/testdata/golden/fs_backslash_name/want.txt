@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+read odd: 3 bytes
+read trailing: not found
+entries 3
+--- stderr

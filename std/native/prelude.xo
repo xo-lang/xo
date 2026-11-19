@@ -3903,7 +3903,9 @@ fn fs_resolve(f: Fs, p: Str) -> Str? {
     }
     return Some(p)
   }
-  let clean = fs_clean("/" + p.replace("\\", "/"))
+  // \ separates only on Windows; elsewhere it is a character of a name
+  // (std.md 3.1, task #237 b30)
+  let clean = fs_clean("/" + fs_slash(p))
   // a Windows device name (COM1, NUL, CON.txt, ...) or a colon (a drive
   // or a stream) under the root names no file of it: denied, as Go's
   // os.DirFS and http.Dir do since GO-2022-1143 (stricter: a reserved
@@ -3981,9 +3983,22 @@ fn fs_check(f: Fs, p: Str, write: Bool) -> Str ! FsErr {
   if (write && (mode & 2) != 0) || (!write && (mode & 4) != 0) {
     return Err(FsErr.Denied(path: p))
   }
-  match fs_resolve(f, p) {
+  let op = match fs_resolve(f, p) {
     Some(op) => op
-    None => Err(FsErr.Denied(path: p))
+    None => return Err(FsErr.Denied(path: p))
+  }
+  fs_no_nul(op, p)?
+  op
+}
+
+// fs_no_nul refuses an OS path holding a NUL byte, as Go's syscall layer
+// does (EINVAL): the OS cuts a C path at its first NUL, so a sub Fs's
+// lexical check passed `..\0` and the OS opened `..` (task #237, b29 of
+// the owner's v0.51.1 evaluation: the parent of the root listed, read and
+// written, `a.txt\0.png` read as a.txt). The error names given.
+fn fs_no_nul(op: Str, given: Str) -> () ! FsErr {
+  if op.contains("\u{0}") {
+    return Err(FsErr.Io(path: given, msg: "invalid argument"))
   }
 }
 
@@ -5266,6 +5281,8 @@ fn fs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
     return u.symlink(target, link)
   }
   let op = fs_check(f, link, true)?
+  // the target is stored as given: `..\0` would be the link `..`
+  fs_no_nul(target, link)?
   if (rt.fs_mode(f) & 1) != 0 && link_escapes(link, target) {
     return Err(FsErr.Denied(path: link))
   }

@@ -1973,7 +1973,17 @@ fn fsrv_serve(fs: Fs, strip: Str, req: http.Request) -> http.Response uses fs.re
     Ok(i) => i
     Err(r) => return r
   }
+  // the directory read once, as Go's FileServer opens it first: a
+  // directory it may not read is 403 (toHTTPError of the open's EACCES),
+  // before a redirect or an index.html (task #237, b31); another error is
+  // the listing's 500 below
+  var listed: List[FileInfo]? = None
   if d.is_dir {
+    match fs.read_dir(p) {
+      Ok(l) => listed = Some(l)
+      Err(FsErr.Denied(path: _)) => return sc_error({}, "403 Forbidden", 403)
+      Err(_) => {}
+    }
     if !upath.ends_with("/") {
       return fsrv_redirect(fsrv_base(upath) + "/", q)
     }
@@ -2001,9 +2011,9 @@ fn fsrv_serve(fs: Fs, strip: Str, req: http.Request) -> http.Response uses fs.re
     if let Some(t) = mt {
       h.put("Last-Modified", http_time_text(t))
     }
-    let list = match fs.read_dir(p) {
-      Ok(l) => l
-      Err(_) => return sc_error({}, "Error reading directory", 500)
+    let list = match listed {
+      Some(l) => l
+      None => return sc_error({}, "Error reading directory", 500)
     }
     var b = StrBuilder.new()
     b.write("<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<pre>\n")

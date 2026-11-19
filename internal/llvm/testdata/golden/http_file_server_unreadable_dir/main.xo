@@ -1,0 +1,23 @@
+use std/http
+
+// file_server answers 403 Forbidden for a directory it may not read, as
+// Go's FileServer (toHTTPError of the open's EACCES), not 500 "Error
+// reading directory" (task #237, b31 of the owner's v0.51.1 evaluation).
+// Where the directory stays readable (Windows has no mode bits, root reads
+// every directory) the listing is served, as by Go.
+
+fn main(os: Os) ! {
+  let dir = os.fs.create_temp(".", "fsperm")?
+  os.fs.remove(dir)?
+  os.fs.create_dir_all("${dir}/locked")?
+  os.fs.write("${dir}/locked/a.txt", b"a\n")?
+  os.fs.set_mode("${dir}/locked", 0).ignore_err("Windows has no mode bits: the listing is served there")
+  let readable = os.fs.read_dir("${dir}/locked").is_ok()
+  let serve = http.file_server(os.fs.sub(dir))
+  let r = serve(http.new_request("GET", "http://x/locked/"))
+  let want = if readable { 200 } else { 403 }
+  os.stdio.println("locked dir: ${if r.status == want { "as Go" } else { "${r.status} ${r.body.to_str_lossy()}" }}")
+  os.stdio.println("top dir: ${serve(http.new_request("GET", "http://x/")).status}")
+  os.fs.set_mode("${dir}/locked", 0o755).ignore_err("remove_all reports a directory it cannot clear")
+  os.fs.remove_all(dir)?
+}

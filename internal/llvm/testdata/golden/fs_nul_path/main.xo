@@ -1,0 +1,39 @@
+// A path holding a NUL byte is refused as invalid (task #237, b29 of the
+// owner's v0.51.1 evaluation), as Go's syscall layer refuses it: the OS
+// cuts a C path at its first NUL, so `..\0` reached the parent of a sub
+// Fs (whose check is lexical) and `a.txt\0.png` read a.txt.
+
+fn show(what: Str, r: Result[Str, FsErr]) -> Str {
+  match r {
+    Ok(v) => "${what}: ok ${v}"
+    // Go's message names the paths for a symlink or a rename
+    Err(FsErr.Io(path: _, msg: m)) => "${what}: ${if m.ends_with("invalid argument") { "invalid argument" } else { m }}"
+    Err(e) => "${what}: ${e.debug().replace("\u{0}", "<NUL>")}"
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-nul-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/root")?
+  base.write("${name}/secret.txt", b"above the root")?
+  let root = base.sub("${name}/root")
+  root.write("a.txt", b"hello")?
+  let up = "..\u{0}"
+  out.println(show("read_dir", root.read_dir(up).map(fn(l) { "${l.len()} entries" })))
+  let read = root.read("a.txt\u{0}.png")
+  out.println(show("read", read.map(fn(b) { "${b.len()} bytes" })))
+  out.println(show("write", root.write("b.txt\u{0}x", b"x").map(fn(_) { "" })))
+  out.println(show("stat", root.stat("a.txt\u{0}").map(fn(s) { "${s.is_some()}" })))
+  out.println(show("create_dir_all", root.create_dir_all("d\u{0}/e").map(fn(_) { "" })))
+  out.println(show("symlink target", root.symlink(up, "up").map(fn(_) { "" })))
+  out.println(show("symlink link", root.symlink("a.txt", "l\u{0}k").map(fn(_) { "" })))
+  out.println(show("sub", root.sub(up).read_dir(".").map(fn(l) { "${l.len()} entries" })))
+  out.println(show("rename", root.rename("a.txt", "c\u{0}.txt").map(fn(_) { "" })))
+  if read.is_err() {
+    out.println(show("remove_all", root.remove_all(up).map(fn(_) { "" })))
+  }
+  out.println("a.txt still ${root.read("a.txt")?.len()} bytes, secret ${base.read("${name}/secret.txt")?.len()} bytes")
+  base.remove_all(name)?
+}

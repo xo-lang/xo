@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+read_dir: invalid argument
+read: invalid argument
+write: invalid argument
+stat: invalid argument
+create_dir_all: invalid argument
+symlink target: invalid argument
+symlink link: invalid argument
+sub: invalid argument
+rename: invalid argument
+remove_all: invalid argument
+a.txt still 5 bytes, secret 14 bytes
+--- stderr

@@ -1,5 +1,14 @@
 # std/http changes
 
+## 2026-11-19: fix: file_server answers 403 for a directory it may not read
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b31 (task #237)
+- Go reference: net/http FileServer (toHTTPError of os.Open's EACCES)
+- Change: a directory whose listing the Fs refuses is `403 Forbidden`, before a redirect or an index.html, as Go's FileServer whose open of it fails; it was 500 "Error reading directory" on both backends. The directory is read once and its entries reused for the listing
+- Test: internal/llvm/testdata/golden/http_file_server_unreadable_dir (fails before: 500)
+
 ## 2026-11-19: security: the HTTP/2 client checks the server's SETTINGS values (GO-2026-4918)
 
 - Kind: security

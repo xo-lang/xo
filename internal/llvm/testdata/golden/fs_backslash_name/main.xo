@@ -1,0 +1,31 @@
+// `\` is an ordinary character of a file name off Windows (std.md 3.1),
+// as for Go's os functions (task #237, b30 of the owner's v0.51.1
+// evaluation): a sub Fs took it for a separator, so `back\slash.txt` was
+// listed but could not be read and `a.txt\` read a.txt. On Windows `\` is
+// a separator, and the same steps give the same lines.
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-backslash-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/d")?
+  let root = base.sub(name)
+  root.write("a.txt", b"hello")?
+  let odd = match target.os {
+    TargetOs.Windows => "d/slash.txt"
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => "back\\slash.txt"
+  }
+  root.write(odd, b"odd")?
+  out.println("read odd: ${root.read(odd)?.len()} bytes")
+  let trail = match target.os {
+    TargetOs.Windows => "a.txt/"
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => "a.txt\\"
+  }
+  out.println("read trailing: ${if root.read(trail).is_ok() { "found" } else { "not found" }}")
+  var names: List[Str] = []
+  for fi in root.read_dir(".")? {
+    names.push(fi.name)
+  }
+  out.println("entries ${names.len()}")
+  base.remove_all(name)?
+}

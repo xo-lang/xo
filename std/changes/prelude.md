@@ -10,6 +10,24 @@
 - Measured: no speedup claimed: bench/perf/image over, xo bench --ab on host 1, 1000 passes, 8 rounds, 24bf1d8a2 against 05c905fae: 0.954 (0.901 to 1.045), within noise (that draw's rows store 8 bytes at a time)
 - Test: test/codegen/wordput fill_be4 and fill_le4 (a 32 bit store, no rs_put call; fail before), internal/llvm/testdata/golden/bytesbuilder_put_u32 (values and the fault; arm64, LLVM and linux/amd64)
 
+## 2026-11-19: fix: `\` is a character of a name off Windows in a sub Fs
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b30 (task #237)
+- Go reference: os functions, which take `\` as a separator only on Windows
+- Change: a sub Fs (both backends) turned every `\` of a path into `/`, so off Windows `back\slash.txt` was listed by read_dir but could not be read, and `a.txt\` read a.txt. It is now an ordinary character there (std.md 3.1); Windows is unchanged
+- Test: internal/llvm/testdata/golden/fs_backslash_name (fails before: `back\slash.txt` is not found)
+
+## 2026-11-19: security: an Fs path holding a NUL byte is refused
+
+- Kind: security
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b29 (task #237)
+- Go reference: syscall.ByteSliceFromString (EINVAL for a path with a NUL)
+- Change: on the native backends every Fs operation (read, write, read_dir, stat, walk, rename, remove, create_dir_all, sub, and a symlink's link and target) refuses a path holding a NUL byte with `FsErr.Io(path, "invalid argument")`, as the Go backend did. The OS reads a path up to its first NUL, so a sub Fs's lexical check passed `..\0` and the OS opened `..`: the parent of the root could be listed, read, written and removed, and `a.txt\0.png` read a.txt
+- Test: internal/llvm/testdata/golden/fs_nul_path (fails before: the parent of the root listed, a.txt read through `a.txt\0.png`)
+
 ## 2026-11-19: perf: BytesBuilder.put_be and put_le of 8 bytes in line
 
 - Kind: perf

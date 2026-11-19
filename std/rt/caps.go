@@ -110,7 +110,13 @@ func (f *realFs) resolve(p string) (string, bool) {
 		}
 		return filepath.FromSlash(p), true
 	}
-	clean := path.Clean("/" + strings.ReplaceAll(p, "\\", "/"))
+	// \ separates only on Windows; elsewhere it is a character of a name
+	// (std.md 3.1, task #237 b30)
+	q := p
+	if runtime.GOOS == "windows" {
+		q = strings.ReplaceAll(p, "\\", "/")
+	}
+	clean := path.Clean("/" + q)
 	if strings.Contains(p, "..") {
 		// a path that names a parent beyond the root escapes it
 		depth := 0

@@ -71,7 +71,21 @@ func (x xoFileSystem) Open(name string) (http.File, error) {
 	if !st.V.Some {
 		return nil, &iofs.PathError{Op: "open", Path: name, Err: iofs.ErrNotExist}
 	}
-	return &xoFile{x: x, p: p, info: st.V.V}, nil
+	f := &xoFile{x: x, p: p, info: st.V.V}
+	if f.info.F_is_dir {
+		// read once here, as os.Open opens a directory: one it may not
+		// read is the open's ErrPermission, so 403, not the listing's 500
+		// (task #237, b31)
+		l := x.fs.M_read_dir(x.tk, p)
+		if !l.Ok && l.E.Tag == 6 {
+			return nil, xoFsGoErr(l.E, name)
+		}
+		if l.Ok {
+			f.list = l.V.s
+			f.listed = true
+		}
+	}
+	return f, nil
 }
 
 // xoFile reads its bytes on the first Read or Seek.
@@ -80,6 +94,9 @@ type xoFile struct {
 	p    string
 	info FileInfo
 	r    *bytes.Reader
+	// a directory's entries, read by Open
+	list   []FileInfo
+	listed bool
 }
 
 func (f *xoFile) load() error {
@@ -111,12 +128,16 @@ func (f *xoFile) Seek(off int64, whence int) (int64, error) {
 }
 
 func (f *xoFile) Readdir(count int) ([]iofs.FileInfo, error) {
-	l := f.x.fs.M_read_dir(f.x.tk, f.p)
-	if !l.Ok {
-		return nil, xoFsGoErr(l.E, f.p)
+	list := f.list
+	if !f.listed {
+		l := f.x.fs.M_read_dir(f.x.tk, f.p)
+		if !l.Ok {
+			return nil, xoFsGoErr(l.E, f.p)
+		}
+		list = l.V.s
 	}
 	var out []iofs.FileInfo
-	for _, i := range l.V.s {
+	for _, i := range list {
 		out = append(out, xoFileInfo{i})
 	}
 	if count > 0 && len(out) == 0 {
