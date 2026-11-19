@@ -1,0 +1,64 @@
+// The Xo side of std/mail's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/mail's result as text, as go/main.go prints package mail's.
+// Kinds date, list and addr: mail's parse_date, parse_address_list
+// and parse_address against Go's.
+// See scripts/stdproven/gotests.go.
+use std/mail
+use std/base64
+
+fn date(s: Str) -> Str {
+  let c = match mail.parse_date_civil(s) {
+    Ok(c) => c
+    Err(e) => return "err ${e.display()}"
+  }
+  match mail.parse_date(s) {
+    Ok(t) => "off=${c.offset.nanos() / 1000000000} unix=${c.unix()} ${t.unix_nanos()}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn list(s: Str) -> Str {
+  match mail.parse_address_list(s) {
+    Ok(xs) => {
+      var out: List[Str] = []
+      for a in xs {
+        out.push("${a.name}|${a.address}|${a.display()}")
+      }
+      out.join("; ")
+    }
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn addr(s: Str) -> Str {
+  match mail.parse_address(s) {
+    Ok(a) => "${a.name}|${a.address}|${a.display()}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "date" => date(inp[0])
+    "list" => list(inp[0])
+    "addr" => addr(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

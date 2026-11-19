@@ -1,0 +1,12 @@
+# Go's mail test tables (go1.26) run through std/mail
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# A date compares as its offset and seconds (parse_date_civil,
+# Go's Zone and Unix) and its instant (parse_date's unix_nanos,
+# Go's UnixNano); an address as its name, address and display.
+# parseTests' messages are not read (their headers are a Header map).
+net/mail message_test.go TestDateParsing.tests dateStr date
+net/mail message_test.go TestDateParsingCFWS.tests dateStr date
+net/mail message_test.go TestAddressParsing.tests addrsStr list
+net/mail message_test.go TestAddressParser.tests addrsStr list
+net/mail message_test.go TestAddressParsingAndFormatting.tests . addr
+net/mail message_test.go TestAddressParsingAndFormatting.badTests . addr
