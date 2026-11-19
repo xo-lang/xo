@@ -1,0 +1,4 @@
+exit 70
+--- stdout
+--- stderr
+fault: BytesBuilder.put: 3..5 outside the builder's 4 bytes at main.xo:5

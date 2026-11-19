@@ -1410,6 +1410,10 @@ fn (var b: BytesBuilder) put_le(at: Int, v: Int, n: Int)
 /// bytes, highest first (Go's binary.BigEndian.PutUint32); a fault for
 /// another n or a range outside len().
 fn (var b: BytesBuilder) put_be(at: Int, v: Int, n: Int)
+/// Overwrites the bytes at..at + data.len() in place with data (Go's
+/// `copy(b[at:], data)` on a []byte being filled), one copy; a fault when
+/// that range is outside len(). It never grows the builder (decision 0722).
+fn (var b: BytesBuilder) put(at: Int, data: Bytes)
 /// Appends v's low n (0 to 8) bytes, lowest first (Go's
 /// binary.LittleEndian.AppendUint64 cut to n); a fault for another n.
 fn (var b: BytesBuilder) write_le(v: Int, n: Int)

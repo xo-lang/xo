@@ -1282,6 +1282,14 @@ func (b *BytesBuilder) M_put_le(_ *Task, at, v, n int64) { b.put(at, v, n, false
 // M_put_be is `b.put_be(at, v, n)`: highest byte first.
 func (b *BytesBuilder) M_put_be(_ *Task, at, v, n int64) { b.put(at, v, n, true) }
 
+// M_put is `b.put(at, data)`: data copied over b[at:at+len(data)].
+func (b *BytesBuilder) M_put(_ *Task, at int64, data Bytes) {
+	if at < 0 || at > int64(len(b.b))-int64(len(data)) {
+		FaultHere("BytesBuilder.put: the range is outside the builder")
+	}
+	copy(b.b[at:], data)
+}
+
 // M_write_le is `b.write_le(v, n)`: the n (0 to 8) low bytes of v
 // appended, lowest first (decision 0561).
 func (b *BytesBuilder) M_write_le(_ *Task, v, n int64) { b.write(v, n, false) }

@@ -650,6 +650,7 @@ fn ([var] b: BytesBuilder) write_byte(x: UInt8)
 fn ([var] b: BytesBuilder) write_str(s: Str)  // its UTF-8 bytes
 fn ([var] b: BytesBuilder) write_rune(r: Rune) // its UTF-8 encoding
 fn ([var] b: BytesBuilder) put_le(at: Int, v: Int, n: Int) // overwrite n (1, 2, 4, 8) bytes in place; put_be too
+fn ([var] b: BytesBuilder) put(at: Int, data: Bytes) // decision 0722: data over at..at + data.len() in place; a fault outside 0..len()
 fn ([var] b: BytesBuilder) write_list(l: List[UInt8], from: Int, to: Int) // l[from..to] in one copy (decision 0667); a fault outside l
 fn (b: BytesBuilder) len() -> Int            // also on StrBuilder
 fn (b: BytesBuilder) at(i: Int) -> UInt8      // decision 0722: the byte at i; a fault outside 0..len()
@@ -695,7 +696,9 @@ outside, is a fault. The length does not change and nothing is copied.
 `get_le` and `get_be` read them back: the `n` bytes `at..at + n` (n is 1 to
 8) as an Int, lowest first or highest first, the high bytes zero; `at(i)` is
 one byte. Any other `n`, or a range outside `len()`, is a fault at the
-caller's line.
+caller's line. `put(at, data)` (decision 0722) overwrites `at..at +
+data.len()` with `data` in place, as Go's `copy(b[at:], data)`; the range
+must lie within `len()` (`put` never grows the builder), else a fault.
 
 `Bytes.into_builder()` (decision 0722) gives a BytesBuilder that starts with
 the bytes of `b`, to overwrite them with `put_le` and `put_be` or append to
@@ -7743,7 +7746,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-635 declarations.
+636 declarations.
 
 ### Range
 
@@ -8344,6 +8347,7 @@ fn (var b: BytesBuilder) write_str(s: Str)
 fn (var b: BytesBuilder) write_rune(r: Rune)
 fn (var b: BytesBuilder) put_le(at: Int, v: Int, n: Int)
 fn (var b: BytesBuilder) put_be(at: Int, v: Int, n: Int)
+fn (var b: BytesBuilder) put(at: Int, data: Bytes)
 fn (var b: BytesBuilder) write_le(v: Int, n: Int)
 fn (var b: BytesBuilder) write_be(v: Int, n: Int)
 fn (var b: BytesBuilder) write_list(l: List[UInt8], from: Int, to: Int)

@@ -1,5 +1,15 @@
 # std/image changes
 
+## 2026-11-19: perf: draw with Op.Src writes the destination's samples in place
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (draw built a new destination buffer on every call; decision 0722)
+- Go reference: image/draw drawCopySrc, drawNRGBASrc (Go draws into dst.Pix)
+- Change: Image.draw with Op.Src onto an RGBA destination takes dst.pix with Bytes.into_builder and writes the rectangle in place (BytesBuilder.put for an RGBA source's rows), so a destination nothing else holds is not copied; a source sharing dst's samples is copied first. Op.Over keeps building new samples (reads through the builder cost more)
+- Measured: xo bench --ab on linux/arm64 host 1, bench/perf/image copy 200, 7b55efd43 against the change: wall 107.0 to 23.07 ms, B/A 0.216 (95% 0.155 to 0.343), max RSS 0.691, 4 rounds; over 0.998 (within noise)
+- Test: std/image_test.xo "draw in place changes only the rectangle, for every source and op", "an image drawn onto itself reads its samples as they were"
+
 ## 2026-11-19: fix: an RGBA source sample above its alpha drawn Over no longer carries into the next byte
 
 - Kind: fix

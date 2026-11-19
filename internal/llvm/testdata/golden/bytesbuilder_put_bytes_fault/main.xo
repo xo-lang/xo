@@ -1,0 +1,7 @@
+// BytesBuilder.put past len() is a fault at the caller's line (decision 0722).
+fn main(os: Os) {
+  var b = BytesBuilder.new()
+  b.write_str("abcd")
+  b.put(3, b"xy")
+  os.stdio.println("not reached")
+}

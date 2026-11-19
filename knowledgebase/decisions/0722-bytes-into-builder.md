@@ -120,6 +120,31 @@ shared (another Image value still holds it) copies once, as today.
   `BytesBuilder.put(at, data: Bytes)` copy (an addition to this decision)
   and the over loop's arm64 code compared with base's, then measure again.
 
+## Amended (owner, 2026-11-19: "#184 do 1", through the Lead, decision #191)
+
+A third addition, BytesBuilder.put, for the copy rows the in-place draw lost:
+
+    fn (var b: BytesBuilder) put(at: Int, data: Bytes)
+      // data's bytes over at..at + data.len(), in place (Go's
+      // copy(b[at:], data)); a fault when that range is outside len()
+
+It never grows the builder. Native: bytesbuilder_put in
+std/native/prelude.xo moves the bytes with rt.mem_move into the builder's
+object (a builder is move only, so its count is 1; any other count copies
+first). Go backend: copy into the builder's slice.
+
+std/image draws Src rows in place with it: `put` of each source row (RGBA
+source), or the pixels built a word at a time (NRGBA, Gray). Over keeps the
+copy path: it reads every destination pixel, and reads through the builder
+(get_be) were 1.22 of base's Bytes index reads on host 1. Measured with
+`xo bench --ab` on linux/arm64 host 1 (4 rounds, bench/perf/image 200
+passes; origin/main 7b55efd43 against the change): copy 0.216 of the time
+(95% 0.155 to 0.343), max RSS 0.691; over 0.998 (within noise). Tests:
+internal/llvm/testdata/golden/bytesbuilder_put_bytes and
+bytesbuilder_put_bytes_fault (a range outside len() faults), std/image_test
+"draw in place changes only the rectangle, for every source and op" and
+"an image drawn onto itself reads its samples as they were".
+
 ## Alternatives
 
 - `Image.draw` writing through raw (std/native/llrt): image is portable std

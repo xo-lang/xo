@@ -567,7 +567,18 @@ pub fn (var dst: Image) draw(r: Rect, src: Image, sp_x: Int, sp_y: Int, op: Op) 
     return
   }
   if dst.model == Model.RGBA && (src.model == Model.RGBA || src.model == Model.NRGBA || src.model == Model.Gray) {
-    dst.pix = draw_rgba_rows(dst, src, x0, y0, x1, y1, sp_x1, sp_y1, op)
+    // dst.pix handed over, so the rows are drawn in its buffer when
+    // nothing else holds it (decision 0722)
+    if op == Op.Over {
+      // Over reads every destination pixel: Bytes index reads, the new
+      // samples built front to back (draw_rgba_rows_over; reads through the
+      // builder were 1.22 of this on host 1, 2026-11-19)
+      dst.pix = draw_rgba_rows_over(dst, src, x0, y0, x1, y1, sp_x1, sp_y1, op)
+      return
+    }
+    let pix = dst.pix
+    dst.pix = b""
+    dst.pix = draw_rgba_rows(pix, dst, src, x0, y0, x1, y1, sp_x1, sp_y1, op)
     return
   }
   var b = BytesBuilder.with_capacity(dst.pix.len())
@@ -1173,9 +1184,9 @@ fn draw_src_color(src: Image, sx: Int, sy: Int) -> Color {
 
 /// One pixel of Go's drawCopyOver, drawNRGBAOver, drawGray (and the Src
 /// forms) for an RGBA destination: the new 0xRRGGBBAA of the destination
-/// pixel at di given the source pixel at si. mk is 0 for an RGBA source, 1 for
-/// NRGBA and 2 for Gray.
-fn draw_px(dp: Bytes, di: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
+/// pixel dw (its 0xRRGGBBAA) given the source pixel at si. mk is 0 for an
+/// RGBA source, 1 for NRGBA and 2 for Gray.
+fn draw_px(dw: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
   // Every product here is under 2^33 (a sample is at most 255, alpha at
   // most 65535), so the arithmetic wraps where Go's uint32 math does and
   // carries no overflow checks (bench/perf/image over: 25 checked
@@ -1204,11 +1215,10 @@ fn draw_px(dp: Bytes, di: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
   }
   if over && sa != 65535 {
     let a = (65535 - sa).wrapping_mul(257)
-    // the last destination sample first, as the source's above
-    let da = Int(dp[di + 3])
-    let r = (div65535(Int(dp[di]).wrapping_mul(a)).wrapping_add(sr)) >> 8
-    let g = (div65535(Int(dp[di + 1]).wrapping_mul(a)).wrapping_add(sg)) >> 8
-    let b = (div65535(Int(dp[di + 2]).wrapping_mul(a)).wrapping_add(sb)) >> 8
+    let da = dw & 255
+    let r = (div65535((dw >> 24).wrapping_mul(a)).wrapping_add(sr)) >> 8
+    let g = (div65535(((dw >> 16) & 255).wrapping_mul(a)).wrapping_add(sg)) >> 8
+    let b = (div65535(((dw >> 8) & 255).wrapping_mul(a)).wrapping_add(sb)) >> 8
     let al = (div65535(da.wrapping_mul(a)).wrapping_add(sa)) >> 8
     // each sample its low 8 bits, as Go's uint8: an RGBA source whose
     // sample exceeds its alpha (not premultiplied) sums past 255
@@ -1230,35 +1240,33 @@ fn div255(x: Int) -> Int {
 }
 
 /// Go's drawCopyOver, drawCopySrc, drawNRGBAOver, drawNRGBASrc and drawGray
-/// for an RGBA destination: the new samples built front to back, rows of the
-/// destination outside the rectangle (and the bytes around it) copied as
-/// slices, the pixels inside computed from the source bytes directly, two to
-/// a word pushed.
-fn draw_rgba_rows(dst: Image, src: Image, x0: Int, y0: Int, x1: Int, y1: Int, sp_x: Int, sp_y: Int, op: Op) -> Bytes {
-  var b = BytesBuilder.with_capacity(dst.pix.len())
-  var pos = 0
+/// for an RGBA destination: the pixels inside the rectangle rewritten in
+/// pix (dst's samples, handed over) two to a word, computed from the source
+/// bytes directly. pix is written in place when nothing else holds it
+/// (Bytes.into_builder, decision 0722), so the bytes outside the rectangle
+/// are not touched; a source sharing dst's samples gets a copy first, so it
+/// reads the samples as they were.
+fn draw_rgba_rows(pix: Bytes, dst: Image, src: Image, x0: Int, y0: Int, x1: Int, y1: Int, sp_x: Int, sp_y: Int, op: Op) -> Bytes {
+  var b = pix.into_builder()
   let over = op == Op.Over
   let mk = if src.model == Model.RGBA { 0 } else if src.model == Model.NRGBA { 1 } else { 2 }
   let sbpp = if mk == 2 { 1 } else { 4 }
   let w = x1 - x0
-  let dp = dst.pix
   let spx = src.pix
   for y in y0..y1 {
     let rowstart = pix_off(dst, x0 - dst.min_x, y - dst.min_y, 4)
-    b.write(dp[pos..rowstart])
     var si = pix_off(src, sp_x - src.min_x, sp_y + (y - y0) - src.min_y, sbpp)
     var di = rowstart
     if !over && mk == 0 {
       // Go's drawCopySrc: a Src copy of RGBA samples is a copy of the row
-      b.write(spx[si..si + w * 4])
-      pos = di + w * 4
+      b.put(di, spx[si..si + w * 4])
       continue
     }
     var x = 0
     if mk == 2 {
       // Go's drawGray: an opaque gray sample y is the pixel y, y, y, 255
       while x + 1 < w {
-        b.write_be((Int(spx[si]) * 0x01010100 | 255).wrapping_shl(32) | (Int(spx[si + 1]) * 0x01010100 | 255), 8)
+        b.put_be(di, (Int(spx[si]) * 0x01010100 | 255).wrapping_shl(32) | (Int(spx[si + 1]) * 0x01010100 | 255), 8)
         si += 2
         di += 8
         x += 2
@@ -1279,16 +1287,17 @@ fn draw_rgba_rows(dst: Image, src: Image, x0: Int, y0: Int, x1: Int, y1: Int, sp
             px = Int(spx[s]).wrapping_shl(24) | Int(spx[s + 1]).wrapping_shl(16) | Int(spx[s + 2]).wrapping_shl(8) | 255
           } else {
             let a = (65535 - sa).wrapping_mul(257)
-            let da = Int(dp[d + 3])
-            let r = (div65535(Int(dp[d]).wrapping_mul(a)).wrapping_add(Int(spx[s]).wrapping_mul(257))) >> 8
-            let g = (div65535(Int(dp[d + 1]).wrapping_mul(a)).wrapping_add(Int(spx[s + 1]).wrapping_mul(257))) >> 8
-            let bl = (div65535(Int(dp[d + 2]).wrapping_mul(a)).wrapping_add(Int(spx[s + 2]).wrapping_mul(257))) >> 8
+            let dw = b.get_be(d, 4)
+            let da = dw & 255
+            let r = (div65535((dw >> 24).wrapping_mul(a)).wrapping_add(Int(spx[s]).wrapping_mul(257))) >> 8
+            let g = (div65535(((dw >> 16) & 255).wrapping_mul(a)).wrapping_add(Int(spx[s + 1]).wrapping_mul(257))) >> 8
+            let bl = (div65535(((dw >> 8) & 255).wrapping_mul(a)).wrapping_add(Int(spx[s + 2]).wrapping_mul(257))) >> 8
             let al = (div65535(da.wrapping_mul(a)).wrapping_add(sa)) >> 8
             px = (r & 255).wrapping_shl(24) | (g & 255).wrapping_shl(16) | (bl & 255).wrapping_shl(8) | (al & 255)
           }
           pr = pr.wrapping_shl(32) | px
         }
-        b.write_be(pr, 8)
+        b.put_be(di, pr, 8)
         si += 8
         di += 8
         x += 2
@@ -1307,27 +1316,26 @@ fn draw_rgba_rows(dst: Image, src: Image, x0: Int, y0: Int, x1: Int, y1: Int, sp
           let bl = div255(Int(spx[s + 2]).wrapping_mul(sa)) >> 8
           pr = pr.wrapping_shl(32) | r.wrapping_shl(24) | g.wrapping_shl(16) | bl.wrapping_shl(8) | (sa >> 8)
         }
-        b.write_be(pr, 8)
+        b.put_be(di, pr, 8)
         si += 8
         di += 8
         x += 2
       }
     }
     while x + 1 < w {
-      let p0 = draw_px(dp, di, spx, si, mk, over)
-      let p1 = draw_px(dp, di + 4, spx, si + sbpp, mk, over)
-      b.write_be(p0.wrapping_shl(32) | p1, 8)
+      let dw = if over { b.get_be(di, 8) } else { 0 }
+      let p0 = draw_px(dw.shr_logical(32), spx, si, mk, over)
+      let p1 = draw_px(dw & 0xFFFFFFFF, spx, si + sbpp, mk, over)
+      b.put_be(di, p0.wrapping_shl(32) | p1, 8)
       si += 2 * sbpp
       di += 8
       x += 2
     }
     if x < w {
-      b.write_be(draw_px(dp, di, spx, si, mk, over), 4)
-      di += 4
+      let dw = if over { b.get_be(di, 4) } else { 0 }
+      b.put_be(di, draw_px(dw, spx, si, mk, over), 4)
     }
-    pos = di
   }
-  b.write(dp[pos..dp.len()])
   b.freeze()
 }
 
@@ -1606,4 +1614,152 @@ fn abl_pixel(src: Image, sr: Rect, sx0: Int, sx1: Int, xf0: Float, xf1: Float, s
   let hb1 = xf1 * b01 + xf0 * b11
   let ha1 = xf1 * a01 + xf0 * a11
   Color{r: Int(yf1 * hr0 + yf0 * hr1) & 65535, g: Int(yf1 * hg0 + yf0 * hg1) & 65535, b: Int(yf1 * hb0 + yf0 * hb1) & 65535, a: Int(yf1 * ha0 + yf0 * ha1) & 65535}
+}
+
+/// One pixel of Go's drawCopyOver, drawNRGBAOver, drawGray (and the Src
+/// forms) for an RGBA destination: the new 0xRRGGBBAA of the destination
+/// pixel at di given the source pixel at si. mk is 0 for an RGBA source, 1 for
+/// NRGBA and 2 for Gray.
+fn draw_px_at(dp: Bytes, di: Int, sp: Bytes, si: Int, mk: Int, over: Bool) -> Int {
+  // Every product here is under 2^33 (a sample is at most 255, alpha at
+  // most 65535), so the arithmetic wraps where Go's uint32 math does and
+  // carries no overflow checks (bench/perf/image over: 25 checked
+  // multiplies in the row loop on arm64).
+  var sr = 0
+  var sg = 0
+  var sb = 0
+  var sa = 65535
+  if mk == 0 {
+    // the last sample first: its index check covers the three before it
+    // (the arm64 backend's ranges drop their checks; #103 lever 2)
+    sa = Int(sp[si + 3]).wrapping_mul(257)
+    sr = Int(sp[si]).wrapping_mul(257)
+    sg = Int(sp[si + 1]).wrapping_mul(257)
+    sb = Int(sp[si + 2]).wrapping_mul(257)
+  } else if mk == 1 {
+    sa = Int(sp[si + 3]).wrapping_mul(257)
+    sr = div255(Int(sp[si]).wrapping_mul(sa))
+    sg = div255(Int(sp[si + 1]).wrapping_mul(sa))
+    sb = div255(Int(sp[si + 2]).wrapping_mul(sa))
+  } else {
+    let g = Int(sp[si]).wrapping_mul(257)
+    sr = g
+    sg = g
+    sb = g
+  }
+  if over && sa != 65535 {
+    let a = (65535 - sa).wrapping_mul(257)
+    // the last destination sample first, as the source's above
+    let da = Int(dp[di + 3])
+    let r = (div65535(Int(dp[di]).wrapping_mul(a)).wrapping_add(sr)) >> 8
+    let g = (div65535(Int(dp[di + 1]).wrapping_mul(a)).wrapping_add(sg)) >> 8
+    let b = (div65535(Int(dp[di + 2]).wrapping_mul(a)).wrapping_add(sb)) >> 8
+    let al = (div65535(da.wrapping_mul(a)).wrapping_add(sa)) >> 8
+    // each sample its low 8 bits, as Go's uint8: an RGBA source whose
+    // sample exceeds its alpha (not premultiplied) sums past 255
+    return (r & 255).wrapping_shl(24) | (g & 255).wrapping_shl(16) | (b & 255).wrapping_shl(8) | (al & 255)
+  }
+  (sr >> 8).wrapping_shl(24) | (sg >> 8).wrapping_shl(16) | (sb >> 8).wrapping_shl(8) | (sa >> 8)
+}
+
+/// Go's drawCopyOver, drawCopySrc, drawNRGBAOver, drawNRGBASrc and drawGray
+/// for an RGBA destination: the new samples built front to back, rows of the
+/// destination outside the rectangle (and the bytes around it) copied as
+/// slices, the pixels inside computed from the source bytes directly, two to
+/// a word pushed.
+fn draw_rgba_rows_over(dst: Image, src: Image, x0: Int, y0: Int, x1: Int, y1: Int, sp_x: Int, sp_y: Int, op: Op) -> Bytes {
+  var b = BytesBuilder.with_capacity(dst.pix.len())
+  var pos = 0
+  let over = op == Op.Over
+  let mk = if src.model == Model.RGBA { 0 } else if src.model == Model.NRGBA { 1 } else { 2 }
+  let sbpp = if mk == 2 { 1 } else { 4 }
+  let w = x1 - x0
+  let dp = dst.pix
+  let spx = src.pix
+  for y in y0..y1 {
+    let rowstart = pix_off(dst, x0 - dst.min_x, y - dst.min_y, 4)
+    b.write(dp[pos..rowstart])
+    var si = pix_off(src, sp_x - src.min_x, sp_y + (y - y0) - src.min_y, sbpp)
+    var di = rowstart
+    if !over && mk == 0 {
+      // Go's drawCopySrc: a Src copy of RGBA samples is a copy of the row
+      b.write(spx[si..si + w * 4])
+      pos = di + w * 4
+      continue
+    }
+    var x = 0
+    if mk == 2 {
+      // Go's drawGray: an opaque gray sample y is the pixel y, y, y, 255
+      while x + 1 < w {
+        b.write_be((Int(spx[si]) * 0x01010100 | 255).wrapping_shl(32) | (Int(spx[si + 1]) * 0x01010100 | 255), 8)
+        si += 2
+        di += 8
+        x += 2
+      }
+    }
+    if over && mk == 0 {
+      // Go's drawCopyOver with the pixel math in the loop: draw_px's call
+      // a pixel (its six arguments and the loop's registers saved around
+      // it) made bench/perf/image over 1.13 of Go on the linux/amd64 host
+      while x + 1 < w {
+        var pr = 0
+        for k in 0..2 {
+          let s = si + 4 * k
+          let d = di + 4 * k
+          let sa = Int(spx[s + 3]).wrapping_mul(257)
+          var px = 0
+          if sa == 65535 {
+            px = Int(spx[s]).wrapping_shl(24) | Int(spx[s + 1]).wrapping_shl(16) | Int(spx[s + 2]).wrapping_shl(8) | 255
+          } else {
+            let a = (65535 - sa).wrapping_mul(257)
+            let da = Int(dp[d + 3])
+            let r = (div65535(Int(dp[d]).wrapping_mul(a)).wrapping_add(Int(spx[s]).wrapping_mul(257))) >> 8
+            let g = (div65535(Int(dp[d + 1]).wrapping_mul(a)).wrapping_add(Int(spx[s + 1]).wrapping_mul(257))) >> 8
+            let bl = (div65535(Int(dp[d + 2]).wrapping_mul(a)).wrapping_add(Int(spx[s + 2]).wrapping_mul(257))) >> 8
+            let al = (div65535(da.wrapping_mul(a)).wrapping_add(sa)) >> 8
+            px = (r & 255).wrapping_shl(24) | (g & 255).wrapping_shl(16) | (bl & 255).wrapping_shl(8) | (al & 255)
+          }
+          pr = pr.wrapping_shl(32) | px
+        }
+        b.write_be(pr, 8)
+        si += 8
+        di += 8
+        x += 2
+      }
+    }
+    if !over && mk == 1 {
+      // Go's drawNRGBASrc, the pixel math in the loop as above (1.06 of
+      // Go with draw_px's call)
+      while x + 1 < w {
+        var pr = 0
+        for k in 0..2 {
+          let s = si + 4 * k
+          let sa = Int(spx[s + 3]).wrapping_mul(257)
+          let r = div255(Int(spx[s]).wrapping_mul(sa)) >> 8
+          let g = div255(Int(spx[s + 1]).wrapping_mul(sa)) >> 8
+          let bl = div255(Int(spx[s + 2]).wrapping_mul(sa)) >> 8
+          pr = pr.wrapping_shl(32) | r.wrapping_shl(24) | g.wrapping_shl(16) | bl.wrapping_shl(8) | (sa >> 8)
+        }
+        b.write_be(pr, 8)
+        si += 8
+        di += 8
+        x += 2
+      }
+    }
+    while x + 1 < w {
+      let p0 = draw_px_at(dp, di, spx, si, mk, over)
+      let p1 = draw_px_at(dp, di + 4, spx, si + sbpp, mk, over)
+      b.write_be(p0.wrapping_shl(32) | p1, 8)
+      si += 2 * sbpp
+      di += 8
+      x += 2
+    }
+    if x < w {
+      b.write_be(draw_px_at(dp, di, spx, si, mk, over), 4)
+      di += 4
+    }
+    pos = di
+  }
+  b.write(dp[pos..dp.len()])
+  b.freeze()
 }

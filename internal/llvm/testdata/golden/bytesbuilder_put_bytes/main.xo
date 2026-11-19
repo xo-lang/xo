@@ -1,0 +1,16 @@
+// BytesBuilder.put(at, data) overwrites at..at + data.len() in place and
+// never grows the builder (decision 0722, amended 2026-11-19).
+fn main(os: Os) {
+  var b = BytesBuilder.new()
+  b.write_str("abcdefgh")
+  b.put(0, b"XY")
+  b.put(3, b"123")
+  b.put(6, b"zz")
+  b.put(8, b"")
+  os.stdio.println("${b.len()}")
+  let src = b"0123456789"
+  b.put(2, src[4..7])
+  let out = b.freeze()
+  os.stdio.println(out.to_str() ?? "?")
+  os.stdio.println(src.to_str() ?? "?")
+}

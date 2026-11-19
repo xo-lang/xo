@@ -1,5 +1,14 @@
 # prelude changes
 
+## 2026-11-19: feature: BytesBuilder.put(at, data)
+
+- Kind: feature
+- Commit: this push
+- Found by: task #271 (std/image's in-place draw had no bulk copy of a source row into the builder)
+- Go reference: copy(b[at:], data) on a []byte
+- Change: `b.put(at, data)` overwrites at..at + data.len() with data in place, one copy; a fault when the range is outside len() (decision 0722, amended 2026-11-19)
+- Test: internal/llvm/testdata/golden/bytesbuilder_put_bytes and bytesbuilder_put_bytes_fault
+
 ## 2026-11-19: perf: sort, concat and map no longer mark the caller's lists shared
 
 - Kind: perf

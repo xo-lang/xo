@@ -48,7 +48,8 @@ test "draw's RGBA over and NRGBA src rows are draw_px's pixels" {
       dst.draw(Rect{x0: 0, y0: 0, x1: w, y1: 3}, src, 0, 0, if over { Op.Over } else { Op.Src })
       let mk = if model == Model.RGBA { 0 } else { 1 }
       for i in 0..w * 3 {
-        let want = draw_px(before.pix, 4 * i, src.pix, 4 * i, mk, over)
+        let bw = Int(before.pix[4 * i]).wrapping_shl(24) | Int(before.pix[4 * i + 1]).wrapping_shl(16) | Int(before.pix[4 * i + 2]).wrapping_shl(8) | Int(before.pix[4 * i + 3])
+        let want = draw_px(bw, src.pix, 4 * i, mk, over)
         let got = Int(dst.pix[4 * i]).wrapping_shl(24) | Int(dst.pix[4 * i + 1]).wrapping_shl(16) | Int(dst.pix[4 * i + 2]).wrapping_shl(8) | Int(dst.pix[4 * i + 3])
         expect(got) == want
       }
@@ -63,4 +64,38 @@ test "an RGBA source sample above its alpha drawn over wraps as Go's uint8" {
   let src = Image{width: 2, height: 1, model: Model.RGBA, pix: b"\x00\x00\x00\x00\xc8\x00\x00\x64"}
   dst.draw(Rect{x0: 0, y0: 0, x1: 2, y1: 1}, src, 0, 0, Op.Over)
   expect(dst.pix) == b"\x0a\x14\x1e\x28\x64\x9b\x9b\xff"
+}
+
+test "draw in place changes only the rectangle, for every source and op" {
+  // dst's samples are held by nothing else, so draw writes them in place
+  // (decision 0722); a twin built from the same seed is the before image
+  for (model, op) in [(Model.RGBA, Op.Over), (Model.RGBA, Op.Src), (Model.NRGBA, Op.Over), (Model.NRGBA, Op.Src), (Model.Gray, Op.Over)] {
+    let bpp = if model == Model.Gray { 1 } else { 4 }
+    let src = Image{width: 7, height: 5, model: model, pix: test_px(5, 7 * 5 * bpp, true)}
+    var dst = Image{width: 9, height: 6, model: Model.RGBA, pix: test_px(41, 9 * 6 * 4, true)}
+    let before = test_px(41, 9 * 6 * 4, true)
+    dst.draw(Rect{x0: 2, y0: 1, x1: 7, y1: 4}, src, 1, 2, op)
+    let mk = if model == Model.RGBA { 0 } else if model == Model.NRGBA { 1 } else { 2 }
+    for y in 0..6 {
+      for x in 0..9 {
+        let d = 4 * (9 * y + x)
+        let got = Int(dst.pix[d]).wrapping_shl(24) | Int(dst.pix[d + 1]).wrapping_shl(16) | Int(dst.pix[d + 2]).wrapping_shl(8) | Int(dst.pix[d + 3])
+        let bw = Int(before[d]).wrapping_shl(24) | Int(before[d + 1]).wrapping_shl(16) | Int(before[d + 2]).wrapping_shl(8) | Int(before[d + 3])
+        if x >= 2 && x < 7 && y >= 1 && y < 4 {
+          let si = bpp * (7 * (y + 1) + x - 1)
+          expect(got) == draw_px(bw, src.pix, si, mk, op == Op.Over)
+        } else {
+          expect(got) == bw
+        }
+      }
+    }
+  }
+}
+
+test "an image drawn onto itself reads its samples as they were" {
+  // the source shares dst's samples, so draw copies before writing: a
+  // shift by one pixel copies every pixel, not the first one repeated
+  var im = Image{width: 4, height: 1, model: Model.RGBA, pix: b"\x01\x01\x01\xff\x02\x02\x02\xff\x03\x03\x03\xff\x04\x04\x04\xff"}
+  im.draw(Rect{x0: 1, y0: 0, x1: 4, y1: 1}, im, 0, 0, Op.Src)
+  expect(im.pix) == b"\x01\x01\x01\xff\x01\x01\x01\xff\x02\x02\x02\xff\x03\x03\x03\xff"
 }

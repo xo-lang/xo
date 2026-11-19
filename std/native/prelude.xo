@@ -849,6 +849,26 @@ fn bytesbuilder_at(b: BytesBuilder, i: Int, at: rt.Loc) -> UInt8 {
   UInt8.wrapping_from(rt.mem_load(raw.data(s), i, 1))
 }
 
+/// BytesBuilder.put: data's bytes moved over b[k..k + data.len()]. A
+/// builder is move only, so its object has one owner and is written in
+/// place (raw.put); any other count takes a copy first.
+fn bytesbuilder_put(var b: BytesBuilder, k: Int, data: Bytes, at: rt.Loc) {
+  let s = rt.cast[BytesBuilder, Str](b)
+  let n = data.len()
+  if k < 0 || k > s.len() - n {
+    rt.fault_at("BytesBuilder.put: ${k}..${k + n} outside the builder's ${s.len()} bytes", at)
+  }
+  if n == 0 {
+    return
+  }
+  var t = s
+  if rt.slot_load(rt.obj_addr(s), 0, 0) != 1 {
+    t = rt.rs_push_word(s, 0, 0)
+  }
+  rt.mem_move(raw.data(t) + k, raw.bytes_addr(data), n)
+  b = rt.cast[Str, BytesBuilder](t)
+}
+
 fn builder_at_fail(i: Int, n: Int, at: rt.Loc) {
   rt.fault_at("index ${i} out of range for BytesBuilder of length ${n}", at)
 }

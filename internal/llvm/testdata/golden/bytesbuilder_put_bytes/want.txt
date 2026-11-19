@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+8
+XY4563zz
+0123456789
+--- stderr
