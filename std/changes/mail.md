@@ -1,5 +1,19 @@
 # std/mail changes
 
+## 2026-11-19: security: not affected by GO-2026-4977 and GO-2026-4986 (quadratic phrase and comment parsing)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #401), Go vulnerability database entries fixed after Go 1.26.0
+- Go reference: net/mail message.go consumePhrase and consumeComment (Go 1.26.11, the fixes for GO-2026-4977 and GO-2026-4986)
+- Change: none; Xo was not affected
+- Measured: not applicable
+- Test: std/mail_test.xo "a display name of many encoded words parses in linear time (GO-2026-4977)" and "long and deeply nested comments parse in linear time (GO-2026-4986)" (guards; they pass before and after)
+- Affected: no release
+- Shipped in: not yet released
+
+Go built a display name of many encoded words, and a long or deeply nested comment, by string concatenation that copied the whole result each time. Xo's `s = s + w` on a variable with one owner appends in place, so `consume_phrase` and the comment reader were already linear: 200,000 encoded words and 200,000 nested parentheses parse in well under a second. The tests keep it that way.
+
 ## 2026-11-15: fix: a comment after an encoded word in a display name is not skipped (Go 1.26's consumePhrase)
 
 - Kind: fix

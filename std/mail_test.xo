@@ -4339,3 +4339,33 @@ test "read_message: Go's headers, body, and errors" {
     expect((m, got)) == (m, want)
   }
 }
+
+test "a display name of many encoded words parses in linear time (GO-2026-4977)" {
+  // Go 1.26.3 joins a run of encoded words in one builder; joining them
+  // by concatenation copied the run once a word (200,000 words: about
+  // 2 * 10^11 byte copies)
+  let n = 200000
+  let a = parse_address("=?us-ascii?q?ab?= ".repeat(n) + "<x@example.com>").ok() ?? Address{name: "", address: ""}
+  expect(a.name.len()) == 2 * n
+  expect(a.address) == "x@example.com"
+  let b = parse_address("=?us-ascii?q?ab?= plain =?us-ascii?q?c?= =?us-ascii?q?d?= <y@example.com>").ok() ?? Address{name: "", address: ""}
+  expect(b.name) == "ab plain cd"
+}
+
+test "long and deeply nested comments parse in linear time (GO-2026-4986)" {
+  // Go 1.26.3 writes a comment into one builder and bounds the work
+  // ParseAddress, ParseAddressList and ParseDate do on hostile input
+  let n = 200000
+  let a = parse_address("x@example.com (" + "c".repeat(n) + ")").ok() ?? Address{name: "", address: ""}
+  expect(a.address) == "x@example.com"
+  let deep = parse_address("x@example.com " + "(".repeat(n) + ")".repeat(n))
+  expect(deep.is_ok()) == true
+  let open = parse_address("x@example.com " + "(".repeat(n))
+  expect(open.is_err()) == true
+  let list = parse_address_list(("a@example.com (" + "c".repeat(n) + "), ").repeat(4) + "b@example.com")
+  expect(list.is_ok()) == true
+  let d = parse_date("Thu, 20 Nov 1997 09:55:06 -0600 (" + "c".repeat(n) + ")")
+  expect(d.is_ok()) == true
+  let bad = parse_date("Thu, 20 Nov 1997 09:55:06 " + "T".repeat(n))
+  expect(bad.is_err()) == true
+}

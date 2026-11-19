@@ -291,3 +291,25 @@ test "a reply line's errors quote its bytes, as Go's %q" {
   var z = reader(b"250-a\xff\r\n")
   expect(z.read_code_line(0)) == Err(TextErr.Protocol(msg: "unexpected multi-line response: \"a\\xff\""))
 }
+
+test "errors quote the input they show (GO-2026-5039)" {
+  // Go 1.26.4 quotes every piece of input an error shows, so a terminal
+  // escape or a forged line cannot reach a log as written
+  let cases = [
+    ("2\x1b[2J\r\n", "short response: \"2\\x1b[2J\""),
+    ("ab\x1b ok\x1b[2J\r\n", "invalid response code: \"ab\\x1b ok\\x1b[2J\""),
+    ("550 no\x1b[2J\nINFO forged\r\n", "550 \"no\\x1b[2J\""),
+  ]
+  for (input, want) in cases {
+    var r = reader(input.bytes())
+    match r.read_code_line(250) {
+      Ok(_) => expect(input) == "an error"
+      Err(e) => expect(e.display()) == want
+    }
+  }
+  var h = reader("Bad\x1b[2JLine\r\n\r\n".bytes())
+  match h.read_header() {
+    Ok(_) => expect("a header line without a colon") == "an error"
+    Err(e) => expect(e.display()) == "malformed MIME header: missing colon: \"Bad\\x1b[2JLine\""
+  }
+}

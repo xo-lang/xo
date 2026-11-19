@@ -1,5 +1,19 @@
 # std/xml changes
 
+## 2026-11-19: security: not affected by GO-2026-6088 (DecodeElement reset the depth counter)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #401), Go vulnerability database entries fixed after Go 1.26.0
+- Go reference: encoding/xml read.go unmarshal and xml.go stkDepth (Go 1.26.11, the fix for GO-2026-6088)
+- Change: none; Xo was not affected
+- Measured: not applicable
+- Test: golden internal/llvm/testdata/golden/xml_depth (an element 10,000 deep is "exceeded max depth", 1,000,000 deep too)
+- Affected: no release
+- Shipped in: not yet released
+
+In Go a type's UnmarshalXML could call DecodeElement, which counted depth from zero again, so nesting through such types was unbounded. Xo has no custom element decoder: `decode` parses the tree without recursion and derive Xml's decoder threads one depth from the root through every nested struct (`xmlcodec.depth_check`), so no call restarts the count.
+
 ## 2026-11-16: security: decode stops at elements 10000 deep (Go's maxUnmarshalDepth)
 
 - Kind: security

@@ -1,5 +1,19 @@
 # std/mime changes
 
+## 2026-11-19: security: not affected by GO-2026-5038 (quadratic decode_header on invalid encoded words)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #401), Go vulnerability database entries fixed after Go 1.26.0
+- Go reference: mime encodedword.go WordDecoder.DecodeHeader (Go 1.26.11, the fix for GO-2026-5038)
+- Change: none; Xo was not affected
+- Measured: not applicable
+- Test: std/mime_test.xo "decode_header on many invalid encoded words is linear (GO-2026-5038)" (a guard; it passes before and after)
+- Affected: no release
+- Shipped in: not yet released
+
+Go rescanned the rest of the header after each invalid encoded word, so many invalid words cost quadratic time. `decode_header_by` already continues past an invalid word as Go's fixed loop does; 200,000 invalid words come back unchanged in linear time.
+
 ## 2026-11-18: perf: parse_media_type copies less
 
 - Kind: perf

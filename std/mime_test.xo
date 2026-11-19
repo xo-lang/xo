@@ -1524,3 +1524,14 @@ test "quoted values: a view without a backslash, unescaped with one, errors when
   long = ""
   expect(t.params.get("x")) == Some("w".repeat(400))
 }
+
+test "decode_header on many invalid encoded words is linear (GO-2026-5038)" {
+  // Go 1.26.4 skips past an encoded word that does not decode; each one
+  // is kept as written
+  let n = 200000
+  let bad = "=?utf-8?x?ab?= =?utf-8?b?!!?= ".repeat(n)
+  expect(decode_header(bad)) == Ok(bad)
+  let mixed = "=?utf-8?q?a?= =?utf-8?x?b?= ".repeat(n)
+  let got = decode_header(mixed).ok() ?? ""
+  expect(got.len()) == n * "a =?utf-8?x?b?= ".len()
+}

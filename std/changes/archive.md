@@ -1,5 +1,19 @@
 # std/archive changes
 
+## 2026-11-19: security: GO-2026-4869 is the old GNU sparse map limit logged on 2026-11-13
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #401), Go vulnerability database entries fixed after Go 1.26.0
+- Go reference: archive/tar reader.go readOldGNUSparseMap (Go 1.26.11, the fix for GO-2026-4869)
+- Change: none; Xo was not affected
+- Measured: not applicable
+- Test: std/native/archive_test.xo "an old GNU sparse map past 1 MiB is too long (Go 1.26.11's readOldGNUSparseMap)"
+- Affected: no release
+- Shipped in: not yet released
+
+The 2026-11-13 entry "an old GNU sparse map is read to 1 MiB at most" is the port of Go's fix for GO-2026-4869; this entry names the advisory. Nothing changed.
+
 ## 2026-11-17: perf: tar writes header digits in place and sizes its output once
 
 - Kind: perf

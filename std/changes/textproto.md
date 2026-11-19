@@ -1,5 +1,19 @@
 # std/textproto changes
 
+## 2026-11-19: security: not affected by GO-2026-5039 and GO-2026-6608 (unescaped input in errors, MIME header memory limit)
+
+- Kind: security
+- Commit: this push
+- Found by: scripts/stdadvisories (task #401), Go vulnerability database entries fixed after Go 1.26.0
+- Go reference: net/textproto reader.go ReadCodeLine, readMIMEHeader and Error (Go 1.26.11, the fixes for GO-2026-5039 and GO-2026-6608)
+- Change: none; Xo was not affected
+- Measured: not applicable
+- Test: std/textproto_test.xo "errors quote the input they show (GO-2026-5039)" (a guard; its texts match Go 1.26.11's for the same inputs)
+- Affected: no release
+- Shipped in: not yet released
+
+Go put the server's bytes into errors unescaped, so a line with terminal escapes could rewrite what a log showed. Every Xo error that shows input already quotes it (`short response: "2\x1b[2J"`, a Code error's `550 "no\x1b[2J"`, `malformed MIME header: missing colon`), the same texts as Go's fix. GO-2026-6608's memory limit lives in `parse_form`, fixed in std/multipart on 2026-11-13 (std/changes/multipart.md); std/textproto reads bytes already in memory and has no limit of its own to bypass.
+
 ## 2026-11-16: perf: read_header copies only folded lines and builds its error only on failure
 
 - Kind: perf
