@@ -3336,11 +3336,39 @@ test "decode_go: a type error under a non-ASCII key is Go's error, not a fault (
     let a = json.decode_go_str[Map[Str, Int]]("{\"${k}\":\"x\"}")
     expect(a.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go value of type int"
     let b = json.decode_go_str[GoDecMap]("{\"m\":{\"${k}\":\"x\"}}")
-    expect(b.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go struct field GoDecMap.m.${k} of type int"
+    expect(b.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go struct field GoDecMap.m of type int"
   }
   // an invalid UTF-8 key reads as U+FFFD
   let c = json.decode_go[GoDecMap](b"{\"m\":{\"\xff\":\"x\"}}")
-  expect(c.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go struct field GoDecMap.m.\u{FFFD} of type int"
+  expect(c.err().map(fn(e) { e.msg }) ?? "") == "json: cannot unmarshal string into Go struct field GoDecMap.m of type int"
+}
+
+struct GoDecLeaf {
+  n: Int
+} derive Json
+
+struct GoDecNest {
+  mi: Map[Str, GoDecLeaf]
+  l: List[Map[Str, Int]]
+} derive Json
+
+test "a Map key in an error is quoted, and decode_go leaves it out as encoding/json (b42 of the owner's v0.51.1 evaluation)" {
+  // a peer's key does not forge a log line: Go 1.26 names GoDecMap.m
+  let forged = "{\"m\":{\"a\\nERROR forged\":\"x\"}}"
+  let g = json.decode_go_str[GoDecMap](forged).err() ?? fault("g")
+  expect(g.msg) == "json: cannot unmarshal string into Go struct field GoDecMap.m of type int"
+  expect(g.path) == "$.m[\"a\\nERROR forged\"]"
+  let st = json.decode_str[GoDecMap](forged).err() ?? fault("st")
+  expect(st.path) == "$.m[\"a\\nERROR forged\"]"
+  expect("${st}".contains("\n")) == false
+  // a key holding ] or a quote does not end the segment early
+  let odd = json.decode_go_str[GoDecMap]("{\"m\":{\"]x.y\\\"z\":\"x\"}}").err() ?? fault("odd")
+  expect(odd.msg) == "json: cannot unmarshal string into Go struct field GoDecMap.m of type int"
+  // Go's answers for a struct under a Map and a Map in a list
+  let n = json.decode_go_str[GoDecNest]("{\"mi\":{\"k\":{\"n\":\"x\"}},\"l\":[]}").err() ?? fault("n")
+  expect(n.msg) == "json: cannot unmarshal string into Go struct field GoDecLeaf.mi.n of type int"
+  let l = json.decode_go_str[GoDecNest]("{\"mi\":{},\"l\":[{\"k\":\"x\"}]}").err() ?? fault("l")
+  expect(l.msg) == "json: cannot unmarshal string into Go struct field GoDecNest.l of type int"
 }
 
 test "JsonWriter.raw escapes U+2028 and U+2029 with escape_html, as Go's Encoder (0616 json review F9)" {
@@ -3486,9 +3514,9 @@ struct PathRoot {
 
 test "error paths keep their segments in order through deep and non-ASCII documents (0616 json review F6)" {
   let cases = [
-    ("{\"m\":{\"é\":[{\"x\":1},{\"x\":\"s\"}]}}", "$.m.é[1].x"),
-    ("{\"m\":{\"日本\":[{\"y\":1}]}}", "$.m.日本[0]"),
-    ("{\"m\":{\"a\\u00ff\":[{\"x\":1.5}]}}", "$.m.aÿ[0].x"),
+    ("{\"m\":{\"é\":[{\"x\":1},{\"x\":\"s\"}]}}", "$.m[\"é\"][1].x"),
+    ("{\"m\":{\"日本\":[{\"y\":1}]}}", "$.m[\"日本\"][0]"),
+    ("{\"m\":{\"a\\u00ff\":[{\"x\":1.5}]}}", "$.m[\"aÿ\"][0].x"),
     ("{\"m\":{},\"k\":[{\"Box\":{\"w\":1,\"leaf\":{\"x\":true}}}]}", "$.k[0].Box.leaf.x"),
     ("{\"m\":{},\"k\":[{\"Box\":{\"w\":1}}]}", "$.k[0].Box"),
     ("{\"m\":{},\"k\":[{\"Boxé\":{}}]}", "$.k[0]"),

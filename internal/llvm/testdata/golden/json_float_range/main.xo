@@ -55,6 +55,6 @@ fn main(os: Os) {
   let deep = "{\"${key}\":".repeat(10000) + "1e999" + "}".repeat(10000)
   match json.parse_value(deep) {
     Ok(_) => os.stdio.println("10000 levels of 1000 byte keys => ok")
-    Err(e) => os.stdio.println("10000 levels of 1000 byte keys => at a ${e.path.len()} byte path, ${e.path.starts_with("$.kkk")}: ${e.msg}")
+    Err(e) => os.stdio.println("10000 levels of 1000 byte keys => at a ${e.path.len()} byte path, ${e.path.starts_with("$[\"kkk")}: ${e.msg}")
   }
 }

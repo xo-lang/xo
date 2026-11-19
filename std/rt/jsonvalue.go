@@ -65,7 +65,7 @@ func jsonValueAt(x any, path JsonPath) (Json_Value, *Json_DecodeErr) {
 			}
 			kept := make(map[string]Json_Value, len(t.keys))
 			for i, m := range t.all {
-				v, err := jsonValueAt(m.v, path.Key("."+m.k))
+				v, err := jsonValueAt(m.v, path.Key(JsonKeySeg(m.k)))
 				if err != nil {
 					return Json_Value{}, err
 				}
@@ -79,7 +79,7 @@ func jsonValueAt(x any, path JsonPath) (Json_Value, *Json_DecodeErr) {
 			return Json_Value{Tag: 7, P: Json_Value_Object{F_fields: ListFromSlice(fs)}}, nil
 		}
 		for i, k := range t.keys {
-			v, err := jsonValueAt(t.vals[k], path.Key("."+k))
+			v, err := jsonValueAt(t.vals[k], path.Key(JsonKeySeg(k)))
 			if err != nil {
 				return Json_Value{}, err
 			}

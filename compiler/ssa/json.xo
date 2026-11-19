@@ -1412,7 +1412,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     let (rk, rhead, rexit) = b.for_up_to_begin(b.call("list.len", it, "", [rep]), rv)
     let rn = b.call("list.index", it, "", [rep, rk])
     let rkey = b.dec_str(d, b.add(Op.Sub, it, Aux.None, [rn, b.cint(3)]))
-    let _dup = b.dec_child(d, args[1], rn, b.call("str.concat", st, "", [b.const_str("."), rkey]))
+    let _dup = b.dec_child(d, args[1], rn, b.json_rt("json_key_seg", st, [rkey]))
     b.for_up_to_end(rk, rv, rhead, rexit)
     let mem = b.json_rt("json_members", b.m.list(it), [d.src, d.tape, i])
     let iv = b.local()
@@ -1423,7 +1423,10 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     let key = b.dec_str(d, b.call("list.index", it, "", [mem, k]))
     let k1 = b.add(Op.Add, it, Aux.None, [k, b.cint(1)])
     let vn = b.call("list.index", it, "", [mem, k1])
-    let seg = b.call("str.concat", st, "", [b.const_str("."), key])
+    // a key's segment is ["KEY"], quoted: a peer's key never reaches an
+    // error's text raw (b42 of the owner's v0.51.1 evaluation), and
+    // decode_go's error leaves it out, as encoding/json
+    let seg = b.json_rt("json_key_seg", st, [key])
     let val = b.dec_child(d, args[1], vn, seg)
     let put = b.map_put(t)
     let cur = b.read(mv)

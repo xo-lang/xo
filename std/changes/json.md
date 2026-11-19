@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-11-19: security: a Map key in an error path is quoted (decision 0725)
+
+- Kind: security
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b42 (task #241)
+- Go reference: encoding/json UnmarshalTypeError.Field (Go 1.26): Map keys and indices are left out
+- Test: std/native/json_test.xo "a Map key in an error is quoted, and decode_go leaves it out as encoding/json"; golden json_dup_nested
+- Timing: none
+
+A Map key's (and a `json.Value` object key's) segment in a `DecodeErr`
+path is `["KEY"]`, quoted, where it was `.KEY` raw: a peer's key with a
+newline no longer forges a log line. `decode_go`'s "Go struct field"
+name leaves keys out, as Go: `T.m`, not `T.m.KEY`.
+
 ## 2026-11-18: feature: encode(public: true) leaves server fields out (decision 0719)
 
 - Kind: feature

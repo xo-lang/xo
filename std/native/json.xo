@@ -73,18 +73,30 @@ fn go_final(e: json.DecodeErr) -> json.DecodeErr {
   }
   // the path's bytes outside `[...]`, a byte at a time into a builder:
   // slicing the Str a byte at a time faulted inside a key's UTF-8
-  // sequence (`{"é": "x"}`, the 0616 json review's F1)
+  // sequence (`{"é": "x"}`, the 0616 json review's F1); the [...]
+  // segments, indices and Map keys, are left out as encoding/json does (a
+  // key's quoted text may hold ] or \", b42)
   var fb = BytesBuilder.new()
   var in_idx = false
+  var in_q = false
   let pb = e.path.bytes()
   var j = 1
   while j < pb.len() {
-    if pb[j] == 91 {
+    let c = pb[j]
+    if in_q {
+      if c == 92 {
+        j += 1
+      } else if c == 34 {
+        in_q = false
+      }
+    } else if in_idx && c == 34 {
+      in_q = true
+    } else if c == 91 {
       in_idx = true
-    } else if pb[j] == 93 {
+    } else if c == 93 {
       in_idx = false
-    } else if !in_idx && !(fb.len() == 0 && pb[j] == 46) {
-      fb.write_byte(pb[j])
+    } else if !in_idx && !(fb.len() == 0 && c == 46) {
+      fb.write_byte(c)
     }
     j += 1
   }
@@ -346,7 +358,8 @@ fn bad_at(src: Bytes, tape: List[Int], i: Int, var steps: List[Int]) -> Int? {
   None
 }
 
-/// The decode path (".key", "[2]") of steps from bad_at, root first.
+/// The decode path (`["key"]` with the key quoted, "[2]") of steps from
+/// bad_at, root first (b42: a peer's key never reaches the text raw).
 fn path_text(src: Bytes, tape: List[Int], steps: List[Int]) -> Str {
   var b = StrBuilder.new()
   var s = steps.len()
@@ -356,8 +369,7 @@ fn path_text(src: Bytes, tape: List[Int], steps: List[Int]) -> Str {
     if x < 0 {
       b.write("[${-x - 1}]")
     } else {
-      b.write(".")
-      b.write(jsontext.str_at(src, tape, x))
+      b.write("[${jsontext.str_at(src, tape, x).quote()}]")
     }
   }
   b.freeze()

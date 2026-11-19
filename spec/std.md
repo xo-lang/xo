@@ -2885,7 +2885,7 @@ pub fn indent(text: Str, prefix: Str = "", indent: Str = "  ") -> Str ! DecodeEr
 pub fn compact(text: Str) -> Str ! DecodeErr                                            // Go's Compact
 pub fn html_escape(text: Str) -> Str                                                    // Go's HTMLEscape: < > & U+2028 U+2029 as \u escapes
 
-struct DecodeErr { path: Str, msg: Str }    // displays as "at $.user.email: expected string"
+struct DecodeErr { path: Str, msg: Str }    // displays as "at $.user.email: expected string"; a Map key's segment is ["KEY"], quoted (decision 0725): "at $.users[\"ann\"].age: expected integer"
 fn (e: DecodeErr) go_text() -> Str    // encoding/json's text of a syntax error (decision 0553): "unexpected end of JSON input", "invalid character '}' looking for beginning of value"; a text that ends inside a literal or number gives the truncation text (Go names the literal) until DecodeErr gains a field; any other error returns msg
 
 enum Patch[T] { Absent, Null, Value(v: T) } derive Json

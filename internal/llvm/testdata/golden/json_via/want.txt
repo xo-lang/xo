@@ -5,7 +5,7 @@ round trip true
 "7.00"
 {"legs":[{"amount":"1.00","tag":"lower"}],"totals":{}} -> {"legs":[{"amount":"1.00","level":1,"tag":"LOWER"}],"totals":{}}
 {"legs":[{"amount":"1.00"},{"amount":"12.3.4"}],"totals":{}} -> at $.legs[1].amount: invalid amount "12.3.4"
-{"legs":[],"totals":{"usd":"x"}} -> at $.totals.usd: invalid amount "x"
+{"legs":[],"totals":{"usd":"x"}} -> at $.totals["usd"]: invalid amount "x"
 {"legs":[{"amount":"1.00","level":4}],"totals":{}} -> at $.legs[0].level: no level 4
 {"legs":[{"amount":12}],"totals":{}} -> at $.legs[0].amount: expected string
 patch {"amount":"3.10"} -> amount 3.10 tag "OLD"

@@ -190,6 +190,11 @@ func (p *jsonPathNode) Key(seg string) JsonPath {
 	return &jsonPathNode{up: p, seg: seg, idx: -1, n: p.n + len(seg)}
 }
 
+// JsonKeySeg is a Map key's path segment, ["KEY"] with the key quoted, so
+// a peer's key never reaches an error's text raw (b42; native:
+// llrt_json_key_seg).
+func JsonKeySeg(k string) string { return "[" + strconv.Quote(k) + "]" }
+
 // Idx is p with "[i]" after it.
 func (p *jsonPathNode) Idx(i int) JsonPath {
 	return &jsonPathNode{up: p, idx: i, n: p.n + 2 + len(strconv.Itoa(i))}
@@ -449,10 +454,21 @@ func jsonGoFinal(e *Json_DecodeErr) *Json_DecodeErr {
 	if parts[0] == "" {
 		return jsonErrAt(e.F_path, head+" into Go value of type "+parts[3])
 	}
+	// the path without its [...] segments: indices and Map keys, which
+	// encoding/json leaves out (a key's quoted text may hold ] or \")
 	var sb strings.Builder
-	in := false
+	in, q, esc := false, false, false
 	for _, c := range e.F_path[1:] {
 		switch {
+		case q && esc:
+			esc = false
+		case q && c == '\\':
+			esc = true
+		case q && c == '"':
+			q = false
+		case q:
+		case in && c == '"':
+			q = true
 		case c == '[':
 			in = true
 		case c == ']':
@@ -1101,7 +1117,7 @@ func (m *Map[K, V]) XoJsonDec(tk *Task, x any, path JsonPath) *Json_DecodeErr {
 			return JsonErr(path, "only Map[Str, V] decodes from JSON")
 		}
 		var v V
-		if err := JsonDec(tk, &v, obj.vals[k], path.Key("."+k)); err != nil {
+		if err := JsonDec(tk, &v, obj.vals[k], path.Key(JsonKeySeg(k))); err != nil {
 			return err
 		}
 		Map_put(tk, &out, kk, v)
