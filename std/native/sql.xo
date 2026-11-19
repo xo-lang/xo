@@ -2481,6 +2481,72 @@ fn pg_date(s: Str) -> time.Date? {
   Some(time.Date{year: if bc { 1 - y } else { y }, month: m, day: d})
 }
 
+/// A timestamp's text for any year as a UTC Civil (Postgres's
+/// `YYYY-MM-DD HH:MM:SS[.f][+HH[:MM[:SS]]][ BC]`, MySQL's DATETIME, or a
+/// T between the date and the time); no offset reads as UTC.
+fn wide_civil(s: Str) -> time.Civil? {
+  var t = s
+  var bc = false
+  if t.ends_with(" BC") {
+    bc = true
+    t = t[0..t.len() - 3]
+  }
+  let b = t.bytes()
+  var i = 0
+  while i < b.len() && b[i] != 32 && b[i] != 84 {
+    i += 1
+  }
+  if i >= b.len() {
+    return None
+  }
+  let d0 = pg_date(t[0..i])?
+  let d = if bc { time.Date{year: 1 - d0.year, month: d0.month, day: d0.day} } else { d0 }
+  let rest = t[i + 1..t.len()]
+  let rb = rest.bytes()
+  var j = 8
+  while j < rb.len() && rb[j] != 43 && rb[j] != 45 {
+    j += 1
+  }
+  var off = 0
+  if j < rb.len() {
+    let ps = rest[j + 1..rest.len()].split(":")
+    if ps.len() > 3 {
+      return None
+    }
+    var mul = 3600
+    for p in ps {
+      if p.len() != 2 {
+        return None
+      }
+      let n = pg_digits(p)?
+      if mul < 3600 && n > 59 {
+        return None
+      }
+      off += n * mul
+      mul /= 60
+    }
+    if rb[j] == 45 {
+      off = -off
+    }
+  }
+  let c = pg_time_of_day(rest[0..j])?
+  if c.hour == 24 {
+    return None
+  }
+  let u = time.Date{year: 1970, month: 1, day: 1}.days_until(d) * 86400 + c.hour * 3600 + c.minute * 60 + c.second - off
+  var days = u / 86400
+  if u - days * 86400 < 0 {
+    days -= 1
+  }
+  let rem = u - days * 86400
+  Some(time.Civil{
+    date: time.Date{year: 1970, month: 1, day: 1}.add_days(days),
+    time: time.ClockTime{hour: rem / 3600, minute: rem / 60 % 60, second: rem % 60, nanos: c.nanos},
+    offset: Duration.from_secs_int(0),
+    zone: "UTC",
+  })
+}
+
 /// A time column's text (pgx's Time.DecodeText): HH:MM:SS with an
 /// optional fraction; 24:00:00 is the end of the day.
 fn pg_time_of_day(s: Str) -> time.ClockTime? {
@@ -2757,6 +2823,47 @@ fn (r: Row) time_bound_opt(name: Str) -> sql.Bound[Time]? ! sql.SqlErr {
 
 fn (r: Row) time_bound(name: Str) -> sql.Bound[Time] ! sql.SqlErr {
   match r.time_bound_opt(name)? {
+    Some(b) => b
+    None => Err(mismatch(name, "a time", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) civil_opt(name: Str) -> time.Civil? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    At(t) => Some(time.civil(t, time.utc()))
+    Integer(n) => match r.unix_time(name, n) {
+      Some(t) => Some(time.civil(t, time.utc()))
+      None => Err(mismatch(name, "a time", Integer(n: n)))
+    }
+    Text(s) => match wide_civil(s) {
+      Some(c) => Some(c)
+      None => Err(mismatch(name, "a time", Text(s: s)))
+    }
+    v => Err(mismatch(name, "a time", v))
+  }
+}
+
+fn (r: Row) civil(name: Str) -> time.Civil ! sql.SqlErr {
+  match r.civil_opt(name)? {
+    Some(c) => c
+    None => Err(mismatch(name, "a time", sql.SqlValue.Null))
+  }
+}
+
+fn (r: Row) civil_bound_opt(name: Str) -> sql.Bound[time.Civil]? ! sql.SqlErr {
+  match r.get(name)? {
+    Text("infinity") => Some(sql.Bound.Infinity)
+    Text("-infinity") => Some(sql.Bound.NegInfinity)
+    _ => match r.civil_opt(name)? {
+      Some(c) => Some(sql.Bound.Finite(v: c))
+      None => None
+    }
+  }
+}
+
+fn (r: Row) civil_bound(name: Str) -> sql.Bound[time.Civil] ! sql.SqlErr {
+  match r.civil_bound_opt(name)? {
     Some(b) => b
     None => Err(mismatch(name, "a time", sql.SqlValue.Null))
   }

@@ -4239,6 +4239,7 @@ fn (i: Interval) duration() -> Duration?                        // when it has n
 pub fn uuid(u: uuid.Uuid) -> SqlValue                           // also date, time_of_day, interval, prefix, mac, hstore
 fn (r: Row) date_bound(name: Str) -> Bound[time.Date] ! SqlErr  // also _opt; infinity and -infinity
 fn (r: Row) time_bound(name: Str) -> Bound[Time] ! SqlErr       // also _opt; a timestamp or timestamptz
+fn (r: Row) civil(name: Str) -> time.Civil ! SqlErr             // also _opt, civil_bound(_opt); any year, in UTC (0614)
 enum Bound[T] { Finite(v: T), Infinity, NegInfinity }          // pgx's InfinityModifier
 pub fn date_bound(b: Bound[time.Date]) -> SqlValue              // also time_bound
 fn (r: Row) mac(name: Str) -> Bytes ! SqlErr                    // also mac_opt: macaddr (6 bytes), macaddr8 (8)
@@ -4260,7 +4261,10 @@ pub fn composite(fields: List[Str?]) -> SqlValue                // `(1,"a b",)`,
 ```
 
 `date` reads `infinity` and `-infinity` as Mismatch; `date_bound` and
-`time_bound` read them. A range keeps the edges the server sent (an
+`time_bound` read them. A timestamp past Time's range (1677-09-21 to
+2262-04-11) comes back as the server's text; `civil` reads it, and any
+other timestamp, as a UTC `time.Civil` (moved by the text's offset; no
+offset is UTC), and `civil_bound` reads infinity too (decision 0614). A range keeps the edges the server sent (an
 int4range or daterange comes back as `[a,b)`); a range bound that is
 `infinity` is a Mismatch (read the column with `str`), and a `tsrange`
 reads as UTC, as a `timestamp` column does. A `Numeric` keeps the

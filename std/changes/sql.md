@@ -1,5 +1,20 @@
 # std/sql changes
 
+## 2026-11-19: feature: Row.civil reads a timestamp of any year
+
+- Kind: feature
+- Commit: this commit
+- Found by: TestPgFuzz seed 43 case 472 (sql fuzz evidence, 2026-11-18; TestPgTimePastTime), the stdaudit gap sql.behavior.timestamp_wide
+- Go reference: database/sql scans a timestamp into time.Time for any year (pgx's Timestamp and Timestamptz, go-sql-driver's parseDateTime); Xo's Time ends at 1677 and 2262, so a Civil (decision 0614 (b))
+- Test: golden sql_pg_types (civil lines; Go, arm64, LLVM)
+- Timing: none
+
+Row.civil, civil_opt, civil_bound and civil_bound_opt read a timestamp, timestamptz or MySQL DATETIME
+column as a UTC time.Civil: a Time as its civil in UTC, and the text a driver keeps past Time's range
+(`294276-12-31 23:59:59.999999+00`, `0044-03-15 12:00:00 BC`, `9999-12-31 23:59:59`) parsed and
+moved to UTC by its offset (no offset is UTC). infinity and -infinity are Mismatch in civil and
+Bound variants in civil_bound; MySQL's zero date and malformed text are Mismatch.
+
 ## 2026-11-18: fix: MySQL names a VECTOR column VECTOR
 
 - Kind: fix

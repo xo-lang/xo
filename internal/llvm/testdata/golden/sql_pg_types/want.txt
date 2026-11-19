@@ -49,6 +49,26 @@ date_bound_opt c3: None
 time_bound c1: Infinity
 time_bound c2: NegInfinity
 time_bound c0: column c0: expected a time, found text
+civil c0: Civil{date: Date{year: 294276, month: 12, day: 31}, time: ClockTime{hour: 23, minute: 59, second: 59, nanos: 999999000}, offset: 0s, zone: "UTC"}
+civil c1: Civil{date: Date{year: -43, month: 3, day: 15}, time: ClockTime{hour: 12, minute: 0, second: 0, nanos: 0}, offset: 0s, zone: "UTC"}
+civil c2: Civil{date: Date{year: 2824, month: 1, day: 2}, time: ClockTime{hour: 11, minute: 4, second: 5, nanos: 0}, offset: 0s, zone: "UTC"}
+civil c3: Civil{date: Date{year: 1677, month: 9, day: 21}, time: ClockTime{hour: 0, minute: 0, second: 0, nanos: 0}, offset: 0s, zone: "UTC"}
+civil c4: Civil{date: Date{year: 9999, month: 12, day: 31}, time: ClockTime{hour: 23, minute: 59, second: 59, nanos: 500000000}, offset: 0s, zone: "UTC"}
+civil c5: Civil{date: Date{year: 2024, month: 1, day: 1}, time: ClockTime{hour: 21, minute: 33, second: 50, nanos: 0}, offset: 0s, zone: "UTC"}
+civil c6: Civil{date: Date{year: 0, month: 12, day: 31}, time: ClockTime{hour: 23, minute: 30, second: 0, nanos: 0}, offset: 0s, zone: "UTC"}
+civil c7: Civil{date: Date{year: 1970, month: 1, day: 2}, time: ClockTime{hour: 0, minute: 0, second: 1, nanos: 0}, offset: 0s, zone: "UTC"}
+civil c8: column c8: expected a time, found text
+civil c9: column c9: expected a time, found text
+civil c10: column c10: expected a time, found NULL
+civil c11: column c11: expected a time, found text
+civil c12: column c12: expected a time, found text
+civil c13: column c13: expected a time, found text
+civil c14: column c14: expected a time, found text
+civil_bound c0: Finite(v: Civil{date: Date{year: 294276, month: 12, day: 31}, time: ClockTime{hour: 23, minute: 59, second: 59, nanos: 999999000}, offset: 0s, zone: "UTC"})
+civil_bound c8: Infinity
+civil_bound c9: NegInfinity
+civil_opt c10: None
+civil_bound_opt c10: None
 mac c0: "08002b010203"
 mac c1: "08002b0102030405"
 mac c2: column c2: expected a macaddr, found text

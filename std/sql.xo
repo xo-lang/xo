@@ -643,6 +643,17 @@ fn (r: Row) date_bound(name: Str) -> Bound[time.Date] ! SqlErr
 fn (r: Row) date_bound_opt(name: Str) -> Bound[time.Date]? ! SqlErr
 fn (r: Row) time_bound(name: Str) -> Bound[Time] ! SqlErr
 fn (r: Row) time_bound_opt(name: Str) -> Bound[Time]? ! SqlErr
+/// A timestamp or timestamptz (or MySQL DATETIME) column as a UTC
+/// wall clock for any year (decision 0614): a Time is its civil in UTC,
+/// and text the driver kept because the year is past Time's range
+/// (`294276-12-31 23:59:59+00`, `0044-03-15 12:00:00 BC`, MySQL's 9999)
+/// is parsed and moved to UTC by its offset; text with no offset is read
+/// as UTC. infinity and -infinity are Mismatch in civil and Bound
+/// variants in civil_bound; MySQL's zero date is Mismatch.
+fn (r: Row) civil(name: Str) -> time.Civil ! SqlErr
+fn (r: Row) civil_opt(name: Str) -> time.Civil? ! SqlErr
+fn (r: Row) civil_bound(name: Str) -> Bound[time.Civil] ! SqlErr
+fn (r: Row) civil_bound_opt(name: Str) -> Bound[time.Civil]? ! SqlErr
 /// A macaddr (6 bytes) or macaddr8 (8 bytes) column (pgx reads both into
 /// net.HardwareAddr).
 fn (r: Row) mac(name: Str) -> Bytes ! SqlErr

@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Sql_uuid is `sql.uuid(u)`.
@@ -333,6 +334,104 @@ func asTimeBound(v any) (Sql_Bound[Time], bool) {
 		}
 	}
 	return Sql_Bound[Time]{}, false
+}
+
+// asCivil reads a timestamp of any year as a UTC Civil (decision 0614,
+// task #375): a Time in UTC, or text a driver kept past Time's range.
+func asCivil(v any) (Time_Civil, bool) {
+	switch x := v.(type) {
+	case Time:
+		return Time_civil(nil, x, Time_utc(nil)), true
+	case string:
+		return wideCivil(x)
+	}
+	return Time_Civil{}, false
+}
+
+func asCivilBound(v any) (Sql_Bound[Time_Civil], bool) {
+	switch v {
+	case "infinity":
+		return Sql_Bound[Time_Civil]{Tag: 2}, true
+	case "-infinity":
+		return Sql_Bound[Time_Civil]{Tag: 3}, true
+	}
+	c, ok := asCivil(v)
+	return boundFinite(c), ok
+}
+
+// wideCivil is std/native/sql.xo's wide_civil: YYYY-MM-DD HH:MM:SS[.f],
+// an optional +HH[:MM[:SS]] offset and ` BC`, moved to UTC.
+func wideCivil(s string) (Time_Civil, bool) {
+	t, bc := strings.CutSuffix(s, " BC")
+	i := strings.IndexAny(t, " T")
+	if i < 0 {
+		return Time_Civil{}, false
+	}
+	d, ok := pgDate(t[:i])
+	if !ok {
+		return Time_Civil{}, false
+	}
+	if bc {
+		d.F_year = 1 - d.F_year
+	}
+	rest := t[i+1:]
+	j := 8
+	for j < len(rest) && rest[j] != '+' && rest[j] != '-' {
+		j++
+	}
+	if j > len(rest) {
+		j = len(rest)
+	}
+	off := int64(0)
+	if j < len(rest) {
+		ps := strings.Split(rest[j+1:], ":")
+		if len(ps) > 3 {
+			return Time_Civil{}, false
+		}
+		mul := int64(3600)
+		for _, p := range ps {
+			n, ok := pgDigits(p)
+			if len(p) != 2 || !ok || (mul < 3600 && n > 59) {
+				return Time_Civil{}, false
+			}
+			off += n * mul
+			mul /= 60
+		}
+		if rest[j] == '-' {
+			off = -off
+		}
+	}
+	c, ok := pgTimeOfDay(rest[:j])
+	if !ok || c.F_hour == 24 {
+		return Time_Civil{}, false
+	}
+	g := time.Date(int(d.F_year), time.Month(d.F_month), int(d.F_day), int(c.F_hour), int(c.F_minute), int(c.F_second), 0, time.UTC)
+	u := time.Unix(g.Unix()-off, 0).UTC()
+	return Time_Civil{
+		F_date: Time_Date{F_year: int64(u.Year()), F_month: int64(u.Month()), F_day: int64(u.Day())},
+		F_time: Time_ClockTime{F_hour: int64(u.Hour()), F_minute: int64(u.Minute()), F_second: int64(u.Second()), F_nanos: c.F_nanos},
+		F_zone: "UTC",
+	}, true
+}
+
+// M_civil is `row.civil(name)`.
+func (r Sql_Row) M_civil(_ *Task, name string) Result[Time_Civil, Sql_SqlErr] {
+	return sqlCol(r, name, "a time", asCivil)
+}
+
+// M_civil_opt is `row.civil_opt(name)`.
+func (r Sql_Row) M_civil_opt(_ *Task, name string) Result[Option[Time_Civil], Sql_SqlErr] {
+	return sqlColOpt(r, name, "a time", asCivil)
+}
+
+// M_civil_bound is `row.civil_bound(name)`.
+func (r Sql_Row) M_civil_bound(_ *Task, name string) Result[Sql_Bound[Time_Civil], Sql_SqlErr] {
+	return sqlCol(r, name, "a time", asCivilBound)
+}
+
+// M_civil_bound_opt is `row.civil_bound_opt(name)`.
+func (r Sql_Row) M_civil_bound_opt(_ *Task, name string) Result[Option[Sql_Bound[Time_Civil]], Sql_SqlErr] {
+	return sqlColOpt(r, name, "a time", asCivilBound)
 }
 
 func pgMac(s string) (Bytes, bool) {
