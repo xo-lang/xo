@@ -1625,9 +1625,26 @@ pub fn erfinv(x0: Float) -> Float {
 
 pub fn erfcinv(x: Float) -> Float { erfinv(1.0 - x) }
 
-const GAM_P: List[Float] = [1.60119522476751861407e-04, 1.19135147006586384913e-03, 1.04213797561761569935e-02, 4.76367800457137231464e-02, 2.07448227648435975150e-01, 4.94214826801497100753e-01, 9.99999999999999996796e-01]
-const GAM_Q: List[Float] = [-2.31581873324120129819e-05, 5.39605580493303397842e-04, -4.45641913851797240494e-03, 1.18139785222060435552e-02, 3.58236398605498653373e-02, -2.34591795718243348568e-01, 7.14304917030273074085e-02, 1.00000000000000000320e+00]
-const GAM_S: List[Float] = [7.87311395793093628397e-04, -2.29549961613378126380e-04, -2.68132617805781232825e-03, 3.47222221605458667310e-03, 8.33333333333482257126e-02]
+const GAM_P0: Float = 1.60119522476751861407e-04
+const GAM_P1: Float = 1.19135147006586384913e-03
+const GAM_P2: Float = 1.04213797561761569935e-02
+const GAM_P3: Float = 4.76367800457137231464e-02
+const GAM_P4: Float = 2.07448227648435975150e-01
+const GAM_P5: Float = 4.94214826801497100753e-01
+const GAM_P6: Float = 9.99999999999999996796e-01
+const GAM_Q0: Float = -2.31581873324120129819e-05
+const GAM_Q1: Float = 5.39605580493303397842e-04
+const GAM_Q2: Float = -4.45641913851797240494e-03
+const GAM_Q3: Float = 1.18139785222060435552e-02
+const GAM_Q4: Float = 3.58236398605498653373e-02
+const GAM_Q5: Float = -2.34591795718243348568e-01
+const GAM_Q6: Float = 7.14304917030273074085e-02
+const GAM_Q7: Float = 1.00000000000000000320e+00
+const GAM_S0: Float = 7.87311395793093628397e-04
+const GAM_S1: Float = -2.29549961613378126380e-04
+const GAM_S2: Float = -2.68132617805781232825e-03
+const GAM_S3: Float = 3.47222221605458667310e-03
+const GAM_S4: Float = 8.33333333333482257126e-02
 
 fn stirling(x: Float) -> (Float, Float) {
   if x > 200.0 {
@@ -1635,9 +1652,8 @@ fn stirling(x: Float) -> (Float, Float) {
   }
   let sqrt_two_pi = 2.5066282746310007
   let max_stirling = 143.01608
-  let s = GAM_S
   var w = 1.0 / x
-  w = 1.0 + w * ((((s[0] * w + s[1]) * w + s[2]) * w + s[3]) * w + s[4])
+  w = 1.0 + w * ((((GAM_S0 * w + GAM_S1) * w + GAM_S2) * w + GAM_S3) * w + GAM_S4)
   var y1 = exp(x)
   var y2 = 1.0
   if x > max_stirling {
@@ -1734,10 +1750,8 @@ pub fn gamma(x0: Float) -> Float {
     return z
   }
   x = x - 2.0
-  let gp = GAM_P
-  let gq = GAM_Q
-  p = (((((x * gp[0] + gp[1]) * x + gp[2]) * x + gp[3]) * x + gp[4]) * x + gp[5]) * x + gp[6]
-  q = ((((((x * gq[0] + gq[1]) * x + gq[2]) * x + gq[3]) * x + gq[4]) * x + gq[5]) * x + gq[6]) * x + gq[7]
+  p = (((((x * GAM_P0 + GAM_P1) * x + GAM_P2) * x + GAM_P3) * x + GAM_P4) * x + GAM_P5) * x + GAM_P6
+  q = ((((((x * GAM_Q0 + GAM_Q1) * x + GAM_Q2) * x + GAM_Q3) * x + GAM_Q4) * x + GAM_Q5) * x + GAM_Q6) * x + GAM_Q7
   z * p / q
 }
 

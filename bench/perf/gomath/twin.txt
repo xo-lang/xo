@@ -9,3 +9,5 @@
 - - next_after
 - - remainder
 - - acosh
+- - exp
+- - pow

@@ -67,6 +67,14 @@ func main() {
 		for i := 0; i < n; i++ {
 			sum += b(math.Acosh(arg(i, 1, 1e6)))
 		}
+	case "exp":
+		for i := 0; i < n; i++ {
+			sum += b(math.Exp(arg(i, -20, 20)))
+		}
+	case "pow":
+		for i := 0; i < n; i++ {
+			sum += b(math.Pow(arg(i, 0.5, 30), arg(i*7, -20, 20)))
+		}
 	}
 	fmt.Printf("%s %d\n", w, sum)
 }

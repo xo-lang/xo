@@ -74,9 +74,19 @@ fn acosh_all() -> Int {
   n
 }
 
-fn main(os: Os) {
-  let args = os.env.args()
-  let w = if args.len() > 0 { args[0] } else { "none" }
+fn exp_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, -20.0, 20.0).exp().to_bits() >> 32 }
+  n
+}
+
+fn pow_all() -> Int {
+  var n = 0
+  for i in 0..N { n += arg(i, 0.5, 30.0).pow(arg(i * 7, -20.0, 20.0)).to_bits() >> 32 }
+  n
+}
+
+fn run(w: Str) -> Int {
   var n = 0
   if w == "erf" {
     n = erf_all()
@@ -96,6 +106,21 @@ fn main(os: Os) {
     n = remainder_all()
   } else if w == "acosh" {
     n = acosh_all()
+  } else if w == "exp" {
+    n = exp_all()
+  } else if w == "pow" {
+    n = pow_all()
   }
+  n
+}
+
+/// gomath WORK [REPEAT]: REPEAT (1) runs of WORK, for an --ab long
+/// enough to judge; the twin runs once.
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = if args.len() > 0 { args[0] } else { "none" }
+  let reps = if args.len() > 1 { Int.parse(args[1]) ?? 1 } else { 1 }
+  var n = 0
+  for _ in 0..reps { n = run(w) }
   os.stdio.println("${w} ${n}")
 }

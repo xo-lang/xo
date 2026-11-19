@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-19: perf: Float.gamma reads its polynomial coefficients as constants, not from const Lists
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/gomath (task #406): gamma at 1.16 times Go's portable algorithm on LLVM (linux/amd64), lines indexing GAM_P, GAM_Q and GAM_S 12.7% of a CPU profile
+- Go reference: math gamma.go (_gamP, _gamQ, _gamS are arrays indexed by constants), Go 1.26
+- Change: std/native/llrt gomath gamma and stirling use scalar constants (GAM_P0 to GAM_P6, GAM_Q0 to GAM_Q7, GAM_S0 to GAM_S4) in the same order; each List read went through the constant's first-use check and a bounds-checked load. Results are bit for bit the same
+- Measured: xo bench --ab on the linux/arm64 offload host, bench/perf/gomath gamma 20 (native arm64): wall 1234 to 1156 ms, B/A 0.936 (95% 0.903 to 0.952), 4 rounds
+- Test: bench/perf/gomath twincheck (gamma's sum equals Go's); the existing math goldens
+- Affected: Xo 0.54.0 and earlier (speed only)
+- Shipped in: not yet released
+
 ## 2026-11-19: security: a NUL byte in a dialed, listened or looked up host or port fails the call (GO-2026-4971 class)
 
 - Kind: security
