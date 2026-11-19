@@ -208,8 +208,11 @@ func stickyExp(big_, small Big_BigFloat, p uint) (int64, bool) {
 
 // stickyBit is 0.5 * 2^e with small's sign, precision and mode.
 func stickyBit(small Big_BigFloat, e int64) *big.Float {
-	z := new(big.Float).SetPrec(uint(small.F_prec)).SetMode(big.RoundingMode(small.F_mode.Tag - 1))
-	z.SetMantExp(big.NewFloat(0.5), int(e))
+	// SetMantExp takes its argument's precision (53 for NewFloat), so the
+	// precision is set after it: an add at precision 0 rounds to the larger
+	// operand precision, which must stay small's (task #434)
+	z := new(big.Float).SetMantExp(big.NewFloat(0.5), int(e))
+	z.SetPrec(uint(small.F_prec)).SetMode(big.RoundingMode(small.F_mode.Tag - 1))
 	if small.F_neg {
 		z.Neg(z)
 	}

@@ -1,5 +1,18 @@
 # std/big changes
 
+## 2026-11-19: fix: BigFloat add and sub of far apart exponents keep Go's precision (Go backend)
+
+- Kind: fix
+- Commit: this push
+- Found by: main red after 308558569 (TestStdCorpora/go/bigfloat, task #434)
+- Go reference: math/big Float.Add and Sub at precision 0 (the larger operand precision)
+- Test: corpus bigfloat "Float add is Go's" and "Float sub is Go's" (fail before); golden bigfloat_far_exps
+- Timing: none
+
+On the Go backend, an add or sub whose small operand stood in as a sticky
+bit took 53 bits of precision from that stand in, so a result at
+precision 0 could be 53 or 64 bits where Go gives 65.
+
 ## 2026-11-18: fix: BigFloat add and sub of far apart exponents on the Go backend
 
 - Kind: fix
