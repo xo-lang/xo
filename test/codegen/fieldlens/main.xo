@@ -1,0 +1,68 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): the length of a List
+// field of a struct parameter that the function indexes is loaded once at
+// entry, as a List parameter's is, not at every index in the loop (task
+// #428, 2026-11-19). Before, both loops loaded q.dc's, q.pos's and
+// q.cost's lengths (`ldr xN, [xM, #8]`) on every iteration.
+
+struct Q {
+  dc: List[Int]
+  cost: List[Float32]
+  pos: List[Int]
+}
+
+fn ext(x: Int) -> Int {
+  if x > 1000000 {
+    return ext(x - 1) + 1
+  }
+  x
+}
+
+// No call in the loop.
+fn fields_nocall(q: Q, n: Int) -> Int {
+  // arm64: -"(?s)_b1:.*ldr x[0-9]+, \[x[0-9]+, #8\]"
+  var s = 0
+  var i = 0
+  while i < n {
+    s = s + q.dc[q.pos[i]] + Int(q.cost[i])
+    i += 1
+  }
+  s
+}
+
+// A call in the loop: the lengths live in callee-saved registers.
+fn fields_call(q: Q, n: Int) -> Int {
+  // arm64: -"(?s)_b1:.*ldr x[0-9]+, \[x[0-9]+, #8\]"
+  var s = 0
+  var i = 0
+  while i < n {
+    s = ext(s + q.dc[q.pos[i]] + Int(q.cost[i]))
+    i += 1
+  }
+  s
+}
+
+// A loop that grows a field list reads the new length after each push:
+// the entry's length belongs to the value the function was given only.
+fn fields_grow(q0: Q, n: Int) -> Int {
+  var q = q0
+  var s = 0
+  var i = 0
+  while i < n {
+    q.dc.push(i)
+    s += q.dc[q.dc.len() - 1] + q.dc.len()
+    i += 1
+  }
+  s
+}
+
+fn main(os: Os) {
+  var a: List[Int] = []
+  var c: List[Float32] = []
+  for i in 0..100 {
+    a.push(i)
+    c.push(Float32(i))
+  }
+  let q = Q{dc: a, cost: c, pos: a}
+  let n = if os.env.args().len() > 5 { 50 } else { 100 }
+  os.stdio.println("${fields_nocall(q, n)} ${fields_call(q, n)} ${fields_grow(q, n)}")
+}

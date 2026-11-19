@@ -1075,11 +1075,18 @@ fn (var g: G) isel() {
       if g.has_ref_ptr {
         g.by_ref_entry(ptrs)
       }
-      for p in g.f.blocks[b].params {
+      for (k, p) in g.f.blocks[b].params.indexed() {
         if g.vkind(p) == ssa.Kind.List {
           // known for the whole function (dead code removes the load
           // when nothing uses it)
           let _n = g.list_len(g.vals[p][0])
+        } else if !ptrs.contains(k) {
+          // so are the lengths of the List fields of a struct or tuple
+          // passed in registers that the function indexes (task #428:
+          // a loop over q.dc[i] loaded q.dc's length at every index)
+          for w in g.indexed_field_lists(p) {
+            let _n = g.list_len(g.vals[p][w])
+          }
         }
       }
     }
@@ -3412,13 +3419,22 @@ fn (var g: G) list_words(p: Int) -> List[Int] {
 }
 
 /// Chooses the List fields of struct or tuple parameter p of a loop
-/// header whose lengths travel with it: those the function indexes or
-/// sets through a field of p itself (`h.chunks[off] = c` in the loop),
-/// so a length no bounds check reads takes no register across the loop.
+/// header whose lengths travel with it (indexed_field_lists).
 fn (var g: G) plan_field_lens(p: Int) {
+  let out = g.indexed_field_lists(p)
+  if !out.is_empty() {
+    g.field_lens[p] = out
+  }
+}
+
+/// The words of the List fields of struct or tuple value p that the
+/// function indexes or sets through a field of p itself
+/// (`h.chunks[off] = c`), so a length no bounds check reads takes no
+/// register.
+fn (var g: G) indexed_field_lists(p: Int) -> List[Int] {
   let k = g.vkind(p)
   if k != ssa.Kind.Struct && k != ssa.Kind.Tuple {
-    return
+    return []
   }
   let t = g.vty(p)
   var out: List[Int] = []
@@ -3447,9 +3463,7 @@ fn (var g: G) plan_field_lens(p: Int) {
       out.push(w)
     }
   }
-  if !out.is_empty() {
-    g.field_lens[p] = out
-  }
+  out
 }
 
 /// The moves of the lengths of p's lists (len_param) from the words aw.
