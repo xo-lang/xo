@@ -1,0 +1,476 @@
+// Loop splitting (task #426, 2026-11-19): register allocation gives a
+// register one location for its whole range, so a value live across a
+// call somewhere in the function takes a callee saved register or a
+// slot for all of it, the stretch of an inner loop without calls
+// included. std/brotli's update_nodes kept the words of two var
+// parameters in x24 to x28 (read only around its calls) while its inner
+// loop reloaded nine invariants from the stack every iteration.
+//
+// loop_split allocates the function once (shrink_split, cluster_mem and
+// regalloc as usual), keeps the locations and throws the rest away. Each
+// innermost loop without calls or switches whose live registers crowd
+// the callee saved ones, and where some register it names had no
+// register in that first allocation, then gets its own names for every
+// register it names and every one passing through it that had a register
+// there, as shrink_split does for the frame's region: an edge block on
+// each edge into the loop copies the outside names to the inside ones,
+// and one on each edge out of it the reverse. Inside, the names cross no
+// call and any register fits them. The function is then allocated again.
+// A value passing through in a slot is left alone (its copies would be a
+// load and a store at every entry and exit: splitting every loop that
+// way cost brotli 0.24% more instructions, 2026-11-19); registers a
+// landing pad of the loop reads keep their one name (the pad reads one
+// location). The edge moves are never coalesced (the ranges would join
+// again) but each side is the other's preferred register, so a name that
+// keeps its register costs no move.
+
+/// The most loops a function splits (each recomputes the liveness).
+const MAX_SPLIT_LOOPS = 16
+
+/// The fewest registers live in a loop that it is split for: beside the
+/// ten callee saved registers, those the inside could use too.
+const SPLIT_MIN_LIVE = 11
+
+/// The most edges into and out of a split loop.
+const MAX_SPLIT_EDGES = 8
+/// The largest function (in instructions) loop_split looks at.
+const SPLIT_MAX_INSTS = 2000
+
+/// Splits the innermost loops without calls (see the top of the file).
+fn (var g: G) loop_split(first: SplitFirst) -> Bool {
+  var done = 0
+  var tried: List[Int] = []
+  // the liveness (split_loop computes it when it must)
+  var sl = SplitLive{ok: false, idx: [], lv: Live{ins: [], succs: []}}
+  while done < MAX_SPLIT_LOOPS {
+    let body = g.split_candidate(tried)
+    if body.is_empty() {
+      break
+    }
+    if g.split_loop(body, tried[tried.len() - 1], first, sl) {
+      done += 1
+    }
+  }
+  done > 0
+}
+
+/// The body of the next innermost loop not tried (its header added to
+/// tried), or empty: blocks in the layout, no call, no switch.
+fn (var g: G) split_candidate(var tried: List[Int]) -> List[Bool] {
+  let order = g.hot + g.cold
+  let nb = g.blocks.len()
+  var inorder: List[Bool] = List.with_capacity(nb)
+  var preds: List[List[Int]] = List.with_capacity(nb)
+  for _ in 0..nb {
+    inorder.push(false)
+    preds.push([])
+  }
+  for b in order {
+    inorder[b] = true
+  }
+  for b in order {
+    for t in g.msuccs(b) {
+      if t >= 0 && t < nb && inorder[t] {
+        preds[t].push(b)
+      }
+    }
+  }
+  // back edges by depth first search from the entry
+  var state: List[Int] = List.with_capacity(nb)
+  for _ in 0..nb {
+    state.push(0)
+  }
+  var backs: List[(Int, Int)] = []
+  let b0 = order[0]
+  var stack: List[(Int, Int)] = [(b0, 0)]
+  state[b0] = 1
+  while !stack.is_empty() {
+    let top = stack.len() - 1
+    let (b, i) = stack[top]
+    let ss = g.msuccs(b)
+    if i >= ss.len() {
+      state[b] = 2
+      let _p = stack.pop()
+      continue
+    }
+    stack[top] = (b, i + 1)
+    let t = ss[i]
+    if t < 0 || t >= nb || !inorder[t] {
+      continue
+    }
+    if state[t] == 0 {
+      state[t] = 1
+      stack.push((t, 0))
+    } else if state[t] == 1 {
+      backs.push((b, t))
+    }
+  }
+  var heads: List[Int] = []
+  for (_, h) in backs {
+    if !heads.contains(h) {
+      heads.push(h)
+    }
+  }
+  for h in heads {
+    if tried.contains(h) {
+      continue
+    }
+    tried.push(h)
+    // the natural loop of every back edge to h
+    var body: List[Bool] = List.with_capacity(nb)
+    for _ in 0..nb {
+      body.push(false)
+    }
+    body[h] = true
+    var work: List[Int] = []
+    for (f, t) in backs {
+      if t == h {
+        work.push(f)
+      }
+    }
+    while !work.is_empty() {
+      let b = work.pop() ?? 0
+      if body[b] {
+        continue
+      }
+      body[b] = true
+      for p in preds[b] {
+        work.push(p)
+      }
+    }
+    // innermost: no other header inside
+    var ok = true
+    for h2 in heads {
+      if h2 != h && body[h2] {
+        ok = false
+      }
+    }
+    for b in 0..nb {
+      if !ok {
+        break
+      }
+      if !body[b] {
+        continue
+      }
+      for inst in g.blocks[b].insts {
+        if inst.kind == K_CALL || inst.kind == K_SWITCH || inst.kind == K_ENTRY || inst.kind == K_RET {
+          ok = false
+        }
+      }
+    }
+    if ok {
+      return body
+    }
+  }
+  []
+}
+
+/// Splits the loop of body (see the top of the file); false when it was
+/// left as it was.
+fn (var g: G) split_loop(body: List[Bool], h: Int, first: SplitFirst, var sl: SplitLive) -> Bool {
+  let order = g.hot + g.cold
+  var edges: List[FEdge] = []
+  for b in order {
+    for t in g.real_succs(b) {
+      if body[b] != body[t] {
+        var dup = false
+        for e in edges {
+          dup = dup || (e.from == b && e.to == t)
+        }
+        if !dup {
+          edges.push(FEdge{from: b, to: t, kind: if body[t] { 1 } else { 2 }})
+        }
+      }
+    }
+  }
+  if edges.is_empty() || edges.len() > MAX_SPLIT_EDGES {
+    return false
+  }
+  let n = g.fp.len()
+  // the registers the loop names; none without a register in the first
+  // allocation: nothing to gain (checked before the liveness, which
+  // costs a pass over the function)
+  var named = new_bits(n)
+  var spilled = false
+  for b in order {
+    if !body[b] {
+      continue
+    }
+    for inst in g.blocks[b].insts {
+      for d in inst.defs {
+        named[d / BW] = named[d / BW] | bit_mask(d)
+        spilled = spilled || first.reg(d, h) < 0
+      }
+      for u in inst.us {
+        named[u / BW] = named[u / BW] | bit_mask(u)
+        spilled = spilled || first.reg(u, h) < 0
+      }
+    }
+  }
+  if !spilled {
+    return false
+  }
+  // a split changes the liveness only in its loop and its new edge
+  // blocks (the loops are innermost, so disjoint): computed again only
+  // when an edge of this loop leads into such a block
+  var fresh = sl.ok
+  for e in edges {
+    fresh = fresh && e.to < sl.idx.len() && sl.idx[e.to] >= 0
+  }
+  if !fresh {
+    sl = g.split_live()
+  }
+  let idx = sl.idx
+  let lv = sl.lv
+  // the registers named on both sides: bit 1 outside, bit 2 inside
+  var side: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    side.push(0)
+  }
+  for b in order {
+    let bit = if body[b] { 2 } else { 1 }
+    // (an edge block of a split before has no entry: it copies names
+    // its own instructions show)
+    if b < idx.len() && idx[b] >= 0 {
+      for v32 in lv.ins[idx[b]] {
+        let v = Int(v32)
+        side[v] = side[v] | bit
+      }
+    }
+    for inst in g.blocks[b].insts {
+      for d in inst.defs {
+        side[d] = side[d] | bit
+      }
+      for u in inst.us {
+        side[u] = side[u] | bit
+      }
+    }
+  }
+  // the general registers the loop names or carries
+  var live = 0
+  for v in 1..n {
+    if (side[v] & 2) != 0 && !g.fp[v] {
+      live += 1
+    }
+  }
+  if live < SPLIT_MIN_LIVE {
+    return false
+  }
+  // a landing pad of a faulting point in the loop is entered with the
+  // locations of the names it reads: those keep one name
+  var keep = new_bits(n)
+  for b in order {
+    if !body[b] {
+      continue
+    }
+    var pads: List[Int] = []
+    for inst in g.blocks[b].insts {
+      if inst.pad >= 0 {
+        pads.push(g.pad_of(inst.pad))
+      }
+      if inst.kind == K_JUMP {
+        for t in inst.targets[1..] {
+          pads.push(t)
+        }
+      }
+    }
+    for pb in pads {
+      let pk = if pb >= 0 && pb < idx.len() { idx[pb] } else { -1 }
+      if pk < 0 {
+        return false
+      }
+      for v32 in lv.ins[pk] {
+        let v = Int(v32)
+        keep[v / BW] = keep[v / BW] | bit_mask(v)
+      }
+    }
+  }
+  var m: List[Int] = List.with_capacity(n)
+  for v in 0..n {
+    m.push(v)
+  }
+  var any = false
+  for v in 1..n {
+    // a value only passing through is split when it held a register
+    // across the loop (in a slot, the copies would be a load and a store
+    // each way)
+    if side[v] == 3 && !g.wide.contains(v) && !bits_has(keep, v) && (bits_has(named, v) || first.reg(v, h) >= 0) {
+      m[v] = g.new_vreg(g.fp[v])
+      any = true
+    }
+  }
+  if !any {
+    return false
+  }
+  for b in order {
+    if !body[b] {
+      continue
+    }
+    var out: List[Inst] = List.with_capacity(g.blocks[b].insts.len())
+    for inst in g.blocks[b].insts {
+      var c = inst
+      c.defs = rename_regs(inst.defs, m)
+      c.us = rename_regs(inst.us, m)
+      c.srcs = rename_srcs(inst.srcs, m)
+      if !c.fx.is_empty() {
+        c.fx[0].fargs = rename_srcs(c.fx[0].fargs, m)
+      }
+      out.push(c)
+    }
+    g.blocks[b].insts = out
+  }
+  // the edge blocks: an entry one before the loop's block it enters, an
+  // exit one before the block it leaves to (where the layout falls
+  // through to it), each hot or cold as that block is
+  var before: Map[Int, List[Int]] = {}
+  for e in edges {
+    let x = g.blocks.len()
+    g.blocks.push(MBlock{id: g.nblock, cold: g.blocks[e.to].cold})
+    g.nblock += 1
+    var defs: List[Int] = []
+    var srcs: List[Src] = []
+    var us: List[Int] = []
+    for v32 in lv.ins[idx[e.to]] {
+      let v = Int(v32)
+      if v != 0 && m[v] != v {
+        let (d, s) = if e.kind == 1 { (m[v], v) } else { (v, m[v]) }
+        defs.push(d)
+        srcs.push(rsrc(s))
+        us.push(s)
+      }
+    }
+    var ins: List[Inst] = []
+    if !defs.is_empty() {
+      ins.push(Inst{kind: K_PMOVE, defs: defs, srcs: srcs, us: us, fl: IF_NOCOAL | IF_SPLIT})
+    }
+    ins.push(Inst{kind: K_JUMP, targets: [e.to]})
+    g.blocks[x].insts = ins
+    g.retarget(e.from, e.to, x)
+    var l = before.get(e.to) ?? []
+    l.push(x)
+    before.put(e.to, l)
+  }
+  let none: Map[Int, List[Int]] = {}
+  g.hot = with_edges(g.hot, before, none)
+  g.cold = with_edges(g.cold, before, none)
+  true
+}
+
+/// The successors of block b but a jump's landing pad (K_JUMP's
+/// targets[1], entered only by the unwinder).
+fn (g: G) real_succs(b: Int) -> List[Int] {
+  let k = g.term_at(b)
+  if k >= 0 && g.blocks[b].insts[k].kind == K_JUMP {
+    return [g.blocks[b].insts[k].targets[0]]
+  }
+  g.msuccs(b)
+}
+
+/// The first allocation of loop_split: the locations, shrink_split's
+/// region and its inside names.
+struct SplitFirst {
+  loc: List[Loc]
+  region: List[Bool]
+  m: List[Int]
+}
+
+/// Register v's register in the first allocation at loop header h (its
+/// inside name when shrink_split put h in its region), or -1.
+fn (f: SplitFirst) reg(v: Int, h: Int) -> Int {
+  var w = v
+  if h < f.region.len() && f.region[h] && v < f.m.len() {
+    w = f.m[v]
+  }
+  if w < f.loc.len() { f.loc[w].reg } else { -1 }
+}
+
+/// Whether the function has a loop loop_split could split: calls, and
+/// an innermost loop without them.
+fn (var g: G) split_any() -> Bool {
+  if g.x86 || (g.hot + g.cold).is_empty() {
+    return false
+  }
+  var calls = false
+  var size = 0
+  for b in g.hot + g.cold {
+    size += g.blocks[b].insts.len()
+    for inst in g.blocks[b].insts {
+      if inst.kind == K_CALL && !inst.has(IF_TAIL) {
+        calls = true
+      }
+    }
+  }
+  // a large function's second allocation costs more than its loops
+  // gain (and stretches the build's longest function)
+  if !calls || size > SPLIT_MAX_INSTS {
+    return false
+  }
+  var tried: List[Int] = []
+  !g.split_candidate(tried).is_empty()
+}
+
+/// The state the first allocation of loop_split leaves beside its
+/// locations (SplitFirst), put back when no loop is split.
+struct SplitAlloc {
+  blocks: List[MBlock]
+  hot: List[Int]
+  cold: List[Int]
+  nblock: Int
+  fp: List[Bool]
+  base: Int
+  order: List[Int]
+  ninst: Int
+  occ_regs: List[List[Int]]
+  saved: List[Int]
+  slots: Int
+  vranges: List[List[Int]]
+  fl: List[Bool]
+  pro: Int
+  fedge: List[Int]
+  shrink: Bool
+}
+
+/// The liveness of the function's registers per block in the layout
+/// (idx: a block's place in it, -1 for none).
+struct SplitLive {
+  ok: Bool
+  idx: List[Int]
+  lv: Live
+}
+
+fn (g: G) split_live() -> SplitLive {
+  let order = g.hot + g.cold
+  let nb = g.blocks.len()
+  let n = g.fp.len()
+  var idx: List[Int] = List.with_capacity(nb)
+  for _ in 0..nb {
+    idx.push(-1)
+  }
+  for (k, b) in order.indexed() {
+    idx[b] = k
+  }
+  var gens: List[List[Int]] = []
+  var kills: List[List[Int]] = []
+  var succs: List[List[Int]] = []
+  var kst: List[Int] = List.with_capacity(n)
+  var ust: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    kst.push(0)
+    ust.push(0)
+  }
+  for (k, b) in order.indexed() {
+    var gl: List[Int] = []
+    var kl: List[Int] = []
+    gen_kill(g.blocks[b].insts, k + 1, gl, kl, kst, ust)
+    gens.push(gl)
+    kills.push(kl)
+    var ss: List[Int] = []
+    for s in g.msuccs(b) {
+      if idx[s] >= 0 {
+        ss.push(idx[s])
+      }
+    }
+    succs.push(ss)
+  }
+  SplitLive{ok: true, idx: idx, lv: solve_live(succs, gens, kills, n)}
+}

@@ -134,6 +134,9 @@ pub fn passes() -> List[Str] {
     "call_saves",
     "arg_slots",
     "slot_group",
+    // loopsplit.xo: the innermost loops without calls get their own
+    // names for what they read and carry (task #426)
+    "loop_split",
     "shrink_split",
     "cluster_mem",
     "x86_merge_blocks",

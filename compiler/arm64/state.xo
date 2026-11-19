@@ -151,6 +151,9 @@ struct Offset {
 
 /// The emitter's state.
 struct G {
+  /// shrink_split's inside name of each register (empty when it made no
+  /// region)
+  shrink_m: List[Int] = []
   m: ssa.Module
   os: Str
   /// x86_64 (decision 0254): the front half's MIR retargeted (x86.xo)

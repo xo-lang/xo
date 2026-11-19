@@ -195,13 +195,66 @@ fn (var g: G) function(fi: Int) {
   if g.on("mark_tails") {
     g.mark_tails()
   }
-  if g.on("shrink_split") {
-    g.shrink_split()
+  var allocated = false
+  if g.on("loop_split") && g.split_any() {
+    // an allocation first: the loops whose values spill there are split
+    // and the function allocated again (loopsplit.xo); with none split,
+    // the first allocation stands
+    let blocks0 = g.blocks
+    let hot0 = g.hot
+    let cold0 = g.cold
+    let nblock0 = g.nblock
+    let fp0 = g.fp
+    let base0 = g.base
+    let order0 = g.order
+    if g.on("shrink_split") {
+      g.shrink_split()
+    }
+    if g.on("cluster_mem") {
+      g.cluster_mem()
+    }
+    g.regalloc()
+    let first = SplitFirst{loc: g.loc, region: g.region, m: g.shrink_m}
+    let a = SplitAlloc{blocks: g.blocks, hot: g.hot, cold: g.cold, nblock: g.nblock, fp: g.fp, base: g.base, order: g.order, ninst: g.ninst, occ_regs: g.occ_regs, saved: g.saved, slots: g.slots, vranges: g.vranges, fl: g.fl, pro: g.pro, fedge: g.fedge, shrink: g.shrink}
+    g.blocks = blocks0
+    g.hot = hot0
+    g.cold = cold0
+    g.nblock = nblock0
+    g.fp = fp0
+    g.base = base0
+    g.order = order0
+    if !g.loop_split(first) {
+      g.blocks = a.blocks
+      g.hot = a.hot
+      g.cold = a.cold
+      g.nblock = a.nblock
+      g.fp = a.fp
+      g.base = a.base
+      g.order = a.order
+      g.ninst = a.ninst
+      g.occ_regs = a.occ_regs
+      g.saved = a.saved
+      g.slots = a.slots
+      g.vranges = a.vranges
+      g.fl = a.fl
+      g.pro = a.pro
+      g.fedge = a.fedge
+      g.shrink = a.shrink
+      g.loc = first.loc
+      g.region = first.region
+      g.shrink_m = first.m
+      allocated = true
+    }
   }
-  if g.on("cluster_mem") {
-    g.cluster_mem()
+  if !allocated {
+    if g.on("shrink_split") {
+      g.shrink_split()
+    }
+    if g.on("cluster_mem") {
+      g.cluster_mem()
+    }
+    g.regalloc()
   }
-  g.regalloc()
   // a wide result in the outgoing area pushed the frame past the ldr
   // reach (x28 addresses far slots): lower the function again with those
   // results in a frame slot (0564 step 3, experiment (h))

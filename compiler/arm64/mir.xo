@@ -232,6 +232,9 @@ const IF_TAIL = 8192
 /// an x86 template (decision 0254: written by retarget, or as x86 by
 /// the front half for amd64)
 const IF_X86 = 16384
+/// K_PMOVE (with IF_NOCOAL): the copies of loop splitting (loopsplit.xo),
+/// never coalesced, each side the other's preferred register
+const IF_SPLIT = 32768
 
 /// Whether instruction x has flag bit b (IF_*).
 fn (x: Inst) has(b: Int) -> Bool { x.fl & b != 0 }

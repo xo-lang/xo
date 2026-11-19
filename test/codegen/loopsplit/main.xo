@@ -1,0 +1,43 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): loop_split
+// (compiler/arm64 loopsplit.xo, task #426) gives a call free inner loop
+// its own names for the values that live across the function's calls.
+// Without it the loop's bound, spilled to free a callee-saved register
+// for the values the calls keep, was reloaded from the frame every
+// iteration.
+
+// recursive: never inlined, so work's values live across real calls
+fn mix(a: Int, b: Int) -> Int {
+  if a < 0 {
+    return mix(-a, b) + 1
+  }
+  (a * 31) ^ (b + 7)
+}
+
+// Fourteen values live across the calls, more than the callee-saved
+// registers; the inner loop reads all of them and has no call.
+fn work(xs: List[Int], a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
+  // arm64: -"ldr x[0-9]+, \[sp, #[0-9]+\]\n\tcmp x[0-9]+, x[0-9]+\n\tb\.lt"
+  let f = mix(a, b)
+  let g = mix(c, d)
+  let h = mix(e, f)
+  let i = mix(g, h)
+  let j = mix(i, a)
+  let k = mix(j, b)
+  let l = mix(k, c)
+  let m = mix(l, d)
+  let n = mix(m, e)
+  var s = 0
+  for x in xs {
+    s = s + ((x * f) ^ (g + h)) - (i & x) + (j >> 3) + ((x ^ k) & l) + (m | x) - (n ^ a) + ((b * x) & c) + (d - e)
+  }
+  let t = mix(s, k)
+  t + a + b + c + d + e + f + g + h + i + j + k + l + m + n
+}
+
+fn main(os: Os) {
+  var xs: List[Int] = []
+  for q in 0..100 {
+    xs.push(q * 3)
+  }
+  os.stdio.println("${work(xs, 1, 2, 3, 4, 5)}")
+}

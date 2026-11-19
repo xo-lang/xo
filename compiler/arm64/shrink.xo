@@ -175,6 +175,7 @@ fn (var g: G) shrink_split() {
   g.pro = -1
   g.fedge = []
   g.region = []
+  g.shrink_m = []
   let order = g.hot + g.cold
   if order.is_empty() {
     return
@@ -361,6 +362,7 @@ fn (var g: G) shrink_split() {
   g.cold = with_edges(g.cold, before, after)
   g.fedge = kind
   g.region = reg
+  g.shrink_m = m
   g.shrink = true
 }
 

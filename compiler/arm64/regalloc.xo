@@ -516,6 +516,7 @@ fn (var g: G) regalloc() {
     barred.push([])
   }
   var pairs: List[Pair] = []
+  var split_pairs: List[(Int, Int)] = []
   // stack words a register is copied to or from (spill slot hints, the
   // pass arg_slots): a call's stack arguments and result words past the
   // registers (SLOT_OUT + j), this function's own (SLOT_IN + k); and the
@@ -585,6 +586,15 @@ fn (var g: G) regalloc() {
           let a = inst.srcs[k]
           if a.kind == S_REG && a.v != 0 {
             pairs.push(Pair{a: d, b: a.v, wt: wt})
+          }
+        }
+      } else if inst.kind == K_PMOVE && inst.has(IF_SPLIT) {
+        // loop splitting's copies: each side the other's preferred
+        // register, never one location (loopsplit.xo)
+        for (k, d) in inst.defs.indexed() {
+          let a = inst.srcs[k]
+          if a.kind == S_REG && a.v != 0 {
+            split_pairs.push((d, a.v))
           }
         }
       } else if inst.kind == K_CALL {
@@ -685,6 +695,14 @@ fn (var g: G) regalloc() {
     }
     if bits_has(no_caller, b) {
       no_caller[a / BW] = no_caller[a / BW] | bit_mask(a)
+    }
+  }
+  for (x, y) in split_pairs {
+    let a = find_leader(leader, x)
+    let b = find_leader(leader, y)
+    if a != b && g.fp[a] == g.fp[b] {
+      push_int(partners, a, b)
+      push_int(partners, b, a)
     }
   }
 
