@@ -1,0 +1,5 @@
+# Go's encoding/base32 test tables (go1.26) run through std/base32
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+encoding/base32 base32_test.go pairs encoded decode
+encoding/base32 base32_test.go pairs decoded encode
+encoding/base32 base32_test.go TestDecodeCorrupt.testCases input decode

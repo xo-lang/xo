@@ -1,0 +1,75 @@
+// The Xo side of std/base64's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/base64's result as text, as go/main.go prints package base64's.
+// Kinds: decode (the input decoded in each of the 4 encodings, and Std
+// strict), encode (the input's bytes encoded in each).
+// See scripts/stdproven/gotests.go.
+use std/base64
+
+fn nums(b: Bytes) -> Str {
+  var out: List[Str] = []
+  for x in b {
+    out.push("${x}")
+  }
+  "[" + out.join(",") + "]"
+}
+
+/// The decoding of s in each encoding (base64: and Std strict), one a line.
+fn decode_all(s: Str) -> Str {
+  var out: List[Str] = []
+  out.push(match base64.decode(s, base64.Base64.Std) {
+    Ok(b) => nums(b)
+    Err(e) => "err ${e.display()}"
+  })
+  out.push(match base64.decode(s, base64.Base64.Url) {
+    Ok(b) => nums(b)
+    Err(e) => "err ${e.display()}"
+  })
+  out.push(match base64.decode(s, base64.Base64.RawStd) {
+    Ok(b) => nums(b)
+    Err(e) => "err ${e.display()}"
+  })
+  out.push(match base64.decode(s, base64.Base64.RawUrl) {
+    Ok(b) => nums(b)
+    Err(e) => "err ${e.display()}"
+  })
+  out.push(match base64.of(base64.Base64.Std).strict().decode(s) {
+    Ok(b) => nums(b)
+    Err(e) => "err ${e.display()}"
+  })
+  out.join("\n")
+}
+
+/// The encoding of s's bytes in each encoding, one a line.
+fn encode_all(s: Str) -> Str {
+  var out: List[Str] = []
+  out.push(base64.encode(s.bytes(), base64.Base64.Std))
+  out.push(base64.encode(s.bytes(), base64.Base64.Url))
+  out.push(base64.encode(s.bytes(), base64.Base64.RawStd))
+  out.push(base64.encode(s.bytes(), base64.Base64.RawUrl))
+  out.join("\n")
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "decode" => decode_all(inp[0])
+    "encode" => encode_all(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

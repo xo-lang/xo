@@ -1,0 +1,8 @@
+# Go's hash/fnv test tables (go1.26) run through std/fnv
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+hash/fnv fnv_test.go golden32 in 32
+hash/fnv fnv_test.go golden32a in 32a
+hash/fnv fnv_test.go golden64 in 64
+hash/fnv fnv_test.go golden64a in 64a
+hash/fnv fnv_test.go golden128 in 128
+hash/fnv fnv_test.go golden128a in 128a

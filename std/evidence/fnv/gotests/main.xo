@@ -1,0 +1,58 @@
+// The Xo side of std/fnv's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/fnv's result as text, as go/main.go prints package fnv's.
+// Kinds 32, 32a, 64, 64a, 128, 128a: that hash of the input (and for 32
+// and 64 bits, of its first half updated by the rest).
+// See scripts/stdproven/gotests.go.
+use std/fnv
+use std/base64
+
+fn nums(b: Bytes) -> Str {
+  var out: List[Str] = []
+  for x in b {
+    out.push("${x}")
+  }
+  "[" + out.join(",") + "]"
+}
+
+fn sum(kind: Str, s: Str) -> Str {
+  let d = s.bytes()
+  let h = d.len() / 2
+  match kind {
+    "32" => "${fnv.sum32(d)} ${fnv.update32(fnv.sum32(d[0..h]), d[h..d.len()])}"
+    "32a" => "${fnv.sum32a(d)} ${fnv.update32a(fnv.sum32a(d[0..h]), d[h..d.len()])}"
+    "64" => "${fnv.sum64(d)} ${fnv.update64(fnv.sum64(d[0..h]), d[h..d.len()])}"
+    "64a" => "${fnv.sum64a(d)} ${fnv.update64a(fnv.sum64a(d[0..h]), d[h..d.len()])}"
+    "128" => nums(fnv.sum128(d))
+    "128a" => nums(fnv.sum128a(d))
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "32" => sum(kind, inp[0])
+    "32a" => sum(kind, inp[0])
+    "64" => sum(kind, inp[0])
+    "64a" => sum(kind, inp[0])
+    "128" => sum(kind, inp[0])
+    "128a" => sum(kind, inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
