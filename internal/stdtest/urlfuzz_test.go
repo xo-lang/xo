@@ -38,6 +38,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 // uqAlphabet is what a random text is built from: every byte class the
@@ -63,6 +65,15 @@ func uqText(r *rand.Rand) string {
 		b.WriteString(uqAlphabet[r.Intn(len(uqAlphabet))])
 	}
 	s := b.String()
+	if len(s)%9 == 4 {
+		// the hostile dictionary (task #352): an escaped UTF-8 sequence
+		// cut inside a rune, chosen by the length so the cases after it
+		// stay as they were
+		cuts := hostile.CutUTF8("é日😀")
+		for _, c := range []byte(cuts[len(s)%len(cuts)]) {
+			s += fmt.Sprintf("%%%02X", c)
+		}
+	}
 	if r.Intn(5) != 0 || s == "" {
 		return s
 	}

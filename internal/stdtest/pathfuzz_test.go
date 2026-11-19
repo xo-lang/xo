@@ -27,6 +27,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/hostile"
 )
 
 type ptCase struct {
@@ -47,6 +49,12 @@ func ptPath(r *rand.Rand, pattern bool) string {
 		if r.Intn(2) == 0 {
 			b.WriteByte('/')
 		}
+	}
+	if b.Len()%17 == 3 {
+		// the hostile dictionary (task #352): ".." runs 1 to 100 deep,
+		// chosen by the length so the cases after it stay as they were
+		ds := hostile.Depths()
+		b.WriteString(hostile.Nest("../", "", ds[b.Len()%len(ds)]/1000))
 	}
 	return b.String()
 }
