@@ -66,6 +66,12 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   host lanes and their jobs from `heavy.sh --status`, queues nothing and
   needs no host file; `OFFLOAD_ENV=FILE` narrows it to that host
   (scripts/lead/offload_status_test.sh).
+  A job's output reaches the caller through a perl filter that drops
+  carriage returns, heartbeat lines and password prompts; it reads 64 KiB
+  at a time and passes a line longer than that in pieces, so a job printing
+  a long line with no newline (or a stream of \r) no longer grows it
+  without bound (#390, 2026-11-18: 20 GB on the Mac under perl -ne;
+  `offload.sh --out-filter`, scripts/lead/offload_filter_test.sh).
   Before each arm64 job, offload.sh runs scripts/lead/offload-prune.sh
   (2026-11-13, owner go on Lang 2's cache cap design; it replaced the age
   prune of 2026-10-30 to 2026-11-07). It deletes the least recently used
