@@ -4694,3 +4694,30 @@ test "Int text: each side of every power of ten, both signs, and the ends" {
     expect("${v}") == itoa_ref(v)
   }
 }
+
+// sort, concat and map's same-type paths tested the element type by
+// putting the list itself in an Any, which marks it (and each list or Str
+// it holds) shared for good: every later write to the caller's list then
+// called the out of line copy-on-write check (gotchas/any-of-shares-lists.md).
+fn count_of[T](x: T) -> Int { rt.slot_load(rt.obj_addr(x), 0, 0) }
+
+test "sort, concat and map leave the caller's lists unique" {
+  var xs: List[Int] = []
+  for i in 0..100 { xs.push((i * 37) % 101) }
+  xs = xs.sort()
+  expect(xs[0] == 0 && xs[1] == 1 && xs[99] == 100)
+  expect(count_of(xs) == 1)
+  var ys: List[Int] = []
+  for i in 0..100 { ys.push(i) }
+  let c = List.concat([xs, ys])
+  expect(c.len() == 200 && c[100] == 0)
+  expect(count_of(c) == 1 && count_of(xs) == 1 && count_of(ys) == 1)
+  var ss: List[Str] = []
+  for i in 0..100 { ss.push("k${(i * 37) % 101}") }
+  ss = ss.sort()
+  expect(ss[0] == "k0" && ss[1] == "k1" && ss[99] == "k99")
+  expect(count_of(ss) == 1)
+  let m = ys.map(fn(v) { v * 2 })
+  expect(m[99] == 198)
+  expect(count_of(m) == 1)
+}

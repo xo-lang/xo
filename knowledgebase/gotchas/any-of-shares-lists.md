@@ -21,8 +21,12 @@ after `List.concat([xs, ys])` so are xs, ys and the result.
 Fix: test the element type on a value that costs nothing to share
 (the fill value, or an empty literal, which is immortal), and build or
 move the list as its own type. words_filled does this since 2026-11-19;
-the concat and sort sites are open (task #271 notes). To check a list,
+words_concat, list_sort (Str), list_sort_in_place (Int) and list_map's
+same type path since the next commit, which hand the list across with
+`rt.obj_at[List[U]](rt.obj_addr(l))` (counted once more, so the source
+binding's release balances it). To check a list,
 read its object's first word in a std test:
 `rt.slot_load(rt.obj_addr(l), 0, 0)` is 1 for a list only its owner
 holds (std/native/prelude_test.xo "List.filled: a bulk filled list is
-unique, not shared").
+unique, not shared"; "sort, concat and map leave the caller's lists
+unique").

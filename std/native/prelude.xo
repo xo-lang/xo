@@ -2026,9 +2026,9 @@ fn list_map[T, U, E, fx: Effects](xs: List[T], f: fn(T) -> U ! E uses fx) -> Lis
       for i in 0..a.len() {
         a[i] = g(a[i])?
       }
-      if let Some(r) = rt.any_get[List[U]](rt.any_of[List[T]](a)) {
-        return r
-      }
+      // U is T, so a is a List[U]: moved across by address, not through
+      // an Any, which would mark a shared for good (any-of-shares-lists)
+      return rt.obj_at[List[U]](rt.obj_addr(a))
     }
   }
   if a.len() >= PRESIZE_MIN {
@@ -2143,8 +2143,12 @@ fn words_concat[T](lists: List[List[T]], n: Int) -> List[T]? {
   if n < 64 {
     return None
   }
-  if let Some(is) = rt.any_get[List[List[Int]]](rt.any_of[List[List[T]]](lists)) {
-    return rt.any_get[List[T]](rt.any_of[List[Int]](ints_concat(is)))
+  // the type test is on an empty list and the lists cross by address: an
+  // Any would mark lists, each of its lists and the result shared for
+  // good (gotchas/any-of-shares-lists.md)
+  if rt.any_get[List[Int]](rt.any_of[List[T]]([])).is_some() {
+    let r = ints_concat(rt.obj_at[List[List[Int]]](rt.obj_addr(lists)))
+    return Some(rt.obj_at[List[T]](rt.obj_addr(r)))
   }
   None
 }
@@ -2608,10 +2612,12 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
   if n < 2 {
     return xs
   }
-  if let Some(ss) = rt.any_get[List[Str]](rt.any_of[List[T]](xs)) {
-    if let Some(r) = rt.any_get[List[T]](rt.any_of[List[Str]](list_sort_str(ss))) {
-      return r
-    }
+  // the type test is on an empty list and xs crosses by address: an Any
+  // would mark the caller's list and every Str in it shared for good
+  // (gotchas/any-of-shares-lists.md)
+  if rt.any_get[List[Str]](rt.any_of[List[T]]([])).is_some() {
+    let r = list_sort_str(rt.obj_at[List[Str]](rt.obj_addr(xs)))
+    return rt.obj_at[List[T]](rt.obj_addr(r))
   }
   // xs's last use: when the call was the caller's last use of its list
   // too, a holds the only reference and the sorts below write its array
@@ -3265,7 +3271,7 @@ fn list_heapify[T: Ord](var xs: List[T]) {
 /// copied the list when another binding shares it, so the receiver's array
 /// is the only one the sort writes.
 fn list_sort_in_place[T: Ord](var xs: List[T]) {
-  if let Some(v) = rt.any_get[List[Int]](rt.any_of[List[T]](xs)) {
+  if rt.any_get[List[Int]](rt.any_of[List[T]]([])).is_some() {
     // Ints: pdq_sort_ints (slices.Sort), in the receiver's own
     // array. The receiver lets go of its reference first, so the Int view
     // is the array's only holder and its swaps copy nothing; the sorted
@@ -3273,12 +3279,13 @@ fn list_sort_in_place[T: Ord](var xs: List[T]) {
     // unstable sort's result is the stable one's (bench/perf/micro13
     // sort1M: the merge with a compare closure, and sort's second list,
     // 2026-11-04)
-    var is = v
+    // the type test is on an empty list and the array crosses by
+    // address both ways: an Any marked the caller's list shared for good
+    // (gotchas/any-of-shares-lists.md)
+    var is = rt.obj_at[List[Int]](rt.obj_addr(xs))
     xs = []
     pdq_sort_ints(is)
-    if let Some(back) = rt.any_get[List[T]](rt.any_of[List[Int]](is)) {
-      xs = back
-    }
+    xs = rt.obj_at[List[T]](rt.obj_addr(is))
     return
   }
   merge_sort_in_place(xs, fn(a, b) { a < b })

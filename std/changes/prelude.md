@@ -1,5 +1,14 @@
 # prelude changes
 
+## 2026-11-19: perf: sort, concat and map no longer mark the caller's lists shared
+
+- Kind: perf
+- Commit: this push
+- Found by: the List.filled fix below (task #271): the same rt.any_of cast in four more prelude sites
+- Go reference: none (Go has no reference counts)
+- Change: List.sort on a List[Str], List.sort_in_place on a List[Int], List.concat of 64 or more Ints, and List.map whose result type is its element type passed their lists through rt.any_of and rt.any_get as a type cast, which marks a list (and every Str in it) shared for good (count -1), so every later write to the caller's list, or to the result, called the out of line copy-on-write check. The type test is now on an empty list and the list crosses by address (rt.obj_at).
+- Test: std/native/prelude_test.xo "sort, concat and map leave the caller's lists unique" (counts 1; fails before: -1)
+
 ## 2026-11-19: perf: a List.filled list of 64 or more elements is no longer marked shared
 
 - Kind: perf
