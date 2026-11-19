@@ -1,0 +1,6 @@
+# Go's unicode/utf16 test tables (go1.26) run through std/charset
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+unicode/utf16 utf16_test.go encodeTests in encode
+unicode/utf16 utf16_test.go encodeTests out decode
+unicode/utf16 utf16_test.go decodeTests in decode
+unicode/utf16 utf16_test.go decodeTests out encode

@@ -23,7 +23,8 @@ package main
 // The runner reads each table from the pinned Go release's source (go env
 // GOROOT) with go/ast and takes its input fields' literals as text (a
 // string literal or a + of them, an integer, an integral float such as
-// 1e9, a rune literal as its code point, true and false, and time's zone
+// 1e9, a rune literal as its code point, a slice of integer or rune
+// literals as its values joined with commas, true and false, and time's zone
 // names Local and UTC); an element whose input is
 // anything else is counted as skipped, as is one that is not UTF-8 (an Xo
 // Str is). A case is a line `KIND<TAB>B64<TAB>B64...` (the
@@ -304,8 +305,35 @@ func stringLit(e ast.Expr) (string, bool) {
 		return a + b, ok1 && ok2
 	case *ast.ParenExpr:
 		return stringLit(e.X)
+	case *ast.CompositeLit:
+		// a slice of integer or rune literals ([]rune{'a', 0x10000},
+		// []uint16{1, -1}) is its values joined with commas
+		if t, ok := e.Type.(*ast.ArrayType); !ok || t.Len != nil {
+			return "", false
+		}
+		vals := make([]string, len(e.Elts))
+		for i, el := range e.Elts {
+			if !intLit(el) {
+				return "", false
+			}
+			v, ok := stringLit(el)
+			if !ok {
+				return "", false
+			}
+			vals[i] = v
+		}
+		return strings.Join(vals, ","), true
 	}
 	return "", false
+}
+
+// intLit reports whether e is an integer or rune literal, negated or not.
+func intLit(e ast.Expr) bool {
+	if u, ok := e.(*ast.UnaryExpr); ok && u.Op == token.SUB {
+		e = u.X
+	}
+	b, ok := e.(*ast.BasicLit)
+	return ok && (b.Kind == token.INT || b.Kind == token.CHAR)
 }
 
 // constNames is an exported constant of the table's package, or a | of

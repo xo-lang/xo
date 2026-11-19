@@ -44,3 +44,12 @@ var flags = []struct {
 	{'x', true, local},
 	{'y', true, Debug &^ 1},
 }
+
+var slices = []struct {
+	in []rune
+}{
+	{[]rune{'a', 0x10000, -1}},
+	{[]rune{}},
+	{[]rune{n}},
+	{nil},
+}

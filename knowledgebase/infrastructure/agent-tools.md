@@ -1060,7 +1060,8 @@ through a Go adapter (`gotests/go`) and an Xo one (`gotests/main.xo`),
 prints each MISMATCH with both texts, and writes `gotests.md` (`-check`
 writes nothing); seconds a module, on the Mac. A FIELDS entry `NAME:const`
 takes a package constant (or a `|` of them) as its name for the adapters
-to map. Last verified: 2026-11-19.
+to map; a slice of integer or rune literals reads as its values joined
+with commas. Last verified: 2026-11-19.
 `go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N]
 [-backends B] [-host LABEL] MODULE` runs every fuzz harness that names
 the module (scripts/stdproven harnesses) with fresh seeds until 1,000,000

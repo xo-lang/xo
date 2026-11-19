@@ -26,6 +26,9 @@ func TestGoTableCases(t *testing.T) {
 		// them) only in a :const field; a lowercase name never
 		{"flags", "pad,on,flags:const", []string{"0 46|true|Debug", "1 9|false|AlignRight|Debug", "2 39|true|0"}, 2},
 		{"flags", "pad,flags", []string{"2 39|0"}, 4},
+		// a slice of integer or rune literals joins them with commas; a
+		// name in it, or nil, is skipped
+		{"slices", "in", []string{"0 97,65536,-1", "1 "}, 2},
 	}
 	for _, tt := range tests {
 		tab := goTable{pkg: "ex", file: "ex_test.go", name: tt.name, fields: strings.Split(tt.fields, ","), kind: "k"}

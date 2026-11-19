@@ -1,0 +1,87 @@
+// The Xo side of std/charset's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/charset's result as text, as go/main.go prints package utf16's.
+// Kinds: encode (code points, comma separated: utf16_append_rune,
+// utf16_rune_len, utf16_encode_rune), decode (code units: from_utf16_units,
+// utf16_decode_rune of adjacent units, utf16_is_surrogate).
+// See scripts/stdproven/gotests.go.
+use std/charset
+use std/base64
+
+fn ints(s: Str) -> List[Int] {
+  var out: List[Int] = []
+  if s.is_empty() {
+    return out
+  }
+  for f in s.split(",") {
+    out.push(Int.parse(f) ?? 0)
+  }
+  out
+}
+
+fn join(xs: List[Int]) -> Str {
+  var out: List[Str] = []
+  for x in xs {
+    out.push("${x}")
+  }
+  out.join(",")
+}
+
+/// The code points encoded (append_rune over them), each one's rune_len,
+/// and each one's encode_rune pair.
+fn encode(s: Str) -> Str {
+  var units: List[Int] = []
+  var lens: List[Int] = []
+  var pairs: List[Int] = []
+  for cp in ints(s) {
+    units = charset.utf16_append_rune(units, cp)
+    lens.push(charset.utf16_rune_len(cp))
+    let (a, b) = charset.utf16_encode_rune(cp)
+    pairs.push(a)
+    pairs.push(b)
+  }
+  "${join(units)}|${join(lens)}|${join(pairs)}"
+}
+
+/// The code units decoded (as code points), decode_rune of each adjacent
+/// pair, and is_surrogate of each.
+fn decode(s: Str) -> Str {
+  let us = ints(s)
+  var cps: List[Int] = []
+  for r in charset.from_utf16_units(us).runes() {
+    cps.push(Int(r))
+  }
+  var pairs: List[Int] = []
+  var surr: List[Str] = []
+  for i in 0..us.len() {
+    if i + 1 < us.len() {
+      pairs.push(Int(charset.utf16_decode_rune(us[i], us[i + 1])))
+    }
+    surr.push("${charset.utf16_is_surrogate(us[i])}")
+  }
+  "${join(cps)}|${join(pairs)}|${surr.join(",")}"
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "encode" => encode(inp[0])
+    "decode" => decode(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
