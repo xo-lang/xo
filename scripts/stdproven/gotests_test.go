@@ -21,6 +21,8 @@ func TestGoTableCases(t *testing.T) {
 	}{
 		{"keyed", "in,out", []string{"0 a|1", "1 bc|2"}, 2},
 		{"keyed", "out", []string{"0 1", "1 2", "2 3", "3 4"}, 0},
+		// a :bytes field keeps text that is not UTF-8
+		{"keyed", "in:bytes,out", []string{"0 a|1", "1 bc|2", "3 \xff|4"}, 1},
 		{"unkeyed", "0,1", []string{"0 x|y", "1 z|w"}, 0},
 		{"nums", "year,month,z,f", []string{"0 2011|-3|Local|1000000000", "1 16|1000|UTC|2"}, 3},
 		{"TestLocal.tests", "in", []string{"0 p", "1 q"}, 0},
@@ -39,6 +41,7 @@ func TestGoTableCases(t *testing.T) {
 		// expressions fold (1 + 2 read as "12", a string +, before)
 		{"vals", ".", []string{"0 -9223372036854775808", "1 -9223372036854775807", "2 9223372036854775807", "3 20", "4 98", "6 3", "7 -1"}, 1},
 		{"sums", "n", []string{"0 3", "1 ab"}, 0},
+		{"calls", "in", []string{"0 ababab", "1 xy"}, 3},
 	}
 	for _, tt := range tests {
 		tab := goTable{pkg: "ex", file: "ex_test.go", name: tt.name, fields: strings.Split(tt.fields, ","), kind: "k"}

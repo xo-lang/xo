@@ -1,0 +1,46 @@
+// The Xo side of std/gif's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/gif's result as text, as go/main.go prints package gif's.
+// Kind loop: decode_all's loop count before and after an encode_all
+// round trip, against DecodeAll and EncodeAll's. Inputs are bytes.
+// See scripts/stdproven/gotests.go.
+use std/gif
+use std/base64
+
+/// decode_all's loop count, and the count after encode_all and decode_all
+/// again, as Go's TestLoopCount checks; an error as its text.
+fn loop_count(data: Bytes) -> Str {
+  match gif.decode_all(data) {
+    Ok(g) => match gif.encode_all(g) {
+      Ok(b) => match gif.decode_all(b) {
+        Ok(g1) => "${g.loop_count} ${g1.loop_count}"
+        Err(e) => "err ${e.display()}"
+      }
+      Err(e) => "err ${e.display()}"
+    }
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn run(kind: Str, inp: List[Bytes]) -> Str {
+  match kind {
+    "loop" => loop_count(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Bytes] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?)
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

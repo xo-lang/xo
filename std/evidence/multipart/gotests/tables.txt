@@ -1,0 +1,6 @@
+# Go's mime/multipart test tables (go1.26) run through std/multipart
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# Writer.SetBoundary against writer (Xo's writer takes the boundary) and
+# FileContentDisposition. parseTests' parts and headers are not literals.
+mime/multipart writer_test.go TestWriterSetBoundary.tests b boundary
+mime/multipart writer_test.go TestFileContentDisposition.tests fieldname,filename disp

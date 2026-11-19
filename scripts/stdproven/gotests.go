@@ -127,7 +127,8 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 		in := make([]string, 0, len(t.fields))
 		for _, field := range t.fields {
 			field, def, hasDef := strings.Cut(field, "=")
-			name, isConst := strings.CutSuffix(field, ":const")
+			name, isBytes := strings.CutSuffix(field, ":bytes")
+			name, isConst := strings.CutSuffix(name, ":const")
 			var e ast.Expr
 			if name == "." {
 				e = el
@@ -142,7 +143,9 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 			if !ok && isConst {
 				s, ok = constNames(e)
 			}
-			if !ok || !utf8.ValidString(s) {
+			// a field marked :bytes may be any bytes (the adapter reads
+			// them as Bytes); others must be UTF-8, which Str holds
+			if !ok || (!isBytes && !utf8.ValidString(s)) {
 				break
 			}
 			in = append(in, s)
@@ -313,6 +316,35 @@ func stringLit(e ast.Expr) (string, bool) {
 		return a + b, ok1 && ok2
 	case *ast.ParenExpr:
 		return stringLit(e.X)
+	case *ast.CallExpr:
+		// conversions of a literal ([]byte("..."), string("...")) are the
+		// literal; strings.Repeat of a literal and a constant count is its
+		// text (up to 1 MB)
+		if len(e.Args) == 1 && !e.Ellipsis.IsValid() {
+			if id, ok := e.Fun.(*ast.Ident); ok && id.Name == "string" {
+				return stringLit(e.Args[0])
+			}
+			if t, ok := e.Fun.(*ast.ArrayType); ok && t.Len == nil {
+				if id, ok := t.Elt.(*ast.Ident); ok && id.Name == "byte" {
+					return stringLit(e.Args[0])
+				}
+			}
+		}
+		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && len(e.Args) == 2 {
+			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "strings" && sel.Sel.Name == "Repeat" {
+				s, ok1 := stringLit(e.Args[0])
+				n, ok2 := intConst(e.Args[1])
+				if !ok1 || !ok2 || intLit(e.Args[0]) {
+					return "", false
+				}
+				c, exact := constant.Int64Val(n)
+				if !exact || c < 0 || int64(len(s))*c > 1<<20 {
+					return "", false
+				}
+				return strings.Repeat(s, int(c)), true
+			}
+		}
+		return "", false
 	case *ast.CompositeLit:
 		// a slice of integer or rune literals ([]rune{'a', 0x10000},
 		// []uint16{1, -1}) is its values joined with commas

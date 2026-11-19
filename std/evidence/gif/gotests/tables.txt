@@ -1,0 +1,5 @@
+# Go's image/gif test tables (go1.26) run through std/gif
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# TestLoopCount's GIFs (no loop extension, 0, 1). TestDecode and the
+# other tables build their inputs in code.
+image/gif reader_test.go TestLoopCount.testCases data:bytes loop

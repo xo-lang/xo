@@ -1064,7 +1064,11 @@ to map; a slice of integer or rune literals reads as its values joined
 with commas; `NAME=DEFAULT` reads as DEFAULT where a keyed element
 leaves NAME out (Go's zero value, `Comma=0`) instead of skipping it.
 FIELDS `.` reads each element of a table of values (`[]int64{...}`)
-as itself, and integer constant expressions of literals fold.
+as itself, and integer constant expressions of literals fold. A
+conversion of a literal (`[]byte("...")`) reads as the literal and
+`strings.Repeat(LIT, N)` as its text; a `NAME:bytes` field keeps text
+that is not UTF-8 (other fields skip it), for an adapter that reads
+that input as Bytes (std/evidence/gif/gotests).
 Last verified: 2026-11-19.
 `go run ./scripts/stdproven fuzz [-cases N] [-hours H] [-batch N]
 [-backends B] [-host LABEL] MODULE` runs every fuzz harness that names

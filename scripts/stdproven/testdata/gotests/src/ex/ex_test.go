@@ -75,3 +75,11 @@ var sums = []struct{ n int }{
 	{1 + 2},
 	{"a" + "b"},
 }
+
+var calls = []struct{ in string }{
+	{strings.Repeat("ab", 3)},
+	{string([]byte("x" + "y"))},
+	{strings.Repeat("x", n)},
+	{strings.Repeat("x", 1<<30)},
+	{strings.ToUpper("x")},
+}
