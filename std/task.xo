@@ -75,24 +75,47 @@ pub fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T)
   if limit <= 0 {
     rt.fault_at("map_concurrent needs a positive limit, got ${limit}", at)
   }
-  let free = permit_chan(limit.min(items.len()).max(1))
+  let n = items.len()
+  if n == 0 {
+    return []
+  }
+  // min(limit, n) tasks, each taking the next item until none is left
+  // (task #419): a task per item cost a spawn, a join and a permit's
+  // channel send and recv each, about 2.5x the work of a 1 us item
+  let next = Atomic[Int].new(0)
+  var slots: List[Result[R, E]?] = []
   scope s {
     var tasks = []
-    for x in items {
-      match free.recv() {
-        _ => {}
-      }
-      tasks.push(s.spawn(fn() -> Result[R, E] {
-        defer free.send(())
-        f(x)
+    for _ in 0..limit.min(n) {
+      tasks.push(s.spawn(fn() -> List[(Int, Result[R, E])] ! Never {
+        var got = []
+        while {
+          let i = next.add(1) - 1
+          if i >= n {
+            break
+          }
+          got.push((i, f(items[i])))
+        }
+        got
       }))
     }
-    var out: List[Result[R, E]] = []
-    for t in tasks {
-      out.push(t.await)
+    for _ in 0..n {
+      slots.push(None)
     }
-    out
+    for t in tasks {
+      for p in t.await {
+        slots.set(p.0, Some(p.1))
+      }
+    }
   }
+  var out: List[Result[R, E]] = []
+  for r in slots {
+    match r {
+      Some(v) => out.push(v)
+      None => rt.fault_at("map_concurrent: an item gave no result", at)
+    }
+  }
+  out
 }
 
 /// Like map_concurrent, but items not finished after d are cancelled and
@@ -244,10 +267,3 @@ pub fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses 
   out?
 }
 
-fn permit_chan(n: Int) -> Chan[()] {
-  let ch = Chan[()].new(n)
-  for _ in 0..n {
-    ch.send(())
-  }
-  ch
-}

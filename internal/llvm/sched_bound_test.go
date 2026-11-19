@@ -555,3 +555,43 @@ func TestPreemptMigrate(t *testing.T) {
 		}
 	}
 }
+
+// TestMapConcurrentSpawns (task #419): task.map_concurrent runs
+// min(limit, n) tasks that take the next item in turn, so 10 calls over
+// 1,000 items with a limit of 8 spawn about 80 tasks, not 10,000 (a task
+// per item cost a spawn, a join and a permit channel's send and recv,
+// 145 ms of bench/perf/task map on linux/amd64 against Go's 82 ms; 42 ms
+// after). Results keep input order and errors, at most 8 at once.
+func TestMapConcurrentSpawns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	be := xotool.BackendLLVM
+	if runtime.GOARCH == "arm64" {
+		be = xotool.BackendArm64
+	} else if _, err := xotool.Clang(); err != nil {
+		t.Skip("clang not found")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "sched", "mapconc")}, xotool.Options{Backend: be})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
+	cmd.Env = append(os.Environ(), "XO_RTSTATS=1")
+	out, err := runCombined(cmd, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+	// each round: the 857 items that are not multiples of 7 succeed and
+	// their doubles sum to 856,858; the 143 multiples of 7 fail
+	if !regexp.MustCompile(`mapconc 8568580 1430 true true\b`).MatchString(out) {
+		t.Fatalf("output: %s", out)
+	}
+	m := regexp.MustCompile(`\bspawn=(\d+)`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no spawn count: %s", out)
+	}
+	if n, _ := strconv.Atoi(m[1]); n > 200 {
+		t.Fatalf("spawn=%d for 10 map_concurrent calls of 1,000 items, limit 8 (want at most 200)", n)
+	}
+}

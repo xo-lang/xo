@@ -1,0 +1,51 @@
+// map_concurrent runs min(limit, n) tasks that take items in turn (task
+// #419), not a task per item: TestMapConcurrentSpawns counts the spawns.
+// Results stay in input order, a failed item keeps its error, and no more
+// than limit items run at once.
+use std/task
+
+enum Odd {
+  Seven(item: Int)
+}
+
+fn main(os: Os) uses stdio {
+  let running = Atomic[Int].new(0)
+  let peak = Atomic[Int].new(0)
+  var sum = 0
+  var errs = 0
+  var ordered = true
+  var items: List[Int] = []
+  for i in 0..1000 {
+    items.push(i)
+  }
+  for _ in 0..10 {
+    let rs = task.map_concurrent(items, 8, fn(x: Int) -> Int ! Odd {
+      let now = running.add(1)
+      let _ = peak.max(now)
+      defer {
+        let _ = running.add(-1)
+      }
+      if x % 7 == 0 {
+        return Err(Odd.Seven(x))
+      }
+      Ok(x * 2)
+    })
+    for (i, r) in rs.indexed() {
+      match r {
+        Ok(v) => {
+          if v != i * 2 {
+            ordered = false
+          }
+          sum += v
+        }
+        Err(Odd.Seven(item: x)) => {
+          if x != i {
+            ordered = false
+          }
+          errs += 1
+        }
+      }
+    }
+  }
+  os.stdio.println("mapconc ${sum} ${errs} ${ordered} ${peak.get() <= 8}")
+}

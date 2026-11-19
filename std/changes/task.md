@@ -1,5 +1,23 @@
 # std/task changes
 
+## 2026-11-19: perf: map_concurrent runs limit tasks, not a task per item
+
+- Kind: perf
+- Commit: this push
+- Found by: perf row bench/perf/task map (task #419: 1.78 of Go's goroutine per item with a channel semaphore on the linux/amd64 host)
+- Go reference: none (errgroup.SetLimit spawns a goroutine per item, as map_concurrent did)
+- Test: internal/llvm TestMapConcurrentSpawns (10 calls of 1,000 items, limit 8: 10,000 spawns before, at most 200 after; order, errors and the limit checked); goldens map_until, task_native, conc_mutex_snapshot and big_struct on arm64 and llvm
+
+map_concurrent spawns min(limit, n) tasks, and each takes the next item
+from a shared counter until none is left, instead of a task per item
+behind a channel of permits. Results keep input order and each item's
+error; at most limit items run at once. A task per item cost a spawn, a
+join and the permit channel's send and recv, about 2.5 times the work of
+a 1 us item. `xo bench --ab` bench/perf/task map: wall 0.305 (0.303 to
+0.311) on linux/amd64 (139 to 42 ms; Go 82 ms) and 0.337 (0.253 to
+0.462) on host 1 (linux/arm64). The tasks are long enough now to run on
+other threads, where the per item tasks ran inline on the spawner.
+
 ## 2026-11-19: perf: a done Once.get copies out only its value
 
 - Kind: perf
