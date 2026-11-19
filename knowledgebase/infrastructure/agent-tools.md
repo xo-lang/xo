@@ -2128,10 +2128,12 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
 `xw preflight offload|gate|batch [--jobs N] [--host HOST.env|mac] [--quiet]`
 checks a run before it starts and prints each check with its fix:
 
-1. seed age: commits behind origin/main and the p50 xo build a job (from
-   `xobuild` events); warn past 100 commits or 180 s, a batch refused past
-   400 or 600 s; a too-old seed also opens one `xw ask` to the owner per
-   seed version;
+1. seed age: warns only when origin/main's minor version (compiler/cli/core/cli.xo
+   VERSION) is above the seed's, and then opens one `xw ask` to the owner
+   per seed version; commits behind and the p50 xo build a job (from
+   `xobuild` events) are shown but never warn or refuse (#388,
+   2026-11-18: on host 2 seed 0.54.0, about 100 commits behind, built
+   compiler/xo in 45.85 s against 45.27 s for an xo built at main);
 2. Docker answers (no open DOCKER-DEAD alert);
 3. host free disk (warn under 30 GB, a batch refused under 15 GB);
 4. main's open failures; 5. tier leases on the evidence lanes;
