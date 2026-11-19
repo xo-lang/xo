@@ -553,3 +553,16 @@ test "bytes_skip32 stops at the first 32 byte step holding c, or near to" {
     }
   }
 }
+
+test "in_set matches the bitmap's bit for every byte" for lo: Int, hi: Int {
+  // the branch-free test (task #302): bytes past ASCII are never in the
+  // set, whatever bit 63 of hi holds; the edges of each word every time
+  for w in [(lo, hi), (-1, -1), (0, 0), (-1, 0), (0, -1)] {
+    var c = 0
+    while c < 256 {
+      let want = c < 128 && (if c < 64 { shr(w.0, c) & 1 } else { shr(w.1, c - 64) & 1 }) == 1
+      expect(in_set(w.0, w.1, c) == want)
+      c += 1
+    }
+  }
+}

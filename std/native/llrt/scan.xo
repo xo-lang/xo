@@ -464,13 +464,15 @@ fn ascii_set(b: Bytes) -> (Int, Int, Bool) {
 /// Whether the ASCII word pair holds byte c: a non-ASCII byte is never in a
 /// set built from an ASCII chars.
 fn in_set(lo: Int, hi: Int, c: Int) -> Bool {
-  if c < 64 {
-    return (shr(lo, c) & 1) != 0
-  }
-  if c < 0x80 {
-    return (shr(hi, c - 64) & 1) != 0
-  }
-  false
+  // no branch on the byte (task #302): the word is picked with a mask and
+  // the ASCII test is a compare, where two tests on c mispredicted on texts
+  // that mix bytes below 64 (spaces, punctuation) with letters, and arm64
+  // ran bench/perf/trimchars pair at 1.35 of Go's Trim (an `if` select
+  // was still a branch on arm64). c is a byte, so shr(c, 7) is 1 past
+  // ASCII and the bit must beat it.
+  let m = 0 - (shr(c, 6) & 1)
+  let w = lo ^ ((lo ^ hi) & m)
+  (shr(w, c & 63) & 1) > shr(c, 7)
 }
 
 /// The ASCII bytes of b as two 64 bit words, and whether every byte is

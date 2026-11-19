@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-11-18: perf: Str.trim_chars and its kin test a byte against the cutset without a branch
+
+- Kind: perf
+- Commit: this push
+- Found by: task #302 (bench/perf/trimchars on linux/arm64 host 2: trim 1.39 of Go's strings.Trim)
+- Go reference: strings asciiSet.contains (one shift and mask of a bitmap word)
+- Measured: linux/arm64 host 2, Xo ms before to after: trim 22.4 to 18.5, trim_start 18.3 to 16.5, trim_end 18.3 to 18.1, one 11.5 to 10.4, pair 22.6 to 20.5, abc 26.2 to 22.2, uni 36.0 to 33.3; host 1 `xo bench --ab` of trim: wall 0.938 (95% 0.902 to 0.972)
+- Test: std/native/llrt/scan_test.xo "in_set matches the bitmap's bit for every byte" (property: every byte against both words, and the edge words)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
+std/native/llrt scan.in_set picked the low or high bitmap word with a
+branch on the byte, which mispredicted on mixed text. It now selects the
+word and the byte's ASCII test with masks, so the loops of trim_chars,
+trim_start_chars, trim_end_chars and the cutset searches run without a
+data dependent branch.
+
 ## 2026-11-18: perf: List.filled(n, 0) skips zeroing a new mapping
 
 - Kind: perf
