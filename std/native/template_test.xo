@@ -149,6 +149,11 @@ const GO_CASES: List[(Str, Str)] = [
   ("{{0x1p4}}", "16"),
   ("{{call .s}}", "err template: t:1:2: executing \"t\" at <call .s>: error calling call: non-function .s of type string"),
   ("{{call nil}}", "err template: t:1:2: executing \"t\" at <call nil>: error calling call: call of nil"),
+  // a piped callee is named as Go's reflect.Value.String names it
+  ("{{1 | call}}", "err template: t:1:6: executing \"t\" at <call>: error calling call: non-function <int Value> of type int"),
+  ("{{.s | call}}", "err template: t:1:7: executing \"t\" at <call>: error calling call: non-function hello of type string"),
+  ("{{1.5 | call}}", "err template: t:1:8: executing \"t\" at <call>: error calling call: non-function <float64 Value> of type float64"),
+  ("{{.list | call}}", "err template: t:1:10: executing \"t\" at <call>: error calling call: non-function <[]interface {} Value> of type []interface {}"),
   ("{{define \"a\"}}A{{.}}{{end}}{{template \"a\" 1}}{{template \"a\"}}", "A1A<no value>"),
   ("{{template \"nope\"}}", "err template: t:1:11: executing \"t\" at <{{template \"nope\"}}>: template \"nope\" not defined"),
   ("{{block \"b\" .s}}[{{.}}]{{end}}", "[hello]"),

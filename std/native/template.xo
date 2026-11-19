@@ -2499,7 +2499,16 @@ fn call_builtin(name: Str, args: List[Arg], argv: List[Val]) -> Val ! Str {
     "js" => Ok(val(V.StrV(s: js_escape(eval_args(argv)))))
     "urlquery" => Ok(val(V.StrV(s: url.query_escape(eval_args(argv)))))
     "call" => {
-      let fname = if args.is_empty() { fmt_v(argv[0].v, false) } else { arg_text(args[0]) }
+      // a piped callee is named as Go's reflect.Value.String names it: a
+      // string's text, else <TYPE Value>
+      let fname = if !args.is_empty() {
+        arg_text(args[0])
+      } else {
+        match unbox(argv[0]).v {
+          StrV(s) => s
+          _ => "<${type_name(unbox(argv[0]))} Value>"
+        }
+      }
       match unbox(argv[0]).v {
         Invalid => Err("call of nil")
         _ => Err("non-function ${fname} of type ${type_name(unbox(argv[0]))}")

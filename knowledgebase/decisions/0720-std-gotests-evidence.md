@@ -68,6 +68,9 @@ with one line per table.
   a module with no ported Go tests and no Go differential from Early to
   Solid. Whether every module needs it for Proven is the lead's call:
   `gotestsRequired` in scripts/stdcov/main.go (TestGotestsEvidence).
+- The owner's choice (2026-11-19): `gotestsRequired` stays off, so a
+  gotests.md is optional for Proven, until every module ported from Go
+  has a passing run (task #403); then it is turned on.
 - Task #403 (2026-11-19): a rune literal reads as its code point and
   `true`/`false` as themselves; a field written `NAME:const` in
   tables.txt also takes an exported constant of the package, or a `|` of
@@ -77,6 +80,9 @@ with one line per table.
   checksum whole and as an update of the first half), html
   (unescapeTests), tabwriter (tests, written whole and a byte at a
   time).
+- template (2026-11-19, task #403): execTests, cmpTests (as
+  `{{EXPR}}`), and text/template/parse's parseTests and errorTests, on
+  nil data (json null in Xo): 600 cases.
 - Only literal inputs are read; tables of Time values, of functions or of
   computed inputs need an adapter kind that builds them from literals, or
   stay uncovered.

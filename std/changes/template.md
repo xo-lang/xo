@@ -1,5 +1,16 @@
 # std/template changes
 
+## 2026-11-19: fix: `call` of a piped non-function names the value as Go does (native)
+
+- Kind: fix
+- Commit: this push
+- Found by: stdproven gotests (decision 0720, task #403), Go's execTests "empty call after pipe invalid"
+- Go reference: text/template funcs.go call and exec.go evalCall (go1.26.11): a piped callee is named by reflect.Value.String
+- Change: `{{1 | call}}` failed with "non-function 1 of type int"; it now says "non-function <int Value> of type int", as Go's; a piped string is named by its text
+- Measured: not applicable
+- Test: std/native/template_test.xo "Go's text/template output and errors" (four piped call rows)
+- Affected: Xo 0.54.0 and earlier, native backends (the Go backend follows its Go toolchain)
+
 ## 2026-11-19: security: GO-2026-4603, GO-2026-4865, GO-2026-4980, GO-2026-4982, GO-2026-6091, GO-2026-6599 and GO-2026-6600 are fixed in the html mode (native)
 
 - Kind: security

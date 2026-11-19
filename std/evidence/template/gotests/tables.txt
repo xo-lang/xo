@@ -1,0 +1,10 @@
+# Go's template test tables (go1.26) run through std/template
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# exec parses a template and executes it on nil data (Xo: json null),
+# cmp is exec of "{{EXPR}}", parse only parses: "ok" and the output,
+# or "err" and the error text. Inputs that need Go's test data (tVal,
+# the test funcs) read as null and undefined there too.
+text/template exec_test.go execTests name,input exec
+text/template exec_test.go cmpTests expr cmp
+text/template/parse parse_test.go parseTests name,input parse
+text/template/parse parse_test.go errorTests name,input parse
