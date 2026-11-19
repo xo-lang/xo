@@ -11,7 +11,8 @@
 
 An aggregate mixed with other columns is "an aggregate cannot be mixed
 with other columns" on the Go backend too (it said "COUNT(*) cannot be
-mixed with other columns").
+mixed with other columns"), and RETURNING with an aggregate is "RETURNING cannot use an
+aggregate" (it said "RETURNING cannot use COUNT(*)"; golden sql_decode).
 
 ## 2026-11-19: fix: Postgres reads a timestamp with a comma before its fraction as a time
 

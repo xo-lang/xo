@@ -1744,7 +1744,7 @@ func (p *sqlParser) returning() ([]selItem, bool, error) {
 	}
 	for _, it := range items {
 		if !it.star && it.e.op == "count" {
-			return nil, false, sqlErr(SqlSyntax, "RETURNING cannot use COUNT(*)")
+			return nil, false, sqlErr(SqlSyntax, "RETURNING cannot use an aggregate")
 		}
 	}
 	return items, true, nil
