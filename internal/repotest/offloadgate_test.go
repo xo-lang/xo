@@ -34,6 +34,22 @@ func TestOffloadGateLease(t *testing.T) {
 	}
 }
 
+// TestOffloadWslJob runs scripts/lead/offload_wsl_job_test.sh: the amd64
+// host's job file (OFF_KIND=wsl) prunes ~/xo-ci/run*.out and off.* older
+// than 24 h under 100 GB free, reports OFFLOAD-FREE-MB, and fails with
+// OFFLOAD-RC=98 when its body cannot be written (task #404: a full disk
+// had run an empty body as success), stops its job once the ssh is gone or
+// past its time limit, and flags orphaned and overdue runs.
+func TestOffloadWslJob(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash")
+	}
+	out, err := exec.Command("bash", filepath.Join(root, "scripts", "lead", "offload_wsl_job_test.sh")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("offload_wsl_job_test.sh: %v\n%s", err, out)
+	}
+}
+
 // TestOffloadAmd64Exclusive runs scripts/lead/offload_amd64_excl_test.sh:
 // on the amd64 host only a timing (OFF_TIMING=1) takes every slot; any
 // other OFF_EXCLUSIVE=1 job is a 2-slot memory lease (task #370), also

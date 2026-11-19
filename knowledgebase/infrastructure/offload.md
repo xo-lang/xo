@@ -344,6 +344,25 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   OFF_BUNDLE_OK=1 for a deliberate one; `offload.sh --bundle-check FILE`
   answers locally). Test: scripts/lead/bundlerefs_test.sh.
 
+  The amd64 host (OFF_KIND=wsl) gets a smaller prune in its job file's
+  first lines, which write no file so they run on a full disk (2026-11-19,
+  #404: its WSL disk reached 100%, 956 of 1007 GB, mostly ~/xo-ci/run*.out
+  older than a day): under 100 GB free on /, each job deletes
+  ~/xo-ci/run*.out and /tmp/off.* older than 24 hours, then prints
+  OFFLOAD-FREE-MB for xw's host-disk-low (#135). A job body the host
+  cannot write fails the job with OFFLOAD-RC=98 (a full disk had run the
+  empty body as OFFLOAD-RC=0). A watcher beside each amd64 job writes a
+heartbeat line every 30 s; once the write fails (the ssh is gone: WSL's
+relay notices within about 2 minutes) or the job is past OFF_MAX_MIN plus
+5 minutes, it stops the job's session and process tree (TERM, KILL after
+10 s) and logs why in ~/xo-ci/runs/stopped.log. Each job's prune flags a
+run still going whose job shell is gone (OFFLOAD-ORPHAN) or 10 minutes
+past its OFF_MAX_MIN (OFFLOAD-OVERDUE); offload.sh logs these in
+notes/offload-stalls.log. The stop (`JOB --stop`) is piped and writes no
+file. Test: scripts/lead/offload_wsl_job_test.sh. Gotcha:
+wsl-job-outlives-its-ssh.md.
+  Last verified: 2026-11-19.
+
 ## The host's setup
 
 A plain `golang:1.26.1-trixie` container (Go 1.26.1, since 2026-11-13 go1.26.11 in
