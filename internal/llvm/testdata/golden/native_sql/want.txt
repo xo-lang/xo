@@ -24,7 +24,7 @@ syntax 2: error syntax error: expected FROM, found "users"
 bad char: error syntax error: unexpected character "#"
 unterminated: error syntax error: unterminated string
 no column: error syntax error: no such column nope
-mixed count: error syntax error: COUNT(*) cannot be mixed with other columns
+mixed count: error syntax error: an aggregate cannot be mixed with other columns
 two stmts: error syntax error: expected one statement
 query exec: error syntax error: query needs a SELECT statement or a write with RETURNING (use exec for other statements)
 div zero: error division by zero

@@ -2043,7 +2043,7 @@ func memSelect(tables map[string]*memTable, p *sqlParser, args []any) ([]string,
 	p.types = memSelTypes(t, items)
 	if counts > 0 {
 		if counts != len(items) {
-			return nil, nil, sqlErr(SqlSyntax, "COUNT(*) cannot be mixed with other columns")
+			return nil, nil, sqlErr(SqlSyntax, "an aggregate cannot be mixed with other columns")
 		}
 		out := make([]any, len(items))
 		for i := range out {

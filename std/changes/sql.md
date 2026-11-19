@@ -1,5 +1,18 @@
 # std/sql changes
 
+## 2026-11-19: fix: the Go backend's mixed aggregate error matches native
+
+- Kind: fix
+- Commit: this push
+- Found by: main red after 164195274 (task #433)
+- Go reference: none (SQLite's own text differs; Xo's message)
+- Test: golden native_sql (LLVM, Go backend parity, split)
+- Timing: none
+
+An aggregate mixed with other columns is "an aggregate cannot be mixed
+with other columns" on the Go backend too (it said "COUNT(*) cannot be
+mixed with other columns").
+
 ## 2026-11-19: fix: Postgres reads a timestamp with a comma before its fraction as a time
 
 - Kind: fix
