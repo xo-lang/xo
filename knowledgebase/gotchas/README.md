@@ -1517,3 +1517,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [pass-off-markers-reach-backends.md](pass-off-markers-reach-backends.md): with addr_keep_drop off alone, rt.addr_keep markers faulted every backend; backends emit nothing for them (Observed 2026-11-19)
 - [amd64-cvtsi2sd-false-dependency.md](amd64-cvtsi2sd-false-dependency.md): Observed 2026-11-19: Floats kept in xmm registers made gomath erf slower on amd64: cvtsi2sd waited for a divsd chain that last wrote its destination; zero the destination first (task #407)
 - [wrapping-add-slower-than-checked.md](wrapping-add-slower-than-checked.md): Observed 2026-11-19: wrapping_add/wrapping_sub in place of checked += in pow's loop made bench/perf/gomath pow 1.026 and gamma 1.048 slower on amd64; measure before trading.
+- [mawk-pipe-reader-buffers.md](mawk-pipe-reader-buffers.md): mawk reads a pipe in 4 KB blocks, so an awk meant to exit at a line waits for EOF (Observed)
