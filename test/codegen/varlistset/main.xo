@@ -1,0 +1,36 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a small function
+// storing into a `var List` parameter's elements, whose landing pad comes
+// before list.set takes its operands, is inlined (compiler/arm64
+// inlsum.xo keeps_param, task #418): the list is the caller's own
+// variable, and the value stored comes from the list or the function.
+// One storing a parameter that is not `var` stays a call (decision 0256
+// rule 3: its cleanup would release the caller's borrowed root).
+
+fn swap(var d: List[Int], i: Int, j: Int) {
+  let t = d[i]
+  d[i] = d[j]
+  d[j] = t
+}
+
+fn put_from(var d: List[Str], i: Int, j: Int) {
+  let t = d[j] + "!"
+  d[i] = t
+}
+
+fn put(var d: List[Str], i: Int, s: Str) {
+  d[i] = s
+}
+
+fn main(os: Os) {
+  // arm64: -"bl _?xo_f_swap\n" -"bl _?xo_f_put__from\n" "bl _?xo_f_put\n"
+  var d = [5, 4, 3, 2, 1, 0]
+  var s = ["a", "b", "c"]
+  var k = 0
+  while k < 5 {
+    swap(d, k, k + 1)
+    put_from(s, k % 3, (k + 1) % 3)
+    put(s, k % 3, "x${k}")
+    k += 1
+  }
+  os.stdio.println("${d} ${s}")
+}

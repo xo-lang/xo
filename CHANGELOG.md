@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (compiler, arm64; task #418): a small function that updates a `var` List parameter's elements in place (`d[i] = d[j]`) is inlined like one without landing pads, at calls that hold counted values too; std/brotli's gs_swap and add_match are inlined in more loops (bench/perf/brotli enc1 0.85% fewer instructions, callgrind, linux/arm64)
 - Feature (std prelude; decision 0722): `Bytes.into_builder()` turns a Bytes no other value holds into a BytesBuilder without a copy (a shared Bytes, a slice or a mapped file is copied; the Go backend always copies), and BytesBuilder gains `at(i)`, `get_le(at, n)` and `get_be(at, n)` to read back what it holds
 - Fix (runtime, Linux; task #355): under the default XO_THP=dense a thread's heap no longer gives up its reserved second half for a pooled run, and no longer advises huge pages over memory other chunks gave back; a long running server's resident set stays flat (grpcreflect's 60 minute stress: 7 to 10% growth and 16 to 22 chunks before, 4% and 16 chunks after)
 - Perf (std/brotli; task #271): the encoder reads an 8-byte little endian word with one load (internal.le_word) where the arm64 backend made eight checked byte loads; quality 1 encodes take about a fifth less time (bench/perf/brotli enc1: `xo bench --ab` on linux/arm64 host 1, 0.783 of the time; enc6 0.965)

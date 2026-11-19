@@ -106,3 +106,20 @@ marks any value with a landing pad), so inlining it would need
 INLINE_ONE_PADDED_INSTRS near 700, the same shape; time_fmt native was
 already 0.812 of LLVM's wall. The dur_parse cycle gap to LLVM (1.18) is
 not the call: it stayed with the body inlined.
+
+## Addendum: a `var` parameter's list updates (Xo Lang 1, 2026-11-19, task #418)
+
+Rule 3 now holds only for a list.set or list.take whose list or stored
+value is part of a parameter that is not `var` (compiler/arm64 inlsum.xo
+keeps_param): a `var` parameter's argument is the caller's own variable,
+never a borrowed root retained for the call. The in-place rule of the
+one-site addendum (updates_in_place) likewise counts only updates of a
+list other than a `var` parameter (FnSum.upd_local, summary v7), and a
+callee with several results (its `var` parameters written back) may be
+inlined at a call with a landing pad (inline.xo pad_tuple_ok). std/brotli's
+gs_swap went from 15 call sites to 4 and add_match from 81 to 73;
+bench/perf/brotli enc1 788,628,514 to 781,954,857 instructions (-0.85%,
+callgrind, linux/arm64), enc6 the same (+0.03%), the binary's .text +1.0%.
+Each copy verifies under XO_INLINE_STRICT=1 (test/codegen/varlistset, the
+golden varlist_set_fault). A helper that stores a non-`var` parameter
+(`d[i] = s`) stays a call.

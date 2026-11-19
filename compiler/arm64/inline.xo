@@ -472,15 +472,14 @@ fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (M
   (small, loopy, padded, fewl, tailbig)
 }
 
-/// Whether a function's own body updates a list in place (ssa rc.xo
+/// Whether a function's own body updates a list other than a `var`
+/// parameter in place (ssa rc.xo
 /// is_update_call's operations).
 fn updates_in_place(s: FnSum) -> Bool {
-  for n in s.calls {
-    if n is "list.set" | "list.push" | "list.pop" | "list.take" {
-      return true
-    }
-  }
-  false
+  // a `var` parameter's updates are the caller's, which the copy makes
+  // on the caller's own variable (task #418: std/brotli's gs_swap and
+  // emit_sym were calls)
+  s.upd_local
 }
 
 /// The functions a build without debug information has at inlining
@@ -1165,10 +1164,7 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], tailbig: Map[Str
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if ssa.pad_of(x.pi) < 0 {
-        return v
-      }
-      if m.funcs[ci].results.len() == 1 {
+      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m.funcs[ci]) {
         return v
       }
     }
@@ -1256,10 +1252,7 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], tailbig
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if ssa.pad_of(x.pi) < 0 {
-        return v
-      }
-      if m.funcs[ci].results.len() == 1 {
+      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m.funcs[ci]) {
         return v
       }
     }
@@ -1287,10 +1280,7 @@ fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], tailbig: Ma
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if ssa.pad_of(x.pi) < 0 {
-        return v
-      }
-      if m.funcs[ci].results.len() == 1 {
+      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m.funcs[ci]) {
         return v
       }
     }
@@ -1649,4 +1639,15 @@ fn return_count(f: ssa.Func) -> Int {
     }
   }
   n
+}
+
+/// Whether callee g, with more than one result, may be inlined at a call
+/// with a landing pad: its results are its own and the values of its
+/// `var` parameters written back, which the copy hands to the caller as
+/// the call did (task #418, 2026-11-19: std/brotli's gs_swap and
+/// test/codegen/varlistset's helpers, each a `var` List's element store,
+/// were calls at every site holding a counted value; the module verifier
+/// checks each copy under XO_INLINE_STRICT=1).
+fn pad_tuple_ok(g: ssa.Func) -> Bool {
+  !g.var_params.is_empty() && g.results.len() == g.var_params.len() + 1
 }
