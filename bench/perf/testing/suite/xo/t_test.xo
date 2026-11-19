@@ -1,0 +1,5000 @@
+test "t1" {
+  let n = 1
+  expect(n * 2) == 2
+}
+
+test "t2" {
+  let n = 2
+  expect(n * 2) == 4
+}
+
+test "t3" {
+  let n = 3
+  expect(n * 2) == 6
+}
+
+test "t4" {
+  let n = 4
+  expect(n * 2) == 8
+}
+
+test "t5" {
+  let n = 5
+  expect(n * 2) == 10
+}
+
+test "t6" {
+  let n = 6
+  expect(n * 2) == 12
+}
+
+test "t7" {
+  let n = 7
+  expect(n * 2) == 14
+}
+
+test "t8" {
+  let n = 8
+  expect(n * 2) == 16
+}
+
+test "t9" {
+  let n = 9
+  expect(n * 2) == 18
+}
+
+test "t10" {
+  let n = 10
+  expect(n * 2) == 20
+}
+
+test "t11" {
+  let n = 11
+  expect(n * 2) == 22
+}
+
+test "t12" {
+  let n = 12
+  expect(n * 2) == 24
+}
+
+test "t13" {
+  let n = 13
+  expect(n * 2) == 26
+}
+
+test "t14" {
+  let n = 14
+  expect(n * 2) == 28
+}
+
+test "t15" {
+  let n = 15
+  expect(n * 2) == 30
+}
+
+test "t16" {
+  let n = 16
+  expect(n * 2) == 32
+}
+
+test "t17" {
+  let n = 17
+  expect(n * 2) == 34
+}
+
+test "t18" {
+  let n = 18
+  expect(n * 2) == 36
+}
+
+test "t19" {
+  let n = 19
+  expect(n * 2) == 38
+}
+
+test "t20" {
+  let n = 20
+  expect(n * 2) == 40
+}
+
+test "t21" {
+  let n = 21
+  expect(n * 2) == 42
+}
+
+test "t22" {
+  let n = 22
+  expect(n * 2) == 44
+}
+
+test "t23" {
+  let n = 23
+  expect(n * 2) == 46
+}
+
+test "t24" {
+  let n = 24
+  expect(n * 2) == 48
+}
+
+test "t25" {
+  let n = 25
+  expect(n * 2) == 50
+}
+
+test "t26" {
+  let n = 26
+  expect(n * 2) == 52
+}
+
+test "t27" {
+  let n = 27
+  expect(n * 2) == 54
+}
+
+test "t28" {
+  let n = 28
+  expect(n * 2) == 56
+}
+
+test "t29" {
+  let n = 29
+  expect(n * 2) == 58
+}
+
+test "t30" {
+  let n = 30
+  expect(n * 2) == 60
+}
+
+test "t31" {
+  let n = 31
+  expect(n * 2) == 62
+}
+
+test "t32" {
+  let n = 32
+  expect(n * 2) == 64
+}
+
+test "t33" {
+  let n = 33
+  expect(n * 2) == 66
+}
+
+test "t34" {
+  let n = 34
+  expect(n * 2) == 68
+}
+
+test "t35" {
+  let n = 35
+  expect(n * 2) == 70
+}
+
+test "t36" {
+  let n = 36
+  expect(n * 2) == 72
+}
+
+test "t37" {
+  let n = 37
+  expect(n * 2) == 74
+}
+
+test "t38" {
+  let n = 38
+  expect(n * 2) == 76
+}
+
+test "t39" {
+  let n = 39
+  expect(n * 2) == 78
+}
+
+test "t40" {
+  let n = 40
+  expect(n * 2) == 80
+}
+
+test "t41" {
+  let n = 41
+  expect(n * 2) == 82
+}
+
+test "t42" {
+  let n = 42
+  expect(n * 2) == 84
+}
+
+test "t43" {
+  let n = 43
+  expect(n * 2) == 86
+}
+
+test "t44" {
+  let n = 44
+  expect(n * 2) == 88
+}
+
+test "t45" {
+  let n = 45
+  expect(n * 2) == 90
+}
+
+test "t46" {
+  let n = 46
+  expect(n * 2) == 92
+}
+
+test "t47" {
+  let n = 47
+  expect(n * 2) == 94
+}
+
+test "t48" {
+  let n = 48
+  expect(n * 2) == 96
+}
+
+test "t49" {
+  let n = 49
+  expect(n * 2) == 98
+}
+
+test "t50" {
+  let n = 50
+  expect(n * 2) == 100
+}
+
+test "t51" {
+  let n = 51
+  expect(n * 2) == 102
+}
+
+test "t52" {
+  let n = 52
+  expect(n * 2) == 104
+}
+
+test "t53" {
+  let n = 53
+  expect(n * 2) == 106
+}
+
+test "t54" {
+  let n = 54
+  expect(n * 2) == 108
+}
+
+test "t55" {
+  let n = 55
+  expect(n * 2) == 110
+}
+
+test "t56" {
+  let n = 56
+  expect(n * 2) == 112
+}
+
+test "t57" {
+  let n = 57
+  expect(n * 2) == 114
+}
+
+test "t58" {
+  let n = 58
+  expect(n * 2) == 116
+}
+
+test "t59" {
+  let n = 59
+  expect(n * 2) == 118
+}
+
+test "t60" {
+  let n = 60
+  expect(n * 2) == 120
+}
+
+test "t61" {
+  let n = 61
+  expect(n * 2) == 122
+}
+
+test "t62" {
+  let n = 62
+  expect(n * 2) == 124
+}
+
+test "t63" {
+  let n = 63
+  expect(n * 2) == 126
+}
+
+test "t64" {
+  let n = 64
+  expect(n * 2) == 128
+}
+
+test "t65" {
+  let n = 65
+  expect(n * 2) == 130
+}
+
+test "t66" {
+  let n = 66
+  expect(n * 2) == 132
+}
+
+test "t67" {
+  let n = 67
+  expect(n * 2) == 134
+}
+
+test "t68" {
+  let n = 68
+  expect(n * 2) == 136
+}
+
+test "t69" {
+  let n = 69
+  expect(n * 2) == 138
+}
+
+test "t70" {
+  let n = 70
+  expect(n * 2) == 140
+}
+
+test "t71" {
+  let n = 71
+  expect(n * 2) == 142
+}
+
+test "t72" {
+  let n = 72
+  expect(n * 2) == 144
+}
+
+test "t73" {
+  let n = 73
+  expect(n * 2) == 146
+}
+
+test "t74" {
+  let n = 74
+  expect(n * 2) == 148
+}
+
+test "t75" {
+  let n = 75
+  expect(n * 2) == 150
+}
+
+test "t76" {
+  let n = 76
+  expect(n * 2) == 152
+}
+
+test "t77" {
+  let n = 77
+  expect(n * 2) == 154
+}
+
+test "t78" {
+  let n = 78
+  expect(n * 2) == 156
+}
+
+test "t79" {
+  let n = 79
+  expect(n * 2) == 158
+}
+
+test "t80" {
+  let n = 80
+  expect(n * 2) == 160
+}
+
+test "t81" {
+  let n = 81
+  expect(n * 2) == 162
+}
+
+test "t82" {
+  let n = 82
+  expect(n * 2) == 164
+}
+
+test "t83" {
+  let n = 83
+  expect(n * 2) == 166
+}
+
+test "t84" {
+  let n = 84
+  expect(n * 2) == 168
+}
+
+test "t85" {
+  let n = 85
+  expect(n * 2) == 170
+}
+
+test "t86" {
+  let n = 86
+  expect(n * 2) == 172
+}
+
+test "t87" {
+  let n = 87
+  expect(n * 2) == 174
+}
+
+test "t88" {
+  let n = 88
+  expect(n * 2) == 176
+}
+
+test "t89" {
+  let n = 89
+  expect(n * 2) == 178
+}
+
+test "t90" {
+  let n = 90
+  expect(n * 2) == 180
+}
+
+test "t91" {
+  let n = 91
+  expect(n * 2) == 182
+}
+
+test "t92" {
+  let n = 92
+  expect(n * 2) == 184
+}
+
+test "t93" {
+  let n = 93
+  expect(n * 2) == 186
+}
+
+test "t94" {
+  let n = 94
+  expect(n * 2) == 188
+}
+
+test "t95" {
+  let n = 95
+  expect(n * 2) == 190
+}
+
+test "t96" {
+  let n = 96
+  expect(n * 2) == 192
+}
+
+test "t97" {
+  let n = 97
+  expect(n * 2) == 194
+}
+
+test "t98" {
+  let n = 98
+  expect(n * 2) == 196
+}
+
+test "t99" {
+  let n = 99
+  expect(n * 2) == 198
+}
+
+test "t100" {
+  let n = 100
+  expect(n * 2) == 200
+}
+
+test "t101" {
+  let n = 101
+  expect(n * 2) == 202
+}
+
+test "t102" {
+  let n = 102
+  expect(n * 2) == 204
+}
+
+test "t103" {
+  let n = 103
+  expect(n * 2) == 206
+}
+
+test "t104" {
+  let n = 104
+  expect(n * 2) == 208
+}
+
+test "t105" {
+  let n = 105
+  expect(n * 2) == 210
+}
+
+test "t106" {
+  let n = 106
+  expect(n * 2) == 212
+}
+
+test "t107" {
+  let n = 107
+  expect(n * 2) == 214
+}
+
+test "t108" {
+  let n = 108
+  expect(n * 2) == 216
+}
+
+test "t109" {
+  let n = 109
+  expect(n * 2) == 218
+}
+
+test "t110" {
+  let n = 110
+  expect(n * 2) == 220
+}
+
+test "t111" {
+  let n = 111
+  expect(n * 2) == 222
+}
+
+test "t112" {
+  let n = 112
+  expect(n * 2) == 224
+}
+
+test "t113" {
+  let n = 113
+  expect(n * 2) == 226
+}
+
+test "t114" {
+  let n = 114
+  expect(n * 2) == 228
+}
+
+test "t115" {
+  let n = 115
+  expect(n * 2) == 230
+}
+
+test "t116" {
+  let n = 116
+  expect(n * 2) == 232
+}
+
+test "t117" {
+  let n = 117
+  expect(n * 2) == 234
+}
+
+test "t118" {
+  let n = 118
+  expect(n * 2) == 236
+}
+
+test "t119" {
+  let n = 119
+  expect(n * 2) == 238
+}
+
+test "t120" {
+  let n = 120
+  expect(n * 2) == 240
+}
+
+test "t121" {
+  let n = 121
+  expect(n * 2) == 242
+}
+
+test "t122" {
+  let n = 122
+  expect(n * 2) == 244
+}
+
+test "t123" {
+  let n = 123
+  expect(n * 2) == 246
+}
+
+test "t124" {
+  let n = 124
+  expect(n * 2) == 248
+}
+
+test "t125" {
+  let n = 125
+  expect(n * 2) == 250
+}
+
+test "t126" {
+  let n = 126
+  expect(n * 2) == 252
+}
+
+test "t127" {
+  let n = 127
+  expect(n * 2) == 254
+}
+
+test "t128" {
+  let n = 128
+  expect(n * 2) == 256
+}
+
+test "t129" {
+  let n = 129
+  expect(n * 2) == 258
+}
+
+test "t130" {
+  let n = 130
+  expect(n * 2) == 260
+}
+
+test "t131" {
+  let n = 131
+  expect(n * 2) == 262
+}
+
+test "t132" {
+  let n = 132
+  expect(n * 2) == 264
+}
+
+test "t133" {
+  let n = 133
+  expect(n * 2) == 266
+}
+
+test "t134" {
+  let n = 134
+  expect(n * 2) == 268
+}
+
+test "t135" {
+  let n = 135
+  expect(n * 2) == 270
+}
+
+test "t136" {
+  let n = 136
+  expect(n * 2) == 272
+}
+
+test "t137" {
+  let n = 137
+  expect(n * 2) == 274
+}
+
+test "t138" {
+  let n = 138
+  expect(n * 2) == 276
+}
+
+test "t139" {
+  let n = 139
+  expect(n * 2) == 278
+}
+
+test "t140" {
+  let n = 140
+  expect(n * 2) == 280
+}
+
+test "t141" {
+  let n = 141
+  expect(n * 2) == 282
+}
+
+test "t142" {
+  let n = 142
+  expect(n * 2) == 284
+}
+
+test "t143" {
+  let n = 143
+  expect(n * 2) == 286
+}
+
+test "t144" {
+  let n = 144
+  expect(n * 2) == 288
+}
+
+test "t145" {
+  let n = 145
+  expect(n * 2) == 290
+}
+
+test "t146" {
+  let n = 146
+  expect(n * 2) == 292
+}
+
+test "t147" {
+  let n = 147
+  expect(n * 2) == 294
+}
+
+test "t148" {
+  let n = 148
+  expect(n * 2) == 296
+}
+
+test "t149" {
+  let n = 149
+  expect(n * 2) == 298
+}
+
+test "t150" {
+  let n = 150
+  expect(n * 2) == 300
+}
+
+test "t151" {
+  let n = 151
+  expect(n * 2) == 302
+}
+
+test "t152" {
+  let n = 152
+  expect(n * 2) == 304
+}
+
+test "t153" {
+  let n = 153
+  expect(n * 2) == 306
+}
+
+test "t154" {
+  let n = 154
+  expect(n * 2) == 308
+}
+
+test "t155" {
+  let n = 155
+  expect(n * 2) == 310
+}
+
+test "t156" {
+  let n = 156
+  expect(n * 2) == 312
+}
+
+test "t157" {
+  let n = 157
+  expect(n * 2) == 314
+}
+
+test "t158" {
+  let n = 158
+  expect(n * 2) == 316
+}
+
+test "t159" {
+  let n = 159
+  expect(n * 2) == 318
+}
+
+test "t160" {
+  let n = 160
+  expect(n * 2) == 320
+}
+
+test "t161" {
+  let n = 161
+  expect(n * 2) == 322
+}
+
+test "t162" {
+  let n = 162
+  expect(n * 2) == 324
+}
+
+test "t163" {
+  let n = 163
+  expect(n * 2) == 326
+}
+
+test "t164" {
+  let n = 164
+  expect(n * 2) == 328
+}
+
+test "t165" {
+  let n = 165
+  expect(n * 2) == 330
+}
+
+test "t166" {
+  let n = 166
+  expect(n * 2) == 332
+}
+
+test "t167" {
+  let n = 167
+  expect(n * 2) == 334
+}
+
+test "t168" {
+  let n = 168
+  expect(n * 2) == 336
+}
+
+test "t169" {
+  let n = 169
+  expect(n * 2) == 338
+}
+
+test "t170" {
+  let n = 170
+  expect(n * 2) == 340
+}
+
+test "t171" {
+  let n = 171
+  expect(n * 2) == 342
+}
+
+test "t172" {
+  let n = 172
+  expect(n * 2) == 344
+}
+
+test "t173" {
+  let n = 173
+  expect(n * 2) == 346
+}
+
+test "t174" {
+  let n = 174
+  expect(n * 2) == 348
+}
+
+test "t175" {
+  let n = 175
+  expect(n * 2) == 350
+}
+
+test "t176" {
+  let n = 176
+  expect(n * 2) == 352
+}
+
+test "t177" {
+  let n = 177
+  expect(n * 2) == 354
+}
+
+test "t178" {
+  let n = 178
+  expect(n * 2) == 356
+}
+
+test "t179" {
+  let n = 179
+  expect(n * 2) == 358
+}
+
+test "t180" {
+  let n = 180
+  expect(n * 2) == 360
+}
+
+test "t181" {
+  let n = 181
+  expect(n * 2) == 362
+}
+
+test "t182" {
+  let n = 182
+  expect(n * 2) == 364
+}
+
+test "t183" {
+  let n = 183
+  expect(n * 2) == 366
+}
+
+test "t184" {
+  let n = 184
+  expect(n * 2) == 368
+}
+
+test "t185" {
+  let n = 185
+  expect(n * 2) == 370
+}
+
+test "t186" {
+  let n = 186
+  expect(n * 2) == 372
+}
+
+test "t187" {
+  let n = 187
+  expect(n * 2) == 374
+}
+
+test "t188" {
+  let n = 188
+  expect(n * 2) == 376
+}
+
+test "t189" {
+  let n = 189
+  expect(n * 2) == 378
+}
+
+test "t190" {
+  let n = 190
+  expect(n * 2) == 380
+}
+
+test "t191" {
+  let n = 191
+  expect(n * 2) == 382
+}
+
+test "t192" {
+  let n = 192
+  expect(n * 2) == 384
+}
+
+test "t193" {
+  let n = 193
+  expect(n * 2) == 386
+}
+
+test "t194" {
+  let n = 194
+  expect(n * 2) == 388
+}
+
+test "t195" {
+  let n = 195
+  expect(n * 2) == 390
+}
+
+test "t196" {
+  let n = 196
+  expect(n * 2) == 392
+}
+
+test "t197" {
+  let n = 197
+  expect(n * 2) == 394
+}
+
+test "t198" {
+  let n = 198
+  expect(n * 2) == 396
+}
+
+test "t199" {
+  let n = 199
+  expect(n * 2) == 398
+}
+
+test "t200" {
+  let n = 200
+  expect(n * 2) == 400
+}
+
+test "t201" {
+  let n = 201
+  expect(n * 2) == 402
+}
+
+test "t202" {
+  let n = 202
+  expect(n * 2) == 404
+}
+
+test "t203" {
+  let n = 203
+  expect(n * 2) == 406
+}
+
+test "t204" {
+  let n = 204
+  expect(n * 2) == 408
+}
+
+test "t205" {
+  let n = 205
+  expect(n * 2) == 410
+}
+
+test "t206" {
+  let n = 206
+  expect(n * 2) == 412
+}
+
+test "t207" {
+  let n = 207
+  expect(n * 2) == 414
+}
+
+test "t208" {
+  let n = 208
+  expect(n * 2) == 416
+}
+
+test "t209" {
+  let n = 209
+  expect(n * 2) == 418
+}
+
+test "t210" {
+  let n = 210
+  expect(n * 2) == 420
+}
+
+test "t211" {
+  let n = 211
+  expect(n * 2) == 422
+}
+
+test "t212" {
+  let n = 212
+  expect(n * 2) == 424
+}
+
+test "t213" {
+  let n = 213
+  expect(n * 2) == 426
+}
+
+test "t214" {
+  let n = 214
+  expect(n * 2) == 428
+}
+
+test "t215" {
+  let n = 215
+  expect(n * 2) == 430
+}
+
+test "t216" {
+  let n = 216
+  expect(n * 2) == 432
+}
+
+test "t217" {
+  let n = 217
+  expect(n * 2) == 434
+}
+
+test "t218" {
+  let n = 218
+  expect(n * 2) == 436
+}
+
+test "t219" {
+  let n = 219
+  expect(n * 2) == 438
+}
+
+test "t220" {
+  let n = 220
+  expect(n * 2) == 440
+}
+
+test "t221" {
+  let n = 221
+  expect(n * 2) == 442
+}
+
+test "t222" {
+  let n = 222
+  expect(n * 2) == 444
+}
+
+test "t223" {
+  let n = 223
+  expect(n * 2) == 446
+}
+
+test "t224" {
+  let n = 224
+  expect(n * 2) == 448
+}
+
+test "t225" {
+  let n = 225
+  expect(n * 2) == 450
+}
+
+test "t226" {
+  let n = 226
+  expect(n * 2) == 452
+}
+
+test "t227" {
+  let n = 227
+  expect(n * 2) == 454
+}
+
+test "t228" {
+  let n = 228
+  expect(n * 2) == 456
+}
+
+test "t229" {
+  let n = 229
+  expect(n * 2) == 458
+}
+
+test "t230" {
+  let n = 230
+  expect(n * 2) == 460
+}
+
+test "t231" {
+  let n = 231
+  expect(n * 2) == 462
+}
+
+test "t232" {
+  let n = 232
+  expect(n * 2) == 464
+}
+
+test "t233" {
+  let n = 233
+  expect(n * 2) == 466
+}
+
+test "t234" {
+  let n = 234
+  expect(n * 2) == 468
+}
+
+test "t235" {
+  let n = 235
+  expect(n * 2) == 470
+}
+
+test "t236" {
+  let n = 236
+  expect(n * 2) == 472
+}
+
+test "t237" {
+  let n = 237
+  expect(n * 2) == 474
+}
+
+test "t238" {
+  let n = 238
+  expect(n * 2) == 476
+}
+
+test "t239" {
+  let n = 239
+  expect(n * 2) == 478
+}
+
+test "t240" {
+  let n = 240
+  expect(n * 2) == 480
+}
+
+test "t241" {
+  let n = 241
+  expect(n * 2) == 482
+}
+
+test "t242" {
+  let n = 242
+  expect(n * 2) == 484
+}
+
+test "t243" {
+  let n = 243
+  expect(n * 2) == 486
+}
+
+test "t244" {
+  let n = 244
+  expect(n * 2) == 488
+}
+
+test "t245" {
+  let n = 245
+  expect(n * 2) == 490
+}
+
+test "t246" {
+  let n = 246
+  expect(n * 2) == 492
+}
+
+test "t247" {
+  let n = 247
+  expect(n * 2) == 494
+}
+
+test "t248" {
+  let n = 248
+  expect(n * 2) == 496
+}
+
+test "t249" {
+  let n = 249
+  expect(n * 2) == 498
+}
+
+test "t250" {
+  let n = 250
+  expect(n * 2) == 500
+}
+
+test "t251" {
+  let n = 251
+  expect(n * 2) == 502
+}
+
+test "t252" {
+  let n = 252
+  expect(n * 2) == 504
+}
+
+test "t253" {
+  let n = 253
+  expect(n * 2) == 506
+}
+
+test "t254" {
+  let n = 254
+  expect(n * 2) == 508
+}
+
+test "t255" {
+  let n = 255
+  expect(n * 2) == 510
+}
+
+test "t256" {
+  let n = 256
+  expect(n * 2) == 512
+}
+
+test "t257" {
+  let n = 257
+  expect(n * 2) == 514
+}
+
+test "t258" {
+  let n = 258
+  expect(n * 2) == 516
+}
+
+test "t259" {
+  let n = 259
+  expect(n * 2) == 518
+}
+
+test "t260" {
+  let n = 260
+  expect(n * 2) == 520
+}
+
+test "t261" {
+  let n = 261
+  expect(n * 2) == 522
+}
+
+test "t262" {
+  let n = 262
+  expect(n * 2) == 524
+}
+
+test "t263" {
+  let n = 263
+  expect(n * 2) == 526
+}
+
+test "t264" {
+  let n = 264
+  expect(n * 2) == 528
+}
+
+test "t265" {
+  let n = 265
+  expect(n * 2) == 530
+}
+
+test "t266" {
+  let n = 266
+  expect(n * 2) == 532
+}
+
+test "t267" {
+  let n = 267
+  expect(n * 2) == 534
+}
+
+test "t268" {
+  let n = 268
+  expect(n * 2) == 536
+}
+
+test "t269" {
+  let n = 269
+  expect(n * 2) == 538
+}
+
+test "t270" {
+  let n = 270
+  expect(n * 2) == 540
+}
+
+test "t271" {
+  let n = 271
+  expect(n * 2) == 542
+}
+
+test "t272" {
+  let n = 272
+  expect(n * 2) == 544
+}
+
+test "t273" {
+  let n = 273
+  expect(n * 2) == 546
+}
+
+test "t274" {
+  let n = 274
+  expect(n * 2) == 548
+}
+
+test "t275" {
+  let n = 275
+  expect(n * 2) == 550
+}
+
+test "t276" {
+  let n = 276
+  expect(n * 2) == 552
+}
+
+test "t277" {
+  let n = 277
+  expect(n * 2) == 554
+}
+
+test "t278" {
+  let n = 278
+  expect(n * 2) == 556
+}
+
+test "t279" {
+  let n = 279
+  expect(n * 2) == 558
+}
+
+test "t280" {
+  let n = 280
+  expect(n * 2) == 560
+}
+
+test "t281" {
+  let n = 281
+  expect(n * 2) == 562
+}
+
+test "t282" {
+  let n = 282
+  expect(n * 2) == 564
+}
+
+test "t283" {
+  let n = 283
+  expect(n * 2) == 566
+}
+
+test "t284" {
+  let n = 284
+  expect(n * 2) == 568
+}
+
+test "t285" {
+  let n = 285
+  expect(n * 2) == 570
+}
+
+test "t286" {
+  let n = 286
+  expect(n * 2) == 572
+}
+
+test "t287" {
+  let n = 287
+  expect(n * 2) == 574
+}
+
+test "t288" {
+  let n = 288
+  expect(n * 2) == 576
+}
+
+test "t289" {
+  let n = 289
+  expect(n * 2) == 578
+}
+
+test "t290" {
+  let n = 290
+  expect(n * 2) == 580
+}
+
+test "t291" {
+  let n = 291
+  expect(n * 2) == 582
+}
+
+test "t292" {
+  let n = 292
+  expect(n * 2) == 584
+}
+
+test "t293" {
+  let n = 293
+  expect(n * 2) == 586
+}
+
+test "t294" {
+  let n = 294
+  expect(n * 2) == 588
+}
+
+test "t295" {
+  let n = 295
+  expect(n * 2) == 590
+}
+
+test "t296" {
+  let n = 296
+  expect(n * 2) == 592
+}
+
+test "t297" {
+  let n = 297
+  expect(n * 2) == 594
+}
+
+test "t298" {
+  let n = 298
+  expect(n * 2) == 596
+}
+
+test "t299" {
+  let n = 299
+  expect(n * 2) == 598
+}
+
+test "t300" {
+  let n = 300
+  expect(n * 2) == 600
+}
+
+test "t301" {
+  let n = 301
+  expect(n * 2) == 602
+}
+
+test "t302" {
+  let n = 302
+  expect(n * 2) == 604
+}
+
+test "t303" {
+  let n = 303
+  expect(n * 2) == 606
+}
+
+test "t304" {
+  let n = 304
+  expect(n * 2) == 608
+}
+
+test "t305" {
+  let n = 305
+  expect(n * 2) == 610
+}
+
+test "t306" {
+  let n = 306
+  expect(n * 2) == 612
+}
+
+test "t307" {
+  let n = 307
+  expect(n * 2) == 614
+}
+
+test "t308" {
+  let n = 308
+  expect(n * 2) == 616
+}
+
+test "t309" {
+  let n = 309
+  expect(n * 2) == 618
+}
+
+test "t310" {
+  let n = 310
+  expect(n * 2) == 620
+}
+
+test "t311" {
+  let n = 311
+  expect(n * 2) == 622
+}
+
+test "t312" {
+  let n = 312
+  expect(n * 2) == 624
+}
+
+test "t313" {
+  let n = 313
+  expect(n * 2) == 626
+}
+
+test "t314" {
+  let n = 314
+  expect(n * 2) == 628
+}
+
+test "t315" {
+  let n = 315
+  expect(n * 2) == 630
+}
+
+test "t316" {
+  let n = 316
+  expect(n * 2) == 632
+}
+
+test "t317" {
+  let n = 317
+  expect(n * 2) == 634
+}
+
+test "t318" {
+  let n = 318
+  expect(n * 2) == 636
+}
+
+test "t319" {
+  let n = 319
+  expect(n * 2) == 638
+}
+
+test "t320" {
+  let n = 320
+  expect(n * 2) == 640
+}
+
+test "t321" {
+  let n = 321
+  expect(n * 2) == 642
+}
+
+test "t322" {
+  let n = 322
+  expect(n * 2) == 644
+}
+
+test "t323" {
+  let n = 323
+  expect(n * 2) == 646
+}
+
+test "t324" {
+  let n = 324
+  expect(n * 2) == 648
+}
+
+test "t325" {
+  let n = 325
+  expect(n * 2) == 650
+}
+
+test "t326" {
+  let n = 326
+  expect(n * 2) == 652
+}
+
+test "t327" {
+  let n = 327
+  expect(n * 2) == 654
+}
+
+test "t328" {
+  let n = 328
+  expect(n * 2) == 656
+}
+
+test "t329" {
+  let n = 329
+  expect(n * 2) == 658
+}
+
+test "t330" {
+  let n = 330
+  expect(n * 2) == 660
+}
+
+test "t331" {
+  let n = 331
+  expect(n * 2) == 662
+}
+
+test "t332" {
+  let n = 332
+  expect(n * 2) == 664
+}
+
+test "t333" {
+  let n = 333
+  expect(n * 2) == 666
+}
+
+test "t334" {
+  let n = 334
+  expect(n * 2) == 668
+}
+
+test "t335" {
+  let n = 335
+  expect(n * 2) == 670
+}
+
+test "t336" {
+  let n = 336
+  expect(n * 2) == 672
+}
+
+test "t337" {
+  let n = 337
+  expect(n * 2) == 674
+}
+
+test "t338" {
+  let n = 338
+  expect(n * 2) == 676
+}
+
+test "t339" {
+  let n = 339
+  expect(n * 2) == 678
+}
+
+test "t340" {
+  let n = 340
+  expect(n * 2) == 680
+}
+
+test "t341" {
+  let n = 341
+  expect(n * 2) == 682
+}
+
+test "t342" {
+  let n = 342
+  expect(n * 2) == 684
+}
+
+test "t343" {
+  let n = 343
+  expect(n * 2) == 686
+}
+
+test "t344" {
+  let n = 344
+  expect(n * 2) == 688
+}
+
+test "t345" {
+  let n = 345
+  expect(n * 2) == 690
+}
+
+test "t346" {
+  let n = 346
+  expect(n * 2) == 692
+}
+
+test "t347" {
+  let n = 347
+  expect(n * 2) == 694
+}
+
+test "t348" {
+  let n = 348
+  expect(n * 2) == 696
+}
+
+test "t349" {
+  let n = 349
+  expect(n * 2) == 698
+}
+
+test "t350" {
+  let n = 350
+  expect(n * 2) == 700
+}
+
+test "t351" {
+  let n = 351
+  expect(n * 2) == 702
+}
+
+test "t352" {
+  let n = 352
+  expect(n * 2) == 704
+}
+
+test "t353" {
+  let n = 353
+  expect(n * 2) == 706
+}
+
+test "t354" {
+  let n = 354
+  expect(n * 2) == 708
+}
+
+test "t355" {
+  let n = 355
+  expect(n * 2) == 710
+}
+
+test "t356" {
+  let n = 356
+  expect(n * 2) == 712
+}
+
+test "t357" {
+  let n = 357
+  expect(n * 2) == 714
+}
+
+test "t358" {
+  let n = 358
+  expect(n * 2) == 716
+}
+
+test "t359" {
+  let n = 359
+  expect(n * 2) == 718
+}
+
+test "t360" {
+  let n = 360
+  expect(n * 2) == 720
+}
+
+test "t361" {
+  let n = 361
+  expect(n * 2) == 722
+}
+
+test "t362" {
+  let n = 362
+  expect(n * 2) == 724
+}
+
+test "t363" {
+  let n = 363
+  expect(n * 2) == 726
+}
+
+test "t364" {
+  let n = 364
+  expect(n * 2) == 728
+}
+
+test "t365" {
+  let n = 365
+  expect(n * 2) == 730
+}
+
+test "t366" {
+  let n = 366
+  expect(n * 2) == 732
+}
+
+test "t367" {
+  let n = 367
+  expect(n * 2) == 734
+}
+
+test "t368" {
+  let n = 368
+  expect(n * 2) == 736
+}
+
+test "t369" {
+  let n = 369
+  expect(n * 2) == 738
+}
+
+test "t370" {
+  let n = 370
+  expect(n * 2) == 740
+}
+
+test "t371" {
+  let n = 371
+  expect(n * 2) == 742
+}
+
+test "t372" {
+  let n = 372
+  expect(n * 2) == 744
+}
+
+test "t373" {
+  let n = 373
+  expect(n * 2) == 746
+}
+
+test "t374" {
+  let n = 374
+  expect(n * 2) == 748
+}
+
+test "t375" {
+  let n = 375
+  expect(n * 2) == 750
+}
+
+test "t376" {
+  let n = 376
+  expect(n * 2) == 752
+}
+
+test "t377" {
+  let n = 377
+  expect(n * 2) == 754
+}
+
+test "t378" {
+  let n = 378
+  expect(n * 2) == 756
+}
+
+test "t379" {
+  let n = 379
+  expect(n * 2) == 758
+}
+
+test "t380" {
+  let n = 380
+  expect(n * 2) == 760
+}
+
+test "t381" {
+  let n = 381
+  expect(n * 2) == 762
+}
+
+test "t382" {
+  let n = 382
+  expect(n * 2) == 764
+}
+
+test "t383" {
+  let n = 383
+  expect(n * 2) == 766
+}
+
+test "t384" {
+  let n = 384
+  expect(n * 2) == 768
+}
+
+test "t385" {
+  let n = 385
+  expect(n * 2) == 770
+}
+
+test "t386" {
+  let n = 386
+  expect(n * 2) == 772
+}
+
+test "t387" {
+  let n = 387
+  expect(n * 2) == 774
+}
+
+test "t388" {
+  let n = 388
+  expect(n * 2) == 776
+}
+
+test "t389" {
+  let n = 389
+  expect(n * 2) == 778
+}
+
+test "t390" {
+  let n = 390
+  expect(n * 2) == 780
+}
+
+test "t391" {
+  let n = 391
+  expect(n * 2) == 782
+}
+
+test "t392" {
+  let n = 392
+  expect(n * 2) == 784
+}
+
+test "t393" {
+  let n = 393
+  expect(n * 2) == 786
+}
+
+test "t394" {
+  let n = 394
+  expect(n * 2) == 788
+}
+
+test "t395" {
+  let n = 395
+  expect(n * 2) == 790
+}
+
+test "t396" {
+  let n = 396
+  expect(n * 2) == 792
+}
+
+test "t397" {
+  let n = 397
+  expect(n * 2) == 794
+}
+
+test "t398" {
+  let n = 398
+  expect(n * 2) == 796
+}
+
+test "t399" {
+  let n = 399
+  expect(n * 2) == 798
+}
+
+test "t400" {
+  let n = 400
+  expect(n * 2) == 800
+}
+
+test "t401" {
+  let n = 401
+  expect(n * 2) == 802
+}
+
+test "t402" {
+  let n = 402
+  expect(n * 2) == 804
+}
+
+test "t403" {
+  let n = 403
+  expect(n * 2) == 806
+}
+
+test "t404" {
+  let n = 404
+  expect(n * 2) == 808
+}
+
+test "t405" {
+  let n = 405
+  expect(n * 2) == 810
+}
+
+test "t406" {
+  let n = 406
+  expect(n * 2) == 812
+}
+
+test "t407" {
+  let n = 407
+  expect(n * 2) == 814
+}
+
+test "t408" {
+  let n = 408
+  expect(n * 2) == 816
+}
+
+test "t409" {
+  let n = 409
+  expect(n * 2) == 818
+}
+
+test "t410" {
+  let n = 410
+  expect(n * 2) == 820
+}
+
+test "t411" {
+  let n = 411
+  expect(n * 2) == 822
+}
+
+test "t412" {
+  let n = 412
+  expect(n * 2) == 824
+}
+
+test "t413" {
+  let n = 413
+  expect(n * 2) == 826
+}
+
+test "t414" {
+  let n = 414
+  expect(n * 2) == 828
+}
+
+test "t415" {
+  let n = 415
+  expect(n * 2) == 830
+}
+
+test "t416" {
+  let n = 416
+  expect(n * 2) == 832
+}
+
+test "t417" {
+  let n = 417
+  expect(n * 2) == 834
+}
+
+test "t418" {
+  let n = 418
+  expect(n * 2) == 836
+}
+
+test "t419" {
+  let n = 419
+  expect(n * 2) == 838
+}
+
+test "t420" {
+  let n = 420
+  expect(n * 2) == 840
+}
+
+test "t421" {
+  let n = 421
+  expect(n * 2) == 842
+}
+
+test "t422" {
+  let n = 422
+  expect(n * 2) == 844
+}
+
+test "t423" {
+  let n = 423
+  expect(n * 2) == 846
+}
+
+test "t424" {
+  let n = 424
+  expect(n * 2) == 848
+}
+
+test "t425" {
+  let n = 425
+  expect(n * 2) == 850
+}
+
+test "t426" {
+  let n = 426
+  expect(n * 2) == 852
+}
+
+test "t427" {
+  let n = 427
+  expect(n * 2) == 854
+}
+
+test "t428" {
+  let n = 428
+  expect(n * 2) == 856
+}
+
+test "t429" {
+  let n = 429
+  expect(n * 2) == 858
+}
+
+test "t430" {
+  let n = 430
+  expect(n * 2) == 860
+}
+
+test "t431" {
+  let n = 431
+  expect(n * 2) == 862
+}
+
+test "t432" {
+  let n = 432
+  expect(n * 2) == 864
+}
+
+test "t433" {
+  let n = 433
+  expect(n * 2) == 866
+}
+
+test "t434" {
+  let n = 434
+  expect(n * 2) == 868
+}
+
+test "t435" {
+  let n = 435
+  expect(n * 2) == 870
+}
+
+test "t436" {
+  let n = 436
+  expect(n * 2) == 872
+}
+
+test "t437" {
+  let n = 437
+  expect(n * 2) == 874
+}
+
+test "t438" {
+  let n = 438
+  expect(n * 2) == 876
+}
+
+test "t439" {
+  let n = 439
+  expect(n * 2) == 878
+}
+
+test "t440" {
+  let n = 440
+  expect(n * 2) == 880
+}
+
+test "t441" {
+  let n = 441
+  expect(n * 2) == 882
+}
+
+test "t442" {
+  let n = 442
+  expect(n * 2) == 884
+}
+
+test "t443" {
+  let n = 443
+  expect(n * 2) == 886
+}
+
+test "t444" {
+  let n = 444
+  expect(n * 2) == 888
+}
+
+test "t445" {
+  let n = 445
+  expect(n * 2) == 890
+}
+
+test "t446" {
+  let n = 446
+  expect(n * 2) == 892
+}
+
+test "t447" {
+  let n = 447
+  expect(n * 2) == 894
+}
+
+test "t448" {
+  let n = 448
+  expect(n * 2) == 896
+}
+
+test "t449" {
+  let n = 449
+  expect(n * 2) == 898
+}
+
+test "t450" {
+  let n = 450
+  expect(n * 2) == 900
+}
+
+test "t451" {
+  let n = 451
+  expect(n * 2) == 902
+}
+
+test "t452" {
+  let n = 452
+  expect(n * 2) == 904
+}
+
+test "t453" {
+  let n = 453
+  expect(n * 2) == 906
+}
+
+test "t454" {
+  let n = 454
+  expect(n * 2) == 908
+}
+
+test "t455" {
+  let n = 455
+  expect(n * 2) == 910
+}
+
+test "t456" {
+  let n = 456
+  expect(n * 2) == 912
+}
+
+test "t457" {
+  let n = 457
+  expect(n * 2) == 914
+}
+
+test "t458" {
+  let n = 458
+  expect(n * 2) == 916
+}
+
+test "t459" {
+  let n = 459
+  expect(n * 2) == 918
+}
+
+test "t460" {
+  let n = 460
+  expect(n * 2) == 920
+}
+
+test "t461" {
+  let n = 461
+  expect(n * 2) == 922
+}
+
+test "t462" {
+  let n = 462
+  expect(n * 2) == 924
+}
+
+test "t463" {
+  let n = 463
+  expect(n * 2) == 926
+}
+
+test "t464" {
+  let n = 464
+  expect(n * 2) == 928
+}
+
+test "t465" {
+  let n = 465
+  expect(n * 2) == 930
+}
+
+test "t466" {
+  let n = 466
+  expect(n * 2) == 932
+}
+
+test "t467" {
+  let n = 467
+  expect(n * 2) == 934
+}
+
+test "t468" {
+  let n = 468
+  expect(n * 2) == 936
+}
+
+test "t469" {
+  let n = 469
+  expect(n * 2) == 938
+}
+
+test "t470" {
+  let n = 470
+  expect(n * 2) == 940
+}
+
+test "t471" {
+  let n = 471
+  expect(n * 2) == 942
+}
+
+test "t472" {
+  let n = 472
+  expect(n * 2) == 944
+}
+
+test "t473" {
+  let n = 473
+  expect(n * 2) == 946
+}
+
+test "t474" {
+  let n = 474
+  expect(n * 2) == 948
+}
+
+test "t475" {
+  let n = 475
+  expect(n * 2) == 950
+}
+
+test "t476" {
+  let n = 476
+  expect(n * 2) == 952
+}
+
+test "t477" {
+  let n = 477
+  expect(n * 2) == 954
+}
+
+test "t478" {
+  let n = 478
+  expect(n * 2) == 956
+}
+
+test "t479" {
+  let n = 479
+  expect(n * 2) == 958
+}
+
+test "t480" {
+  let n = 480
+  expect(n * 2) == 960
+}
+
+test "t481" {
+  let n = 481
+  expect(n * 2) == 962
+}
+
+test "t482" {
+  let n = 482
+  expect(n * 2) == 964
+}
+
+test "t483" {
+  let n = 483
+  expect(n * 2) == 966
+}
+
+test "t484" {
+  let n = 484
+  expect(n * 2) == 968
+}
+
+test "t485" {
+  let n = 485
+  expect(n * 2) == 970
+}
+
+test "t486" {
+  let n = 486
+  expect(n * 2) == 972
+}
+
+test "t487" {
+  let n = 487
+  expect(n * 2) == 974
+}
+
+test "t488" {
+  let n = 488
+  expect(n * 2) == 976
+}
+
+test "t489" {
+  let n = 489
+  expect(n * 2) == 978
+}
+
+test "t490" {
+  let n = 490
+  expect(n * 2) == 980
+}
+
+test "t491" {
+  let n = 491
+  expect(n * 2) == 982
+}
+
+test "t492" {
+  let n = 492
+  expect(n * 2) == 984
+}
+
+test "t493" {
+  let n = 493
+  expect(n * 2) == 986
+}
+
+test "t494" {
+  let n = 494
+  expect(n * 2) == 988
+}
+
+test "t495" {
+  let n = 495
+  expect(n * 2) == 990
+}
+
+test "t496" {
+  let n = 496
+  expect(n * 2) == 992
+}
+
+test "t497" {
+  let n = 497
+  expect(n * 2) == 994
+}
+
+test "t498" {
+  let n = 498
+  expect(n * 2) == 996
+}
+
+test "t499" {
+  let n = 499
+  expect(n * 2) == 998
+}
+
+test "t500" {
+  let n = 500
+  expect(n * 2) == 1000
+}
+
+test "t501" {
+  let n = 501
+  expect(n * 2) == 1002
+}
+
+test "t502" {
+  let n = 502
+  expect(n * 2) == 1004
+}
+
+test "t503" {
+  let n = 503
+  expect(n * 2) == 1006
+}
+
+test "t504" {
+  let n = 504
+  expect(n * 2) == 1008
+}
+
+test "t505" {
+  let n = 505
+  expect(n * 2) == 1010
+}
+
+test "t506" {
+  let n = 506
+  expect(n * 2) == 1012
+}
+
+test "t507" {
+  let n = 507
+  expect(n * 2) == 1014
+}
+
+test "t508" {
+  let n = 508
+  expect(n * 2) == 1016
+}
+
+test "t509" {
+  let n = 509
+  expect(n * 2) == 1018
+}
+
+test "t510" {
+  let n = 510
+  expect(n * 2) == 1020
+}
+
+test "t511" {
+  let n = 511
+  expect(n * 2) == 1022
+}
+
+test "t512" {
+  let n = 512
+  expect(n * 2) == 1024
+}
+
+test "t513" {
+  let n = 513
+  expect(n * 2) == 1026
+}
+
+test "t514" {
+  let n = 514
+  expect(n * 2) == 1028
+}
+
+test "t515" {
+  let n = 515
+  expect(n * 2) == 1030
+}
+
+test "t516" {
+  let n = 516
+  expect(n * 2) == 1032
+}
+
+test "t517" {
+  let n = 517
+  expect(n * 2) == 1034
+}
+
+test "t518" {
+  let n = 518
+  expect(n * 2) == 1036
+}
+
+test "t519" {
+  let n = 519
+  expect(n * 2) == 1038
+}
+
+test "t520" {
+  let n = 520
+  expect(n * 2) == 1040
+}
+
+test "t521" {
+  let n = 521
+  expect(n * 2) == 1042
+}
+
+test "t522" {
+  let n = 522
+  expect(n * 2) == 1044
+}
+
+test "t523" {
+  let n = 523
+  expect(n * 2) == 1046
+}
+
+test "t524" {
+  let n = 524
+  expect(n * 2) == 1048
+}
+
+test "t525" {
+  let n = 525
+  expect(n * 2) == 1050
+}
+
+test "t526" {
+  let n = 526
+  expect(n * 2) == 1052
+}
+
+test "t527" {
+  let n = 527
+  expect(n * 2) == 1054
+}
+
+test "t528" {
+  let n = 528
+  expect(n * 2) == 1056
+}
+
+test "t529" {
+  let n = 529
+  expect(n * 2) == 1058
+}
+
+test "t530" {
+  let n = 530
+  expect(n * 2) == 1060
+}
+
+test "t531" {
+  let n = 531
+  expect(n * 2) == 1062
+}
+
+test "t532" {
+  let n = 532
+  expect(n * 2) == 1064
+}
+
+test "t533" {
+  let n = 533
+  expect(n * 2) == 1066
+}
+
+test "t534" {
+  let n = 534
+  expect(n * 2) == 1068
+}
+
+test "t535" {
+  let n = 535
+  expect(n * 2) == 1070
+}
+
+test "t536" {
+  let n = 536
+  expect(n * 2) == 1072
+}
+
+test "t537" {
+  let n = 537
+  expect(n * 2) == 1074
+}
+
+test "t538" {
+  let n = 538
+  expect(n * 2) == 1076
+}
+
+test "t539" {
+  let n = 539
+  expect(n * 2) == 1078
+}
+
+test "t540" {
+  let n = 540
+  expect(n * 2) == 1080
+}
+
+test "t541" {
+  let n = 541
+  expect(n * 2) == 1082
+}
+
+test "t542" {
+  let n = 542
+  expect(n * 2) == 1084
+}
+
+test "t543" {
+  let n = 543
+  expect(n * 2) == 1086
+}
+
+test "t544" {
+  let n = 544
+  expect(n * 2) == 1088
+}
+
+test "t545" {
+  let n = 545
+  expect(n * 2) == 1090
+}
+
+test "t546" {
+  let n = 546
+  expect(n * 2) == 1092
+}
+
+test "t547" {
+  let n = 547
+  expect(n * 2) == 1094
+}
+
+test "t548" {
+  let n = 548
+  expect(n * 2) == 1096
+}
+
+test "t549" {
+  let n = 549
+  expect(n * 2) == 1098
+}
+
+test "t550" {
+  let n = 550
+  expect(n * 2) == 1100
+}
+
+test "t551" {
+  let n = 551
+  expect(n * 2) == 1102
+}
+
+test "t552" {
+  let n = 552
+  expect(n * 2) == 1104
+}
+
+test "t553" {
+  let n = 553
+  expect(n * 2) == 1106
+}
+
+test "t554" {
+  let n = 554
+  expect(n * 2) == 1108
+}
+
+test "t555" {
+  let n = 555
+  expect(n * 2) == 1110
+}
+
+test "t556" {
+  let n = 556
+  expect(n * 2) == 1112
+}
+
+test "t557" {
+  let n = 557
+  expect(n * 2) == 1114
+}
+
+test "t558" {
+  let n = 558
+  expect(n * 2) == 1116
+}
+
+test "t559" {
+  let n = 559
+  expect(n * 2) == 1118
+}
+
+test "t560" {
+  let n = 560
+  expect(n * 2) == 1120
+}
+
+test "t561" {
+  let n = 561
+  expect(n * 2) == 1122
+}
+
+test "t562" {
+  let n = 562
+  expect(n * 2) == 1124
+}
+
+test "t563" {
+  let n = 563
+  expect(n * 2) == 1126
+}
+
+test "t564" {
+  let n = 564
+  expect(n * 2) == 1128
+}
+
+test "t565" {
+  let n = 565
+  expect(n * 2) == 1130
+}
+
+test "t566" {
+  let n = 566
+  expect(n * 2) == 1132
+}
+
+test "t567" {
+  let n = 567
+  expect(n * 2) == 1134
+}
+
+test "t568" {
+  let n = 568
+  expect(n * 2) == 1136
+}
+
+test "t569" {
+  let n = 569
+  expect(n * 2) == 1138
+}
+
+test "t570" {
+  let n = 570
+  expect(n * 2) == 1140
+}
+
+test "t571" {
+  let n = 571
+  expect(n * 2) == 1142
+}
+
+test "t572" {
+  let n = 572
+  expect(n * 2) == 1144
+}
+
+test "t573" {
+  let n = 573
+  expect(n * 2) == 1146
+}
+
+test "t574" {
+  let n = 574
+  expect(n * 2) == 1148
+}
+
+test "t575" {
+  let n = 575
+  expect(n * 2) == 1150
+}
+
+test "t576" {
+  let n = 576
+  expect(n * 2) == 1152
+}
+
+test "t577" {
+  let n = 577
+  expect(n * 2) == 1154
+}
+
+test "t578" {
+  let n = 578
+  expect(n * 2) == 1156
+}
+
+test "t579" {
+  let n = 579
+  expect(n * 2) == 1158
+}
+
+test "t580" {
+  let n = 580
+  expect(n * 2) == 1160
+}
+
+test "t581" {
+  let n = 581
+  expect(n * 2) == 1162
+}
+
+test "t582" {
+  let n = 582
+  expect(n * 2) == 1164
+}
+
+test "t583" {
+  let n = 583
+  expect(n * 2) == 1166
+}
+
+test "t584" {
+  let n = 584
+  expect(n * 2) == 1168
+}
+
+test "t585" {
+  let n = 585
+  expect(n * 2) == 1170
+}
+
+test "t586" {
+  let n = 586
+  expect(n * 2) == 1172
+}
+
+test "t587" {
+  let n = 587
+  expect(n * 2) == 1174
+}
+
+test "t588" {
+  let n = 588
+  expect(n * 2) == 1176
+}
+
+test "t589" {
+  let n = 589
+  expect(n * 2) == 1178
+}
+
+test "t590" {
+  let n = 590
+  expect(n * 2) == 1180
+}
+
+test "t591" {
+  let n = 591
+  expect(n * 2) == 1182
+}
+
+test "t592" {
+  let n = 592
+  expect(n * 2) == 1184
+}
+
+test "t593" {
+  let n = 593
+  expect(n * 2) == 1186
+}
+
+test "t594" {
+  let n = 594
+  expect(n * 2) == 1188
+}
+
+test "t595" {
+  let n = 595
+  expect(n * 2) == 1190
+}
+
+test "t596" {
+  let n = 596
+  expect(n * 2) == 1192
+}
+
+test "t597" {
+  let n = 597
+  expect(n * 2) == 1194
+}
+
+test "t598" {
+  let n = 598
+  expect(n * 2) == 1196
+}
+
+test "t599" {
+  let n = 599
+  expect(n * 2) == 1198
+}
+
+test "t600" {
+  let n = 600
+  expect(n * 2) == 1200
+}
+
+test "t601" {
+  let n = 601
+  expect(n * 2) == 1202
+}
+
+test "t602" {
+  let n = 602
+  expect(n * 2) == 1204
+}
+
+test "t603" {
+  let n = 603
+  expect(n * 2) == 1206
+}
+
+test "t604" {
+  let n = 604
+  expect(n * 2) == 1208
+}
+
+test "t605" {
+  let n = 605
+  expect(n * 2) == 1210
+}
+
+test "t606" {
+  let n = 606
+  expect(n * 2) == 1212
+}
+
+test "t607" {
+  let n = 607
+  expect(n * 2) == 1214
+}
+
+test "t608" {
+  let n = 608
+  expect(n * 2) == 1216
+}
+
+test "t609" {
+  let n = 609
+  expect(n * 2) == 1218
+}
+
+test "t610" {
+  let n = 610
+  expect(n * 2) == 1220
+}
+
+test "t611" {
+  let n = 611
+  expect(n * 2) == 1222
+}
+
+test "t612" {
+  let n = 612
+  expect(n * 2) == 1224
+}
+
+test "t613" {
+  let n = 613
+  expect(n * 2) == 1226
+}
+
+test "t614" {
+  let n = 614
+  expect(n * 2) == 1228
+}
+
+test "t615" {
+  let n = 615
+  expect(n * 2) == 1230
+}
+
+test "t616" {
+  let n = 616
+  expect(n * 2) == 1232
+}
+
+test "t617" {
+  let n = 617
+  expect(n * 2) == 1234
+}
+
+test "t618" {
+  let n = 618
+  expect(n * 2) == 1236
+}
+
+test "t619" {
+  let n = 619
+  expect(n * 2) == 1238
+}
+
+test "t620" {
+  let n = 620
+  expect(n * 2) == 1240
+}
+
+test "t621" {
+  let n = 621
+  expect(n * 2) == 1242
+}
+
+test "t622" {
+  let n = 622
+  expect(n * 2) == 1244
+}
+
+test "t623" {
+  let n = 623
+  expect(n * 2) == 1246
+}
+
+test "t624" {
+  let n = 624
+  expect(n * 2) == 1248
+}
+
+test "t625" {
+  let n = 625
+  expect(n * 2) == 1250
+}
+
+test "t626" {
+  let n = 626
+  expect(n * 2) == 1252
+}
+
+test "t627" {
+  let n = 627
+  expect(n * 2) == 1254
+}
+
+test "t628" {
+  let n = 628
+  expect(n * 2) == 1256
+}
+
+test "t629" {
+  let n = 629
+  expect(n * 2) == 1258
+}
+
+test "t630" {
+  let n = 630
+  expect(n * 2) == 1260
+}
+
+test "t631" {
+  let n = 631
+  expect(n * 2) == 1262
+}
+
+test "t632" {
+  let n = 632
+  expect(n * 2) == 1264
+}
+
+test "t633" {
+  let n = 633
+  expect(n * 2) == 1266
+}
+
+test "t634" {
+  let n = 634
+  expect(n * 2) == 1268
+}
+
+test "t635" {
+  let n = 635
+  expect(n * 2) == 1270
+}
+
+test "t636" {
+  let n = 636
+  expect(n * 2) == 1272
+}
+
+test "t637" {
+  let n = 637
+  expect(n * 2) == 1274
+}
+
+test "t638" {
+  let n = 638
+  expect(n * 2) == 1276
+}
+
+test "t639" {
+  let n = 639
+  expect(n * 2) == 1278
+}
+
+test "t640" {
+  let n = 640
+  expect(n * 2) == 1280
+}
+
+test "t641" {
+  let n = 641
+  expect(n * 2) == 1282
+}
+
+test "t642" {
+  let n = 642
+  expect(n * 2) == 1284
+}
+
+test "t643" {
+  let n = 643
+  expect(n * 2) == 1286
+}
+
+test "t644" {
+  let n = 644
+  expect(n * 2) == 1288
+}
+
+test "t645" {
+  let n = 645
+  expect(n * 2) == 1290
+}
+
+test "t646" {
+  let n = 646
+  expect(n * 2) == 1292
+}
+
+test "t647" {
+  let n = 647
+  expect(n * 2) == 1294
+}
+
+test "t648" {
+  let n = 648
+  expect(n * 2) == 1296
+}
+
+test "t649" {
+  let n = 649
+  expect(n * 2) == 1298
+}
+
+test "t650" {
+  let n = 650
+  expect(n * 2) == 1300
+}
+
+test "t651" {
+  let n = 651
+  expect(n * 2) == 1302
+}
+
+test "t652" {
+  let n = 652
+  expect(n * 2) == 1304
+}
+
+test "t653" {
+  let n = 653
+  expect(n * 2) == 1306
+}
+
+test "t654" {
+  let n = 654
+  expect(n * 2) == 1308
+}
+
+test "t655" {
+  let n = 655
+  expect(n * 2) == 1310
+}
+
+test "t656" {
+  let n = 656
+  expect(n * 2) == 1312
+}
+
+test "t657" {
+  let n = 657
+  expect(n * 2) == 1314
+}
+
+test "t658" {
+  let n = 658
+  expect(n * 2) == 1316
+}
+
+test "t659" {
+  let n = 659
+  expect(n * 2) == 1318
+}
+
+test "t660" {
+  let n = 660
+  expect(n * 2) == 1320
+}
+
+test "t661" {
+  let n = 661
+  expect(n * 2) == 1322
+}
+
+test "t662" {
+  let n = 662
+  expect(n * 2) == 1324
+}
+
+test "t663" {
+  let n = 663
+  expect(n * 2) == 1326
+}
+
+test "t664" {
+  let n = 664
+  expect(n * 2) == 1328
+}
+
+test "t665" {
+  let n = 665
+  expect(n * 2) == 1330
+}
+
+test "t666" {
+  let n = 666
+  expect(n * 2) == 1332
+}
+
+test "t667" {
+  let n = 667
+  expect(n * 2) == 1334
+}
+
+test "t668" {
+  let n = 668
+  expect(n * 2) == 1336
+}
+
+test "t669" {
+  let n = 669
+  expect(n * 2) == 1338
+}
+
+test "t670" {
+  let n = 670
+  expect(n * 2) == 1340
+}
+
+test "t671" {
+  let n = 671
+  expect(n * 2) == 1342
+}
+
+test "t672" {
+  let n = 672
+  expect(n * 2) == 1344
+}
+
+test "t673" {
+  let n = 673
+  expect(n * 2) == 1346
+}
+
+test "t674" {
+  let n = 674
+  expect(n * 2) == 1348
+}
+
+test "t675" {
+  let n = 675
+  expect(n * 2) == 1350
+}
+
+test "t676" {
+  let n = 676
+  expect(n * 2) == 1352
+}
+
+test "t677" {
+  let n = 677
+  expect(n * 2) == 1354
+}
+
+test "t678" {
+  let n = 678
+  expect(n * 2) == 1356
+}
+
+test "t679" {
+  let n = 679
+  expect(n * 2) == 1358
+}
+
+test "t680" {
+  let n = 680
+  expect(n * 2) == 1360
+}
+
+test "t681" {
+  let n = 681
+  expect(n * 2) == 1362
+}
+
+test "t682" {
+  let n = 682
+  expect(n * 2) == 1364
+}
+
+test "t683" {
+  let n = 683
+  expect(n * 2) == 1366
+}
+
+test "t684" {
+  let n = 684
+  expect(n * 2) == 1368
+}
+
+test "t685" {
+  let n = 685
+  expect(n * 2) == 1370
+}
+
+test "t686" {
+  let n = 686
+  expect(n * 2) == 1372
+}
+
+test "t687" {
+  let n = 687
+  expect(n * 2) == 1374
+}
+
+test "t688" {
+  let n = 688
+  expect(n * 2) == 1376
+}
+
+test "t689" {
+  let n = 689
+  expect(n * 2) == 1378
+}
+
+test "t690" {
+  let n = 690
+  expect(n * 2) == 1380
+}
+
+test "t691" {
+  let n = 691
+  expect(n * 2) == 1382
+}
+
+test "t692" {
+  let n = 692
+  expect(n * 2) == 1384
+}
+
+test "t693" {
+  let n = 693
+  expect(n * 2) == 1386
+}
+
+test "t694" {
+  let n = 694
+  expect(n * 2) == 1388
+}
+
+test "t695" {
+  let n = 695
+  expect(n * 2) == 1390
+}
+
+test "t696" {
+  let n = 696
+  expect(n * 2) == 1392
+}
+
+test "t697" {
+  let n = 697
+  expect(n * 2) == 1394
+}
+
+test "t698" {
+  let n = 698
+  expect(n * 2) == 1396
+}
+
+test "t699" {
+  let n = 699
+  expect(n * 2) == 1398
+}
+
+test "t700" {
+  let n = 700
+  expect(n * 2) == 1400
+}
+
+test "t701" {
+  let n = 701
+  expect(n * 2) == 1402
+}
+
+test "t702" {
+  let n = 702
+  expect(n * 2) == 1404
+}
+
+test "t703" {
+  let n = 703
+  expect(n * 2) == 1406
+}
+
+test "t704" {
+  let n = 704
+  expect(n * 2) == 1408
+}
+
+test "t705" {
+  let n = 705
+  expect(n * 2) == 1410
+}
+
+test "t706" {
+  let n = 706
+  expect(n * 2) == 1412
+}
+
+test "t707" {
+  let n = 707
+  expect(n * 2) == 1414
+}
+
+test "t708" {
+  let n = 708
+  expect(n * 2) == 1416
+}
+
+test "t709" {
+  let n = 709
+  expect(n * 2) == 1418
+}
+
+test "t710" {
+  let n = 710
+  expect(n * 2) == 1420
+}
+
+test "t711" {
+  let n = 711
+  expect(n * 2) == 1422
+}
+
+test "t712" {
+  let n = 712
+  expect(n * 2) == 1424
+}
+
+test "t713" {
+  let n = 713
+  expect(n * 2) == 1426
+}
+
+test "t714" {
+  let n = 714
+  expect(n * 2) == 1428
+}
+
+test "t715" {
+  let n = 715
+  expect(n * 2) == 1430
+}
+
+test "t716" {
+  let n = 716
+  expect(n * 2) == 1432
+}
+
+test "t717" {
+  let n = 717
+  expect(n * 2) == 1434
+}
+
+test "t718" {
+  let n = 718
+  expect(n * 2) == 1436
+}
+
+test "t719" {
+  let n = 719
+  expect(n * 2) == 1438
+}
+
+test "t720" {
+  let n = 720
+  expect(n * 2) == 1440
+}
+
+test "t721" {
+  let n = 721
+  expect(n * 2) == 1442
+}
+
+test "t722" {
+  let n = 722
+  expect(n * 2) == 1444
+}
+
+test "t723" {
+  let n = 723
+  expect(n * 2) == 1446
+}
+
+test "t724" {
+  let n = 724
+  expect(n * 2) == 1448
+}
+
+test "t725" {
+  let n = 725
+  expect(n * 2) == 1450
+}
+
+test "t726" {
+  let n = 726
+  expect(n * 2) == 1452
+}
+
+test "t727" {
+  let n = 727
+  expect(n * 2) == 1454
+}
+
+test "t728" {
+  let n = 728
+  expect(n * 2) == 1456
+}
+
+test "t729" {
+  let n = 729
+  expect(n * 2) == 1458
+}
+
+test "t730" {
+  let n = 730
+  expect(n * 2) == 1460
+}
+
+test "t731" {
+  let n = 731
+  expect(n * 2) == 1462
+}
+
+test "t732" {
+  let n = 732
+  expect(n * 2) == 1464
+}
+
+test "t733" {
+  let n = 733
+  expect(n * 2) == 1466
+}
+
+test "t734" {
+  let n = 734
+  expect(n * 2) == 1468
+}
+
+test "t735" {
+  let n = 735
+  expect(n * 2) == 1470
+}
+
+test "t736" {
+  let n = 736
+  expect(n * 2) == 1472
+}
+
+test "t737" {
+  let n = 737
+  expect(n * 2) == 1474
+}
+
+test "t738" {
+  let n = 738
+  expect(n * 2) == 1476
+}
+
+test "t739" {
+  let n = 739
+  expect(n * 2) == 1478
+}
+
+test "t740" {
+  let n = 740
+  expect(n * 2) == 1480
+}
+
+test "t741" {
+  let n = 741
+  expect(n * 2) == 1482
+}
+
+test "t742" {
+  let n = 742
+  expect(n * 2) == 1484
+}
+
+test "t743" {
+  let n = 743
+  expect(n * 2) == 1486
+}
+
+test "t744" {
+  let n = 744
+  expect(n * 2) == 1488
+}
+
+test "t745" {
+  let n = 745
+  expect(n * 2) == 1490
+}
+
+test "t746" {
+  let n = 746
+  expect(n * 2) == 1492
+}
+
+test "t747" {
+  let n = 747
+  expect(n * 2) == 1494
+}
+
+test "t748" {
+  let n = 748
+  expect(n * 2) == 1496
+}
+
+test "t749" {
+  let n = 749
+  expect(n * 2) == 1498
+}
+
+test "t750" {
+  let n = 750
+  expect(n * 2) == 1500
+}
+
+test "t751" {
+  let n = 751
+  expect(n * 2) == 1502
+}
+
+test "t752" {
+  let n = 752
+  expect(n * 2) == 1504
+}
+
+test "t753" {
+  let n = 753
+  expect(n * 2) == 1506
+}
+
+test "t754" {
+  let n = 754
+  expect(n * 2) == 1508
+}
+
+test "t755" {
+  let n = 755
+  expect(n * 2) == 1510
+}
+
+test "t756" {
+  let n = 756
+  expect(n * 2) == 1512
+}
+
+test "t757" {
+  let n = 757
+  expect(n * 2) == 1514
+}
+
+test "t758" {
+  let n = 758
+  expect(n * 2) == 1516
+}
+
+test "t759" {
+  let n = 759
+  expect(n * 2) == 1518
+}
+
+test "t760" {
+  let n = 760
+  expect(n * 2) == 1520
+}
+
+test "t761" {
+  let n = 761
+  expect(n * 2) == 1522
+}
+
+test "t762" {
+  let n = 762
+  expect(n * 2) == 1524
+}
+
+test "t763" {
+  let n = 763
+  expect(n * 2) == 1526
+}
+
+test "t764" {
+  let n = 764
+  expect(n * 2) == 1528
+}
+
+test "t765" {
+  let n = 765
+  expect(n * 2) == 1530
+}
+
+test "t766" {
+  let n = 766
+  expect(n * 2) == 1532
+}
+
+test "t767" {
+  let n = 767
+  expect(n * 2) == 1534
+}
+
+test "t768" {
+  let n = 768
+  expect(n * 2) == 1536
+}
+
+test "t769" {
+  let n = 769
+  expect(n * 2) == 1538
+}
+
+test "t770" {
+  let n = 770
+  expect(n * 2) == 1540
+}
+
+test "t771" {
+  let n = 771
+  expect(n * 2) == 1542
+}
+
+test "t772" {
+  let n = 772
+  expect(n * 2) == 1544
+}
+
+test "t773" {
+  let n = 773
+  expect(n * 2) == 1546
+}
+
+test "t774" {
+  let n = 774
+  expect(n * 2) == 1548
+}
+
+test "t775" {
+  let n = 775
+  expect(n * 2) == 1550
+}
+
+test "t776" {
+  let n = 776
+  expect(n * 2) == 1552
+}
+
+test "t777" {
+  let n = 777
+  expect(n * 2) == 1554
+}
+
+test "t778" {
+  let n = 778
+  expect(n * 2) == 1556
+}
+
+test "t779" {
+  let n = 779
+  expect(n * 2) == 1558
+}
+
+test "t780" {
+  let n = 780
+  expect(n * 2) == 1560
+}
+
+test "t781" {
+  let n = 781
+  expect(n * 2) == 1562
+}
+
+test "t782" {
+  let n = 782
+  expect(n * 2) == 1564
+}
+
+test "t783" {
+  let n = 783
+  expect(n * 2) == 1566
+}
+
+test "t784" {
+  let n = 784
+  expect(n * 2) == 1568
+}
+
+test "t785" {
+  let n = 785
+  expect(n * 2) == 1570
+}
+
+test "t786" {
+  let n = 786
+  expect(n * 2) == 1572
+}
+
+test "t787" {
+  let n = 787
+  expect(n * 2) == 1574
+}
+
+test "t788" {
+  let n = 788
+  expect(n * 2) == 1576
+}
+
+test "t789" {
+  let n = 789
+  expect(n * 2) == 1578
+}
+
+test "t790" {
+  let n = 790
+  expect(n * 2) == 1580
+}
+
+test "t791" {
+  let n = 791
+  expect(n * 2) == 1582
+}
+
+test "t792" {
+  let n = 792
+  expect(n * 2) == 1584
+}
+
+test "t793" {
+  let n = 793
+  expect(n * 2) == 1586
+}
+
+test "t794" {
+  let n = 794
+  expect(n * 2) == 1588
+}
+
+test "t795" {
+  let n = 795
+  expect(n * 2) == 1590
+}
+
+test "t796" {
+  let n = 796
+  expect(n * 2) == 1592
+}
+
+test "t797" {
+  let n = 797
+  expect(n * 2) == 1594
+}
+
+test "t798" {
+  let n = 798
+  expect(n * 2) == 1596
+}
+
+test "t799" {
+  let n = 799
+  expect(n * 2) == 1598
+}
+
+test "t800" {
+  let n = 800
+  expect(n * 2) == 1600
+}
+
+test "t801" {
+  let n = 801
+  expect(n * 2) == 1602
+}
+
+test "t802" {
+  let n = 802
+  expect(n * 2) == 1604
+}
+
+test "t803" {
+  let n = 803
+  expect(n * 2) == 1606
+}
+
+test "t804" {
+  let n = 804
+  expect(n * 2) == 1608
+}
+
+test "t805" {
+  let n = 805
+  expect(n * 2) == 1610
+}
+
+test "t806" {
+  let n = 806
+  expect(n * 2) == 1612
+}
+
+test "t807" {
+  let n = 807
+  expect(n * 2) == 1614
+}
+
+test "t808" {
+  let n = 808
+  expect(n * 2) == 1616
+}
+
+test "t809" {
+  let n = 809
+  expect(n * 2) == 1618
+}
+
+test "t810" {
+  let n = 810
+  expect(n * 2) == 1620
+}
+
+test "t811" {
+  let n = 811
+  expect(n * 2) == 1622
+}
+
+test "t812" {
+  let n = 812
+  expect(n * 2) == 1624
+}
+
+test "t813" {
+  let n = 813
+  expect(n * 2) == 1626
+}
+
+test "t814" {
+  let n = 814
+  expect(n * 2) == 1628
+}
+
+test "t815" {
+  let n = 815
+  expect(n * 2) == 1630
+}
+
+test "t816" {
+  let n = 816
+  expect(n * 2) == 1632
+}
+
+test "t817" {
+  let n = 817
+  expect(n * 2) == 1634
+}
+
+test "t818" {
+  let n = 818
+  expect(n * 2) == 1636
+}
+
+test "t819" {
+  let n = 819
+  expect(n * 2) == 1638
+}
+
+test "t820" {
+  let n = 820
+  expect(n * 2) == 1640
+}
+
+test "t821" {
+  let n = 821
+  expect(n * 2) == 1642
+}
+
+test "t822" {
+  let n = 822
+  expect(n * 2) == 1644
+}
+
+test "t823" {
+  let n = 823
+  expect(n * 2) == 1646
+}
+
+test "t824" {
+  let n = 824
+  expect(n * 2) == 1648
+}
+
+test "t825" {
+  let n = 825
+  expect(n * 2) == 1650
+}
+
+test "t826" {
+  let n = 826
+  expect(n * 2) == 1652
+}
+
+test "t827" {
+  let n = 827
+  expect(n * 2) == 1654
+}
+
+test "t828" {
+  let n = 828
+  expect(n * 2) == 1656
+}
+
+test "t829" {
+  let n = 829
+  expect(n * 2) == 1658
+}
+
+test "t830" {
+  let n = 830
+  expect(n * 2) == 1660
+}
+
+test "t831" {
+  let n = 831
+  expect(n * 2) == 1662
+}
+
+test "t832" {
+  let n = 832
+  expect(n * 2) == 1664
+}
+
+test "t833" {
+  let n = 833
+  expect(n * 2) == 1666
+}
+
+test "t834" {
+  let n = 834
+  expect(n * 2) == 1668
+}
+
+test "t835" {
+  let n = 835
+  expect(n * 2) == 1670
+}
+
+test "t836" {
+  let n = 836
+  expect(n * 2) == 1672
+}
+
+test "t837" {
+  let n = 837
+  expect(n * 2) == 1674
+}
+
+test "t838" {
+  let n = 838
+  expect(n * 2) == 1676
+}
+
+test "t839" {
+  let n = 839
+  expect(n * 2) == 1678
+}
+
+test "t840" {
+  let n = 840
+  expect(n * 2) == 1680
+}
+
+test "t841" {
+  let n = 841
+  expect(n * 2) == 1682
+}
+
+test "t842" {
+  let n = 842
+  expect(n * 2) == 1684
+}
+
+test "t843" {
+  let n = 843
+  expect(n * 2) == 1686
+}
+
+test "t844" {
+  let n = 844
+  expect(n * 2) == 1688
+}
+
+test "t845" {
+  let n = 845
+  expect(n * 2) == 1690
+}
+
+test "t846" {
+  let n = 846
+  expect(n * 2) == 1692
+}
+
+test "t847" {
+  let n = 847
+  expect(n * 2) == 1694
+}
+
+test "t848" {
+  let n = 848
+  expect(n * 2) == 1696
+}
+
+test "t849" {
+  let n = 849
+  expect(n * 2) == 1698
+}
+
+test "t850" {
+  let n = 850
+  expect(n * 2) == 1700
+}
+
+test "t851" {
+  let n = 851
+  expect(n * 2) == 1702
+}
+
+test "t852" {
+  let n = 852
+  expect(n * 2) == 1704
+}
+
+test "t853" {
+  let n = 853
+  expect(n * 2) == 1706
+}
+
+test "t854" {
+  let n = 854
+  expect(n * 2) == 1708
+}
+
+test "t855" {
+  let n = 855
+  expect(n * 2) == 1710
+}
+
+test "t856" {
+  let n = 856
+  expect(n * 2) == 1712
+}
+
+test "t857" {
+  let n = 857
+  expect(n * 2) == 1714
+}
+
+test "t858" {
+  let n = 858
+  expect(n * 2) == 1716
+}
+
+test "t859" {
+  let n = 859
+  expect(n * 2) == 1718
+}
+
+test "t860" {
+  let n = 860
+  expect(n * 2) == 1720
+}
+
+test "t861" {
+  let n = 861
+  expect(n * 2) == 1722
+}
+
+test "t862" {
+  let n = 862
+  expect(n * 2) == 1724
+}
+
+test "t863" {
+  let n = 863
+  expect(n * 2) == 1726
+}
+
+test "t864" {
+  let n = 864
+  expect(n * 2) == 1728
+}
+
+test "t865" {
+  let n = 865
+  expect(n * 2) == 1730
+}
+
+test "t866" {
+  let n = 866
+  expect(n * 2) == 1732
+}
+
+test "t867" {
+  let n = 867
+  expect(n * 2) == 1734
+}
+
+test "t868" {
+  let n = 868
+  expect(n * 2) == 1736
+}
+
+test "t869" {
+  let n = 869
+  expect(n * 2) == 1738
+}
+
+test "t870" {
+  let n = 870
+  expect(n * 2) == 1740
+}
+
+test "t871" {
+  let n = 871
+  expect(n * 2) == 1742
+}
+
+test "t872" {
+  let n = 872
+  expect(n * 2) == 1744
+}
+
+test "t873" {
+  let n = 873
+  expect(n * 2) == 1746
+}
+
+test "t874" {
+  let n = 874
+  expect(n * 2) == 1748
+}
+
+test "t875" {
+  let n = 875
+  expect(n * 2) == 1750
+}
+
+test "t876" {
+  let n = 876
+  expect(n * 2) == 1752
+}
+
+test "t877" {
+  let n = 877
+  expect(n * 2) == 1754
+}
+
+test "t878" {
+  let n = 878
+  expect(n * 2) == 1756
+}
+
+test "t879" {
+  let n = 879
+  expect(n * 2) == 1758
+}
+
+test "t880" {
+  let n = 880
+  expect(n * 2) == 1760
+}
+
+test "t881" {
+  let n = 881
+  expect(n * 2) == 1762
+}
+
+test "t882" {
+  let n = 882
+  expect(n * 2) == 1764
+}
+
+test "t883" {
+  let n = 883
+  expect(n * 2) == 1766
+}
+
+test "t884" {
+  let n = 884
+  expect(n * 2) == 1768
+}
+
+test "t885" {
+  let n = 885
+  expect(n * 2) == 1770
+}
+
+test "t886" {
+  let n = 886
+  expect(n * 2) == 1772
+}
+
+test "t887" {
+  let n = 887
+  expect(n * 2) == 1774
+}
+
+test "t888" {
+  let n = 888
+  expect(n * 2) == 1776
+}
+
+test "t889" {
+  let n = 889
+  expect(n * 2) == 1778
+}
+
+test "t890" {
+  let n = 890
+  expect(n * 2) == 1780
+}
+
+test "t891" {
+  let n = 891
+  expect(n * 2) == 1782
+}
+
+test "t892" {
+  let n = 892
+  expect(n * 2) == 1784
+}
+
+test "t893" {
+  let n = 893
+  expect(n * 2) == 1786
+}
+
+test "t894" {
+  let n = 894
+  expect(n * 2) == 1788
+}
+
+test "t895" {
+  let n = 895
+  expect(n * 2) == 1790
+}
+
+test "t896" {
+  let n = 896
+  expect(n * 2) == 1792
+}
+
+test "t897" {
+  let n = 897
+  expect(n * 2) == 1794
+}
+
+test "t898" {
+  let n = 898
+  expect(n * 2) == 1796
+}
+
+test "t899" {
+  let n = 899
+  expect(n * 2) == 1798
+}
+
+test "t900" {
+  let n = 900
+  expect(n * 2) == 1800
+}
+
+test "t901" {
+  let n = 901
+  expect(n * 2) == 1802
+}
+
+test "t902" {
+  let n = 902
+  expect(n * 2) == 1804
+}
+
+test "t903" {
+  let n = 903
+  expect(n * 2) == 1806
+}
+
+test "t904" {
+  let n = 904
+  expect(n * 2) == 1808
+}
+
+test "t905" {
+  let n = 905
+  expect(n * 2) == 1810
+}
+
+test "t906" {
+  let n = 906
+  expect(n * 2) == 1812
+}
+
+test "t907" {
+  let n = 907
+  expect(n * 2) == 1814
+}
+
+test "t908" {
+  let n = 908
+  expect(n * 2) == 1816
+}
+
+test "t909" {
+  let n = 909
+  expect(n * 2) == 1818
+}
+
+test "t910" {
+  let n = 910
+  expect(n * 2) == 1820
+}
+
+test "t911" {
+  let n = 911
+  expect(n * 2) == 1822
+}
+
+test "t912" {
+  let n = 912
+  expect(n * 2) == 1824
+}
+
+test "t913" {
+  let n = 913
+  expect(n * 2) == 1826
+}
+
+test "t914" {
+  let n = 914
+  expect(n * 2) == 1828
+}
+
+test "t915" {
+  let n = 915
+  expect(n * 2) == 1830
+}
+
+test "t916" {
+  let n = 916
+  expect(n * 2) == 1832
+}
+
+test "t917" {
+  let n = 917
+  expect(n * 2) == 1834
+}
+
+test "t918" {
+  let n = 918
+  expect(n * 2) == 1836
+}
+
+test "t919" {
+  let n = 919
+  expect(n * 2) == 1838
+}
+
+test "t920" {
+  let n = 920
+  expect(n * 2) == 1840
+}
+
+test "t921" {
+  let n = 921
+  expect(n * 2) == 1842
+}
+
+test "t922" {
+  let n = 922
+  expect(n * 2) == 1844
+}
+
+test "t923" {
+  let n = 923
+  expect(n * 2) == 1846
+}
+
+test "t924" {
+  let n = 924
+  expect(n * 2) == 1848
+}
+
+test "t925" {
+  let n = 925
+  expect(n * 2) == 1850
+}
+
+test "t926" {
+  let n = 926
+  expect(n * 2) == 1852
+}
+
+test "t927" {
+  let n = 927
+  expect(n * 2) == 1854
+}
+
+test "t928" {
+  let n = 928
+  expect(n * 2) == 1856
+}
+
+test "t929" {
+  let n = 929
+  expect(n * 2) == 1858
+}
+
+test "t930" {
+  let n = 930
+  expect(n * 2) == 1860
+}
+
+test "t931" {
+  let n = 931
+  expect(n * 2) == 1862
+}
+
+test "t932" {
+  let n = 932
+  expect(n * 2) == 1864
+}
+
+test "t933" {
+  let n = 933
+  expect(n * 2) == 1866
+}
+
+test "t934" {
+  let n = 934
+  expect(n * 2) == 1868
+}
+
+test "t935" {
+  let n = 935
+  expect(n * 2) == 1870
+}
+
+test "t936" {
+  let n = 936
+  expect(n * 2) == 1872
+}
+
+test "t937" {
+  let n = 937
+  expect(n * 2) == 1874
+}
+
+test "t938" {
+  let n = 938
+  expect(n * 2) == 1876
+}
+
+test "t939" {
+  let n = 939
+  expect(n * 2) == 1878
+}
+
+test "t940" {
+  let n = 940
+  expect(n * 2) == 1880
+}
+
+test "t941" {
+  let n = 941
+  expect(n * 2) == 1882
+}
+
+test "t942" {
+  let n = 942
+  expect(n * 2) == 1884
+}
+
+test "t943" {
+  let n = 943
+  expect(n * 2) == 1886
+}
+
+test "t944" {
+  let n = 944
+  expect(n * 2) == 1888
+}
+
+test "t945" {
+  let n = 945
+  expect(n * 2) == 1890
+}
+
+test "t946" {
+  let n = 946
+  expect(n * 2) == 1892
+}
+
+test "t947" {
+  let n = 947
+  expect(n * 2) == 1894
+}
+
+test "t948" {
+  let n = 948
+  expect(n * 2) == 1896
+}
+
+test "t949" {
+  let n = 949
+  expect(n * 2) == 1898
+}
+
+test "t950" {
+  let n = 950
+  expect(n * 2) == 1900
+}
+
+test "t951" {
+  let n = 951
+  expect(n * 2) == 1902
+}
+
+test "t952" {
+  let n = 952
+  expect(n * 2) == 1904
+}
+
+test "t953" {
+  let n = 953
+  expect(n * 2) == 1906
+}
+
+test "t954" {
+  let n = 954
+  expect(n * 2) == 1908
+}
+
+test "t955" {
+  let n = 955
+  expect(n * 2) == 1910
+}
+
+test "t956" {
+  let n = 956
+  expect(n * 2) == 1912
+}
+
+test "t957" {
+  let n = 957
+  expect(n * 2) == 1914
+}
+
+test "t958" {
+  let n = 958
+  expect(n * 2) == 1916
+}
+
+test "t959" {
+  let n = 959
+  expect(n * 2) == 1918
+}
+
+test "t960" {
+  let n = 960
+  expect(n * 2) == 1920
+}
+
+test "t961" {
+  let n = 961
+  expect(n * 2) == 1922
+}
+
+test "t962" {
+  let n = 962
+  expect(n * 2) == 1924
+}
+
+test "t963" {
+  let n = 963
+  expect(n * 2) == 1926
+}
+
+test "t964" {
+  let n = 964
+  expect(n * 2) == 1928
+}
+
+test "t965" {
+  let n = 965
+  expect(n * 2) == 1930
+}
+
+test "t966" {
+  let n = 966
+  expect(n * 2) == 1932
+}
+
+test "t967" {
+  let n = 967
+  expect(n * 2) == 1934
+}
+
+test "t968" {
+  let n = 968
+  expect(n * 2) == 1936
+}
+
+test "t969" {
+  let n = 969
+  expect(n * 2) == 1938
+}
+
+test "t970" {
+  let n = 970
+  expect(n * 2) == 1940
+}
+
+test "t971" {
+  let n = 971
+  expect(n * 2) == 1942
+}
+
+test "t972" {
+  let n = 972
+  expect(n * 2) == 1944
+}
+
+test "t973" {
+  let n = 973
+  expect(n * 2) == 1946
+}
+
+test "t974" {
+  let n = 974
+  expect(n * 2) == 1948
+}
+
+test "t975" {
+  let n = 975
+  expect(n * 2) == 1950
+}
+
+test "t976" {
+  let n = 976
+  expect(n * 2) == 1952
+}
+
+test "t977" {
+  let n = 977
+  expect(n * 2) == 1954
+}
+
+test "t978" {
+  let n = 978
+  expect(n * 2) == 1956
+}
+
+test "t979" {
+  let n = 979
+  expect(n * 2) == 1958
+}
+
+test "t980" {
+  let n = 980
+  expect(n * 2) == 1960
+}
+
+test "t981" {
+  let n = 981
+  expect(n * 2) == 1962
+}
+
+test "t982" {
+  let n = 982
+  expect(n * 2) == 1964
+}
+
+test "t983" {
+  let n = 983
+  expect(n * 2) == 1966
+}
+
+test "t984" {
+  let n = 984
+  expect(n * 2) == 1968
+}
+
+test "t985" {
+  let n = 985
+  expect(n * 2) == 1970
+}
+
+test "t986" {
+  let n = 986
+  expect(n * 2) == 1972
+}
+
+test "t987" {
+  let n = 987
+  expect(n * 2) == 1974
+}
+
+test "t988" {
+  let n = 988
+  expect(n * 2) == 1976
+}
+
+test "t989" {
+  let n = 989
+  expect(n * 2) == 1978
+}
+
+test "t990" {
+  let n = 990
+  expect(n * 2) == 1980
+}
+
+test "t991" {
+  let n = 991
+  expect(n * 2) == 1982
+}
+
+test "t992" {
+  let n = 992
+  expect(n * 2) == 1984
+}
+
+test "t993" {
+  let n = 993
+  expect(n * 2) == 1986
+}
+
+test "t994" {
+  let n = 994
+  expect(n * 2) == 1988
+}
+
+test "t995" {
+  let n = 995
+  expect(n * 2) == 1990
+}
+
+test "t996" {
+  let n = 996
+  expect(n * 2) == 1992
+}
+
+test "t997" {
+  let n = 997
+  expect(n * 2) == 1994
+}
+
+test "t998" {
+  let n = 998
+  expect(n * 2) == 1996
+}
+
+test "t999" {
+  let n = 999
+  expect(n * 2) == 1998
+}
+
+test "t1000" {
+  let n = 1000
+  expect(n * 2) == 2000
+}
+

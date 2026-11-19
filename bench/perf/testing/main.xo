@@ -1,0 +1,25 @@
+// testing: the std/testing twin (decision 0655 rule 7): `xo test` of a
+// suite of 1,000 tests with the same trivial body (suite/xo, as run.sh
+// writes it) against `go test` of the same tests (suite/go), each with its
+// result cache off, so the row is the harness: finding the tests, building
+// or finding the test binary, running each test and reporting. The Go
+// twin (twin.go.txt) runs `go test`; both count the passed tests from the
+// verbose report. The xo is $XO_CLI (a relative path is the checkout
+// root's, as the offload hosts set it), else the checkout's bin/xo. Prints
+// `testing <passed>`. Written 2026-11-19 for task #419.
+fn main(os: Os) ! {
+  let cli = os.env.get("XO_CLI") ?? "bin/xo"
+  let xo = if cli.starts_with("/") { cli } else { "../../../" + cli }
+  let out = os.proc.cmd(xo, ["test", "--count=1", "-v", "suite/xo"]).output()?
+  if out.code != 0 {
+    os.stdio.println("testing failed: exit ${out.code}")
+    return
+  }
+  var passed = 0
+  for l in (out.stdout.to_str() ?? "").lines() {
+    if l.starts_with("--- PASS") {
+      passed += 1
+    }
+  }
+  os.stdio.println("testing ${passed}")
+}

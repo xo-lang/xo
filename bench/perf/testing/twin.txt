@@ -1,0 +1,3 @@
+# twincheck: testing: `xo test` of a 1,000 test suite against `go test` of
+# the same tests, result caches off (decision 0655 rule 7).
+- - 

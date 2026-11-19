@@ -1,0 +1,30 @@
+// Go twin of testing/main.xo: `go test -count=1 -v` of suite/go (1,000
+// tests with the same trivial body as suite/xo), counting the passed tests
+// from the verbose report. Prints `testing <passed>`.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"os/exec"
+	"strings"
+)
+
+func main() {
+	cmd := exec.Command("go", "test", "-count=1", "-v", ".")
+	cmd.Dir = "suite/go"
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Printf("testing failed: %v\n", err)
+		return
+	}
+	passed := 0
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		if strings.HasPrefix(sc.Text(), "--- PASS") {
+			passed++
+		}
+	}
+	fmt.Printf("testing %d\n", passed)
+}

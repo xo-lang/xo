@@ -1,0 +1,6 @@
+# twincheck: tlsloop: std/http over TLS 1.3, server and client in one
+# process, 20,000 POSTs on one kept-alive HTTP/1.1 connection, against
+# net/http with crypto/tls (HTTP/2 off on both sides, as Xo's ALPN leaves
+# h2 out unless Http2 is set).
+- - small
+- - big
