@@ -204,7 +204,10 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 			writeDump(root.node)
 		}
 	}()
-	defer signal.Stop(quit)
+	// no signal.Stop for quit or sig: the process exits when RunMain
+	// returns (its only caller is the generated main), and each Stop is a
+	// round trip to the runtime's signal thread (about 100 us per signal
+	// on linux/amd64, a fifth of the start up gap to Go, 2026-11-19)
 	st := newStopState(nil)
 	root.stop = st
 	if rp != nil {
@@ -240,7 +243,6 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 				}
 			}
 		}()
-		defer signal.Stop(sig)
 	}
 	var res Result[Unit, IError]
 	defer func() {

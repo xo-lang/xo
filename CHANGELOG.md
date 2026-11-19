@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Perf (compiler, arm64, x86-64 and LLVM; task #87): reading a list constant of Int or Float literals at an index known only at run time (`TABLE[i]`) loads the element from data kept beside the code, after the same bounds check and fault as before, with no first use check; bench/perf/random exp 0.936 (0.919 to 0.946) and normal 0.912 (0.903 to 0.929) of the time (`xo bench --ab`, host 1), 31.9% and 29.0% fewer instructions (callgrind, linux/arm64). wasm reads them as before.
+- Perf (Go backend runtime, std/rt; task #419): a program no longer stops its SIGQUIT, SIGINT and SIGTERM subscriptions as `main` returns (the process exits right after, and each `signal.Stop` waits on the Go runtime's signal thread); bench/perf/gobridge `none 0` (start up and exit only) 3.24 to 2.84 ms (linux/amd64, xo bench --ab, wall 0.876)
 - Perf (Go backend runtime, std/rt; task #419): checked Int `+` tests the sum against its first operand by the sign of the second, which frees two registers the sign test held; bench/perf/gobridge none 15.0 to 13.0 ms, str 32.6 to 31.9 ms, bytes 28.3 to 27.6 ms (10,000,000 `use go` calls, linux/amd64)
 - Perf (std prelude): `List.filled(n, x)` with 64 or more elements of UInt8, Int or UInt32 returns a list its caller owns alone; it was marked shared, so every later write took the out of line copy-on-write check
 - Perf (std/task; task #419): a done `Once.get` copies out only its value, not the whole state; 20,000,000 gets on the Mac 0.19 to 0.14 s
