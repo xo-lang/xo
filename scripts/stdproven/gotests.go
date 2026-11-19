@@ -12,8 +12,10 @@ package main
 //     package (net/url), its test file (url_test.go), the table variable
 //     (a package level var, or FUNC.NAME for a `NAME := []T{...}` inside
 //     func FUNC), the input fields (comma separated: a field name, or a
-//     position for an unkeyed element), and the kind the adapters know it
-//     by. Blank lines and # comments are skipped.
+//     position for an unkeyed element; a field written NAME:const also
+//     takes an exported constant of the package, or a | of them, as its
+//     name, "Debug|AlignRight", for the adapters to map), and the kind the
+//     adapters know it by. Blank lines and # comments are skipped.
 //   - go/main.go: the Go adapter, `main CASES`, printing a result line per
 //     case.
 //   - main.xo: the Xo adapter, the same protocol.
@@ -21,7 +23,8 @@ package main
 // The runner reads each table from the pinned Go release's source (go env
 // GOROOT) with go/ast and takes its input fields' literals as text (a
 // string literal or a + of them, an integer, an integral float such as
-// 1e9, and time's zone names Local and UTC); an element whose input is
+// 1e9, a rune literal as its code point, true and false, and time's zone
+// names Local and UTC); an element whose input is
 // anything else is counted as skipped, as is one that is not UTF-8 (an Xo
 // Str is). A case is a line `KIND<TAB>B64<TAB>B64...` (the
 // inputs in base64, so any byte passes). Each adapter prints one line a
@@ -118,8 +121,12 @@ func goTableCases(goroot string, t goTable) ([]goCase, int, error) {
 		}
 		in := make([]string, 0, len(t.fields))
 		for _, field := range t.fields {
-			e := fieldExpr(c, field, order)
+			name, isConst := strings.CutSuffix(field, ":const")
+			e := fieldExpr(c, name, order)
 			s, ok := stringLit(e)
+			if !ok && isConst {
+				s, ok = constNames(e)
+			}
 			if !ok || !utf8.ValidString(s) {
 				break
 			}
@@ -266,6 +273,10 @@ func stringLit(e ast.Expr) (string, bool) {
 		case token.STRING:
 			s, err := strconv.Unquote(e.Value)
 			return s, err == nil
+		case token.CHAR:
+			// a rune literal as its code point ('.' is 46)
+			r, _, _, err := strconv.UnquoteChar(e.Value[1:len(e.Value)-1], '\'')
+			return strconv.Itoa(int(r)), err == nil
 		}
 		return "", false
 	case *ast.UnaryExpr:
@@ -280,7 +291,7 @@ func stringLit(e ast.Expr) (string, bool) {
 	case *ast.Ident:
 		// time's zones: the adapters read Local as Go's tests set it
 		// (America/Los_Angeles) and UTC
-		if e.Name == "Local" || e.Name == "UTC" {
+		if e.Name == "Local" || e.Name == "UTC" || e.Name == "true" || e.Name == "false" {
 			return e.Name, true
 		}
 		return "", false
@@ -293,6 +304,25 @@ func stringLit(e ast.Expr) (string, bool) {
 		return a + b, ok1 && ok2
 	case *ast.ParenExpr:
 		return stringLit(e.X)
+	}
+	return "", false
+}
+
+// constNames is an exported constant of the table's package, or a | of
+// them, as its names (`Debug|AlignRight`), for a NAME:const field.
+func constNames(e ast.Expr) (string, bool) {
+	switch e := e.(type) {
+	case *ast.Ident:
+		return e.Name, ast.IsExported(e.Name)
+	case *ast.BinaryExpr:
+		if e.Op != token.OR {
+			return "", false
+		}
+		a, ok1 := constNames(e.X)
+		b, ok2 := constNames(e.Y)
+		return a + "|" + b, ok1 && ok2
+	case *ast.ParenExpr:
+		return constNames(e.X)
 	}
 	return "", false
 }

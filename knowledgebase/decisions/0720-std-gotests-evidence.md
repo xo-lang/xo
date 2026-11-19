@@ -68,6 +68,15 @@ with one line per table.
   a module with no ported Go tests and no Go differential from Early to
   Solid. Whether every module needs it for Proven is the lead's call:
   `gotestsRequired` in scripts/stdcov/main.go (TestGotestsEvidence).
+- Task #403 (2026-11-19): a rune literal reads as its code point and
+  `true`/`false` as themselves; a field written `NAME:const` in
+  tables.txt also takes an exported constant of the package, or a `|` of
+  them, as its names (`AlignRight|Debug`), which the adapters map
+  (tabwriter's flags). A lowercase name or other expression is still
+  skipped. Modules added: adler32, crc32, crc64 (Go's golden tables,
+  checksum whole and as an update of the first half), html
+  (unescapeTests), tabwriter (tests, written whole and a byte at a
+  time).
 - Only literal inputs are read; tables of Time values, of functions or of
   computed inputs need an adapter kind that builds them from literals, or
   stay uncovered.

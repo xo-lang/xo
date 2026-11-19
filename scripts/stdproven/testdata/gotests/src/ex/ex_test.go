@@ -32,3 +32,15 @@ func TestLocal(t *testing.T) {
 	tests := []struct{ in string }{{"p"}, {"q"}}
 	_ = tests
 }
+
+var flags = []struct {
+	pad   byte
+	on    bool
+	flags uint
+}{
+	{'.', true, Debug},
+	{'\t', false, AlignRight | Debug},
+	{'\'', true, 0},
+	{'x', true, local},
+	{'y', true, Debug &^ 1},
+}

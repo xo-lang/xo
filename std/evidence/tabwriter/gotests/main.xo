@@ -1,0 +1,70 @@
+// The Xo side of std/tabwriter's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/tabwriter's result as text, as go/main.go prints package tabwriter's.
+// Kind format: the table's writer settings over its src, written whole and
+// a byte at a time.
+// See scripts/stdproven/gotests.go.
+use std/tabwriter
+use std/base64
+
+/// Go's flag constants by name, as the table writes them ("Debug|AlignRight").
+fn flags(s: Str) -> Int {
+  var n = 0
+  for f in s.split("|") {
+    n += match f {
+      "FilterHTML" => tabwriter.FILTER_HTML
+      "StripEscape" => tabwriter.STRIP_ESCAPE
+      "AlignRight" => tabwriter.ALIGN_RIGHT
+      "DiscardEmptyColumns" => tabwriter.DISCARD_EMPTY_COLUMNS
+      "TabIndent" => tabwriter.TAB_INDENT
+      "Debug" => tabwriter.DEBUG
+      _ => Int.parse(f) ?? 0
+    }
+  }
+  n
+}
+
+/// The output of src written whole, then written a byte at a time (as Go's
+/// test writes it in pieces), joined by a line "--".
+fn format(inp: List[Str]) -> Str {
+  var n: List[Int] = []
+  for s in inp[0..4] {
+    match Int.parse(s) {
+      Some(v) => n.push(v)
+      None => return "bad input ${s}"
+    }
+  }
+  let src = inp[5].bytes()
+  var w = tabwriter.writer(n[0], n[1], n[2], n[3], flags(inp[4]))
+  w.write(src)
+  let whole = w.flush()
+  var w1 = tabwriter.writer(n[0], n[1], n[2], n[3], flags(inp[4]))
+  for i in 0..src.len() {
+    w1.write(src[i..i + 1])
+  }
+  let out = w1.flush()
+  "${whole.to_str() ?? "not utf-8"}\n--\n${out.to_str() ?? "not utf-8"}"
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "format" => format(inp)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

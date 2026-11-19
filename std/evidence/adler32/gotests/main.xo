@@ -1,0 +1,40 @@
+// The Xo side of std/adler32's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/adler32's result as text, as go/main.go prints package adler32's.
+// Kind sum: the Adler-32 of the input whole and as an update of its first
+// half's checksum by the rest (checksum and update), one line per polynomial joined by
+// "; ". See scripts/stdproven/gotests.go.
+use std/adler32
+use std/base64
+
+fn sums(d: Bytes) -> Str {
+  let h = d.len() / 2
+  var out: List[Str] = []
+  let whole = adler32.checksum(d)
+  let split = adler32.update(adler32.checksum(d[0..h]), d[h..d.len()])
+  out.push("${whole} ${split}")
+  out.join("; ")
+}
+
+fn run(kind: Str, inp: List[Bytes]) -> Str {
+  match kind {
+    "sum" => sums(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Bytes] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?)
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

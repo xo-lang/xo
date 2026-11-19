@@ -1,0 +1,3 @@
+# Go's text/tabwriter test tables (go1.26) run through std/tabwriter
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+text/tabwriter tabwriter_test.go tests minwidth,tabwidth,padding,padchar,flags:const,src format

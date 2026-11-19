@@ -1,0 +1,3 @@
+# Go's hash/adler32 test tables (go1.26) run through std/adler32 (stdproven gotests,
+# decision 0720, task #403): PKG FILE VAR FIELDS KIND
+hash/adler32 adler32_test.go golden in sum

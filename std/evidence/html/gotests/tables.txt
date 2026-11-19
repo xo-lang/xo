@@ -1,0 +1,3 @@
+# Go's html test tables (go1.26) run through std/html (stdproven gotests,
+# decision 0720, task #403): PKG FILE VAR FIELDS KIND
+html escape_test.go unescapeTests html unescape

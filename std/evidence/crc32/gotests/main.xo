@@ -1,0 +1,39 @@
+// The Xo side of std/crc32's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/crc32's result as text, as go/main.go prints package crc32's.
+// Kind sum: the CRC-32 of the input whole and as an update of its first
+// half's checksum by the rest (IEEE and Castagnoli checksums and update), one line per polynomial joined by
+// "; ". See scripts/stdproven/gotests.go.
+use std/crc32
+use std/base64
+
+fn sums(d: Bytes) -> Str {
+  let h = d.len() / 2
+  var out: List[Str] = []
+  out.push("${crc32.checksum(d, crc32.Poly.Ieee)} ${crc32.update(crc32.checksum(d[0..h], crc32.Poly.Ieee), d[h..d.len()], crc32.Poly.Ieee)}")
+  out.push("${crc32.checksum(d, crc32.Poly.Castagnoli)} ${crc32.update(crc32.checksum(d[0..h], crc32.Poly.Castagnoli), d[h..d.len()], crc32.Poly.Castagnoli)}")
+  out.join("; ")
+}
+
+fn run(kind: Str, inp: List[Bytes]) -> Str {
+  match kind {
+    "sum" => sums(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Bytes] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?)
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

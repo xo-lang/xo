@@ -9,7 +9,8 @@ import (
 // TestGoTableCases checks the gotests table reader on testdata/gotests:
 // keyed and unkeyed elements, pointer elements, + of strings, a table
 // local to a test function, numbers and time's zone names, and what is
-// skipped (no literal, not UTF-8, an expression, a float with a fraction).
+// skipped (no literal, not UTF-8, an expression, a float with a fraction),
+// and rune, bool and NAME:const inputs (task #403).
 func TestGoTableCases(t *testing.T) {
 	tests := []struct {
 		name, fields string
@@ -21,6 +22,10 @@ func TestGoTableCases(t *testing.T) {
 		{"unkeyed", "0,1", []string{"0 x|y", "1 z|w"}, 0},
 		{"nums", "year,month,z,f", []string{"0 2011|-3|Local|1000000000", "1 16|1000|UTC|2"}, 3},
 		{"TestLocal.tests", "in", []string{"0 p", "1 q"}, 0},
+		// a rune and a bool always; an exported constant (or a | of
+		// them) only in a :const field; a lowercase name never
+		{"flags", "pad,on,flags:const", []string{"0 46|true|Debug", "1 9|false|AlignRight|Debug", "2 39|true|0"}, 2},
+		{"flags", "pad,flags", []string{"2 39|0"}, 4},
 	}
 	for _, tt := range tests {
 		tab := goTable{pkg: "ex", file: "ex_test.go", name: tt.name, fields: strings.Split(tt.fields, ","), kind: "k"}

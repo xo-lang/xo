@@ -1,0 +1,3 @@
+# Go's hash/crc64 test tables (go1.26) run through std/crc64 (stdproven gotests,
+# decision 0720, task #403): PKG FILE VAR FIELDS KIND
+hash/crc64 crc64_test.go golden in sum
