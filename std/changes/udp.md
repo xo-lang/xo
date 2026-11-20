@@ -1,5 +1,21 @@
 # std/udp changes
 
+## 2026-11-20: fix: a port with a sign reads as Go's net reads it
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 3, the upstream sweep (TestUdpFuzz seed 1000001, 33 of
+  5,000 cases; task #460)
+- Go reference: net/port.go parsePort (one + or - before the digits)
+- Test: std/udp_test.xo "a port with a sign reads as Go's net reads it";
+  TestUdpFuzz seed 1000001 (33 of 5,000 cases differed before, 5,000
+  equal on arm64 and llvm after)
+- Timing: none
+
+"+0", "-0" and "+53" were errors (getaddrinfo takes no sign); they are
+ports 0, 0 and 53, and "-53" is an invalid port, as in Go. The same
+address split serves TCP's listen and dial (llrt/netpolicy.xo).
+
 ## 2026-11-17: fix: an empty address listens on port 0
 
 - Kind: fix

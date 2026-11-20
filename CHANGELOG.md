@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/udp, net): a port with a sign reads as Go's net reads it: `"127.0.0.1:+0"` and `":-0"` are port 0 and `"+53"` is port 53 (they were errors), and `"-53"` is an invalid port (task #460).
 - Perf (std/ui): a wasm client syncs with `?model=1&view=0` once its module has loaded and renders the reply's model itself, so the server no longer renders the view for it (an add's reply at 200 todos in examples/ui-todo: 32,673 B to 4,350 B); a render that fails asks for the server's view again. Older pages keep working: the server renders unless asked not to.
 - Changed (compiler, arm64 and x86-64): a conditional count, `if c { k += 1 }`, adds the condition as a 0 or 1 (`cset` and a checked `adds`; setcc and add on x86-64) instead of branching around the add, as Go does with CSINC; the overflow fault is unchanged and happens only when the condition holds, and the add is unchecked where the loop's bounds prove k + 1 fits. A count under two compares, `if a && b { k += 1 }`, makes both as 0 or 1 and adds their `and` (task #446). `XO_PASSES=-cond_inc` keeps the branches.
 - Performance (std/random, x86-64): the ChaCha8 generator behind `os.rand` and std/random runs Go's four-block vertical kernel: bare words take 0.663 of the time on linux/amd64 (bench/perf/random draw, `xo bench --ab`); the words are unchanged.

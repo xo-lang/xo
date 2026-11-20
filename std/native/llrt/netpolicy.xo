@@ -216,16 +216,45 @@ pub fn split_hostport(a: Str) -> (Bool, Str, Str) {
   // byte copies, not Str slices: a may come from outside (a redirect's
   // Location) and not be UTF-8, and a slice next to a broken sequence
   // faults (TestHTTPFuzz/client, 2026-10-18; decision 0259)
-  (true, raw.str_slice(a, h0, h1), if p0 == p1 { "0" } else { raw.str_slice(a, p0, p1) })
+  (true, raw.str_slice(a, h0, h1), if p0 == p1 { "0" } else { unsign_port(raw.str_slice(a, p0, p1)) })
+}
+
+/// Go's net parsePort (net/port.go) takes one + or - before the digits:
+/// "+53" is port 53, "-0" and "+" are port 0, and "-53" is out of range
+/// (port_out_of_range). The port without the sign when it reads as one of
+/// those, else port as given, for getaddrinfo, which takes no sign
+/// (TestUdpFuzz seed 1000001, task #460: "+0" and "-0" were errors).
+fn unsign_port(port: Str) -> Str {
+  let b = port.bytes()
+  if b.is_empty() || (b[0] != 43 && b[0] != 45) {
+    return port
+  }
+  var zero = true
+  for i in 1..b.len() {
+    if b[i] < 48 || b[i] > 57 {
+      return port
+    }
+    if b[i] != 48 {
+      zero = false
+    }
+  }
+  if b[0] == 45 && !zero {
+    return port
+  }
+  if b.len() == 1 { "0" } else { raw.str_slice(port, 1, b.len()) }
 }
 
 /// Whether port is a number above 65535. Darwin's getaddrinfo rejects
 /// one; glibc's truncates it to 16 bits and binds another port
 /// (gotchas/glibc-getaddrinfo-port-truncation.md).
+/// A negative one ("-53", which split_hostport keeps; Go's parsePort
+/// reads it as below 0) is out of range too.
 pub fn port_out_of_range(port: Str) -> Bool {
   let b = port.bytes()
+  let neg = b.len() > 1 && b[0] == 45
   var v = 0
-  for c in b {
+  for i in (if neg { 1 } else { 0 })..b.len() {
+    let c = b[i]
     let d = Int(c) - 48
     if d < 0 || d > 9 {
       return false
@@ -235,5 +264,5 @@ pub fn port_out_of_range(port: Str) -> Bool {
       return true
     }
   }
-  false
+  neg
 }

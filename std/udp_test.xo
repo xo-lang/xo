@@ -180,3 +180,17 @@ test "an empty address listens on port 0" uses (net, clock) {
   s.close()
   expect(dial(os.net, "") is Err(_)) == true
 }
+
+// TestUdpFuzz seed 1000001 (task #460): Go's net takes one sign before a
+// port's digits, so "+0" and "-0" are port 0 and "-1" is out of range
+test "a port with a sign reads as Go's net reads it" uses (net, clock) {
+  for a in ["127.0.0.1:+0", "127.0.0.1:-0", "127.0.0.1:-00", "127.0.0.1:+"] {
+    let s = listen(os.net, a).or_fault("listen ${a}")
+    expect(s.local_addr().ends_with(":0")) == false
+    s.close()
+  }
+  expect(dial(os.net, "127.0.0.1:+53").is_ok()) == true
+  for a in ["127.0.0.1:-1", "127.0.0.1:-53", "127.0.0.1:+-0", "127.0.0.1:++0", "127.0.0.1:+0x1"] {
+    expect(listen(os.net, a).is_err()) == true
+  }
+}
