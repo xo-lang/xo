@@ -3,6 +3,7 @@ package arm64
 import (
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/xotool"
@@ -28,7 +29,20 @@ func TestGoldenBinSelectBuild(t *testing.T) {
 	if _, err := xotool.Path(); err != nil {
 		t.Fatalf("xo: %v", err)
 	}
-	for _, dir := range goldenDirs(t) {
+	// a build environment that fails every golden (no std, a broken
+	// linker) is not a selection of every golden: the side fails, so the
+	// gate's note says so (2026-11-19: XO_STD unset built nothing and the
+	// llvm test passed)
+	var tried, built atomic.Int64
+	dirs := goldenDirs(t)
+	t.Run("all", func(t *testing.T) { buildGoldenBins(t, dirs, out, &tried, &built) })
+	if tried.Load() > 0 && built.Load() == 0 {
+		t.Fatalf("none of %d goldens built: the build environment, not the change", tried.Load())
+	}
+}
+
+func buildGoldenBins(t *testing.T, dirs []string, out string, tried, built *atomic.Int64) {
+	for _, dir := range dirs {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
@@ -36,10 +50,16 @@ func TestGoldenBinSelectBuild(t *testing.T) {
 			if err := os.MkdirAll(o, 0o755); err != nil {
 				t.Fatal(err)
 			}
+			tried.Add(1)
 			res, err := sharedBuild(dir, xotool.Options{Backend: xotool.BackendArm64})
-			if err != nil || res.Failed {
-				// a build that fails selects its golden (no binary)
-				t.Logf("build: %v %s", err, res.Output)
+			// a build that fails selects its golden (no binary); res is
+			// nil when err is set
+			if err != nil {
+				t.Logf("build: %v", err)
+				return
+			}
+			if res.Failed {
+				t.Logf("build failed: %s", res.Output)
 				return
 			}
 			data, err := os.ReadFile(res.Binaries[xotool.Host()])
@@ -49,6 +69,7 @@ func TestGoldenBinSelectBuild(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(o, "prog"), data, 0o755); err != nil {
 				t.Fatal(err)
 			}
+			built.Add(1)
 		})
 	}
 }

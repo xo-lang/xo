@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -212,7 +213,7 @@ func Build(dirs []string, o Options) (*Result, error) {
 	if wd == "" {
 		wd, _ = os.Getwd()
 	}
-	env := append(append(os.Environ(), "PWD="+wd), o.Env...)
+	env := append(append(harnessFree(os.Environ()), "PWD="+wd), o.Env...)
 	if bd := buildScratch(mode, o.Env); bd != "" {
 		defer os.RemoveAll(bd)
 		env = append(env, "XO_BUILD_DIR="+bd)
@@ -567,4 +568,24 @@ func stdVariants(cli []string) error {
 		}
 	})
 	return stdVariantsErr
+}
+
+// harnessEnv are the XO_ variables only the Go tests read (which goldens
+// run, where the gate's binary selection copies its binaries). xo hashes
+// every XO_ variable into its run cache key (decision 0360), so passing
+// them on made the binary selection's builds (XO_GOLDEN_BIN_OUT set) and
+// the same gate's TestGolden builds (XO_LLVM_GOLDENS set) two keys: every
+// selected golden was built twice (decision 0657 stage 2, 2026-11-19).
+var harnessEnv = []string{"XO_GOLDEN_BIN_OUT", "XO_LLVM_GOLDENS", "XO_ARM64_GOLDENS"}
+
+// harnessFree is env without the harnessEnv variables.
+func harnessFree(env []string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(harnessEnv, name) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

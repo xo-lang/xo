@@ -70,6 +70,27 @@ with it on and off on the host it runs on, shows a net gate-time win.
 Stage 2, after this one is measured: the llvm step keyed the same way on
 llvm-backend binaries, replacing TestGoldenIRManifest.
 
+Addendum 2026-11-19 (xw-1, task #425): stage 2 is built
+(XO_GATE_BIN_SELECT=1 or force: the llvm goldens keyed by their llvm
+binaries, the selection's builds reused by TestGolden) and measured on
+one change ((private commit), a compiler-wide change) on host 2 (offload-arm64b),
+on against off, from notes/gate-times:
+
+| llvm step | selected | select s | package s | step s |
+|---|---|---|---|---|
+| off (IR scope) | 149 of 842 | 1,506 | 1,600 | 3,112 |
+| on (binaries) | 156 of 842 | 3,441 (3,391 builds) | 3,058 | 6,514 |
+
+The binaries select no fewer goldens than the IR scope (156 against 149:
+a compiler change changes the same programs either way) and the builds
+compete with the package's tests, so the step took twice as long. A
+rerun on host 3 gave 7,025 s with the selection on (3,289 s of builds).
+The llvm selection by binaries therefore stays off by default, under the
+rule above; TestGoldenIRManifest's IR scope stays the llvm selection.
+The sanitizer goldens run in full either way (TestGoldenASan 5,160 s and
+TestGoldenTasks 13,024 s of subtest time on host 3), so they, not the
+selection, are where the llvm step's time is.
+
 ## Consequences
 
 - A compiler change no longer runs every arm64 golden: E's gate runs its

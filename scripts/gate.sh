@@ -818,6 +818,20 @@ llvm_goldens() {
     echo "llvm IR: the scoped build failed ($logs/llvm-ir-base.txt, $logs/llvm-ir-head.txt): the manifests below" >&2
     git worktree remove --force "$pw2/tree" >/dev/null 2>&1; rm -rf "${pw2:?}"
   fi
+  # decision 0657 stage 2 (XO_GATE_BIN_SELECT=1): the goldens whose llvm
+  # binaries differ, in place of the IR manifests, once the scope above
+  # did not settle it. A compiler change alters nearly every golden's IR
+  # but few binaries: Lang 1's E (b1f55ed34) changed 16 of 743 llvm
+  # binaries (6 more use C), where the manifests select about 720 for
+  # 1,000 to 2,200 s (host 1, 2026-11-16: about 800 s a side at 12 CPUs;
+  # the head side's builds fill TestGolden's run cache)
+  if bin_select_ok && [ -z "$llvm_shard_n" ]; then
+    local bs
+    bs=$(bin_select llvm 2>>"$logs/bin-select-base-llvm.txt")
+    [ -n "$bs" ] || bs=all
+    echo "$(cat "$logs/bin-select-llvm.txt" 2>/dev/null) (decision 0657 stage 2, by their llvm binaries)" >"$sel_note"
+    echo "$bs"; return
+  fi
   ir_manifest_for "$(git rev-parse "$base")"; bm=$irm
   # an ancestor's manifest in place of the base's (lead, 2026-11-14,
   # owner's test-time plan: main moves between almost every gate, so the
@@ -1236,7 +1250,7 @@ arm64_goldens() {
 # byte-identical (E: 14 of 743 differ; openenum: 8 of 742, all C;
 # ~/xo-lead/notes/lang2/artifact-keyed-tests.md), where its LLVM IR differed
 # in nearly every golden. Prints "all", "none" or the comma separated
-# names, with a line for the log in $logs/bin-select.txt; every golden when
+# names, with a line for the log in $logs/bin-select-BACKEND.txt; every golden when
 # the change touches the golden tests, the test harness or the selection,
 # or when a build of the base fails. The full tier on main (ctier.sh) runs
 # every golden. Off by default (lead, 2026-11-15: on E it made the arm64
@@ -1245,7 +1259,9 @@ arm64_goldens() {
 # XO_GATE_BIN_SELECT=1 turns it on, force also skips the touched-files check.
 bin_select() {
   local be=$1 base files T bx t0 sel n ntot
-  local note="$logs/bin-select.txt"
+  # a note and base log per backend: the arm64 and llvm selections run
+  # at once in a concurrent gate (decision 0657 stage 2)
+  local note="$logs/bin-select-$be.txt"
   t0=$(date +%s)
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   files=$({ git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; })
@@ -1255,8 +1271,10 @@ bin_select() {
     echo "every golden (the change touches the golden tests, internal/xotool, scripts/xobuild or the selection)" >"$note"; echo all; return
   fi
   T=$(mktemp -d "$gt/xo-gate-bin.XXXXXX")
-  if ! { git worktree add -q --detach "$T/tree" "$base" && (cd "$T/tree" && go run ./scripts/xobuild); } >"$logs/bin-select-base.txt" 2>&1 || [ ! -x "$T/tree/bin/xo" ]; then
-    echo "every golden (the merge base's xo did not build: $logs/bin-select-base.txt)" >"$note"
+  if ! { git worktree add -q --detach "$T/tree" "$base" && (cd "$T/tree" && go run ./scripts/xobuild); } >"$logs/bin-select-base-$be.txt" 2>&1 || [ ! -x "$T/tree/bin/xo" ]; then
+    # the log's last lines in the note, which the gate prints: the host
+    # prunes the log, and bsE1c's cause (2026-11-17) was lost with it
+    echo "every golden (the merge base's xo did not build: $logs/bin-select-base-$be.txt: $(tail -3 "$logs/bin-select-base-$be.txt" 2>/dev/null | tr '\n' ' ' | cut -c1-400))" >"$note"
     git worktree remove --force "$T/tree" >/dev/null 2>&1; rm -rf "${T:?}"; echo all; return
   fi
   cp "$T/tree/bin/xo" "$T/xo-base"
@@ -1280,16 +1298,35 @@ bin_select() {
   # (lever b, lead 2026-11-15); the base side runs the test with the merge
   # base's xo and std. XO_GATE_BIN_SHAPE=script builds both with xargs.
   bin_test_side() { # XO STDDIR OUT
+    # arm64: internal/arm64's test; llvm: internal/llvm's, in TestGolden's
+    # shape (goldenEnv's optimization level and LTO; decision 0657 stage 2)
     mkdir -p "$3"
     # the base side's xo is older than this tree, so xotool's stale check
     # is off for it (without it every build failed to start and the side
     # built nothing; 2026-11-15)
-    env ${2:+XO_STD="$2" XO_CLI_STALE_OK=1} XO_CLI="$1" XO_GOLDEN_BIN_OUT="$3" \
-      go test -count=1 -timeout 120m ./internal/arm64 -run '^TestGoldenBinSelectBuild$' >"$3.log" 2>&1
+    # one literal package per backend: TestGateRunPatterns checks each
+    # gate.sh `go test PKG -run PAT` names a test of PKG
+    case $be in
+    arm64)
+      env ${2:+XO_STD="$2" XO_CLI_STALE_OK=1} XO_CLI="$1" XO_GOLDEN_BIN_OUT="$3" \
+        go test -count=1 -timeout 120m ./internal/arm64 -run '^TestGoldenBinSelectBuild$' >"$3.log" 2>&1 ;;
+    llvm)
+      env ${2:+XO_STD="$2" XO_CLI_STALE_OK=1} XO_CLI="$1" XO_GOLDEN_BIN_OUT="$3" \
+        go test -count=1 -timeout 120m ./internal/llvm -run '^TestGoldenBinSelectBuild$' >"$3.log" 2>&1 ;;
+    esac
   }
-  if [ "$be" = arm64 ] && [ "${XO_GATE_BIN_SHAPE:-test}" = test ]; then
+  if { [ "$be" = arm64 ] || [ "$be" = llvm ]; } && [ "${XO_GATE_BIN_SHAPE:-test}" = test ]; then
     bin_test_side "$T/xo-base" "$T/tree/std" "$T/a"
     bin_test_side "$XO_CLI" "" "$T/b"
+    # a side that built no golden (its test fails "none of N goldens
+    # built": no std, a broken clang) selects every golden, and says why
+    local sl
+    for sl in "$T/a.log" "$T/b.log"; do
+      if grep -q 'none of [0-9]* goldens built' "$sl" 2>/dev/null; then
+        echo "every golden (a side built none, $(basename "$sl" .log): $(grep -m1 -E 'build failed|build:' "$sl" | cut -c1-300))" >"$note"
+        git worktree remove --force "$T/tree" >/dev/null 2>&1; rm -rf "${T:?}"; echo all; return
+      fi
+    done
   else
     bin_build_side "$T/xo-base" "$T/tree/std" "$T/a"
     bin_build_side "$XO_CLI" "$PWD/std" "$T/b"
@@ -1373,14 +1410,14 @@ run_step_body() {
     if bin_select_ok; then
       # decision 0657: the goldens whose arm64 binaries differ, selected
       # while the package's other tests run
-      ( bin_select arm64 >"$logs/arm64-binsel.txt.tmp" 2>>"$logs/bin-select-base.txt"; mv "$logs/arm64-binsel.txt.tmp" "$logs/arm64-binsel.txt" ) &
+      ( bin_select arm64 >"$logs/arm64-binsel.txt.tmp" 2>>"$logs/bin-select-base-arm64.txt"; mv "$logs/arm64-binsel.txt.tmp" "$logs/arm64-binsel.txt" ) &
       bpid=$!
       presk="^($arm64_sel_tests)\$"
       [ -n "$sk" ] && presk="^($arm64_sel_tests|${sk#^(}"
       full arm64 ./internal/arm64 -skip "$presk"
       wait "$bpid"
       asel=$(cat "$logs/arm64-binsel.txt" 2>/dev/null); [ -n "$asel" ] || asel=all
-      echo "arm64 goldens: $(cat "$logs/bin-select.txt" 2>/dev/null)"
+      echo "arm64 goldens: $(cat "$logs/bin-select-arm64.txt" 2>/dev/null)"
       case $asel in
         all) full arm64sel ./internal/arm64 -run "^($arm64_sel_tests)\$" ${sk:+-skip "$sk"} ;;
         *) XO_ARM64_GOLDENS=$asel full arm64sel ./internal/arm64 -run "^($arm64_sel_tests)\$" ${sk:+-skip "$sk"} ;;
