@@ -6,6 +6,12 @@
 // settings FRAME_SIZE_ERROR. Before the fix the client ignored
 // the value and took the 200 that followed it. A raw h2c server sends the
 // SETTINGS frame, then HEADERS (":status 200", end of stream) on stream 1.
+// It sends them once the client's HEADERS for stream 1 arrived: Go's
+// transport, when the bad SETTINGS closes the connection before the
+// request took stream 1, reports "http2: client conn could not be
+// established" (h2_bundle.go awaitOpenSlotForStreamLocked) in place of
+// the connection error, which made the Go backend's output flaky (task
+// #482: 2 of 10 runs on main 43b2d62ba).
 use std/http
 
 fn serve_once(os: Os, setting: Str) -> Str ! {
@@ -20,7 +26,31 @@ fn serve_once(os: Os, setting: Str) -> Str ! {
       }
       let n = setting.len() / 2
       let frames = Bytes.from_hex("0000" + "0123456789abcdef"[n / 16..n / 16 + 1] + "0123456789abcdef"[n % 16..n % 16 + 1] + "040000000000" + setting + "00000101050000000188") ?? b""
-      c.write(frames).ignore_err("frames")
+      // read until a whole HEADERS frame (type 1) follows the 24-byte
+      // client preface
+      var got = b""
+      var seen = false
+      while !seen {
+        match c.read(4096) {
+          Ok(Some(b)) => got = got + b
+          _ => break
+        }
+        var i = 24
+        while i + 9 <= got.len() {
+          let fl = Int(got[i]) * 65536 + Int(got[i + 1]) * 256 + Int(got[i + 2])
+          if i + 9 + fl > got.len() {
+            break
+          }
+          if got[i + 3] == 1 {
+            seen = true
+            break
+          }
+          i = i + 9 + fl
+        }
+      }
+      if seen {
+        c.write(frames).ignore_err("frames")
+      }
       while true {
         match c.read(4096) {
           Ok(Some(_)) => ()
