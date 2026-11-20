@@ -100,7 +100,7 @@ pub fn h2_wake_rec(rc: Int) {
   when_st(c, 1)
   let tls = ld(c, C_TLS)
   if tls != 0 {
-    tlsio.set_when(tls, 1)
+    tlsio.wake(tls)
   }
   poll.pd_kick(ld(c, C_PD), 1)
 }

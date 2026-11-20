@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/http): a duplex HTTP/2 request body over TLS written by another task no longer races the client's TLS state (two threads saved it and released one buffer twice; task #464).
 - Fix (std/http): a duplex HTTP/2 request body written by another task no longer races the client's read deadline (a data race ThreadSanitizer found in the wake added for task #293; task #456).
 - Fix (arm64 backend, windows/arm64; task #465): a build for windows/arm64 no longer fails with "arm64 backend: internal: no free register for a spilled operand" (std/amqp's st_begin did since call_saves, fc8c0a611). A value saved around calls no longer takes a caller-saved register over an instruction that needs such registers for itself (the reference count decrement there writes x15 and x17) once two would not be left.
 - Fix (std/udp, net): a port with a sign reads as Go's net reads it: `"127.0.0.1:+0"` and `":-0"` are port 0 and `"+53"` is port 53 (they were errors), and `"-53"` is an invalid port (task #460).

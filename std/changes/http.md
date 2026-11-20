@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-20: fix: a duplex HTTP/2 body over TLS wakes the pump's read without touching the reader's TLS state
+
+- Kind: fix
+- Commit: this push
+- Found by: reading the #456 fix (task #464); confirmed by TestGoldenTasks/http_duplex_h2tls under ThreadSanitizer, 2 of 40 on linux/arm64 host 2 (a data race in tlsio.save)
+- Go reference: not applicable (Xo's own wake of h2_pump's read, task #293)
+- Change: the feeder of a duplex body, on another thread, ended the pump's TLS read with tlsio.set_when, which loads, changes and saves the boxed TLS state the reading thread also saves (both released the same box), and the read waited on its own copy's deadline anyway. The TLS handle now holds a wake word beside the box; the feeder stores only that word and kicks the descriptor, and the read's waits treat a set word as a past deadline
+- Measured: not applicable
+- Test: TestGoldenTasks/http_duplex_h2tls under TSan, -count=40 on host 2 (fails before: 2 of 40)
+
 ## 2026-11-20: fix: a duplex HTTP/2 body's wake no longer races the pump's read deadline
 
 - Kind: fix
