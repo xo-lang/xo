@@ -69,7 +69,15 @@ pub struct Tokenizer {
   pub cdata: Bool
   /// the attributes tag_attr has returned for this token (Go's nAttrReturned)
   pub nattr: Int = 0
+  /// the lower cased keys of attr once a tag has ATTR_SCAN of them (Go's
+  /// attrNames); names_on is false until then and a key is found by a scan
+  names: Map[Bytes, Bool] = {}
+  names_on: Bool = false
 }
+
+/// Up to this many attributes a duplicate key is found by scanning attr; past
+/// it, by names (b51: 40,000 attributes took 13 s in the scan).
+const ATTR_SCAN = 16
 
 /// Go's NewTokenizer.
 pub fn tokenizer(text: Str) -> Tokenizer { new_tokenizer(text, "") }
@@ -1057,6 +1065,7 @@ fn tokenizer_read_start_tag(var z: Tokenizer) -> TokenType {
 
 fn tokenizer_read_tag(var z: Tokenizer, save_attr: Bool) {
   z.attr = []
+  z.names_on = false
   tokenizer_read_tag_name(z)
   tokenizer_skip_white_space(z)
   if z.errc != 0 {
@@ -1087,12 +1096,27 @@ fn tokenizer_read_tag(var z: Tokenizer, save_attr: Bool) {
       var j = 0
       if z.attr.len() > 0 {
         let key = lower_bytes(z.src[z.pend.k0..z.pend.k1])
-        while j + 3 < z.attr.len() {
-          if lower_bytes(z.src[z.attr[j]..z.attr[j + 1]]) == key {
-            dup = true
-            break
+        if !z.names_on && z.attr.len() >= ATTR_SCAN * 4 {
+          z.names = {}
+          while j + 3 < z.attr.len() {
+            z.names[lower_bytes(z.src[z.attr[j]..z.attr[j + 1]])] = true
+            j += 4
           }
-          j += 4
+          z.names_on = true
+        }
+        if z.names_on {
+          dup = z.names.contains(key)
+          if !dup {
+            z.names[key] = true
+          }
+        } else {
+          while j + 3 < z.attr.len() {
+            if lower_bytes(z.src[z.attr[j]..z.attr[j + 1]]) == key {
+              dup = true
+              break
+            }
+            j += 4
+          }
         }
       }
       if !dup {

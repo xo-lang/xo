@@ -103,3 +103,47 @@ test "nLt; and nGt; are x/net's two code point references (escape_test.go)" {
   expect(z.next()) == TokenType.Text
   expect(z.token().display()) == "\u{226A}\u{20D2}"
 }
+
+// b51 (the owner's v0.51.1 evaluation, task #240): each attribute key was
+// compared with every key before it, so 40,000 attributes took 13 s. Past 16
+// keys a tag keeps them in a map, as Go's attrNames; the budget is 2 s (a
+// time-budget guard), and the first of each key still wins, case folded.
+test "a tag with 40,000 attributes drops its duplicates in linear time" uses clock {
+  var s = "<p"
+  for i in 0..40000 {
+    s += " a${i}=${i}"
+  }
+  s += " A7=x a39999=y b=1 a0=z>"
+  var z = tokenizer(s)
+  let t0 = os.clock.now()
+  expect(z.next() == TokenType.StartTag) == true
+  let t = z.token()
+  let took = os.clock.now() - t0
+  expect(t.attrs.len()) == 40001
+  expect(t.attrs[7].val) == "7"
+  expect(t.attrs[39999].val) == "39999"
+  expect(t.attrs[40000].key) == "b"
+  expect(took < 2000ms) == true
+}
+
+test "the first of each attribute key wins, case folded, below and past 16 keys" {
+  var small = tokenizer("<p a=1 B=2 A=3 b=4 c=5>")
+  let _ = small.next()
+  let st = small.token()
+  expect(st.attrs.len()) == 3
+  expect(st.attrs[1].key) == "b"
+  expect(st.attrs[1].val) == "2"
+  var s = "<p"
+  for i in 0..20 {
+    s += " k${i}=${i}"
+  }
+  s += " K3=x k19=y K20=z k20=w>"
+  var big = tokenizer(s)
+  let _ = big.next()
+  let bt = big.token()
+  expect(bt.attrs.len()) == 21
+  expect(bt.attrs[3].val) == "3"
+  expect(bt.attrs[19].val) == "19"
+  expect(bt.attrs[20].key) == "k20"
+  expect(bt.attrs[20].val) == "z"
+}

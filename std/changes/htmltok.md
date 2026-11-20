@@ -1,5 +1,18 @@
 # std/htmltok changes
 
+## 2026-11-20: perf: a tag drops duplicate attributes in linear time
+
+- Kind: perf
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b51 (task #240)
+- Go reference: golang.org/x/net v0.62.0 html/token.go (readTag's attrNames map)
+- Test: std/htmltok_test.xo "a tag with 40,000 attributes drops its duplicates in linear time" (a 2 s budget, `--real`; over it before), "the first of each attribute key wins, case folded, below and past 16 keys"
+- Timing: 40,000 attributes in one tag, 13 s on the owner's Intel Mac at v0.51.1 (the evaluation); under the 2 s budget now
+
+The tokenizer compared each attribute key with every key before it in the
+tag. Past 16 keys a tag now keeps its lower cased keys in a map, as Go's
+attrNames does. The first of each key still wins.
+
 ## 2026-11-19: fix: &nLt; and &nGt; are their two code points
 
 - Kind: fix
