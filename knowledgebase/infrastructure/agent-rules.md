@@ -14,7 +14,7 @@ Read by machines, so keep the shape:
   repository, checked when `~/godev/claude-space/xolang/workstream`
   exists). A `(name)` after a path names the function or check inside it.
 - xw reads the Incident kinds column: an alert kind (main failures are the
-  `main-check`, `tier` and `bisect` kinds) raised 3 times in 7 days that no
+  `main-check`, `tier`, `bisect` and `sched-failed` kinds) raised 3 times in 7 days that no
   row with an enforcement lists raises a `rule-gap` alert to the lead.
 - xw reads the Schedules table: a schedule whose evidence is older than
   twice its period raises `schedule-missed` to the lead, unless the row's
@@ -43,7 +43,7 @@ Last verified: 2026-11-17.
 | An open task never sits on a paused agent or one with no live session: the lead moves it (task #319, alert #23789: std tasks on a paused azure-1 stalled the evidence) | xw alert | `workstream:work.xo` (orphan_problems: session gone 30 min, no session, or charter notes saying Agent paused; suggest_owner by area) | `workstream:xw_test.xo` (orphan_problems) | orphaned |
 | A measurement's drain never holds waiting gates past 5 minutes | heavyd | `scripts/lead/heavyd/daemon.go` (phYield) | `scripts/lead/heavyd/scenario_test.go` (TestScenario31DrainYieldsToWaitingGate) | |
 | Push only through pushq.sh, gated, squashed; holds respected | pushq | `scripts/lead/pushq.sh` | `scripts/lead/pushq_hold_test.sh` | push-refusals, push-refused-twice, push-held |
-| A failure on main is bisected to its commit and fixed forward by its owner | hourly.sh, ctier.sh | `scripts/lead/mainbisect.sh`, `scripts/lead/mainbisect-remote.sh` | `scripts/lead/mainbisect_test.sh` | main-check, tier, bisect |
+| A failure on main is bisected to its commit and fixed forward by its owner within the hour; the lead names one bisect owner (CLAUDE.md "Tests and pushes"). The xw schedule checks of main (mainsmall, cgcheck) raise `sched-failed` when they find one | hourly.sh, ctier.sh, xw schedule | `scripts/lead/mainbisect.sh`, `scripts/lead/mainbisect-remote.sh`, `scripts/lead/mainsmall.sh`, `scripts/lead/cgcheck.sh` | `scripts/lead/mainbisect_test.sh`, `scripts/lead/mainsmall_test.sh` | main-check, tier, bisect, sched-failed |
 | Offload hosts keep /work free; leaked bundles are removed | offload tools | `scripts/lead/offload-prune.sh`, `scripts/lead/stdproven-offload.sh` (sp_end), `workstream:alerts.xo` (host_disk_low) | `scripts/lead/offload-prune_test.sh`, `scripts/lead/stdproven_offload_test.sh` | host-disk-low, disk-low |
 | A lease name is not resubmitted in a loop | xw alert | `workstream:alerts.xo` (retry_storm) | `workstream:test/pg_test.sh` | retry-storm |
 | Long waits and blocked leases go to the digest unless they grow | xw alert | `workstream:alerts.xo` (wait_rising) | `workstream:test/pg_test.sh` | long-wait, lease-blocked, wait-rising |
