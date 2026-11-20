@@ -1,0 +1,88 @@
+// todo-rest's state and routes (task #432): ui-todo's shared list and
+// three seats as a JSON API.
+use std/http
+
+pub struct Todo {
+  pub id: Int
+  pub title: Str
+  pub done: Bool
+} derive Eq, Json
+
+pub struct State {
+  pub ver: Int
+  pub todos: List[Todo]
+  pub next_id: Int
+  pub seats: Int
+  pub holders: List[Str]
+} derive Eq, Json
+
+struct TitleIn { title: Str } derive Json
+struct NameIn { name: Str } derive Json
+
+fn bad(msg: Str) -> http.Response { http.json(400, {"error": msg}) }
+
+/// A State with no todos and three seats.
+pub fn new_state() -> Mutex[State] {
+  Mutex[State].new(State{ver: 1, todos: [], next_id: 1, seats: 3, holders: []})
+}
+
+/// The routes over one shared State: the page and its script, and the
+/// JSON API.
+pub fn routes(st: Mutex[State], index: Bytes, app_js: Bytes) -> http.Router {
+  var r = http.router()
+  r.handle("GET /", fn(req) { http.serve_content(req, "index.html", None, index) })
+  r.handle("GET /app.js", fn(req) { http.serve_content(req, "app.js", None, app_js) })
+  r.handle("GET /api/state", fn(_req) { http.json(200, st.with_read(fn(s) { s })) })
+  r.handle("GET /api/ver", fn(_req) { http.json(200, {"ver": st.with_read(fn(s) { s.ver })}) })
+  r.handle("POST /api/todos", fn(req) {
+    let t = match req.json[TitleIn]() {
+      Ok(v) => v.title.trim()
+      Err(e) => return bad("${e}")
+    }
+    if t == "" || t.rune_count() > 200 {
+      return bad("a title is 1 to 200 characters")
+    }
+    http.json(201, st.with(fn(var s) {
+      s.todos.push(Todo{id: s.next_id, title: t, done: false})
+      s.next_id = s.next_id + 1
+      s.ver = s.ver + 1
+      s
+    }))
+  })
+  r.handle("POST /api/todos/{id:Int}/toggle", fn(req) {
+    let id = req.param_int("id")
+    http.json(200, st.with(fn(var s) {
+      s.todos = s.todos.map(fn(t) { if t.id == id { Todo{id: t.id, title: t.title, done: !t.done} } else { t } })
+      s.ver = s.ver + 1
+      s
+    }))
+  })
+  r.handle("DELETE /api/todos/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    http.json(200, st.with(fn(var s) {
+      s.todos = s.todos.filter(fn(t) { t.id != id })
+      s.ver = s.ver + 1
+      s
+    }))
+  })
+  r.handle("POST /api/seats", fn(req) {
+    let who = match req.json[NameIn]() {
+      Ok(v) => v.name.trim()
+      Err(e) => return bad("${e}")
+    }
+    let res = st.with(fn(var s) -> (Int, State) {
+      if who == "" || s.holders.contains(who) {
+        return (400, s)
+      }
+      if s.seats == 0 {
+        return (409, s)
+      }
+      s.seats = s.seats - 1
+      s.holders.push(who)
+      s.ver = s.ver + 1
+      (200, s)
+    })
+    http.json(res.0, res.1)
+  })
+  r
+}

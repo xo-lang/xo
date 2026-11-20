@@ -1,0 +1,65 @@
+// Measures ui-todo's server per action and per idle viewer (task #432,
+// beside ../../todo-rest/measure): drives the Host's routes in process,
+// so the figures are the server's work and bytes, no network.
+//
+//   xo run ./measure
+use std/http
+use std/json
+use std/ui
+use example.com/uitodo/todo
+
+fn req(body: Str, query: Str) -> http.Request {
+  http.new_request("POST", "/_xo/sync${query}", headers: {"Content-Type": "application/json"}, body: body.bytes())
+}
+
+fn up(client: Str, ver: Int, seq: Int, msgs: List[todo.Msg], seen: Str = "") -> Str {
+  var envs: List[ui.Envelope[todo.Msg]] = []
+  var s = seq
+  for m in msgs {
+    envs.push(ui.Envelope{seq: s, msg: m})
+    s = s + 1
+  }
+  json.encode_str(ui.Up{client: client, ver: ver, msgs: envs, seen: seen})
+}
+
+fn main(os: Os) ! {
+  for n in [10, 200] {
+  for q in ["?thin=1", ""] {
+    var r = http.router()
+    let h = ui.host(todo.app(), title: "Todos", css: todo.CSS)
+    h.mount(r)
+    // one viewer adds 200 todos, one per sync, as a browser would
+    var ver = 0
+    var seen = ""
+    var add_bytes = 0
+    let t0 = os.clock.now()
+    for i in 0..n {
+      let a = r.call(req(up("c-a", ver, i + 1, [todo.Msg.Add(title: "todo ${i}")], seen: seen), q)).text() ?? ""
+      let s = json.decode_str[ui.Sync[todo.Model, todo.Msg]](a)?
+      ver = s.ver
+      seen = s.seen
+      add_bytes = add_bytes + a.len()
+    }
+    let add_us = os.clock.since(t0).micros() / n
+    // 1000 idle viewers, each caught up, then each checks once
+    var seens: List[Str] = []
+    for i in 0..1000 {
+      let a = r.call(req(up("c-${i}", 0, 1, []), q)).text() ?? ""
+      seens.push(json.decode_str[ui.Sync[todo.Model, todo.Msg]](a)?.seen)
+    }
+    var idle_bytes = 0
+    var same = 0
+    let t1 = os.clock.now()
+    for i in 0..1000 {
+      let a = r.call(req(up("c-${i}", ver, 1, [], seen: seens[i]), q)).text() ?? ""
+      idle_bytes = idle_bytes + a.len()
+      if a.contains("\"same\":true") {
+        same = same + 1
+      }
+    }
+    let idle_us = os.clock.since(t1).micros()
+    let page = r.call(http.new_request("GET", "/")).body.len()
+    os.stdio.println("todos=${n} ui${if q == "" { "-wasm" } else { "-thin" }} page=${page} add_us=${add_us} add_reply_avg=${add_bytes / n} idle_us_per_1000=${idle_us} idle_reply_avg=${idle_bytes / 1000} idle_same=${same}/1000")
+  }
+  }
+}

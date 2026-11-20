@@ -1,0 +1,20 @@
+// The todo-rest server (task #432): ui-todo's shared list and three seats
+// built the traditional way, a JSON API and a static page with its own
+// JavaScript (static/), embedded in the binary (decision 0304). The page
+// polls the version every 2 s to see other people's changes.
+//
+//   xo run ./server -- :8080
+use std/http
+use std/log
+use example.com/todorest/api
+
+const INDEX: Bytes = embed("static/index.html")
+const APP_JS: Bytes = embed("static/app.js")
+
+fn main(os: Os) ! {
+  let addr = os.env.args().get(0) ?? ":8080"
+  let st = api.new_state()
+  let l = os.net.listen(addr)?
+  log.info("listening", {"addr": l.addr()})
+  http.server(l, api.routes(st, INDEX, APP_JS)).serve()?
+}

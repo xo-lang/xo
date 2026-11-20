@@ -1,0 +1,31 @@
+// Measures todo-rest's server per action and per idle viewer (task #432,
+// beside ../../ui-todo/measure): drives the routes in process, so the
+// figures are the server's work and bytes, no network.
+//
+//   xo run ./measure
+use std/http
+use example.com/todorest/api
+
+fn main(os: Os) ! {
+  for n in [10, 200] {
+  let r = api.routes(api.new_state(), b"", b"")
+  var add_bytes = 0
+  let t0 = os.clock.now()
+  for i in 0..n {
+    let resp = r.call(http.new_request("POST", "/api/todos", headers: {"Content-Type": "application/json"}, body: "{\"title\":\"todo ${i}\"}".bytes()))
+    if resp.status != 201 {
+      return Err("add ${resp.status}")
+    }
+    add_bytes = add_bytes + resp.body.len()
+  }
+  let add_us = os.clock.since(t0).micros() / n
+  var idle_bytes = 0
+  let t1 = os.clock.now()
+  for _i in 0..1000 {
+    idle_bytes = idle_bytes + r.call(http.new_request("GET", "/api/ver")).body.len()
+  }
+  let idle_us = os.clock.since(t1).micros()
+  let page = r.call(http.new_request("GET", "/")).body.len()
+  os.stdio.println("todos=${n} rest page=${page} add_us=${add_us} add_reply_avg=${add_bytes / n} idle_us_per_1000=${idle_us} idle_reply_avg=${idle_bytes / 1000}")
+  }
+}
