@@ -1,0 +1,114 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): task #457, an index
+// a + i with a never negative and i below a limit clamped to the room
+// past a (`lim = limit.min(b.len() - a)`). Then 0 <= a + i < a + lim <=
+// b.len(), so neither the add's overflow check nor the bounds check is
+// needed; Go's prove pass drops both in findMatchLengthWithLimit's shape
+// (2026-11-20: brotli's rb_match at enc11, 477.9M instructions, 50 for
+// every 4 matching bytes).
+
+fn match_len(b: List[UInt8], a: Int, c: Int, limit: Int) -> Int {
+  // arm64: -"b\.hs" -"b\.vs"
+  // amd64: -"\tcmpq [^\n]*\n\tjae " -"\tjo "
+  if a < 0 {
+    return 0
+  }
+  if c < 0 {
+    return 0
+  }
+  let lim = limit.min(b.len() - a).min(b.len() - c)
+  var m = 0
+  while m + 4 <= lim {
+    if b[a + m] != b[c + m] { return m }
+    if b[a + m + 1] != b[c + m + 1] { return m + 1 }
+    if b[a + m + 2] != b[c + m + 2] { return m + 2 }
+    if b[a + m + 3] != b[c + m + 3] { return m + 3 }
+    m += 4
+  }
+  while m < lim && b[a + m] == b[c + m] {
+    m += 1
+  }
+  m
+}
+
+// One index, a plain counted loop: `for i in 0..lim` with lim at most
+// the room past a.
+fn sum_from(xs: List[Int], a: Int, n: Int) -> Int {
+  // arm64: -"b\.hs" -"b\.vs"
+  // amd64: -"\tcmpq [^\n]*\n\tjae " -"\tjo "
+  if a < 0 {
+    return 0
+  }
+  let lim = n.min(xs.len() - a)
+  var s = 0
+  for i in 0..lim {
+    s = s.wrapping_add(xs[a + i])
+  }
+  s
+}
+
+// The boundary: a's sign is not known, so a + i may be negative and the
+// bounds check stays.
+fn sum_any(xs: List[Int], a: Int, n: Int) -> Int {
+  // arm64: "b\.hs"
+  // amd64: "\tcmpq [^\n]*\n\tjae "
+  let lim = n.min(xs.len() - a)
+  var s = 0
+  for i in 0..lim {
+    s = s.wrapping_add(xs[a + i])
+  }
+  s
+}
+
+// The boundary: the limit is clamped to the room of another list.
+fn sum_other(xs: List[Int], ys: List[Int], a: Int, n: Int) -> Int {
+  // arm64: "b\.hs"
+  // amd64: "\tcmpq [^\n]*\n\tjae "
+  if a < 0 {
+    return 0
+  }
+  let lim = n.min(ys.len() - a)
+  var s = 0
+  for i in 0..lim {
+    s = s.wrapping_add(xs[a + i])
+  }
+  s
+}
+
+// The boundary: the room is past c, the index starts at a.
+fn sum_shift(xs: List[Int], a: Int, c: Int, n: Int) -> Int {
+  // arm64: "b\.hs"
+  // amd64: "\tcmpq [^\n]*\n\tjae "
+  if a < 0 {
+    return 0
+  }
+  if c < 0 {
+    return 0
+  }
+  let lim = n.min(xs.len() - c)
+  var s = 0
+  for i in 0..lim {
+    s = s.wrapping_add(xs[a + i])
+  }
+  s
+}
+
+// The boundary of the counter's proof: nothing bounds k, so `k += 4`
+// keeps its overflow check.
+fn count_up(xs: List[Int], n: Int) -> Int {
+  // arm64: "b\.vs"
+  // amd64: "\tjo "
+  var k = 0
+  var i = 0
+  while xs[i % xs.len()] != n {
+    k += 4
+    i += 1
+  }
+  k
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  let b: List[UInt8] = [1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 7]
+  let xs = [1, 2, 3, 4, 5]
+  os.stdio.println("${match_len(b, 0, 6, 10 + k)} ${sum_from(xs, 1, 9 + k)} ${sum_any(xs, k, 3)} ${count_up(xs, 3)} ${sum_other(xs, xs, 1, 2 + k)} ${sum_shift(xs, 0, 1, 2 + k)}")
+}

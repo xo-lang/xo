@@ -3531,15 +3531,27 @@ fn ldl32(b: List[UInt8], i: Int) -> Int {
 
 /// findMatchLengthWithLimit over the ring buffer.
 fn rb_match(b: List[UInt8], a: Int, c: Int, limit: Int) -> Int {
+  // the limit clamped to the room past each start, and both starts 0 or
+  // more: the compiler then drops the bounds and overflow checks of every
+  // b[a + m + k] below (task #457, test/codegen/matchbounds; 12
+  // instructions a byte compared before, 3 after). The callers never
+  // pass a limit past the buffer, so the clamp changes no result.
+  if a < 0 {
+    fault("brotli: match start before the buffer")
+  }
+  if c < 0 {
+    fault("brotli: match start before the buffer")
+  }
+  let lim = limit.min(b.len() - a).min(b.len() - c)
   var m = 0
-  while m + 4 <= limit {
+  while m + 4 <= lim {
     if b[a + m] != b[c + m] { return m }
     if b[a + m + 1] != b[c + m + 1] { return m + 1 }
     if b[a + m + 2] != b[c + m + 2] { return m + 2 }
     if b[a + m + 3] != b[c + m + 3] { return m + 3 }
     m += 4
   }
-  while m < limit && b[a + m] == b[c + m] {
+  while m < lim && b[a + m] == b[c + m] {
     m += 1
   }
   m

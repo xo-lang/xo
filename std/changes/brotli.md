@@ -10,6 +10,17 @@
 - Measured: callgrind (cgab, linux/arm64) enc11 5,179,128,981 to 5,099,341,779 instructions (-1.54%), enc6 unchanged; no speedup claimed: xo bench --ab on host 1, 12 rounds, 1108d9ea6 against 90825aa0b: 0.986 (0.974 to 1.0), within noise
 - Test: `xo test --std-module brotli` (9 pass)
 
+## 2026-11-20: perf: the match length loop clamps its limit to the buffer
+
+- Kind: perf
+- Commit: this push
+- Found by: task #457 (Lang 2's callgrind per line of bench/perf/brotli enc11: rb_match kept 2 bounds and 2 overflow checks for every byte compared, 50 instructions for 4 matching bytes; Go's prove pass drops them in findMatchLengthWithLimit)
+- Go reference: andybalholm/brotli find_match_length.go (findMatchLengthWithLimit)
+- Measured: callgrind on linux/arm64 (b30aec685 against 9b8bb3c40): enc11 5,179,128,981 to 4,961,391,691 instructions (-4.20%), enc6 704,165,253 to 637,532,875 (-9.46%), enc1 unchanged. `xo bench --ab` on linux/arm64 host 1 (6 rounds): enc11 1.002 (95% 0.988 to 1.019, within noise); enc6 0.962 (0.959 to 0.992, a 28 ms run the tool reads as too short). No speedup is claimed.
+- Test: test/codegen/matchbounds (the loop's shape keeps no bounds or overflow check on arm64 and x86-64); brotli module tests (9 passed)
+- Affected: rb_match faults with "brotli: match start before the buffer" for a negative start (an index fault before) and stops at the buffer's end where a limit past it faulted; no caller passes either
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: quality 10 and 11 reuse one set of dictionary match slots
 
 - Kind: perf

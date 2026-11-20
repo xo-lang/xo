@@ -211,3 +211,43 @@ the function changes that container's length (FACT_UNSTABLE)
 guard in straight code; a loop that writes the list lost it, which kept
 every S box check of bcrypt's expand (18 checks, now 4).
 Test: test/codegen/maskedindex.
+
+## Offset indexes under a clamped limit (2026-11-20, task #457)
+
+`xs[a + i + k]` (k a constant of 0 or more) needs neither its bounds
+check nor its adds' overflow checks when (fieldlicm.xo `add_index`):
+
+- a and i are never negative where the index is read (a constant, a
+  length, a checked sum of such, or a dominating branch: the fall through
+  of `if a < 0 { ... return or fault }` now records `a >= 0`, FACT_GE);
+- a branch that dominates the read bounds i + k by n: `i < n` for k of 0,
+  or `i + K <= n` (`i + K < n`) for a checked sum with K above (at least)
+  k, which FACT_SUM finds from i;
+- n is at most the room past a (`room`): `xs.len() - a` itself, an
+  `Int.min` with such a side, or a block parameter that carries one, with
+  a the same value as the index's (len_root follows the parameters);
+- nothing in the function changes xs's length (FACT_UNSTABLE).
+
+Then 0 <= a + i + k < a + n <= len. `drop_proven_adds` (last in
+hoist_fields, so the other proofs still read the adds as checked) takes
+the overflow check from those adds, and from a constant added to a value
+that is at most a length plus little (`small`: a loop counter that is 0
+from outside and `m + 4` from a latch under `m + 4 <= lim`, lim
+len_bounded). A block parameter met again in `small` counts only when no
+add was crossed on the way (gotchas/proof-cycle-through-add.md).
+
+Facts also pass a short-circuit join (`join_facts`): after `a && b` the
+true side has b's block's facts and b's own; after `a || b` the false
+side. Not around a loop (an edge from a block the join dominates).
+Nothing is copied: the facts' dominator tree (Proof.fidom) hangs the
+taken side under the block its value came from
+(gotchas/proof-cycle-through-add.md; internal/arm64 TestJoinFactsBudget).
+
+Why: Go's prove pass drops both checks in findMatchLengthWithLimit's
+shape; std/brotli's rb_match kept two of each for every byte compared
+(12 instructions a byte, 3 now). The source says the clamp
+(`limit.min(b.len() - a).min(b.len() - c)`) and the sign guards; the
+compiler does not invent them.
+Tests: test/codegen/matchbounds (four shapes proven, five that keep a
+check: unknown sign, another list's length, another offset's room, a
+counter with no bound).
