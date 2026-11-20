@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: quality 10 and 11 reuse one set of dictionary match slots
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (host 1 perf of bench/perf/brotli enc11: List[Int].filled took 1.1% of samples, h10_find_all's 38 match slots allocated once per position; Go keeps them in a stack array)
+- Go reference: andybalholm/brotli h10.go (findAllMatchesH10's dict_matches)
+- Measured: callgrind on linux/arm64 (55fa9430a against 1a40dc9d7): enc11 0.90% fewer instructions, enc6 unchanged; `xo bench --ab` on linux/arm64 host 1 (6 rounds): enc11 0.973 (95% 0.931 to 0.998, 226.9 to 220.8 ms, better); a first run was within noise (0.986, 0.926 to 1.044)
+- Test: brotli module tests (9 passed); bench output unchanged (enc11 and enc6)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: quality 10 and 11 keep each zopfli node in two words
 
 - Kind: perf

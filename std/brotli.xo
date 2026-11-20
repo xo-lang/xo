@@ -3495,6 +3495,8 @@ struct Enc {
   h_delta: List[Int]
   h_next: List[Int]
   h_free: List[Int]
+  // h10_find_all's 38 dictionary match slots, reset per call (Go: a stack array)
+  h_dm: List[Int]
   h_window_mask: Int
   h_invalid: Int
   h_forest: List[UInt32]
@@ -4776,7 +4778,11 @@ fn h10_find_all(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, var
   if best_len < max_length {
     best_len = h10_store_and_find(e, cur_ix, max_length, max_backward, best_len, true, out)
   }
-  var dm = List[Int].filled(38, 0xFFFFFFF)
+  var dm = e.h_dm
+  e.h_dm = []
+  for k in 0..38 {
+    dm[k] = 0xFFFFFFF
+  }
   let minlen = max_i(4, best_len + 1)
   if find_all_dict_matches(e, cur_m, minlen, max_length, dm) {
     let maxlen = min_i(37, max_length)
@@ -4791,6 +4797,7 @@ fn h10_find_all(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, var
       }
     }
   }
+  e.h_dm = dm
   out.len() - start
 }
 
@@ -7175,7 +7182,7 @@ fn enc_new(quality: Int, window: Int) -> Enc {
     last_bytes: lb, last_bytes_bits: lbb, prev_byte: 0, prev_byte2: 0, size_hint: 0,
     h_made: false, h_prepared: false, h_type: 0, h_bucket_bits: 0, h_sweep: 1, h_hash_len: 0, h_use_dict: false, buckets: [],
     h_lookahead: 8, h_num_last: 0, h_block_bits: 0, h_num: [], h_mask64: 0, h_num_banks: 1, h_bank_bits: 0, h_max_hops: 0,
-    h_addr: [], h_head: [], h_tiny: [], h_delta: [], h_next: [], h_free: [], h_window_mask: 0, h_invalid: 0, h_forest: [],
+    h_addr: [], h_head: [], h_tiny: [], h_delta: [], h_next: [], h_free: [], h_dm: List[Int].filled(38, 0xFFFFFFF), h_window_mask: 0, h_invalid: 0, h_forest: [],
     dict_lookups: 0, dict_matches: 0, npostfix: 0, ndirect: 0, dist_alphabet: 16 + (24 << 1), dist_max: (1 << 26) - 4,
     last_block_emitted: false, finished: false, w: BitBuf{b: BytesBuilder.new(), ix: 0}, out: BytesBuilder.new()}
 }
