@@ -4,5 +4,6 @@ without idle pings: 200 200 ok, idle pings no, the next request at once, connect
 with idle pings: 200 200 ok, idle pings yes, the next request at once, connections 1
 a dead connection: 200 200 ok, idle pings yes, the next request at once, connections 2
 a dead connection without idle pings: 200 200 ok, idle pings no, the next request waits, connections 2
+a request during an idle PING: 200 200 ok, idle pings yes, the next request in time, connections 1
 the task ends with its group: at once
 --- stderr

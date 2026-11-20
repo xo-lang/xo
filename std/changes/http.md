@@ -59,6 +59,26 @@
 - Measured: not applicable
 - Test: std/native/http_test.xo "the router matches the escaped path and unescapes each segment once", 11 cases checked against Go 1.26 net/http (fails before: `/admin%2Fx` 200); the Go backend (std/rt/http.go dispatch) the same, golden http_router_paths under TestGoldenGoParity (fails before: `/a/%41/b/%2F` gives `[A] [/]`)
 
+## 2026-11-20: fix: an idle PING that fails closes its connection instead of pooling it due at once
+
+- Kind: fix
+- Commit: this push
+- Found by: task #474's repro of http_idle_pings on darwin/arm64 (1 run in about 100 stuck with "idle pings no"); `xo debug` on the stuck process showed the pinger task running in idle_ping_take and h2_begin's write, again and again
+- Go reference: net/http's http2 healthCheck closes the connection on any ping error (closeForLostPing)
+- Change: an idle PING that failed without marking the connection broken (a RST_STREAM on stream 0, a read error other than EOF, a failed write) put the connection back in the pool with its ping time unchanged, so it was due at once and the pinger took it again in a busy loop, leaving the live connections behind it unpinged. A failed idle PING now closes the connection
+- Measured: not applicable
+- Test: golden http_idle_ping_dead (a server by hand answers each PING with a RST_STREAM on stream 0): more than 1 PING before, 6 of 6 runs; 1 after, 6 of 6 (darwin/arm64)
+
+## 2026-11-20: fix: a request during an idle PING reuses the connection instead of dialing a second one
+
+- Kind: fix
+- Commit: this push
+- Found by: TestGoldenTasks/http_idle_pings failing once at XO_THREADS=2 in an llvm gate on linux/arm64 ("with idle pings ... connections 2", task #474)
+- Go reference: net/http's http2 Transport healthCheck pings a connection that stays usable for requests
+- Change: Client.with_idle_pings' pinger takes an idle HTTP/2 connection out of the pool for the PING's round trip, so a request in that window found no idle connection and dialed. The pool now lists the connections out for a PING; a request whose only match is one of them waits for it (at most its ping_timeout, 15 s without one) and reuses it, or dials once the PING failed and closed it
+- Measured: not applicable
+- Test: http_idle_pings' new case (the proxy holds the PING's ack 300 ms and a request comes during it): connections 2 before, 1 after (native arm64 and llvm; the Go backend gave 1)
+
 ## 2026-11-20: fix: a duplex HTTP/2 body over TLS wakes the pump's read without touching the reader's TLS state
 
 - Kind: fix

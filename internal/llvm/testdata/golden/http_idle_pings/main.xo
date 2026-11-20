@@ -68,6 +68,12 @@ fn run(os: Os, name: Str, idle: Bool, deafen: Bool) uses net, stdio, clock {
     }
     let url = "http://${pl.addr()}/"
     let r1 = hc.get(url).or_fault("get 1")
+    // the body read first, so the stream has ended before the proxy goes
+    // deaf: a DATA frame held back kept the stream open, and its
+    // send_ping_timeout PING counted as an idle one ("a dead connection
+    // without idle pings" printed idle pings yes in task #474's gate on
+    // host 3)
+    let _b1 = r1.text() ?? ""
     if deafen {
       deaf.set(true)
     }
@@ -81,6 +87,84 @@ fn run(os: Os, name: Str, idle: Bool, deafen: Bool) uses net, stdio, clock {
       Err(_) => "error"
     }
     os.stdio.println("${name}: ${r1.status} ${got}, idle pings ${if p > 0 { "yes" } else { "no" }}, the next request ${if waited < 150ms { "at once" } else { "waits" }}, connections ${conns.get()}")
+  }
+}
+
+/// A request while the idle pinger's PING is out on its connection (the
+/// proxy holds the server's next bytes, the PING's ack, 300 ms) waits
+/// for that connection rather than dial a second one, as Go's
+/// healthCheck leaves the connection usable (task #474: one llvm run of
+/// "with idle pings" saw connections 2 at XO_THREADS=2).
+fn held(os: Os) uses net, stdio, clock {
+  let name = "a request during an idle PING"
+  var rt = http.router()
+  rt.handle("GET /", fn(_req) { http.text(200, "ok") })
+  let hs = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), rt).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let pl = os.net.listen("127.0.0.1:0").or_fault("listen")
+  // the client's bytes on its first connection, the connections, and
+  // whether the first connection still gets the server's bytes
+  let first = Mutex[Bytes].new(b"")
+  let conns = Atomic[Int].new(0)
+  let hold = Atomic[Bool].new(false)
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    s.spawn_background(fn() uses (net, sync, clock) {
+      while let Ok(a) = pl.accept() {
+        let one = conns.add(1) == 1
+        let b = os.net.dial(hs.addr()).or_fault("dial")
+        s.spawn_background(fn() uses (net, sync, clock) {
+          while let Ok(Some(x)) = b.read(65536) {
+            if one && hold.get() {
+              hold.set(false)
+              os.clock.sleep(300ms)
+            }
+            if a.write(x).is_err() {
+              break
+            }
+          }
+        })
+        s.spawn_background(fn() uses (net, sync) {
+          while let Ok(Some(x)) = a.read(65536) {
+            if one {
+              first.with(fn(var v: Bytes) { v = v + x })
+            }
+            if b.write(x).is_err() {
+              break
+            }
+          }
+        })
+      }
+    })
+    var hc = http.client(os.net, timeout: 10s).with_protocols(#{http.Protocol.UnencryptedHttp2}).with_h2_config(http.H2Config{send_ping_timeout: 50ms, ping_timeout: 2s})
+    hc = hc.with_idle_pings(s.group(), os.clock)
+    let url = "http://${pl.addr()}/"
+    let r1 = hc.get(url).or_fault("get 1")
+    // the body read first, so the stream has ended and the connection is
+    // pooled before the hold: on linux the server's DATA frame can come
+    // in a read after its HEADERS, and held, it kept the stream open and
+    // the connection out of the pool (no PING in 5 s on hosts 3 and 4)
+    let _b1 = r1.text() ?? ""
+    // the server's next bytes on the first connection, the ack of the
+    // PING sent 50 ms after the request, come 300 ms late; a request
+    // once the PING is on the wire finds the connection out for it (a
+    // fixed 80 ms missed a PING sent late on a loaded host: task #474's
+    // gate on host 4 printed idle pings no)
+    hold.set(true)
+    var p = 0
+    var tries = 0
+    while p == 0 && tries < 500 {
+      os.clock.sleep(10ms)
+      p = pings(first.with(fn(var v: Bytes) -> Bytes { v }))
+      tries += 1
+    }
+    let t0 = os.clock.now()
+    let r2 = hc.get(url)
+    let waited = os.clock.now() - t0
+    let got = match r2 {
+      Ok(r) => "${r.status} ${r.text() ?? ""}"
+      Err(_) => "error"
+    }
+    os.stdio.println("${name}: ${r1.status} ${got}, idle pings ${if p > 0 { "yes" } else { "no" }}, the next request ${if waited < 1s { "in time" } else { "late" }}, connections ${conns.get()}")
   }
 }
 
@@ -101,5 +185,6 @@ fn main(os: Os) uses net, stdio, clock {
   run(os, "with idle pings", true, false)
   run(os, "a dead connection", true, true)
   run(os, "a dead connection without idle pings", false, true)
+  held(os)
   ends(os)
 }

@@ -1,0 +1,150 @@
+// Client.with_idle_pings with a pooled HTTP/2 connection whose idle PING
+// fails: the connection leaves the pool, as Go's healthCheck closes a
+// connection on any ping error (closeForLostPing). Before task #474's fix
+// a PING that failed without breaking the connection (here a RST_STREAM
+// on stream 0, a connection error; also a read error other than EOF, or
+// a failed write) put it back in the pool due at once, and the pinger
+// took it again and again: a busy loop, with live connections behind it
+// left unpinged (an llvm golden's "idle pings no", task #474). A server
+// by hand counts the PINGs; then a proxy in front of a live h2c server
+// counts the client's PING frames on its connection.
+use std/http
+
+fn pings(b: Bytes) -> Int {
+  var n = 0
+  var i = 24
+  while i + 9 <= b.len() {
+    let len = (Int(b[i]) << 16) | (Int(b[i + 1]) << 8) | Int(b[i + 2])
+    if i + 9 + len > b.len() {
+      break
+    }
+    if Int(b[i + 3]) == 6 && (Int(b[i + 4]) & 1) == 0 {
+      n = n + 1
+    }
+    i = i + 9 + len
+  }
+  n
+}
+
+// one server behind a proxy for the life of a scope: a request through
+// it, then (live) a wait for the client's first idle PING on its
+// connection; the scope's end closes the server and the proxy's
+// connections
+fn run(os: Os, hc: http.Client, name: Str, live: Bool) uses net, stdio, clock {
+  var rt = http.router()
+  rt.handle("GET /", fn(_req) { http.text(200, "ok") })
+  let hs = http.server(os.net.listen("127.0.0.1:0").or_fault("listen"), rt).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  let pl = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let first = Mutex[Bytes].new(b"")
+  let conns = Atomic[Int].new(0)
+  scope s {
+    s.spawn_background(fn() { hs.serve().ignore_err("the program ends the server") })
+    s.spawn_background(fn() uses (net, sync) {
+      while let Ok(a) = pl.accept() {
+        let one = conns.add(1) == 1
+        let b = os.net.dial(hs.addr()).or_fault("dial")
+        s.spawn_background(fn() uses (net, sync) {
+          while let Ok(Some(x)) = b.read(65536) {
+            if a.write(x).is_err() {
+              break
+            }
+          }
+        })
+        s.spawn_background(fn() uses (net, sync) {
+          while let Ok(Some(x)) = a.read(65536) {
+            if one {
+              first.with(fn(var v: Bytes) { v = v + x })
+            }
+            if b.write(x).is_err() {
+              break
+            }
+          }
+        })
+      }
+    })
+    let r = hc.get("http://${pl.addr()}/").or_fault("get")
+    let body = r.text() ?? ""
+    var p = 0
+    if live {
+      var tries = 0
+      while p == 0 && tries < 300 {
+        os.clock.sleep(10ms)
+        p = pings(first.with(fn(var v: Bytes) -> Bytes { v }))
+        tries += 1
+      }
+    }
+    os.stdio.println("${name}: ${r.status} ${body}, idle pings ${if p > 0 { "yes" } else { "no" }}")
+  }
+}
+
+// whether b (the client's bytes after its preface) holds a HEADERS frame
+fn has_headers(b: Bytes) -> Bool {
+  var i = 24
+  while i + 9 <= b.len() {
+    let len = (Int(b[i]) << 16) | (Int(b[i + 1]) << 8) | Int(b[i + 2])
+    if Int(b[i + 3]) == 1 {
+      return true
+    }
+    i = i + 9 + len
+  }
+  false
+}
+
+fn frame(typ: Int, flags: Int, sid: Int, payload: Bytes) -> Bytes {
+  let n = payload.len()
+  Bytes.from_list([UInt8(n >> 16), UInt8((n >> 8) & 255), UInt8(n & 255), UInt8(typ), UInt8(flags), UInt8(sid >> 24), UInt8((sid >> 16) & 255), UInt8((sid >> 8) & 255), UInt8(sid & 255)]) + payload
+}
+
+// an h2c server by hand: it answers the GET with a 200 and no body, then
+// answers each idle PING with a RST_STREAM on stream 0 (a connection
+// error), counting the PINGs until the client closes the connection
+fn stub(os: Os, hc: http.Client) -> Int uses net, stdio, clock {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let n = Atomic[Int].new(0)
+  scope s {
+    s.spawn_background(fn() uses (net, sync) {
+      if let Ok(c) = l.accept() {
+        var got = b""
+        while !has_headers(got) {
+          match c.read(65536) {
+            Ok(Some(x)) => got = got + x
+            _ => return
+          }
+        }
+        c.write(frame(4, 0, 0, b"") + frame(4, 1, 0, b"") + frame(1, 5, 1, b"\x88")).ignore_err("the client reads it")
+        var answered = 0
+        while true {
+          let p = pings(got)
+          while answered < p {
+            c.write(frame(3, 0, 0, b"\x00\x00\x00\x00")).ignore_err("the client may have closed")
+            answered += 1
+          }
+          n.set(p)
+          match c.read(65536) {
+            Ok(Some(x)) => got = got + x
+            _ => return
+          }
+        }
+      }
+    })
+    let r = hc.get("http://${l.addr()}/").or_fault("get")
+    // the body read, so the stream has ended and the connection is pooled
+    let _body = r.text() ?? "?"
+    // the first idle PING goes 50 ms in; then 500 ms for any more
+    os.clock.sleep(550ms)
+  }
+  n.get()
+}
+
+fn main(os: Os) {
+  scope m {
+    var hc = http.client(os.net, timeout: 10s).with_protocols(#{http.Protocol.UnencryptedHttp2}).with_h2_config(http.H2Config{send_ping_timeout: 50ms, ping_timeout: 2s})
+    hc = hc.with_idle_pings(m.group(), os.clock)
+    // the first server goes with its scope; its connection stays pooled
+    // a connection error on the idle PING closes the connection: one
+    // PING; pooled again due at once it took hundreds in 550 ms
+    let n = stub(os, hc)
+    os.stdio.println("idle PINGs on a connection that failed one: ${if n == 1 { "1" } else { "${if n > 1 { "more than 1" } else { "0" }}" }}")
+    run(os, hc, "a live server after it", true)
+  }
+}
