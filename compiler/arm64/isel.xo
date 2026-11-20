@@ -143,35 +143,105 @@ fn (var g: G) function(fi: Int) {
     if g.on("x86_sink_loads") {
       g.x86_sink_loads()
     }
-    // a load folded into several reads whose base was then spilled
-    // reloads the base at each read (2026-10-21: nistec.mul4p's
-    // multiplier word into four mulq, 217 to 232 instructions): those
-    // loads stay loads, and the function is allocated again
-    let before_fold = g.blocks
-    if g.on("x86_fold_loads") {
-      g.x86_fold_loads()
-    }
-    if g.on("x86_carry_fuse") {
-      g.x86_carry_fuse()
-    }
-    g.regalloc()
-    var refold = false
-    for (v, base) in g.fold_multi {
-      if base > 0 && base < g.loc.len() && g.loc[base].reg < 0 {
-        g.fold_skip[v] = true
-        refold = true
-      }
-    }
-    if refold {
-      g.blocks = before_fold
+    let blocks0 = g.blocks
+    let hot0 = g.hot
+    let cold0 = g.cold
+    let nblock0 = g.nblock
+    let fp0 = g.fp
+    let base0 = g.base
+    let order0 = g.order
+    let skip0 = g.fold_skip
+    let shrink0 = g.shrink
+    let fl0 = g.fl
+    let pro0 = g.pro
+    g.x86_alloc()
+    if g.on("loop_split") && g.split_any() {
+      // loopsplit.xo, as on arm64 below: the loops whose values spilled
+      // in this allocation are split and the function allocated again
+      // (task #481: brotli update_nodes' j loop kept its counters, masks
+      // and bounds in slots, its rare rb_match call holding the five
+      // callee saved registers). shrink_split has run already, so the
+      // first allocation's names are the loop's own (no region map); a
+      // spilled operand without a free scratch register borrows one
+      // (x86_scratch_b), so no split_scratch_ok
+      let first = SplitFirst{loc: g.loc, region: [], m: []}
+      let a = SplitAlloc{blocks: g.blocks, hot: g.hot, cold: g.cold, nblock: g.nblock, fp: g.fp, base: g.base, order: g.order, ninst: g.ninst, occ_regs: g.occ_regs, saved: g.saved, slots: g.slots, vranges: g.vranges, fl: g.fl, pro: g.pro, fedge: g.fedge, shrink: g.shrink}
+      let skip1 = g.fold_skip
+      g.blocks = blocks0
+      g.hot = hot0
+      g.cold = cold0
+      g.nblock = nblock0
+      g.fp = fp0
+      g.base = base0
+      g.order = order0
+      g.fold_skip = skip0
       g.fold_multi = []
-      if g.on("x86_fold_loads") {
-        g.x86_fold_loads()
+      g.shrink = shrink0
+      g.fl = fl0
+      g.pro = pro0
+      let region0 = g.region
+      let fedge0 = g.fedge
+      g.split_made = []
+      g.split_ban = {}
+      var split = g.loop_split(first)
+      if split {
+        g.x86_split_blocks()
+        g.x86_alloc()
+        // a name that spilled inside its loop gained nothing and costs a
+        // copy between two slots at each edge (update_nodes' j loop was
+        // entered through seven push and pop pairs, and enc11 ran 5%
+        // slower than unsplit): split again without those
+        var ban: Map[Int, Bool] = {}
+        for (key, inner) in g.split_made {
+          if inner < g.loc.len() && g.loc[inner].reg < 0 {
+            ban[key] = true
+          }
+        }
+        if !ban.is_empty() {
+          g.blocks = blocks0
+          g.hot = hot0
+          g.cold = cold0
+          g.nblock = nblock0
+          g.fp = fp0
+          g.base = base0
+          g.order = order0
+          g.fold_skip = skip0
+          g.fold_multi = []
+          g.shrink = shrink0
+          g.fl = fl0
+          g.pro = pro0
+          g.region = region0
+          g.fedge = fedge0
+          g.split_made = []
+          g.split_ban = ban
+          split = g.loop_split(first)
+          if split {
+            g.x86_split_blocks()
+            g.x86_alloc()
+          }
+        }
       }
-      if g.on("x86_carry_fuse") {
-        g.x86_carry_fuse()
+      if !split {
+        g.blocks = a.blocks
+        g.hot = a.hot
+        g.cold = a.cold
+        g.nblock = a.nblock
+        g.fp = a.fp
+        g.base = a.base
+        g.order = a.order
+        g.ninst = a.ninst
+        g.occ_regs = a.occ_regs
+        g.saved = a.saved
+        g.slots = a.slots
+        g.vranges = a.vranges
+        g.fl = a.fl
+        g.pro = a.pro
+        g.fedge = a.fedge
+        g.shrink = a.shrink
+        g.region = region0
+        g.loc = first.loc
+        g.fold_skip = skip1
       }
-      g.regalloc()
     }
     if narrow {
       g.sret_out_max = SRET_OUT_WIDE
@@ -284,6 +354,59 @@ fn (var g: G) function(fi: Int) {
   }
   g.dump_named()
   g.emit()
+}
+
+/// loop_split's edge blocks in shrink_split's tables: each on its
+/// target's side of the region (an edge across it has a save or restore
+/// block already), and no save or restore block itself.
+fn (var g: G) x86_split_blocks() {
+  var region = g.region
+  while region.len() < g.blocks.len() {
+    let x = region.len()
+    let ss = g.msuccs(x)
+    region.push(ss.len() == 1 && ss[0] >= 0 && ss[0] < region.len() && region[ss[0]])
+  }
+  g.region = region
+  var fedge = g.fedge
+  while fedge.len() < g.blocks.len() {
+    fedge.push(0)
+  }
+  g.fedge = fedge
+}
+
+/// The x86-64 allocation: loads folded into their reads and carries
+/// fused, then the registers. A load folded into several reads whose
+/// base was then spilled reloads the base at each read (2026-10-21:
+/// nistec.mul4p's multiplier word into four mulq, 217 to 232
+/// instructions): those loads stay loads, and the function is allocated
+/// again.
+fn (var g: G) x86_alloc() {
+  let before_fold = g.blocks
+  if g.on("x86_fold_loads") {
+    g.x86_fold_loads()
+  }
+  if g.on("x86_carry_fuse") {
+    g.x86_carry_fuse()
+  }
+  g.regalloc()
+  var refold = false
+  for (v, base) in g.fold_multi {
+    if base > 0 && base < g.loc.len() && g.loc[base].reg < 0 {
+      g.fold_skip[v] = true
+      refold = true
+    }
+  }
+  if refold {
+    g.blocks = before_fold
+    g.fold_multi = []
+    if g.on("x86_fold_loads") {
+      g.x86_fold_loads()
+    }
+    if g.on("x86_carry_fuse") {
+      g.x86_carry_fuse()
+    }
+    g.regalloc()
+  }
 }
 
 /// The most SSA values of a function that tries the outgoing area for

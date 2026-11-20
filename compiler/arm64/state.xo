@@ -460,6 +460,12 @@ struct G {
   /// it leaves alone (their base was spilled: each read reloaded it)
   fold_multi: List[(Int, Int)] = []
   fold_skip: Map[Int, Bool] = {}
+  /// loop_split on x86-64 (isel.xo): the names it made, each (split_key
+  /// of the loop's header and the value, the name inside), and the keys
+  /// it must leave one name (the inside name spilled in the allocation
+  /// after: a copy between two slots at each edge)
+  split_made: List[(Int, Int)] = []
+  split_ban: Map[Int, Bool] = {}
   fl: List[Bool] = []
   pro: Int = -1
   /// per block: 1 a save block, 2 a restore block, 0 neither; and
@@ -694,6 +700,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.shrink = false
   g.fold_multi = []
   g.fold_skip = {}
+  g.split_made = []
+  g.split_ban = {}
   g.fl = []
   g.pro = -1
   g.fedge = []

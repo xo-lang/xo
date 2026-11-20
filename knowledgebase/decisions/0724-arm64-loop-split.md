@@ -71,6 +71,32 @@ edges).
   2026-11-19): split names held across a loop left a madd of three
   spilled names in xo.mlog.vals no free register, and compiler/xo did
   not build; such a function keeps its first allocation.
+- x86-64 (task #481, 2026-11-20): the x86 path (isel.xo, its own
+  allocation after x86_retarget) never ran the pass. It now does, with
+  three differences. `SPLIT_MIN_LIVE` is 6 (8 on Windows): System V has
+  five callee saved general registers, not ten. shrink_split has run
+  before it there, so the edge blocks are added to its region and edge
+  tables (x86_split_blocks). And a name that still has no register
+  inside its loop after the second allocation is not split: the
+  function is split again without those names and allocated a third
+  time (G.split_made, G.split_ban). Without that rule each such value
+  was copied between two slots at every loop edge (a push and pop
+  pair): update_nodes' j loop was entered through seven of them and
+  bench/perf/brotli ran slower split than unsplit (enc11 1.052, enc6
+  1.074, enc1 1.083 of the unsplit build). With it, on the linux/amd64
+  host over 30 interleaved rounds against the Go twin (the host not
+  exclusive, load 7): enc11 1.054 of Go unsplit and 1.033 split (split
+  over unsplit 0.977), enc6 0.995, enc1 1.010, the decoders 0.988 to
+  1.003; outputs identical. update_nodes' j loop keeps its counter,
+  its two shift words, the mask and the distance in registers.
+  Building compiler/xo for linux/amd64 takes the same time (emit 18.2
+  and 19.1 s split, 22.1 and 18.5 s unsplit, on the Mac). The amd64
+  sample and the pass hunt's goldens pass (53 goldens, 13 sets of 50).
+  test/codegen/loopsplit work_rare has the amd64 pattern (a multiply
+  by a slot in the loop); it fails with `-loop_split`. x86 needs no
+  split_scratch_ok: a spilled operand with no free scratch register
+  borrows one (x86_scratch_b). Not done: the same rule on arm64, where
+  a name spilled on both sides costs a load and a store at each edge.
 - Landing pads still read their live ins in one location, so values
   live into a pad are never renamed; the call blocks of a loop stay
   outside the split part, the loop's other blocks are split.

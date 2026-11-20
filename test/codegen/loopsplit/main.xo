@@ -40,6 +40,9 @@ fn work(xs: List[Int], a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
 // values in registers.
 fn work_rare(xs: List[Int], a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
   // arm64: -"ldr x[0-9]+, \[sp, #[0-9]+\]\n\tcmp x[0-9]+, x[0-9]+\n\tb\.lt"
+  // x86-64 (task #481): with five callee saved registers f lived in a
+  // slot, and the loop multiplied by the slot on every iteration
+  // amd64: -"imulq [0-9]+\(%rsp\), %r"
   let f = mix(a, b)
   let g = mix(c, d)
   let h = mix(e, f)

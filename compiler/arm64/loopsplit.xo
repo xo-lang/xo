@@ -31,6 +31,25 @@ const MAX_SPLIT_LOOPS = 16
 /// ten callee saved registers, those the inside could use too.
 const SPLIT_MIN_LIVE = 11
 
+/// SPLIT_MIN_LIVE on x86-64, which has five callee saved general
+/// registers under System V (rbx, r12 to r15) and seven on Windows (rsi
+/// and rdi too).
+const SPLIT_MIN_LIVE_X86 = 6
+const SPLIT_MIN_LIVE_WIN64 = 8
+
+fn (g: G) split_min_live() -> Int {
+  if !g.x86 {
+    return SPLIT_MIN_LIVE
+  }
+  if g.os == "windows" { SPLIT_MIN_LIVE_WIN64 } else { SPLIT_MIN_LIVE_X86 }
+}
+
+/// The key of value v split in the loop of header h (G.split_made,
+/// G.split_ban).
+fn split_key(h: Int, v: Int) -> Int {
+  h * 16777216 + v
+}
+
 /// The most edges into and out of a split loop.
 const MAX_SPLIT_EDGES = 8
 
@@ -300,7 +319,7 @@ fn (var g: G) split_loop(body: List[Bool], h: Int, first: SplitFirst, var sl: Sp
       live += 1
     }
   }
-  if live < SPLIT_MIN_LIVE {
+  if live < g.split_min_live() {
     return false
   }
   // a landing pad of a faulting point in the loop is entered with the
@@ -341,9 +360,12 @@ fn (var g: G) split_loop(body: List[Bool], h: Int, first: SplitFirst, var sl: Sp
     // a value only passing through is split when it held a register
     // across the loop (in a slot, the copies would be a load and a store
     // each way)
-    if side[v] == 3 && !g.wide.contains(v) && !bits_has(keep, v) && (bits_has(named, v) || first.reg(v, h) >= 0) {
+    if side[v] == 3 && !g.wide.contains(v) && !bits_has(keep, v) && (bits_has(named, v) || first.reg(v, h) >= 0) && !g.split_ban.contains(split_key(h, v)) {
       m[v] = g.new_vreg(g.fp[v])
       any = true
+      if g.x86 {
+        g.split_made.push((split_key(h, v), m[v]))
+      }
     }
   }
   if !any {
@@ -434,7 +456,7 @@ fn (f: SplitFirst) reg(v: Int, h: Int) -> Int {
 /// Whether the function has a loop loop_split could split: calls, and
 /// an innermost loop without them.
 fn (var g: G) split_any() -> Bool {
-  if g.x86 || (g.hot + g.cold).is_empty() {
+  if (g.hot + g.cold).is_empty() {
     return false
   }
   var calls = false
