@@ -11,7 +11,6 @@ import (
 	"crypto/elliptic"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
@@ -93,10 +92,10 @@ func keyErr(m string) Crypto_KeyErr { return Crypto_KeyErr{F_msg: m} }
 // ParsePKCS1PublicKey; encoding/asn1's errors are `x509: malformed public
 // key`, and X25519 and DSA keys `x509: unknown public key algorithm`.
 func Crypto_parse_public_key(_ *Task, der Bytes) Result[Crypto_PublicKey, Crypto_KeyErr] {
-	k, err := x509.ParsePKIXPublicKey([]byte(der))
+	k, err := x5ParsePKIXPublicKey([]byte(der))
 	if err != nil && strings.Contains(err.Error(), "use ParsePKCS1PublicKey") {
 		var pk *rsa.PublicKey
-		pk, err = x509.ParsePKCS1PublicKey([]byte(der))
+		pk, err = x5ParsePKCS1PublicKey([]byte(der))
 		if err == nil {
 			k = pk
 		}
@@ -113,7 +112,7 @@ func Crypto_parse_public_key(_ *Task, der Bytes) Result[Crypto_PublicKey, Crypto
 	default:
 		return Err[Crypto_PublicKey](keyErr("x509: unknown public key algorithm"))
 	}
-	m, err := x509.MarshalPKIXPublicKey(k)
+	m, err := x5MarshalPKIXPublicKey(k)
 	if err != nil {
 		return Err[Crypto_PublicKey](keyErr(err.Error()))
 	}
@@ -125,7 +124,7 @@ func Crypto_marshal_public_key(_ *Task, k Crypto_PublicKey) Bytes { return Bytes
 // Crypto_marshal_private_key is `crypto.marshal_private_key(k)`: Go's
 // MarshalPKCS8PrivateKey.
 func Crypto_marshal_private_key(_ *Task, k Crypto_PrivateKey) Bytes {
-	der, err := x509.MarshalPKCS8PrivateKey(k.k)
+	der, err := x5MarshalPKCS8PrivateKey(k.k)
 	if err != nil {
 		panic("crypto.marshal_private_key: " + err.Error())
 	}
@@ -162,13 +161,13 @@ func (v Crypto_PrivateKey) M_public_key(*Task) Crypto_PublicKey { return v.pub }
 // supported`, as the native code says.
 func Crypto_parse_private_key(_ *Task, der Bytes) Result[Crypto_PrivateKey, Crypto_KeyErr] {
 	b := []byte(der)
-	k, err := x509.ParsePKCS8PrivateKey(b)
+	k, err := x5ParsePKCS8PrivateKey(b)
 	if err != nil {
 		m := err.Error()
 		if strings.Contains(m, "use ParsePKCS1PrivateKey") {
-			k, err = x509.ParsePKCS1PrivateKey(b)
+			k, err = x5ParsePKCS1PrivateKey(b)
 		} else if strings.Contains(m, "use ParseECPrivateKey") {
-			k, err = x509.ParseECPrivateKey(b)
+			k, err = x5ParseECPrivateKey(b)
 		}
 	}
 	if err != nil {
@@ -194,7 +193,7 @@ func Crypto_parse_private_key(_ *Task, der Bytes) Result[Crypto_PrivateKey, Cryp
 	default:
 		return Err[Crypto_PrivateKey](keyErr("x509: PKCS#8 wrapping contained private key with unknown algorithm: 1.3.101.110"))
 	}
-	m, err := x509.MarshalPKIXPublicKey(pub)
+	m, err := x5MarshalPKIXPublicKey(pub)
 	if err != nil {
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
 	}
@@ -431,7 +430,7 @@ func Crypto_generate_key(tk *Task, r Rand, alg Crypto_KeyAlg, bits int64) Result
 		}
 	}
 	s := k.(crypto.Signer)
-	m, err := x509.MarshalPKIXPublicKey(s.Public())
+	m, err := x5MarshalPKIXPublicKey(s.Public())
 	if err != nil {
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
 	}
@@ -449,7 +448,7 @@ func Crypto_ecdsa_private_key(_ *Task, alg Crypto_KeyAlg, d Bytes) Result[Crypto
 	if err != nil {
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
 	}
-	m, err := x509.MarshalPKIXPublicKey(k.Public())
+	m, err := x5MarshalPKIXPublicKey(k.Public())
 	if err != nil {
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
 	}
@@ -474,7 +473,7 @@ func Crypto_ecdsa_public_key(_ *Task, alg Crypto_KeyAlg, point Bytes) Result[Cry
 	if err != nil {
 		return Err[Crypto_PublicKey](keyErr(err.Error()))
 	}
-	m, err := x509.MarshalPKIXPublicKey(k)
+	m, err := x5MarshalPKIXPublicKey(k)
 	if err != nil {
 		return Err[Crypto_PublicKey](keyErr(err.Error()))
 	}
@@ -681,7 +680,7 @@ func Crypto_rsa_public_key(_ *Task, n Bytes, e int64) Result[Crypto_PublicKey, C
 		return Err[Crypto_PublicKey](keyErr("crypto/rsa: public exponent too small or negative"))
 	}
 	k := &rsa.PublicKey{N: N, E: int(e)}
-	m, err := x509.MarshalPKIXPublicKey(k)
+	m, err := x5MarshalPKIXPublicKey(k)
 	if err != nil {
 		return Err[Crypto_PublicKey](keyErr(err.Error()))
 	}
@@ -702,7 +701,7 @@ func Crypto_rsa_private_key(_ *Task, n Bytes, e int64, d Bytes, primes List[Byte
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
 	}
 	k.Precompute()
-	m, err := x509.MarshalPKIXPublicKey(&k.PublicKey)
+	m, err := x5MarshalPKIXPublicKey(&k.PublicKey)
 	if err != nil {
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
 	}
@@ -804,7 +803,7 @@ func Crypto_jwk_public_key(_ *Task, jwk string) Result[Crypto_PublicKey, Crypto_
 	default:
 		return fail("jwk: unsupported key type " + strconv.Quote(kty))
 	}
-	m, err := x509.MarshalPKIXPublicKey(k)
+	m, err := x5MarshalPKIXPublicKey(k)
 	if err != nil {
 		return fail(err.Error())
 	}

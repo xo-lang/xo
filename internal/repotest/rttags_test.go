@@ -115,7 +115,9 @@ func TestStdRTBuildTags(t *testing.T) {
 // such program's start (net/http about 0.08 ms, crypto/tls 0.06, x509
 // 0.04 on linux/arm64 host 2, task #429). Before task #472 the untagged
 // files (testing.go's fake network, replay.go's servers, attenuate.go's
-// dispatch, the std/http, std/tls and std/x509 methods) imported them.
+// dispatch, the std/http, std/tls and std/x509 methods) imported them;
+// before task #516 std/crypto's key encodings were crypto/x509's, so a
+// program reaching std/crypto but not std/x509 linked it.
 func TestStdRTNoHTTPDeps(t *testing.T) {
 	gates := stdgen.Gates(root)
 	// a program that does not reach m reaches no module that uses m
@@ -132,8 +134,7 @@ func TestStdRTNoHTTPDeps(t *testing.T) {
 	for _, c := range []struct{ mod, pkg string }{
 		{"http", "net/http"},
 		{"tls", "crypto/tls"},
-		// std/crypto's key parsing (cryptokeys.go) is crypto/x509's, so
-		// only a program not reaching std/crypto leaves it out
+		{"x509", "crypto/x509"},
 		{"crypto", "crypto/x509"},
 	} {
 		tags := with(c.mod)
@@ -145,7 +146,9 @@ func TestStdRTNoHTTPDeps(t *testing.T) {
 		}
 		var bad []string
 		for _, p := range strings.Fields(string(out)) {
-			if p == c.pkg || strings.HasPrefix(p, c.pkg+"/") {
+			// crypto/x509/pkix is ASN.1 structures alone, which std/crypto's
+			// key encodings (cryptox509keys.go) use
+			if (p == c.pkg || strings.HasPrefix(p, c.pkg+"/")) && p != "crypto/x509/pkix" {
 				bad = append(bad, p)
 			}
 		}

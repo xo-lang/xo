@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Startup (Go backend; task #516): a program that uses std/crypto but not std/x509 no longer links Go's crypto/x509: std/rt carries its own port of crypto/x509's key encodings (PKCS #1, PKCS #8, SEC 1, PKIX), with the same results and error texts (a std/crypto program 16,976 bytes smaller on darwin/arm64).
 - Perf (std/ui; task #500): a live socket notice that comes while the page's own sync is in flight is noted rather than synced for; the page syncs again after the reply only when the notice named a newer version, so an action makes one sync request instead of two.
 - Fix (xo def, doc, refs; task #506): a name not found where a `use go` package has no current binding again says the check stopped and names the package (`use go without a current binding of net/url ...`); since task #477 it answered only "no declaration named".
 - Fix (windows/arm64, native backend; task #505): a function's Float constants are emitted after its `.seh_endproc`, not inside the unwind range, where their alignment left clang's assembler unable to compute the function's length ("Failed to evaluate function length in SEH unwind info", a `--as=cc` build; since 553a8b9bd).

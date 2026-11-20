@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-20: startup: a Go backend program using std/crypto but not std/x509 no longer links Go's crypto/x509
+
+- Kind: perf
+- Commit: this push
+- Found by: task #516 (after task #472, std/rt's cryptokeys.go still called crypto/x509's key functions, so its init ran in every std/crypto program)
+- Go reference: crypto/x509 (Go 1.26: pkcs1.go, pkcs8.go, sec1.go, x509.go's PKIX key functions, parser.go's parsePublicKey)
+- Change: std/rt/cryptox509keys.go ports those functions (x5 prefix; parsePublicKey reads DER with x5der, the part of cryptobyte it used; GODEBUG=x509rsacrt=0 kept); cryptokeys.go calls them; the error texts are Go's
+- Measured: a std/crypto program (sha256 and parse_public_key) built with --backend=go on darwin/arm64: 4,723,330 to 4,706,354 bytes (-16,976), crypto/x509 symbol names 14 to 0, same output
+- Test: TestX509KeysMatchGo (the port against crypto/x509 on every key type and their truncations, byte changes and trailing data: same keys, same error texts), 13 TestX5 tests ported from crypto/x509's pkcs8, sec1 and x509 tests, TestStdRTNoHTTPDeps (x509 case)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: AES block modes, AES-GCM keys and small BLAKE2b sums on arm64 skip the per call dispatch, a fifth fewer instructions
 
 - Kind: perf
