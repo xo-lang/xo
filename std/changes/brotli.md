@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: quality 10 and 11 keep each node's distance cache in the queue
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (enc11 profile on linux/arm64 host 1 against the Go twin: alloc.resize, obj.grow and rl_grow_n about 3.5% of Xo's time, none in Go's; evaluate_node built a 4 element List for every position)
+- Go reference: andybalholm/brotli backward_references_hq.go evaluateNode, computeDistanceCache and startPosQueuePush (a [4]int on the stack)
+- Measured: callgrind on linux/arm64 (9c2150dc0 against deb934b16): bench/perf/brotli enc11 2.04% fewer instructions; `xo bench --ab` on linux/arm64 host 1 (6 rounds): enc11 0.966 (95% 0.948 to 0.985, 265.2 to 256.3 ms, better)
+- Test: brotli module tests (8 passed); bench output unchanged (enc11 13312, enc6 167596 both)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: the encoder's match probes compute each offset once
 
 - Kind: perf

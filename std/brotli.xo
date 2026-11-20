@@ -4989,16 +4989,17 @@ fn zq_swap(var q: Zq, a: Int, b: Int) {
   }
 }
 
-fn zq_push(var q: Zq, pos: Int, cost: Float32, costdiff: Float32, dc: List[Int]) {
+/// startPosQueuePush with computeDistanceCache: the node's distance cache
+/// goes straight into the queue's slot (Go keeps it in a [4]int; a List
+/// per node cost an allocation at every position).
+fn zq_push(var q: Zq, pos: Int, cost: Float32, costdiff: Float32, start_dc: List[Int], z: Zn) {
   var offset = (-1 - q.idx) & 7
   q.idx += 1
   let len = zq_size(q)
   q.pos[offset] = pos
   q.cost[offset] = cost
   q.costdiff[offset] = costdiff
-  for k in 0..4 {
-    q.dc[4 * offset + k] = dc[k]
-  }
+  zn_distance_cache_into(pos, start_dc, z, q.dc, 4 * offset)
   for _ in 1..len {
     if q.costdiff[offset & 7] > q.costdiff[(offset + 1) & 7] {
       zq_swap(q, offset & 7, (offset + 1) & 7)
@@ -5038,29 +5039,29 @@ fn distance_shortcut(block_start: Int, pos: Int, max_backward_limit: Int, z: Zn)
   z.short[pos - clen - ilen]
 }
 
-fn zn_distance_cache(pos: Int, start_dc: List[Int], z: Zn) -> List[Int] {
-  var dc: List[Int] = []
+fn zn_distance_cache_into(pos: Int, start_dc: List[Int], z: Zn, var out: List[Int], at: Int) {
+  var n = 0
   var p = z.short[pos]
-  while dc.len() < 4 && p > 0 {
+  while n < 4 && p > 0 {
     let ilen = z.dil[p] & 0x7FFFFFF
     let clen = zn_copy_len(z, p)
-    dc.push(z.dist[p])
+    out[at + n] = z.dist[p]
+    n += 1
     p = z.short[p - clen - ilen]
   }
   var k = 0
-  while dc.len() < 4 {
-    dc.push(start_dc[k])
+  while n < 4 {
+    out[at + n] = start_dc[k]
+    n += 1
     k += 1
   }
-  dc
 }
 
 fn evaluate_node(block_start: Int, pos: Int, max_backward_limit: Int, start_dc: List[Int], m: Zm, var q: Zq, var z: Zn) {
   let node_cost = z.cost[pos]
   z.short[pos] = distance_shortcut(block_start, pos, max_backward_limit, z)
   if node_cost <= zm_lit(m, 0, pos) {
-    let dc = zn_distance_cache(pos, start_dc, z)
-    zq_push(q, pos, node_cost, node_cost - zm_lit(m, 0, pos), dc)
+    zq_push(q, pos, node_cost, node_cost - zm_lit(m, 0, pos), start_dc, z)
   }
 }
 
