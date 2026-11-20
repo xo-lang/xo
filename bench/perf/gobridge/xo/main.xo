@@ -17,7 +17,8 @@ fn main(os: Os) {
   let w = if a.is_empty() { "str" } else { a[0] }
   let n = if a.len() > 1 { Int.parse(a[1]) ?? 10000000 } else { 10000000 }
   let s = "the quick brown fox jumps over z"
-  let b = s.bytes()
+  // clone: Go's []byte(s) copies; a view of the rodata literal is misaligned (#429)
+  let b = s.bytes().clone()
   var sum = 0
   for i in 0..n {
     // a match, as the Go twin's switch (task #429): on the Go backend

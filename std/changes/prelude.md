@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-20: fix: Str.clone and Bytes.clone copy on the Go backend
+
+- Kind: fix
+- Commit: this push
+- Found by: task #429, the std/go bytes twin (a clone measured as a view)
+- Go reference: strings.Clone
+- Change: on the Go backend both returned their argument, so a clone of a slice kept its whole source alive; both now copy into a buffer of their own (strings.Clone), as native targets did and spec/std.md says
+- Measured: no speed claim
+- Test: std/rt TestCloneOwnBuffer (fails before: the clone shares its argument's buffer)
+
 ## 2026-11-20: fix: List crossings by address hold their list without the addr_keep pass
 
 - Kind: fix

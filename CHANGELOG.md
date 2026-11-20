@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (Go backend; task #429): `Str.clone()` and `Bytes.clone()` copy into a buffer of their own, as on native targets; they returned their argument, so a clone of a slice kept the whole source alive.
 - Fix (xo symbols): a NAME pattern that matches no declaration exits 1 with "no declaration matches NAME", as xo def, refs and doc do (decision 0261); it exited 0 with nothing printed. Found by the new CLI class guard, cmd/xo TestCLIMatrix (task #361), which runs 15 subcommands from a subdirectory, from outside the module, with absolute paths, a stale PWD, an unreadable file and a C:\ path, and checks the exit code and that no file changed.
 - Perf (Go backend; task #429): a `match` whose arms are all Str or Int literals (or-patterns of them) and an optional `_`, with no guard, is a Go `switch` on the subject, which Go compiles to a length and binary search dispatch, in place of a chain of `==` tests; a value an earlier arm lists is dropped, as the chain never reached it. Output is unchanged.
 - Fix (std/http): a duplex HTTP/2 request body over TLS written by another task no longer races the client's TLS state (two threads saved it and released one buffer twice; task #464).
