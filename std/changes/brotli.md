@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: quality 10 and 11 keep each zopfli node in two words
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (callgrind cache simulation of bench/perf/brotli enc11 on linux/arm64: the zopfli node walks, zn_distance_cache_into, evaluate_node and zn_reset, took 9.2M of 17.6M D1 misses; a node's six fields were six lists, Go keeps it in one 16 byte zopfliNode)
+- Go reference: andybalholm/brotli backward_references_hq.go (zopfliNode)
+- Measured: `xo bench --ab` on linux/arm64 host 1 (6 rounds, d7ae7dad2 against 7a3309ea1): enc11 0.985 (95% 0.975 to 1.0, 220.6 to 217.4 ms, better), max RSS 0.952 (48164 to 45864 KB); callgrind on linux/arm64: enc11 1.46% fewer instructions, enc6 unchanged (quality 6 has no zopfli nodes)
+- Test: brotli module tests (9 passed); bench output unchanged (enc11 and enc6)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: quality 10 and 11 fill the dictionary match slots in one allocation
 
 - Kind: perf

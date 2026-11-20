@@ -4805,13 +4805,15 @@ struct Zm {
   num_bytes: Int
 }
 
+/// The zopfli nodes. Node i's fields share two words of w, as Go's
+/// 16 byte zopfliNode shares one cache line: w[2i] is the length field
+/// (copy length and length code) in its low 32 bits and the distance
+/// above, w[2i + 1] the short code and insert length in its low 32 bits
+/// and the distance shortcut above.
 struct Zn {
-  len: List[Int]
-  dist: List[Int]
-  dil: List[Int]
+  w: List[Int]
   cost: List[Float32]
   next: List[Int]
-  short: List[Int]
 }
 
 struct Zq {
@@ -4844,36 +4846,42 @@ fn zm_new(var e: Enc, num_bytes: Int) -> Zm {
 }
 
 fn zn_new(n: Int) -> Zn {
-  var cost = List[Float32].with_capacity(n)
-  var len = List[Int].with_capacity(n)
-  for _ in 0..n {
-    cost.push(Z_INF)
-    len.push(1)
+  var w = List[Int].filled(2 * n, 0)
+  for i in 0..n {
+    w[2 * i] = 1
   }
-  Zn{len: len, dist: zero_ints(n), dil: zero_ints(n), cost: cost, next: zero_ints(n), short: zero_ints(n)}
+  Zn{w: w, cost: List[Float32].filled(n, Z_INF), next: zero_ints(n)}
 }
 
 fn zn_reset(var z: Zn) {
-  for i in 0..z.len.len() {
-    z.len[i] = 1
-    z.dist[i] = 0
-    z.dil[i] = 0
+  for i in 0..z.cost.len() {
+    z.w[2 * i] = 1
+    z.w[2 * i + 1] = 0
     z.cost[i] = Z_INF
     z.next[i] = 0
-    z.short[i] = 0
   }
 }
 
-fn zn_copy_len(z: Zn, i: Int) -> Int { z.len[i] & 0x1FFFFFF }
+fn zn_len(z: Zn, i: Int) -> Int { z.w[2 * i] & MASK32 }
 
-fn zn_len_code(z: Zn, i: Int) -> Int { zn_copy_len(z, i) + 9 - (z.len[i] >> 25) }
+fn zn_dist(z: Zn, i: Int) -> Int { (z.w[2 * i] >> 32) & MASK32 }
+
+fn zn_dil(z: Zn, i: Int) -> Int { z.w[2 * i + 1] & MASK32 }
+
+fn zn_short(z: Zn, i: Int) -> Int { (z.w[2 * i + 1] >> 32) & MASK32 }
+
+fn zn_set_short(var z: Zn, i: Int, s: Int) { z.w[2 * i + 1] = zn_dil(z, i) | (s << 32) }
+
+fn zn_copy_len(z: Zn, i: Int) -> Int { z.w[2 * i] & 0x1FFFFFF }
+
+fn zn_len_code(z: Zn, i: Int) -> Int { zn_copy_len(z, i) + 9 - (zn_len(z, i) >> 25) }
 
 fn zn_dist_code(z: Zn, i: Int) -> Int {
-  let short_code = z.dil[i] >> 27
-  if short_code == 0 { z.dist[i] + 16 - 1 } else { short_code - 1 }
+  let short_code = zn_dil(z, i) >> 27
+  if short_code == 0 { zn_dist(z, i) + 16 - 1 } else { short_code - 1 }
 }
 
-fn zn_cmd_len(z: Zn, i: Int) -> Int { zn_copy_len(z, i) + (z.dil[i] & 0x7FFFFFF) }
+fn zn_cmd_len(z: Zn, i: Int) -> Int { zn_copy_len(z, i) + (z.w[2 * i + 1] & 0x7FFFFFF) }
 
 fn set_cost(h: List[Int], n: Int, literal: Bool, var cost: List[Float32]) {
   var sum = 0
@@ -4962,9 +4970,8 @@ fn zm_lit(m: Zm, from: Int, to: Int) -> Float32 { m.lit[to] - m.lit[from] }
 
 fn zn_update(var z: Zn, pos: Int, start_pos: Int, len: Int, len_code: Int, dist: Int, short_code: Int, cost: Float32) {
   let next = pos + len
-  z.len[next] = (len | ((len + 9 - len_code) << 25)) & MASK32
-  z.dist[next] = dist & MASK32
-  z.dil[next] = ((short_code << 27) | (pos - start_pos)) & MASK32
+  z.w[2 * next] = ((len | ((len + 9 - len_code) << 25)) & MASK32) | (dist & MASK32).wrapping_shl(32)
+  z.w[2 * next + 1] = (((short_code << 27) | (pos - start_pos)) & MASK32) | (zn_short(z, next) << 32)
   z.cost[next] = cost
 }
 
@@ -5033,23 +5040,23 @@ fn distance_shortcut(block_start: Int, pos: Int, max_backward_limit: Int, z: Zn)
     return 0
   }
   let clen = zn_copy_len(z, pos)
-  let ilen = z.dil[pos] & 0x7FFFFFF
-  let dist = z.dist[pos]
+  let ilen = z.w[2 * pos + 1] & 0x7FFFFFF
+  let dist = zn_dist(z, pos)
   if dist + clen <= block_start + pos && dist <= max_backward_limit && zn_dist_code(z, pos) > 0 {
     return pos
   }
-  z.short[pos - clen - ilen]
+  zn_short(z, pos - clen - ilen)
 }
 
 fn zn_distance_cache_into(pos: Int, start_dc: List[Int], z: Zn, var out: List[Int], at: Int) {
   var n = 0
-  var p = z.short[pos]
+  var p = zn_short(z, pos)
   while n < 4 && p > 0 {
-    let ilen = z.dil[p] & 0x7FFFFFF
+    let ilen = z.w[2 * p + 1] & 0x7FFFFFF
     let clen = zn_copy_len(z, p)
-    out[at + n] = z.dist[p]
+    out[at + n] = zn_dist(z, p)
     n += 1
-    p = z.short[p - clen - ilen]
+    p = zn_short(z, p - clen - ilen)
   }
   var k = 0
   while n < 4 {
@@ -5061,7 +5068,7 @@ fn zn_distance_cache_into(pos: Int, start_dc: List[Int], z: Zn, var out: List[In
 
 fn evaluate_node(block_start: Int, pos: Int, max_backward_limit: Int, start_dc: List[Int], m: Zm, var q: Zq, var z: Zn) {
   let node_cost = z.cost[pos]
-  z.short[pos] = distance_shortcut(block_start, pos, max_backward_limit, z)
+  zn_set_short(z, pos, distance_shortcut(block_start, pos, max_backward_limit, z))
   if node_cost <= zm_lit(m, 0, pos) {
     zq_push(q, pos, node_cost, node_cost - zm_lit(m, 0, pos), start_dc, z)
   }
@@ -5187,7 +5194,7 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
 fn shortest_path_from_nodes(num_bytes: Int, var z: Zn) -> Int {
   var index = num_bytes
   var num_commands = 0
-  while z.dil[index] & 0x7FFFFFF == 0 && z.len[index] == 1 {
+  while z.w[2 * index + 1] & 0x7FFFFFF == 0 && zn_len(z, index) == 1 {
     index -= 1
   }
   z.next[index] = MASK32
@@ -5208,7 +5215,7 @@ fn zopfli_create_commands(var e: Enc, num_bytes: Int, block_start: Int, z: Zn) {
   while offset != MASK32 {
     let next = pos + offset
     let copy_length = zn_copy_len(z, next)
-    var insert_length = z.dil[next] & 0x7FFFFFF
+    var insert_length = z.w[2 * next + 1] & 0x7FFFFFF
     pos += insert_length
     offset = z.next[next]
     if first {
@@ -5216,7 +5223,7 @@ fn zopfli_create_commands(var e: Enc, num_bytes: Int, block_start: Int, z: Zn) {
       e.last_insert_len = 0
       first = false
     }
-    let distance = z.dist[next]
+    let distance = zn_dist(z, next)
     let len_code = zn_len_code(z, next)
     let max_distance = min_i(block_start + pos, max_backward_limit)
     let is_dict = distance > max_distance
@@ -5243,7 +5250,7 @@ fn create_zopfli_refs(var e: Enc, num_bytes: Int, position: Int) {
   var m = zm_new(e, num_bytes)
   var q = zq_new()
   let store_end = if num_bytes >= 128 { position + num_bytes - 128 + 1 } else { position }
-  z.len[0] = 0
+  z.w[0] = zn_dist(z, 0) << 32
   z.cost[0] = Float32(0.0)
   zm_from_literal_costs(m, e, position)
   let start_dc = start_dist_cache(e)
@@ -5286,7 +5293,7 @@ fn zopfli_iterate(var e: Enc, num_bytes: Int, position: Int, start_dc: List[Int]
   let max_backward_limit = (1 << e.lgwin) - 16
   var q = zq_new()
   var cur = 0
-  z.len[0] = 0
+  z.w[0] = zn_dist(z, 0) << 32
   z.cost[0] = Float32(0.0)
   var i = 0
   while i + 3 < num_bytes {
