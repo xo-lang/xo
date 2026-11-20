@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-19: perf: Float.log's mantissa adjustment without a branch
+
+- Kind: perf
+- Commit: this push
+- Found by: std/random Proven perf (std/evidence/random/perf.md, zipf 1.506 of Go on linux/amd64); callgrind --branch-sim of bench/perf/random zipf (1M draws, linux/arm64 in Docker): log's `f1 < SQRT2_2` test mispredicted 0.5 times per call (508K of 892K)
+- Go reference: math.Log's `if f1 < Sqrt2/2 { f1 *= 2; ki-- }`, which Go's branchelim makes conditional selects
+- Change: std/native/llrt gomath log computes the test once and applies it as two selects (f1 times 2.0 or 1.0, ki minus 1 or 0): the same arithmetic, the same bits; zipf's mispredictions under callgrind 892K to 427K
+- Measured: no speedup claimed on linux/amd64: xo bench --ab bench/perf/random zipf on the amd64 host, 6 rounds, bc1cd26d4 against 5612b70d1: 1.018 (0.988 to 1.03), within noise, verdict "too short" (40 ms); linux/arm64 host 1, 4 rounds: 0.877 (0.861 to 0.888), verdict "too short" (35 ms)
+- Test: internal/stdtest TestStdCorpora */gomath (Go's result bits for log on special and random inputs; arm64, llvm, go) and `xo test --std-module=native/llrt/gomath` pass
+
 ## 2026-11-19: perf: BytesBuilder.put_be and put_le of 4 bytes in line
 
 - Kind: perf

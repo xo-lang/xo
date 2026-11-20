@@ -257,10 +257,14 @@ pub fn log(x: Float) -> Float {
     f1 = f1_0
     ki = ki_0
   }
-  if f1 < SQRT2_2 {
-    f1 = f1 * 2.0
-    ki -= 1
-  }
+  // Go's `if f1 < Sqrt2/2 { f1 *= 2; ki-- }` as selects: the test is on
+  // the mantissa, random where log follows a random draw (bench/perf/random
+  // zipf: half of these mispredicted, 0.5 per draw under callgrind's branch
+  // simulation, 2026-11-19), and Go's branchelim makes it a CSEL. f1 * 1.0
+  // is f1 and ki - 0 is ki, so the result is the same bits.
+  let small = f1 < SQRT2_2
+  f1 = f1 * (if small { 2.0 } else { 1.0 })
+  ki -= if small { 1 } else { 0 }
   let f = f1 - 1.0
   let k = Float(ki)
   let s = f / (2.0 + f)
