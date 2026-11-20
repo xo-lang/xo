@@ -4829,6 +4829,11 @@ const Z_INF: Float32 = Float32(1.7e38)
 const Z_DC_INDEX: List[Int] = [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
 const Z_DC_OFFSET: List[Int] = [0, 0, 0, 0, -1, 1, -2, 2, -3, 3, -1, 1, -2, 2, -3, 3]
 
+/// Z_DC_INDEX packed 2 bits per entry and Z_DC_OFFSET + 3 packed 3 bits
+/// per entry (entry j at bit 2j and 3j), for update_nodes' j loop.
+const Z_DC_INDEX_BITS: Int = 1431306468
+const Z_DC_OFFSET_BITS: Int = 213961054496475
+
 fn zero_f32(n: Int) -> List[Float32] {
   var l = List[Float32].with_capacity(n)
   for _ in 0..n {
@@ -5085,8 +5090,6 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
   let max_zopfli_len = if e.quality <= 10 { 150 } else { 325 }
   let max_iters = if e.quality <= 10 { 1 } else { 5 }
   var result = 0
-  let dci = Z_DC_INDEX
-  let dco = Z_DC_OFFSET
   let copy_extra = ENC_COPY_EXTRA
   let copy_base = ENC_COPY_BASE
   evaluate_node(block_start, pos, max_backward_limit, start_dc, m, q, z)
@@ -5100,10 +5103,14 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
     let inscode = ins_code(pos - start)
     let base_cost = q.costdiff[qi] + Float32(ENC_INS_EXTRA[inscode]) + zm_lit(m, 0, pos)
     var best_len = min_len - 1
+    // cb's byte changes only with best_len, so it is loaded again only
+    // after a match moves best_len
+    var cb = cur_m + best_len
+    var cbyte: UInt8 = if cb <= mask { b[cb] } else { 0 }
+    let dc0 = 4 * qi
     var j = 0
     while j < 16 && best_len < max_len {
-      let backward = q.dc[4 * qi + dci[j]] + dco[j]
-      let cb = cur_m + best_len
+      let backward = q.dc[dc0 + ((Z_DC_INDEX_BITS >> (2 * j)) & 3)] + ((Z_DC_OFFSET_BITS >> (3 * j)) & 7) - 3
       if cb > mask {
         break
       }
@@ -5113,7 +5120,7 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
       }
       let prev = (cur_ix - backward) & mask
       let pb = prev + best_len
-      if pb > mask || b[cb] != b[pb] {
+      if pb > mask || cbyte != b[pb] {
         j += 1
         continue
       }
@@ -5136,6 +5143,10 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
           l += 1
         }
         best_len = run_end
+      }
+      cb = cur_m + best_len
+      if cb <= mask {
+        cbyte = b[cb]
       }
       j += 1
     }

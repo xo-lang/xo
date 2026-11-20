@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: quality 10 and 11 load the distance cache candidate's byte once per best length
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (enc11 line profile of update_nodes under callgrind on linux/arm64: the 16 distance cache candidates' loop read Z_DC_INDEX and Z_DC_OFFSET and the ring buffer byte at cur + best_len on every candidate, though that byte changes only when best_len does)
+- Go reference: andybalholm/brotli backward_references_hq.go updateNodes (kDistanceCacheIndex, kDistanceCacheOffset; Xo now packs both tables into Int constants and keeps the byte in a local, the same candidates and choices)
+- Measured: callgrind on linux/arm64 (2ffcb4f7a against b5cef1cab): bench/perf/brotli enc11 2.88% fewer instructions, enc6 unchanged (quality 6 does not use it); `xo bench --ab` on linux/arm64 host 1 (6 rounds): enc11 0.971 (95% 0.961 to 0.989, 225.9 to 219.4 ms, better)
+- Test: brotli module tests (9 passed; new: the packed tables match Z_DC_INDEX and Z_DC_OFFSET); bench output unchanged (enc11 13312, enc6 167596 both)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: quality 10 and 11 price each copy code's run of lengths once
 
 - Kind: perf

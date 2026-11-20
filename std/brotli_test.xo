@@ -2409,3 +2409,10 @@ test "ld64 is the little endian word at every offset, the last one too" {
     expect(ld64(b, i)) == want
   }
 }
+
+test "update_nodes' packed distance cache tables match Z_DC_INDEX and Z_DC_OFFSET" {
+  for j in 0..16 {
+    expect((Z_DC_INDEX_BITS >> (2 * j)) & 3) == Z_DC_INDEX[j]
+    expect(((Z_DC_OFFSET_BITS >> (3 * j)) & 7) - 3) == Z_DC_OFFSET[j]
+  }
+}
