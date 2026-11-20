@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (xo symbols): a NAME pattern that matches no declaration exits 1 with "no declaration matches NAME", as xo def, refs and doc do (decision 0261); it exited 0 with nothing printed. Found by the new CLI class guard, cmd/xo TestCLIMatrix (task #361), which runs 15 subcommands from a subdirectory, from outside the module, with absolute paths, a stale PWD, an unreadable file and a C:\ path, and checks the exit code and that no file changed.
 - Fix (std/http): a duplex HTTP/2 request body over TLS written by another task no longer races the client's TLS state (two threads saved it and released one buffer twice; task #464).
 - Fix (std/http): a duplex HTTP/2 request body written by another task no longer races the client's read deadline (a data race ThreadSanitizer found in the wake added for task #293; task #456).
 - Fix (arm64 backend, windows/arm64; task #465): a build for windows/arm64 no longer fails with "arm64 backend: internal: no free register for a spilled operand" (std/amqp's st_begin did since call_saves, fc8c0a611). A value saved around calls no longer takes a caller-saved register over an instruction that needs such registers for itself (the reference count decrement there writes x15 and x17) once two would not be left.

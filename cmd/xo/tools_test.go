@@ -3051,6 +3051,15 @@ func TestLookupsCompactText(t *testing.T) {
 	if got := lookup("symbols", "add_*"); strings.Count(got, "\n") != 2 || strings.Contains(got, "other") {
 		t.Errorf("symbols add_*:\n%s", got)
 	}
+	// a NAME that matches nothing is exit 1, as def gives (decision
+	// 0261); it was exit 0 with nothing printed (#361)
+	for _, extra := range [][]string{nil, {"--json"}} {
+		var out, errOut bytes.Buffer
+		args := append([]string{"symbols", "nosuch_*", "--dir=" + dir}, extra...)
+		if code := run(t, args, &out, &errOut); code != 1 || !strings.Contains(out.String()+errOut.String(), "no declaration matches nosuch_*") {
+			t.Errorf("xo %v: exit %d, want 1 and a no-match error:\n%s%s", args, code, out.String(), errOut.String())
+		}
+	}
 	if got := lookup("symbols", "--limit=1"); !strings.Contains(got, "note: showing 1 of ") {
 		t.Errorf("symbols --limit=1:\n%s", got)
 	}

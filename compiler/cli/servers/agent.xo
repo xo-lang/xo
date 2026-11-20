@@ -342,6 +342,11 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
       // --limit and symbols' pattern, in both forms
       let (v2, cut) = trim_answer(cmd, v, pattern, a.limit)
       v = v2
+      if cmd == "symbols" && !pattern.is_empty() && items_of(v, "symbols").is_empty() {
+        // no match is exit 1, as def, refs and doc give (decision 0261;
+        // was exit 0 with nothing printed, found by TestCLIMatrix, #361)
+        return fail(os, cmd, as_json, "no declaration matches ${pattern}")
+      }
       if as_json {
         print_json(os, v)
       } else {
