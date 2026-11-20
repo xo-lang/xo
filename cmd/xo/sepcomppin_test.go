@@ -20,6 +20,17 @@ func TestStdVariantLineWholeProgram(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program")
 	}
+	// the --release case needs XO_SEPCOMP and XO_SEPCOMP_DEFAULT unset
+	// (xo counts a set XO_SEPCOMP, even "", as the user's choice); an
+	// offload gate exports XO_TEST_SEPCOMP=0, under which xotool sets
+	// XO_SEPCOMP=0 in this process for every xo it starts (tierSepcomp),
+	// and the case printed "off (XO_SEPCOMP=0 ...)" on the gate hosts
+	// (task #507, rel-0550 on host 4). The test is not parallel, so
+	// t.Setenv restores what this removes.
+	for _, k := range []string{"XO_SEPCOMP", "XO_SEPCOMP_DEFAULT"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
 	tmp := t.TempDir()
 	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
 	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
