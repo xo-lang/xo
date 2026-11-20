@@ -1,0 +1,8 @@
+# golang.org/x/net v0.62.0's html test tables (the version go/go.mod requires) run through
+# std/htmltok (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# tokens: TestTokenizer's loop (AllowCDATA on), every Token's String joined by $, then the error
+# raw: each token's type and Raw text
+# unescape: UnescapeString
+golang.org/x/net/html token_test.go tokenTests html tokens
+golang.org/x/net/html token_test.go tokenTests html raw
+golang.org/x/net/html escape_test.go unescapeTests html unescape

@@ -92,3 +92,14 @@ test "token takes the token's data, as Go's Token: a second call is empty" {
     expect("${t1.display()}|${t2.display()} ${t1.attrs.len()}|${t2.attrs.len()} ${k}=${v} ${m} ${n} ${h}") == want
   }
 }
+
+test "nLt; and nGt; are x/net's two code point references (escape_test.go)" {
+  expect(unescape_string("&nLt;hello")) == "\u{226A}\u{20D2}hello"
+  expect(unescape_string("a&nGt;b")) == "a\u{226B}\u{20D2}b"
+  expect(unescape_string("&nLt;&lt;")) == "\u{226A}\u{20D2}<"
+  var z = tokenizer("<a title=\"&nGt;\">&nLt;</a>")
+  expect(z.next()) == TokenType.StartTag
+  expect(z.token().display()) == "<a title=\"\u{226B}\u{20D2}\">"
+  expect(z.next()) == TokenType.Text
+  expect(z.token().display()) == "\u{226A}\u{20D2}"
+}

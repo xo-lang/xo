@@ -1,5 +1,14 @@
 # std/htmltok changes
 
+## 2026-11-19: fix: &nLt; and &nGt; are their two code points
+
+- Kind: fix
+- Commit: this push
+- Found by: stdproven gotests (decision 0720, task #403): x/net v0.62.0's unescapeTests "nLt then text" and five more
+- Go reference: golang.org/x/net v0.62.0 html/entity.go (entity2 holds nLt; and nGt;, which Go's html and std/htmlent leave out)
+- Test: std/htmltok_test.xo "nLt; and nGt; are x/net's two code point references (escape_test.go)" (failed before, passes after); std/evidence/htmltok/gotests (248 cases, 0 mismatches)
+- Timing: none (two name checks after the entity tables miss)
+
 
 ## 2026-11-16: feature: Text, TagName, TagAttr and the String methods; fix: token takes a tag's data
 

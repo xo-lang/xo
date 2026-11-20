@@ -1,0 +1,52 @@
+// The Xo side of std/htmltok's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/htmltok's result as text, as go/main.go prints
+// golang.org/x/net/html's. Kind tokens: every token's display joined by "$"
+// (CDATA allowed), then "|" and the error that ended it; kind raw: each
+// token's type and raw text; kind unescape: unescape_string. See
+// scripts/stdproven/gotests.go.
+use std/htmltok
+use std/base64
+
+fn tokens(s: Str, raw: Bool) -> Str {
+  var z = htmltok.tokenizer(s)
+  z.allow_cdata(true)
+  var out: List[Str] = []
+  while true {
+    let tt = z.next()
+    if tt == htmltok.TokenType.Error {
+      break
+    }
+    if raw {
+      out.push("${tt.display()}:${z.raw()}")
+    } else {
+      out.push(z.token().display())
+    }
+  }
+  out.join("$") + "|" + (z.err() ?? "")
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "tokens" => tokens(inp[0], false)
+    "raw" => tokens(inp[0], true)
+    "unescape" => htmltok.unescape_string(inp[0])
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}

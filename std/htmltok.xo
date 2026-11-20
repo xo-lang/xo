@@ -1423,6 +1423,15 @@ fn unescape_entity(s: Bytes, at: Int, attribute: Bool) -> (Str, Int) {
   if !two.is_empty() {
     return (two, i)
   }
+  // x/net's entity2 holds nLt; and nGt; (since v0.62.0, its unescape no
+  // longer writes in place); Go's html, which std/htmlent follows, leaves
+  // them out
+  if name == "nLt;" {
+    return ("\u{226A}\u{20D2}", i)
+  }
+  if name == "nGt;" {
+    return ("\u{226B}\u{20D2}", i)
+  }
   if !attribute {
     var max_len = name.len() - 1
     if max_len > nhtml.LONGEST_ENTITY_WITHOUT_SEMICOLON {
