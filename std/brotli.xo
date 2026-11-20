@@ -3911,7 +3911,8 @@ fn dict_match_length(var e: Enc, at: Int, id: Int, l: Int, maxlen: Int) -> Int {
   let offset = DICT_OFFSETS[l] + l * id
   let limit = min_i(l, maxlen)
   var m = 0
-  while m < limit && DICT[offset + m] == e.rb.buf[at + m] {
+  let buf = e.rb.buf
+  while m < limit && DICT[offset + m] == buf[at + m] {
     m += 1
   }
   m
@@ -4759,6 +4760,10 @@ fn h10_find_all(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, var
   var best_len = 1
   let short_max = if e.quality != 11 { 16 } else { 64 }
   let stop = if cur_ix < short_max { 0 } else { cur_ix - short_max }
+  // the two bytes at cur_m, loaded once (the buffer's 7 slack bytes
+  // keep cur_m + 1 in range)
+  let c0 = e.rb.buf[cur_m]
+  let c1 = e.rb.buf[cur_m + 1]
   var i = cur_ix - 1
   while i > stop && best_len <= 2 {
     let backward = cur_ix - i
@@ -4766,7 +4771,7 @@ fn h10_find_all(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, var
       break
     }
     let prev = i & mask
-    if e.rb.buf[cur_m] == e.rb.buf[prev] && e.rb.buf[cur_m + 1] == e.rb.buf[prev + 1] {
+    if c0 == e.rb.buf[prev] && c1 == e.rb.buf[prev + 1] {
       let len = rb_match(e.rb.buf, prev, cur_m, max_length)
       if len > best_len {
         best_len = len

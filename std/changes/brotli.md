@@ -1,5 +1,15 @@
 # std/brotli changes
 
+## 2026-11-20: perf: quality 10 and 11 load the hashed position's two bytes once per search
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271, callgrind per line of bench/perf/brotli enc11 (linux/arm64 in Docker): h10_find_all's two-byte check, 180M instructions over 11.5M probes, reloaded the bytes at the current position on every probe
+- Go reference: findAllMatchesH10's `data[cur_ix_masked] == data[prev_ix] && data[cur_ix_masked+1] == data[prev_ix+1]`
+- Change: h10_find_all loads the two bytes at the current position once before its loop (the ring buffer's 7 slack bytes keep the second in range); dict_match_length reads the ring buffer through a local; output unchanged (enc11 and enc6 bytes identical)
+- Measured: callgrind (cgab, linux/arm64) enc11 5,179,128,981 to 5,099,341,779 instructions (-1.54%), enc6 unchanged; no speedup claimed: xo bench --ab on host 1, 12 rounds, 1108d9ea6 against 90825aa0b: 0.986 (0.974 to 1.0), within noise
+- Test: `xo test --std-module brotli` (9 pass)
+
 ## 2026-11-19: perf: quality 10 and 11 reuse one set of dictionary match slots
 
 - Kind: perf
