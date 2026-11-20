@@ -1,6 +1,6 @@
 # 0726: perf evidence reads interleaved rounds as the median of per-round ratios
 
-Status: Proposed (xo-4c, 2026-11-20, task #429; for the owner)
+Status: Accepted (owner, 2026-11-20, xw decision #201: host 2 perf evidence is the median of paired per-round Go/Xo ratios over at least 30 interleaved rounds, for every std module; proposed by xo-4c, task #429)
 
 ## Context
 
