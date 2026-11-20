@@ -51,7 +51,11 @@ fn (var c: Checker) go_miss(f: Int, sp: Span, gopath: Str, root: Str, cache: Str
     return
   }
   c.add_miss(BindMiss{key: key, go_path: gopath, root: root, cache: cache})
-  if c.unsupported.is_empty() {
+  // a declarations-only view (xo def, doc, symbols) leaves the package's
+  // names unresolved instead of stopping: one file's missing binding
+  // below a --dir (std/evidence/go/stress under std) stopped every
+  // lookup there (task #477)
+  if c.unsupported.is_empty() && !(c.view_only && c.decls_only) {
     c.unsupported = "use go without a current binding of ${gopath} in ${cache} (a Go check or build, or `xo bind`, writes it) in ${fpath}"
   }
 }

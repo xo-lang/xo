@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (xo def, doc, symbols; task #477): a directory below --dir with a `use go` whose binding is missing (std/evidence/go/stress under std) leaves that package's names unresolved instead of stopping the lookup; `xo def Router --dir=std` said "the check stopped before resolving names".
 - Perf (Go backend; task #467): `.bytes()` on a plain string literal of 32 bytes or more (or on a `let` bound to one) reads one package level copy on a 32-byte boundary (rt.AlignedBytes), made once at init, so Go's vector byte searches run no partial head block; bench/perf/gobridge bytes 50000000 on linux/arm64 host 1: wall 135.1 to 113.4 ms (`xo bench --ab`, B/A 0.839).
 - Perf (Go backend; task #429): a program that does not reach std/template, std/xml, std/archive or std/gif is built without their std/rt Go (build tag `xo_no_M`, std/go_optional.txt), so Go's html/template, encoding/xml, archive and image/gif packages are not linked and their init does not run at startup.
 - Fixed (compiler; task #469): wrong output from generic functions instantiated with two types of one runtime form (Str and Bytes, or Int, Duration and Time). Their instances shared one symbol, so `json.encode_str("aé")` returned `"YcOp"` (std's Bytes instance, base64) in programs linked against std's store since 19e3f5961, and a function value such as `let f: fn(Int) -> Str = show` could call the Duration instance. Instances are now named by the type arguments as written.

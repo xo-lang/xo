@@ -1967,6 +1967,28 @@ func TestAgentRootSkipsBrokenModule(t *testing.T) {
 	}
 }
 
+// TestAgentDirSkipsUseGoDir: xo def --dir=D NAME, where D has its own
+// .xo files (std) and a directory below it has a `use go` without a
+// current binding (std/evidence/go/stress), finds NAME in D instead of
+// stopping on the binding (task #477: `xo def Router --dir=std`).
+func TestAgentDirSkipsUseGoDir(t *testing.T) {
+	t.Parallel()
+	root := writeFiles(t, map[string]string{
+		"xo.mod":  "module example.com/lib\n",
+		"lib.xo":  "/// A router.\npub struct Router {\n  n: Int\n}\n",
+		"more.xo": "pub fn route(r: Router) -> Int { r.n }\n",
+		// it spells Router (a comment), so def's candidates take it
+		"ev/stress/main.xo": "use go \"strconv\"\n\n// not the Router\nfn main(os: Os) {\n  os.stdio.println(strconv.Itoa(1))\n}\n",
+	})
+	for _, cmd := range []string{"def", "doc"} {
+		var out, errOut bytes.Buffer
+		code := run(t, []string{cmd, "--dir=" + root, "Router"}, &out, &errOut)
+		if code != 0 || !strings.Contains(out.String(), "lib.xo:") || strings.Contains(out.String()+errOut.String(), "without a current binding") {
+			t.Errorf("xo %s --dir=ROOT Router: exit %d\n--- stdout\n%s--- stderr\n%s", cmd, code, out.String(), errOut.String())
+		}
+	}
+}
+
 // TestAgentRootStdUseC: xo def and xo doc from the repository root answer
 // for std/sqlite, whose implementation std/native/sqlite.xo has `use c`,
 // in a tree without its binding (written only by a build with a C

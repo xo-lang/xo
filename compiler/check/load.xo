@@ -228,7 +228,8 @@ pub struct Checker {
   /// a std module whose `use c` binding is missing (a C library driver's,
   /// written only by a build with a C compiler) leaves its C names
   /// unresolved instead of stopping the check
-  /// (gotchas/std-store-build-use-c-module.md).
+  /// (gotchas/std-store-build-use-c-module.md); with decls_only, a
+  /// `use go` whose binding is missing does too (task #477).
   pub view_only: Bool = false
   pub lazy: Bool = false
   /// Map and Set as decision 0291's hybrid (every backend since 2026-10-21,
