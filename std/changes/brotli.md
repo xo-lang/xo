@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: quality 10 and 11 fill the dictionary match slots in one allocation
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (enc11 line profile of h10_find_all under callgrind on linux/arm64: every position built its 38 dictionary match slots with 38 pushes, growing the list four times)
+- Go reference: andybalholm/brotli hash_to_binary_tree.go / backward_references_hq.go (dict_matches is a [maxStaticDictionaryMatchLen + 1]uint32 on the stack, filled with kInvalidMatch)
+- Measured: callgrind on linux/arm64 (59eb34460 against 410c76c0f): bench/perf/brotli enc11 2.68% fewer instructions, enc6 unchanged (quality 6 does not use it); `xo bench --ab` on linux/arm64 host 1 (6 rounds): enc11 0.972 (95% 0.965 to 0.98, 221.9 to 215.6 ms, better)
+- Test: brotli module tests (9 passed); bench output unchanged (enc11 13312, enc6 167596 both)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: quality 10 and 11 load the distance cache candidate's byte once per best length
 
 - Kind: perf

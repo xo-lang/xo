@@ -4776,10 +4776,7 @@ fn h10_find_all(var e: Enc, cur_ix: Int, max_length: Int, max_backward: Int, var
   if best_len < max_length {
     best_len = h10_store_and_find(e, cur_ix, max_length, max_backward, best_len, true, out)
   }
-  var dm: List[Int] = []
-  for _ in 0..38 {
-    dm.push(0xFFFFFFF)
-  }
+  var dm = List[Int].filled(38, 0xFFFFFFF)
   let minlen = max_i(4, best_len + 1)
   if find_all_dict_matches(e, cur_m, minlen, max_length, dm) {
     let maxlen = min_i(37, max_length)
