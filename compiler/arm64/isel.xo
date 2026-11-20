@@ -534,6 +534,44 @@ fn (var g: G) fneg_const(f: Float) -> Int {
   r
 }
 
+/// The register of 1 / c where value b is a Float constant c whose
+/// reciprocal is exact (a power of two, normal, its reciprocal normal:
+/// Go's reciprocalIsExact64), or None. x / c and x * (1 / c) are then the
+/// same bits for every x (each is the exact quotient rounded once), so the
+/// divide (fdiv, divsd: 10 to 20 cycles of latency) is a multiply (task
+/// #87: Rand.float's `/ 2^53` was on every zipf draw's critical path;
+/// LLVM's InstCombine does the same).
+fn (var g: G) exact_recip(b: Int) -> Int? {
+  // a Const, or a negative literal (the SSA negates the constant)
+  var x = g.f.values[b]
+  var neg = false
+  if x.op == ssa.Op.Neg && x.args.len() == 1 {
+    x = g.f.values[g.f.arg(x.args, 0)]
+    neg = true
+  }
+  if x.op != ssa.Op.Const {
+    return None
+  }
+  let c = match x.aux {
+    F(f) => f
+    _ => { return None }
+  }
+  let bits = float_bits(c) ^ (if neg { MIN_INT } else { 0 })
+  let e = (bits >> 52) & 0x7ff
+  if bits & 0xfffffffffffff != 0 || e == 0 || e >= 0x7fe {
+    return None
+  }
+  let rbits = (bits & MIN_INT) | ((2046 - e) << 52)
+  let key = float_key(Float.from_bits(rbits))
+  let _mi = g.m_()
+  if let Some(r) = g.cm.cf.get(key) {
+    return Some(r)
+  }
+  let r = g.fimm(rbits)
+  g.cm.cf[key] = r
+  Some(r)
+}
+
 /// Puts the double with bits b in a floating point register.
 fn (var g: G) fimm(bits: Int) -> Int {
   if bits == 0 {
@@ -4232,6 +4270,12 @@ fn (var g: G) div_rem(v: Int) {
   }
   if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float {
     let a = g.word(g.f.arg(x.args, 0))
+    if is_div {
+      if let Some(rb) = g.exact_recip(g.f.arg(x.args, 1)) {
+        g.set(v, [g.def1(true, "fmul $d0, $u0, $u1", [a, rb])])
+        return
+      }
+    }
     let b = g.word(g.f.arg(x.args, 1))
     if is_div {
       g.set(v, [g.def1(true, "fdiv $d0, $u0, $u1", [a, b])])

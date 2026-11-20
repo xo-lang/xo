@@ -58,3 +58,27 @@ side block holds only the k + 1).
   linux/amd64 (4 rounds, 286e38ba8 against eccbfe06c). In and_inc, test
   the second block's compare with `g.has_val`, not `g.lazy`: lazy is set
   only once a block is selected, and the second block never is.
+
+
+## Profile attribution and a divide by 2^53 (task #87, 2026-11-19)
+
+- Symptom: bench/perf/random zipf at 1.22 of Go on linux/amd64; XO_PROF
+  gave gomath.exp, expmulti and log about 690 ms of 1056 ms, against 420
+  ms for Go's archExp and archLog. Timed alone (30M calls each, the
+  amd64 host) they were 1.05 (log) and 0.89 (exp) of Go: the profile's
+  split was not where the time went.
+- What did not work: a branch free x86 fcsel (setcc, mask, andpd, andnpd,
+  orpd) for gomath.log's `f1 * (if small { 2.0 } else { 1.0 })`: zipf
+  stayed at 0.94 s against 0.74 s. Kept unpushed (branch l1-87-fsel-hold).
+- Also not it: Rand.float's `Float(w >> 11) / 2^53` was a divsd (fdiv on
+  arm64) on every draw. Go rewrites a divide by a constant whose
+  reciprocal is exact into a multiply (reciprocalIsExact64), as LLVM's
+  InstCombine does; Xo's isel now does too (exact_recip: a power of two,
+  it and its reciprocal normal, a negative literal included; fmul /
+  mulsd, the same bits for every dividend; codegen test fdivpow2, golden
+  fdiv_pow2). draw's code then has `mulsd` and no divsd, but zipf stayed
+  at 0.95 s against Go's 0.74 s (linux/amd64 host, 5 runs each).
+- Check: time a function alone against Go's before trusting a profile's
+  split of a dependent chain, and confirm a suspected instruction is on
+  the measured path (`xo asm --backend=amd64 --targets=linux/amd64`)
+  before and after a change. Open (2026-11-19): where the 0.2 s goes.

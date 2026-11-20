@@ -1,0 +1,35 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a Float divide by a
+// constant whose reciprocal is exact (a power of two, both normal) is a
+// multiply, the same bits for every x (task #87, 2026-11-19: Rand.float's
+// `/ 2^53` was a divide on every bench/perf/random zipf draw; Go's
+// reciprocalIsExact64). Other divisors keep the divide.
+
+fn unit(w: Int) -> Float {
+  // arm64: "fmul" -"fdiv"
+  // amd64: "mulsd" -"divsd"
+  Float(w.shr_logical(11)) / 9007199254740992.0
+}
+
+fn quarter(x: Float) -> Float {
+  // arm64: "fmul" -"fdiv"
+  // amd64: "mulsd" -"divsd"
+  x / -4.0
+}
+
+fn third(x: Float) -> Float {
+  // arm64: "fdiv"
+  // amd64: "divsd"
+  x / 3.0
+}
+
+fn big(x: Float) -> Float {
+  // 2^1023: its reciprocal 2^-1023 is subnormal, so the divide stays
+  // arm64: "fdiv"
+  // amd64: "divsd"
+  x / 8.98846567431158e307
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  os.stdio.println("${unit(n - 1)} ${quarter(Float(n))} ${third(Float(n))} ${big(Float(n))}")
+}
