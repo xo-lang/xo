@@ -5124,6 +5124,13 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
   let q0 = zq_at(q, 0)
   let min_cost0 = q.cost[q0] + m.min_cost_cmd + zm_lit(m, q.pos[q0], pos)
   let min_len = min_copy_length(min_cost0, z, num_bytes, pos)
+  // the queue's distance caches, 4 words for each of its 8 slots: read
+  // through a local of a length checked once, so the 16 reads a slot of
+  // the loop below take no check and no reload of the list (task #271)
+  let dcl = q.dc
+  if dcl.len() < 32 {
+    fault("brotli: the distance cache queue is short")
+  }
   var k = 0
   while k < max_iters && k < zq_size(q) {
     let qi = zq_at(q, k)
@@ -5137,8 +5144,16 @@ fn update_nodes(var e: Enc, num_bytes: Int, block_start: Int, pos: Int, max_back
     var cbyte: UInt8 = if cb <= mask { b[cb] } else { 0 }
     let dc0 = 4 * qi
     var j = 0
+    // the 16 short codes' cache indexes (2 bits each) and offsets (3 bits
+    // each, biased by 3), shifted down one code a pass: `>> (2 * j)` and
+    // `>> (3 * j)` were a checked multiply and a variable shift each
+    // (task #271: 19 instructions for this line, 609M of enc11's 4.96G)
+    var ib = Z_DC_INDEX_BITS
+    var ob = Z_DC_OFFSET_BITS
     while j < 16 && best_len < max_len {
-      let backward = q.dc[dc0 + ((Z_DC_INDEX_BITS >> (2 * j)) & 3)] + ((Z_DC_OFFSET_BITS >> (3 * j)) & 7) - 3
+      let backward = dcl[dc0 + (ib & 3)] + ((ob & 7) - 3)
+      ib = ib >> 2
+      ob = ob >> 3
       if cb > mask {
         break
       }

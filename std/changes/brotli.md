@@ -1,5 +1,17 @@
 # std/brotli changes
 
+## 2026-11-20: perf: quality 10 and 11 read the short distance codes with shifts by constants
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271, callgrind per line of bench/perf/brotli enc11 (linux/arm64 in Docker, at b30aec685): update_nodes's line for a short code's distance (`q.dc[dc0 + ((BITS >> (2 * j)) & 3)] + ((BITS >> (3 * j)) & 7) - 3`) took 609,473,878 of 4,961,391,691 instructions, 19 for each of the 16 codes of a position: two checked multiplies, two variable shifts, a reload and bounds check of the cache list, and two overflow checks
+- Go reference: andybalholm/brotli backward_references_hq.go (updateNodes reads kDistanceCacheIndex[j] and kDistanceCacheOffset[j])
+- Change: the two bit queues are locals shifted down one code a pass, the offset is folded before its one checked add, and the queue's distance caches are read through a local whose length is checked once before the loop (9 instructions for the line, the cache read with no check)
+- Measured: callgrind (cgab, linux/arm64, a6ac68087 against 1735df29b): enc11 5,092,597,465 to 4,798,403,881 instructions (-5.78%), enc6 and enc1 unchanged
+- Test: `xo test --std-module brotli` (9 pass); bench/perf/brotli enc11 prints the same sum (13312)
+- Affected: none (no behavior change; update_nodes faults with "brotli: the distance cache queue is short" if its queue had fewer than 32 words, which Zq never has)
+- Shipped in: not yet released
+
 ## 2026-11-20: perf: quality 10 and 11 load the hashed position's two bytes once per search
 
 - Kind: perf
