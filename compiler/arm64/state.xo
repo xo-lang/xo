@@ -225,6 +225,8 @@ struct G {
   /// is in and the cause labels made
   cur_cause: Int = 0
   blk_cause: Int = 0
+  // the block isel lowers faults on every path (fault_only)
+  cur_faults: Bool = false
   /// the release being lowered is of a Str read from storage (a field,
   /// payload, list element or the entry's parameter), which drop_thunk
   /// takes: a call's result or a value carried around a loop is most

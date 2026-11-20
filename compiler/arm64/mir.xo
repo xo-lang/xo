@@ -249,6 +249,9 @@ struct MBlock {
   id: Int
   insts: List[Inst] = []
   cold: Bool = false
+  // every path from it faults (isel's fault_only): a call there is
+  // the fault's, never one a loop's value lives across in a run
+  faults: Bool = false
   succs: List[Int] = []
   preds: List[Int] = []
   // filled by register allocation

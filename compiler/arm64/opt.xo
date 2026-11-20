@@ -2059,7 +2059,7 @@ fn (var g: G) hoist_consts() {
     // iteration of update's and grid's loops)
     var calls = false
     for b in 0..g.blocks.len() {
-      if !body[b] || g.blocks[b].cold {
+      if !body[b] || g.blocks[b].cold || g.blocks[b].faults {
         continue
       }
       for inst in g.blocks[b].insts {
@@ -2074,7 +2074,7 @@ fn (var g: G) hoist_consts() {
     if calls {
       var costs: List[Int] = []
       for b in blocks {
-        if !body[b] {
+        if !body[b] || g.blocks[b].faults {
           continue
         }
         for inst in g.blocks[b].insts {
@@ -2092,9 +2092,11 @@ fn (var g: G) hoist_consts() {
       costs = costs.sort()
       min_lines = if costs.len() > HOIST_CALL_CONSTS { costs[costs.len() - HOIST_CALL_CONSTS] } else { costs[0] }
     }
+    // a constant only a fault path reads stays there (task #450: a
+    // bounds message's text held a register through the loop)
     var hoisted: List[Inst] = []
     for b in blocks {
-      if !body[b] {
+      if !body[b] || g.blocks[b].faults {
         continue
       }
       var out: List[Inst] = []
@@ -2489,7 +2491,7 @@ fn (var g: G) hoist_invariants() {
     }
     var calls = false
     for b in 0..g.blocks.len() {
-      if !body[b] || g.blocks[b].cold {
+      if !body[b] || g.blocks[b].cold || g.blocks[b].faults {
         continue
       }
       for inst in g.blocks[b].insts {
@@ -2523,14 +2525,29 @@ fn (var g: G) hoist_invariants() {
     while again && hoisted.len() < HOIST_MAX {
       again = false
       for b in blocks {
-        if !body[b] || g.blocks[b].cold || hoisted.len() >= HOIST_MAX {
+        if !body[b] || g.blocks[b].cold || g.blocks[b].faults || hoisted.len() >= HOIST_MAX {
           continue
         }
         var out: List[Inst] = []
         var any = false
         for inst in g.blocks[b].insts {
           if hoisted.len() < HOIST_MAX && g.hoistable(inst, body, ndef, defb, outside) {
-            hoisted.push(inst)
+            // one this loop already hoisted, with the same text and uses,
+            // is read in its place and leaves the budget alone (task #450:
+            // two inlined BytesBuilder.at copies each unpacked the length
+            // and made the data address, four of HOIST_MAX's four)
+            let us = canon_regs(inst.us, same)
+            var hit = -1
+            for h in hoisted {
+              if hit < 0 && h.text == inst.text && canon_regs(h.us, same) == us && g.fp[h.defs[0]] == g.fp[inst.defs[0]] && single_defs(us, ndef) {
+                hit = h.defs[0]
+              }
+            }
+            if hit >= 0 {
+              same[inst.defs[0]] = hit
+            } else {
+              hoisted.push(inst)
+            }
             outside[inst.defs[0]] = true
             any = true
             again = true

@@ -60,6 +60,33 @@ fn work_rare(xs: List[Int], a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
   t + a + b + c + d + e + f + g + h + i + j + k + l + m + n
 }
 
+// work_rare in a function whose cold code (the fault messages of 40
+// BytesBuilder reads, cold under fault_cold) is over loop_split's size
+// limit while its hot code is not (task #450: std/brotli update_nodes on
+// (private commit)): only hot instructions count, so the loop is still split.
+fn work_rare_big(xs: List[Int], var bb: BytesBuilder, a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
+  // arm64: -"ldr x[0-9]+, \[sp, #[0-9]+\]\n\tasr x[0-9]+, x[0-9]+, #3"
+  let r = bb.at(0) ^ bb.at(1) ^ bb.at(2) ^ bb.at(3) ^ bb.at(4) ^ bb.at(5) ^ bb.at(6) ^ bb.at(7) ^ bb.at(8) ^ bb.at(9) ^ bb.at(10) ^ bb.at(11) ^ bb.at(12) ^ bb.at(13) ^ bb.at(14) ^ bb.at(15) ^ bb.at(16) ^ bb.at(17) ^ bb.at(18) ^ bb.at(19) ^ bb.at(20) ^ bb.at(21) ^ bb.at(22) ^ bb.at(23) ^ bb.at(24) ^ bb.at(25) ^ bb.at(26) ^ bb.at(27) ^ bb.at(28) ^ bb.at(29) ^ bb.at(30) ^ bb.at(31) ^ bb.at(32) ^ bb.at(33) ^ bb.at(34) ^ bb.at(35) ^ bb.at(36) ^ bb.at(37) ^ bb.at(38) ^ bb.at(39)
+  let f = mix(a, b)
+  let g = mix(c, d)
+  let h = mix(e, f)
+  let i = mix(g, h)
+  let j = mix(i, a)
+  let k = mix(j, b)
+  let l = mix(k, c)
+  let m = mix(l, d)
+  let n = mix(m, e)
+  var s = 0
+  for x in xs {
+    if x == 298 {
+      s = s + mix(s, x)
+    }
+    s = s + ((x * f) ^ (g + h)) - (i & x) + (j >> 3) + ((x ^ k) & l) + (m | x) - (n ^ a) + ((b * x) & c) + (d - e)
+  }
+  let t = mix(s, k)
+  t + (if r == 0 { 1 } else { 0 }) + a + b + c + d + e + f + g + h + i + j + k + l + m + n
+}
+
 fn main(os: Os) {
   var xs: List[Int] = []
   for q in 0..100 {
@@ -67,4 +94,9 @@ fn main(os: Os) {
   }
   os.stdio.println("${work(xs, 1, 2, 3, 4, 5)}")
   os.stdio.println("${work_rare(xs, 1, 2, 3, 4, 5)}")
+  var bb = BytesBuilder.new()
+  for q in 0..120 {
+    bb.write_byte(UInt8.wrapping_from(q))
+  }
+  os.stdio.println("${work_rare_big(xs, bb, 1, 2, 3, 4, 5)}")
 }

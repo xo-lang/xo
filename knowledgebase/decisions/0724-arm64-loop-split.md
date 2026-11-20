@@ -21,13 +21,15 @@ A default on pass `loop_split` (compiler/arm64/loopsplit.xo; off with
 `XO_PASSES=-loop_split`) splits in two phases:
 
 1. In a function with a non tail call, at most `SPLIT_MAX_INSTS` (2000)
-   instructions and an innermost loop with no call, switch, entry or
+   instructions in hot blocks (cold blocks, such as fault messages under
+   fault_cold, do not count; 2026-11-19, task #450) and an innermost loop with no call, switch, entry or
    return, it allocates once as usual and keeps the locations. A loop
    with such a block counts as the blocks its header reaches without
    one, when they hold a cycle back to the header and no other loop's
    header (2026-11-19, task #438): a rare call, and an inner loop only
    reached past it, leave the common path split.
-2. For up to 16 such loops with at most 8 edges in or out and at least
+2. For up to 16 such loops with at most 8 edges in or out (not
+   counting exits to fault paths, of which at most 48; task #450) and at least
    11 general registers live in it, if a value the loop names had no
    register in the first allocation, every value named in the loop and
    live across its edges (not wide, not live into a landing pad of a

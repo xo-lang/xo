@@ -46,7 +46,55 @@ fn latch_call(x: Int) -> Int {
   c
 }
 
+// A loop reading a BytesBuilder through two inlined .at calls (task
+// #450, 2026-11-19): the builder's length and data address are made once
+// before the loop, where each .at unpacked the length and added the
+// header offset in every iteration. The bounds failure's message
+// (builder_at_fail: rs_with_cap, str.concat, num.append_int) is inlined
+// in the loop; its calls only run on the way to a fault (isel
+// fault_only), so they no longer keep hoist_invariants out of the loop,
+// and the second copy's length and address are the first's.
+fn byte_runs(var b: BytesBuilder, n: Int) -> Int {
+  // arm64: "ldrb w[0-9]+, \[x[0-9]+, x[0-9]+\]" -"#16\n(?:[^\n]*:\n)*\tldrb w"
+  var k = 0
+  var i = 1
+  while i < n {
+    if b.at(i) != b.at(i - 1) {
+      k += 1
+    }
+    i += 1
+  }
+  k
+}
+
+fn probes(var b: BytesBuilder, ds: List[Int], cur: Int, mask: Int, lim: Int, maxd: Int, maxl: Int) -> Int {
+  // task #450 (fault_cold): .at's fault message calls are cold, so the
+  // fault paths are laid out after the epilogue, out of the loop's
+  // registers' ranges
+  // arm64: "_ep:" -"bl _xo_x_obj_rs_concat\n(?:[^\n]*\n)*L[^\n]*_ep:"
+  var best = 0
+  var j = 0
+  while j < 16 && best < maxl {
+    let d = ds[j & 7] + j
+    let cb = (cur + best) & mask
+    if d <= 0 || d > maxd {
+      j += 1
+      continue
+    }
+    let pb = (cur - d + best) & mask
+    if cb < lim && pb < lim && b.at(cb) == b.at(pb) {
+      best += 1
+    }
+    j += 1
+  }
+  best
+}
+
 fn main(os: Os) {
   let n = os.env.args().len() + 27
-  os.stdio.println("${collatz(n)} ${latch_call(n)}")
+  var bb = BytesBuilder.new()
+  for i in 0..n {
+    bb.write_byte(UInt8.wrapping_from(i / 3))
+  }
+  os.stdio.println("${collatz(n)} ${latch_call(n)} ${byte_runs(bb, n)} ${probes(bb, [1, 2, 3, 4, 5, 6, 7, 8], n - 1, 31, n, 20, 9)}")
 }

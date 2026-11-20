@@ -33,6 +33,9 @@ const SPLIT_MIN_LIVE = 11
 
 /// The most edges into and out of a split loop.
 const MAX_SPLIT_EDGES = 8
+
+/// The most exits to fault paths a split loop may have (task #450).
+const MAX_SPLIT_FAULT_EDGES = 48
 /// The largest function (in instructions) loop_split looks at.
 const SPLIT_MAX_INSTS = 2000
 
@@ -217,7 +220,17 @@ fn (var g: G) split_loop(body: List[Bool], h: Int, first: SplitFirst, var sl: Sp
       }
     }
   }
-  if edges.is_empty() || edges.len() > MAX_SPLIT_EDGES {
+  // an exit to a fault path (fault_only) costs its fixup moves only on
+  // the way to the fault, so those exits do not count against the limit
+  // (task #450: update_nodes' j loop on (private commit) left by 17 bounds and
+  // overflow faults and was never split)
+  var hot_edges = 0
+  for e in edges {
+    if e.kind == 1 || !g.blocks[e.to].faults {
+      hot_edges += 1
+    }
+  }
+  if edges.is_empty() || hot_edges > MAX_SPLIT_EDGES || edges.len() > MAX_SPLIT_FAULT_EDGES {
     return false
   }
   let n = g.fp.len()
@@ -427,7 +440,12 @@ fn (var g: G) split_any() -> Bool {
   var calls = false
   var size = 0
   for b in g.hot + g.cold {
-    size += g.blocks[b].insts.len()
+    // cold code (landing pads, fault messages under fault_cold) does
+    // not count: task #450, update_nodes on (private commit) was over the limit
+    // by its inlined bounds messages
+    if !g.blocks[b].cold {
+      size += g.blocks[b].insts.len()
+    }
     for inst in g.blocks[b].insts {
       if inst.kind == K_CALL && !inst.has(IF_TAIL) {
         calls = true

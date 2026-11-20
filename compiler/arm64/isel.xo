@@ -325,7 +325,7 @@ fn (var g: G) new_vregs(lay: List[Bool]) -> List[Int] {
 
 fn (var g: G) new_block(cold: Bool) -> Int {
   let i = g.blocks.len()
-  g.blocks.push(MBlock{id: g.nblock, cold: cold})
+  g.blocks.push(MBlock{id: g.nblock, cold: cold, faults: g.cur_faults})
   g.nblock += 1
   if cold {
     g.cold.push(i)
@@ -937,6 +937,12 @@ fn (var g: G) isel() {
       }
     }
   }
+  let faults = fault_only(g.f)
+  // task #450: a loop's inlined fault messages (builder_at_fail's
+  // concat, append_int and fault_at) are cold, so their calls sit after
+  // the hot code and save what they clobber (cold_saves) instead of
+  // making every value live across the loop callee saved or spilled
+  let fault_cold = g.on("fault_cold")
   g.find_take_args()
   let ptrs = g.plan_held()
   g.plan_sret_slots()
@@ -1033,7 +1039,9 @@ fn (var g: G) isel() {
     // decision 0443: the unwind exit, and what only landing pads reach
     g.blk_cause = if b == g.f.unwind_exit { C_FAULT_EXIT } else if cold[b] { C_LANDING } else { C_BODY }
     g.cur_cause = g.blk_cause
-    if cold[b] {
+    g.cur_faults = faults[b]
+    g.blocks[mb].faults = faults[b]
+    if cold[b] || (fault_cold && faults[b]) {
       g.blocks[mb].cold = true
       g.cold.push(mb)
     } else {
@@ -5067,4 +5075,47 @@ fn (var g: G) chain_mem(v0: Int) -> (Int, Bool) {
     v = u
   }
   (0, false)
+}
+
+/// The blocks every path from which faults: one that calls rt.fault_at,
+/// rt.fault_raise, rt.fault_rethrow or rt.fault_continue, and a block
+/// (not the entry) whose every successor is one of those. An inlined
+/// bounds check's message (BytesBuilder.at's builder_at_fail: rs_with_cap,
+/// str.concat, num.append_int) is such a path, and its calls kept a loop's
+/// invariants in the loop (task #450, 2026-11-19). Unlike inlsum's
+/// fault_blocks it does not follow a fault's own successors: the jump
+/// after rt.fault_continue goes back to the code it left.
+fn fault_only(f: ssa.Func) -> List[Bool] {
+  let n = f.blocks.len()
+  var fl: List[Bool] = []
+  var succ: List[List[Int]] = []
+  for (bi, bl) in f.blocks.indexed() {
+    var c = false
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op == ssa.Op.Call {
+        let name = f.name_of(x)
+        c = c || name is "rt.fault_at" | "rt.fault_raise" | "rt.fault_rethrow" | "rt.fault_continue"
+      }
+    }
+    fl.push(c && bi != 0)
+    var out: List[Int] = []
+    if !bl.instrs.is_empty() {
+      for e in f.values[bl.instrs[bl.instrs.len() - 1]].succs() {
+        out.push(f.edges[e].to)
+      }
+    }
+    succ.push(out)
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for b in 1..n {
+      if !fl[b] && !succ[b].is_empty() && succ[b].all(fn(t: Int) -> Bool { fl[t] }) {
+        fl[b] = true
+        changed = true
+      }
+    }
+  }
+  fl
 }

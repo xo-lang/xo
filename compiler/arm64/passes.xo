@@ -117,6 +117,9 @@ pub fn passes() -> List[Str] {
     "slp_carry",
     "hoist_consts",
     "hoist_invariants",
+    // isel.xo: blocks only on the way to a fault (fault_only: an inlined
+    // bounds message) are laid out and allocated as cold code (task #450)
+    "fault_cold",
     "copy_prop",
     // zimage.xo: runs of constant word stores copy a read only image
     "zero_images",
