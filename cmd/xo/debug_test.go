@@ -357,3 +357,57 @@ func TestDebugWindowsUnwindData(t *testing.T) {
 		t.Errorf("want at least 100 functions checked, got %q (%v)", stdout.String(), err)
 	}
 }
+
+// TestDebugAssignedVarNotStale (task #243, the owner's 0.51.1
+// evaluation: "locals in a debug build"): `var t = 0` whose loop the
+// compiler folded away kept one binding record, its first, a constant,
+// which the native backends describe over the whole function: stopped
+// after the loop, xo debug showed `t = 0` where t was 10. A variable
+// assigned again shows its value or is optimized out, never its first
+// value.
+func TestDebugAssignedVarNotStale(t *testing.T) {
+	if !debugLaunches() {
+		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
+	}
+	if testing.Short() {
+		t.Skip("builds and debugs a native program")
+	}
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	// main's println is line 14
+	dir := writeFiles(t, map[string]string{"main.xo": `fn add(a: Int, b: Int) -> Int {
+  let c = a + b
+  c * 2
+}
+
+fn main(os: Os) {
+  let s = "abc"
+  var t = 0
+  for i in 0..3 {
+    t += add(i, t)
+  }
+  let q = "x${t}"
+  // t is 10 here
+  os.stdio.println("${s} ${q}")
+}
+`})
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: debugBackend(), Out: filepath.Join(t.TempDir(), "prog")}))
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %s", err, res.Output)
+	}
+	prog := res.Binaries[xotool.Host()]
+	var out, errb bytes.Buffer
+	code := runXo(t, []string{"debug", "--batch", "--timeout=20s", "-c", "break main.xo:14", "-c", "run", "-c", "locals", "-c", "quit", prog}, &out, &errb)
+	got := out.String()
+	if strings.Contains(got+errb.String(), "task_for_pid") {
+		t.Skipf("this xo cannot control the program (entitlements, Developer Mode):\n%s%s", got, errb.String())
+	}
+	if code != 0 || !strings.Contains(got, "stopped at breakpoint 1") {
+		t.Fatalf("xo debug: exit %d\n%s%s", code, got, errb.String())
+	}
+	if strings.Contains(got, "\nt = 0\n") {
+		t.Errorf("t shows its first value after the loop (it is 10):\n%s", got)
+	}
+	if !strings.Contains(got, "\nt = 10\n") && !strings.Contains(got, "\nt = <optimized out>\n") {
+		t.Errorf("t is neither 10 nor optimized out:\n%s", got)
+	}
+}

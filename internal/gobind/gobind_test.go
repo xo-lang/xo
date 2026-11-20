@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -180,6 +181,26 @@ func grep(s, sub string) string {
 // line from the installed go command (a fake one here), never above
 // gotool.TestedGo, so the go command is not asked for a newer Go than
 // itself (decision 0176).
+// TestPreludeNamedTypes pins spec 4.4's rule for a Go type named like a
+// prelude type: its package's name goes in front (the owner's 0.51.1
+// evaluation, b28: fs.DirEntry is fs.FsDirEntry; the rule was the
+// binder's since decision 0392 and the spec did not state it). Whether
+// such a type keeps Go's name is xw question #233, for after 0.55.0.
+func TestPreludeNamedTypes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	decl, _, _ := bindDecl(t, "io/fs")
+	for _, want := range []string{"FsDirEntry", "FsFileInfo"} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("io/fs's binding has no %s:\n%s", want, grep(decl, "DirEntry"))
+		}
+	}
+	if regexp.MustCompile(`(?m)^(pub )?(struct|interface|type) (DirEntry|FileInfo)\b`).MatchString(decl) {
+		t.Errorf("io/fs's binding declares a type with a prelude type's name:\n%s", grep(decl, "DirEntry"))
+	}
+}
+
 func TestWorkspaceGoLine(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake go command is a shell script")

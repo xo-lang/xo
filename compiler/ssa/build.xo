@@ -4149,6 +4149,15 @@ fn (var b: Builder) debug_bind(vo: Int, v: Int, line: Int) {
     k = b.s.f.dvars.len()
     b.s.f.dvars.push(DVar{name: name, ty: ty_of(b.s.f.values[v].tb), line: o.line * 4096 + col, param: o.local is "param" | "var-param" | "recv" | "var-recv"})
     b.s.dvar_of[vo] = k
+  } else if line == 0 && !(b.c.objs[vo].local is "var" | "var-param" | "var-recv") {
+    // an immutable local holds its first value for good: no record for
+    // the join parameter a loop or a branch gives it again. A record at
+    // another line than a variable's first marks it assigned again
+    // (passes.xo drops such a variable's constant records when a later
+    // one's value is optimized away, and arm64 dwvars.xo describes a
+    // constant over the whole function only for a variable whose
+    // records are all at one line; task #243)
+    return
   }
   b.s.f.dbinds.push(DBind{dvar: k, value: v, line: line})
 }

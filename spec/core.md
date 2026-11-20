@@ -2274,7 +2274,11 @@ fn main(os: Os) ! {
   decides them.
 - Names are converted to Xo naming: functions and methods to `snake_case`
   (`Split` is `split`, `EncodeToString` is `encode_to_string`), types stay
-  `UpperCamel`.
+  `UpperCamel`. A Go type whose name is a prelude type's (`DirEntry`,
+  `File`, `Cmd`, `Mutex`, ...) or another type's in its binding takes its
+  package's name in front: `fs.DirEntry` is `fs.FsDirEntry`, `exec.Cmd` is
+  `exec.ExecCmd`, `os.File` is `os.OsFile` (and `Go` in front of that if
+  it is still taken; a name that stays taken is not bound).
 - Types at the boundary: `(T, error)` becomes `T ! go.Error`; a pointer result
   that may be nil becomes `T?`; mutable Go objects become opaque handles;
   a handle keeps Go's equality (2.9): a comparable type the package hands

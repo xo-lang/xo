@@ -1727,10 +1727,43 @@ fn renumber(var f: Func) {
   // binding records follow their values; one whose value no block holds
   // any more is dropped (decision 0252)
   var bs: List[DBind] = []
+  // the variables that lose a record here: a later value of theirs was
+  // optimized away
+  // optimized away, by variable: the lines of the lost records
+  var lost: Map[Int, List[Int]] = {}
   for d in f.dbinds {
     if d.value >= 0 && d.value < map.len() && map[d.value] >= 0 {
       bs.push(DBind{dvar: d.dvar, value: map[d.value], line: d.line})
+    } else {
+      var ls = lost.get(d.dvar) ?? []
+      ls.push(d.line)
+      lost[d.dvar] = ls
     }
+  }
+  if !lost.is_empty() {
+    // Such a variable's constant records go too. A backend describes a
+    // constant over the whole function (arm64 dwvars.xo: no register
+    // holds a literal), which is the variable's value only while no
+    // later record replaces it: `var t = 0` with its loop folded away
+    // kept the one record and a debugger showed `t = 0` after the loop,
+    // where t was 10 (the owner's 0.51.1 evaluation, task #243). With
+    // none it is "optimized out", which is true. A lost record at the
+    // constant's own line is the same declaration (a literal converted
+    // where it is declared), not a later value.
+    var kept: List[DBind] = []
+    for d in bs {
+      if d.value < f.values.len() && f.values[d.value].op == Op.Const {
+        var later = false
+        for l in lost.get(d.dvar) ?? [] {
+          later = later || l != d.line
+        }
+        if later {
+          continue
+        }
+      }
+      kept.push(d)
+    }
+    bs = kept
   }
   f.dbinds = bs
   // the payloads that took their enum's ownership follow theirs too

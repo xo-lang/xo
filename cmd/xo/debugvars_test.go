@@ -65,10 +65,15 @@ func TestDebugVarsDump(t *testing.T) {
 			t.Errorf("dump of sum lacks %q:\n%s", want, body)
 		}
 	}
-	// the loop carries total and k in join parameters: bound from the
-	// start of the loop header (0:0)
-	if n := strings.Count(body, "from 0:0"); n < 4 {
-		t.Errorf("want at least 4 records from a block's start (ps, k, and the loop's k and total), got %d:\n%s", n, body)
+	// the loop carries total in a join parameter: bound from the start of
+	// the loop header (0:0). k, immutable, keeps its one record (task
+	// #243: a record at another line marks a variable assigned again,
+	// and the join parameter of an immutable local is its first value)
+	if n := strings.Count(body, "from 0:0"); n < 3 {
+		t.Errorf("want at least 3 records from a block's start (ps, k, and the loop's total), got %d:\n%s", n, body)
+	}
+	if n := strings.Count(body, "; bind 1 = v"); n != 1 {
+		t.Errorf("the immutable parameter k has %d records, want 1:\n%s", n, body)
 	}
 	// without the flag the dump has no records (the recorded dumps stay
 	// as they were, decision 0217)

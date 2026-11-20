@@ -424,6 +424,21 @@ fn (var g: G) dv_plan() -> DvPlan {
       fn_end = fn_end.max(2 * (rng_e(rg) / 4 + 1))
     }
   }
+  // the variables with records at more than one line: assigned again
+  // (or carried in a join parameter), so no one constant is their value
+  // over the whole function
+  var line0: Map[Int, Int] = {}
+  var varies: Map[Int, Bool] = {}
+  for d in g.f.dbinds {
+    match line0.get(d.dvar) {
+      Some(l) => {
+        if l != d.line {
+          varies[d.dvar] = true
+        }
+      }
+      None => line0[d.dvar] = d.line
+    }
+  }
   for d in g.f.dbinds {
     let dv = g.f.dvars[d.dvar]
     if !g.dv_type_ok(dv.ty) {
@@ -432,9 +447,11 @@ fn (var g: G) dv_plan() -> DvPlan {
     // a binding of a literal (`let label = "order-7"`): its words are
     // made again at each use (isel.xo words), so no register holds them
     // across a call; described as the constant over the whole function
-    // (2026-10-22: it showed <unavailable> in every frame)
+    // (2026-10-22: it showed <unavailable> in every frame). Only a
+    // variable whose records are all at one line: `var x = 0` assigned
+    // again has another, and showed 0 after the assignment (task #243)
     let cx = g.f.values[d.value]
-    if cx.op == ssa.Op.Const && fn_end > 0 {
+    if cx.op == ssa.Op.Const && fn_end > 0 && !varies.contains(d.dvar) {
       let ks = g.dv_const(g.f.aux(cx))
       if ks.len() == g.layout(dv.ty).len() {
         var words: List[List[DvSpan]] = []
