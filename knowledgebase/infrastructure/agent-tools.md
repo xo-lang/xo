@@ -392,7 +392,12 @@ yourself.
   last: --- PASS: ...` per step, with `no new lines since the last beat`
   when its log did not grow: a long llvm step is no longer silent for
   heavyd's 45 minute STALLED mark, and a hung test shows as a log that
-  stopped growing (2026-11-15).
+  stopped growing (2026-11-15). A lease holding the whole lane (a
+  memory gate, an exclusive) that writes no line for twice its STALLED
+  mark (`HEAVYD_STALL_STOP_MIN`, 90 minutes for llvm; 0: never) is
+  stopped with rc 131 and a `STALLED-STOP` line, so the lane's waiters
+  start (#449, 2026-11-19: xw1-425mon held pass4 2h34m with no line,
+  beats included, while repro2 waited 2h14m).
 - A gate step that hangs or runs far past its usual time (lead,
   2026-11-07): before blaming your change or the gate, run the same
   step at main as a control with a go test `-timeout` a few times its
