@@ -268,8 +268,13 @@ lane's `-max`) says why in its report.
   from the build's own pipeline (packed byte lists, `XO_PASSES`, every
   build pass). `xo dev dump asm --fn=NAME DIR` without --ssa runs that
   same build (its old output came from the dump's own pipeline and was
-  not the build's code; it printed every function). NAME matches as in
-  dump ssa: `main` also names std's `cabi_c.main`, so pick a unique name.
+  not the build's code; it printed every function). `--fn=NAME` matches
+  the same way for dump ssa, dump asm and `xo asm` (`ssa.named_in`): a
+  bare NAME names that function in every module (`main` is the
+  program's main and std's `cabi_c.main`; `InStream.push` is
+  `flate.InStream.push`), a qualified `pkg.NAME` names that module's
+  function alone (`cabi_c.main`), and `main.NAME` the program's own
+  (`main.main`). Last verified: 2026-11-20.
 - `XO_POISON_FRAMES=1` fills frame slots with a poison pattern, so a
   read before a write shows up at once.
 - `XO_DCE=off|debug|list` controls and lists native dead function

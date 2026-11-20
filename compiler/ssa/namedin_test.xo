@@ -1,0 +1,19 @@
+// named_in (main.xo): which functions --fn=NAME names (dump ssa, dump
+// asm, xo asm).
+
+test "a qualified --fn name matches that function, not every one of its last part" {
+  // bare: exactly or after a module's name
+  expect(named_in("main", ["main"])) == true
+  expect(named_in("cabi_c.main", ["main"])) == true
+  expect(named_in("flate.InStream.push", ["InStream.push"])) == true
+  // main. names the program's own functions
+  expect(named_in("main", ["main.main"])) == true
+  expect(named_in("sq", ["main.sq"])) == true
+  expect(named_in("cabi_c.main", ["main.main"])) == false
+  // a module-qualified name names that module's function alone
+  expect(named_in("cabi_c.main", ["cabi_c.main"])) == true
+  expect(named_in("main", ["cabi_c.main"])) == false
+  expect(named_in("InStream.push", ["flate.InStream.push"])) == false
+  expect(named_in("push", ["flate.InStream.push"])) == false
+  expect(named_in("anything", [])) == true
+}

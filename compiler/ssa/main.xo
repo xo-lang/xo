@@ -164,14 +164,19 @@ fn dump_body(os: Os, args: List[Str]) ! {
   os.stdio.print(out.freeze())
 }
 
-/// Whether function name is one fns name: exactly, or after a module's
-/// name (`flate.InStream.push` for `InStream.push`); all when fns is empty.
+/// Whether function name is one fns name; all when fns is empty. A name
+/// NAME matches exactly or after a module's name (`InStream.push` names
+/// `flate.InStream.push`, `main` names `cabi_c.main` too). `main.` names
+/// the program's own functions, which have no module name: `main.main`
+/// is the program's main alone (task #468 follow-up: a qualified name
+/// used to match any function named by its last part, so
+/// `flate.InStream.push` also named a program's `InStream.push`).
 pub fn named_in(name: Str, fns: List[Str]) -> Bool {
   if fns.is_empty() {
     return true
   }
   for n in fns {
-    if name == n || name.ends_with(".${n}") || n.ends_with(".${name}") {
+    if name == n || name.ends_with(".${n}") || (n.starts_with("main.") && name == n.trim_prefix("main.")) {
       return true
     }
   }

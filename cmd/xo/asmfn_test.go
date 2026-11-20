@@ -34,6 +34,18 @@ func TestDumpAsmFnIsBuildCode(t *testing.T) {
 	if dump != one {
 		t.Errorf("xo dev dump asm --fn=sq (%d lines) differs from xo asm --fn=sq (%d lines):\n%s", strings.Count(dump, "\n"), strings.Count(one, "\n"), firstLines(dump, 5))
 	}
+	// a qualified name is exact: main.main is the program's main, not
+	// also std's cabi_c.main, which --fn=main names too
+	mm := xo(t, "asm", "--backend=arm64", "--fn=main.main", ".").want(0).out
+	if !strings.HasPrefix(mm, "// func main\n") || strings.Count(mm, "// func ") != 1 {
+		t.Errorf("xo asm --fn=main.main is not the program's main alone (%d functions):\n%s", strings.Count(mm, "// func "), firstLines(mm, 3))
+	}
+	if d := xo(t, "dev", "dump", "asm", "--fn=main.main", ".").want(0).out; d != mm {
+		t.Errorf("xo dev dump asm --fn=main.main differs from xo asm --fn=main.main")
+	}
+	if n := strings.Count(xo(t, "asm", "--backend=arm64", "--fn=main", ".").want(0).out, "// func "); n < 2 {
+		t.Errorf("xo asm --fn=main names %d functions, want main and std's cabi_c.main", n)
+	}
 	if got := xo(t, "asm", "--backend=arm64", "--fn=gone", ".").want(0).out; got != "== no function matches gone\n" {
 		t.Errorf("xo asm --fn=gone: %q", got)
 	}
