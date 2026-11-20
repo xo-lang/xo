@@ -2045,7 +2045,7 @@ fn list_map[T, U, E, fx: Effects](xs: List[T], f: fn(T) -> U ! E uses fx) -> Lis
       }
       // U is T, so a is a List[U]: moved across by address, not through
       // an Any, which would mark a shared for good (any-of-shares-lists)
-      return rt.obj_at[List[U]](rt.obj_addr(a))
+      return list_cross[List[U], T](a)
     }
   }
   if a.len() >= PRESIZE_MIN {
@@ -2164,8 +2164,8 @@ fn words_concat[T](lists: List[List[T]], n: Int) -> List[T]? {
   // Any would mark lists, each of its lists and the result shared for
   // good (gotchas/any-of-shares-lists.md)
   if rt.any_get[List[Int]](rt.any_of[List[T]]([])).is_some() {
-    let r = ints_concat(rt.obj_at[List[List[Int]]](rt.obj_addr(lists)))
-    return Some(rt.obj_at[List[T]](rt.obj_addr(r)))
+    let r = ints_concat(list_cross[List[List[Int]], List[T]](lists))
+    return Some(list_cross[List[T], Int](r))
   }
   None
 }
@@ -2633,8 +2633,8 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
   // would mark the caller's list and every Str in it shared for good
   // (gotchas/any-of-shares-lists.md)
   if rt.any_get[List[Str]](rt.any_of[List[T]]([])).is_some() {
-    let r = list_sort_str(rt.obj_at[List[Str]](rt.obj_addr(xs)))
-    return rt.obj_at[List[T]](rt.obj_addr(r))
+    let r = list_sort_str(list_cross[List[Str], T](xs))
+    return list_cross[List[T], Str](r)
   }
   // xs's last use: when the call was the caller's last use of its list
   // too, a holds the only reference and the sorts below write its array
@@ -3284,6 +3284,16 @@ fn list_heapify[T: Ord](var xs: List[T]) {
   }
 }
 
+/// xs's object as an R (R is List[E] or a List of the same elements,
+/// the caller's type test says): moved across by address with xs a
+/// borrowed parameter, so xs is held for the whole call and the address
+/// is never used past its release, with or without decision 0460's
+/// addr_keep pass (task #461: with XO_PASSES=-addr_keep, sort_in_place
+/// on a List[Int] took its array after xs let go of it, a use after free)
+fn list_cross[R, E](xs: List[E]) -> R {
+  rt.obj_at[R](rt.obj_addr(xs))
+}
+
 /// list_sort's sort in place, for a var receiver: the compiler has already
 /// copied the list when another binding shares it, so the receiver's array
 /// is the only one the sort writes.
@@ -3299,10 +3309,10 @@ fn list_sort_in_place[T: Ord](var xs: List[T]) {
     // the type test is on an empty list and the array crosses by
     // address both ways: an Any marked the caller's list shared for good
     // (gotchas/any-of-shares-lists.md)
-    var is = rt.obj_at[List[Int]](rt.obj_addr(xs))
+    var is = list_cross[List[Int], T](xs)
     xs = []
     pdq_sort_ints(is)
-    xs = rt.obj_at[List[T]](rt.obj_addr(is))
+    xs = list_cross[List[T], Int](is)
     return
   }
   merge_sort_in_place(xs, fn(a, b) { a < b })

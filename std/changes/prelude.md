@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-20: fix: List crossings by address hold their list without the addr_keep pass
+
+- Kind: fix
+- Commit: this push
+- Found by: task #461, internal/arm64 TestGoldenPassesOff rc_empty_entry/all (SIGSEGV in alloc after sort_in_place, red on main since c0dadde57)
+- Go reference: none (an Xo ownership rule, decision 0460)
+- Change: sort_in_place on a List[Int], sort on a List[Str], List.concat of 64 or more Ints and map to its own element type move the list across with list_cross, whose borrowed parameter holds it to the read of its address; before, only the addr_keep pass held it, so XO_PASSES=-addr_keep freed the array first. Default builds are unchanged
+- Measured: no speed claim
+- Test: golden addr_keep_cross in TestGoldenPassesOff (fails before with -addr_keep: SIGSEGV), rc_empty_entry/all passes
+
 ## 2026-11-19: perf: BytesBuilder.get_le and get_be of 4 or 8 bytes inline in loops with many call sites
 
 - Kind: perf

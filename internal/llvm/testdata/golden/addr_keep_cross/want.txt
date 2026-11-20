@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+sort_in_place 300 true 154118 150866
+sort strs 300 s10 s991 148030
+concat 2400 1145944 147058
+map 300 146590 135502
+sort_in_place 1000 true 500460 502732
+sort strs 1000 s0 s999 503412
+concat 8000 3904944 496908
+map 1000 491404 486900
+--- stderr

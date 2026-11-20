@@ -1,0 +1,68 @@
+// The prelude's List crossings by address (rt.obj_addr of a list read back
+// with rt.obj_at as a List of the same elements): sort_in_place on a
+// List[Int], sort on a List[Str], concat of 64 or more Ints, and map to
+// its own element type over 256 or more elements. Each held its list only
+// through decision 0460's addr_keep pass, so XO_PASSES=-addr_keep took
+// the array after the list let go of it (task #461: a use after free in
+// rc_empty_entry's sort_in_place). TestGoldenPassesOff runs this with
+// addr_keep off.
+
+fn ints(n: Int, seed: Int) -> List[Int] {
+  var xs: List[Int] = []
+  var s = seed
+  for _ in 0..n {
+    s = (s * 1103515245 + 12345) % 2147483648
+    xs.push(s % 1000)
+  }
+  xs
+}
+
+fn sum(xs: List[Int]) -> Int {
+  var t = 0
+  for x in xs { t += x }
+  t
+}
+
+fn sorted_in_place(n: Int) -> Str {
+  var xs = ints(n, n)
+  xs.sort_in_place()
+  var ok = true
+  for i in 1..xs.len() {
+    if xs[i - 1] > xs[i] { ok = false }
+  }
+  // allocations after the sort reuse whatever the sort freed
+  let ys = ints(n, n + 1)
+  "sort_in_place ${xs.len()} ${ok} ${sum(xs)} ${sum(ys)}"
+}
+
+fn sorted_strs(n: Int) -> Str {
+  var ss: List[Str] = []
+  for x in ints(n, 7) { ss.push("s${x}") }
+  let t = ss.sort()
+  let more = ints(n, 8)
+  "sort strs ${t.len()} ${t[0]} ${t[t.len() - 1]} ${sum(more)}"
+}
+
+fn concat(n: Int) -> Str {
+  var ls: List[List[Int]] = []
+  for i in 0..8 { ls.push(ints(n, i)) }
+  let c = List.concat(ls)
+  let more = ints(n, 99)
+  "concat ${c.len()} ${sum(c)} ${sum(more)}"
+}
+
+fn mapped(n: Int) -> Str {
+  let m = ints(n, 3).map(fn(x) { x + 1 })
+  let more = ints(n, 4)
+  "map ${m.len()} ${sum(m)} ${sum(more)}"
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  for n in [300 + k, 1000 + k] {
+    os.stdio.println(sorted_in_place(n))
+    os.stdio.println(sorted_strs(n))
+    os.stdio.println(concat(n))
+    os.stdio.println(mapped(n))
+  }
+}

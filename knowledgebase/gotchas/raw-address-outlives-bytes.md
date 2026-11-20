@@ -74,3 +74,15 @@ use of a raw address taken from it in the same function, so
 kept in a field, passed through a block parameter, or handed to another
 function that keeps it still needs `raw.alive` (or a field that holds the
 value).
+
+Observed 2026-11-20 (task #461): decision 0460's keep-alive is the
+`addr_keep` pass, and `XO_PASSES=-addr_keep` (internal/arm64
+TestGoldenPassesOff's "all" set) turns it off, so std code that holds a
+value only through that pass is a use after free there.
+`rt.obj_at[List[Int]](rt.obj_addr(xs))` in the prelude's List[Int]
+sort_in_place (c0dadde57) released xs before obj_at took its array, and
+rc_empty_entry crashed in the next allocation. A crossing by address goes
+through a function whose parameter is the value (the prelude's list_cross,
+like tlssrv.keep_list), never a bare obj_addr of a value released in the
+same expression; golden addr_keep_cross runs the four prelude crossings
+with addr_keep off.
