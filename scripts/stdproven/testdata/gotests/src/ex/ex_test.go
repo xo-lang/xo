@@ -83,6 +83,16 @@ var vals = []int64{
 	^0,
 }
 
+// math's integer limits, as protowire's TestZigZag writes them
+var limits = []uint64{
+	math.MaxUint64 - 2,
+	math.MinInt64 + 1,
+	math.MaxInt32,
+	math.MaxUint8 + math.MinInt8,
+	math.Pi,
+	other.MaxInt64,
+}
+
 var sums = []struct{ n int }{
 	{1 + 2},
 	{"a" + "b"},

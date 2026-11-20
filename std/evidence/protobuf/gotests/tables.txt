@@ -1,0 +1,1 @@
+google.golang.org/protobuf/encoding/protowire wire_test.go TestZigZag.tests dec,enc zigzag

@@ -57,6 +57,9 @@ func TestGoTableCases(t *testing.T) {
 		// FIELDS "." reads a table of values; integer constant
 		// expressions fold (1 + 2 read as "12", a string +, before)
 		{"vals", ".", []string{"0 -9223372036854775808", "1 -9223372036854775807", "2 9223372036854775807", "3 20", "4 98", "6 3", "7 -1"}, 1},
+		// math's integer limits fold; math.Pi and another package's
+		// names do not
+		{"limits", ".", []string{"0 18446744073709551613", "1 -9223372036854775807", "2 2147483647", "3 127"}, 2},
 		{"sums", "n", []string{"0 3", "1 ab"}, 0},
 		{"calls", "in", []string{"0 ababab", "1 xy", "5 p", "6 q"}, 4},
 	}

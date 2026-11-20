@@ -560,9 +560,17 @@ func intLit(e ast.Expr) bool {
 
 // intConst folds an integer constant expression of literals: integer and
 // rune literals under unary -, + and ^, the binary integer operators, and
-// parentheses (-1<<63 + 1 is -9223372036854775807).
+// parentheses (-1<<63 + 1 is -9223372036854775807), and math's integer
+// limits (math.MinInt64 + 1, as protowire's TestZigZag writes).
 func intConst(e ast.Expr) (constant.Value, bool) {
 	switch e := e.(type) {
+	case *ast.SelectorExpr:
+		if x, ok := e.X.(*ast.Ident); ok && x.Name == "math" {
+			if v, ok := mathLimits[e.Sel.Name]; ok {
+				return constant.MakeFromLiteral(v, token.INT, 0), true
+			}
+		}
+		return nil, false
 	case *ast.BasicLit:
 		if e.Kind != token.INT && e.Kind != token.CHAR {
 			return nil, false
@@ -607,6 +615,17 @@ func intConst(e ast.Expr) (constant.Value, bool) {
 		}
 	}
 	return nil, false
+}
+
+// mathLimits is math's integer limit constants (MaxInt and MaxUint as on
+// a 64-bit target, which the tables assume).
+var mathLimits = map[string]string{
+	"MaxInt": "9223372036854775807", "MinInt": "-9223372036854775808",
+	"MaxInt8": "127", "MinInt8": "-128", "MaxInt16": "32767", "MinInt16": "-32768",
+	"MaxInt32": "2147483647", "MinInt32": "-2147483648",
+	"MaxInt64": "9223372036854775807", "MinInt64": "-9223372036854775808",
+	"MaxUint": "18446744073709551615", "MaxUint8": "255", "MaxUint16": "65535",
+	"MaxUint32": "4294967295", "MaxUint64": "18446744073709551615",
 }
 
 // constNames is an exported constant of the table's package, or a | of
