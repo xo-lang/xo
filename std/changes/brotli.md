@@ -1,5 +1,16 @@
 # std/brotli changes
 
+## 2026-11-19: perf: quality 10 and 11 price each copy code's run of lengths once
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271 (enc11 instruction profile of update_nodes on linux/arm64 host 1: its hottest loop computed copy_code, with checked arithmetic, for every candidate length, though the command's cost changes only when the copy code does)
+- Go reference: andybalholm/brotli backward_references_hq.go updateNodes (computes getCopyLengthCode for every length; Xo now walks ENC_COPY_BASE's runs instead, the same costs and choices)
+- Measured: callgrind on linux/arm64 (68932cfca against 9e67ae77c): bench/perf/brotli enc11 7.77% fewer instructions, enc6 unchanged (quality 6 does not use it); `xo bench --ab` on linux/arm64 host 1 (6 rounds): enc11 0.901 (95% 0.875 to 0.931, 253.8 to 228.8 ms, better)
+- Test: brotli module tests (8 passed); bench output unchanged (enc11 13312, enc6 167596 both)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: quality 10 and 11 keep each node's distance cache in the queue
 
 - Kind: perf
