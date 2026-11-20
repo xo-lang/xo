@@ -23,7 +23,7 @@ GET /a//b/2 -> 307 <a href="/a/b/2">Temporary Redirect</a>.
 
 GET /a/1/b/ -> 200 root
 GET /a/1/b -> 200 root
-GET /a/%41/b/%2F -> 200 ab [A] [/] no z
+GET /a/%41/b/%2F -> 200 ab [%41] [%2F] no z
 GET /files -> 307 <a href="/files/">Temporary Redirect</a>.
 
 
@@ -42,7 +42,7 @@ GET /x/y -> 200 xy
 GET /x///y -> 307 <a href="/x/y">Temporary Redirect</a>.
 
 
-GET /users/%37 -> 200 user 7
+GET /users/%37 -> 400 {"error":"path segment `id` must be an Int"}
 GET /USERS -> 200 root
 GET /users/-3 -> 200 user -3
 GET /users/99999999999999999999 -> 400 {"error":"path segment `id` must be an Int"}
@@ -67,13 +67,13 @@ PATCH /files -> 405 {"error":"method not allowed"}
 PATCH /files/ -> 405 {"error":"method not allowed"}
 PATCH /files/a/b//c/ -> 307 
 PATCH /files/a%2Fb/c -> 405 {"error":"method not allowed"}
-PATCH /any/q -> 200 any PATCH [q]
+PATCH /any/q -> 405 {"error":"method not allowed"}
 PATCH /any/ -> 405 {"error":"method not allowed"}
 PATCH /any -> 405 {"error":"method not allowed"}
 PATCH /x//y -> 307 
 PATCH /x/y -> 405 {"error":"method not allowed"}
 PATCH /x///y -> 307 
-PATCH /users/%37 -> 200 patch 7
+PATCH /users/%37 -> 400 {"error":"path segment `id` must be an Int"}
 PATCH /USERS -> 405 {"error":"method not allowed"}
 PATCH /users/-3 -> 200 patch -3
 PATCH /users/99999999999999999999 -> 400 {"error":"path segment `id` must be an Int"}
@@ -98,7 +98,7 @@ POST /files -> 405 {"error":"method not allowed"}
 POST /files/ -> 405 {"error":"method not allowed"}
 POST /files/a/b//c/ -> 307 
 POST /files/a%2Fb/c -> 405 {"error":"method not allowed"}
-POST /any/q -> 200 any POST [q]
+POST /any/q -> 405 {"error":"method not allowed"}
 POST /any/ -> 405 {"error":"method not allowed"}
 POST /any -> 405 {"error":"method not allowed"}
 POST /x//y -> 307 
@@ -124,7 +124,7 @@ get /a/1/b/2 -> 200 ab [1] [2] no z
 get /a//b/2 -> 307 
 get /a/1/b/ -> 200 root
 get /a/1/b -> 200 root
-get /a/%41/b/%2F -> 200 ab [A] [/] no z
+get /a/%41/b/%2F -> 200 ab [%41] [%2F] no z
 get /files -> 307 
 get /files/ -> 200 files []
 get /files/a/b//c/ -> 307 
@@ -135,7 +135,7 @@ get /any -> 200 root
 get /x//y -> 307 
 get /x/y -> 200 xy
 get /x///y -> 307 
-get /users/%37 -> 200 user 7
+get /users/%37 -> 400 {"error":"path segment `id` must be an Int"}
 get /USERS -> 200 root
 get /users/-3 -> 200 user -3
 get /users/99999999999999999999 -> 400 {"error":"path segment `id` must be an Int"}

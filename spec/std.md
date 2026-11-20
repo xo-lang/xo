@@ -1833,9 +1833,32 @@ type Next = fn(Request) -> Response
   `/healthz/`. A `GET` pattern also takes `HEAD` requests (the handler sees
   the method `HEAD`; the server sends the headers and no body). Matching is
   Go 1.22's ServeMux (std/changes/http.md
-  2026-11-10): the route with the most literal segments wins, a route
-  without a rest before one with, the first registered among equals.
-  Plain strings: `"GET /users/{id:Int}"`.
+  2026-11-10): a route of the request's method wins over a `GET` route
+  for a `HEAD` request, which wins over a route of any method; among
+  those, the route with the most literal segments wins, a route without
+  a rest before one with, the first registered among equals. A request
+  target `*` is 400 with `Connection: close` (the server answers
+  `OPTIONS *` itself, before the Router). Registering a route that
+  conflicts with one already registered faults, as Go's `Handle`
+  panics: `http: pattern "P" conflicts with pattern "Q":` and Go's
+  reason, for two patterns matching the same requests (`/a/{x}` and
+  `/a/{y}`), or some requests each with neither more specific
+  (`/a/{x}` and `/{y}/b`; `GET /` and `/any/{v}`, whose method is more
+  general but path more specific). `mount` checks the mounted routes
+  the same way.
+  Plain strings: `"GET /users/{id:Int}"`; a space or tab ends the method.
+  The path matched is the request's escaped path (Go's
+  `URL.EscapedPath`), each segment unescaped once, so `%2F` stays inside
+  its segment (`/files/a%2Fb` gives `name` `a/b`) and `%2561` is `%61`; a
+  `{name...}` value is unescaped once.
+- `handle` and `handle_stream` fault on a pattern Go's ServeMux refuses
+  (as Go's `Handle` panics), with `http: parsing "PATTERN": ` and Go's
+  reason: an empty pattern, a method that is not a token, a path without
+  `/`, a method with an unclean path (`GET /a//b`), a wildcard segment
+  not `{...}` as a whole, an empty or non-identifier name, a duplicate
+  name, `{name...}` or `{$}` not last. A host pattern
+  (`example.com/a`), which Go takes, faults too: the Router routes on the
+  path alone.
 - Path cleaning and redirects (Go 1.26's ServeMux): the request path is
   cleaned (`//`, `.`, `..` resolved, a trailing slash kept); when the
   cleaned path differs, the answer is a 307 with the cleaned path (and the

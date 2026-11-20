@@ -210,18 +210,23 @@ fn show(os: Os, label: Str, peer: Str, own: Str, r: Result[http.Response, http.C
   }
 }
 
+// the Go client's User-Agent and the native one's agree; the rest too
+fn headers_reply(req: http.Request) -> http.Response {
+  http.text(200, "${fields(req.headers)} host=${req.url.host} scheme=${req.url.scheme} port=${req.url.port ?? -1}")
+}
+
 fn routes(clock: Clock) -> http.Router uses clock {
   var r = http.router()
   // RFC 7541's examples request / and /index.html (probeH2HPACK)
   r.handle("GET /", fn(req) { http.text(200, "${fields(req.headers)} host=${req.url.host} scheme=${req.url.scheme}") })
   r.handle("GET /index.html", fn(req) { http.text(200, "${fields(req.headers)} host=${req.url.host} scheme=${req.url.scheme}") })
   r.handle("GET /hello", fn(req) { http.text(200, "hello ${req.method} ${req.path} q=${req.query("q") ?? "-"}") })
-  r.handle("/any", fn(req) { http.text(200, "any ${req.method}") })
-  r.handle("/headers", fn(req) {
-    var h = req.headers
-    // the Go client's User-Agent and the native one's agree; the rest too
-    http.text(200, "${fields(h)} host=${req.url.host} scheme=${req.url.scheme} port=${req.url.port ?? -1}")
-  })
+  // one route per method: a methodless /any or /headers conflicts with
+  // GET / (Go's ServeMux refuses the pair, task #238); HEAD takes GET's
+  r.handle("GET /any", fn(req) { http.text(200, "any ${req.method}") })
+  r.handle("OPTIONS /any", fn(req) { http.text(200, "any ${req.method}") })
+  r.handle("GET /headers", fn(req) { headers_reply(req) })
+  r.handle("POST /headers", fn(req) { headers_reply(req) })
   r.handle("POST /echo", fn(req) {
     let ok = req.body == "z".repeat(req.body.len()).bytes()
     http.text(200, "len=${req.body.len()} ok=${ok}")

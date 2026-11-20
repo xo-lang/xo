@@ -1,4 +1,5 @@
 use std/http
+use std/task
 use std/url
 
 // Request.form and query_all (decision 0279), with the cases of Go's
@@ -2050,4 +2051,146 @@ test "Request.gone closes when the HTTP/2 client resets the stream" uses (net, c
   }
   let lit = http.Request{method: "GET", path: "/", url: http.parse_url("http://h/").or_fault("url"), headers: {}, body: b"", remote_ip: ""}
   expect(lit.gone().try_recv()) == None
+}
+
+// b35 (task #238): the Router matches the escaped path, as Go's ServeMux
+// (findHandler: r.URL.EscapedPath(), cleaned, each segment unescaped once).
+// It matched the decoded path and unescaped it again, so `%2F` split a
+// segment and `%2561` became `a`: a rule on the raw path was bypassed.
+test "the router matches the escaped path and unescapes each segment once" {
+  var r = http.router()
+  r.handle("GET /admin/{p...}", fn(req) { http.text(200, "admin ${req.param("p")}") })
+  r.handle("GET /files/{name}", fn(req) { http.text(200, "file ${req.param("name")}") })
+  r.handle("GET /static/{p...}", fn(req) { http.text(200, "static ${req.param("p")}") })
+  let got = fn(path: Str) -> (Int, Str) {
+    let resp = r.call(http.new_request("GET", "http://x${path}"))
+    (resp.status, resp.body.to_str_lossy())
+  }
+  expect(got("/admin/x")) == (200, "admin x")
+  expect(got("/admin%2Fx").0) == 404
+  expect(got("/%2561dmin/x").0) == 404
+  expect(got("/%61dmin/x")) == (200, "admin x")
+  expect(got("/files/%2541")) == (200, "file %41")
+  expect(got("/files/a%2Fb")) == (200, "file a/b")
+  expect(got("/static/%2e%2e/a.txt")) == (200, "static ../a.txt")
+  expect(got("/static/a%2Fb/c%20d")) == (200, "static a/b/c d")
+  // the redirect to the cleaned path is the escaped path escaped again
+  // (Go's url.URL{Path: path}.String()); the trailing slash one escapes
+  // the decoded path
+  let red = r.call(http.new_request("GET", "http://x/static/x/../b%2Fc"))
+  expect((red.status, red.headers.get("Location"))) == (307, Some("/static/b%252Fc"))
+  var r2 = http.router()
+  r2.handle("GET /dir/", fn(_req) { http.text(200, "dir") })
+  r2.handle("GET /a b/", fn(_req) { http.text(200, "ab") })
+  let red2 = r2.call(http.new_request("GET", "http://x/dir"))
+  expect((red2.status, red2.headers.get("Location"))) == (307, Some("/dir/"))
+  let red3 = r2.call(http.new_request("GET", "http://x/a%20b"))
+  expect((red3.status, red3.headers.get("Location"))) == (307, Some("/a%20b/"))
+}
+
+// b36 (task #238): Router.handle refuses the patterns Go's ServeMux does
+// (parsePattern), with a fault as Go's Handle panics; it took each of
+// them, so "" matched every path and `/{r...}/admin` never matched.
+test "the router refuses invalid patterns" {
+  let fault_of = fn(p: Str) -> Str {
+    match task.isolate(fn() -> Int ! () {
+      var r = http.router()
+      r.handle(p, fn(_req) { http.text(200, "x") })
+      0
+    }) {
+      Ok(_) => ""
+      Err(task.Isolated.Faulted(info)) => info.msg
+      Err(_) => "other"
+    }
+  }
+  expect(fault_of("")) == "http: parsing \"\": empty pattern"
+  expect(fault_of("/{r...}/admin")) == "http: parsing \"/{r...}/admin\": {...} wildcard not at end"
+  expect(fault_of("/{a}/{a}")) == "http: parsing \"/{a}/{a}\": duplicate wildcard name \"a\""
+  expect(fault_of("/{a}/{a:Int}")) == "http: parsing \"/{a}/{a:Int}\": duplicate wildcard name \"a\""
+  expect(fault_of("example.com/a")) == "http: parsing \"example.com/a\": host patterns are not supported (std.md 4.1)"
+  expect(fault_of("a")) == "http: parsing \"a\": host/path missing /"
+  expect(fault_of("G(T /a")) == "http: parsing \"G(T /a\": invalid method \"G(T\""
+  expect(fault_of("GET /a/../b")) == "http: parsing \"GET /a/../b\": non-CONNECT pattern with unclean path can never match"
+  expect(fault_of("/x{a}")) == "http: parsing \"/x{a}\": bad wildcard segment (must start with '{')"
+  expect(fault_of("/{a")) == "http: parsing \"/{a\": bad wildcard segment (must end with '}')"
+  expect(fault_of("/{}")) == "http: parsing \"/{}\": empty wildcard"
+  expect(fault_of("/{...}")) == "http: parsing \"/{...}\": empty wildcard"
+  expect(fault_of("/{1a}")) == "http: parsing \"/{1a}\": bad wildcard name \"1a\""
+  expect(fault_of("/{$}/a")) == "http: parsing \"/{$}/a\": {$} not at end"
+  // the forms Go and std.md 4.1 take
+  expect(fault_of("GET\t/a")) == ""
+  expect(fault_of("GET   /a/{id:Int}/{rest...}")) == ""
+  expect(fault_of("/a/{$}")) == ""
+  expect(fault_of("/a/../b")) == ""
+  expect(fault_of("/{é_1}")) == ""
+  var r = http.router()
+  r.handle("GET\t/t", fn(_req) { http.text(200, "tab") })
+  expect(r.call(http.new_request("GET", "http://x/t")).body.to_str_lossy()) == "tab"
+}
+
+// task #238 (the v0.51.1 evaluation's doc mismatch): precedence is Go's
+// ServeMux, the method first (the request's own, then GET for HEAD, then
+// any) and the path within it; a request target `*` is 400 with
+// Connection: close (ServeMux.ServeHTTP). Xo answered `/a` before
+// `GET /a`, HEAD /h with `GET /h`, and `GET *` with a 307 to `/*`.
+test "the router prefers a route of the request's method, as Go" {
+  var r = http.router()
+  r.handle("/a", fn(_req) { http.text(200, "any") })
+  r.handle("GET /a", fn(_req) { http.text(200, "get") })
+  r.handle("GET /h", fn(_req) { http.text(200, "get h") })
+  r.handle("HEAD /h", fn(_req) { http.text(200, "head h") })
+  r.handle("/{x}/b", fn(_req) { http.text(200, "any x") })
+  r.handle("POST /{x}/c", fn(_req) { http.text(200, "post xc") })
+  let got = fn(m: Str, path: Str) -> (Int, Str) {
+    let resp = r.call(http.new_request(m, "http://x${path}"))
+    (resp.status, resp.body.to_str_lossy())
+  }
+  expect(got("GET", "/a")) == (200, "get")
+  expect(got("POST", "/a")) == (200, "any")
+  expect(got("HEAD", "/a").0) == 200
+  expect(got("HEAD", "/h").0) == 200
+  expect(got("GET", "/h")) == (200, "get h")
+  expect(got("POST", "/q/b")) == (200, "any x")
+  expect(got("POST", "/q/c")) == (200, "post xc")
+  expect(got("GET", "/q/b")) == (200, "any x")
+  // HEAD's handler: which route ran shows in a header, HEAD has no body
+  var r2 = http.router()
+  r2.handle("GET /h", fn(_req) { http.text(200, "g").with_header("X-R", "get") })
+  r2.handle("HEAD /h", fn(_req) { http.text(200, "h").with_header("X-R", "head") })
+  r2.handle("GET /a", fn(_req) { http.text(200, "g").with_header("X-R", "get") })
+  r2.handle("/a", fn(_req) { http.text(200, "a").with_header("X-R", "any") })
+  expect(r2.call(http.new_request("HEAD", "http://x/h")).headers.get("X-R")) == Some("head")
+  expect(r2.call(http.new_request("HEAD", "http://x/a")).headers.get("X-R")) == Some("get")
+  let u = http.Url{scheme: "http", host: "x", port: None, path: "*", query: {}}
+  let star = r.call(http.Request{method: "GET", path: "*", url: u, headers: {}, body: b"", remote_ip: ""})
+  expect((star.status, star.headers.get("Connection"), star.body.len())) == (400, Some("close"), 0)
+}
+
+// task #238: ServeMux.Handle refuses a pattern that conflicts with one
+// registered before (pattern.go conflictsWith), in Go's words; the Router
+// took both, and its method-first pick then let `GET /` answer `/any/q`
+test "the router refuses conflicting patterns, as Go" {
+  let conflict = fn(a: Str, b: Str) -> Str {
+    match task.isolate(fn() -> Int ! () {
+      var r = http.router()
+      r.handle(a, fn(_req) { http.text(200, "a") })
+      r.handle(b, fn(_req) { http.text(200, "b") })
+      0
+    }) {
+      Ok(_) => "ok"
+      Err(task.Isolated.Faulted(info)) => info.msg
+      Err(_) => "other"
+    }
+  }
+  expect(conflict("GET /", "/any/{v}")) == "http: pattern \"/any/{v}\" conflicts with pattern \"GET /\":\n/any/{v} matches more methods than GET /, but has a more specific path pattern"
+  expect(conflict("/a/b", "GET /a/{x}")) == "http: pattern \"GET /a/{x}\" conflicts with pattern \"/a/b\":\nGET /a/{x} matches fewer methods than /a/b, but has a more general path pattern"
+  expect(conflict("/a/{x}", "/a/{y}")) == "http: pattern \"/a/{y}\" conflicts with pattern \"/a/{x}\":\n/a/{y} matches the same requests as /a/{x}"
+  expect(conflict("/a/{x}", "/{y}/b")) == "http: pattern \"/{y}/b\" conflicts with pattern \"/a/{x}\":\n/{y}/b and /a/{x} both match some paths, like \"/a/b\".\nBut neither is more specific than the other.\n/{y}/b matches \"/y/b\", but /a/{x} doesn't.\n/a/{x} matches \"/a/x\", but /{y}/b doesn't."
+  expect(conflict("/files/{p...}", "/files/")) == "http: pattern \"/files/\" conflicts with pattern \"/files/{p...}\":\n/files/ matches the same requests as /files/{p...}"
+  expect(conflict("/a", "GET /a")) == "ok"
+  expect(conflict("GET /{x}", "POST /{y}")) == "ok"
+  expect(conflict("GET /users/{id}", "GET /users/me")) == "ok"
+  expect(conflict("GET /a", "HEAD /a")) == "ok"
+  expect(conflict("/a/{$}", "/a/{x}")) == "ok"
+  expect(conflict("/", "/{$}")) == "ok"
 }

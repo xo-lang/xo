@@ -23,7 +23,6 @@ fn main(os: Os) {
   r.handle("POST /items", fn(q: http.Request) -> http.Response { http.text(201, "made") })
   r.handle("GET /items/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "item ${q.param("id")}") })
   r.handle("PUT /items/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "put ${q.param("id")}") })
-  r.handle("PUT /items/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "put again") })
   r.handle("/any", fn(q: http.Request) -> http.Response { http.text(200, "any ${q.method}") })
   var sub = http.router()
   sub.handle("GET /s", fn(q: http.Request) -> http.Response { http.text(200, "sub") })

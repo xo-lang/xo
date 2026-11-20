@@ -454,18 +454,334 @@ fn req_pieces(p: Str) -> List[Str] {
   out
 }
 
-fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
-  var method = ""
-  var p = pattern
-  match pattern.find(" ") {
+/// A pattern's method and the rest: split at its first space or tab, the
+/// rest's leading blanks dropped (Go's parsePattern); no method when it has
+/// neither.
+fn pattern_method(pattern: Str) -> (Str, Str) {
+  let b = pattern.bytes()
+  var i = 0
+  while i < b.len() {
+    if b[i] == 32 || b[i] == 9 {
+      var j = i + 1
+      while j < b.len() && (b[j] == 32 || b[j] == 9) {
+        j += 1
+      }
+      return (raw.str_slice(pattern, 0, i), raw.str_slice(pattern, j, pattern.len()))
+    }
+    i += 1
+  }
+  ("", pattern)
+}
+
+/// Why Go's ServeMux refuses pattern (parsePattern's errors, without the
+/// offset), or "" when it is a pattern of std.md 4.1. A host pattern Go
+/// takes is refused: the Router routes on the path alone.
+fn pattern_error(pattern: Str) -> Str {
+  if pattern.is_empty() {
+    return "empty pattern"
+  }
+  let (method, rest) = pattern_method(pattern)
+  if !method.is_empty() && !pattern_token(method) {
+    return "invalid method \"${method}\""
+  }
+  match rest.find("/") {
+    None => return "host/path missing /"
     Some(i) => {
       if i > 0 {
-        method = raw.str_slice(pattern, 0, i).to_upper()
-        p = raw.str_slice(pattern, i + 1, pattern.len()).trim()
+        if raw.str_slice(rest, 0, i).contains("{") {
+          return "host contains '{' (missing initial '/'?)"
+        }
+        return "host patterns are not supported (std.md 4.1)"
       }
     }
-    None => ()
   }
+  if !method.is_empty() && method != "CONNECT" && rest != clean_request_path(rest) {
+    return "non-CONNECT pattern with unclean path can never match"
+  }
+  var seen: List[Str] = []
+  let pieces = rest.split("/")
+  var k = 1
+  while k < pieces.len() {
+    let seg = pieces[k]
+    let at_end = k == pieces.len() - 1
+    k += 1
+    match seg.find("{") {
+      None => continue
+      Some(j) => {
+        if j != 0 {
+          return "bad wildcard segment (must start with '{')"
+        }
+      }
+    }
+    if !seg.ends_with("}") {
+      return "bad wildcard segment (must end with '}')"
+    }
+    var name = raw.str_slice(seg, 1, seg.len() - 1)
+    if name == "$" {
+      if !at_end {
+        return "{$} not at end"
+      }
+      continue
+    }
+    let multi = name.ends_with("...")
+    if multi {
+      if !at_end {
+        return "{...} wildcard not at end"
+      }
+      name = name.trim_suffix("...")
+    } else {
+      name = name.trim_suffix(":Int")
+    }
+    if name.is_empty() {
+      return "empty wildcard"
+    }
+    for (ri, c) in name.runes().indexed() {
+      if !c.is_letter() && c != '_' && (ri == 0 || !c.is_digit()) {
+        return "bad wildcard name \"${name}\""
+      }
+    }
+    if seen.contains(name) {
+      return "duplicate wildcard name \"${name}\""
+    }
+    seen.push(name)
+  }
+  ""
+}
+
+/// Whether m is an HTTP token (RFC 9110 tchar; Go's validMethod).
+fn pattern_token(m: Str) -> Bool {
+  for c in m.bytes() {
+    let ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 46 || c == 94 || c == 95 || c == 96 || c == 124 || c == 126
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// Faults on a pattern Go's ServeMux refuses, as Go's Handle panics (b36,
+/// task #238: "" matched every path, `/{r...}/admin` none).
+fn check_pattern(pattern: Str) {
+  let e = pattern_error(pattern)
+  if !e.is_empty() {
+    fault("http: parsing \"${pattern}\": ${e}")
+  }
+}
+
+// Go's pattern conflicts (net/http pattern.go conflictsWith, task #238):
+// two routes conflict when they match the same requests or some requests
+// each with neither more specific, as ServeMux.Handle refuses them. The
+// relations: 0 equivalent, 1 more general, 2 more specific, 3 disjoint,
+// 4 overlaps.
+
+/// Go's segment fields of s: multi (a rest), wild (one segment), and s
+/// (the name, the literal, or "/" for `{$}`).
+fn seg_multi(s: Seg) -> Bool {
+  s.rest
+}
+
+fn seg_wild(s: Seg) -> Bool {
+  !s.rest && !s.dollar && !s.param.is_empty()
+}
+
+fn seg_s(s: Seg) -> Str {
+  if s.rest || seg_wild(s) { s.param } else if s.dollar { "/" } else { s.lit }
+}
+
+fn inverse_rel(r: Int) -> Int {
+  if r == 2 { 1 } else if r == 1 { 2 } else { r }
+}
+
+fn combine_rel(r1: Int, r2: Int) -> Int {
+  if r1 == 0 {
+    return r2
+  }
+  if r1 == 3 {
+    return 3
+  }
+  if r1 == 4 {
+    return if r2 == 3 { 3 } else { 4 }
+  }
+  if r2 == 0 {
+    return r1
+  }
+  if r2 == inverse_rel(r1) {
+    return 4
+  }
+  r2
+}
+
+fn compare_methods(m1: Str, m2: Str) -> Int {
+  if m1 == m2 {
+    return 0
+  }
+  if m1.is_empty() {
+    return 1
+  }
+  if m2.is_empty() {
+    return 2
+  }
+  if m1 == "GET" && m2 == "HEAD" {
+    return 1
+  }
+  if m2 == "GET" && m1 == "HEAD" {
+    return 2
+  }
+  3
+}
+
+fn compare_segs(s1: Seg, s2: Seg) -> Int {
+  if seg_multi(s1) && seg_multi(s2) {
+    return 0
+  }
+  if seg_multi(s1) {
+    return 1
+  }
+  if seg_multi(s2) {
+    return 2
+  }
+  if seg_wild(s1) && seg_wild(s2) {
+    return 0
+  }
+  if seg_wild(s1) {
+    return if seg_s(s2) == "/" { 3 } else { 1 }
+  }
+  if seg_wild(s2) {
+    return if seg_s(s1) == "/" { 3 } else { 2 }
+  }
+  if seg_s(s1) == seg_s(s2) { 0 } else { 3 }
+}
+
+fn last_multi(segs: List[Seg]) -> Bool {
+  !segs.is_empty() && segs[segs.len() - 1].rest
+}
+
+fn compare_paths(a: List[Seg], b: List[Seg]) -> Int {
+  if a.len() != b.len() && !last_multi(a) && !last_multi(b) {
+    return 3
+  }
+  var rel = 0
+  var i = 0
+  while i < a.len() && i < b.len() {
+    rel = combine_rel(rel, compare_segs(a[i], b[i]))
+    if rel == 3 {
+      return rel
+    }
+    i += 1
+  }
+  if a.len() == b.len() {
+    return rel
+  }
+  if a.len() < b.len() && last_multi(a) {
+    return combine_rel(rel, 1)
+  }
+  if b.len() < a.len() && last_multi(b) {
+    return combine_rel(rel, 2)
+  }
+  3
+}
+
+/// The route's pattern as written (the method upper case).
+fn route_text(route: Route) -> Str {
+  var t = if route.method.is_empty() { "" } else { route.method + " " }
+  for s in route.segs {
+    t = t + "/"
+    if s.rest {
+      if !s.param.is_empty() {
+        t = t + "{" + s.param + "...}"
+      }
+    } else if s.dollar {
+      t = t + "{$}"
+    } else if !s.param.is_empty() {
+      t = t + "{" + s.param + if s.is_int { ":Int}" } else { "}" }
+    } else {
+      t = t + s.lit
+    }
+  }
+  t
+}
+
+fn write_seg(s: Seg) -> Str {
+  if !seg_multi(s) && seg_s(s) != "/" { "/" + seg_s(s) } else { "/" }
+}
+
+fn write_rest(segs: List[Seg], from: Int) -> Str {
+  var t = ""
+  var i = from
+  while i < segs.len() {
+    t = t + write_seg(segs[i])
+    i += 1
+  }
+  t
+}
+
+fn common_path(a: List[Seg], b: List[Seg]) -> Str {
+  var t = ""
+  var i = 0
+  while i < a.len() && i < b.len() {
+    t = t + if seg_wild(a[i]) { write_seg(b[i]) } else { write_seg(a[i]) }
+    i += 1
+  }
+  t + if i < a.len() { write_rest(a, i) } else { write_rest(b, i) }
+}
+
+fn difference_path(a: List[Seg], b: List[Seg]) -> Str {
+  var t = ""
+  var i = 0
+  while i < a.len() && i < b.len() {
+    let s1 = a[i]
+    let s2 = b[i]
+    if seg_multi(s1) && seg_multi(s2) {
+      return t + "/"
+    }
+    if seg_multi(s1) {
+      t = t + "/"
+      if seg_s(s2) == "/" {
+        t = t + if seg_s(s1).is_empty() { "x" } else { seg_s(s1) }
+      }
+      return t
+    }
+    if seg_wild(s1) && !seg_wild(s2) && !seg_multi(s2) && seg_s(s1) == seg_s(s2) {
+      t = t + "/" + seg_s(s2) + "x"
+    } else {
+      t = t + write_seg(s1)
+    }
+    i += 1
+  }
+  t + if i < a.len() { write_rest(a, i) } else { write_rest(b, i) }
+}
+
+/// Faults when nr conflicts with a route of r (ServeMux.Handle's panic,
+/// without the registration sites).
+fn check_conflicts(r: Router, nr: Route) {
+  for old in r.routes {
+    let mrel = compare_methods(nr.method, old.method)
+    if mrel == 3 {
+      continue
+    }
+    let prel = compare_paths(nr.segs, old.segs)
+    let rel = combine_rel(mrel, prel)
+    if rel != 0 && rel != 4 {
+      continue
+    }
+    let p1 = route_text(nr)
+    let p2 = route_text(old)
+    let why = if rel == 0 {
+      "${p1} matches the same requests as ${p2}"
+    } else if prel == 4 {
+      "${p1} and ${p2} both match some paths, like ${go_quote_s(common_path(nr.segs, old.segs))}.\nBut neither is more specific than the other.\n${p1} matches ${go_quote_s(difference_path(nr.segs, old.segs))}, but ${p2} doesn't.\n${p2} matches ${go_quote_s(difference_path(old.segs, nr.segs))}, but ${p1} doesn't."
+    } else if mrel == 1 && prel == 2 {
+      "${p1} matches more methods than ${p2}, but has a more specific path pattern"
+    } else {
+      "${p1} matches fewer methods than ${p2}, but has a more general path pattern"
+    }
+    fault("http: pattern ${go_quote_s(p1)} conflicts with pattern ${go_quote_s(p2)}:\n${why}")
+  }
+}
+
+fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
+  let (m0, p) = pattern_method(pattern)
+  let method = m0.to_upper()
   var segs: List[Seg] = []
   // the pieces after the leading slash, a trailing slash kept as an empty
   // last piece: Go 1.22's pattern forms (a trailing slash is the subtree
@@ -501,6 +817,7 @@ fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
 }
 
 fn (var r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) -> http.Response ! E uses fx) uses fx {
+  check_pattern(pattern)
   let (method, segs) = parse_pattern(pattern)
   let g = fn(req: Request) -> http.Response {
     match h(req) {
@@ -508,10 +825,13 @@ fn (var r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) ->
       Err(e) => error_response(e)
     }
   }
-  r.routes.push(Route{method: method, segs: segs, h: rt.launder1(g)})
+  let nr = Route{method: method, segs: segs, h: rt.launder1(g)}
+  check_conflicts(r, nr)
+  r.routes.push(nr)
 }
 
 fn (var r: Router) handle_stream[E: Error, fx: Effects](pattern: Str, h: fn(Request, BodyReader) -> http.Response ! E uses fx) uses fx {
+  check_pattern(pattern)
   let (method, segs) = parse_pattern(pattern)
   let g = fn(req: Request) -> http.Response {
     match h(req, body_reader_of(req)) {
@@ -519,7 +839,9 @@ fn (var r: Router) handle_stream[E: Error, fx: Effects](pattern: Str, h: fn(Requ
       Err(e) => error_response(e)
     }
   }
-  r.routes.push(Route{method: method, segs: segs, h: rt.launder1(g), stream: true})
+  let nr = Route{method: method, segs: segs, h: rt.launder1(g), stream: true}
+  check_conflicts(r, nr)
+  r.routes.push(nr)
   r.streamed = true
 }
 
@@ -792,7 +1114,9 @@ fn (var r: Router) mount(prefix: Str, sub: Router) {
     if !sub.mws.is_empty() {
       h = chain(sub.mws, sr.h)
     }
-    r.routes.push(Route{method: sr.method, segs: segs, h: h, stream: sr.stream})
+    let nr = Route{method: sr.method, segs: segs, h: h, stream: sr.stream}
+    check_conflicts(r, nr)
+    r.routes.push(nr)
   }
   if sub.streamed {
     r.streamed = true
@@ -1166,7 +1490,8 @@ fn bind_in(route: Route, p: Str, sb: List[Int]) -> Map[Str, Str] {
 }
 
 /// The route's parameters: from the unescaped parts, a rest parameter
-/// from the raw parts joined.
+/// from the escaped parts joined and unescaped once (Go's routing tree:
+/// pathUnescape(path[1:]), so `%2F` in it is `/`).
 fn bind_params(route: Route, parts: List[Str], uparts: List[Str]) -> Map[Str, Str] {
   var params: Map[Str, Str] = {}
   for (i, s) in route.segs.indexed() {
@@ -1179,7 +1504,7 @@ fn bind_params(route: Route, parts: List[Str], uparts: List[Str]) -> Map[Str, St
           tail.push(parts[j])
           j += 1
         }
-        rest = tail.join("/")
+        rest = http1.path_unescape(tail.join("/"))
       }
       if !s.param.is_empty() {
         params.put(s.param, rest)
@@ -1213,8 +1538,10 @@ fn takes_method(rm: Str, m: Str) -> Bool {
 }
 
 /// The route for the clean path (it starts with "/") and the upper case
-/// method: the one with the most literal segments, a route without a rest
-/// before one with it, the first registered among equals.
+/// method: a route of the method before a GET route for HEAD before one of
+/// any method (Go's ServeMux), then the one with the most literal
+/// segments, a route without a rest before one with it, the first
+/// registered among equals.
 fn pick(r: Router, path: Str, method: Str) -> Pick {
   // a path without escapes is matched where it is (match_in); one with
   // them as its unescaped parts, unescaped once for every route
@@ -1243,7 +1570,11 @@ fn pick(r: Router, path: Str, method: Str) -> Pick {
       }
       continue
     }
-    let sc = literals(route) * 2 + if has_rest(route) { 0 } else { 1 }
+    // Go's routing tree looks up the method before the path: the
+    // request's own, then GET for HEAD, then any (task #238); the path's
+    // score orders routes of one tier
+    let tier = if route.method == method { 2 } else if !route.method.is_empty() { 1 } else { 0 }
+    let sc = tier * 1048576 + literals(route) * 2 + if has_rest(route) { 0 } else { 1 }
     if best < 0 || sc > best_score {
       best = i
       best_score = sc
@@ -1286,20 +1617,31 @@ fn mux_redirect(req: Request, loc: Str) -> http.Response {
 }
 
 fn dispatch(r: Router, req: Request) -> http.Response {
-  // Go 1.22's ServeMux: the path cleaned, a trailing slash redirect when
-  // only the path with one is an exact match, then the redirect to the
-  // cleaned path; a HEAD request takes GET routes
+  // Go 1.22's ServeMux (findHandler): the escaped path (URL.EscapedPath)
+  // cleaned and matched, each segment unescaped once, so `%2F` stays in
+  // its segment and `%2561` is `%61` (b35, task #238: the decoded path
+  // was matched and unescaped again); a trailing slash redirect when only
+  // the path with one is an exact match (to the decoded path cleaned, as
+  // matchOrRedirect's url.URL{Path: cleanPath(u.Path) + "/"}), then the
+  // redirect to the cleaned path (url.URL{Path: path}, so escaped again);
+  // a HEAD request takes GET routes
+  if req.path == "*" {
+    // ServeMux.ServeHTTP: a request target `*` (an OPTIONS * the server
+    // answers before the Router) is 400, Connection: close
+    return http.Response{status: 400, headers: {"Connection": "close"}, body: b""}
+  }
   let method = req.method.to_upper()
-  let cp = clean_request_path(req.path)
+  let ep = request_escaped_path(req)
+  let cp = clean_request_path(ep)
   let pk = pick(r, cp, method)
   if !pk.exact && !cp.ends_with("/") {
     let p2 = pick(r, cp + "/", method)
     if p2.best >= 0 && p2.exact {
-      return mux_redirect(req, cp + "/")
+      return mux_redirect(req, http1.escaped_path(clean_request_path(req.path) + "/", ""))
     }
   }
-  if cp != req.path {
-    return mux_redirect(req, cp)
+  if cp != ep {
+    return mux_redirect(req, http1.escaped_path(cp, ""))
   }
   let best = pk.best
   let best_bad = pk.bad

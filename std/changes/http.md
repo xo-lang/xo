@@ -1,5 +1,34 @@
 # std/http changes
 
+## 2026-11-20: the Router prefers the request's method and refuses conflicting patterns, `*` is 400
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, the std 4.1 doc mismatch (task #238)
+- Go reference: net/http routing_tree.go (the method looked up before the path: the request's, GET for HEAD, then any), ServeMux.ServeHTTP (`RequestURI == "*"`), pattern.go conflictsWith and describeConflict
+- Change: a route of any method with more literal segments, or registered first, beat a route of the request's method: `/a` answered `GET /a`, `GET /h` answered `HEAD /h`. The request's method is now looked up first, then GET for HEAD, then any, as Go. A request target `*` was redirected (307 to `/*`); it is 400 with `Connection: close`, as Go. `handle`, `handle_stream` and `mount` fault on a route that conflicts with one registered before (pattern.go conflictsWith, describeConflict's words), as Go's Handle panics; the Router took both and answered by its own order. The http_router_paths golden registered `GET /` with `/any/{v}` (Go refuses the pair): it is `GET /any/{v}`; http_router_hooks registered `PUT /items/{id:Int}` twice: once
+- Measured: not applicable
+- Test: std/native/http_test.xo "the router prefers a route of the request's method, as Go", cases checked against Go 1.26's ServeMux (fails before: `GET /a` gave "any"); "the router refuses conflicting patterns, as Go", 5 conflicts in Go 1.26's words and 6 pairs Go takes (fails before: both patterns register); the Go backend (std/rt/http.go pick, dispatch, std/rt/http_conflict.go) the same, std/rt TestConflictError (fails before: no conflictError) and the router goldens under TestGoldenGoParity
+## 2026-11-20: fix: Router.handle faults on the patterns Go's ServeMux refuses
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b36 (task #238)
+- Go reference: net/http pattern.go parsePattern (its errors, without the offset), ServeMux.Handle's panic
+- Change: `handle` and `handle_stream` took any pattern: `""` matched every path, `/{r...}/admin` never matched, a duplicate name kept one value, `example.com/a` was a path. They now fault with `http: parsing "PATTERN": REASON` in Go's words for each pattern parsePattern refuses; a host pattern faults too (the Router has no host routing). A tab ends the method as a space does (`"GET\t/a"`, as Go). The http_router_paths golden registered `GET /x//y`, which Go refuses: it is `GET /x/y`, with the same output
+- Measured: not applicable
+- Test: std/native/http_test.xo "the router refuses invalid patterns", 14 refused and 6 taken patterns checked against Go 1.26's messages (fails before: `""` registers); the Go backend (std/rt/http.go checkPattern) the same, std/rt TestPatternError (fails before: no patternError)
+
+## 2026-11-20: fix: the Router matches the escaped path, unescaping each segment once
+
+- Kind: fix, security
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b35 (task #238)
+- Go reference: net/http ServeMux (findHandler: r.URL.EscapedPath() cleaned; routing tree segments and `{p...}` unescaped once; matchOrRedirect)
+- Change: the Router cleaned and matched the decoded path, then unescaped its segments again, so `/admin%2Fx` matched `GET /admin/{p...}` and `/%2561dmin/x` became `/admin/x`: a rule on the raw path was bypassed. It now matches the escaped path as Go's ServeMux: `%2F` stays inside its segment (`/files/a%2Fb` gives name `a/b`, `/admin%2Fx` is 404), `%2541` is `%41`, a rest parameter is unescaped once, and the redirect to the cleaned path carries it escaped again (`/static/x/../b%2Fc` to `/static/b%252Fc`, as Go)
+- Measured: not applicable
+- Test: std/native/http_test.xo "the router matches the escaped path and unescapes each segment once", 11 cases checked against Go 1.26 net/http (fails before: `/admin%2Fx` 200); the Go backend (std/rt/http.go dispatch) the same, golden http_router_paths under TestGoldenGoParity (fails before: `/a/%41/b/%2F` gives `[A] [/]`)
+
 ## 2026-11-20: fix: a duplex HTTP/2 body over TLS wakes the pump's read without touching the reader's TLS state
 
 - Kind: fix

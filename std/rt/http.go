@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -99,12 +100,110 @@ func (r Http_Router) XoDebug(b *strings.Builder) { b.WriteString("<router>") }
 // Http_router is `http.router()`.
 func Http_router(*Task) Http_Router { return Http_Router{} }
 
+// patternMethod splits a pattern at its first space or tab, the rest's
+// leading blanks dropped (Go's parsePattern); no method without either.
+func patternMethod(p string) (string, string) {
+	if i := strings.IndexAny(p, " \t"); i >= 0 {
+		return p[:i], strings.TrimLeft(p[i+1:], " \t")
+	}
+	return "", p
+}
+
+// patternError is why Go's ServeMux refuses pattern (parsePattern's
+// errors, without the offset), or "" (std/native/http.xo pattern_error;
+// task #238, b36). A host pattern is refused: the Router routes on paths.
+func patternError(pattern string) string {
+	if pattern == "" {
+		return "empty pattern"
+	}
+	method, rest := patternMethod(pattern)
+	if method != "" && !patternToken(method) {
+		return "invalid method " + strconv.Quote(method)
+	}
+	i := strings.IndexByte(rest, '/')
+	if i < 0 {
+		return "host/path missing /"
+	}
+	if i > 0 {
+		if strings.Contains(rest[:i], "{") {
+			return "host contains '{' (missing initial '/'?)"
+		}
+		return "host patterns are not supported (std.md 4.1)"
+	}
+	if method != "" && method != "CONNECT" && rest != cleanRequestPath(rest) {
+		return "non-CONNECT pattern with unclean path can never match"
+	}
+	var seen []string
+	pieces := strings.Split(rest, "/")
+	for k := 1; k < len(pieces); k++ {
+		seg := pieces[k]
+		atEnd := k == len(pieces)-1
+		j := strings.IndexByte(seg, '{')
+		if j < 0 {
+			continue
+		}
+		if j != 0 {
+			return "bad wildcard segment (must start with '{')"
+		}
+		if !strings.HasSuffix(seg, "}") {
+			return "bad wildcard segment (must end with '}')"
+		}
+		name := seg[1 : len(seg)-1]
+		if name == "$" {
+			if !atEnd {
+				return "{$} not at end"
+			}
+			continue
+		}
+		if strings.HasSuffix(name, "...") {
+			if !atEnd {
+				return "{...} wildcard not at end"
+			}
+			name = strings.TrimSuffix(name, "...")
+		} else {
+			name = strings.TrimSuffix(name, ":Int")
+		}
+		if name == "" {
+			return "empty wildcard"
+		}
+		for ri, c := range []rune(name) {
+			if !unicode.IsLetter(c) && c != '_' && (ri == 0 || !unicode.IsDigit(c)) {
+				return "bad wildcard name " + strconv.Quote(name)
+			}
+		}
+		for _, n := range seen {
+			if n == name {
+				return "duplicate wildcard name " + strconv.Quote(name)
+			}
+		}
+		seen = append(seen, name)
+	}
+	return ""
+}
+
+// patternToken reports whether m is an HTTP token (Go's validMethod).
+func patternToken(m string) bool {
+	for i := 0; i < len(m); i++ {
+		c := m[i]
+		if !(c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkPattern faults on a pattern Go's ServeMux refuses, as its Handle
+// panics.
+func checkPattern(pattern string) {
+	if e := patternError(pattern); e != "" {
+		FaultHere("http: parsing %s: %s", strconv.Quote(pattern), e)
+	}
+}
+
 // parsePattern parses "[METHOD ]/path/{name}/{id:Int}/{rest...}".
 func parsePattern(p string) (string, []routeSeg) {
-	method := ""
-	if i := strings.IndexByte(p, ' '); i > 0 {
-		method, p = strings.ToUpper(p[:i]), strings.TrimSpace(p[i+1:])
-	}
+	method, p := patternMethod(p)
+	method = strings.ToUpper(method)
 	var segs []routeSeg
 	// the pieces after the leading slash, a trailing slash kept as an empty
 	// last piece: Go 1.22's pattern forms (a trailing slash is the subtree
@@ -200,7 +299,13 @@ func (r *route) matchParts(a *Arena, parts []string, bind bool) (Map[string, str
 				return params, "", false
 			}
 			if s.param != "" {
-				put(s.param, strings.Join(parts[i:], "/"))
+				// the escaped parts joined, unescaped once (Go's routing
+				// tree: pathUnescape(path[1:]), so %2F in it is /)
+				rest := strings.Join(parts[i:], "/")
+				if u, err := url.PathUnescape(rest); err == nil {
+					rest = u
+				}
+				put(s.param, rest)
 			}
 			return params, badInt, true
 		}
@@ -267,6 +372,7 @@ func (r *route) hasRest() bool {
 // Http_Router_handle is `r.handle(pattern, h)` (std.md 4.1). A handler's
 // error is mapped to a response (std.md 4.2) and a fault is isolated: 500.
 func Http_Router_handle[E any](_ *Task, r *Http_Router, pattern string, h func(*Task, Http_Request) Result[Http_Response, E]) {
+	checkPattern(pattern)
 	method, segs := parsePattern(pattern)
 	rt := &route{method: method, segs: segs}
 	rt.h = func(tk *Task, req Http_Request) Http_Response {
@@ -276,13 +382,14 @@ func Http_Router_handle[E any](_ *Task, r *Http_Router, pattern string, h func(*
 		}
 		return errorResponse(tk, any(res.E), res.Tr)
 	}
-	List_push(nil, &r.routes, rt)
+	addRoute(r, rt)
 }
 
 // Http_Router_handle_stream is `r.handle_stream(pattern, h)` (decision
 // 0310): h reads the request body through a BodyReader; the server calls
 // it before reading the body (http_net.go), Router.call streams req.body.
 func Http_Router_handle_stream[E any](_ *Task, r *Http_Router, pattern string, h func(*Task, Http_Request, Http_BodyReader) Result[Http_Response, E]) {
+	checkPattern(pattern)
 	method, segs := parsePattern(pattern)
 	rt := &route{method: method, segs: segs, stream: true}
 	rt.h = func(tk *Task, req Http_Request) Http_Response {
@@ -292,7 +399,7 @@ func Http_Router_handle_stream[E any](_ *Task, r *Http_Router, pattern string, h
 		}
 		return errorResponse(tk, any(res.E), res.Tr)
 	}
-	List_push(nil, &r.routes, rt)
+	addRoute(r, rt)
 }
 
 // errorResponse maps a handler error (std.md 4.2).
@@ -351,7 +458,7 @@ func (r *Http_Router) M_mount(_ *Task, prefix string, sub Http_Router) {
 			// the middleware sees the handler's response and may keep it
 			nr.h = noArenaResp(chain(mws, sr.h))
 		}
-		List_push(nil, &r.routes, nr)
+		addRoute(r, nr)
 	}
 }
 
@@ -444,7 +551,16 @@ func (r Http_Router) pick(path, method string, wantAllow bool) (best *route, bes
 			}
 			continue
 		}
-		sc := rt.literals() * 2
+		// Go's routing tree looks up the method before the path: the
+		// request's own, then GET for HEAD, then any (task #238); the
+		// path's score orders routes of one tier
+		tier := 0
+		if rt.method == method {
+			tier = 2
+		} else if rt.method != "" {
+			tier = 1
+		}
+		sc := tier*1048576 + rt.literals()*2
 		if !rt.hasRest() {
 			sc++
 		}
@@ -490,21 +606,33 @@ func (r Http_Router) streams(method, p string) bool {
 	return best != nil && best.stream && bad == ""
 }
 
-// dispatch finds the route and runs it isolated. Go 1.22's ServeMux: the
-// path cleaned, a trailing slash redirect when only the path with one is
-// an exact match, then the redirect to the cleaned path; a HEAD request
-// takes GET routes.
+// dispatch finds the route and runs it isolated. Go 1.22's ServeMux
+// (findHandler): the escaped path (URL.EscapedPath) cleaned and matched,
+// each segment unescaped once, so %2F stays in its segment and %2561 is
+// %61 (b35, task #238: the decoded path was matched and unescaped again);
+// a trailing slash redirect when only the path with one is an exact match
+// (to the decoded path cleaned), then the redirect to the cleaned path
+// (url.URL{Path: path}, so escaped again); a HEAD request takes GET
+// routes. std/native/http.xo dispatch is the same.
 func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
+	if req.F_path == "*" {
+		// ServeMux.ServeHTTP: a request target `*` (an OPTIONS * the
+		// server answers before the Router) is 400, Connection: close
+		h := mapCap[string, string](1)
+		Map_put(tk, &h, "Connection", "close")
+		return Http_Response{F_status: 400, F_headers: h}
+	}
 	method := strings.ToUpper(req.F_method)
-	cp := cleanRequestPath(req.F_path)
+	ep := req.M_escaped_path(tk)
+	cp := cleanRequestPath(ep)
 	best, bestBad, exact, _ := r.pick(cp, method, false)
 	if !exact && !strings.HasSuffix(cp, "/") {
 		if b2, _, e2, _ := r.pick(cp+"/", method, false); b2 != nil && e2 {
-			return muxRedirect(tk, req, cp+"/")
+			return muxRedirect(tk, req, (&url.URL{Path: cleanRequestPath(req.F_path) + "/"}).EscapedPath())
 		}
 	}
-	if cp != req.F_path {
-		return muxRedirect(tk, req, cp)
+	if cp != ep {
+		return muxRedirect(tk, req, (&url.URL{Path: cp}).EscapedPath())
 	}
 	if best == nil {
 		_, _, _, allow := r.pick(cp, method, true)
