@@ -25,3 +25,11 @@ DOCKER-DEAD (no answer, or refuses) only when all 3 fail.
 `scripts/lead/hangcheck_docker_test.sh` (test-heavy.sh scenario 20)
 checks it with a stand-in docker that is slow or refuses once, then
 answers.
+
+docker-up.sh had the same trap with a worse answer: a daemon slow past
+WAIT (90 s) got `docker desktop stop --force`, which on 2026-11-20 about
+08:46 took down the long-lived containers (hosts 3 and 4, xw-postgres)
+and the gates on them (#496). It now waits a second WAIT and then exits 1
+for the lead, never stopping Docker Desktop, and `docker-up.sh stop`
+leaves Docker running when `docker ps` fails. `scripts/lead/docker_up_test.sh`
+checks both.
