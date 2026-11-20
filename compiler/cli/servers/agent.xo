@@ -1038,7 +1038,7 @@ fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str uses fs {
   }
 
   if out.is_empty() {
-    let stopped = s.res[0].c.unsupported
+    let stopped = s.stopped_reason()
     if !stopped.is_empty() {
       // nothing was resolved: say why instead of "no declaration"
       return Err("no declaration named ${target}: the check stopped before resolving names (${stopped}); run it from a module's directory, or give --dir=DIR${semantic.miss_hint(os, s.std_dir, target)}")
@@ -1046,6 +1046,27 @@ fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str uses fs {
     return Err("no declaration named ${target}${s.receiver_hint(target)}${semantic.miss_hint(os, s.std_dir, target)}")
   }
   Ok(out)
+}
+
+/// Why the check resolved fewer names than asked: the reason it stopped
+/// (Checker.unsupported), else a `use go` package whose binding is
+/// missing, which a declarations-only view leaves unresolved instead of
+/// stopping (task #477); a name not found then says so and names the
+/// package, as it did before #477 (task #506).
+fn (s: Session) stopped_reason() -> Str {
+  for r in s.res {
+    if !r.c.unsupported.is_empty() {
+      return r.c.unsupported
+    }
+  }
+  for r in s.res {
+    for m in r.c.bind_misses {
+      if !m.go_path.is_empty() {
+        return "use go without a current binding of ${m.go_path} in ${m.cache} (a Go check or build, or `xo bind`, writes it)"
+      }
+    }
+  }
+  ""
 }
 
 /// What to add to "no declaration named x.m" when x names no type but
