@@ -1322,6 +1322,9 @@ pub struct H2Req {
   pub streamed: Bool = false
   /// RFC 8441's :protocol of an extended CONNECT, "" for none (decision 0687)
   pub protocol: Str = ""
+  /// the :path as sent, without its query (Go's URL.RawPath source; task
+  /// #238: the Router matches the escaped path)
+  pub rawpath: Str = ""
 }
 
 /// The fiber's state of an HTTP/2 server connection: its record, HPACK,
@@ -1380,6 +1383,7 @@ struct ReqParts {
   fields: List[Str] = []
   trailer: Str = ""
   protocol: Str = ""
+  rawpath: Str = ""
 }
 
 /// Keeps the parts in a (an Any of ReqParts) in stream record st's
@@ -1429,7 +1433,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
     unlk(ld(st, S_C))
   }
   http1.fault_probe(p.path, "frame")
-  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, trailer: p.trailer, streamed: streamed, protocol: p.protocol}
+  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, trailer: p.trailer, streamed: streamed, protocol: p.protocol, rawpath: p.rawpath}
 }
 
 /// The next bytes of the streamed body of stream connection h (at most
@@ -2294,8 +2298,13 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
       query.push(t[i])
       i += 1
     }
-    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query, rawquery: t[5], fields: fields, trailer: trailer, protocol: proto}))
-    if !end_stream && !h.streams.is_empty() && h.streams[0](method, t[4]) {
+    // the :path without its query, for Request's raw path (task #238)
+    let rawpath = match path.find("?") {
+      Some(i) => path[0..i]
+      None => path
+    }
+    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query, rawquery: t[5], fields: fields, trailer: trailer, protocol: proto, rawpath: rawpath}))
+    if !end_stream && !h.streams.is_empty() && h.streams[0](method, path) {
       sto(st, S_STREAM, 1)
     }
   }

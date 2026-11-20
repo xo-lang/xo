@@ -1046,8 +1046,15 @@ fn body_read(var s: BodyState, max: Int) -> Bytes? ! IoErr {
 
 /// Whether the route dispatch picks for method and path is a
 /// handle_stream route: the server then leaves the body to it.
-fn route_streams(r: Router, method: Str, path: Str) -> Bool {
-  let pk = pick(r, clean_request_path(path), method.to_upper())
+/// Whether the route of a request with the request target raw (the
+/// path as sent, a query or an absolute form allowed) is a handle_stream
+/// route. It picks on the escaped path cleaned, as dispatch (task #238:
+/// it picked on the decoded path, so for `/up/a%2Fb` a streaming
+/// `POST /up/a/b` left the body unread while dispatch ran `POST /up/{f}`,
+/// whose request then had an empty body).
+fn route_streams(r: Router, method: Str, raw: Str) -> Bool {
+  let rp = target_path(raw)
+  let pk = pick(r, clean_request_path(http1.escaped_path(http1.path_unescape(rp), rp)), method.to_upper())
   pk.best >= 0 && pk.bad.is_empty() && r.routes[pk.best].stream
 }
 
@@ -1170,7 +1177,7 @@ pub fn serve_component(r: Router) {
     let u = parse_url_loose(pq)
     let url = u with {host: http1.host_name(raw_host), port: wasi_host_port(raw_host)}
     let method = rt.wasi_http_method()
-    let streams = route_streams(r, method, path)
+    let streams = route_streams(r, method, rawp)
     var req = Request{method: method, path: path, url: url, headers: headers, body: if streams { b"" } else { rt.wasi_http_body() }, remote_ip: "", raw_query: raw_query, fields: fields, raw_path: rawp, raw_host: raw_host}
     if streams {
       // as the server does: a handle_stream route has its body in its
@@ -4163,7 +4170,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   let th = hconn.tls_of(q.conn)
   let scheme = if q.scheme.is_empty() { if th != 0 { "https" } else { "http" } } else { q.scheme }
   let url = http.Url{scheme: scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.host, ext_protocol: q.protocol, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields, values: gone_values(q.conn)}
+  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.host, ext_protocol: q.protocol, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields, values: gone_values(q.conn), raw_path: q.rawpath}
   if !q.streamed {
     return req
   }

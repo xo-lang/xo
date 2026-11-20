@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+h1 GET /a/b: 200 a/b
+h1 GET /a%2Fb: 404 {"error":"not found"}
+h1 POST /up/a/b: 200 stream a/b 5 bytes
+h1 POST /up/a%2Fb: 200 up {f}=a/b 5 bytes
+h2c GET /a/b: 200 a/b
+h2c GET /a%2Fb: 404 {"error":"not found"}
+h2c POST /up/a/b: 200 stream a/b 5 bytes
+h2c POST /up/a%2Fb: 200 up {f}=a/b 5 bytes
+done
+--- stderr

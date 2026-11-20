@@ -1,0 +1,61 @@
+// A served Router matches the escaped request path over HTTP/1.1 and
+// h2c, as Go's ServeMux (task #238): `%2F` stays inside its segment. The
+// server's choice of a handle_stream route (whose body it leaves unread)
+// is made on that same path: before, it picked on the decoded path, so
+// `POST /up/a%2Fb` was read as a streaming `POST /up/a/b` and dispatched
+// to `POST /up/{f}`, whose request had an empty body; and over h2c the
+// request had no raw path, so `/a%2Fb` matched `GET /a/b`.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /a/b", fn(_req) { Ok(http.text(200, "a/b")) })
+  r.handle("GET /a/{x}", fn(req) { Ok(http.text(200, "a {x}=${req.param("x")}")) })
+  r.handle_stream("POST /up/a/b", fn(_req, b) {
+    var n = 0
+    while true {
+      match b.read()? {
+        Some(d) => n += d.len()
+        None => break
+      }
+    }
+    Ok(http.text(200, "stream a/b ${n} bytes"))
+  })
+  r.handle("POST /up/{f}", fn(req) { Ok(http.text(200, "up {f}=${req.param("f")} ${req.body.len()} bytes")) })
+  r
+}
+
+fn show(os: Os, c: http.Client, label: Str, req: http.Request) {
+  match c.send(req) {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${resp.body.to_str() ?? "?"}")
+    Err(e) => os.stdio.println("${label}: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes()).with_protocols(#{http.Protocol.Http1, http.Protocol.UnencryptedHttp2})
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        let base = "http://${srv.addr()}"
+        for (label, c) in [
+          ("h1", http.client(os.net, timeout: 30s)),
+          ("h2c", http.client(os.net, timeout: 30s).with_protocols(#{http.Protocol.UnencryptedHttp2})),
+        ] {
+          show(os, c, "${label} GET /a/b", http.new_request("GET", "${base}/a/b"))
+          show(os, c, "${label} GET /a%2Fb", http.new_request("GET", "${base}/a%2Fb"))
+          show(os, c, "${label} POST /up/a/b", http.new_request("POST", "${base}/up/a/b", body: "hello".bytes()))
+          show(os, c, "${label} POST /up/a%2Fb", http.new_request("POST", "${base}/up/a%2Fb", body: "hello".bytes()))
+        }
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

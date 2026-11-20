@@ -79,7 +79,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		}
 		// a handle_stream route (decision 0310) reads the body itself; a
 		// recording server keeps it whole for the replay
-		stream := rec == nil && !recording && s.r.streams(hr.Method, urlTextOf(hr.URL.Path))
+		stream := rec == nil && !recording && s.r.streams(hr.Method, hr.URL.EscapedPath())
 		var body Bytes
 		if stream {
 			// net/http drains or closes what the handler left unread

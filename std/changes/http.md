@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-20: fix: over HTTP/2 and for handle_stream routes the Router sees the escaped path too
+
+- Kind: fix, security
+- Commit: this push
+- Found by: review of task #238's escaped-path fix (the stream choice and the HTTP/2 Request were left on the decoded path)
+- Go reference: net/http h2_bundle.go (the server's URL from :path keeps RawPath), server.go (ServeMux matches URL.EscapedPath)
+- Change: the HTTP/2 server's Request had no raw path, so the Router matched the decoded path there (`/a%2Fb` reached `GET /a/b`); the server (HTTP/1.1, HTTP/2, wasi; std/rt's on the Go backend) chose a handle_stream route on the decoded path while the Router dispatched on the escaped one, so a `POST /up/a%2Fb` was read as a streaming `POST /up/a/b` and its plain `POST /up/{f}` handler got an empty body. Both now use the escaped path.
+- Measured: not applicable
+- Test: golden http_router_escaped_serve (HTTP/1.1 and h2c; fails before: h1 `POST /up/a%2Fb` 0 bytes, h2c `GET /a%2Fb` 200 a/b and `POST /up/a%2Fb` to the stream route)
+
 ## 2026-11-20: the Router prefers the request's method and refuses conflicting patterns, `*` is 400
 
 - Kind: fix

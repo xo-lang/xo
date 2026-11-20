@@ -1878,7 +1878,8 @@ fn head_cap(x: Int) -> Int { let m = xl(x, X_MAX_HEAD); if m > 0 { m + 4096 } el
 pub fn reader(h: rthttp.HConn) -> Reader { Reader{h: h, x: x1_of(h), head: no_head()} }
 
 /// The reader of the connection that leaves the body of a request for
-/// which streams(method, path) holds to the handler (body_next).
+/// which streams(method, target) holds to the handler (body_next); target
+/// is the request target as sent.
 pub fn reader_streaming(h: rthttp.HConn, streams: fn(Str, Str) -> Bool) -> Reader { Reader{h: h, x: x1_of(h), head: no_head(), streams: [streams]} }
 
 /// The number of the request read last when its body is streamed, else
@@ -2091,7 +2092,7 @@ fn (var r: Reader) read_one() -> Int {
     return 0
   }
   xs(x, X_SMODE, S_NONE)
-  if !r.streams.is_empty() && !(q.method == "OPTIONS" && q.target == "*") && r.streams[0](q.method, q.url.path) {
+  if !r.streams.is_empty() && !(q.method == "OPTIONS" && q.target == "*") && r.streams[0](q.method, q.target) {
     // the handler reads the body (body_next); 100 Continue on its first
     // read, as net/http's expectContinueReader
     xs(x, X_SSEQ, xl(x, X_SSEQ) + 1)

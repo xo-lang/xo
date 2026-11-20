@@ -144,6 +144,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_cross_origin":             "it drives the router in process with Router.call and prints each response from main; a component only serves requests (CrossOrigin is plain std/http)",
 	"http_timeout_handler":          "it drives the router in process with Router.call and prints each response from main; a component only serves requests (the middleware is plain std/http on task.with_timeout)",
 	"http_escaped_path":             "it listens on a socket of its own for new_request's client to call, which a component cannot; TestWasmComponentClient runs the client",
+	"http_router_escaped_serve":     "it listens on a socket of its own for its HTTP/1.1 and h2c clients to call, which a component cannot; the component's Router matches the escaped path through the same std/http dispatch",
 	"http_raw_path":                 "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_gzip_hostile":             "it listens on a socket of its own for the client to call, which a component cannot (the client's gzip slicing is native std/http)",
 	"http_client":                   "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",

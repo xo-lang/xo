@@ -600,7 +600,8 @@ func muxRedirect(tk *Task, req Http_Request, loc string) Http_Response {
 }
 
 // streams reports whether a request's route is a handle_stream route
-// (decision 0310): the server then leaves its body unread.
+// (decision 0310): the server then leaves its body unread. p is the
+// escaped path, as dispatch matches (task #238).
 func (r Http_Router) streams(method, p string) bool {
 	best, bad, _, _ := r.pick(cleanRequestPath(p), strings.ToUpper(method), false)
 	return best != nil && best.stream && bad == ""

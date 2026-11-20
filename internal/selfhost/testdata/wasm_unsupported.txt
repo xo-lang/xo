@@ -172,3 +172,4 @@ http_h2_body_budget # wasip1 # network: the network (`rt.net_status`): WASI prev
 http_h2_empty_continuation # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
 http_request_guards # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
 http_max_idle # wasip1 # network: the network (`rt.net_status`): WASI preview1 has no sockets
+http_router_escaped_serve # wasip1 # network: WASI preview1 has no sockets
