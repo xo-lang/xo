@@ -2023,7 +2023,13 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     pushes by rc, wall time p50 and max, and each pushq step's pushes,
     total, p50 and max: `pre.STEP` before the lane, `queue.wait` for
     it, `lane.STEP` in it; pushq.sh puts them on push.end as
-    steps=PHASE.STEP:SECS, tested by pushq_prelane_test.sh), `xw check` (off-charter tasks, idle agents with queued work,
+    steps=PHASE.STEP:SECS, tested by pushq_prelane_test.sh), `xw
+    builds [NAME] --since 24h` (#525, 2026-11-20: ended heavy.sh jobs
+    by kind, costliest first: jobs, run total, p50, max, waited, and the
+    top targets; heavy.sh's job.start carries kind= and target= from
+    xwhook.sh `xw_job_kind`, inferred from the command line: go-test
+    PKG, xo-build DIR, xobuild, script NAME.sh, else the program's name;
+    jobs from before it read "unknown"), `xw check` (off-charter tasks, idle agents with queued work,
     DONE without a restart, unacknowledged tasks and decisions).
   - `xw task title ID TEXT` replaces a stale task title (the old one
     stays in the task log).
