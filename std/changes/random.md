@@ -1,5 +1,16 @@
 # std/random changes
 
+## 2026-11-19: perf: the x86-64 ChaCha8 block in Go's vertical layout
+
+- Kind: perf
+- Commit: this push
+- Found by: std/random Proven perf on linux/amd64 (exp 1.05 of Go with its count branch-free, the rest the generator): 1000 Hz profiles of 1.2 * 10^8 bare words put the ChaCha8 block at 80% of Xo's time and 55% of Go's, at about the same instruction count (Xo's kernel ran two blocks at a time in rows, latency bound, then transposed)
+- Go reference: internal/chacha8rand chacha8_amd64.s, go1.26.1
+- Test: internal/llvm TestRuntimeRandChaCha8/amd64 on the linux/amd64 host (Go's TestOutput vector, 372 words, unchanged); bench/perf/random draw (new: 5 * 10^7 bare words) 0.663 (0.662 to 0.683) of the time (`xo bench --ab`, linux/amd64 host, 6 rounds, verdict better); 1.2 * 10^8 words 0.495 to 0.325 s, Go 0.479 s
+- Shipped in: not yet released
+
+rt.chacha8_rand4's x86-64 lowering (compiler/ssa x86chacha.xo chacha8rand_x86_lines) is now a port of Go's kernel: word k of the four blocks in xmm k, so each half round is four independent quarter rounds and the result is already in Go's layout. The rotations by 16 and 8 stay pshufb, their tables loaded from the output buffer during the rounds. arm64 (NEON) and the llvm backend are unchanged.
+
 ## 2026-11-19: perf: normal without a branch on the draw's sign
 
 - Kind: perf

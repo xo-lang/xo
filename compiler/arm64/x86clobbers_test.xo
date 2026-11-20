@@ -1,0 +1,27 @@
+// The xmm lists an x86 template names in Inst.clobbers hold only
+// registers the allocator hands out (fp_caller_t): xmm14 and xmm15 are
+// the emitter's scratch. Naming them made the linux/amd64 xo built with
+// it compile native_json's show[Str] as Bytes' (base64 output) at
+// c1d6bff46, chacha8rand_x86_xmms 0 to 15 (2026-11-19).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+fn x86_allocatable(rs: List[Int]) -> List[Int] {
+  let g = G{m: ssa.Module{}, os: "linux-amd64", x86: true}
+  let fp = g.fp_caller_t()
+  var bad: List[Int] = []
+  for r in rs {
+    if !fp.contains(FP_BASE + r) {
+      bad.push(r)
+    }
+  }
+  bad
+}
+
+test "chacha8rand's x86 clobbers are allocatable xmm registers" {
+  expect(x86_allocatable(ssa.chacha8rand_x86_xmms())) == []
+}
+
+test "crc32 fold's x86 clobbers are allocatable xmm registers" {
+  expect(x86_allocatable(ssa.crc32_fold_x86_xmms())) == []
+}

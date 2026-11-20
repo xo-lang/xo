@@ -129,97 +129,82 @@ fn x86_chacha_setup(d: Str, s: Str) -> List[Str] {
   ]
 }
 
-/// The xmm registers chacha8rand_x86_lines writes (chacha4_x86_xmms'
-/// first twelve).
-pub fn chacha8rand_x86_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
+/// The xmm registers chacha8rand_x86_lines writes that the register
+/// allocator hands out: xmm0 to xmm13. The state's words fill all
+/// sixteen, as Go's; xmm14 and xmm15 are the emitter's scratch (regalloc
+/// never holds a value there) and are left out of the clobbers, as the
+/// AES-GCM kernels' (naming them broke native_json on linux/amd64:
+/// "\u{1F600}" decoded wrong).
+pub fn chacha8rand_x86_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] }
 
 /// The general registers chacha8rand_x86_lines writes besides r11.
 pub fn chacha8rand_x86_gprs() -> List[Str] { ["rax", "rcx", "r8", "r9"] }
 
-/// Go's chacha8rand block (decision 0669, cpu.chacha8_rand4) with SSSE3:
-/// blocks 0 and 1, then 2 and 3, in chacha4_x86_lines' horizontal layout
-/// (8 rounds, only the key rows 1 and 2 added back); blocks 0 and 1 go to
-/// the upper half of the 256 bytes at d as rows, then a 4 by 4 transpose
-/// of each row of the four blocks writes Go's vertical layout (word k of
-/// block b at d + 16k + 4b), each output row written after the rows it
-/// overwrites were read. st is the 80 byte input (16 words, word 12
-/// unused, then the four counters).
+/// Go's ChaCha quarter round on the four blocks' words a, b, c, d (Go's
+/// chacha8_amd64.s QR), with t its scratch; the rotations by 16 and 8 by
+/// pshufb with their tables loaded into t from d's rows 0 and 1 (free
+/// until the rounds end; movdqu, so no alignment is needed).
+fn x86_chacha8rand_qr(a: Int, b: Int, c: Int, d: Int, t: Int) -> List[Str] {
+  [
+    "paddd %xmm${b}, %xmm${a}", "pxor %xmm${a}, %xmm${d}", "movdqu (%r8), %xmm${t}", "pshufb %xmm${t}, %xmm${d}",
+    "paddd %xmm${d}, %xmm${c}", "pxor %xmm${c}, %xmm${b}", "movdqa %xmm${b}, %xmm${t}", "pslld $12, %xmm${t}", "psrld $20, %xmm${b}", "pxor %xmm${t}, %xmm${b}",
+    "paddd %xmm${b}, %xmm${a}", "pxor %xmm${a}, %xmm${d}", "movdqu 16(%r8), %xmm${t}", "pshufb %xmm${t}, %xmm${d}",
+    "paddd %xmm${d}, %xmm${c}", "pxor %xmm${c}, %xmm${b}", "movdqa %xmm${b}, %xmm${t}", "pslld $7, %xmm${t}", "psrld $25, %xmm${b}", "pxor %xmm${t}, %xmm${b}",
+  ]
+}
+
+/// Go's chacha8rand block (decision 0669, cpu.chacha8_rand4): a port of
+/// Go's internal/chacha8rand chacha8_amd64.s (BSD-style license,
+/// Copyright The Go Authors), its vertical layout: word k of the four
+/// blocks in xmm k's four lanes, so a half round is four independent
+/// quarter rounds and the result is already Go's layout (word k of block
+/// b at d + 16k + 4b), with no transpose. Sixteen words fill the sixteen
+/// registers, so as Go's, words 4 and 15 take turns in d's rows 4 and 15
+/// to free a scratch register. st is the 80 byte input (16 words, word 12
+/// unused, then the four counters, which are word 12's four lanes). After
+/// the 8 rounds only the key words 4 to 11 are added back, as Go's.
 pub fn chacha8rand_x86_lines(d: Str, st: Str) -> List[Str] {
+  // pshufb's tables (each lane's bytes 2, 3, 0, 1: left by 16; 3, 0, 1,
+  // 2: left by 8) into d's rows 0 and 1
   var t = [
-    "movabsq $361421592464458498, %rax",
-    "movq %rax, %xmm10",
-    "movabsq $940142975169071882, %rax",
-    "movq %rax, %xmm8",
-    "punpcklqdq %xmm8, %xmm10",
-    "movabsq $433757367256023043, %rax",
-    "movq %rax, %xmm11",
-    "movabsq $1012478749960636427, %rax",
-    "movq %rax, %xmm8",
-    "punpcklqdq %xmm8, %xmm11",
     "movq ${d}, %r8",
     "movq ${st}, %r9",
+    "movabsq $361421592464458498, %rax",
+    "movq %rax, (%r8)",
+    "movabsq $940142975169071882, %rax",
+    "movq %rax, 8(%r8)",
+    "movabsq $433757367256023043, %rax",
+    "movq %rax, 16(%r8)",
+    "movabsq $1012478749960636427, %rax",
+    "movq %rax, 24(%r8)",
   ]
-  for k in [0, 2] {
-    for (o, b) in [(0, k), (4, k + 1)] {
-      t = t + [
-        "movdqu (%r9), %xmm${o}",
-        "movdqu 16(%r9), %xmm${o + 1}",
-        "movdqu 32(%r9), %xmm${o + 2}",
-        "movdqu 48(%r9), %xmm${o + 3}",
-        "movl ${64 + 4 * b}(%r9), %eax",
-        "pinsrd $0, %eax, %xmm${o + 3}",
-      ]
-    }
-    t = t + ["movl $4, %ecx", "2:"]
-    t = t + x86_chacha_half() + x86_chacha_diag(57, 78, 147) + x86_chacha_half() + x86_chacha_diag(147, 78, 57)
-    t = t + ["subl $1, %ecx", "jnz 2b"]
-    for o in [0, 4] {
-      t = t + ["movdqu 16(%r9), %xmm8", "paddd %xmm8, %xmm${o + 1}", "movdqu 32(%r9), %xmm8", "paddd %xmm8, %xmm${o + 2}"]
-    }
-    if k == 0 {
-      for o in [0, 4] {
-        for r in 0..4 {
-          t.push("movdqu %xmm${o + r}, ${128 + 16 * o + 16 * r}(%r8)")
-        }
-      }
+  for k in 0..16 {
+    if k == 12 {
+      t.push("movdqu 64(%r9), %xmm12")
+    } else {
+      t = t + ["movd ${4 * k}(%r9), %xmm${k}", "pshufd $0, %xmm${k}, %xmm${k}"]
     }
   }
-  // blocks 2 and 3's rows in xmm0 to xmm3 and xmm4 to xmm7; 0 and 1's at
-  // d + 128 and d + 192. Row r's output (words 4r to 4r + 3) goes to
-  // d + 64r: rows 2 and 3 overwrite 0 and 1's, so those are loaded first
-  // (into xmm0, 1, 4, 5, free once rows 0 and 1 are out)
-  for r in 0..4 {
-    var a = 10
-    var bb = 11
-    if r < 2 {
-      t = t + ["movdqu ${128 + 16 * r}(%r8), %xmm10", "movdqu ${192 + 16 * r}(%r8), %xmm11"]
-    } else {
-      if r == 2 {
-        t = t + ["movdqu 160(%r8), %xmm0", "movdqu 176(%r8), %xmm1", "movdqu 224(%r8), %xmm4", "movdqu 240(%r8), %xmm5"]
-      }
-      a = r - 2
-      bb = r + 2
-    }
-    let c = r
-    let dd = r + 4
-    t = t + [
-      "movdqa %xmm${a}, %xmm8",
-      "punpckldq %xmm${bb}, %xmm8",
-      "punpckhdq %xmm${bb}, %xmm${a}",
-      "movdqa %xmm${c}, %xmm9",
-      "punpckldq %xmm${dd}, %xmm9",
-      "punpckhdq %xmm${dd}, %xmm${c}",
-      "movdqa %xmm8, %xmm${bb}",
-      "punpcklqdq %xmm9, %xmm8",
-      "punpckhqdq %xmm9, %xmm${bb}",
-      "movdqa %xmm${a}, %xmm${dd}",
-      "punpcklqdq %xmm${c}, %xmm${a}",
-      "punpckhqdq %xmm${c}, %xmm${dd}",
-      "movdqu %xmm8, ${64 * r}(%r8)",
-      "movdqu %xmm${bb}, ${64 * r + 16}(%r8)",
-      "movdqu %xmm${a}, ${64 * r + 32}(%r8)",
-      "movdqu %xmm${dd}, ${64 * r + 48}(%r8)",
-    ]
+  // word 15 starts in its row, xmm15 the first scratch
+  t = t + ["movdqu %xmm15, 240(%r8)", "movl $4, %ecx", "2:"]
+  t = t + x86_chacha8rand_qr(0, 4, 8, 12, 15) + ["movdqu %xmm4, 64(%r8)"]
+  t = t + x86_chacha8rand_qr(1, 5, 9, 13, 15) + ["movdqu 240(%r8), %xmm15"]
+  t = t + x86_chacha8rand_qr(2, 6, 10, 14, 4) + x86_chacha8rand_qr(3, 7, 11, 15, 4)
+  t = t + x86_chacha8rand_qr(0, 5, 10, 15, 4) + ["movdqu %xmm15, 240(%r8)"]
+  t = t + x86_chacha8rand_qr(1, 6, 11, 12, 4) + ["movdqu 64(%r8), %xmm4"]
+  t = t + x86_chacha8rand_qr(2, 7, 8, 13, 15) + x86_chacha8rand_qr(3, 4, 9, 14, 15)
+  t = t + ["subl $1, %ecx", "jnz 2b"]
+  // words 0 to 3 and 12 to 14 as they are (15 is in its row); then the
+  // key words 4 to 11 plus the input's, in xmm0 to xmm3 and xmm12 to
+  // xmm15, free now
+  for k in [0, 1, 2, 3, 12, 13, 14] {
+    t.push("movdqu %xmm${k}, ${16 * k}(%r8)")
+  }
+  let tmp = [0, 1, 2, 3, 12, 13, 14, 15]
+  for j in 0..8 {
+    let k = 4 + j
+    let r = tmp[j]
+    t = t + ["movd ${4 * k}(%r9), %xmm${r}", "pshufd $0, %xmm${r}, %xmm${r}", "paddd %xmm${r}, %xmm${k}", "movdqu %xmm${k}, ${16 * k}(%r8)"]
   }
   t
 }

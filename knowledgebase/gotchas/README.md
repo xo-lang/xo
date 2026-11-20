@@ -1533,3 +1533,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-test-ok-line-has-a-tab.md](go-test-ok-line-has-a-tab.md): `go test` writes "ok", spaces and a tab before the package; `^ok +PKG` never matches a pass (golden-freecheck.sh, 2026-11-19)
 - [xw-events-arrive-late-in-tests.md](xw-events-arrive-late-in-tests.md): xwhook sends events in the background; a test that rm-s its events file and sleeps 1 s reads a late event of an earlier run (#442)
 - [growth-runs-sharing-a-host.md](growth-runs-sharing-a-host.md): two stress growth runs started together on one host failed at 34% and 25%; alone they grew 2 to 3%; run A/Bs exclusive, one at a time, on one host
+- [x86-clobbers-scratch-xmm.md](x86-clobbers-scratch-xmm.md): Observed 2026-11-19: naming xmm14 or xmm15 (the emitter's scratch) in a native x86 template's clobbers miscompiled the xo that ran it (native_json's show[Str] printed base64); clobbers name only fp_caller_t

@@ -1,8 +1,9 @@
 // std/random against Go's math/rand/v2: 10^6 draws of normal and exp,
-// 2,000 permutations of 1,000, and 10^6 Zipf draws (s 1.5, v 1, imax
-// 1000), each from the program's own Rand (the operating system's
-// generator; Go's top-level functions draw from its runtime generator);
-// `none` is the setup alone. Usage: `<program> none|normal|exp|perm|zipf`.
+// 2,000 permutations of 1,000, 10^6 Zipf draws (s 1.5, v 1, imax
+// 1000) and 5 * 10^7 bare words (`draw`: the ChaCha8 generator alone), each
+// from the program's own Rand (the operating system's generator; Go's
+// top-level functions draw from its runtime generator); `none` is the
+// setup alone. Usage: `<program> none|normal|exp|perm|zipf|draw`.
 // Prints `<workload> <draws> <statistic>`: the draws match the twin; the
 // statistic (a share to two places) agrees with overwhelming probability
 // and is printed so the draws are used, not compared (twin.txt).
@@ -51,6 +52,13 @@ fn main(os: Os) uses stdio, env, rand {
       }
     }
     os.stdio.println("zipf ${n} ${share(k, n)}")
+  } else if w == "draw" {
+    // the words' low bits counted, so every word is used
+    var k = 0
+    for _ in 0..50 * n {
+      k += os.rand.int(Int.min, Int.max) & 1
+    }
+    os.stdio.println("draw ${50 * n} ${share(k, 50 * n)}")
   } else {
     os.stdio.println("none 0 0.00")
   }
