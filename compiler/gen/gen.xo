@@ -244,9 +244,12 @@ fn (var g: Gen) run() -> Program {
     }
     // std/go_optional.txt: a std module's std/rt Go (and the Go packages
     // it imports, whose init runs at startup) is left out of a program
-    // that does not reach it
+    // that does not reach it. A program of its own that uses std/internal
+    // can name any internal op (internal.crypto_op("x509.parse", ...) in
+    // the tls_x509 golden), so it keeps them all.
+    let raw = g.uses_internal()
     for p in g.c.go_optional.keys().sort() {
-      if !reached.contains(p) {
+      if !raw && !reached.contains(p) {
         prog.tags.push("xo_no_${p.trim_prefix("std/")}")
       }
     }
@@ -404,6 +407,23 @@ fn go_line_parts(v: Str) -> List[Int] {
 
 /// The paths of the modules the program's modules or the prelude import,
 /// directly or through other modules, and their own.
+/// A module outside std imports std/internal.
+fn (g: Gen) uses_internal() -> Bool {
+  for m in g.c.order {
+    if g.c.mods[m].is_std {
+      continue
+    }
+    for fi in g.c.mods[m].files {
+      for (_, imp) in g.c.files[fi].imports.entries() {
+        if imp.module >= 0 && g.c.mods[imp.module].path == "std/internal" {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
 fn (g: Gen) reached_std() -> Map[Str, Bool] {
   var out: Map[Str, Bool] = {}
   var seen: Map[Int, Bool] = {}
