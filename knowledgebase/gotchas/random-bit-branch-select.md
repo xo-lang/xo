@@ -27,3 +27,34 @@ Fix: write the hot code branch free where the bit is random
 m) - m`. bench/perf/random normal 0.782 of the time on host 1, amd64
 1.76x to 1.38x of Go. Measure a codegen heuristic's losers with a
 repeated workload (`--ab` runs under 10 ms say "too short").
+
+
+## cond_inc (task #446, 2026-11-19)
+
+The arm64 isel pass cond_inc lowers `if c { k += 1 }` to `cset`/`csinc`
+plus the add for any condition (it does not go through from_memory: the
+side block holds only the k + 1).
+
+- Symptom: text float_fmt 1.011 of the branch build (1.008 to 1.018,
+  host 1, 200 repeats) with equal callgrind counts (1,911,650,667 against
+  1,911,651,222). Cause: code layout. The sites cond_inc changed before
+  std/native num moved every hot function (num.layout from offset 32 to
+  48 mod 64); a branch build padded by 16 bytes in main to the same
+  offsets against the cond_inc build gave 1.003 (0.991 to 1.013, within
+  noise). Check: before blaming a codegen change for a 1% loss with equal
+  instruction counts, compare against a padded build at the same offsets
+  (go tool nm, offset mod 64).
+- A checked add where the branch build had none: num.dbox's rounding
+  `xi += 1` had bounds proving no overflow, and cond_inc first always
+  emitted `adds` and `b.vs`. cond_inc now asks safe_add as the Add
+  lowering does (codegen test condinc round_up).
+- A single 5 ms run reads "too short": measure text and random cases with
+  a repeat count (float_fmt 200 times, random 20 times).
+- `&&` of two compares (`if x > -1.0 && x < 1.0 { k += 1 }`, random's
+  normal at 25%) is two blocks in SSA, so cond_inc never saw it; the
+  branch on the first compare mispredicts as often as a single random
+  one. and_inc lowers it as `cset`, `cset`, `and`, add (setcc, movzbl,
+  andq on x86-64): bench/perf/random normal 0.638 of the time on
+  linux/amd64 (4 rounds, 286e38ba8 against eccbfe06c). In and_inc, test
+  the second block's compare with `g.has_val`, not `g.lazy`: lazy is set
+  only once a block is selected, and the second block never is.

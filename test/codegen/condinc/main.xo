@@ -1,0 +1,69 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a conditional
+// count, `if c { k += 1 }`, adds the condition as a 0 or 1 (cset and a
+// checked adds) instead of branching around the add, as Go's CSINC
+// (task #446: std/random exp was 1.73x Go's time with the branch, 0.89x
+// with the count written branch-free). The overflow check stays: it
+// faults only when the condition holds (golden cond_inc_fault).
+
+// A Float compare on a loaded element: the branch's side edge is its
+// true edge.
+fn count_below(xs: List[Float], t: Float) -> Int {
+  // arm64: "\tcset x[0-9]+, (mi|lt)\n\tadds x[0-9]+, x[0-9]+, x[0-9]+\n\tb\.vs "
+  // arm64: -"\tb\.(pl|mi|ge) [^\n]*\n\t(adds|add) x[0-9]+, x[0-9]+, #1\n"
+  // amd64: "\tset(a|b) %[a-z0-9]+\n\tmovzbl %[a-z0-9]+, %[a-z0-9]+\n\taddq %[a-z0-9]+, %[a-z0-9]+\n\tjo "
+  var k = 0
+  for x in xs {
+    if x < t {
+      k += 1
+    }
+  }
+  k
+}
+
+// The count on the else side: the side edge is the false edge (csinc).
+fn count_not_above(xs: List[Int], t: Int) -> Int {
+  // arm64: "\tcsinc x[0-9]+, xzr, xzr, gt\n\tadds x[0-9]+, x[0-9]+, x[0-9]+\n\tb\.vs "
+  // arm64: -"\tb\.(gt|le) "
+  // amd64: "\tsetle %[a-z0-9]+\n\tmovzbl %[a-z0-9]+, %[a-z0-9]+\n\taddq %[a-z0-9]+, %[a-z0-9]+\n\tjo "
+  var k = 0
+  for x in xs {
+    if x > t {
+    } else {
+      k += 1
+    }
+  }
+  k
+}
+
+// k's bounds prove k + 1 fits: a plain add, no overflow check (std/native
+// num.dbox's rounding: the Add lowering emits no check there either).
+fn round_up(x: Int, y: Int) -> Int {
+  // arm64: "\tcset x[0-9]+, lt\n\tadd x[0-9]+, x[0-9]+, x[0-9]+\n"
+  // arm64: -"\tadds x[0-9]+, x[0-9]+, x[0-9]+\n"
+  // amd64: "\tsetl %[a-z0-9]+\n\tmovzbl %[a-z0-9]+, %[a-z0-9]+\n\tleaq \(%[a-z0-9]+,%[a-z0-9]+\), %[a-z0-9]+\n"
+  // amd64: -"\tjo "
+  var k = x & 1023
+  if k < y {
+    k += 1
+  }
+  k
+}
+
+// `c1 && c2` of two Float compares: both as 0 or 1, and, one add, no
+// branch on either (std/random normal's `x > -1.0 && x < 1.0`).
+fn count_in(xs: List[Float]) -> Int {
+  // arm64: "\tcset x[0-9]+, [a-z]+\n(\t[^\n]*\n){1,4}\tcset x[0-9]+, [a-z]+\n\tand x[0-9]+, x[0-9]+, x[0-9]+\n\tadds x[0-9]+, x[0-9]+, x[0-9]+\n\tb\.vs "
+  // arm64: -"\tfccmp [^\n]*\n\tb\."
+  // amd64: "\tset[a-z]+ %[a-z0-9]+\n\tmovzbl [^\n]*\n\tucomisd [^\n]*\n\tset[a-z]+ %[a-z0-9]+\n\tmovzbl [^\n]*\n\tandq %[a-z0-9]+, %[a-z0-9]+\n\taddq %[a-z0-9]+, %[a-z0-9]+\n\tjo "
+  var k = 0
+  for x in xs {
+    if x > -1.0 && x < 1.0 {
+      k += 1
+    }
+  }
+  k
+}
+
+fn main(os: Os) {
+  os.stdio.println("${count_below([0.5, 2.0, 0.25, 1.0], 1.0)} ${count_not_above([5, 1, 9, 3], 4)} ${round_up(2047, 5000)} ${count_in([0.5, 2.0, -0.25, -3.0, 0.0 / 0.0])}")
+}

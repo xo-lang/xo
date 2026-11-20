@@ -2545,6 +2545,9 @@ fn (var g: G) branch_op(v: Int) {
   }
   if g.lazy[c] {
     let cmp = g.compare(c)
+    if g.on("cond_inc") && g.and_inc(x, cmp) {
+      return
+    }
     if g.select_branch(x, cmp) {
       return
     }
@@ -2591,6 +2594,9 @@ fn (var g: G) branch_op(v: Int) {
 /// both paths pass are computed before the branch, so nothing runs that
 /// would not have.
 fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
+  if !g.cond_from_const(x) && g.on("cond_inc") && g.cond_inc(x, cmp) {
+    return true
+  }
   if g.from_memory(g.f.arg(x.args, 0), 3) {
     // a condition on a loaded value (a binary search's `sec < w[m]`): a
     // select makes the next load wait for this one, where a predicted
@@ -2659,6 +2665,258 @@ fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
   g.pmove(dsts, srcs)
   let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[j0]]})
   true
+}
+
+/// A conditional count, `if c { k += 1 }`: branch x's edge to side
+/// block S holds only the checked `k + 1` and a jump to J, its other
+/// edge reaches J directly, and the two pass J k + 1 and k for one
+/// parameter and the same values for the rest (the other edge may pass
+/// through a block that only jumps). Adds the condition as a
+/// 0 or 1 instead, `cset w, c` and `adds k2, k, w` with the add's
+/// overflow fault (only when c holds and k is the largest Int, as the
+/// branch): no branch to mispredict on data-dependent conditions, as
+/// Go's CSINC (std/random exp 1.73x Go's time with the branch, 0.89x
+/// written branch-free, task #446). Taken whatever x tests, a loaded
+/// value too: k feeds no address the way a binary search's bound does.
+fn (var g: G) cond_inc(x: ssa.Value, cmp: Cmp) -> Bool {
+  for side in 0..2 {
+    let m = g.inc_match(x, side)
+    if m.v < 0 {
+      continue
+    }
+    let c = cmp.cond
+    // 1 when x takes the side edge: cset on its condition, or csinc
+    // (c ? 0 : 1) for the false edge
+    let w = if side == 0 { g.def1(false, "${cmp.text}\ncset $d0, ${c}", cmp.us) } else { g.def1(false, "${cmp.text}\ncsinc $d0, xzr, xzr, ${c}", cmp.us) }
+    g.inc_emit(m, w)
+    return true
+  }
+  false
+}
+
+/// A cond_inc match: the add v (k + 1) of a, the side edge es, the
+/// other edge's last edge eo into J, and k's parameter at (v -1: none).
+struct IncMatch {
+  v: Int = -1
+  a: Int = -1
+  es: Int = -1
+  eo: Int = -1
+  j: Int = -1
+  at: Int = -1
+}
+
+/// cond_inc's shape for branch x's edge `side` (IncMatch.v -1 when it
+/// is not one).
+fn (g: G) inc_match(x: ssa.Value, side: Int) -> IncMatch {
+  let none = IncMatch{}
+  let es = ssa.succ(x, side)
+  let (v, a, ej) = g.inc_side(es)
+  if v < 0 {
+    return none
+  }
+  // the other edge reaches J directly or through a block that only
+  // jumps (forward)
+  let (jo, eo, so) = g.forward(ssa.succ(x, 1 - side))
+  let j = g.f.edges[ej].to
+  if jo != j || !so.is_empty() || j == g.f.edges[es].to || !g.plans_of(j).is_empty() || g.f32_params(j) {
+    return none
+  }
+  let ps = g.f.blocks[j].params
+  var at = -1
+  for (i, p) in ps.indexed() {
+    let sa = g.f.edges[ej].args[i]
+    let ao = g.f.edges[eo].args[i]
+    if g.mem_only(p) >= 0 {
+      return none
+    }
+    if sa == ao {
+      continue
+    }
+    if sa != v || ao != a || at >= 0 || g.vkind(p) != ssa.Kind.Int || g.vals[p].len() != 1 {
+      return none
+    }
+    at = i
+  }
+  if at < 0 {
+    return none
+  }
+  for i in 0..ps.len() {
+    if i != at && g.f.edges[ej].args[i] == v {
+      return none // v passed twice
+    }
+  }
+  IncMatch{v: v, a: a, es: es, eo: eo, j: j, at: at}
+}
+
+/// cond_inc's code for match m, w the 0 or 1 to add: k + w (checked
+/// unless a's bounds prove k + 1 fits), J's parameters, and the jump.
+fn (var g: G) inc_emit(m: IncMatch, w: Int) {
+  let av = g.word(m.a)
+  let xv = g.f.values[m.v]
+  let pl = g.loc_args(g.f.pos_of(xv))
+  // unchecked when a's bounds prove k + 1 fits, as the Add lowering
+  // (std/native num.dbox: the Add lowering emits no check there)
+  let d = if g.safe_add(m.a, 1, ssa.Op.Add) { g.def1(false, "add $d0, $u0, $u1", [av, w]) } else { g.checked(false, "adds $d0, $u0, $u1", [av, w], "add", "vs", "xo_fault_overflow", [rsrc(av), isrc(op_char(ssa.Op.Add)), isrc(1)] + pl) }
+  g.set(m.v, [d])
+  g.spec[g.f.edges[m.es].to] = true
+  var dsts: List[Int] = []
+  var srcs: List[Src] = []
+  for (i, p) in g.f.blocks[m.j].params.indexed() {
+    let ao = g.f.edges[m.eo].args[i]
+    if i == m.at {
+      let pw = g.vals[p][0]
+      if d != pw {
+        dsts.push(pw)
+        srcs.push(rsrc(d))
+      }
+      continue
+    }
+    g.param_moves(p, ao, dsts, srcs)
+  }
+  g.pmove(dsts, srcs)
+  let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[m.j]]})
+}
+
+/// cond_inc for `if c1 && c2 { k += 1 }` as the SSA builder gives it:
+/// branch x on c1 to block B, which holds only the compare c2 (and
+/// constants) and jumps to JB passing it, and otherwise to JB (directly
+/// or through a block that only jumps) passing false; JB only branches
+/// on that parameter, to cond_inc's shape, and its other parameters get
+/// the same value on both edges. Adds `cset c1 & cset c2` (std/random
+/// normal's `x > -1.0 && x < 1.0`, a quarter of its time on amd64 with
+/// the two branches, task #446). Both compares run: c2 reads only
+/// values x's block has (B's one predecessor) and constants, and a
+/// compare cannot fault.
+fn (var g: G) and_inc(x: ssa.Value, cmp1: Cmp) -> Bool {
+  let bi = g.f.edges[ssa.succ(x, 0)].to
+  let b = g.f.blocks[bi]
+  let n = b.instrs.len()
+  if !b.params.is_empty() || n < 2 || b.preds.len() != 1 {
+    return false
+  }
+  let jmp = g.f.values[b.instrs[n - 1]]
+  if jmp.op != ssa.Op.Jump || ssa.pad_of(jmp.pi) >= 0 {
+    return false
+  }
+  let eb = ssa.succ(jmp, 0)
+  let jb = g.f.edges[eb].to
+  let (jf, ef, sp) = g.forward(ssa.succ(x, 1))
+  if jf != jb || !sp.is_empty() {
+    return false
+  }
+  let j = g.f.blocks[jb]
+  if j.instrs.len() != 1 || j.preds.len() != 2 || g.f32_params(jb) {
+    return false
+  }
+  let c2 = b.instrs[n - 2]
+  let o2 = g.op(c2)
+  if g.has_val[c2] || g.nuses[c2] != 1 || !(o2 is ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge | ssa.Op.Eq | ssa.Op.Ne) {
+    return false
+  }
+  for k in 0..n - 2 {
+    if g.f.values[b.instrs[k]].op != ssa.Op.Const {
+      return false
+    }
+  }
+  let br = g.f.values[j.instrs[0]]
+  if br.op != ssa.Op.Branch || ssa.pad_of(br.pi) >= 0 {
+    return false
+  }
+  let p = g.f.arg(br.args, 0)
+  if !j.params.contains(p) || g.nuses[p] != 1 {
+    return false
+  }
+  for (i, q) in j.params.indexed() {
+    let ab = g.f.edges[eb].args[i]
+    let af = g.f.edges[ef].args[i]
+    if q == p {
+      let (f, fok) = g.word_const(af)
+      if ab != c2 || !fok || f != 0 {
+        return false
+      }
+      continue
+    }
+    if ab != af || g.mem_only(q) >= 0 || g.vals[q].len() != 1 || g.vkind(q) == ssa.Kind.List {
+      return false
+    }
+  }
+  let m = g.inc_match(br, 0)
+  if m.v < 0 {
+    return false
+  }
+  var dsts: List[Int] = []
+  var srcs: List[Src] = []
+  for (i, q) in j.params.indexed() {
+    if q == p {
+      continue
+    }
+    let w = g.word(g.f.edges[eb].args[i])
+    if w != g.vals[q][0] {
+      dsts.push(g.vals[q][0])
+      srcs.push(rsrc(w))
+    }
+  }
+  g.pmove(dsts, srcs)
+  let w1 = g.def1(false, "${cmp1.text}\ncset $d0, ${cmp1.cond}", cmp1.us)
+  let cmp2 = g.compare(c2)
+  let w2 = g.def1(false, "${cmp2.text}\ncset $d0, ${cmp2.cond}", cmp2.us)
+  let w = g.def1(false, "and $d0, $u0, $u1", [w1, w2])
+  g.spec[bi] = true
+  g.spec[jb] = true
+  g.inc_emit(m, w)
+  true
+}
+
+/// The checked Int `a + 1` (v) that the block edge e enters holds alone
+/// (constants aside) before its jump, and the jump's edge: (v, a, edge),
+/// or v -1.
+fn (g: G) inc_side(e: Int) -> (Int, Int, Int) {
+  let b = g.f.blocks[g.f.edges[e].to]
+  let n = b.instrs.len()
+  if !b.params.is_empty() || n == 0 || b.preds.len() != 1 {
+    return (-1, -1, -1)
+  }
+  var v = -1
+  for k in 0..n - 1 {
+    let u = b.instrs[k]
+    let o = g.f.values[u].op
+    if o == ssa.Op.Const || o == ssa.Op.Tuple && g.f.values[u].args.is_empty() {
+      continue
+    }
+    if v >= 0 || o != ssa.Op.Add {
+      return (-1, -1, -1)
+    }
+    v = u
+  }
+  if v < 0 {
+    return (-1, -1, -1)
+  }
+  let x = g.f.values[v]
+  // a landing on the add does not matter: its overflow is a fault,
+  // which no landing catches (the Add lowering ignores it too)
+  if ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int || !ssa.has_pos(x.lp) {
+    return (-1, -1, -1)
+  }
+  let x0 = g.f.arg(x.args, 0)
+  let x1 = g.f.arg(x.args, 1)
+  let (n1, c1) = g.const_int(x1)
+  let (n0, c0) = g.const_int(x0)
+  var a = -1
+  if c1 && n1 == 1 && !c0 {
+    a = x0
+  } else if c0 && n0 == 1 && !c1 {
+    a = x1
+  } else {
+    return (-1, -1, -1)
+  }
+  if g.vkind(a) != ssa.Kind.Int || g.vals[a].len() != 1 {
+    return (-1, -1, -1)
+  }
+  let jv = g.f.values[b.instrs[n - 1]]
+  if jv.op != ssa.Op.Jump || ssa.pad_of(jv.pi) >= 0 {
+    return (-1, -1, -1)
+  }
+  (v, a, ssa.succ(jv, 0))
 }
 
 /// Whether branch x tests a parameter of its own block that a

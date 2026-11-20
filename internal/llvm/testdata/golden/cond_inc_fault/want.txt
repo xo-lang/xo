@@ -1,0 +1,7 @@
+exit 70
+--- stdout
+count: 2
+max, none below: 9223372036854775807
+max, one below
+--- stderr
+fault: integer overflow: 9223372036854775807 + 1 does not fit Int at main.xo:8:7

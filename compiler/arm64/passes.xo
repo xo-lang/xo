@@ -111,6 +111,8 @@ pub fn passes() -> List[Str] {
     "jump_tables",
     "live_dce",
     "select_compares",
+    // isel.xo cond_inc: `if c { k += 1 }` as cset and adds (task #446)
+    "cond_inc",
     "slp_f64",
     "slp_carry",
     "hoist_consts",
