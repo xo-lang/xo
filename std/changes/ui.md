@@ -1,5 +1,15 @@
 # std/ui changes
 
+## 2026-11-20: perf: a live notice during the tab's own sync no longer makes a second sync
+
+- Kind: perf
+- Commit: this push
+- Found by: task #500 (bench/results/ui-vs-split-2026-11-20.md finding 5: each action made two syncs, the second for the version the first one brought back)
+- Go reference: none
+- Test: internal/uiruntime TestBusyNoticeNoSecondSync (syncs per action 2,2,2 before, 1,1,2 after: a notice of a newer version still syncs again)
+- Timing: one sync request per action instead of two on a page with the live socket
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: a wasm client's sync reply leaves the rendered view out
 
 - Kind: perf

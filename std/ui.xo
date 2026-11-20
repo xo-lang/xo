@@ -2913,7 +2913,7 @@ function boot(){
   var dg=root.getAttribute("data-xo-seen")||"";
   var ver=st.ver;
   var last=root.innerHTML;
-  var busy=false,again=false;
+  var busy=false,again=false,heard=0,uheard=0;
   function save(free){try{localStorage.setItem(KEY+"|"+client,JSON.stringify({client:client,next:next,queue:queue,acked:acked,unext:unext,uqueue:uqueue,uacked:uacked,seen:Date.now(),free:!!free}));}catch(e){}}
   function mark(){var h=H();if(waiting())h.setAttribute("data-xo-pending","");else h.removeAttribute("data-xo-pending");}
   function fill(v,get){
@@ -3007,8 +3007,13 @@ function boot(){
       if(stale&&!stopped&&!waiting()&&!editing())location.reload();
     })
     .catch(function(e){if(!/sync (40[13]|dead)/.test(String(e)))H().setAttribute("data-xo-offline","");})
-    .then(function(){busy=false;if(again){again=false;sync();}});
+    .then(function(){busy=false;if(again||heard>ver||uheard>uver){again=false;heard=0;uheard=0;sync();}});
   }
+  // a live notice while a sync is in flight: that sync's reply may bring
+  // the version it names (the tab's own Msg made it), so it is only noted
+  // and synced for after the reply when still newer (task #500: each
+  // action made two syncs)
+  function heardWhileBusy(v,u){if(v>heard)heard=v;if(u>uheard)uheard=u;}
   function handler(ev,name,u){
     var at="data-xo-"+(u?"u":"")+name;
     var t=ev.target&&ev.target.closest?ev.target.closest("["+at+"]"):null;
@@ -3030,12 +3035,13 @@ function boot(){
     ws.onopen=function(){wsUp=true;backoff=1000;sync();};// catch up on what changed while the socket was down
     ws.onmessage=function(ev){
       var d=String(ev.data);
-      if(d.charAt(0)==="u"){if(+d.slice(1)>uver||waiting())sync();return;}
-      if(d.charAt(0)!=="{"){if(+d>ver||waiting())sync();return;}
+      if(d.charAt(0)==="u"){if(busy)heardWhileBusy(0,+d.slice(1));else if(+d.slice(1)>uver||waiting())sync();return;}
+      if(d.charAt(0)!=="{"){if(busy)heardWhileBusy(+d,0);else if(+d>ver||waiting())sync();return;}
       var f;try{f=JSON.parse(d);}catch(e){sync();return;}
       // a page with Msgs to send, a sync in flight, a predicting client or
       // another query syncs instead
-      if(waiting()||busy||mod||f.q!==location.search.slice(1)){if(f.ver>ver||(f.uver||0)!==uver||waiting())sync();return;}
+      if(busy){heardWhileBusy(f.ver,f.uver||0);return;}
+      if(waiting()||mod||f.q!==location.search.slice(1)){if(f.ver>ver||(f.uver||0)!==uver||waiting())sync();return;}
       if(f.ver<ver||(f.ver===ver&&(f.uver||0)===uver))return;
       ver=f.ver;uver=f.uver||0;dg=f.seen||"";show(f.html);
       if(f.build&&build&&f.build!==build&&!stopped){stale=true;H().setAttribute("data-xo-stale","");}

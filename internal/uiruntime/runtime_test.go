@@ -195,6 +195,17 @@ func TestSocketOpenSyncs(t *testing.T) {
 	}
 }
 
+// A live notice of the version the tab's own sync is bringing back (the
+// tab's Msg, still in flight, made it) needs no second sync: each action
+// made two (task #500, bench/results/ui-vs-split-2026-11-20.md finding 5).
+// A notice of a newer version still syncs again once the reply is in.
+func TestBusyNoticeNoSecondSync(t *testing.T) {
+	r := run(t, "busy-notice")
+	if r.During != "1,1,2" {
+		t.Errorf("syncs per action (notice of the same version as a number, as a pushed view, a newer one) %q, want 1,1,2", r.During)
+	}
+}
+
 // A Host with redact names the digest of the page each viewer is shown
 // (the page's data-xo-seen, then each Sync.seen); the runtime sends back
 // the one it has, so the server can answer same while that view did not

@@ -201,6 +201,23 @@ if (scenario === "reconnect") {
   server.sockets[1].onopen(); await settle();
   extra = { before: String(first), reloads: server.syncs };
 }
+if (scenario === "busy-notice") {
+  // the live socket tells of the version this tab's own sync, still in
+  // flight, brings back: the reply has it, so no second sync (task #500:
+  // each action made two); a newer version still syncs again
+  server.live = "/_xo/live";
+  const a = tab(); await settle();
+  const ws = server.sockets[0];
+  ws.onopen(); await settle();
+  const counts = [];
+  for (const [title, data] of [["n1", () => String(server.applied.length)], ["n2", () => JSON.stringify({ ver: server.applied.length, q: "", html: "<p>x</p>" })], ["n3", () => String(server.applied.length + 1)]]) {
+    const s0 = server.syncs;
+    a.click({ Add: { title } });
+    ws.onmessage({ data: data() }); await settle();
+    counts.push(server.syncs - s0);
+  }
+  extra = { during: counts.join(",") };
+}
 if (scenario === "seen") {
   // a Host with redact names the digest of the page (data-xo-seen, then
   // Sync.seen): every sync sends back the one it has
