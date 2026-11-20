@@ -237,8 +237,23 @@ func (cb *GoCallback) End(ctk *Task) {
 // GoBytesView is b's bytes as a []byte without a copy, for a Go function
 // that only reads them during the call (internal/gobind bytesView): the
 // callee must never write to it or keep it.
+//
+// The slice is made from its three words, not with unsafe.Slice: that
+// one tests the length's sign, a nil pointer with a length, and the end
+// address at every call, 6 instructions that stay in a loop calling a Go
+// function on one Bytes (bench/perf/gobridge bytes, callgrind on
+// linux/arm64: 60.0M of the 61.2M instructions the Xo side ran over the
+// Go twin in 10M calls, task #491). A Bytes is a string, so its length
+// is in range and its pointer is nil only when it is empty.
 func GoBytesView(b Bytes) []byte {
-	return unsafe.Slice(unsafe.StringData(string(b)), len(b))
+	v := bytesView{unsafe.StringData(string(b)), len(b), len(b)}
+	return *(*[]byte)(unsafe.Pointer(&v))
+}
+
+// bytesView is a []byte's three words (GoBytesView).
+type bytesView struct {
+	p    *byte
+	n, c int
 }
 
 // GoEnter is called by every adapter before its Go call; it defers

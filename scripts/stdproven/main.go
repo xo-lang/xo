@@ -1476,7 +1476,8 @@ func perfOwner(dir string) string {
 // size) and writes std/evidence/MODULE/perf.md, a table of the medians
 // with Xo over Go, the performance axis's evidence (decision 0461:
 // Proven at or under 1.05 of Go in every row). Rows under 5 ms on both
-// sides are listed but marked: startup decides them.
+// sides are listed but marked: startup decides them. A diagnostic case
+// (perfDiag) is listed, marked and not judged.
 func perf(args []string) error {
 	fs := flag.NewFlagSet("perf", flag.ExitOnError)
 	rounds := fs.Int("rounds", 30, "interleaved rounds of each case (decision 0726: at least 30)")
@@ -1580,7 +1581,9 @@ func perf(args []string) error {
 	}
 	for _, r := range rows {
 		mark := ""
-		if r.xo < 5 && r.gom < 5 {
+		if perfDiag(r.name) {
+			mark = " (diagnostic, not judged)"
+		} else if r.xo < 5 && r.gom < 5 {
 			mark = " (under 5 ms: startup)"
 		} else if r.ratio > worst {
 			worst = r.ratio
@@ -1609,6 +1612,16 @@ func perf(args []string) error {
 	}
 	fmt.Print(tb.String())
 	return os.WriteFile(outp, []byte(b.String()), 0o644)
+}
+
+// perfDiag reports whether a twincheck time name is a diagnostic case:
+// its first argument starts with "diag_". The row is listed and marked
+// but not judged (owner 2026-11-20, xw decision #207: bench/perf/gobridge
+// keeps the program's startup and Xo's checked adds as rows of their
+// own, beside the judged rows that time the bridge's calls).
+func perfDiag(name string) bool {
+	i := strings.LastIndex(name, "/diag_")
+	return i >= 0 && !strings.Contains(name[i+1:], "/")
 }
 
 // perfRef reports whether a twincheck time name is a reference case, its

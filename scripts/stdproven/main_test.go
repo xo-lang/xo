@@ -782,3 +782,22 @@ func TestPerfRef(t *testing.T) {
 		}
 	}
 }
+
+// TestPerfDiag: a case whose one argument starts with diag_ is a
+// diagnostic row (xw decision #207), and no other.
+func TestPerfDiag(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		want bool
+	}{
+		{"bench/perf/gobridge/diag_startup", true},
+		{"bench/perf/gobridge/diag_str_checked", true},
+		{"bench/perf/gobridge/str", false},
+		{"bench/perf/diag_x/str", false},
+		{"bench/perf/gomath/erf///erf/pkg", false},
+	} {
+		if got := perfDiag(c.name); got != c.want {
+			t.Errorf("perfDiag(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

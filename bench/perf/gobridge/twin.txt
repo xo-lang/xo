@@ -5,3 +5,7 @@ env N=1000
 - - str
 - - bytes
 - - int
+- - diag_startup
+- - diag_none_checked
+- - diag_str_checked
+- - diag_bytes_checked

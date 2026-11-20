@@ -1,5 +1,8 @@
 // gobridge's Go twin: the same calls as main.xo's `use go` bindings, made
 // directly.
+// The diag_ workloads are main.xo's diagnostics: diag_startup runs no
+// iteration, and a diag_*_checked workload is its plain loop again (Go's
+// `+` wraps; the Xo side's checks are what the row shows).
 package main
 
 import (
@@ -10,28 +13,67 @@ import (
 	"strings"
 )
 
+const s = "the quick brown fox jumps over z"
+
+// text is the bytes workload's 32 bytes, made once on the heap, where a
+// 32 byte object starts on a 32 byte boundary, as the Xo side's literal
+// does (rt.AlignedBytes, task #467). As a local `[]byte(s)` it was on
+// the stack at whatever offset the frame gave it, and bytes.IndexByte's
+// time followed the offset: 2.2 ns a call in one build of this file and
+// 8.7 ns in the next (2026-11-20, linux/arm64 host 2, task #423).
+var text = []byte(s)
+
 func main() {
 	w := "str"
 	if len(os.Args) > 1 {
 		w = os.Args[1]
 	}
-	n := 10000000
+	n := 50000000
+	switch w {
+	case "diag_startup":
+		n = 0
+	case "none", "diag_none_checked":
+		n = 200000000
+	case "int":
+		n = 10000000
+	}
 	if len(os.Args) > 2 {
 		if v, err := strconv.Atoi(os.Args[2]); err == nil {
 			n = v
 		}
 	}
-	s := "the quick brown fox jumps over z"
-	b := []byte(s)
+	b := text
+	// the workload as a number, as main.xo's k
+	k := 0
+	switch w {
+	case "str":
+		k = 1
+	case "bytes":
+		k = 2
+	case "int":
+		k = 3
+	case "diag_str_checked":
+		k = 4
+	case "diag_bytes_checked":
+		k = 5
+	case "diag_none_checked":
+		k = 6
+	}
 	sum := 0
 	for i := 0; i < n; i++ {
-		switch w {
-		case "str":
+		switch k {
+		case 1:
 			sum += strings.Index(s, "z") + i%3
-		case "bytes":
+		case 2:
 			sum += bytes.IndexByte(b, 'z') + i%3
-		case "int":
+		case 3:
 			sum += len(strconv.Itoa(i))
+		case 4:
+			sum += strings.Index(s, "z") + i%3
+		case 5:
+			sum += bytes.IndexByte(b, 'z') + i%3
+		case 6:
+			sum += i % 3
 		default:
 			sum += i % 3
 		}
