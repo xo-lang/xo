@@ -1972,6 +1972,11 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     tool, `--tool NAME` or `PUSHQ_TOOL=NAME` ("none, WHY" when none
     helped), passed to `xw task done` as "tool: NAME", and refuses the
     push (exit 2) without it (#405; tested by pushq_done_tool_test.sh).
+    A bug fix proven by a test that already existed and failed before
+    the fix (no test file in its commit) adds `--test NAME`
+    (`PUSHQ_TEST`), or `xw task done ID "tool: X; test: NAME"`: the note
+    "test: NAME" keeps xw's bug-no-test check quiet; "test: none" does
+    not (#515, 2026-11-20).
     Detached, none of them fails or slows
     its tool (xwhook.sh xw_task_bind, xw_task_of, xw_task_mark; tested
     by xwhook_test.sh and pushq_prelane_test.sh). Agents call only `xw
