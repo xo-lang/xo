@@ -1,0 +1,24 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): the unwinder's scan
+// of a frame's call site table (std/native/llrt/unwind.xo landing_uleb)
+// decodes the table's uleb128 numbers itself and calls nothing. Through
+// read_val and uleb each entry was four calls, 921 calls a fault in
+// bench/perf/fault's defer row (tasks #508 and #511): a fault's unwind
+// scans one table per frame.
+use std/task
+
+fn deep(n: Int, xs: List[Int]) -> Int {
+  if n == 0 {
+    return xs[n + 5]
+  }
+  deep(n - 1, xs) + 1
+}
+
+fn main(os: Os) {
+  let xs = [1, 2, 3]
+  let r = task.isolate(fn() -> Int ! Never { deep(3, xs) })
+  os.stdio.println("${r is Err(_)}")
+}
+
+// func unwind.landing_uleb
+// arm64: -"\tbl\t" -"\tbl "
+// amd64: -"\tcallq "

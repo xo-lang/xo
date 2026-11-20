@@ -599,6 +599,9 @@ fn landing(lsda: Int, func: Int, ip: Int) -> Int {
   let (cslen, p1) = uleb(p + 1)
   let end = p1 + cslen
   p = p1
+  if (csenc & 15) == 1 {
+    return landing_uleb(p, end, func, ip)
+  }
   while p < end {
     let (start, p2) = read_val(p, csenc)
     let (len, p3) = read_val(p2, csenc)
@@ -613,6 +616,65 @@ fn landing(lsda: Int, func: Int, ip: Int) -> Int {
         return 0
       }
       return func + lp
+    }
+  }
+  0
+}
+
+/// landing's scan of a call site table of uleb128 entries from p to
+/// end (the native backends' and LLVM's ELF tables), decoded here: a
+/// fault's unwind scans a table per frame, and through read_val and
+/// uleb each entry was four calls (bench/perf/fault defer: 921 calls a
+/// fault, 627M of 1,594M instructions in a whole program build, task
+/// #511). A function of its own: written into landing, its size moved
+/// the inliner's choices in raise's loop and the three fault rows ran 3
+/// to 30% more instructions on the native backend (2026-11-20). Offsets
+/// are under 2^28 (four bytes), so the shifts stay in range.
+fn landing_uleb(p0: Int, end: Int, func: Int, ip: Int) -> Int {
+  var p = p0
+  while p < end {
+    var start = 0
+    var sh = 0
+    var c = 128
+    while c >= 128 {
+      c = rt.mem_load(p, 0, 1)
+      p = p.wrapping_add(1)
+      start = start | (c & 127).wrapping_shl(sh & 63)
+      sh = sh.wrapping_add(7)
+    }
+    var len = 0
+    sh = 0
+    c = 128
+    while c >= 128 {
+      c = rt.mem_load(p, 0, 1)
+      p = p.wrapping_add(1)
+      len = len | (c & 127).wrapping_shl(sh & 63)
+      sh = sh.wrapping_add(7)
+    }
+    var lp = 0
+    sh = 0
+    c = 128
+    while c >= 128 {
+      c = rt.mem_load(p, 0, 1)
+      p = p.wrapping_add(1)
+      lp = lp | (c & 127).wrapping_shl(sh & 63)
+      sh = sh.wrapping_add(7)
+    }
+    // the action: skipped
+    c = 128
+    while c >= 128 {
+      c = rt.mem_load(p, 0, 1)
+      p = p.wrapping_add(1)
+    }
+    let at = func.wrapping_add(start)
+    if ip < at {
+      return 0
+    }
+    if ip < at.wrapping_add(len) {
+      if lp == 0 {
+        return 0
+      }
+      return func.wrapping_add(lp)
     }
   }
   0
