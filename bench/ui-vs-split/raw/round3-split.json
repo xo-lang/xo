@@ -1,0 +1,1 @@
+{"url":"http://127.0.0.1:8783/","adds":30,"rtt_ms":100,"cold_load":{"requests":5,"bytes":4410,"by_resource":[["/",807],["/app.js",2297],["/style.css",1130],["/api/events",0],["/favicon.ico",176]]},"fcp_ms":28,"add_local":{"p50":2.3,"p95":71.3,"max":72.6},"add_rtt":{"p50":110.8,"p95":220.2,"max":244.6},"html_bytes":668,"todos_in_html":false}

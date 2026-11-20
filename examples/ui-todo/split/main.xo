@@ -1,0 +1,91 @@
+// The ui-todo App built the traditional way, for comparison with
+// ../server (std/ui): a hand written HTML, CSS and JavaScript front end
+// in static/, embedded in the binary (decision 0304) and served as
+// files, talking to a JSON API. The server keeps the same Model and runs
+// the same todo.update; the browser renders the Model itself and hears
+// every change over server-sent events.
+//
+//   xo run ./split -- :8080
+//
+// GET /api/state     the Model and its version, as JSON
+// POST /api/msg      a Msg as JSON; the new Model and version
+// GET /api/events    server-sent events: the Model and version on each change
+use std/embed
+use std/http
+use std/json
+use std/log
+use std/sse
+use example.com/uitodo/todo
+
+const STATIC: embed.Dir = embed("static")
+
+struct Snap {
+  ver: Int
+  model: todo.Model
+} derive Json
+
+struct State {
+  snap: Snap
+  // each events stream's wake up channel, by stream number
+  subs: Map[Int, Chan[Int]]
+  next_sub: Int
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let addr = args.get(0) ?? ":8080"
+  let st = Mutex[State].new(State{snap: Snap{ver: 0, model: todo.initial()}, subs: {}, next_sub: 0})
+  var r = http.router()
+  r.handle("GET /api/state", fn(_req) { http.json(200, st.with_read(fn(s: State) -> Snap { s.snap })) })
+  r.handle("POST /api/msg", fn(req) {
+    match req.json[todo.Msg]() {
+      Ok(msg) => {
+        let snap = st.with(fn(var s: State) -> Snap {
+          s.snap = Snap{ver: s.snap.ver + 1, model: todo.update(s.snap.model, msg)}
+          for (_, ch) in s.subs {
+            // a stream already woken reads the newest Model anyway
+            let _sent = ch.try_send(s.snap.ver)
+          }
+          s.snap
+        })
+        http.json(200, snap)
+      }
+      Err(e) => http.text(400, "bad Msg: ${e.display()}")
+    }
+  })
+  r.handle("GET /api/events", fn(_req) {
+    let ch = Chan[Int].new(cap: 1)
+    let id = st.with(fn(var s: State) -> Int {
+      let n = s.next_sub
+      s.next_sub = n + 1
+      s.subs[n] = ch
+      n
+    })
+    var resp = http.stream(200, fn(w) {
+      defer {
+        // xo:allow XO0804 id is this stream's own number, not shared state
+        st.with(fn(var s: State) { s.subs.remove(id) })
+      }
+      var sent = -1
+      while true {
+        let snap = st.with_read(fn(s: State) -> Snap { s.snap })
+        if snap.ver != sent {
+          sse.send(w, json.encode_str(snap))?
+          sent = snap.ver
+        }
+        if ch.recv() == None {
+          break
+        }
+      }
+      Ok(())
+    })
+    for (k, v) in sse.headers() {
+      resp = resp.with_header(k, v)
+    }
+    resp
+  })
+  r.handle("GET /", http.file_server(STATIC.sub("static").fs()))
+  let l = os.net.listen(addr)?
+  log.info("listening", {"addr": l.addr(), "static_bytes": "${STATIC.files.values().fold(0, fn(n, b) { n + b.len() })}"})
+  http.server(l, r).serve()?
+}

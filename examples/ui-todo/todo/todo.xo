@@ -78,9 +78,14 @@ pub fn view(m: Model) -> ui.Html {
   ])
 }
 
+/// The Model a new list starts from: no todos and three seats.
+pub fn initial() -> Model {
+  Model{todos: [], next_id: 1, seats: 3, holders: []}
+}
+
 pub fn app() -> ui.App[Model, Msg] {
   // A seat is the server's to give: Reserve waits for its answer.
-  ui.app(Model{todos: [], next_id: 1, seats: 3, holders: []}, update, view).confirming(fn(m) { m is Msg.Reserve(_) })
+  ui.app(initial(), update, view).confirming(fn(m) { m is Msg.Reserve(_) })
 }
 
 pub const CSS = r"""

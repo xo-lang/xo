@@ -1,0 +1,1 @@
+{"url":"http://127.0.0.1:8781/","adds":30,"rtt_ms":100,"cold_load":{"requests":6,"bytes":106025,"by_resource":[["/",2415],["/_xo/app.wasm",93863],["/_xo/ui.js",9059],["/_xo/sync",276],["/favicon.ico",136],["/_xo/sync",276]]},"fcp_ms":68,"add_local":{"p50":1.6,"p95":6.4,"max":13},"add_rtt":{"p50":1.9,"p95":2.4,"max":2.4},"html_bytes":20385,"todos_in_html":true}
