@@ -1,0 +1,21 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): std random's draws
+// split a random word without a branch on its random bits (task #463,
+// guarding dd8a5b588; gotchas/random-bit-branch-select.md). A branch on
+// a random bit is mispredicted half the time: normal ran 1.7x of Go on
+// linux/amd64 with equal instruction counts while it had two.
+use std/random
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  let r = random.seeded("seed${n}".bytes())
+  os.stdio.println("${random.normal(r)} ${random.exp(r)} ${random.perm(r, n + 4)}")
+}
+
+// normal: j = int32(w) is a mask, a shift and a subtract, and |j| is
+// asr, eor and sub, each in one straight run (no branch can sit between
+// them; dd8a5b588 replaced two `if`s on the sign bit). exp and perm
+// have no select on a random bit: exp's split is masks and a shift, its
+// `j < KE[i]` test is Go's branch too, and perm's swap is straight code.
+// func random.normal
+// arm64: "\tand x[0-9]+, x[0-9]+, #2147483648\n\tlsl x[0-9]+, x[0-9]+, #1\n\tsub x[0-9]+, x[0-9]+, x[0-9]+\n" "\tasr x[0-9]+, x[0-9]+, #63\n\teor x[0-9]+, x[0-9]+, x[0-9]+\n\tsub x[0-9]+, x[0-9]+, x[0-9]+\n"
+// amd64: "\tmovl \$2147483648, %r[a-z0-9]+\n\tandq [^\n]*\n\tshlq \$1, %r[a-z0-9]+\n\tsubq " "\tsarq \$63, %r[a-z0-9]+\n(\tmovq [^\n]*\n)?\txorq %r[a-z0-9]+, %r[a-z0-9]+\n\tsubq %r"

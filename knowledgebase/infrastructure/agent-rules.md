@@ -23,7 +23,7 @@ Read by machines, so keep the shape:
   to MAINWATCH_LOAD_WAIT for load; task #210). A beat past due is
   `loop-stale` and the late schedule alerts again.
 
-Last verified: 2026-11-17.
+Last verified: 2026-11-20.
 
 ## Rules
 
@@ -92,6 +92,7 @@ Last verified: 2026-11-17.
 | Never wait idle while a gate or push runs | CLAUDE.md | `workstream:work.xo` (checks: idle, idle-empty, waiting) | `workstream:test/work_test.sh` | idle, idle-empty, waiting |
 | A scope is never freed while its node is linked or its last unit is still counting itself done (gotchas/orphan-scope-free-races-last-unit.md, #326) | std/native runtime | `internal/llvm/threads_test.go` (xo test --check=free,guard on race_orphan; scope_free invariant, task #348) | `internal/llvm/threads_test.go` (TestFreeCheckOrphanScope) | gotcha:orphan-scope-free-races-last-unit |
 | pushq runs every check and gate command under an allowlisted env (env -i plus login, GO* and XO_* settings), so no caller or lane OFF_*, OFFGATE_*, HEAVY_* or GATE_* setting reaches one (gotchas/gate-env-leaks-into-push.md, #376) | pushq | `scripts/lead/pushq-env.sh` (pq_env in pushq.sh; GATE_RUN_ENV for the corpus check) | `scripts/lead/pushq_prelane_test.sh` (allowlisted env cases) | gotcha:gate-env-leaks-into-push |
+| A branch on a random bit is written branch free in the source; select_branch is not widened (gotchas/random-bit-branch-select.md, #463) | std (random), compiler/arm64 isel | `test/codegen/randselect/main.xo` (random.normal split, arm64 and amd64), `test/codegen/condinc/main.xo` | `internal/devgoldens/devgoldens_test.go` (TestDevCodegen) | gotcha:random-bit-branch-select |
 
 ## Retired kinds
 

@@ -82,3 +82,8 @@ side block holds only the k + 1).
   split of a dependent chain, and confirm a suspected instruction is on
   the measured path (`xo asm --backend=amd64 --targets=linux/amd64`)
   before and after a change. Open (2026-11-19): where the 0.2 s goes.
+
+Guard (task #463, 2026-11-20): test/codegen/randselect checks that
+normal's two splits stay straight runs (and/lsl/sub, asr/eor/sub on arm64;
+the same on amd64); it fails on the source before a0d695aab. The
+agent-rules.md row "A branch on a random bit" lists it.
