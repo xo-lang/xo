@@ -237,8 +237,19 @@ pub fn generate(c: check.Checker, opts: Opts) -> Program {
 
 fn (var g: Gen) run() -> Program {
   var prog = Program{}
-  if !g.opts.test_mode && !g.reaches_std("std/http") {
-    prog.tags.push("xo_nohttp")
+  if !g.opts.test_mode {
+    let reached = g.reached_std()
+    if !reached.contains("std/http") {
+      prog.tags.push("xo_nohttp")
+    }
+    // std/go_optional.txt: a std module's std/rt Go (and the Go packages
+    // it imports, whose init runs at startup) is left out of a program
+    // that does not reach it
+    for p in g.c.go_optional.keys().sort() {
+      if !reached.contains(p) {
+        prog.tags.push("xo_no_${p.trim_prefix("std/")}")
+      }
+    }
   }
   g.init_adapt()
   g.proto_free = g.c.go_proto_free
@@ -391,9 +402,10 @@ fn go_line_parts(v: Str) -> List[Int] {
   out
 }
 
-/// Whether the program's modules or the prelude import the std module
-/// path, directly or through other modules (reachesStd).
-fn (g: Gen) reaches_std(path: Str) -> Bool {
+/// The paths of the modules the program's modules or the prelude import,
+/// directly or through other modules, and their own.
+fn (g: Gen) reached_std() -> Map[Str, Bool] {
+  var out: Map[Str, Bool] = {}
   var seen: Map[Int, Bool] = {}
   var stack: List[Int] = []
   for m in g.c.order {
@@ -407,9 +419,7 @@ fn (g: Gen) reaches_std(path: Str) -> Bool {
       continue
     }
     seen[m] = true
-    if g.c.mods[m].path == path {
-      return true
-    }
+    out[g.c.mods[m].path] = true
     for fi in g.c.mods[m].files {
       for (_, imp) in g.c.files[fi].imports.entries() {
         if imp.module >= 0 && !seen.contains(imp.module) {
@@ -418,7 +428,7 @@ fn (g: Gen) reaches_std(path: Str) -> Bool {
       }
     }
   }
-  false
+  out
 }
 
 /// The widest tuple std/rt declares (scripts/gentuples Max).

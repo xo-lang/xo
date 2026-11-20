@@ -29,6 +29,10 @@ pub struct Checker {
   /// The Go backend's std/go_proto_free.txt (decision 0542), read with
   /// go_compiled.
   pub go_proto_free: Map[Str, Bool] = {}
+  /// The Go backend's std/go_optional.txt (task #467 lever C), read with
+  /// go_compiled: the std modules whose std/rt Go builds under the tag
+  /// xo_no_M, which a program that does not reach std/M is built with.
+  pub go_optional: Map[Str, Bool] = {}
   /// The std tree's block in objs, tys, esets and evars (Checker.run,
   /// decision 0388): what std_export records
   pub std_block: StdBlock = StdBlock{}
@@ -870,7 +874,8 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
     c.load_native()
   } else {
     c.load_go_compiled()
-    c.go_proto_free = c.read_go_proto_free()
+    c.go_proto_free = c.read_std_set("go_proto_free.txt")
+    c.go_optional = c.read_std_set("go_optional.txt")
   }
   if c.unsupported.is_empty() {
     c.run()?
@@ -923,7 +928,8 @@ fn (var c: Checker) check_std_test() -> () ! Str uses fs.read {
     c.load_native()
   } else {
     c.load_go_compiled()
-    c.go_proto_free = c.read_go_proto_free()
+    c.go_proto_free = c.read_std_set("go_proto_free.txt")
+    c.go_optional = c.read_std_set("go_optional.txt")
   }
   let m = match c.mod_index.get(p) {
     Some(m) => m
@@ -1279,11 +1285,12 @@ fn (c: Checker) std_list(name: Str) -> List[Str] {
   out
 }
 
-/// The std generic functions whose Go never compares or hashes a type
-/// parameter's value (decision 0542): std/go_proto_free.txt, one
-/// `module.name` a line, `#` comments.
-fn (c: Checker) read_go_proto_free() -> Map[Str, Bool] {
-  let data = c.fs.read("${c.std_dir}/go_proto_free.txt").ok() ?? None
+/// The lines of the std list file std/name, `#` comments and blank lines
+/// left out: std/go_proto_free.txt, the std generic functions whose Go
+/// never compares or hashes a type parameter's value (decision 0542), one
+/// `module.name` a line; std/go_optional.txt, one `std/M` a line.
+fn (c: Checker) read_std_set(name: Str) -> Map[Str, Bool] {
+  let data = c.fs.read("${c.std_dir}/${name}").ok() ?? None
   let text = match data {
     Some(b) => b.to_str() ?? ""
     None => return {}

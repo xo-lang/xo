@@ -42,7 +42,26 @@ func TestStdRTBuildTags(t *testing.T) {
 	if !seen["xo_nohttp"] {
 		t.Fatal("no //go:build line in std/rt names xo_nohttp: the scan is broken")
 	}
-	tags := []string{""}
+	// std/go_optional.txt (task #429 lever C): each listed module's tag
+	// must leave something out, and all of them at once (a program that
+	// reaches none of the modules) must build too
+	opt, err := os.ReadFile(filepath.Join(root, "std/go_optional.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := []string{"xo_nohttp", "xo_gotimers"}
+	for _, l := range strings.Split(string(opt), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		x := "xo_no_" + strings.TrimPrefix(l, "std/")
+		if !seen[x] {
+			t.Errorf("std/go_optional.txt lists %s, but no //go:build line in std/rt names %s", l, x)
+		}
+		all = append(all, x)
+	}
+	tags := []string{"", strings.Join(all, ",")}
 	for x := range seen {
 		tags = append(tags, x)
 	}

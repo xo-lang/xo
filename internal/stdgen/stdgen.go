@@ -103,6 +103,23 @@ func merged(root string) map[string]bool {
 	return out
 }
 
+// OptionalTag is the build tag a program that does not reach std module m,
+// listed in std/go_optional.txt, is built with: std/rt's Go for m is
+// left out under it (task #467 lever C).
+func OptionalTag(m string) string { return "xo_no_" + m }
+
+// Optional is the modules std/go_optional.txt lists.
+func Optional(root string) map[string]bool { return stdList(root, "go_optional.txt") }
+
+// buildLine is the //go:build line of module m's generated files, or ""
+// when m is not optional.
+func buildLine(optional map[string]bool, m string) string {
+	if !optional[m] {
+		return ""
+	}
+	return "//go:build !" + OptionalTag(m) + "\n\n"
+}
+
 // stdList reads std/name: one `std/M` a line, `#` comments, as M.
 func stdList(root, name string) map[string]bool {
 	out := map[string]bool{}
@@ -266,6 +283,7 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	optional := Optional(root)
 	dir, err := os.MkdirTemp("", "xo-stdgen-")
 	if err != nil {
 		return nil, err
@@ -378,7 +396,7 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	}
 	for g, body := range chunks {
 		var b strings.Builder
-		b.WriteString(lines[0] + "\n" + lines[1] + "\n" + hashPrefix + hashes[g] + "\n\npackage rt\n\n")
+		b.WriteString(lines[0] + "\n" + lines[1] + "\n" + hashPrefix + hashes[g] + "\n\n" + buildLine(optional, g) + "package rt\n\n")
 		if strings.Contains(body, "strings.") {
 			b.WriteString("import \"strings\"\n\n")
 		}
@@ -415,7 +433,7 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	}
 	for g, specs := range byGroup {
 		var b strings.Builder
-		b.WriteString(lines[0] + "\n" + lines[1] + "\n\npackage rt\n\n")
+		b.WriteString(lines[0] + "\n" + lines[1] + "\n\n" + buildLine(optional, g) + "package rt\n\n")
 		for _, h := range head {
 			if h != "" {
 				b.WriteString(h + "\n")

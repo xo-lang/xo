@@ -1,0 +1,11 @@
+# std modules whose std/rt Go a Go backend program that does not reach
+# them is built without (task #467 lever C): a program not reaching std/M
+# is built with the tag xo_no_M, and std/rt's Go for M (scripts/stdgen's
+# std_gen_M.go and std_sigs_M.go, and the hand written files that carry
+# `//go:build !xo_no_M`) is left out, with the Go packages it imports,
+# whose init would run at startup. internal/stdgen TestOptionalBuilds
+# builds std/rt under each tag.
+std/template
+std/xml
+std/archive
+std/gif

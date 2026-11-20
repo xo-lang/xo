@@ -1,3 +1,5 @@
+//go:build !xo_no_template
+
 package rt
 
 import (
@@ -295,3 +297,6 @@ func (t Template_Template) M_render_named(tk *Task, name string, data Json_Value
 	// outside bytes as Str (decision 0259): a string sliced inside a rune
 	return Ok[string, Template_TemplateErr](textOf(b.String()))
 }
+
+// M_display is `e.display()`.
+func (v Template_TemplateErr) M_display(*Task) string { return v.F_msg }

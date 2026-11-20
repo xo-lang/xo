@@ -1,3 +1,5 @@
+//go:build !xo_no_gif
+
 package rt
 
 // std/gif on the Go backend (decision 0578 step 5): Go's image/gif over

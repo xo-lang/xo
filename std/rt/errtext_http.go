@@ -43,6 +43,3 @@ func (v Http_TlsErr) M_display(*Task) string { return v.F_msg }
 
 // M_display is `e.display()`.
 func (v Tls_TlsErr) M_display(*Task) string { return v.F_msg }
-
-// M_display is `e.display()`.
-func (v Template_TemplateErr) M_display(*Task) string { return v.F_msg }

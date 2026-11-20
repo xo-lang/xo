@@ -1,3 +1,5 @@
+//go:build !xo_no_xml
+
 package rt
 
 // std/xml (std.md 34, decision 0314): Go's encoding/xml. Tokens come from
