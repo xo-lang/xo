@@ -504,6 +504,21 @@ so it is the VM, not thread migration in the program. A 5 to 20 round
 median can land in either mode (20 rounds gave Xo / Go 1.04, 300 rounds
 1.15); decision 0726 proposes how perf evidence reads such rows.
 
+Host 2 also runs a search over data in the first 64-byte line of a page
+4 to 8 times slower (xo-4c, task #429; Last verified: 2026-11-20): Go's
+strings.Index on a 32-byte text, 2,000,000 calls, one process per page
+offset, took 20.0 ms at offset 0 (and 4096, 8192), 33.6 ms at offsets 1
+to 63, and 4.2 to 4.5 ms at every other line of the page; the Mac shows
+no such effect (3.7 to 6.4 ms throughout). Source:
+~/xo-lead/notes/xo-4c/429-bytes-gap-2026-11-20.md "Placement sweep"
+(s726/off/h2e.out, h2f.out, mac-a.out). A timing on host 2 that moves
+between builds with the same hot code can be its data's page offset;
+check where the data lands before blaming the change (see also
+gotchas/go-string-literal-alignment.md). Two binaries of identical code
+can also keep different speeds within one lease (a whole-binary
+effect), so compare builds interleaved in one lease, never across
+leases.
+
 riscv64 tools on host 2 (decision 0645, Lang 1; Last verified: 2026-11-15):
 /opt/llvm/bin has clang, llvm-mc, llvm-readelf and llvm-objdump 23.1.3 with
 the riscv64 target. Its clang.cfg forces `-mcpu=generic`, which riscv64
