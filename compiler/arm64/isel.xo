@@ -2770,7 +2770,7 @@ fn (var g: G) branch_op(v: Int) {
 /// both paths pass are computed before the branch, so nothing runs that
 /// would not have.
 fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
-  if !g.cond_from_const(x) && g.on("cond_inc") && g.cond_inc(x, cmp) {
+  if !g.cond_from_const(x) && !g.test_from_const(x) && g.on("cond_inc") && g.cond_inc(x, cmp) {
     return true
   }
   if g.from_memory(g.f.arg(x.args, 0), 3) {
@@ -3116,6 +3116,33 @@ fn (g: G) cond_from_const(x: ssa.Value) -> Bool {
     let a = g.f.edges[e].args[at]
     if g.op(a) == ssa.Op.Const {
       return true
+    }
+  }
+  false
+}
+
+/// Whether branch x tests an operation on a parameter of its own block
+/// that a predecessor passes a constant (a derived order's -1, 0 or 1
+/// tested `< 0`, `if a < b { n += 1 }` on structs): cond_inc leaves it a
+/// branch, which each constant's path then takes at once; as a 0 or 1
+/// to add, every path set the constant, joined, and ran a compare, a
+/// setl, a movzbl and the add (task #490: test/codegen/strs count_desc3
+/// on amd64 since cond_inc, b24d925fa).
+fn (g: G) test_from_const(x: ssa.Value) -> Bool {
+  let c = g.f.arg(x.args, 0)
+  let bl = g.f.blocks[ssa.block_of(x.tb)]
+  let (sp, ep) = g.f.args_span(g.f.values[c].args)
+  for ak in sp..ep {
+    let a = g.f.argpool[ak]
+    for (i, p) in bl.params.indexed() {
+      if p != a {
+        continue
+      }
+      for e in bl.preds {
+        if g.op(g.f.edges[e].args[i]) == ssa.Op.Const {
+          return true
+        }
+      }
     }
   }
   false

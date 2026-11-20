@@ -12,4 +12,4 @@ fn main(os: Os) {
 
 // func rand.block
 // arm64: "tbl v" "rev32 v" -"chacha8_rand4_soft"
-// amd64: "pshufb" "paddd" "punpckhqdq" -"chacha8_rand4_soft"
+// amd64: "pshufb" "paddd" "pshufd" -"chacha8_rand4_soft"

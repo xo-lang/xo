@@ -87,3 +87,17 @@ Guard (task #463, 2026-11-20): test/codegen/randselect checks that
 normal's two splits stay straight runs (and/lsl/sub, asr/eor/sub on arm64;
 the same on amd64); it fails on the source before a0d695aab. The
 agent-rules.md row "A branch on a random bit" lists it.
+
+## A test of a constant a path passes stays a branch (Observed, 2026-11-20, task #490)
+
+Symptom: test/codegen/strs count_desc3 failed on amd64 (`setl`, `movzbl`)
+from b14bfe6b0 on; the gate's codegen step runs arm64 and llvm only, so
+the push did not see it. Cause: `if ks[i] < ks[i - 1] { n += 1 }` on a
+struct tests the derived order's -1, 0 or 1 `< 0`; cond_inc turned the
+test into a 0 or 1 to add, so each path set its constant, jumped to the
+join, and ran a compare, a set and the add, where a branch sends each
+constant's path straight to its side. Fix: select_branch skips cond_inc
+when the branch tests an operation on a parameter of its own block that
+a predecessor passes a constant (isel.xo test_from_const, beside
+cond_from_const). Run `xo dev codegen --backend=arm64,amd64,llvm
+test/codegen` on the Mac for a change to isel's branch lowering.
