@@ -2903,6 +2903,11 @@ struct Composer {
   doc: yaml.Doc
   err: Str
   init_done: Bool
+  /// the documents composed before this one, and the anchors they define
+  /// (name to document and node): yaml.v3's parser keeps its anchors for the
+  /// whole stream, so a later document's alias may name one
+  done: List[yaml.Doc]
+  old: Map[Str, (Int, Int)]
 }
 
 const TAG_PREFIX: Str = "tag:yaml.org,2002:"
@@ -3064,12 +3069,45 @@ fn c_alias(var c: Composer) -> Int {
   match c.doc.anchors.get(name) {
     Some(a) => c.doc.nodes[n].alias = a
     None => {
-      c_fail(c, "unknown anchor '${name}' referenced")
-      return -1
+      match c.old.get(name) {
+        Some((k, a)) => {
+          // the node belongs to an earlier document: this one holds a copy
+          var memo: Map[Int, Int] = {}
+          let m = copy_from(c, k, a, memo)
+          c.doc.anchors[name] = m
+          c.doc.nodes[n].alias = m
+        }
+        None => {
+          c_fail(c, "unknown anchor '${name}' referenced")
+          return -1
+        }
+      }
     }
   }
   c_next(c)
   n
+}
+
+/// Copies node a of the earlier document k, with what it holds and the nodes
+/// its aliases name, into the document being composed; memo maps k's indexes
+/// to the copies (an alias to an ancestor makes a cycle).
+fn copy_from(var c: Composer, k: Int, a: Int, var memo: Map[Int, Int]) -> Int {
+  if let Some(m) = memo.get(a) {
+    return m
+  }
+  let src = c.done[k].nodes[a]
+  let m = c.doc.nodes.len()
+  c.doc.nodes.push(src)
+  memo[a] = m
+  var content: List[Int] = []
+  for x in src.content {
+    content.push(copy_from(c, k, x, memo))
+  }
+  c.doc.nodes[m].content = content
+  if src.alias >= 0 {
+    c.doc.nodes[m].alias = copy_from(c, k, src.alias, memo)
+  }
+  m
 }
 
 fn c_scalar(var c: Composer) -> Int {
@@ -3172,23 +3210,36 @@ fn compose_all(text: Bytes) -> Result[List[yaml.Doc], Str] {
 
 /// The first `limit` documents of text (all when limit is negative).
 fn compose_docs(text: Bytes, limit: Int) -> Result[List[yaml.Doc], Str] {
-  var c = Composer{p: new_parser(if text.len() == 0 { b"\n" } else { text }), ev: ev(E_NONE, mark0(), mark0()), has_ev: false, doc: yaml.Doc{nodes: [], anchors: {}, root: -1}, err: "", init_done: false}
-  var docs: List[yaml.Doc] = []
+  let (docs, err) = compose_part(text, limit)
+  if err != "" {
+    return Err(err)
+  }
+  Ok(docs)
+}
+
+/// The documents of text before the first error, and that error ("" when
+/// none): yaml.v3's Decoder decodes each document before it parses the next.
+fn compose_part(text: Bytes, limit: Int) -> (List[yaml.Doc], Str) {
+  var c = Composer{p: new_parser(if text.len() == 0 { b"\n" } else { text }), ev: ev(E_NONE, mark0(), mark0()), has_ev: false, doc: yaml.Doc{nodes: [], anchors: {}, root: -1}, err: "", init_done: false, done: [], old: {}}
   while true {
     c.doc = yaml.Doc{nodes: [], anchors: {}, root: -1}
     let n = c_parse(c)
     if c.err != "" {
-      return Err(c.err)
+      return (c.done, c.err)
     }
     if n < 0 {
       break
     }
-    docs.push(c.doc)
-    if limit >= 0 && docs.len() >= limit {
+    let k = c.done.len()
+    for (name, a) in c.doc.anchors {
+      c.old[name] = (k, a)
+    }
+    c.done.push(c.doc)
+    if limit >= 0 && c.done.len() >= limit {
       break
     }
   }
-  Ok(docs)
+  (c.done, "")
 }
 
 // ---- resolver (resolve.go): the tag of a plain scalar ----
@@ -3612,6 +3663,11 @@ fn parse_doc(text: Str) -> yaml.Doc ! yaml.YamlErr {
       Ok(docs[0])
     }
   }
+}
+
+fn parse_docs_part(text: Str) -> (List[yaml.Doc], yaml.YamlErr?) {
+  let (docs, err) = compose_part(text.bytes(), -1)
+  (docs, if err == "" { None } else { Some(yaml.YamlErr{line: 0, msg: err}) })
 }
 
 fn parse_docs(text: Str) -> List[yaml.Doc] ! yaml.YamlErr {
@@ -5947,7 +6003,9 @@ fn to_duration_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Duration) 
   if n.tag == "!!null" {
     return Ok((false, Duration.from_nanos(0)))
   }
-  if n.tag == "!!str" && n.value.trim() == n.value {
+  // yaml.v3's resolve leaves a scalar with a tag of its own (`!custom 1s`)
+  // a string, which ParseDuration reads as it reads a !!str
+  if (n.tag == "!!str" || !n.tag.starts_with("!!")) && n.value.trim() == n.value {
     if let Ok(v) = Duration.parse(n.value) {
       return Ok((true, v))
     }

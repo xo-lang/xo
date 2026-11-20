@@ -215,6 +215,10 @@ fn leave(var st: Dec, entered: Bool)
 
 /// Every document of text (parse reads the first).
 fn parse_docs(text: Str) -> List[Doc] ! YamlErr
+/// The documents before the first syntax error, and that error: decode_all
+/// decodes them in order first, as yaml.v3's Decoder reports a document's
+/// type error before a later document's syntax error.
+fn parse_docs_part(text: Str) -> (List[Doc], YamlErr?)
 /// The documents the event lists make, one after another.
 fn finish_all(ws: List[Enc], indent: Int) -> Str ! YamlErr
 

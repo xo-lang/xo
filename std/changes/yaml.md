@@ -1,5 +1,16 @@
 # std/yaml changes
 
+## 2026-11-20: fix: decode_all reads the stream as yaml.v3's Decoder, and a custom tag on a Duration is its text
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b39 and b40 (task #239)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (parser.anchors lives for the stream; Decoder.Decode parses and decodes one document at a time; d.scalar parses a resolved string into time.Duration), resolve.go (a tag of its own resolves as the text)
+- Test: internal/stdtest/testdata/corpus/yaml (allCases and rtCases from scripts/stdcorpus/yamloracle)
+- Shipped in: not yet released
+
+`decode_all` now reports a document's type error before a syntax error in a later document (`n: 1\n---\nn: x\n---\nn: [` was the syntax error), and an anchor stays defined for the documents after it (`n: &a 1\n---\nm: {a: *a}` was "unknown anchor"). A Duration field reads a scalar with a tag of its own (`d: !custom 1s`) as its text, as yaml.v3; it was a type error.
+
 ## 2026-11-20: fix: to_json writes an integer past Int that fits uint64 exactly
 
 - Kind: fix

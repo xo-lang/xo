@@ -234,6 +234,7 @@ func rtShow(in string) (out string) {
 var rtCases = []string{
 	"d: 1h30m", "d: 5", "d: 1.5", "d: abc", "d: \"10\"", "d: ~", "d: 1s\nb: [1, 2]", "d: [1]", "d: {a: 1}", "d: 1h\nd: 2h",
 	"d: 100ms", "d: 1.5s", "d: -3m", "d: 0", "d: 2h45m30.5s", "d: 1us", "d: 7ns", "d: 36000h", "d: 0.1s", "d: 1d", "d: \" 1s\"", "d: 1s ", "d: !!str 5s",
+	"d: !custom 1s", "d: !custom 5", "d: !<tag:example.com,2000:d> 3s", "p: !custom 2s", "d: !custom [1]", "d: !custom",
 	"b: hello", "b: !!binary aGVsbG8=", "b: [1, 2, 255]", "b: [256]", "b: [-1]", "b: [1.5, 2]", "b: [a, 2]", "b: [~, 3]", "b: [[1]]", "b: 5", "b: ~", "b: {a: 1}", "b: []", "b: [0x10, 0b11, 1_0]",
 	"p: 5s", "p: ~", "p: 5", "e: 5s\nf: [1]", "e: 0s",
 }
@@ -601,6 +602,11 @@ func allShow(in string) (out string) {
 }
 
 var allCases = []string{
+	// a document's type error comes before a later syntax error, and an
+	// anchor stays defined for the rest of the stream (task #239)
+	"n: 1\n---\nn: x\n---\nn: [\n", "n: x\n---\nn: [\n", "n: 1\n---\nn: [\n", "n: 1\n---\nn: 2\n---\n: : :\n",
+	"n: &a 1\n---\nm: {a: *a}\n", "l: &l [1, 2]\n---\nl: *l\n---\nl: *l\n", "n: &a 1\n---\nn: &a 2\n---\nm: {k: *a}\n",
+	"m: &m {k: 1}\n---\n<<: *m\nn: 2\n", "n: &a 1\n---\nn: *b\n", "l: &x [&y 5, *y]\n---\nn: *y\nl: *x\n",
 	"n: 1\n---\nn: 2\n...\n---\ns: three\n",
 	"",
 	"---\n",
