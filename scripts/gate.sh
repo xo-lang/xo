@@ -1190,7 +1190,7 @@ for step in "$@"; do
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
-  selftest-fail|selftest-sleep|selftest-ok|selftest-tmp)
+  selftest-fail|selftest-sleep|selftest-ok|selftest-tmp|selftest-json)
     if [ "${XO_GATE_SELFTEST:-0}" = 1 ]; then steps="$steps $step"; else echo "gate.sh: $step is a test step (XO_GATE_SELFTEST=1)"; failed=1; fi ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
@@ -1347,6 +1347,12 @@ run_step_body() {
     selftest-sleep)
       echo '--- PASS: TestSelf/first (0.01s)' >"$logs/$1.txt"
       sleep 60; echo "selftest-sleep: ok" ;;
+    selftest-json)
+      # a go test -json step: STEP.json grows while STEP.txt is written
+      # only at its end (pkg_test)
+      echo '{"Time":"2026-11-19T00:00:00Z","Action":"pass","Package":"x","Test":"TestJ/first","Elapsed":0.1}' >"$logs/$1.json"
+      sleep 7; echo '{"Time":"2026-11-19T00:00:07Z","Action":"pass","Package":"x","Test":"TestJ/second","Elapsed":0.1}' >>"$logs/$1.json"
+      sleep 8; echo "selftest-json: ok" ;;
     selftest-tmp)
       # a step's scratch left behind: the gate's end deletes it
       d=$(mktemp -d "$gt/xo-gate-selftest.XXXXXX") && echo x >"$d/out"
@@ -1967,13 +1973,21 @@ pool_beat() {
     kill -0 "${kp#*:}" 2>/dev/null || continue
     [ -e "$logs/.job-$k.failed" ] && continue
     f=$logs/$k.txt n=0 last=""
+    # a go test -json step (pkg_test) writes STEP.json as it runs and
+    # STEP.txt only at its end: count the json while there is no txt, or
+    # every beat of a long llvm step said "no new lines" (xw-1,
+    # 2026-11-19: 774 goldens passed under 11 such beats on host 3)
+    [ ! -s "$f" ] && [ -f "$logs/$k.json" ] && f=$logs/$k.json
     if [ -f "$f" ]; then
       n=$(wc -l <"$f" | tr -d ' ')
-      last=$(grep -E -- '--- (PASS|FAIL|SKIP): ' "$f" | tail -1 | sed 's/^ *//')
+      case $f in
+      *.json) last=$(grep -E '"Action":"(pass|fail|skip)"' "$f" | grep '"Test":' | tail -1 | sed -E 's/.*"Action":"([a-z]+)".*"Test":"([^"]*)".*/\1 \2/') ;;
+      *) last=$(grep -E -- '--- (PASS|FAIL|SKIP): ' "$f" | tail -1 | sed 's/^ *//') ;;
+      esac
     fi
     prev=$(cat "$logs/.job-$k.beat" 2>/dev/null)
     echo "$n" >"$logs/.job-$k.beat"
-    echo "gate.sh: $k running ($(($(date +%s) - tsteps)) s since the steps began); $k.txt $n lines$([ "$prev" = "$n" ] && echo ', no new lines since the last beat')${last:+; last: $last}"
+    echo "gate.sh: $k running ($(($(date +%s) - tsteps)) s since the steps began); ${f##*/} $n lines$([ "$prev" = "$n" ] && echo ', no new lines since the last beat')${last:+; last: $last}"
   done
 }
 pool_wait() {
