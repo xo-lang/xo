@@ -1,0 +1,87 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a BytesBuilder
+// get_le or get_be of 8 or 4 bytes (a constant width) in a loop is its
+// range check and one load in line, with no call to the native
+// prelude's bytesbuilder_get_le or bytesbuilder_get_be (builder_get
+// stays the out of range path), with five call sites of each, over the
+// inliner's leaf loop site limit (std/brotli's match compare,
+// 2026-11-19: the 61 instruction body, over the loop limit of 60, was
+// 12.6M calls on enc11). Faults are unchanged (test golden
+// bytes_into_builder).
+
+fn sum_le(var b: BytesBuilder, n: Int) -> Int {
+  // arm64: "ldr\s+x" -"bytesbuilder__get"
+  var s = 0
+  var i = 0
+  while i + 8 <= n {
+    s = s.wrapping_add(b.get_le(i, 8))
+    i += 8
+  }
+  s
+}
+
+fn sum_le4(var b: BytesBuilder, n: Int) -> Int {
+  // arm64: "ldr\s+w" -"bytesbuilder__get"
+  var s = 0
+  var i = 0
+  while i + 4 <= n {
+    s = s.wrapping_add(b.get_le(i, 4))
+    i += 4
+  }
+  s
+}
+
+fn sum_be(var b: BytesBuilder, n: Int) -> Int {
+  // arm64: "rev\s+x" -"bytesbuilder__get"
+  var s = 0
+  var i = 0
+  while i + 8 <= n {
+    s = s.wrapping_add(b.get_be(i, 8))
+    i += 8
+  }
+  s
+}
+
+fn sum_be4(var b: BytesBuilder, n: Int) -> Int {
+  // arm64: "rev\s+x" -"bytesbuilder__get"
+  var s = 0
+  var i = 0
+  while i + 4 <= n {
+    s = s.wrapping_add(b.get_be(i, 4))
+    i += 4
+  }
+  s
+}
+
+fn match_len(var b: BytesBuilder, p: Int, q: Int, lim: Int) -> Int {
+  // arm64: "ldr\s+x" -"bytesbuilder__get"
+  var m = 0
+  while m + 8 <= lim {
+    let x = b.get_le(p + m, 8) ^ b.get_le(q + m, 8)
+    if x != 0 {
+      return m + x.trailing_zeros() / 8
+    }
+    m += 8
+  }
+  m
+}
+
+// A fifth call site of each: the old 61 instruction body inlined in a
+// loop only while a program had at most INLINE_LEAF_LOOP_SITES (4).
+fn mix(var b: BytesBuilder, n: Int) -> Int {
+  // arm64: "rev\s+x" -"bytesbuilder__get"
+  var s = 0
+  var i = 0
+  while i + 16 <= n {
+    s = s.wrapping_add(b.get_le(i + 8, 8) ^ b.get_be(i, 8) ^ b.get_be(i + 8, 4) ^ b.get_be(i + 12, 4))
+    i += 16
+  }
+  s
+}
+
+fn main(os: Os) {
+  var b = BytesBuilder.with_capacity(64)
+  for i in 0..64 {
+    b.write_byte(UInt8.wrapping_from(i * 7))
+  }
+  os.stdio.println("${sum_le(b, 64)} ${sum_le4(b, 64)} ${sum_be(b, 64)} ${sum_be4(b, 64)} ${match_len(b, 0, 8, 48)} ${mix(b, 64)}")
+}

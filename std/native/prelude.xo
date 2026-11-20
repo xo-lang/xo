@@ -877,25 +877,22 @@ fn builder_at_fail(i: Int, n: Int, at: rt.Loc) {
 /// at k, lowest first or highest first. Widths 4 and 8 in range are one
 /// load (and a byte swap) here, which inlines and folds a constant n (a
 /// call to builder_get per pixel was std/image's draw at 1.23 of the
-/// copying draw, 2026-11-19); the rest go to builder_get.
+/// copying draw, 2026-11-19); the rest go to builder_get. One range
+/// check for both widths keeps the body under the inliner's size limit
+/// in a loop with many call sites (two checks were 61 instructions, a
+/// call per std/brotli match compare; test/codegen/wordget).
 fn bytesbuilder_get_le(b: BytesBuilder, k: Int, n: Int, at: rt.Loc) -> Int {
   let s = rt.cast[BytesBuilder, Str](b)
-  if n == 4 && k >= 0 && k <= s.len() - 4 {
-    return rt.mem_load(raw.data(s), k, 4)
-  }
-  if n == 8 && k >= 0 && k <= s.len() - 8 {
-    return rt.mem_load(raw.data(s), k, 8)
+  if (n == 8 || n == 4) && k >= 0 && k <= s.len() - n {
+    return if n == 8 { rt.mem_load(raw.data(s), k, 8) } else { rt.mem_load(raw.data(s), k, 4) }
   }
   builder_get(s, k, n, false, at)
 }
 
 fn bytesbuilder_get_be(b: BytesBuilder, k: Int, n: Int, at: rt.Loc) -> Int {
   let s = rt.cast[BytesBuilder, Str](b)
-  if n == 4 && k >= 0 && k <= s.len() - 4 {
-    return rt.mem_load(raw.data(s), k, 4).swap_bytes().shr_logical(32)
-  }
-  if n == 8 && k >= 0 && k <= s.len() - 8 {
-    return rt.mem_load(raw.data(s), k, 8).swap_bytes()
+  if (n == 8 || n == 4) && k >= 0 && k <= s.len() - n {
+    return if n == 8 { rt.mem_load(raw.data(s), k, 8).swap_bytes() } else { rt.mem_load(raw.data(s), k, 4).swap_bytes().shr_logical(32) }
   }
   builder_get(s, k, n, true, at)
 }

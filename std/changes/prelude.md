@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-19: perf: BytesBuilder.get_le and get_be of 4 or 8 bytes inline in loops with many call sites
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271, std/brotli on a BytesBuilder ring buffer (l2-br29, not pushed): callgrind of bench/perf/brotli enc11 (linux/arm64 in Docker) gave bytesbuilder_get_le 12.6M calls from rb_match; XO_INLINE_REPORT: 61 IR instructions, 23 blocks, 5 sites, "no (size)"
+- Go reference: none (an Xo inliner limit)
+- Change: one range check covers both widths (`(n == 8 || n == 4) && k >= 0 && k <= s.len() - n`), then the 8 or 4 byte load; get_le 61 to 50 IR instructions, get_be 70 to 59, both within the loop limit (INLINE_LOOP_INSTRS 60) at any number of sites; widths 1, 2, 3, 5, 6, 7 and faults unchanged (builder_get)
+- Measured: no speedup claimed for a pushed program (no std module calls get_le from more than 4 loop sites yet); on l2-br29's brotli the rb_match cost fell 128M instructions under callgrind
+- Test: test/codegen/wordget (five loop call sites each; fails before: a call to bytesbuilder_get_le and get_be), golden bytes_into_builder unchanged
+
 ## 2026-11-19: perf: Float.log's mantissa adjustment without a branch
 
 - Kind: perf
