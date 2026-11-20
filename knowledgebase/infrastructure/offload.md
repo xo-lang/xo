@@ -490,6 +490,20 @@ both `--put` and the job, and a whole bundle the first time (a bare
 there). Its commits sent are in `refs/offload-arm64b/sent`. Memory-heavy runs
 (the tier's selfhost and llvm steps) stay on the first host.
 
+Timing on host 2 (xo-4c, task #429; Last verified: 2026-11-20): the
+container runs in a Linux VM on Apple silicon with 18 vCPUs and no
+hardware performance counters (`perf stat` gives `<not supported>` for
+cycles and cache events; `perf record` samples the software clock and
+`perf annotate` prints nothing), so instruction counts come from
+callgrind, and time from wall clocks. A short CPU loop is bimodal from
+run to run even in an exclusive lease at load 0.04: the gobridge `none`
+loop takes about 5 or about 8 ms, Go's own twin as much as Xo (300
+interleaved rounds: 60 of Go's and 87 of Xo's over 7.5 ms). Pinning to
+one core (`taskset -c 2`) and GOMAXPROCS=1 do not remove the slow mode,
+so it is the VM, not thread migration in the program. A 5 to 20 round
+median can land in either mode (20 rounds gave Xo / Go 1.04, 300 rounds
+1.15); decision 0726 proposes how perf evidence reads such rows.
+
 riscv64 tools on host 2 (decision 0645, Lang 1; Last verified: 2026-11-15):
 /opt/llvm/bin has clang, llvm-mc, llvm-readelf and llvm-objdump 23.1.3 with
 the riscv64 target. Its clang.cfg forces `-mcpu=generic`, which riscv64
