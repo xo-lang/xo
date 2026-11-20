@@ -159,3 +159,26 @@ test "edits keep the tree's links and render as Go's" {
   expect(datas(t, t.descendants(body))) == "em x<y p b p a"
   expect(t.ancestors(tx).map(fn(n) { t.nodes[n].typ.display() }).join(" ")) == "ElementNode ElementNode ElementNode DocumentNode"
 }
+
+// b49 (the owner's v0.51.1 evaluation, task #240): a fragment in an svg or
+// math context closes its html root at `</html>`, and what follows reads
+// an empty open stack or pops an empty template stack. Go's parse panics
+// there and recovers the panic into its error (x/net/html v0.62.0); the
+// port read node -1 (a fault) or kept parsing the same token (a hang).
+test "a fragment in svg or math after </html> ends with Go's error" {
+  for ns in ["svg", "math"] {
+    for (src, want) in [
+      ("</html>x", "runtime error: invalid memory address or nil pointer dereference"),
+      ("</html><template><d></template><r>", "runtime error: index out of range [-1]"),
+    ] {
+      match parse_fragment(src, ns, ns) {
+        Ok(t) => expect("${ns} ${src}: ${t.dump()}") == "${ns} ${src}: ${want}"
+        Err(e) => expect("${ns} ${src}: ${e.display()}") == "${ns} ${src}: ${want}"
+      }
+    }
+    for src in ["</html>", "</html><p>x"] {
+      let t = parse_fragment(src, ns, ns) ?? e => fault("${ns} ${src}: ${e.display()}")
+      expect("${ns} ${src}: ${t.dump()}") == "${ns} ${src}: "
+    }
+  }
+}

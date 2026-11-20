@@ -515,6 +515,37 @@ fn stack_insert(var s: List[Int], i: Int, n: Int) {
   s.insert(i, n)
 }
 
+/// Go's runtime error for a nil Node read from an empty open stack
+/// (nodeStack.top), which parse recovers into its error (b49).
+const ERR_NIL_NODE = "runtime error: invalid memory address or nil pointer dereference"
+
+/// nodeStack.top where Go reads the Node it returns: the top of the open
+/// stack, or, when the stack is empty, node 0 with Go's nil dereference
+/// latched as the parse's error (a fragment in an svg or math context
+/// after `</html>`, b49).
+fn oe_top(var p: Parser) -> Int {
+  let n = stack_top(p.oe)
+  if n != -1 {
+    return n
+  }
+  if p.err == "" {
+    p.err = ERR_NIL_NODE
+  }
+  0
+}
+
+/// insertionModeStack.pop: an empty stack latches Go's index error, which
+/// parse recovers into its error; without it the parser looped (b49).
+fn template_pop(var p: Parser) {
+  if p.template_stack.len() == 0 {
+    if p.err == "" {
+      p.err = "runtime error: index out of range [-1]"
+    }
+    return
+  }
+  p.template_stack.pop()
+}
+
 fn truncate(var s: List[Int], n: Int) {
   while s.len() > n {
     s.pop()
@@ -1224,7 +1255,7 @@ fn close_template_end(var p: Parser) {
     i -= 1
   }
   clear_active_formatting_elements(p)
-  truncate(p.template_stack, p.template_stack.len() - 1)
+  template_pop(p)
   reset_insertion_mode(p)
 }
 
@@ -1461,7 +1492,7 @@ fn in_body_im(var p: Parser) -> Bool {
   let d = p.tok.data
   if t == K_TEXT {
     var s = d
-    let n = top(p)
+    let n = oe_top(p)
     let nd = p.nodes[n].data
     if (nd == "pre" || nd == "listing") && p.nodes[n].first_child == -1 {
       s = strip_leading_newline(s)
@@ -1841,7 +1872,10 @@ fn in_body_im(var p: Parser) -> Bool {
 
 /// The adoption agency algorithm (inBodyEndTagFormatting).
 fn in_body_end_tag_formatting(var p: Parser, tag: Str) {
-  let current = stack_top(p.oe)
+  let current = oe_top(p)
+  if p.err != "" {
+    return
+  }
   if p.nodes[current].data == tag && stack_index(p.afe, current) == -1 {
     pop_oe(p)
     return
@@ -1969,7 +2003,7 @@ fn text_im(var p: Parser) -> Bool {
     pop_oe(p)
   } else if t == K_TEXT {
     var d = p.tok.data
-    let n = top(p)
+    let n = oe_top(p)
     if p.nodes[n].data == "textarea" && p.nodes[n].first_child == -1 {
       d = strip_leading_newline(d)
     }
@@ -1991,7 +2025,7 @@ fn in_table_im(var p: Parser) -> Bool {
   let d = p.tok.data
   if t == K_TEXT {
     p.tok.data = d.replace("\u{0}", "")
-    let td = p.nodes[top(p)].data
+    let td = p.nodes[oe_top(p)].data
     if td == "table" || td == "tbody" || td == "tfoot" || td == "thead" || td == "tr" {
       if p.tok.data.trim_chars(WHITESPACE) == "" {
         add_text(p, p.tok.data)
@@ -2161,7 +2195,7 @@ fn in_column_group_im(var p: Parser) -> Bool {
   } else if t == K_END {
     match d {
       "colgroup" => {
-        if p.nodes[top(p)].data == "colgroup" {
+        if p.nodes[oe_top(p)].data == "colgroup" {
           pop_oe(p)
           p.im = IM_IN_TABLE
         }
@@ -2178,7 +2212,7 @@ fn in_column_group_im(var p: Parser) -> Bool {
   } else if t == K_ERROR {
     return in_body_im(p)
   }
-  if p.nodes[top(p)].data != "colgroup" {
+  if p.nodes[oe_top(p)].data != "colgroup" {
     return true
   }
   pop_oe(p)
@@ -2345,7 +2379,7 @@ fn in_cell_im(var p: Parser) -> Bool {
 }
 
 fn replace_template_top(var p: Parser, im: Int) {
-  truncate(p.template_stack, p.template_stack.len() - 1)
+  template_pop(p)
   p.template_stack.push(im)
   p.im = im
 }
@@ -2458,9 +2492,9 @@ fn in_frameset_im(var p: Parser) -> Bool {
     }
   } else if t == K_END {
     if d == "frameset" {
-      if p.nodes[top(p)].data != "html" {
+      if p.nodes[oe_top(p)].data != "html" {
         pop_oe(p)
-        if p.nodes[top(p)].data != "frameset" {
+        if p.nodes[oe_top(p)].data != "frameset" {
           p.im = IM_AFTER_FRAMESET
           return true
         }

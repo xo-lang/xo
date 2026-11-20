@@ -1,5 +1,22 @@
 # std/htmlparse changes
 
+## 2026-11-20: fix: a fragment in svg or math after </html> ends with Go's error, not a hang
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b49 (task #240)
+- Go reference: golang.org/x/net v0.62.0 html/parse.go (insertionModeStack.pop, nodeStack.top; parse's recover)
+- Test: std/htmlparse_test.xo "a fragment in svg or math after </html> ends with Go's error"
+- Timing: none
+
+`parse_fragment` in an svg or math context closes its html root at
+`</html>`. A template end tag after that pops an empty template stack,
+and text reads an empty open stack. Go panics in both places and its
+parse recovers the panic into the returned error. The port instead
+looped on the same token (`</html><template><d></template><r>`) or
+returned an empty tree (`</html>x`). Both now return Go's errors:
+`runtime error: index out of range [-1]` and `runtime error: invalid
+memory address or nil pointer dereference`.
 
 ## 2026-11-16: feature: Go's tree editing and walking (node.go, iter.go)
 
