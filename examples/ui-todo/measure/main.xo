@@ -24,7 +24,8 @@ fn up(client: Str, ver: Int, seq: Int, msgs: List[todo.Msg], seen: Str = "") -> 
 
 fn main(os: Os) ! {
   for n in [10, 200] {
-  for q in ["?thin=1", ""] {
+  // the thin client, the wasm client before task #451, and since
+  for q in ["?thin=1", "?thin=1&model=1", "?thin=1&model=1&view=0"] {
     var r = http.router()
     let h = ui.host(todo.app(), title: "Todos", css: todo.CSS)
     h.mount(r)
@@ -59,7 +60,7 @@ fn main(os: Os) ! {
     }
     let idle_us = os.clock.since(t1).micros()
     let page = r.call(http.new_request("GET", "/")).body.len()
-    os.stdio.println("todos=${n} ui${if q == "" { "-wasm" } else { "-thin" }} page=${page} add_us=${add_us} add_reply_avg=${add_bytes / n} idle_us_per_1000=${idle_us} idle_reply_avg=${idle_bytes / 1000} idle_same=${same}/1000")
+    os.stdio.println("todos=${n} ui-${if q == "?thin=1" { "thin" } else if q == "?thin=1&model=1" { "wasm-before" } else { "wasm" }} page=${page} add_us=${add_us} add_reply_avg=${add_bytes / n} idle_us_per_1000=${idle_us} idle_reply_avg=${idle_bytes / 1000} idle_same=${same}/1000")
   }
   }
 }

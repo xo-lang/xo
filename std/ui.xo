@@ -2482,7 +2482,9 @@ fn (h: Host[M, E]) scope_for(page: Str, p: Str) -> Str? {
 /// takes only `Content-Type: application/json`, which a cross-site form
 /// cannot send without CORS (415 otherwise); a body that is not an Up is
 /// 400. `?thin=1` leaves the log entries out of the reply, for a client
-/// that shows the rendered view.
+/// that shows the rendered view; `?model=1` adds the model the client
+/// predicts from, and `?model=1&view=0` leaves the rendered view out, for
+/// a wasm client that renders its own (task #451).
 pub fn (h: Host[M, E, fx, bx, lx, cx, sx]) mount(var r: http.Router, prefix: Str = "") uses (bx, cx, fx, lx, sx) {
   let app = h.app
   let title = h.title
@@ -2663,7 +2665,10 @@ pub fn (h: Host[M, E, fx, bx, lx, cx, sx]) mount(var r: http.Router, prefix: Str
     if up.msgs.is_empty() && user_same && (up.ver == v || (seen != "" && up.seen == seen)) {
       return public_json(200, Sync{down: down, ver: v, html: "", model: None, same: true, build: build, seen: seen, user: ud})
     }
-    public_json(200, Sync{down: down, ver: v, html: render(app.show(m, up.query, user: ud.map(fn(u) { u.state }))), model: with_model, build: build, seen: seen, user: ud})
+    // a wasm client that has its module asks for the model only (view=0):
+    // it renders the view itself, so the reply leaves the render out
+    let html = if with_model.is_some() && req.query("view") == Some("0") { "" } else { render(app.show(m, up.query, user: ud.map(fn(u) { u.state }))) }
+    public_json(200, Sync{down: down, ver: v, html: html, model: with_model, build: build, seen: seen, user: ud})
   })
   if !client.is_empty() {
     let gz = h.client_gz
@@ -2868,7 +2873,7 @@ function boot(){
   var subset=root.hasAttribute("data-xo-subset");
   var build=root.getAttribute("data-xo-build")||"",stale=false;
   function editing(){var a=document.activeElement;return !!(a&&root.contains(a)&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")&&a.value!=="");}
-  var mod=null,confirmed=st.model;
+  var mod=null,full=false,confirmed=st.model;
   var KEY="xo-ui:"+location.pathname+":"+url;
   if(drainers[KEY])drainers[KEY]();
   // stopped: navigated away (no view, listeners or socket; the queue still
@@ -2974,7 +2979,10 @@ function boot(){
     var msgs=queue.filter(function(e){return e.seq>acked;});
     var up={client:client,ver:ver,msgs:msgs,seen:dg,query:location.search.slice(1)};
     if(hasUser||uqueue.length)up.user={ver:uver,msgs:uqueue.filter(function(e){return e.seq>uacked;})};
-    fetch(url+(url.indexOf("?")<0?"?":"&")+(mod?"thin=1&model=1":"thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(up),credentials:"same-origin"})
+    // with its module a wasm client renders the reply's model itself (view=0);
+    // after a render that failed it asks for the server's view (full)
+    var nv=!!mod&&!full;
+    fetch(url+(url.indexOf("?")<0?"?":"&")+(mod?(nv?"thin=1&model=1&view=0":"thin=1&model=1"):"thin=1"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(up),credentials:"same-origin"})
     .then(function(r){
       var h=H();
       if(dead)throw new Error("sync dead");
@@ -2990,7 +2998,7 @@ function boot(){
       if(s.user){if(s.user.acked>uacked)uacked=s.user.acked;uqueue=uqueue.filter(function(e){return e.seq>uacked;});uver=s.user.ver;uconfirmed=s.user.state;hasUser=true;}
       ver=s.ver;dg=s.seen||"";
       if(s.model!=null)confirmed=s.model;
-      if(!(queue.length&&predict())){if(!s.same)show(s.html);H().removeAttribute("data-xo-awaiting");}
+      if(!(queue.length&&predict())){if(!s.same){if(!nv)show(s.html);else if(!predict()){full=true;again=true;}}H().removeAttribute("data-xo-awaiting");}
       H().removeAttribute("data-xo-offline");
       save();mark();
       // a new build is served: reload once nothing waits to be sent and no

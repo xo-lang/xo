@@ -70,19 +70,23 @@ network: one viewer adds todos one at a time, then 1,000 idle viewers
 each check for changes once. Three runs each; the ranges are across
 runs.
 
-| | std/ui | JSON API |
-|---|---|---|
-| One add, 200 todos in the list | 109 to 131 us | 3 us |
-| Reply to an add, 10 todos | 2,167 to 2,248 B | 269 B |
-| Reply to an add, 200 todos | 28,476 to 28,562 B | 4,209 B |
-| One idle check | 1.1 to 1.9 us | 0.4 us |
-| Reply to an idle check | 151 B | 10 B |
+| | std/ui, thin client | std/ui, wasm client | JSON API |
+|---|---|---|---|
+| One add, 200 todos in the list | 109 to 122 us | 13 to 22 us | 3 us |
+| Reply to an add, 10 todos | 2,167 B | 408 B | 269 B |
+| Reply to an add, 200 todos | 28,476 B | 4,350 B | 4,209 B |
+| One idle check | 1.2 to 1.9 us | 1.3 to 2.1 us | 0.4 us |
+| Reply to an idle check | 151 B | 151 B | 10 B |
 
-The traditional server does less per action because it does less: it
-changes the state and encodes it. std/ui's server also renders the
-view and sends it, so the reply grows with the page. That is the price
-of the thin client working with no JavaScript of the app's own, and of
-every client seeing the server's render.
+For a thin client std/ui's server renders the view and sends it, so
+the reply grows with the page: the price of a client with no
+JavaScript of the app's own. A wasm client gets the model and renders
+it itself, which brings its replies to the JSON API's size. Writing
+this comparison found that the wasm client was being sent both, the
+model and the server's render (32,673 B at 200 todos), and std/ui now
+leaves the render out for it (task #451). The rest of the gap to the
+JSON API is std/ui's sync bookkeeping: acks, the version, the digest
+that lets an idle check answer "same".
 
 The idle cost is what decides how many open tabs a server holds. Both
 are small: 1,000 viewers checking every 2 seconds cost std/ui about 1
@@ -116,17 +120,15 @@ Neither is hard; std/ui's is in one place.
   matters more than 93 KB on the first visit.
 - **JSON API plus a page** when the front end is someone else's (a
   mobile app, a partner, a team that writes React), when the page must
-  be static hosted, or when the replies must stay small as the page
-  grows: the API sends data, not a render.
+  be static hosted, or when the clients cannot run wasm and the
+  replies must stay small as the page grows: a thin std/ui client is
+  sent a render, the API sends data.
 
 Both live in one Xo binary, and a site can use both: std/ui mounts
 under a prefix (`mount(r, "/todo")`) beside ordinary routes.
 
 ## Open questions from the numbers
 
-- std/ui sends the rendered view in the reply to a wasm client's
-  action too (28.5 KB at 200 todos), though that client renders its
-  own view. Whether it needs the server's render is worth a look.
 - The figures are in process on one machine. A run over the network
   with many concurrent viewers would show the websocket push's cost,
   which this comparison does not measure.

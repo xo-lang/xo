@@ -1506,6 +1506,18 @@ test "sync returns the confirmed model when asked" {
   expect(without.model) == None
 }
 
+test "a wasm client's sync with view=0 gets the model and no rendered view (task #451)" {
+  let r = routes_for(host(todo_app()))
+  let up = Up{client: "a", ver: 0, msgs: [Envelope{seq: 1, msg: Msg.Add(id: "x", title: "milk")}]}
+  let lean = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(up), query: "?thin=1&model=1&view=0")).text()?)?
+  expect(lean.model?.todos.len()) == 1
+  expect(lean.html) == ""
+  expect(lean.same) == false
+  // the view is still rendered for a client that did not ask for the model
+  let thin = json.decode_str[Sync[Model, Msg]](r.call(sync_req(json.encode_str(Up{client: "b", ver: 0, msgs: []}), query: "?thin=1&view=0")).text()?)?
+  expect(thin.html.contains("milk")) == true
+}
+
 test "the client module is served gzipped when accepted, with an ETag" {
   var bb = BytesBuilder.new()
   bb.write(b"\x00asm\x01\x00\x00\x00")

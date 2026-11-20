@@ -247,3 +247,31 @@ func TestScopedSyncURLKeepsPage(t *testing.T) {
 		t.Errorf("sync URL %q, want /_xo/sync?page=%%2Froom%%2F1&thin=1", r.Before)
 	}
 }
+
+// A wasm client renders its own view: once its module has loaded it asks
+// for the model only (view=0), so a reply does not carry the server's
+// render as well (28.5 KB at 200 todos in examples/ui-todo, task #451),
+// and it shows what its module renders from the reply's model.
+func TestWasmSyncSkipsServerView(t *testing.T) {
+	r := run(t, "wasm")
+	urls := strings.Split(r.Before, ",")
+	if last := urls[len(urls)-1]; !strings.Contains(last, "model=1") || !strings.Contains(last, "view=0") {
+		t.Errorf("last sync %q, want model=1 and view=0 (all: %q)", last, r.Before)
+	}
+	if r.After != "<w>1</w>" {
+		t.Errorf("view %q, want <w>1</w> (the module's render of the reply's model)", r.After)
+	}
+}
+
+// A wasm client whose render fails falls back to the server's view: it
+// syncs again without view=0 and shows the reply's html.
+func TestWasmRenderFailureAsksForView(t *testing.T) {
+	r := run(t, "wasm-fail")
+	urls := strings.Split(r.Before, ",")
+	if last := urls[len(urls)-1]; strings.Contains(last, "view=0") || !strings.Contains(last, "model=1") {
+		t.Errorf("last sync %q, want model=1 without view=0 (all: %q)", last, r.Before)
+	}
+	if r.After != "<p>1</p>" {
+		t.Errorf("view %q, want the server's <p>1</p>", r.After)
+	}
+}

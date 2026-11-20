@@ -12355,8 +12355,10 @@ pub fn room_view(last: Bytes, frame: Bytes) -> (Int, Int, Bytes)?
   reply, the server's version and the view rendered for its model). Sync
   takes only `Content-Type: application/json` (415 otherwise; a
   cross-site form cannot send it without CORS) and a body that decodes
-  as an `Up` (400 otherwise); `?thin=1` leaves the log entries out and
-  `?model=1` adds the server's model.
+  as an `Up` (400 otherwise); `?thin=1` leaves the log entries out,
+  `?model=1` adds the server's model, and `?view=0` with `?model=1`
+  leaves the rendered view out (`html` is ""): the browser runtime sends
+  it once its wasm client has loaded and renders the model itself.
   `GET prefix/_xo/live` is a websocket (std/websocket's same-host Origin
   rule) that sends the server's version as text at once and after each
   sync that changed it; a connection has one pending notice at most, so a

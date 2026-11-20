@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (std/ui): a wasm client syncs with `?model=1&view=0` once its module has loaded and renders the reply's model itself, so the server no longer renders the view for it (an add's reply at 200 todos in examples/ui-todo: 32,673 B to 4,350 B); a render that fails asks for the server's view again. Older pages keep working: the server renders unless asked not to.
 - Fixed (std/task): when the task running a `Once`'s function is cancelled, the first task waiting on it runs the function next (it was whichever waiter the schedule ran first).
 - Fixed (compiler): an element read after `rt.list_swap` or `rt.list_swap2` in a function with cleanups is read again, not merged by cse with the same read before the swap (since 420460f6e a cross-list Str swap left `ys[1]` holding its old element; test/codegen/swapcse).
 - Added (std/cbor): `cbor.diagnose(data)`, fxamacker's Diagnose: the diagnostic notation read from the bytes, so indefinite lengths keep their marks (`[_ 1, 2]`, `(_ h'01', h'02')`, `''_`).

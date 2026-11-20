@@ -1,5 +1,15 @@
 # std/ui changes
 
+## 2026-11-19: perf: a wasm client's sync reply leaves the rendered view out
+
+- Kind: perf
+- Commit: this push
+- Found by: task #451 (task #432's comparison: a wasm client was sent the server's render beside the model it renders itself)
+- Go reference: none
+- Test: internal/uiruntime TestWasmSyncSkipsServerView (failed on main's runtime), TestWasmRenderFailureAsksForView; std/ui "a wasm client's sync with view=0 gets the model and no rendered view (task #451)"
+- Timing: examples/ui-todo/measure, in process on the Mac, 3 runs: an add's reply at 200 todos 32,673 B before, 4,350 B after; the server's time per add 115 to 136 us before, 13 to 22 us after; at 10 todos 2,424 B to 408 B
+- Shipped in: not yet released
+
 ## 2026-11-18: perf: render checks tag and attribute names by index
 
 - Kind: perf
