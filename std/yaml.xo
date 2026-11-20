@@ -192,6 +192,13 @@ struct Dec {
   ad: Int
   active: List[Int]
   strict: Bool
+  // the merge aliases add_pairs entered to reach a merged value, by value
+  // node: tick enters them again when the value is read (yaml.v3's merge
+  // decodes the alias's whole mapping inside d.alias)
+  via: Map[Int, List[Int]]
+  // per entered tick: the anchors it pushed on active, times 2, plus 1
+  // when one of them is an alias's own (ad counts those)
+  frames: List[Int]
 }
 
 /// strict: an unknown key is an error (yaml.v3's KnownFields).

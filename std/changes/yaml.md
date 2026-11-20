@@ -1,5 +1,16 @@
 # std/yaml changes
 
+## 2026-11-20: fix: a merge alias inside its own anchor ends the decode with yaml.v3's error, not a stack overflow
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b38 (task #239)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (merge decodes an alias through d.alias, which refuses an anchor it is already decoding)
+- Test: std/yaml_test.xo "a merge alias inside its own anchor ends to_json as yaml.v3's error" (a stack overflow before)
+- Shipped in: not yet released
+
+`to_json("inner: &a {<<: *a}")` recursed in the merge until the stack ran out (SIGBUS). A merge alias now enters its anchor as yaml.v3 does, for the merged keys and for the decode of their values, so `inner: &a {<<: *a}`, `inner: &a {<<: [*a]}`, `x: &a {<<: {<<: *a}}` and `a: &a {b: {<<: *a}}` end with `yaml: anchor 'a' value contains itself`. Merging the same anchor twice, or an anchor that itself merges, decodes as before.
+
 ## 2026-11-19: fix: an alias inside its own anchor no longer overflows the stack in parse
 
 - Kind: fix

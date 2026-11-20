@@ -3507,6 +3507,47 @@ fn allowed_alias_ratio(dc: Int) -> Float {
 /// Counts the read of node i0; for an alias, enters it (leave undoes it) and counts
 /// its target too. A target already being read is an alias to itself.
 fn tick(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> Bool ! yaml.YamlErr {
+  count_read(st)?
+  // a value merged through aliases is read inside them, as yaml.v3 reads
+  // it inside d.alias (b38: `a: &a {b: {<<: *a}}` recursed without end)
+  var pushed = 0
+  if let Some(chain) = st.via.get(i0) {
+    st.via.remove(i0)
+    for a in chain {
+      let t = d.nodes[a].alias
+      if st.active.contains(t) {
+        for _ in 0..pushed {
+          st.active.pop()
+        }
+        return Err(self_alias(d, a))
+      }
+      st.active.push(t)
+      pushed += 1
+    }
+  }
+  if d.nodes[i0].kind != K_ALIAS {
+    if pushed == 0 {
+      return Ok(false)
+    }
+    st.frames.push(pushed * 2)
+    return Ok(true)
+  }
+  let t = d.nodes[i0].alias
+  if st.active.contains(t) {
+    for _ in 0..pushed {
+      st.active.pop()
+    }
+    return Err(self_alias(d, i0))
+  }
+  st.active.push(t)
+  st.ad += 1
+  st.frames.push((pushed + 1) * 2 + 1)
+  count_read(st)?
+  Ok(true)
+}
+
+/// Counts one node read (yaml.v3's decodeCount, and aliasCount inside an alias).
+fn count_read(var st: yaml.Dec) -> () ! yaml.YamlErr {
   st.dc += 1
   if st.ad > 0 {
     st.ac += 1
@@ -3514,28 +3555,28 @@ fn tick(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> Bool ! yaml.YamlErr {
   if st.ac > 100 && st.dc > 1000 && Float(st.ac) / Float(st.dc) > allowed_alias_ratio(st.dc) {
     return Err(yaml.YamlErr{line: 0, msg: "document contains excessive aliasing"})
   }
-  if d.nodes[i0].kind != K_ALIAS {
-    return Ok(false)
-  }
-  let t = d.nodes[i0].alias
-  if st.active.contains(t) {
-    return Err(yaml.YamlErr{line: 0, msg: "anchor '${d.nodes[i0].value}' value contains itself"})
-  }
-  st.active.push(t)
-  st.ad += 1
-  let _ = tick(d, t, st)?
-  Ok(true)
+  Ok(())
+}
+
+/// yaml.v3's error for alias node a reached inside its own anchor's value.
+fn self_alias(d: yaml.Doc, a: Int) -> yaml.YamlErr {
+  yaml.YamlErr{line: 0, msg: "anchor '${d.nodes[a].value}' value contains itself"}
 }
 
 fn leave(var st: yaml.Dec, entered: Bool) {
   if entered {
-    st.ad -= 1
-    st.active.pop()
+    let f = st.frames.pop() ?? 0
+    if f % 2 == 1 {
+      st.ad -= 1
+    }
+    for _ in 0..f / 2 {
+      st.active.pop()
+    }
   }
 }
 
 fn dec_new(strict: Bool) -> yaml.Dec {
-  yaml.Dec{errs: [], dc: 1, ac: 0, ad: 0, active: [], strict: strict}
+  yaml.Dec{errs: [], dc: 1, ac: 0, ad: 0, active: [], strict: strict, via: {}, frames: []}
 }
 
 /// The error of a decode that collected errs: yaml.v3's "unmarshal errors:" list.
@@ -3797,7 +3838,11 @@ fn items(d: yaml.Doc, i0: Int, what: Str, var st: yaml.Dec) -> (Bool, List[Int])
 /// yaml.v3 decodes nothing of it), else 1. A key that is not a scalar is put in st.errs
 /// and left out. A merge value that is not a mapping, an alias of one, or a sequence
 /// of those ends the decode (yaml.v3's failf).
-fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.Dec, top: Bool = true) -> Int ! yaml.YamlErr {
+///
+/// via is the chain of merge aliases entered to reach i0: an alias whose anchor
+/// is already on it, or being read (st.active), is yaml.v3's `value contains
+/// itself`, and a merged value records the chain in st.via for tick (b38).
+fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.Dec, top: Bool = true, via: List[Int] = []) -> Int ! yaml.YamlErr {
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_MAPPING {
@@ -3829,6 +3874,9 @@ fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.
       if kn.tag != "!!null" && !seen.contains(kn.value) {
         seen[kn.value] = true
         out.push((kn.value, v, kn.line))
+        if via.len() > 0 {
+          st.via[v] = via
+        }
       }
     } else {
       // reported when the entry is reached, in document order (bad_key)
@@ -3859,22 +3907,42 @@ fn add_pairs(d: yaml.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yaml.
           out.push(("", MERGE_FAIL, 0))
           return Ok(1)
         }
-        add_pairs(d, it, out, st, top: false)?
+        add_pairs(d, it, out, st, top: false, via: merge_via(d, it, via, st)?)?
       }
     } else if mn.kind == K_ALIAS {
       if d.nodes[res(d, m)].kind != K_MAPPING {
         out.push(("", MERGE_FAIL, 0))
         return Ok(1)
       }
-      add_pairs(d, m, out, st, top: false)?
+      add_pairs(d, m, out, st, top: false, via: merge_via(d, m, via, st)?)?
     } else if mn.kind == K_MAPPING {
-      add_pairs(d, m, out, st, top: false)?
+      add_pairs(d, m, out, st, top: false, via: via)?
     } else {
       out.push(("", MERGE_FAIL, 0))
       return Ok(1)
     }
   }
   Ok(1)
+}
+
+/// via with the merge alias m on it; its anchor already on via or being read
+/// is yaml.v3's `value contains itself`.
+fn merge_via(d: yaml.Doc, m: Int, via: List[Int], st: yaml.Dec) -> List[Int] ! yaml.YamlErr {
+  if d.nodes[m].kind != K_ALIAS {
+    return Ok(via)
+  }
+  let t = d.nodes[m].alias
+  if st.active.contains(t) {
+    return Err(self_alias(d, m))
+  }
+  for a in via {
+    if d.nodes[a].alias == t {
+      return Err(self_alias(d, m))
+    }
+  }
+  var out = via
+  out.push(m)
+  Ok(out)
 }
 
 /// yaml.v3's KnownFields error for a key no field takes (only a strict decode).

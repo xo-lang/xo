@@ -56,3 +56,18 @@ test "a collection key ends to_json as yaml.v3's invalid map key" {
     }
   }
 }
+
+// b38 (the owner's v0.51.1 evaluation, task #239): a merge key whose alias
+// reaches its own anchor recursed until the stack ran out (SIGBUS). yaml.v3
+// v3.0.1 decodes a merge alias inside d.alias, so the anchor is active for
+// the whole merged mapping, its values included, and ends the decode.
+test "a merge alias inside its own anchor ends to_json as yaml.v3's error" {
+  for text in ["inner: &a {<<: *a}", "inner: &a {<<: [*a]}", "a: &a {b: {<<: *a}}", "x: &a {<<: {<<: *a}}"] {
+    match to_json(text) {
+      Ok(s) => fault("${text.quote()} gave ${s}")
+      Err(e) => expect("${text}: ${e}") == "${text}: yaml: anchor 'a' value contains itself"
+    }
+  }
+  expect(to_json("a: &a {k: 1}\nb: {<<: [*a, *a]}") ?? e => fault("${e}")) == "{\"a\":{\"k\":1},\"b\":{\"k\":1}}"
+  expect(to_json("a: &a {k: 1}\nb: &b {<<: *a, c: 2}\nc: {<<: *b}") ?? e => fault("${e}")) == "{\"a\":{\"k\":1},\"b\":{\"c\":2,\"k\":1},\"c\":{\"c\":2,\"k\":1}}"
+}
