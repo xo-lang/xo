@@ -223,7 +223,23 @@ fn (var g: G) function(fi: Int) {
     g.fp = fp0
     g.base = base0
     g.order = order0
-    if !g.loop_split(first) {
+    var keep_first = !g.loop_split(first)
+    if !keep_first {
+      if g.on("shrink_split") {
+        g.shrink_split()
+      }
+      if g.on("cluster_mem") {
+        g.cluster_mem()
+      }
+      g.regalloc()
+      // the split names can leave an instruction more spilled operands
+      // than registers free there (2026-11-19, task #438: a madd of
+      // three spilled names in xo.mlog.vals, every register held across
+      // the split loop): the first allocation stands
+      keep_first = !g.split_scratch_ok()
+    }
+    allocated = true
+    if keep_first {
       g.blocks = a.blocks
       g.hot = a.hot
       g.cold = a.cold
@@ -243,7 +259,6 @@ fn (var g: G) function(fi: Int) {
       g.loc = first.loc
       g.region = first.region
       g.shrink_m = first.m
-      allocated = true
     }
   }
   if !allocated {

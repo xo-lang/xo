@@ -138,28 +138,62 @@ fn (var g: G) split_candidate(var tried: List[Int]) -> List[Bool] {
         work.push(p)
       }
     }
-    // innermost: no other header inside
-    var ok = true
-    for h2 in heads {
-      if h2 != h && body[h2] {
-        ok = false
-      }
-    }
+    // the blocks that call: an innermost loop that calls on some paths
+    // is split on the rest, when a cycle through its header remains
+    // there (task #438: update_nodes' j loop calls rb_match and runs an
+    // inner loop after it on 1 in 30 of its iterations; the other 29
+    // reloaded nine slots)
+    var any_call = false
     for b in 0..nb {
-      if !ok {
-        break
-      }
       if !body[b] {
         continue
       }
       for inst in g.blocks[b].insts {
         if inst.kind == K_CALL || inst.kind == K_SWITCH || inst.kind == K_ENTRY || inst.kind == K_RET {
-          ok = false
+          body[b] = false
+          any_call = true
         }
       }
     }
+    if !body[h] {
+      continue
+    }
+    var region = body
+    if any_call {
+      // what the header reaches without a call, and whether it gets back
+      var seen: List[Bool] = List.with_capacity(nb)
+      for _ in 0..nb {
+        seen.push(false)
+      }
+      seen[h] = true
+      var reach: List[Int] = [h]
+      var back = false
+      while !reach.is_empty() {
+        let b = reach.pop() ?? 0
+        for t in g.msuccs(b) {
+          if t == h {
+            back = true
+          }
+          if t >= 0 && t < nb && body[t] && !seen[t] {
+            seen[t] = true
+            reach.push(t)
+          }
+        }
+      }
+      if !back {
+        continue
+      }
+      region = seen
+    }
+    // innermost: no other header inside
+    var ok = true
+    for h2 in heads {
+      if h2 != h && region[h2] {
+        ok = false
+      }
+    }
     if ok {
-      return body
+      return region
     }
   }
   []
@@ -473,4 +507,92 @@ fn (g: G) split_live() -> SplitLive {
     succs.push(ss)
   }
   SplitLive{ok: true, idx: idx, lv: solve_live(succs, gens, kills, n)}
+}
+
+/// Whether every instruction of the second allocation finds the
+/// registers its spilled operands are reloaded into (emit_plain's
+/// scratch_reg): a split loop holds more names in registers, and an
+/// instruction there with three spilled uses found none free
+/// (2026-11-19, task #438).
+fn (var g: G) split_scratch_ok() -> Bool {
+  let pos0 = g.pos
+  let cur0 = g.cur
+  var ok = true
+  for b in g.hot + g.cold {
+    g.cur = b
+    for (k, inst) in g.blocks[b].insts.indexed() {
+      if inst.kind != K_PLAIN && inst.kind != K_CONDBR && inst.kind != K_TRAP {
+        continue
+      }
+      g.pos = g.blocks[b].start + 4 * k
+      let t = inst.text
+      let own = t.contains("x16") || t.contains("x17") || t.contains("w16") || t.contains("w17")
+      var ngp = if own { 2 } else { 0 }
+      var nfp = 0
+      var seen: List[Int] = []
+      var use_reg: List[Int] = []
+      for v in inst.us {
+        if v == 0 || seen.contains(v) {
+          continue
+        }
+        seen.push(v)
+        let (l, _) = g.vloc(v)
+        if l.reg >= 0 {
+          use_reg.push(l.reg)
+          continue
+        }
+        let fp = g.fp[v]
+        let r = g.scratch_reg(fp, if fp { nfp } else { ngp }, use_reg)
+        if fp { nfp += 1 } else { ngp += 1 }
+        if r < 0 {
+          ok = false
+          break
+        }
+        use_reg.push(r)
+      }
+      if !ok {
+        break
+      }
+      var taken: List[Int] = []
+      var nsp = 0
+      for d in inst.defs {
+        let (l, dok) = g.vloc(d)
+        if dok && l.reg >= 0 {
+          taken.push(l.reg)
+        } else if !g.fp[d] {
+          nsp += 1
+        }
+      }
+      if inst.has(IF_EARLY) || own {
+        for r in use_reg {
+          taken.push(r)
+        }
+      }
+      var dgp = if inst.has(IF_EARLY) || own || (ngp > 0 && ngp + nsp <= 2) { ngp } else { 0 }
+      var dfp = if inst.has(IF_EARLY) { nfp } else { 0 }
+      for d in inst.defs {
+        let (l, dok) = g.vloc(d)
+        if dok && l.reg >= 0 {
+          continue
+        }
+        let fp = g.fp[d]
+        let r = g.scratch_reg(fp, if fp { dfp } else { dgp }, taken)
+        if fp { dfp += 1 } else { dgp += 1 }
+        if r < 0 {
+          ok = false
+          break
+        }
+        taken.push(r)
+      }
+      if !ok {
+        break
+      }
+    }
+    if !ok {
+      break
+    }
+  }
+  g.pos = pos0
+  g.cur = cur0
+  ok
 }

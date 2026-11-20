@@ -34,10 +34,37 @@ fn work(xs: List[Int], a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
   t + a + b + c + d + e + f + g + h + i + j + k + l + m + n
 }
 
+// The same loop with a call on a path it rarely takes (task #438:
+// std/brotli update_nodes calls rb_match on 1 in 30 of its iterations):
+// the loop is split on the paths without the call, which keep their
+// values in registers.
+fn work_rare(xs: List[Int], a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
+  // arm64: -"ldr x[0-9]+, \[sp, #[0-9]+\]\n\tcmp x[0-9]+, x[0-9]+\n\tb\.lt"
+  let f = mix(a, b)
+  let g = mix(c, d)
+  let h = mix(e, f)
+  let i = mix(g, h)
+  let j = mix(i, a)
+  let k = mix(j, b)
+  let l = mix(k, c)
+  let m = mix(l, d)
+  let n = mix(m, e)
+  var s = 0
+  for x in xs {
+    if x == 298 {
+      s = s + mix(s, x)
+    }
+    s = s + ((x * f) ^ (g + h)) - (i & x) + (j >> 3) + ((x ^ k) & l) + (m | x) - (n ^ a) + ((b * x) & c) + (d - e)
+  }
+  let t = mix(s, k)
+  t + a + b + c + d + e + f + g + h + i + j + k + l + m + n
+}
+
 fn main(os: Os) {
   var xs: List[Int] = []
   for q in 0..100 {
     xs.push(q * 3)
   }
   os.stdio.println("${work(xs, 1, 2, 3, 4, 5)}")
+  os.stdio.println("${work_rare(xs, 1, 2, 3, 4, 5)}")
 }

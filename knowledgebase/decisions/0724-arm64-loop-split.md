@@ -22,7 +22,11 @@ A default on pass `loop_split` (compiler/arm64/loopsplit.xo; off with
 
 1. In a function with a non tail call, at most `SPLIT_MAX_INSTS` (2000)
    instructions and an innermost loop with no call, switch, entry or
-   return, it allocates once as usual and keeps the locations.
+   return, it allocates once as usual and keeps the locations. A loop
+   with such a block counts as the blocks its header reaches without
+   one, when they hold a cycle back to the header and no other loop's
+   header (2026-11-19, task #438): a rare call, and an inner loop only
+   reached past it, leave the common path split.
 2. For up to 16 such loops with at most 8 edges in or out and at least
    11 general registers live in it, if a value the loop names had no
    register in the first allocation, every value named in the loop and
@@ -51,9 +55,23 @@ edges).
   longer).
 - test/codegen/loopsplit checks that the loop no longer reloads its
   bound from the stack; it fails with `-loop_split`.
+- Splitting the call free part of a loop (task #438, 2026-11-19):
+  bench/perf/brotli enc11 6,499,614,129 to 6,209,902,866 instructions
+  (4.46% fewer, callgrind, linux/arm64); update_nodes' j loop, which
+  calls rb_match on about 1 in 30 iterations and runs an inner loop
+  after it, had 14 stack loads and stores per iteration and has 1.
+  Outputs are identical. test/codegen/loopsplit work_rare fails
+  without it. Renaming the read only values a pad reads as well (the
+  outside name living on through the loop for the pad) measured 0.4%
+  worse than leaving them and was dropped.
+- The second allocation is kept only when every instruction still finds
+  registers to reload its spilled operands into (split_scratch_ok,
+  2026-11-19): split names held across a loop left a madd of three
+  spilled names in xo.mlog.vals no free register, and compiler/xo did
+  not build; such a function keeps its first allocation.
 - Landing pads still read their live ins in one location, so values
-  live into a pad are never renamed; a loop with a faulting call cannot
-  be split (it has a call).
+  live into a pad are never renamed; the call blocks of a loop stay
+  outside the split part, the loop's other blocks are split.
 
 ## Alternatives
 

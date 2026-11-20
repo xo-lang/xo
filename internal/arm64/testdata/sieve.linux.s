@@ -191,79 +191,77 @@ xo_f_sieve:
 	.cfi_offset w23, -8
 .LpGL1jtk_f2_b0:
 .LpGL1jtk_f2_x0_dc1:
-	mov x22, x0
+	mov x23, x0
 	adr x21, .LpGL1jtk_f2_el
-	adds x24, x22, #1
+	adds x22, x23, #1
 	b.vs .LpGL1jtk_f2_fault1
 .LpGL1jtk_f2_b2:
 	mov x20, #0
 	ldr x19, [x21, #8]
-	mov x23, #1
+	mov x24, #1
 .LpGL1jtk_f2_b3:
-	cmp x20, x24
-	b.ge .LpGL1jtk_f2_b9
+	cmp x20, x22
+	b.ge .LpGL1jtk_f2_b10
 .LpGL1jtk_f2_b4:
 	ldr x9, [x21, #16]
 	cmp x19, x9
 	b.eq .LpGL1jtk_f2_b5
 .LpGL1jtk_f2_b7:
 	add x9, x21, x19
-	strb w23, [x9, #24]
+	strb w24, [x9, #24]
 	add x19, x19, #1
 	str x19, [x21, #8]
 .LpGL1jtk_f2_b8:
 	add x20, x20, #1
-	cmp x20, x24
+	cmp x20, x22
 	b.lt .LpGL1jtk_f2_b4
-.LpGL1jtk_f2_b9:
-	add x13, x22, #1
-.LpGL1jtk_f2_b11:
+.LpGL1jtk_f2_b10:
 	mov x10, #2
 	mov x20, #0
 	add x12, x21, #24
+.LpGL1jtk_f2_b11:
+	cmp x10, x22
+	b.ge .LpGL1jtk_f2_b30
 .LpGL1jtk_f2_b12:
-	cmp x10, x13
-	b.ge .LpGL1jtk_f2_b32
-.LpGL1jtk_f2_b13:
 	cmp x10, x19
 	b.hs .LpGL1jtk_f2_fault2
-.LpGL1jtk_f2_b13_c:
+.LpGL1jtk_f2_b12_c:
 	ldrb w9, [x12, x10]
-.LpGL1jtk_f2_b14:
-	cbnz x9, .LpGL1jtk_f2_b15
-.LpGL1jtk_f2_b29:
+.LpGL1jtk_f2_b13:
+	cbnz x9, .LpGL1jtk_f2_b14
+.LpGL1jtk_f2_b28:
 	add x10, x10, #1
-	cmp x10, x13
-	b.lt .LpGL1jtk_f2_b13
-	b .LpGL1jtk_f2_b32
-.LpGL1jtk_f2_b15:
+	cmp x10, x22
+	b.lt .LpGL1jtk_f2_b12
+	b .LpGL1jtk_f2_b30
+.LpGL1jtk_f2_b14:
 	adds x20, x20, #1
 	b.vs .LpGL1jtk_f2_fault3
-.LpGL1jtk_f2_b17:
+.LpGL1jtk_f2_b16:
 	mul x9, x10, x10
 	smulh x11, x10, x10
 	cmp x11, x9, asr #63
 	b.ne .LpGL1jtk_f2_fault4
-.LpGL1jtk_f2_b20:
+.LpGL1jtk_f2_b19:
 	mov x11, x12
+.LpGL1jtk_f2_b20:
+	cmp x9, x23
+	b.gt .LpGL1jtk_f2_b27
 .LpGL1jtk_f2_b21:
-	cmp x9, x22
-	b.gt .LpGL1jtk_f2_b28
-.LpGL1jtk_f2_b22:
 	cmp x9, x19
 	b.hs .LpGL1jtk_f2_fault5
-.LpGL1jtk_f2_b22_c:
+.LpGL1jtk_f2_b21_c:
 	strb wzr, [x11, x9]
-.LpGL1jtk_f2_b24:
+.LpGL1jtk_f2_b23:
 	adds x9, x9, x10
 	b.vs .LpGL1jtk_f2_fault6
-	cmp x9, x22
-	b.le .LpGL1jtk_f2_b22
-.LpGL1jtk_f2_b28:
+	cmp x9, x23
+	b.le .LpGL1jtk_f2_b21
+.LpGL1jtk_f2_b27:
 	add x10, x10, #1
-	cmp x10, x13
-	b.lt .LpGL1jtk_f2_b13
-.LpGL1jtk_f2_b32:
+	cmp x10, x22
+	b.lt .LpGL1jtk_f2_b12
+.LpGL1jtk_f2_b30:
 .LpGL1jtk_f2_x6_dc11:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
@@ -279,7 +277,7 @@ xo_f_sieve:
 .LpGL1jtk_f2_x3_dc13:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
-	b .LpGL1jtk_f2_b26
+	b .LpGL1jtk_f2_b25
 .LpGL1jtk_f2_b5:
 .LpGL1jtk_f2_x0_dc14:
 	mov x0, x21
@@ -287,23 +285,19 @@ xo_f_sieve:
 	bl xo_x_obj_rl_grow_n
 	mov x21, x0
 	b .LpGL1jtk_f2_b7
-.LpGL1jtk_f2_b10:
+.LpGL1jtk_f2_b18:
 .LpGL1jtk_f2_x3_dc15:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
-	b .LpGL1jtk_f2_b26
-.LpGL1jtk_f2_b19:
+	b .LpGL1jtk_f2_b25
+.LpGL1jtk_f2_b22:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
-	b .LpGL1jtk_f2_b26
-.LpGL1jtk_f2_b23:
+	b .LpGL1jtk_f2_b25
+.LpGL1jtk_f2_b24:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
-	b .LpGL1jtk_f2_b26
 .LpGL1jtk_f2_b25:
-	mov x0, x21
-	bl xo_hG9GOmRI4zL
-.LpGL1jtk_f2_b26:
 .LpGL1jtk_f2_x2_dc16:
 	bl xo_x_fault_continue
 	mov x0, #0
@@ -311,7 +305,7 @@ xo_f_sieve:
 	b .LpGL1jtk_f2_ep
 .LpGL1jtk_f2_x4_dc2:
 .LpGL1jtk_f2_fault1:
-	mov x0, x22
+	mov x0, x23
 	mov x1, #43
 	mov x2, #1
 	adrp x3, .Lxo_pGL1jtk_loc0
@@ -323,9 +317,9 @@ xo_f_sieve:
 .LpGL1jtk_f2_cs1b:
 	brk #1
 .LpGL1jtk_f2_x3_dc3:
-.LpGL1jtk_f2_pe16:
+.LpGL1jtk_f2_pe15:
 	mov sp, x29
-	b .LpGL1jtk_f2_b19
+	b .LpGL1jtk_f2_b18
 .LpGL1jtk_f2_x4_dc4:
 .LpGL1jtk_f2_fault2:
 	sub sp, sp, #16
@@ -373,9 +367,9 @@ xo_f_sieve:
 .LpGL1jtk_f2_cs4b:
 	brk #1
 .LpGL1jtk_f2_x3_dc7:
-.LpGL1jtk_f2_pe20:
+.LpGL1jtk_f2_pe19:
 	mov sp, x29
-	b .LpGL1jtk_f2_b23
+	b .LpGL1jtk_f2_b22
 .LpGL1jtk_f2_x4_dc8:
 .LpGL1jtk_f2_fault5:
 	sub sp, sp, #16
@@ -391,9 +385,9 @@ xo_f_sieve:
 .LpGL1jtk_f2_cs5b:
 	brk #1
 .LpGL1jtk_f2_x3_dc9:
-.LpGL1jtk_f2_pe22:
+.LpGL1jtk_f2_pe21:
 	mov sp, x29
-	b .LpGL1jtk_f2_b25
+	b .LpGL1jtk_f2_b24
 .LpGL1jtk_f2_x4_dc10:
 .LpGL1jtk_f2_fault6:
 	sub sp, sp, #16
