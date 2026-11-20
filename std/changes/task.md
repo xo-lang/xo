@@ -1,5 +1,22 @@
 # std/task changes
 
+## 2026-11-19: fix: a cancelled Once runner hands f to the first waiter
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1's main check at b040f825b (gen TestGolden/test_once: "canceled runner hands the run to the next waiter" got c, want b)
+- Go reference: none (sync.Once has no cancellation)
+- Test: golden test_once runs under --explore=60 (args.txt): failed before on the go and native backends, passes after; the handoff test under --seed=1..40 failed 20 (go) and 22 (native) before, 0 after
+
+Once.get's waiters took the read lock first, so when a cancelled runner
+let go every waiter woke at once and raced for the write lock: whichever
+the schedule ran first ran f, not the first to wait (half the schedules,
+before c977db0ad too; its one more yield moved the Go backend's default
+schedule onto a failing one). Until the Once is done, a get now goes
+straight to the write lock, which hands itself on in arrival order. A
+done Once on the Go backend publishes -1 in Once.done and keeps the read
+lock path; native keeps the one load of the published box.
+
 ## 2026-11-19: perf: map_concurrent runs limit tasks, not a task per item
 
 - Kind: perf

@@ -1924,116 +1924,128 @@ func (v Task_Once[tp_T, tp_E]) M_debug(*Task) string { return Debug(v) }
 func (v_o Task_Once[tp_T, tp_E]) M_get(tk *Task, v_f func(*Task) Result[tp_T, tp_E]) Result[tp_T, tp_E] {
 	var v_a int64 = (*Addr(Secret_reveal[*Atomic[int64]](tk, v_o.F_done))).M_get(tk)
 	_ = v_a
-	if v_a != int64(0) {
+	if v_a > int64(0) {
 		return Ok[tp_T, tp_E](Own(Task_once_at[tp_T](tk, v_a)))
 	}
-	x_a64 := v_f
-	return Own(v_o.M_get_slow(tk, x_a64))
+	x_a64 := v_a
+	x_a65 := v_f
+	return Own(v_o.M_get_slow(tk, x_a64, x_a65))
 }
 
-func (v_o Task_Once[tp_T, tp_E]) M_get_slow(tk *Task, v_f func(*Task) Result[tp_T, tp_E]) Result[tp_T, tp_E] {
-	x_a67 := func(tk *Task, v_st Option[Result[List[tp_T], Task_Isolated[tp_E]]]) Result[Option[tp_T], Never] {
-		_ = v_st
-		x_m65 := Own(v_st)
-		_ = x_m65
-		switch {
-		default:
-			if x_m65.Some && x_m65.V.Ok {
-				var v_box List[tp_T] = x_m65.V.V
-				_ = v_box
-				return Ok[Option[tp_T], Never](Some[tp_T](Own(List_At(v_box, int64(0), "std/task.xo:274:29"))))
-			}
-			{
-				return Ok[Option[tp_T], Never](Own(None[tp_T]()))
+func (v_o Task_Once[tp_T, tp_E]) M_get_slow(tk *Task, v_a int64, v_f func(*Task) Result[tp_T, tp_E]) Result[tp_T, tp_E] {
+	if v_a < int64(0) {
+		x_a68 := func(tk *Task, v_st Option[Result[List[tp_T], Task_Isolated[tp_E]]]) Result[Option[tp_T], Never] {
+			_ = v_st
+			x_m66 := Own(v_st)
+			_ = x_m66
+			switch {
+			default:
+				if x_m66.Some && x_m66.V.Ok {
+					var v_box List[tp_T] = x_m66.V.V
+					_ = v_box
+					return Ok[Option[tp_T], Never](Some[tp_T](Own(List_At(v_box, int64(0), "std/task.xo:276:31"))))
+				}
+				{
+					return Ok[Option[tp_T], Never](Own(None[tp_T]()))
+				}
 			}
 		}
+		var v_seen Option[tp_T] = Own(Mutex_with_read[Option[Result[List[tp_T], Task_Isolated[tp_E]]], Option[tp_T], Never](tk, v_o.F_st, x_a68).V)
+		_ = v_seen
+		x_l69 := Own(v_seen)
+		if x_l69.Some {
+			var v_v tp_T = x_l69.V
+			_ = v_v
+			return Ok[tp_T, tp_E](Own(v_v))
+		}
 	}
-	var v_seen Option[tp_T] = Own(Mutex_with_read[Option[Result[List[tp_T], Task_Isolated[tp_E]]], Option[tp_T], Never](tk, v_o.F_st, x_a67).V)
-	_ = v_seen
-	x_l68 := Own(v_seen)
-	if x_l68.Some {
-		var v_v tp_T = x_l68.V
-		_ = v_v
-		return Ok[tp_T, tp_E](Own(v_v))
-	}
-	x_a74 := func(tk *Task, v_st_1 *Option[Result[List[tp_T], Task_Isolated[tp_E]]]) Result[Result[List[tp_T], Task_Isolated[tp_E]], Never] {
+	x_a75 := func(tk *Task, v_st_1 *Option[Result[List[tp_T], Task_Isolated[tp_E]]]) Result[Result[List[tp_T], Task_Isolated[tp_E]], Never] {
 		_ = (*v_st_1)
-		x_m69 := Own((*v_st_1))
-		_ = x_m69
+		x_m70 := Own((*v_st_1))
+		_ = x_m70
 		switch {
 		default:
-			if x_m69.Some {
-				var v_done Result[List[tp_T], Task_Isolated[tp_E]] = x_m69.V
+			if x_m70.Some {
+				var v_done Result[List[tp_T], Task_Isolated[tp_E]] = x_m70.V
 				_ = v_done
 				return Ok[Result[List[tp_T], Task_Isolated[tp_E]], Never](Own(v_done))
 			}
-			if !x_m69.Some {
+			if !x_m70.Some {
 				{
-					var x_v71 Result[List[tp_T], Task_Isolated[tp_E]]
-					x_m72 := Own(Task_isolate[tp_T, tp_E](tk, v_f))
-					_ = x_m72
-				x_M73:
+					var x_v72 Result[List[tp_T], Task_Isolated[tp_E]]
+					x_m73 := Own(Task_isolate[tp_T, tp_E](tk, v_f))
+					_ = x_m73
+				x_M74:
 					switch {
 					default:
-						if x_m72.Ok {
-							var v_v_1 tp_T = x_m72.V
+						if x_m73.Ok {
+							var v_v_1 tp_T = x_m73.V
 							_ = v_v_1
-							x_v71 = Ok[List[tp_T], Task_Isolated[tp_E]](ListOf[tp_T](Own(v_v_1)))
-							break x_M73
+							x_v72 = Ok[List[tp_T], Task_Isolated[tp_E]](ListOf[tp_T](Own(v_v_1)))
+							break x_M74
 						}
-						if !x_m72.Ok {
-							var v_e Task_Isolated[tp_E] = x_m72.E
+						if !x_m73.Ok {
+							var v_e Task_Isolated[tp_E] = x_m73.E
 							_ = v_e
-							x_v71 = Err[List[tp_T], Task_Isolated[tp_E]](v_e)
-							break x_M73
+							x_v72 = Err[List[tp_T], Task_Isolated[tp_E]](v_e)
+							break x_M74
 						}
-						panic(Unreachable("std/task.xo:286:21"))
+						panic(Unreachable("std/task.xo:295:21"))
 					}
-					var v_fresh Result[List[tp_T], Task_Isolated[tp_E]] = x_v71
+					var v_fresh Result[List[tp_T], Task_Isolated[tp_E]] = x_v72
 					_ = v_fresh
 					(*v_st_1) = Some[Result[List[tp_T], Task_Isolated[tp_E]]](Own(v_fresh))
 					return Ok[Result[List[tp_T], Task_Isolated[tp_E]], Never](Own(v_fresh))
 				}
 			}
-			panic(Unreachable("std/task.xo:283:5"))
+			panic(Unreachable("std/task.xo:292:5"))
 		}
 	}
-	var v_r Result[List[tp_T], Task_Isolated[tp_E]] = Own(Mutex_with[Option[Result[List[tp_T], Task_Isolated[tp_E]]], Result[List[tp_T], Task_Isolated[tp_E]], Never](tk, v_o.F_st, x_a74).V)
+	var v_r Result[List[tp_T], Task_Isolated[tp_E]] = Own(Mutex_with[Option[Result[List[tp_T], Task_Isolated[tp_E]]], Result[List[tp_T], Task_Isolated[tp_E]], Never](tk, v_o.F_st, x_a75).V)
 	_ = v_r
-	var x_v75 Result[tp_T, tp_E]
-	x_m76 := Own(v_r)
-	_ = x_m76
-x_M77:
+	var x_v76 Result[tp_T, tp_E]
+	x_m77 := Own(v_r)
+	_ = x_m77
+x_M78:
 	switch {
 	default:
-		if x_m76.Ok {
-			var v_box_1 List[tp_T] = x_m76.V
+		if x_m77.Ok {
+			var v_box_1 List[tp_T] = x_m77.V
 			_ = v_box_1
 			{
-				(*Addr(Secret_reveal[*Atomic[int64]](tk, v_o.F_done))).M_set(tk, Task_once_addr[tp_T](tk, List_Own(v_box_1)))
-				x_v75 = Ok[tp_T, tp_E](Own(List_At(v_box_1, int64(0), "std/task.xo:299:10")))
+				var v_p int64 = Task_once_addr[tp_T](tk, List_Own(v_box_1))
+				_ = v_p
+				x_a80 := (*Addr(Secret_reveal[*Atomic[int64]](tk, v_o.F_done)))
+				var x_v79 int64
+				if v_p == int64(0) {
+					x_v79 = int64(-1)
+				} else {
+					x_v79 = v_p
+				}
+				x_a80.M_set(tk, x_v79)
+				x_v76 = Ok[tp_T, tp_E](Own(List_At(v_box_1, int64(0), "std/task.xo:310:10")))
 			}
-			break x_M77
+			break x_M78
 		}
-		if !x_m76.Ok && x_m76.E.Tag == 2 {
-			var v_e_1 tp_E = x_m76.E.P.(Task_Isolated_Failed[tp_E]).F0
+		if !x_m77.Ok && x_m77.E.Tag == 2 {
+			var v_e_1 tp_E = x_m77.E.P.(Task_Isolated_Failed[tp_E]).F0
 			_ = v_e_1
-			x_v75 = Err[tp_T, tp_E](Own(v_e_1))
-			break x_M77
+			x_v76 = Err[tp_T, tp_E](Own(v_e_1))
+			break x_M78
 		}
-		if !x_m76.Ok && x_m76.E.Tag == 1 {
-			var v_info Task_Fault = x_m76.E.P.(Task_Isolated_Faulted[tp_E]).F_info
+		if !x_m77.Ok && x_m77.E.Tag == 1 {
+			var v_info Task_Fault = x_m77.E.P.(Task_Isolated_Faulted[tp_E]).F_info
 			_ = v_info
-			x_v75 = Absurd[Result[tp_T, tp_E]](Rt_fault_raise(tk, v_info.F_msg, v_info.F_location))
-			break x_M77
+			x_v76 = Absurd[Result[tp_T, tp_E]](Rt_fault_raise(tk, v_info.F_msg, v_info.F_location))
+			break x_M78
 		}
-		panic(Unreachable("std/task.xo:295:27"))
+		panic(Unreachable("std/task.xo:304:27"))
 	}
-	var v_out Result[tp_T, tp_E] = x_v75
+	var v_out Result[tp_T, tp_E] = x_v76
 	_ = v_out
-	x_r78 := Own(v_out)
-	if !x_r78.Ok {
-		return ErrTr[tp_T](x_r78.E, Frame2(x_r78.Tr, "task.Once.get_slow", "std/task.xo:304", "o f", FrameTextOf(v_o), v_f))
+	x_r81 := Own(v_out)
+	if !x_r81.Ok {
+		return ErrTr[tp_T](x_r81.E, Frame3(x_r81.Tr, "task.Once.get_slow", "std/task.xo:315", "o a f", FrameTextOf(v_o), v_a, v_f))
 	}
-	return Ok[tp_T, tp_E](x_r78.V)
+	return Ok[tp_T, tp_E](x_r81.V)
 }
