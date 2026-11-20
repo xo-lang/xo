@@ -1,0 +1,47 @@
+// The Xo side of std/random's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/random's result as text, as go/main.go prints package math/rand/v2's.
+// Kind chacha8: where the word is in the first 4096 of seeded(chacha8seed).
+// See scripts/stdproven/gotests.go.
+use std/random
+use std/base64
+
+fn u64(s: Str) -> UInt64 {
+  var n: UInt64 = 0
+  for c in s.bytes() {
+    n = n * 10 + UInt64(Int(c) - 48)
+  }
+  n
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "chacha8" => {
+      let v = u64(inp[0])
+      let s = random.seeded(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+      for i in 0..4096 {
+        if UInt64.from_bits(s.word()) == v {
+          return "${i}"
+        }
+      }
+      "absent"
+    }
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
