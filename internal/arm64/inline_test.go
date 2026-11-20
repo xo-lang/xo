@@ -54,16 +54,20 @@ func TestInlineFallbackLoud(t *testing.T) {
 		}
 		// the binary records it: `xo version -m` shows it, and `xo bench
 		// --ab` refuses the binary unless --allow-fallback (2026-10-24)
+		// (--in-place: since cff92ecee --ab stages its programs on a tmpfs
+		// that allows exec and exits 2 where none is mounted, as on the
+		// offload hosts' /dev/shm; this test is about the refusal, not a
+		// timing, 2026-11-20)
 		prog := filepath.Join(dir, progExe)
 		out, err = runXo(cli, dir, "version", "-m", prog)
 		if err != nil || !strings.Contains(out, "inline=fallback (") {
 			t.Fatalf("%s: want `xo version -m` to show inline=fallback, got %v:\n%s", brk, err, out)
 		}
-		out, err = runXo(cli, dir, "bench", "--ab", "--rounds=1", "--warmup=0", "--no-guard", prog, prog)
+		out, err = runXo(cli, dir, "bench", "--ab", "--in-place", "--rounds=1", "--warmup=0", "--no-guard", prog, prog)
 		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 || !strings.Contains(out, "built without inlining") {
 			t.Fatalf("%s: want `xo bench --ab` to refuse the binary with exit 2, got %v:\n%s", brk, err, out)
 		}
-		if out, err = runXo(cli, dir, "bench", "--ab", "--rounds=1", "--warmup=0", "--no-guard", "--allow-fallback", prog, prog); err != nil {
+		if out, err = runXo(cli, dir, "bench", "--ab", "--in-place", "--rounds=1", "--warmup=0", "--no-guard", "--allow-fallback", prog, prog); err != nil {
 			t.Fatalf("%s: want `xo bench --ab --allow-fallback` to run, got %v:\n%s", brk, err, out)
 		}
 	}
