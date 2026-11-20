@@ -45,7 +45,10 @@ import (
 // one golden per std module in the sequences, and pairs among the first 3
 // goldens of each module) or all (every golden that uses std; pairs among
 // the first 4 of each module). XO_WARMSEQ_SEED sets the shuffle (default:
-// the day number, so each day checks another order; the seed is logged).
+// the day number, so each day checks another order; the seed and the
+// order are logged). A build that differs from its cold build says
+// where (warmDiff) and, with XO_WARMSEQ_KEEP=DIR (scripts/gate.sh sets
+// it), keeps both binaries in DIR (task #471).
 func TestWarmBuildSequence(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -138,7 +141,7 @@ func TestWarmBuildSequence(t *testing.T) {
 			return
 		}
 		if !bytes.Equal(data, cold[dir]) {
-			t.Errorf("%s: the build through the shared cache, %s, differs from its cold build (every cache off)", name, after)
+			t.Errorf("%s: the build through the shared cache, %s, differs from its cold build (every cache off): %s%s", name, after, warmDiff(data, cold[dir]), keepWarmDiff(name+"-"+strings.ReplaceAll(t.Name(), "/", "-"), data, cold[dir]))
 			return
 		}
 		want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
@@ -183,6 +186,11 @@ func TestWarmBuildSequence(t *testing.T) {
 	}
 	shuffled := append([]string(nil), progs...)
 	rand.New(rand.NewSource(seed)).Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+	var names []string
+	for _, p := range shuffled {
+		names = append(names, filepath.Base(p))
+	}
+	t.Logf("shuffled order: %s", strings.Join(names, " "))
 	for _, order := range []struct {
 		name  string
 		progs []string

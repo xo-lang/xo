@@ -71,6 +71,8 @@
 #            task #353, about 25 s): run after the steps
 #            named when the branch changes compiler/ (warmseq_change);
 #            XO_WARMSEQ=modules or all for wider sets
+#            (a build that differs from its cold one is kept in the
+#            logs' warmseq-keep/, warm and cold, task #471)
 #   chkcache the module check cache's auto mode against a cold check
 #            (internal/arm64 TestModuleCheckAuto, ...Generic, ...Zones):
 #            run after the steps named when the branch changes
@@ -1569,7 +1571,7 @@ run_step_body() {
   chkcache)
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
   warmseq)
-    full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$' ;;
+    XO_WARMSEQ_KEEP=$logs/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$' ;;
   stdwasm)
     # every std test module under `xo test --backend=wasm` (decision 0610),
     # Node's WASI as the runner: a module passes when its summary line is
@@ -1614,7 +1616,7 @@ after_steps() {
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
   fi
   if [ "$warmseq_ran" = 0 ] && [ "${XO_GATE_WARMSEQ:-1}" != 0 ] && warmseq_change; then
-    full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$'
+    XO_WARMSEQ_KEEP=$logs/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$'
   fi
   if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
     full scale ./internal/arm64 -run '^TestSwitch65535Arms$'
