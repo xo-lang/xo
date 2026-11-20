@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+3030618753 1009457673 4335587696407205573
+--- stderr
+fault: index 12 out of range for List of length 12 at main.xo:6:43

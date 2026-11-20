@@ -1,0 +1,21 @@
+// Load combining over a List[UInt8] (task #454): one load for the
+// bytes, and a fault past the end names the first element out of range
+// (index 12, the third byte b[i + 2]) at that element's position, as the
+// byte loads did.
+fn ld32(b: List[UInt8], i: Int) -> Int {
+  Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
+}
+
+fn ld64(b: List[UInt8], i: Int) -> Int {
+  Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 2]) << 16 | Int(b[i + 3]) << 24 | Int(b[i + 4]) << 32 | Int(b[i + 5]) << 40 | Int(b[i + 6]) << 48 | Int(b[i + 7]).wrapping_shl(56)
+}
+
+fn main(os: Os) {
+  var b: List[UInt8] = []
+  for x in b"\x81\x92\xa3\xb4\xc5\xd6\xe7\xf8\x09\x1a\x2b\x3c" {
+    b.push(x)
+  }
+  let n = os.env.args().len()
+  os.stdio.println("${ld32(b, n)} ${ld32(b, n + 8)} ${ld64(b, n + 4)}")
+  os.stdio.println("${ld32(b, n + 10)}")
+}

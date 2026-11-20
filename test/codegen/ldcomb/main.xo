@@ -4,6 +4,7 @@
 // word, is one ldrh or ldr on arm64, its bounds checks two compares
 // (std/brotli ld32, std/binary get_u32_le). Faults are unchanged: a cold
 // block repeats each byte's check (test/golden ldcomb_faults).
+// List[UInt8] too (task #454).
 
 fn ld16(b: Bytes, i: Int) -> Int {
   // arm64: "ldrh\s+w" -"ldrb"
@@ -21,8 +22,9 @@ fn ld32r(b: Bytes, i: Int) -> Int {
   (Int(b[i + 4]) << 24) | (Int(b[i + 3]) << 16) | (Int(b[i + 2]) << 8) | Int(b[i + 1])
 }
 
+// The index adds i + k only the loads use go to the cold block (task #454).
 fn ld64(b: Bytes, i: Int) -> Int {
-  // arm64: "ldr\s+x" -"ldrb"
+  // arm64: "ldr\s+x" -"ldrb" -"b\.vs \S+\n\tadds"
   Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 2]) << 16 | Int(b[i + 3]) << 24 | Int(b[i + 4]) << 32 | Int(b[i + 5]) << 40 | Int(b[i + 6]) << 48 | Int(b[i + 7]).wrapping_shl(56)
 }
 
@@ -32,7 +34,31 @@ fn gap(b: Bytes, i: Int) -> Int {
   Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 3]) << 24 | Int(b[i + 4]) << 32
 }
 
+// A List[UInt8] (task #454): std/brotli's rb_word reads its ring buffer.
+fn lld32(b: List[UInt8], i: Int) -> Int {
+  // arm64: "ldr\s+w" -"ldrb"
+  Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
+}
+
+fn lld64(b: List[UInt8], i: Int) -> Int {
+  // arm64: "ldr\s+x" -"ldrb"
+  Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 2]) << 16 | Int(b[i + 3]) << 24 | Int(b[i + 4]) << 32 | Int(b[i + 5]) << 40 | Int(b[i + 6]) << 48 | Int(b[i + 7]).wrapping_shl(56)
+}
+
+// A signed byte list stays byte loads (sign extension per byte).
+fn sld16(b: List[Int8], i: Int) -> Int {
+  // arm64: "ldrb"
+  Int(b[i]) | Int(b[i + 1]) << 8
+}
+
 fn main(os: Os) {
   let b = "abcdefghijkl".bytes()
+  var l: List[UInt8] = []
+  var sl: List[Int8] = []
+  for x in b {
+    l.push(x)
+    sl.push(Int8.wrapping_from(Int(x)))
+  }
   os.stdio.println("${ld16(b, 1)} ${ld32(b, 2)} ${ld32r(b, 3)} ${ld64(b, 4)} ${gap(b, 0)}")
+  os.stdio.println("${lld32(l, 2)} ${lld64(l, 4)} ${sld16(sl, 1)}")
 }

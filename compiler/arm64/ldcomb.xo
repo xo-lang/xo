@@ -23,6 +23,13 @@ struct LdComb {
   c0: Int
   n: Int
   leaves: List[Int]
+  // a List[UInt8] (list.index) rather than Bytes (bytes.index; task #454)
+  list: Bool
+  // the index adds j + k only a byte load uses, absorbed with it: the cold
+  // block repeats them, checked, in the block's order (task #454)
+  adds: List[Int]
+  // the absorbed adds and the byte loads in the order of their block
+  seq: List[Int]
 }
 
 /// A byte of the tree: its bytes.index value and its shift.
@@ -51,9 +58,23 @@ fn (var g: G) find_ld_combs() {
       if !g.ld_flatten(v, v, bi, 0, terms, inner) || terms.len() > 8 {
         continue
       }
-      if let Some(c) = g.ld_match(v, bi, terms) {
+      if let Some(c0) = g.ld_match(v, bi, terms) {
+        var c = c0
         for u in inner {
           g.ldc_skip[u] = true
+        }
+        // each byte's own index add, when only its load uses it
+        for l in c.leaves {
+          let iv = g.f.arg(g.f.values[l].args, 1)
+          if g.ld_own_add(iv, c.j, bi, v) && !c.adds.contains(iv) {
+            c.adds.push(iv)
+            g.ldc_skip[iv] = true
+          }
+        }
+        for u in g.f.blocks[bi].instrs {
+          if c.adds.contains(u) || c.leaves.contains(u) {
+            c.seq.push(u)
+          }
         }
         g.ldcs[v] = c
       }
@@ -124,7 +145,7 @@ fn (var g: G) ld_flatten(r: Int, v: Int, bi: Int, sh: Int, var terms: List[LdTer
     IntConv => {
       let l = g.f.arg(x.args, 0)
       let lx = g.f.values[l]
-      if lx.op != ssa.Op.Call || !g.f.name_is(lx, "bytes.index") || g.nuses[l] != 1 || ssa.block_of(lx.tb) != bi || ssa.pad_of(lx.pi) != ssa.pad_of(g.f.values[r].pi) {
+      if lx.op != ssa.Op.Call || !(g.f.name_is(lx, "bytes.index") || (g.f.name_is(lx, "list.index") && g.ld_list_byte(ssa.ty_of(lx.tb)))) || g.nuses[l] != 1 || ssa.block_of(lx.tb) != bi || ssa.pad_of(lx.pi) != ssa.pad_of(g.f.values[r].pi) {
         return false
       }
       inner.push(l)
@@ -133,6 +154,29 @@ fn (var g: G) ld_flatten(r: Int, v: Int, bi: Int, sh: Int, var terms: List[LdTer
     }
     _ => false
   }
+}
+
+/// Whether t is a list element of one unsigned byte (UInt8 under
+/// --pack-lists, decision 0369; task #454).
+fn (g: G) ld_list_byte(t: Int) -> Bool {
+  g.narrow_w(t) == 1 && !g.narrow_signed(t)
+}
+
+/// Whether iv is j + k (k a constant from 1 to 4095) in block bi, root
+/// r's pad, used only by one byte load (task #454).
+fn (g: G) ld_own_add(iv: Int, j: Int, bi: Int, r: Int) -> Bool {
+  if j < 0 || iv == j || g.nuses[iv] != 1 {
+    return false
+  }
+  let x = g.f.values[iv]
+  if x.op != ssa.Op.Add || x.args.len() != 2 || g.f.arg(x.args, 0) != j {
+    return false
+  }
+  if ssa.block_of(x.tb) != bi || ssa.pad_of(x.pi) != ssa.pad_of(g.f.values[r].pi) {
+    return false
+  }
+  let (k, kc) = g.const_int(g.f.arg(x.args, 1))
+  kc && k >= 1 && k <= 4095
 }
 
 /// The index of bytes.index value l as (base, constant offset): base -1
@@ -169,11 +213,12 @@ fn (g: G) ld_match(r: Int, bi: Int, terms: List[LdTerm]) -> LdComb? {
     return None
   }
   let b = g.f.arg(g.f.values[terms[0].leaf].args, 0)
+  let list = g.f.name_is(g.f.values[terms[0].leaf], "list.index")
   let (j, _) = g.ld_index(terms[0].leaf)
   var c0 = 1 << 40
   for t in terms {
     let (tj, tc) = g.ld_index(t.leaf)
-    if g.f.arg(g.f.values[t.leaf].args, 0) != b || tj != j {
+    if g.f.arg(g.f.values[t.leaf].args, 0) != b || tj != j || g.f.name_is(g.f.values[t.leaf], "list.index") != list {
       return None
     }
     if tc < c0 {
@@ -201,30 +246,48 @@ fn (g: G) ld_match(r: Int, bi: Int, terms: List[LdTerm]) -> LdComb? {
       }
     }
   }
-  Some(LdComb{b: b, j: j, c0: c0, n: n, leaves: leaves})
+  Some(LdComb{b: b, j: j, c0: c0, n: n, leaves: leaves, list: list, adds: [], seq: []})
 }
 
 /// Lowers root v of combined load c (find_ld_combs).
 fn (var g: G) ld_comb(v: Int, c: LdComb) {
-  let a = g.words(c.b)
+  var a: List[Int] = []
+  var lw = 0
   var k = -1
-  let y = g.f.values[c.b]
-  if y.op == ssa.Op.Const {
-    if let Some(bs) = const_bytes(g.f.aux(y)) {
-      k = bs.len()
+  if c.list {
+    lw = g.word(c.b)
+  } else {
+    a = g.words(c.b)
+    let y = g.f.values[c.b]
+    if y.op == ssa.Op.Const {
+      if let Some(bs) = const_bytes(g.f.aux(y)) {
+        k = bs.len()
+      }
     }
   }
-  let alen = g.str_len(a)
-  // a byte's check stays where bytes.index would keep it
-  var checks = false
+  let alen = if c.list { g.list_len(lw) } else { g.str_len(a) }
+  let fault = if c.list { "xo_fault_index" } else { "xo_fault_bytes_index" }
+  // a byte's check stays where bytes.index (list.index: bounds_check)
+  // would keep it
+  var checked: List[Int] = []
   for l in c.leaves {
     let lx = g.f.values[l]
     let iv = g.f.arg(lx.args, 1)
-    let short = g.proof.div_of_len(g.f, ssa.block_of(lx.tb), iv, c.b)
-    if ssa.has_pos(lx.lp) && !short && !g.proved_index(iv, alen, k) && !g.proof.proven(g.f, ssa.block_of(lx.tb), iv, c.b) {
-      checks = true
+    let blk = ssa.block_of(lx.tb)
+    let short = g.proof.div_of_len(g.f, blk, iv, c.b)
+    if ssa.has_pos(lx.lp) && !short && !g.proved_index(iv, alen, k) && !g.proof.proven(g.f, blk, iv, c.b) && !(c.list && g.below_len_min(iv, c.b, blk)) {
+      checked.push(l)
     }
   }
+  // an absorbed add that can overflow is checked in the cold block: a
+  // wrapped index is negative, so the two compares send it there
+  for u in c.adds {
+    let (uk, _) = g.const_int(g.f.arg(g.f.values[u].args, 1))
+    if ssa.has_pos(g.f.values[u].lp) && !g.safe_add(c.j, uk, ssa.Op.Add) {
+      checked.push(u)
+    }
+  }
+  let checks = !checked.is_empty()
   let jw = if c.j >= 0 { g.word(c.j) } else { 0 }
   if checks {
     let lo = if c.j < 0 {
@@ -242,17 +305,28 @@ fn (var g: G) ld_comb(v: Int, c: LdComb) {
     let _b1 = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [lo, alen], cond: "hs", targets: [cold, mid]})
     g.cur = mid
     let _b2 = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [hi, alen], cond: "hs", targets: [cold, ld]})
-    // each byte's own check, in the program's order: the fault it raises
-    // is the one the byte loads raised
+    // each byte's own check (and its index add's), in the program's
+    // order: the fault it raises is the one the byte loads raised
     g.cur = cold
-    for l in c.leaves {
-      let lx = g.f.values[l]
-      if !ssa.has_pos(lx.lp) {
+    var addr: Map[Int, Int] = {}
+    for u in c.seq {
+      let ux = g.f.values[u]
+      if c.adds.contains(u) {
+        let (ak, _) = g.const_int(g.f.arg(ux.args, 1))
+        addr[u] = if checked.contains(u) {
+          g.checked(false, "adds $d0, $u0, #${ak}", [jw], "add", "vs", "xo_fault_overflow", [rsrc(jw), isrc(op_char(ssa.Op.Add)), isrc(ak)] + g.loc_args(g.f.pos_of(ux)))
+        } else {
+          g.ld_add(jw, ak)
+        }
         continue
       }
-      let (_, tc) = g.ld_index(l)
-      let ix = if c.j < 0 { g.def1(false, "mov $d0, #${tc}", []) } else if tc == 0 { jw } else { g.ld_add(jw, tc) }
-      g.check("cmp $u0, $u1", [ix, alen], "hs", "xo_fault_bytes_index", [rsrc(ix), rsrc(alen)] + g.loc_args(g.f.pos_of(lx)))
+      if !ssa.has_pos(ux.lp) {
+        continue
+      }
+      let iv = g.f.arg(ux.args, 1)
+      let (_, tc) = g.ld_index(u)
+      let ix = if let Some(r) = addr.get(iv) { r } else if c.j < 0 { g.def1(false, "mov $d0, #${tc}", []) } else if tc == 0 { jw } else { g.ld_add(jw, tc) }
+      g.check("cmp $u0, $u1", [ix, alen], "hs", fault, [rsrc(ix), rsrc(alen)] + g.loc_args(g.f.pos_of(ux)))
     }
     let _j = g.add(Inst{kind: K_JUMP, targets: [ld]})
     g.cur = ld
@@ -262,8 +336,8 @@ fn (var g: G) ld_comb(v: Int, c: LdComb) {
     g.less_fact(g.f.arg(g.f.values[l].args, 1), alen)
   }
   let bv = g.f.values[c.b]
-  let borrowed = g.inl_str() && bv.op == ssa.Op.Call && g.f.name_is(bv, "rt.str_bytes") && !g.escapes[c.b]
-  let d = if borrowed { g.str_base_inl(a) } else { g.str_base_heap(a) }
+  let borrowed = !c.list && g.inl_str() && bv.op == ssa.Op.Call && g.f.name_is(bv, "rt.str_bytes") && !g.escapes[c.b]
+  let d = if c.list { g.data_addr(lw) } else if borrowed { g.str_base_inl(a) } else { g.str_base_heap(a) }
   let ins = match c.n {
     2 => "ldrh $wd0"
     4 => "ldr $wd0"
