@@ -11,7 +11,10 @@
 // -time N runs each agreeing case's two programs N times, alternating,
 // without twin.txt's env (its smaller iteration counts are for the check),
 // and prints `time NAME xo MS go MS ratio R`: the medians of the wall times
-// and Xo over Go. It is a survey's first cut (2026-11-07, the Xo against
+// and the median of the per-round Xo / Go ratios, each round one Xo run and
+// the Go run after it (decision 0726: a slow VM phase hits both sides of a
+// pair). A case whose Go side is under 10 ms runs more rounds, until each
+// side has run 1 s in all (at most 1000 rounds). It is a survey's first cut (2026-11-07, the Xo against
 // Go re-survey), not an --ab: a claim about one change still takes
 // `xo bench --ab` on an offload host.
 //
@@ -31,6 +34,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -299,7 +303,7 @@ func (c *checker) timeCase(d *twincheck.Dir, cs twincheck.Case, name string) (st
 		return "", err
 	}
 	var xs, gs []float64
-	for i := 0; i < c.times; i++ {
+	for i := 0; i < c.times || moreRounds(xs, gs); i++ {
 		for _, side := range []struct {
 			bin  string
 			args []string
@@ -312,18 +316,47 @@ func (c *checker) timeCase(d *twincheck.Dir, cs twincheck.Case, name string) (st
 			*side.out = append(*side.out, float64(time.Since(t).Microseconds())/1000)
 		}
 	}
-	x, g := median(xs), median(gs)
-	return fmt.Sprintf("time %s xo %.1f go %.1f ratio %.3f", strings.ReplaceAll(name, " ", "/"), x, g, x/g), nil
+	return fmt.Sprintf("time %s xo %.1f go %.1f ratio %.3f", strings.ReplaceAll(name, " ", "/"), median(xs), median(gs), roundRatio(xs, gs)), nil
 }
 
+// moreRounds reports whether a case past its -time rounds runs another:
+// its Go median is under 10 ms and a side has run under 1 s in all
+// (decision 0726), up to 1000 rounds.
+func moreRounds(xs, gs []float64) bool {
+	if len(gs) == 0 || len(gs) >= 1000 || median(gs) >= 10 {
+		return false
+	}
+	return sum(xs) < 1000 || sum(gs) < 1000
+}
+
+func sum(v []float64) float64 {
+	t := 0.0
+	for _, x := range v {
+		t += x
+	}
+	return t
+}
+
+// roundRatio is the median of the per-round ratios xs[i] / gs[i]
+// (decision 0726).
+func roundRatio(xs, gs []float64) float64 {
+	r := make([]float64, len(xs))
+	for i := range xs {
+		r[i] = xs[i] / gs[i]
+	}
+	return median(r)
+}
+
+// median is the middle value, the mean of the two middle ones for an even
+// count.
 func median(v []float64) float64 {
 	s := append([]float64{}, v...)
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
+	sort.Float64s(s)
+	n := len(s)
+	if n%2 == 1 {
+		return s[n/2]
 	}
-	return s[len(s)/2]
+	return (s[n/2-1] + s[n/2]) / 2
 }
 
 // tail is the last lines of a failed command's output.

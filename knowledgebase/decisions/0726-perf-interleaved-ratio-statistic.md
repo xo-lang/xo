@@ -67,7 +67,7 @@ looked at under task #429.
 Raw rounds: ~/xo-lead/notes/xo-4c/s726/raw-h2.out, raw2-h2.out (outside
 the repository); the job scripts beside them.
 
-## Decision (proposed)
+## Decision
 
 `stdproven perf` keeps twincheck's alternation and judges a row by the
 median of its per-round Xo / Go ratios (each round pairs one Xo run with
@@ -85,7 +85,13 @@ on this evidence it gives the same verdicts.
 - A 9-round run costs about 3 times as many runs (30 rounds); every
   module's perf.md is refreshed on its next run under the new reading,
   no rewrite of old files.
-- Until the owner decides, current perf.md results stand.
+- The owner accepted it on 2026-11-20 (xw decision #201): twincheck
+  `-time` and `stdproven perf` read the per-round ratio, and
+  `stdproven perf` refuses `-rounds` under 30.
+- The first rescore under it (std/evidence/go/perf.md, linux/arm64 host 2,
+  commit f345ced72, 30 rounds): gobridge none 1.254, str 1.152, bytes 1.144,
+  int 0.948 (9 rounds of medians had 1.483, 1.105, 1.142, 0.961): std/go
+  stays over the 1.05 bar, str and bytes in the Go bridge calls.
 
 ## Alternatives
 

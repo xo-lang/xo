@@ -306,6 +306,8 @@ crypto; within it, a module that misses only the testing axis first.
   1.05, decision 0461's Proven), so the performance axis has a
   rerunnable record beside the testing kinds; the coverage generator
   reads it when it moves into the repository (section 5).
+  Since 2026-11-20 (decision 0726) the Xo / Go column is the median of
+  the per-round ratios over at least 30 interleaved rounds.
 - 2026-11-13 (aws-43, lead's ruling): section 2a, servers. `stdproven
   serverperf MODULE` reads bench/perf/MODULE/proven.sh's rows; http's
   runs the CRUD server under loadgen (rps, CPU per request, p99 shown),

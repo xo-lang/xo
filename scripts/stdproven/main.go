@@ -1479,11 +1479,14 @@ func perfOwner(dir string) string {
 // sides are listed but marked: startup decides them.
 func perf(args []string) error {
 	fs := flag.NewFlagSet("perf", flag.ExitOnError)
-	rounds := fs.Int("rounds", 9, "timed runs of each program")
+	rounds := fs.Int("rounds", 30, "interleaved rounds of each case (decision 0726: at least 30)")
 	hostLabel := fs.String("host", "", "the host's name in the evidence")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
 		usage()
+	}
+	if *rounds < 30 {
+		return fmt.Errorf("-rounds %d: perf evidence takes at least 30 interleaved rounds (decision 0726)", *rounds)
 	}
 	module := fs.Arg(0)
 	src, _, err := sourceHash(module)
@@ -1598,7 +1601,7 @@ func perf(args []string) error {
 	fmt.Fprintf(&b, "kind: perf\nmodule: %s\nresult: %s\ncommit: %s\nsource: %s\ndate: %s\nhost: %s\n", module, result, commit, src, time.Now().UTC().Format("2006-01-02"), host)
 	fmt.Fprintf(&b, "command: go run ./scripts/stdproven perf -rounds %d -host %q %s\n", *rounds, host, module)
 	fmt.Fprintf(&b, "measure: %d cases of %d twin directories, worst Xo / Go %.3f over the cases above 5 ms (Proven at or under 1.05), %s\n\n", len(rows), len(dirs), worst, time.Since(start).Round(time.Second))
-	fmt.Fprintf(&b, "Performance against Go (decisions 0461, 0616): scripts/twincheck -time %d over %s; medians of wall time, the two programs alternating.\n\n", *rounds, strings.Join(dirs, ", "))
+	fmt.Fprintf(&b, "Performance against Go (decisions 0461, 0616): scripts/twincheck -time %d over %s, the two programs alternating; Go ms and Xo ms are the medians of wall time, Xo / Go the median of the per-round ratios (decision 0726; a case under 10 ms of Go runs until each side has run 1 s).\n\n", *rounds, strings.Join(dirs, ", "))
 	b.WriteString(tb.String())
 	outp := filepath.Join("std", "evidence", module, "perf.md")
 	if err := os.MkdirAll(filepath.Dir(outp), 0o755); err != nil {
