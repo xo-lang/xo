@@ -1,0 +1,33 @@
+fn peek(m: Map[Int, Str]?, k: Int) -> Int {
+  if let Some(x) = m {
+    return (x.get(k) ?? "").len()
+  }
+  0
+}
+
+fn rem(m: Map[Int, Str]?, k: Int) -> Int {
+  if let Some(x) = m {
+    var y = x
+    let _gone = y.remove(k)
+    return y.len()
+  }
+  0
+}
+
+fn other(m: Map[Int, Str]?, k: Int) -> Int {
+  if let Some(x) = m {
+    var y = x
+    y[k] = "y"
+    return y.len()
+  }
+  0
+}
+
+fn fill(m: Map[Int, Str]?, k: Int) -> Int {
+  if let Some(x) = m {
+    var y = x
+    y[k] = "x${k}"
+    return y.len()
+  }
+  0
+}

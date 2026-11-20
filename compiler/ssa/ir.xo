@@ -599,6 +599,14 @@ pub struct Func {
   /// only such a function's constant result is folded into its callers
   /// (passes.xo fold_known_calls). Not in the codec.
   pub target: Bool = false
+  /// A Map helper's own requests (fecache fe_map_helper): the Map helpers
+  /// its lowering asked for by name (Builder.thunk_func, made or found),
+  /// each once, in the order it asked. A build that makes this helper
+  /// makes those it lacks in this order, right after it, so an entry that
+  /// found the helper already made records them so (fe_entry, task #476).
+  /// Not in the codec: a front end cache entry carries it beside each
+  /// function it made whole.
+  pub hreq: List[Str] = []
   /// The builder folded `dwline.built()` in it, so it is a DWARF reader:
   /// its body is the stub a build without debug information keeps plus
   /// the arm one with it adds. The inliner decides for the readers and

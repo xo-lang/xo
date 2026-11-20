@@ -1576,7 +1576,7 @@ run_step_body() {
   chkcache)
     XO_WARMSEQ_KEEP=$gate_keep/chkcache-keep full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
   warmseq)
-    XO_WARMSEQ_KEEP=$gate_keep/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$' ;;
+    XO_WARMSEQ_KEEP=$gate_keep/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms|TestWarmHelperOrder)$' ;;
   stdwasm)
     # every std test module under `xo test --backend=wasm` (decision 0610),
     # Node's WASI as the runner: a module passes when its summary line is
@@ -1621,7 +1621,7 @@ after_steps() {
     XO_WARMSEQ_KEEP=$gate_keep/chkcache-keep full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
   fi
   if [ "$warmseq_ran" = 0 ] && [ "${XO_GATE_WARMSEQ:-1}" != 0 ] && warmseq_change; then
-    XO_WARMSEQ_KEEP=$gate_keep/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$'
+    XO_WARMSEQ_KEEP=$gate_keep/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms|TestWarmHelperOrder)$'
   fi
   if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
     full scale ./internal/arm64 -run '^TestSwitch65535Arms$'

@@ -1,0 +1,7 @@
+fn main(os: Os) {
+  let p = peek(None, 1)
+  let a = rem(None, 3)
+  let b = other(None, 4)
+  let c = fill(None, 5)
+  os.stdio.println("${p} ${a} ${b} ${c}")
+}

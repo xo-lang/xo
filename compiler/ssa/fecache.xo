@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v19"
+const FE_CACHE_VERSION = "xo front cache v20"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -826,16 +826,31 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       if emitted.contains(x) {
         continue
       }
-      // the helper and the helpers its body calls in the order the
-      // recording program made them (a helper's maker may make what it
-      // calls first)
-      var group: List[Int] = [x]
+      // the helper, then the helpers its body calls in the order a
+      // build that lacks them makes them: each where the lowering of the
+      // one before it asks for it (Func.hreq). Not the order the
+      // recording program made them in: there another body may have made
+      // a callee first (a remove made xo.maph.oflog[T] before any put
+      // made xo.maph.slowput[T], which calls it), and a build replaying
+      // the entry where none was made then made the callee first, unlike
+      // the build without the cache (task #476: std/sql's
+      // mem_create_index, one cold build in 150 of golden sql_conv, when
+      // a speculative worker recorded it so; TestWarmHelperOrder)
+      var want: Map[Int, Bool] = {}
       for w in after.get(x) ?? [] {
         if !emitted.contains(w) {
+          want[w] = true
+        }
+      }
+      var group: List[Int] = [x]
+      b.helper_order(x, want, group)
+      // one no lowering asked for by name: after the others
+      for w in (after.get(x) ?? []).sort() {
+        if want.contains(w) {
           group.push(w)
         }
       }
-      for w in group.sort() {
+      for w in group {
         emitted[w] = true
         evs.push((3, w))
       }
@@ -935,6 +950,11 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     }
     e.bool(b.m.funcs[i].target)
     e.bytes(hb ?? b"")
+    // what its lowering asked for (Func.hreq is not in the codec)
+    e.uv(b.m.funcs[i].hreq.len())
+    for n in b.m.funcs[i].hreq {
+      e.str(n)
+    }
   }
   if !b.fe_touched.is_empty() {
     b.fe_skip(b.fe_touched)
@@ -1574,9 +1594,19 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     shape_names.push((fnames, vnames, enames, rn))
   }
   var helpers: List[(Bool, Bytes)] = []
+  var helper_reqs: List[List[Str]] = []
   for _ in 0..nmf {
     let tg = r.bool()
     helpers.push((tg, r.bytes()))
+    let nq = r.uv()
+    if !r.ok || nq > d.len() {
+      return b.fe_miss("malformed")
+    }
+    var q: List[Str] = []
+    for _ in 0..nq {
+      q.push(r.str())
+    }
+    helper_reqs.push(q)
   }
   // its closures' entries, in the order it made them
   var subs: List[Bytes] = []
@@ -1753,6 +1783,7 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       Some(g0) => {
         var g = g0
         g.target = tg
+        g.hreq = helper_reqs[h]
         fe_rename(g, renames)
         b.fe_const_ids(g)
         fe_site_ids(g, sites)
@@ -2031,6 +2062,20 @@ pub fn (var b: Builder) fe_finalize() {
 /// where it was recorded; in a program where another body made it first
 /// the closure's entry, which cannot fall back to its source, did not
 /// replay, and the build was made again without the cache.)
+/// Adds to group the helpers of want that the lowering of helper x asks
+/// for (Func.hreq), each followed by its own, and takes them out of
+/// want: the order a build makes them in after x (fe_entry).
+fn (b: Builder) helper_order(x: Int, var want: Map[Int, Bool], var group: List[Int]) {
+  for n in b.m.funcs[x].hreq {
+    let w = b.m.func_at.get(n) ?? -1
+    if w >= 0 && want.contains(w) {
+      let _was = want.remove(w)
+      group.push(w)
+      b.helper_order(w, want, group)
+    }
+  }
+}
+
 /// Whether n names a Map type's helper (xo.map.*, xo.mlog.*,
 /// xo.maph.*[T]), which thunk_func makes by its name: an entry that read
 /// one another body made records it as made whole (fe_entry).

@@ -1,0 +1,5 @@
+fn main(os: Os) {
+  let p = peek(None, 1)
+  let c = fill(None, 5)
+  os.stdio.println("${p} ${c}")
+}

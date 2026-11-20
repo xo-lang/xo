@@ -228,6 +228,11 @@ fn (var b: Builder) type_id(ct: Int) -> Int {
 /// do: they declare functions the queue builds, in the queue's order.
 /// Returns the function, or -1 when it exists.
 fn (var b: Builder) thunk_func(name: Str, params: List[Int], results: List[Int], captures: List[Int]) -> Int {
+  // a Map helper's lowering asking for another: the order a build makes
+  // them in (Func.hreq)
+  if fe_map_helper(name) && fe_map_helper(b.s.f.name) && !b.s.f.hreq.contains(name) {
+    b.s.f.hreq.push(name)
+  }
   if b.fidx(name) >= 0 {
     return -1
   }
