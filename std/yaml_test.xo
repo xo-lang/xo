@@ -71,3 +71,87 @@ test "a merge alias inside its own anchor ends to_json as yaml.v3's error" {
   expect(to_json("a: &a {k: 1}\nb: {<<: [*a, *a]}") ?? e => fault("${e}")) == "{\"a\":{\"k\":1},\"b\":{\"k\":1}}"
   expect(to_json("a: &a {k: 1}\nb: &b {<<: *a, c: 2}\nc: {<<: *b}") ?? e => fault("${e}")) == "{\"a\":{\"k\":1},\"b\":{\"c\":2,\"k\":1},\"c\":{\"c\":2,\"k\":1}}"
 }
+
+// b39 (task #239): yaml.v3 resolves a `!!float` scalar whose text is an int as
+// that int and converts it (`017` is YAML 1.1 octal 15, `0x1F` 31); Float.parse
+// read 017 as 17 and 0x1F not at all. b40: to_json names an infinity or a NaN
+// as Go's json.Marshal does (`+Inf`, `-Inf`, `NaN`). The texts are yaml.v3
+// v3.0.1's and Go's encoding/json's.
+test "a !!float int and a non-finite float in to_json, as yaml.v3 and json.Marshal" {
+  let cases: List[(Str, Str)] = [
+    ("x: !!float 017", "{\"x\":15}"),
+    ("x: !!float 0x1F", "{\"x\":31}"),
+    ("x: !!float 0o17", "{\"x\":15}"),
+    ("x: !!float 1_000", "{\"x\":1000}"),
+    ("x: !!float 1.5", "{\"x\":1.5}"),
+  ]
+  for (text, want) in cases {
+    expect("${text}: ${to_json(text) ?? e => fault("${e}")}") == "${text}: ${want}"
+  }
+  for (text, want) in [("x: .inf", "+Inf"), ("x: -.Inf", "-Inf"), ("x: .NaN", "NaN"), ("x: !!float +.INF", "+Inf")] {
+    match to_json(text) {
+      Ok(s) => fault("${text} gave ${s}")
+      Err(e) => expect("${text}: ${e}") == "${text}: yaml: json: unsupported value: ${want}"
+    }
+  }
+}
+
+// Task #239: a leading UTF-8 BOM ended the stream after the first line
+// (`\u{feff}a: 1\nb: 2` gave {"a":1}): the reader skipped the BOM but the
+// scanner started on it. yaml.v3's is_bom also reads its decoded buffer's
+// first bytes, not the current character, so a BOM later in a line's key
+// stays in it, and a second leading BOM skips the first character of each
+// line. The wants are yaml.v3 v3.0.1's.
+test "a BOM in to_json, as yaml.v3's reader and scanner" {
+  let ok: List[(Str, Str)] = [
+    ("\u{feff}a: 1\nb: 2", "{\"a\":1,\"b\":2}"),
+    ("\u{feff}- 1\n- 2", "[1,2]"),
+    ("\u{feff}", "null"),
+    ("\u{feff}a", "\"a\""),
+    ("a: 1\n\u{feff}b: 2", "{\"a\":1,\"\u{feff}b\":2}"),
+    ("\u{feff}\u{feff}a: 1\nbb: 2\n", "{\"a\":1,\"b\":2}"),
+  ]
+  for (i, (text, want)) in ok.indexed() {
+    expect("case ${i}: ${to_json(text) ?? e => fault("${e}")}") == "case ${i}: ${want}"
+  }
+  let bad: List[(Str, Str)] = [
+    ("\u{feff}a: 1\nb: [", "yaml: line 2: did not find expected node content"),
+    ("\u{feff}a: 1\nb: 2\nc: [", "yaml: line 3: did not find expected node content"),
+    ("\u{feff}\u{feff}a: 1\nb: 2", "yaml: line 1: did not find expected key"),
+  ]
+  for (i, (text, want)) in bad.indexed() {
+    match to_json(text) {
+      Ok(s) => fault("case ${i} gave ${s}")
+      Err(e) => expect("case ${i}: ${e}") == "case ${i}: ${want}"
+    }
+  }
+}
+
+// xw decision #221 (task #239): yaml.v3 decodes an int past int64 that fits
+// uint64 as uint64, which json.Marshal writes exactly; past uint64, or
+// negative past int64, it is a float64. The wants are yaml.v3 v3.0.1 with
+// encoding/json.
+test "to_json writes an integer past Int that fits uint64 as its exact digits" {
+  let cases: List[(Str, Str)] = [
+    ("x: 9223372036854775808", "{\"x\":9223372036854775808}"),
+    ("x: 18446744073709551615", "{\"x\":18446744073709551615}"),
+    ("x: 0x8000000000000000", "{\"x\":9223372036854775808}"),
+    ("x: 0xFFFFFFFFFFFFFFFF", "{\"x\":18446744073709551615}"),
+    ("x: [1_8446_744_073_709_551_615, 9223372036854775807]", "{\"x\":[18446744073709551615,9223372036854775807]}"),
+    ("x: 18446744073709551616", "{\"x\":18446744073709552000}"),
+    ("x: -9223372036854775809", "{\"x\":-9223372036854776000}"),
+    ("x: -0x8000000000000001", "{\"x\":\"-0x8000000000000001\"}"),
+    ("x: 0o1777777777777777777777", "{\"x\":18446744073709551615}"),
+    ("x: 0b1000000000000000000000000000000000000000000000000000000000000000", "{\"x\":9223372036854775808}"),
+    ("x: !!int 9223372036854775808", "{\"x\":9223372036854775808}"),
+    ("x: !!float 9223372036854775808", "err yaml: cannot decode !!int `9223372036854775808` as a !!float"),
+    ("x: !!float 9223372036854775807", "{\"x\":9223372036854776000}"),
+  ]
+  for (i, (text, want)) in cases.indexed() {
+    let got = match to_json(text) {
+      Ok(j) => j
+      Err(e) => "err ${e.display()}"
+    }
+    expect("case ${i}: ${got}") == "case ${i}: ${want}"
+  }
+}

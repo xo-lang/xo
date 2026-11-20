@@ -1,5 +1,38 @@
 # std/yaml changes
 
+## 2026-11-20: fix: to_json writes an integer past Int that fits uint64 exactly
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation (task #239); xw decision #221 chose exact digits
+- Go reference: gopkg.in/yaml.v3 v3.0.1 resolve.go (ParseUint gives uint64; a floatTag scalar converts only int and int64); encoding/json writes a uint64 with strconv.FormatUint
+- Test: std/yaml_test.xo "to_json writes an integer past Int that fits uint64 as its exact digits"
+- Shipped in: not yet released
+
+`x: 9223372036854775808`, `18446744073709551615` and `0xFFFFFFFFFFFFFFFF` gave rounded floats (9223372036854776000); to_json now writes their decimal digits, as yaml.v3's uint64 through json.Marshal. `!!float 9223372036854775808` is yaml.v3's resolve error ("cannot decode !!int ... as a !!float") instead of a float. Past uint64, or negative past Int, the value stays a float as in Go.
+
+## 2026-11-20: fix: a leading BOM no longer ends the stream after the first line
+
+- Kind: fix
+- Commit: this push
+- Found by: comparing to_json with yaml.v3 for the owner's v0.51.1 evaluation (task #239)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 readerc.go (yaml_parser_determine_encoding), scannerc.go (yaml_parser_scan_to_next_token), yamlprivateh.go (is_bom reads buffer[0])
+- Test: std/yaml_test.xo "a BOM in to_json, as yaml.v3's reader and scanner"
+- Shipped in: not yet released
+
+Input starting with a UTF-8 byte order mark decoded only its first line: `\ufeffa: 1\nb: 2` gave {"a":1} and a syntax error on a later line was not reported. The scanner now starts past the BOM, as yaml.v3's decoded buffer does. A BOM later in the input follows yaml.v3 too: it stays in the text (a key `\ufeffb`), and a second leading BOM skips the first character of each line, as yaml.v3's is_bom reads the start of its buffer.
+
+## 2026-11-20: fix: a !!float int resolves as yaml.v3's int, and to_json names a non-finite float as Go
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.51.1 evaluation, b39 and b40 (task #239)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 resolve.go (a floatTag scalar resolved as an int becomes float64 of it); encoding/json's UnsupportedValueError (strconv.FormatFloat's text)
+- Test: std/yaml_test.xo "a !!float int and a non-finite float in to_json, as yaml.v3 and json.Marshal"
+- Shipped in: not yet released
+
+`!!float 017` decoded as 17 and `!!float 0x1F` as the string "0x1F". yaml.v3 resolves the text as an int first, giving 15 and 31, in to_json and in Float and Int fields. to_json's error for an infinity or a NaN now names it as json.Marshal does (`+Inf`, `-Inf`, `NaN`), not as the YAML text (`.inf`).
+
 ## 2026-11-20: fix: a merge alias inside its own anchor ends the decode with yaml.v3's error, not a stack overflow
 
 - Kind: fix

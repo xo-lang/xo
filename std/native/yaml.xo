@@ -134,6 +134,10 @@ struct Parser {
   pos: Int
   /// the end of what the reader has decoded and validated
   dec_end: Int
+  /// where yaml.v3's decoded buffer starts (its buffer[0]): update_buffer
+  /// moves the unread characters there each time it decodes more, and the
+  /// scanner's is_bom reads it, not the current character
+  buf0: Int
   /// the start of the undecoded raw bytes (Go's raw buffer position)
   raw_pos: Int
   /// the end of the raw bytes read so far
@@ -193,7 +197,7 @@ fn new_parser(input: Bytes) -> Parser {
     error: NO_ERROR, problem: "", problem_offset: 0, problem_value: 0,
     problem_mark: Mark{index: 0, line: 0, column: 0},
     context: "", context_mark: Mark{index: 0, line: 0, column: 0},
-    b: input, pos: 0, dec_end: 0, raw_pos: 0, raw_end: 0, eof: false, enc_done: false, unread: 0, newlines: 0, offset: 0,
+    b: input, pos: 0, dec_end: 0, buf0: 0, raw_pos: 0, raw_end: 0, eof: false, enc_done: false, unread: 0, newlines: 0, offset: 0,
     mark: Mark{index: 0, line: 0, column: 0},
     stream_start_produced: false, stream_end_produced: false, flow_level: 0,
     tokens: [], tokens_head: 0, tokens_parsed: 0, token_available: false,
@@ -330,6 +334,12 @@ fn determine_encoding(var p: Parser) {
   if p.raw_end - p.raw_pos >= 3 && p.b[0] == 239 && p.b[1] == 187 && p.b[2] == 191 {
     p.raw_pos = 3
     p.offset = 3
+    // yaml.v3's decoded buffer never holds the BOM: the scanner starts past it.
+    // With pos left at 0 the scanner skipped the BOM as a character the reader
+    // never counted, ran out of unread one early and ended the stream after the
+    // first line.
+    p.pos = 3
+    p.dec_end = 3
   }
 }
 
@@ -343,6 +353,7 @@ fn update_buffer(var p: Parser, length: Int) -> Bool {
     p.enc_done = true
     determine_encoding(p)
   }
+  p.buf0 = p.pos
   var first = true
   while p.unread < length {
     if !first || p.raw_pos == p.raw_end {
@@ -1015,7 +1026,10 @@ fn scan_to_next_token(var p: Parser) -> Bool {
     if p.unread < 1 && !update_buffer(p, 1) {
       return false
     }
-    if p.mark.column == 0 && p.c(0) == 239 && p.c(1) == 187 && p.c(2) == 191 {
+    // yaml.v3's is_bom(parser.buffer, parser.buffer_pos) ignores the index
+    // and reads buffer[0]: a BOM later in the stream stays in the text, and a
+    // second leading BOM skips the first character of each line it reaches
+    if p.mark.column == 0 && is_bom_at(p.b[p.buf0..], 0) {
       skip(p)
     }
     if p.unread < 1 && !update_buffer(p, 1) {
@@ -3628,7 +3642,9 @@ fn check_tag(d: yaml.Doc, i: Int) -> yaml.YamlErr? {
     return None
   }
   let r = resolve_tag("", n.value)
-  if r == n.tag || (n.tag == "!!float" && r == "!!int") {
+  // an int becomes a float64 only from Go's int or int64; a uint64 past
+  // int64 (`!!float 9223372036854775808`) is this error
+  if r == n.tag || (n.tag == "!!float" && r == "!!int" && uint64_text(n.value.replace("_", "")) == None) {
     return None
   }
   Some(yaml.YamlErr{line: 0, msg: "cannot decode ${r} `${n.value}` as a ${n.tag}"})
@@ -3664,6 +3680,21 @@ fn to_str_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Str) ! yaml.Yam
   Ok((true, n.value))
 }
 
+/// A `!!float` scalar whose text resolves as an int (`!!float 017`, `!!float
+/// 0x1F`): yaml.v3's resolve reads it as the int and converts it to float64
+/// (15 and 31), where Float.parse read 017 as 17 and 0x1F not at all (b39).
+fn float_as_int(d: yaml.Doc, n: yaml.RawNode) -> Float? {
+  if n.tag != "!!float" || resolve_tag("", n.value) != "!!int" {
+    return None
+  }
+  var m = n
+  m.tag = "!!int"
+  if let Some(v) = int_of(d, m) {
+    return Some(Float(v))
+  }
+  None
+}
+
 fn int_of(d: yaml.Doc, n: yaml.RawNode) -> Int? {
   if n.tag == "!!int" {
     let plain = n.value.replace("_", "")
@@ -3692,6 +3723,9 @@ fn int_of(d: yaml.Doc, n: yaml.RawNode) -> Int? {
     }
   }
   if n.tag == "!!float" {
+    if let Some(f) = float_as_int(d, n) {
+      return Some(Int(f))
+    }
     if n.value is "-.inf" | "-.Inf" | "-.INF" {
       // yaml.v3 resolves -.inf to -Inf, which int64() saturates on arm64
       return Some(Int.min)
@@ -3769,6 +3803,9 @@ fn to_float_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Float) ! yaml
     if let Some(f) = Float.parse(n.value.replace("_", "")) {
       return Ok((true, f))
     }
+  }
+  if let Some(f) = float_as_int(d, n) {
+    return Ok((true, f))
   }
   if n.tag == "!!float" {
     let v = n.value
@@ -4070,6 +4107,42 @@ fn pairs(d: yaml.Doc, i0: Int, what: Str, var st: yaml.Dec) -> (Bool, List[(Str,
     return Ok((false, []))
   }
   Ok((true, out))
+}
+
+/// The decimal digits of plain when it is a uint64 that Int cannot hold
+/// (`9223372036854775808`, `0x8000000000000000`): yaml.v3 decodes such a
+/// scalar as uint64, which json.Marshal writes exactly (xw decision #221).
+fn uint64_text(plain: Str) -> Str? {
+  if !is_uint64(plain) || Int.parse_base(plain, 0) != None {
+    return None
+  }
+  let b = plain.bytes()
+  var base: UInt64 = 10
+  var i = 0
+  if b.len() > 1 && b[0] == 48 {
+    let x = b[1]
+    if x == 120 || x == 88 {
+      base = 16
+      i = 2
+    } else if x == 98 || x == 66 {
+      base = 2
+      i = 2
+    } else if x == 111 || x == 79 {
+      base = 8
+      i = 2
+    } else {
+      base = 8
+      i = 1
+    }
+  }
+  var u: UInt64 = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    let dg = if c <= 57 { c - 48 } else if c >= 97 { c - 87 } else { c - 55 }
+    u = u * base + UInt64(dg)
+    i += 1
+  }
+  Some("${u}")
 }
 
 /// Whether plain is a non-negative integer (base prefix 0x, 0b, 0o, or decimal and
@@ -6319,9 +6392,17 @@ fn json_of_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> js.Value ! yaml.YamlE
     if let Some(v) = int_of(d, n) {
       return Ok(js.Value.Int(n: v))
     }
+    if let Some(t) = uint64_text(n.value.replace("_", "")) {
+      // a value YAML text cannot make (decoded input never holds Trusted):
+      // json_text writes its digits as they are
+      return Ok(js.Value.Trusted(kind: U64_KIND, s: t))
+    }
     if let Some(f) = Float.parse(n.value.replace("_", "")) {
       return Ok(js.Value.Num(n: f))
     }
+  }
+  if let Some(f) = float_as_int(d, n) {
+    return Ok(js.Value.Num(n: f))
   }
   if n.tag == "!!float" {
     var f = 0.0
@@ -6332,7 +6413,9 @@ fn json_of_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> js.Value ! yaml.YamlE
     }
     let v = n.value
     if v == ".nan" || v == ".NaN" || v == ".NAN" || v == ".inf" || v == ".Inf" || v == ".INF" || v == "+.inf" || v == "+.Inf" || v == "+.INF" || v == "-.inf" || v == "-.Inf" || v == "-.INF" {
-      return Err(yaml.YamlErr{line: 0, msg: "json: unsupported value: ${v}"})
+      // Go's json.Marshal names the float64 as strconv.FormatFloat does (b40)
+      let g = if v.starts_with("-") { "-Inf" } else if v.to_lower().ends_with("nan") { "NaN" } else { "+Inf" }
+      return Err(yaml.YamlErr{line: 0, msg: "json: unsupported value: ${g}"})
     }
     if ok {
       return Ok(js.Value.Num(n: f))
@@ -6356,7 +6439,41 @@ fn to_json(text: Str) -> Str ! yaml.YamlErr {
   if st.errs.len() > 0 {
     return Err(errors(st))
   }
-  Ok(v.encode())
+  var out: List[Str] = []
+  json_text(v, out)
+  Ok(out.join(""))
+}
+
+const U64_KIND = "yaml-uint64"
+
+/// js.Value.encode, but a uint64 from uint64_text is written as its digits.
+fn json_text(v: js.Value, var out: List[Str]) {
+  match v {
+    js.Value.Trusted(kind, s) if kind == U64_KIND => out.push(s)
+    js.Value.List(items) => {
+      out.push("[")
+      for (k, x) in items.indexed() {
+        if k > 0 {
+          out.push(",")
+        }
+        json_text(x, out)
+      }
+      out.push("]")
+    }
+    js.Value.Object(fields) => {
+      out.push("{")
+      for (k, (name, x)) in fields.indexed() {
+        if k > 0 {
+          out.push(",")
+        }
+        out.push(js.Value.Str(s: name).encode())
+        out.push(":")
+        json_text(x, out)
+      }
+      out.push("}")
+    }
+    _ => out.push(v.encode())
+  }
 }
 
 fn put_node(var w: yaml.Enc, n: yaml.Node) {
