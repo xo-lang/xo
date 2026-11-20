@@ -52,7 +52,6 @@ Last verified: 2026-11-20.
 | Questions for the owner or the lead go through xw ask | xw | `workstream:asks.xo` | `workstream:test/work_test.sh` | |
 | A pushed task is marked done, or pushed as a part, not left pushed | pushq, xw | `scripts/lead/xwhook.sh` (xw_task_push: PUSHQ_TASK, PUSHQ_PARTIAL), `workstream:std.xo` (push_partial: auto-partial for a multi-module task) | `scripts/lead/xwhook_test.sh`, `workstream:xw_test.xo` | task-pushed |
 | A hook event is never lost when xw cannot run (#337) | xwhook | `scripts/lead/xwhook.sh` (_xw_send, _xw_replay), `workstream:alerts.xo` (hook_spool_alerts), `workstream:event.xo` (at=) | `scripts/lead/xwhook_test.sh`, `workstream:xw_test.xo` | hook-spool |
-| An agent at its prompt while its run goes starts its next queued task | xw alert | `workstream:alerts.xo` (agent_first_kind: the agent's inbox first, the lead on a repeat), `workstream:inbox.xo` (AGENT_ALERTS) | `workstream:test/work_test.sh` | waiting |
 | Work outside an agent's charter needs the lead's ok; a bug fix does not | xw check | `workstream:work.xo` (off_charter) | `workstream:test/work_test.sh` | off-charter |
 | A stuck gate, spinning process or dead Docker is found and stopped | heavyd, hangcheck | `scripts/lead/hangcheck.sh`, `scripts/lead/heavyd/daemon.go` (gate and slot timeouts, stall stop) | `scripts/lead/heavyd/scenario_test.go` (TestScenario17Stall), `scripts/lead/hangcheck_docker_test.sh` (DOCKER-DEAD after 3 tries) | hang |
 | A job quiet by design prints a heartbeat, so the hang check reads it as alive (the corpus check) | gatelib.sh | `scripts/lead/beatrun.sh`, `scripts/lead/gatelib.sh` (gate_corpus_run), `scripts/stdcorpus/main.go` (beat) | `scripts/lead/gatesteps_test.sh` (corpus run: heartbeats), `scripts/stdcorpus/beat_test.go` | hang |
@@ -103,6 +102,7 @@ here (#335).
 | Kind | Retired by |
 |---|---|
 | `done-no-restart` | xw decision 55 (2026-11-17): agents go straight to the next item, no restart after a task; #266 removed the alert |
+| `waiting` | #485 (workstream (private commit), 2026-11-20, xw decision 58): of 125 in 7 days 19 (15%) preceded any task move and 8 (6%) the start of the task named, none in the 36 h after #386; long-wait's digest and lease-blocked cover an avoidable wait |
 
 ## Schedules
 
