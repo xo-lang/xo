@@ -485,7 +485,12 @@ func checkLinePaths(t *testing.T, bin string) {
 		t.Fatalf("%s: no line_strp file names in %d line tables:\n%.2000s", bin, units, lines)
 	}
 	for _, n := range names {
-		if !strings.HasSuffix(n[1], ".xo") && n[1] != "<generated>" {
+		// a `derive` expansion is a file of its own beside the one that
+		// declares it, FILE.xo#derive (compiler/check load.xo
+		// add_derived_file; fault positions and vet name it the same way):
+		// std's object holds std/native/otlp.xo's derive Proto code, so the
+		// separately compiled build names it (task #527)
+		if !strings.HasSuffix(n[1], ".xo") && !strings.HasSuffix(n[1], ".xo#derive") && n[1] != "<generated>" {
 			t.Errorf("%s: file name %q is not a .xo path (a wrong __debug_line_str rebase?)", bin, n[1])
 		}
 	}
