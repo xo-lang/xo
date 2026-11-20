@@ -90,6 +90,26 @@ fn work_rare_big(xs: List[Int], var bb: BytesBuilder, a: Int, b: Int, c: Int, d:
   t + (if r == 0 { 1 } else { 0 }) + a + b + c + d + e + f + g + h + i + j + k + l + m + n
 }
 
+// A Float sum live across the calls of an earlier loop (task #458:
+// os.rand.float's refill and lock calls). x86-64 has no callee saved
+// vector register, so acc had a slot for its whole life, and this later
+// loop, which calls nothing, loaded, added and stored it on every
+// iteration: a chain through memory, 3 times Go's time for the loop.
+// Split, the loop keeps acc in a register.
+fn facc(os: Os, n: Int) -> Float uses rand {
+  // amd64: -"addsd %xmm[0-9]+, %xmm[0-9]+\n\tmovsd %xmm[0-9]+, [0-9]+\(%rsp\)\n\tleaq"
+  var acc = 0.0
+  for _ in 0..n {
+    acc += os.rand.float()
+  }
+  var x = 1
+  for _ in 0..n {
+    x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+    acc += Float(x.shr_logical(11)) * 1.1102230246251565e-16
+  }
+  acc
+}
+
 fn main(os: Os) {
   var xs: List[Int] = []
   for q in 0..100 {
@@ -102,4 +122,9 @@ fn main(os: Os) {
     bb.write_byte(UInt8.wrapping_from(q))
   }
   os.stdio.println("${work_rare_big(xs, bb, 1, 2, 3, 4, 5)}")
+  var fs: List[Float] = []
+  for q in 0..100 {
+    fs.push(Float(q) * 0.5)
+  }
+  os.stdio.println("${facc(os, 10) < 100.0}")
 }

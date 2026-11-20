@@ -95,7 +95,14 @@ edges).
   test/codegen/loopsplit work_rare has the amd64 pattern (a multiply
   by a slot in the loop); it fails with `-loop_split`. x86 needs no
   split_scratch_ok: a spilled operand with no free scratch register
-  borrows one (x86_scratch_b). Not done: the same rule on arm64, where
+  borrows one (x86_scratch_b). Floats too (task #458): x86-64 has
+  no callee saved vector register, so a Float live across any call had
+  a slot for its whole life; a later call free loop adding into it ran
+  a load, an add and a store through the slot on every iteration. Split,
+  it stays in a register: the 30M iteration accumulate loop of the
+  zipf ablation program took 87 to 101 ms unsplit and 27 to 34 ms split
+  on the linux/amd64 host (7 runs each, load 10;
+  test/codegen/loopsplit facc). Not done: the same rule on arm64, where
   a name spilled on both sides costs a load and a store at each edge.
 - Landing pads still read their live ins in one location, so values
   live into a pad are never renamed; the call blocks of a loop stay
