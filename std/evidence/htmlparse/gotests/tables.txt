@@ -1,0 +1,8 @@
+# golang.org/x/net/html's test inputs (v0.62.0) through std/htmlparse
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# render parses with scripting and renders the tree (Parse, Render);
+# noscript parses without scripting (ParseOptionEnableScripting(false))
+golang.org/x/net/html token_test.go tokenTests html render
+golang.org/x/net/html token_test.go tokenTests html noscript
+golang.org/x/net/html escape_test.go unescapeTests html render
+golang.org/x/net/html parse_test.go TestParseFragmentForeignContentTemplates.srcs . render

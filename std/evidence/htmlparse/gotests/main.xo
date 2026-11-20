@@ -1,0 +1,42 @@
+// The Xo side of std/htmlparse's gotests evidence (decision 0720, task #403):
+// main CASES prints, for each case line `KIND<TAB>B64...`, the base64 of
+// std/htmlparse's result as text, as go/main.go prints package html's.
+// Kind render: parse, then render the tree; kind noscript: parse_with
+// scripting off, then render.
+// See scripts/stdproven/gotests.go.
+use std/htmlparse
+use std/base64
+
+fn render(s: Str, scripting: Bool) -> Str {
+  match htmlparse.parse_with(s, scripting) {
+    Err(e) => "parse: ${e.display()}"
+    Ok(t) => match t.render() {
+      Ok(out) => out
+      Err(e) => "|render: ${e.display()}"
+    }
+  }
+}
+
+fn run(kind: Str, inp: List[Str]) -> Str {
+  match kind {
+    "render" => render(inp[0], true)
+    "noscript" => render(inp[0], false)
+    _ => "unknown kind ${kind}"
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let text = os.fs.read_text(args[0])?
+  for line in text.split("\n") {
+    if line.is_empty() {
+      continue
+    }
+    let f = line.split("\t")
+    var inp: List[Str] = []
+    for s in f[1..f.len()] {
+      inp.push(base64.decode(s)?.to_str() ?? "")
+    }
+    os.stdio.println(base64.encode(run(f[0], inp).bytes()))
+  }
+}
