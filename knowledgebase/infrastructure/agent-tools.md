@@ -25,7 +25,7 @@ prints this table's rows for the task's kind (from the title when no
 | Slow on one linux host only, the same on the Mac | on that host: `perf record`, then `perf script -F ip \| sort \| uniq -c` mapped with `go tool objdump` (gotchas/perf-annotate-empty-on-host2.md) | a load whose block covers a store of the same iteration (gotchas/host2-store-forwarding-stall.md); alternate the A and B binaries in one lease before blaming the host |
 | Hang or deadlock | `xo debug -p PID --batch -c tasks -c 'task N bt' PROG` (attaches, lists every task and what it waits on, detaches) | `--race` on llvm for a data race; the crash report and `xo dev symbolize` for a fault |
 | Wrong output, miscompile | `xo dev bisect-pass DIR`, `XO_PASSES=-name`, `XO_LOWER=-name` | `reduce-diff.py --crash` to shrink; `xo dev dump ssa --fn=NAME` |
-| Fails on main, worked before | `scripts/bisect.sh` (Testing) | message the lead with good and bad commits |
+| Fails on main, worked before | `scripts/bisect.sh` (Testing); on a host for a failure seen only there: `amd64-run.sh REV NAME script scripts/bisect.sh TEST GOOD BAD` | message the lead with good and bad commits |
 | Fails on one host only | "A failure seen on one host only" below: observe on that host first | |
 | Flaky or rare failure | `stdproven stress` / `race` sharded to the offload hosts (Std maturity evidence) | a failing seed or count kept as the regression test |
 
@@ -957,7 +957,17 @@ yourself.
   tests GOOD and BAD first and stops (exit 3) when GOOD fails or BAD
   passes (a GOOD that already failed once named the commit after GOOD,
   2026-10-22); `--skip-verify` skips that check. After editing it, run
-  `scripts/bisect_test.sh` (seconds, no xo build). Run it
+  `scripts/bisect_test.sh` (seconds, no xo build). On a host (task
+  #459): `amd64-run.sh REV NAME script scripts/bisect.sh TEST GOOD BAD`
+  from the Mac (one lease, at most 45 minutes; #469's four steps took
+  193 s with each step's xo already in the host's checkout cache), REV a local commit that adds
+  the repro script; TEST a command like `bash
+  "$XO_BISECT_ROOT/scripts/repro.sh"` (XO_BISECT_ROOT is the invoking
+  checkout, so the repro need not be in the steps' trees; exit 0 good,
+  1 bad, 125 skip), each step's xo built with the host's seed
+  (XO_BISECT_SEED, which offload-amd64.sh's script mode sets). Proof
+  case: #469's repro on linux/amd64 named 19e3f5961 between 8d8741fe5d9a
+  and 39477ffb8 (2026-11-20; ~/xo-lead/notes/xw-1/469-bisect.out). Run it
   as `HEAVY_CLASS=bulk ~/xo-lead/agents/heavy.sh NAME scripts/bisect.sh
   ...`, once the lead has named you the bisect owner (CLAUDE.md).
   A crash or a failure that could be intermittent (a fault, a signal,

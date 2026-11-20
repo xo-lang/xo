@@ -31,6 +31,15 @@
 # scripts/bisect.sh ... (each step builds xo and runs the test).
 # Work in ${XO_BISECT_WORK:-$TMPDIR/xo-bisect.PID}; --keep keeps it.
 # XO_BISECT_XOBUILD=CMD replaces the xobuild step (scripts/bisect_test.sh).
+# A command TEST runs with XO_BISECT_ROOT set to this checkout, so it can
+# run a repro script that the step's tree lacks:
+#   'bash "$XO_BISECT_ROOT/scripts/repro.sh"'.
+# XO_BISECT_SEED=PATH builds every step's xo with that seed (XO_SEED)
+# instead of the step's era seed; a step it cannot build is skipped.
+# On a host (task #459), from the Mac, REV a commit that has the repro:
+#   amd64-run.sh REV NAME script scripts/bisect.sh 'bash "$XO_BISECT_ROOT/scripts/repro.sh"' GOOD BAD
+# (offload-amd64.sh sets XO_BISECT_SEED to the host's seed; the host has
+# every commit it was sent.)
 set -u -o pipefail
 pkg=""
 timeout=30m
@@ -117,7 +126,11 @@ cd "\$work/tree" || exit 128
 c=\$(git rev-parse --short=9 HEAD)
 for d in backend build gocache; do rm -rf "\$work/cache/\$d"; mkdir -p "\$work/cache/\$d"; done
 export XO_BACKEND_CACHE_DIR="\$work/cache/backend" XO_BUILD_DIR="\$work/cache/build" XO_GOCACHE="\$work/cache/gocache" XO_BIN_CACHE=off
-unset XO_SEED XO_CLI
+unset XO_CLI
+# a host's own seed (offload-amd64.sh script mode sets it); else each
+# step's xobuild picks its era's seed
+if [ -n "\${XO_BISECT_SEED:-}" ]; then export XO_SEED="\$XO_BISECT_SEED"; else unset XO_SEED; fi
+export XO_BISECT_ROOT='$root'
 if ! "\$work/xobuild" >"\$work/build-\$c.log" 2>&1; then
 	echo "bisect.sh: \$c: xo does not build (skipped; \$work/build-\$c.log)"
 	tail -3 "\$work/build-\$c.log"

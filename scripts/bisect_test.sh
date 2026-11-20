@@ -53,6 +53,14 @@ check skip-verify 0 "first bad commit: $(git rev-parse --short "$(c 5)")" $rc "$
 # adjacent GOOD and BAD: the step runs in BAD's tree, not an empty one
 out=$(scripts/bisect.sh "$t" "$(c 3)" "$(c 4)" 2>&1); rc=$?
 check adjacent 0 "first bad commit: $(git rev-parse --short "$(c 4)")" $rc "$out"
+# a host run (task #459): the test sees the invoking checkout and the
+# step's xobuild the host's seed
+t2='test "$XO_SEED" = /host/seed && test -f "$XO_BISECT_ROOT/scripts/bisect.sh" && test ! -e broken'
+out=$(XO_SEED=/other XO_BISECT_SEED=/host/seed scripts/bisect.sh "$t2" "$(c 1)" "$(c 6)" 2>&1); rc=$?
+check host-seed-and-root 0 "first bad commit: $(git rev-parse --short "$(c 4)")" $rc "$out"
+# without XO_BISECT_SEED the step's xobuild picks its own (XO_SEED unset)
+out=$(XO_SEED=/other scripts/bisect.sh 'test -z "${XO_SEED:-}" && test ! -e broken' "$(c 1)" "$(c 6)" 2>&1); rc=$?
+check seed-unset 0 "first bad commit: $(git rev-parse --short "$(c 4)")" $rc "$out"
 if [ "$fails" != 0 ]; then
 	echo "bisect_test.sh: $fails failed"
 	exit 1
