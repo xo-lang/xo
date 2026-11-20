@@ -368,13 +368,30 @@ func TestFaultLocalsFrames(t *testing.T) {
 		"total": {"sum = 9"},
 		"main":  {`items = [Item { name: "a", qty: 4 }, Item { name: "b", qty: 5 }]`},
 	}
-	backends := []string{xotool.BackendLLVM}
-	if runtime.GOARCH == "arm64" {
-		backends = append(backends, xotool.BackendArm64)
+	// a string literal's address is in a variable's location on ELF and
+	// in a whole-program macOS build; a separately compiled macOS build
+	// (decision 0388, the default) leaves it out, since lldb and dsymutil
+	// misread it through the debug map (1afb971b3, 2026-11-06,
+	// gotchas/dsymutil-loclist-address-function-offset.md), and label is
+	// then <unavailable>, never another value. The test asked for the
+	// text in the default build and failed on macOS from that commit on,
+	// unseen: only the linux hosts ran it (task #547).
+	type variant struct {
+		name, be string
+		env      []string
+		literal  bool
 	}
-	for _, be := range backends {
-		t.Run(be, func(t *testing.T) {
-			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
+	variants := []variant{{xotool.BackendLLVM, xotool.BackendLLVM, nil, false}}
+	if runtime.GOARCH == "arm64" {
+		variants = append(variants, variant{xotool.BackendArm64, xotool.BackendArm64, nil, runtime.GOOS != "darwin"})
+		if runtime.GOOS == "darwin" {
+			variants = append(variants, variant{"arm64-whole", xotool.BackendArm64, []string{"XO_SEPCOMP=0"}, true})
+		}
+	}
+	for _, vr := range variants {
+		be := vr.be
+		t.Run(vr.name, func(t *testing.T) {
+			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be, Env: vr.env})
 			if err != nil || res.Failed {
 				t.Fatalf("build: %v %v", err, res.Output)
 			}
@@ -407,10 +424,15 @@ func TestFaultLocalsFrames(t *testing.T) {
 				}
 			}
 			want := common
-			if be == xotool.BackendArm64 {
+			if vr.literal {
 				want = map[string][]string{"main": {`label = "order-7"`}}
 				for k, v := range common {
 					want[k] = append(want[k], v...)
+				}
+			}
+			for _, v := range frames["main"] {
+				if strings.HasPrefix(v, "label = ") && v != `label = "order-7"` && v != "label = <unavailable>" {
+					t.Errorf("frame main shows a wrong value for label: %q in\n%s", v, got)
 				}
 			}
 			for fr, vs := range want {

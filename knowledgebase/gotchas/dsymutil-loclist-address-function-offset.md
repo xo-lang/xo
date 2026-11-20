@@ -37,3 +37,14 @@ for the program's side of a separately compiled build and for std's
 object (gm.sepcomp_program, gm.std_obj), and STD_CACHE_VERSION went to
 2 so cached variants rebuild; TestDebugTypes and TestDebugVars check
 the separately compiled build (macho-sep) through dsymutil and lldb.
+
+Observed again 2026-11-20 (Lang 1, task #547): the 2026-11-06 change
+also took a Str literal local out of Xo's own fault report
+(`XO_TRACEBACK=locals`) in a default macOS build: `label =
+<unavailable>`, where a whole-program build (`XO_SEPCOMP=0`) shows
+`label = "order-7"`. internal/llvm TestFaultLocalsFrames still asked
+for the text in the default build and failed on macOS for two weeks
+unseen, since only the linux hosts ran internal/llvm. It now asks for
+the text where the build has it (ELF, and macOS built whole) and for
+no wrong value in the default macOS build. Showing the text there
+(a location only Xo's reader uses) is task #548.
