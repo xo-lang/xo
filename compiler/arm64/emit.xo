@@ -474,7 +474,9 @@ fn (var g: G) emit() {
     }
   }
   b.push(g.stubs.join(""))
-  b.push(g.fconsts.join(""))
+  if !g.win_a64() {
+    b.push(g.fconsts.join(""))
+  }
   b.push(g.leaf_pes.join(""))
   if g.m.debug_info && !g.dl_rows.is_empty() {
     let end = g.local("${g.lbl_prefix()}_dend")
@@ -501,6 +503,12 @@ fn (var g: G) emit() {
       g.win_sites(b, sites, if stub_lsda { g.stubs_begin() } else { g.func_begin() })
     }
     b.push("\t.seh_endproc\n")
+    // the Float constants after the unwind range, not in it: their
+    // `.p2align 3` inside it left the function's length no constant to
+    // clang's assembler ("Failed to evaluate function length in SEH
+    // unwind info": cmd/xo TestWindowsArm64Assembly failed from
+    // 43a07d467 on, task #505)
+    b.push(g.fconsts.join(""))
   } else {
     b.push("\t.cfi_endproc\n")
     // cfi_start named the table whenever an instruction has a pad, also
