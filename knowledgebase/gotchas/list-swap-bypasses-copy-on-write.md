@@ -42,6 +42,18 @@ safe. It costs one retain and one release per call. Another shape is to
 give the swap intrinsic a count check, which makes every swap a little
 slower and needs a new seed because it changes a landed intrinsic.
 
+## Observed 2026-11-19: cse merged reads across a swap
+
+- Symptom: prelude_test's "list_swap2: a cross-list Str swap" failed at
+  `rt.obj_addr(ys[1]) == px` on main after 420460f6e (task #438).
+- Cause: the swap moves elements under the same SSA list value, so
+  cse's `list.index` key (list, index) is the same before and after it.
+  Reads with a landing (a function with cleanups) were never merged
+  until 420460f6e let them merge with a dominating twin.
+- Fix: cse (compiler/ssa/passes.xo `swapped_lists`) merges no
+  `list.index` of a list an rt.list_swap or rt.list_swap2 takes;
+  test/codegen/swapcse checks the reload after the swap's stores.
+
 ## See also
 
 - decisions/0374-list-sort-in-place.md (step 3, which primitives it

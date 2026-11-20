@@ -1,0 +1,27 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): cse keeps an
+// element read after a swap in place (rt.list_swap, here through
+// internal.list_swap_at) apart from the same read before it. The list's
+// SSA value does not change while its elements move, and in a function
+// with cleanups (the List `keep`) each read has a landing; once cse
+// merged a read with a landing into its dominating twin (9fa83eb0a, task
+// #438), the read after the swap was the element from before it
+// (2026-11-19: prelude_test's list_swap2 cross-list Str swap).
+use std/internal
+
+// Two element reads of xs[n]: one before the swap (inlined: two loads
+// and two stores), and one load after the swap's stores.
+fn after_swap(xs: List[Int], n: Int) -> Int {
+  // arm64: "(?s)\tstr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]\n.*\tldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]"
+  var keep: List[Int] = [n]
+  keep.push(n + 1)
+  let a = xs[n]
+  internal.list_swap_at(xs, n, n + 1)
+  a * 1000 + xs[n] + keep.len()
+}
+
+fn main(os: Os) {
+  var xs = [7, 9, 11]
+  xs[0] = 7
+  // 7 before the swap, 9 after it: 7011
+  os.stdio.println("${after_swap(xs, 0)}")
+}

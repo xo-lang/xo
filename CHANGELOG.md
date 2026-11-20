@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fixed (std/task): when the task running a `Once`'s function is cancelled, the first task waiting on it runs the function next (it was whichever waiter the schedule ran first).
+- Fixed (compiler): an element read after `rt.list_swap` or `rt.list_swap2` in a function with cleanups is read again, not merged by cse with the same read before the swap (since 420460f6e a cross-list Str swap left `ys[1]` holding its old element; test/codegen/swapcse).
 - Added (std/cbor): `cbor.diagnose(data)`, fxamacker's Diagnose: the diagnostic notation read from the bytes, so indefinite lengths keep their marks (`[_ 1, 2]`, `(_ h'01', h'02')`, `''_`).
 - Fixed (std/htmltok, std/htmlparse): `&nLt;` and `&nGt;` unescape to their two code points (`\u226A\u20D2`, `\u226B\u20D2`), as golang.org/x/net/html v0.62.0 does; they stayed as written.
 - Fixed (std/yaml): `parse` of an alias inside its own anchor (`a: &a\n  b: *a`) no longer overflows the stack (the alias's `alias` is None, as a Node cannot contain itself); `to_json` of a sequence or mapping key ends with yaml.v3's `invalid map key: ...`; `encode_node` names the unexpected event (`but got document end`, not `but got 4`). Found by Go's yaml.v3 tables (task #403).
