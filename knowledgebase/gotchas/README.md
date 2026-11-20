@@ -1531,3 +1531,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [cancel-file-cancels-the-rerun.md](cancel-file-cancels-the-rerun.md): a cancel file its lease never took cancelled the next run with the same name; since #440 a run takes only a file filed after it began (Observed)
 - [shared-landing-cse-unland.md](shared-landing-cse-unland.md): dropping a landing with cleanup code can strand other landings (shared, or nested in the pruned pad); cse unland checks and falls back (task #438)
 - [go-test-ok-line-has-a-tab.md](go-test-ok-line-has-a-tab.md): `go test` writes "ok", spaces and a tab before the package; `^ok +PKG` never matches a pass (golden-freecheck.sh, 2026-11-19)
+- [xw-events-arrive-late-in-tests.md](xw-events-arrive-late-in-tests.md): xwhook sends events in the background; a test that rm-s its events file and sleeps 1 s reads a late event of an earlier run (#442)
