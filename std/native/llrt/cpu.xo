@@ -1343,7 +1343,7 @@ fn keep(xs: List[Int]) {
 }
 
 /// The 16 bytes of the words lo and hi, little endian.
-fn words16(lo: Int, hi: Int) -> Bytes { rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), lo, 8), hi, 8).bytes() }
+fn words16(lo: Int, hi: Int) -> Bytes { rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, lo), 8, hi), 16).bytes() }
 
 /// The 16 bytes of b in a new list of two words.
 fn block(b: Bytes) -> List[Int] { [rt.bytes_word(b, 0), rt.bytes_word(b, 8)] }

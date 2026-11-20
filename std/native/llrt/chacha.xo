@@ -402,7 +402,7 @@ fn absorb_tail(p: Poly, m: Bytes, off: Int, pad1: Bool) -> Poly {
 /// branch on h.
 fn poly_finish(p: Poly, key: Bytes) -> Bytes {
   let (o0, o1) = poly_words(p, rt.bytes_word(key, 16), rt.bytes_word(key, 24))
-  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), o0, 8), o1, 8).bytes()
+  rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, o0), 8, o1), 16).bytes()
 }
 
 /// poly_finish's tag as two little endian words, s = s0 + s1 2^64.
@@ -661,7 +661,7 @@ fn poly26_finish(p: Poly26, key: Bytes) -> Bytes {
   let o2 = f & M32
   f = w3 + le32(key, 28) + shr(f, 32)
   let o3 = f & M32
-  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), o0 | shl(o1, 32), 8), o2 | shl(o3, 32), 8).bytes()
+  rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, o0 | shl(o1, 32)), 8, o2 | shl(o3, 32)), 16).bytes()
 }
 
 /// The Poly1305 tag of msg under the one time key (32 bytes: r, then s).
@@ -829,7 +829,7 @@ fn tag26(key: Bytes, nonce: Bytes, data: Bytes, aad: Bytes) -> Bytes {
   let otk = block(key, 0, nonce)
   var p = absorb26_tail(poly26_new(otk), aad, 0, false)
   p = absorb26_tail(p, data, 0, false)
-  let lens = rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), aad.len(), 8), data.len(), 8).bytes()
+  let lens = rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, aad.len()), 8, data.len()), 16).bytes()
   poly26_finish(absorb26(p, lens, 0, 16, shl(1, 24)), otk)
 }
 

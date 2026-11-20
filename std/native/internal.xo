@@ -694,9 +694,15 @@ fn probe_check(p: Int, n: Int, m: Int, t: Int) -> Bool {
 fn frame_below() -> Int { rt.frame_addr() }
 
 fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
-  let area = op.split(".")[0]
-  let what = op.trim_prefix("${area}.")
+  // two views of op, no List and no interpolated prefix (2026-11-19:
+  // bench/perf/aesgcm's key makes 20,000 calls, at 1.091 of Go's twin,
+  // which has no dispatch)
+  let (area, what) = op.cut(".") ?? (op, op)
   let r = match area {
+    // the bulk ops first: arms compare in order (task #448: "aes" was
+    // the tenth, nine string compares a record)
+    "aes" => aesgcm.op(what, a, b, c, d)
+    "chacha" => chacha.op(what, a, b, c, d)
     "hash" => sha256.op(what, a, b, c, d)
     "hmac" => hmac.op(what, a, b, c, d)
     "hkdf" => hkdf.op(what, a, b, c, d)
@@ -706,8 +712,6 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "p224" => nistec.op(nistec.P224, what, a, b, c, d)
     "rsa" => rsa.op(what, a, b, c, d)
     "x509" => x509.op(what, a, b, c, d)
-    "aes" => aesgcm.op(what, a, b, c, d)
-    "chacha" => chacha.op(what, a, b, c, d)
     "chain" => x509verify.op(what, a, b, c, d)
     "x25519" => x25519.op(what, a, b, c, d)
     "tls13" => tls13.op(what, a, b, c, d)

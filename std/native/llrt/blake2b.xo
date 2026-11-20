@@ -6,6 +6,7 @@
 // compression is digest_tables.blake2b_compress, the one Argon2's
 // one shot digest.blake2b uses. std/native/crypto.xo calls these.
 use native/llrt/digest_tables
+use native/rt
 
 /// The block size and the largest digest size in bytes (Go's BlockSize
 /// and Size).
@@ -152,11 +153,32 @@ fn final_words(s: State) -> List[Int] {
 
 /// The first n bytes of the words, little endian.
 fn le_out(h: List[Int], n: Int) -> Bytes {
-  var o = BytesBuilder.with_capacity(64)
-  for w in h {
-    o.write_le(w, 8)
+  // the n bytes alone, four words a call, into one string of n bytes (a
+  // BytesBuilder wrote all 64 and sliced; bench/perf/blake2b small,
+  // 2026-11-19)
+  if n & 7 == 0 {
+    // whole words (BLAKE2b-256, -384, -512): inline stores, no call
+    // (task #448: rs_push_words was about a twentieth of a short hash,
+    // callgrind, 2026-11-19)
+    var t = rt.rs_with_cap(n)
+    for i in 0..n >> 3 {
+      t = rt.rs_put_word(t, 8 * i, h[i])
+    }
+    return rt.rs_set_len(t, n).bytes()
   }
-  o.freeze()[0..n]
+  var s = rt.rs_with_cap(n)
+  var k = 0
+  while k * 8 < n {
+    var lens = 0
+    for j in 0..4 {
+      let r = n - (k + j) * 8
+      let l = if r >= 8 { 8 } else if r > 0 { r } else { 0 }
+      lens = lens | l.wrapping_shl(4 * j)
+    }
+    s = rt.rs_push_words(s, h[k], h[k + 1], h[k + 2], h[k + 3], lens)
+    k += 4
+  }
+  s.bytes()
 }
 
 /// The digest of what was written (Go's Sum); writing may continue.

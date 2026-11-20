@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-19: perf: AES block modes, AES-GCM keys and small BLAKE2b sums on arm64 skip the per call dispatch, a fifth fewer instructions
+
+- Kind: perf
+- Commit: this push
+- Found by: task #448 (std/evidence/crypto perf 1.093 of Go on linux/arm64 host 2; aesmodes block and aesgcm key the dearest rows, Lang 3)
+- Go reference: crypto/internal/fips140/aes (the block and GCM key paths), golang.org/x/crypto/blake2b
+- Change: std/native crypto_op tests its bulk arms first; 16 byte results are stored inline into the result (rs_put_word, rs_set_len) instead of two rs_push_word calls; new_gcm builds H in place in the key's table, with no io or powers list; blake2b writes its sum as whole words through inline stores
+- Measured: callgrind (linux/arm64, cgab e9735fdb8 to this change): bench/perf/aesmodes block 44,656,831 to 35,454,649 instructions (-20.61%), aesgcm key 71,792,678 to 57,692,634 (-19.64%), blake2b small 571,743,801 to 551,743,276 (-3.50%), the empty runs unchanged; linux/arm64 host 2 pstat (median of 9, less the empty run): aesmodes block 0.93 of Go, aesgcm key 0.88, blake2b small 0.99; `xo bench --ab` host 1, 4 rounds: aesgcm key 0.698 (95%: 0.66 to 0.731), blake2b small 0.928 (0.902 to 0.938), both runs too short for xo bench's verdict; 10,000,000 single block encryptions 0.998 (0.956 to 1.002, within noise: the block's time is the AES rounds)
+- Test: crypto tests (native and LLVM; the AES, GCM and BLAKE2b vectors)
+- Affected: none (no behavior change)
+- Shipped in: not yet released
+
 ## 2026-11-19: perf: an AES-GCM key stores its round keys and GHASH table unzeroed, another tenth faster to make
 
 - Kind: perf

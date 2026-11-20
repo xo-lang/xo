@@ -562,9 +562,11 @@ fn hw_dec_n(c: Cipher, var io: List[Int], blocks: Int) {
 pub fn (c: Cipher) encrypt_block(b: Bytes) -> Bytes {
   if (c.hw & cpu.HW_AES) != 0 {
     // the CPU's rounds in place in the result's own 16 bytes (a new heap
-    // string: rs_with_cap's room is at least 16): one allocation, as Go's
-    // Encrypt into a fresh slice, where io's list was a second
-    let s = rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), rt.bytes_word(b, 0), 8), rt.bytes_word(b, 8), 8)
+    // string): one allocation, as Go's Encrypt into a fresh slice, where
+    // io's list was a second. The two words are inline stores
+    // (rs_put_word, rs_set_len), not two rs_push_word calls (about 56 of
+    // the block's 214 instructions, callgrind, 2026-11-19)
+    let s = rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, rt.bytes_word(b, 0)), 8, rt.bytes_word(b, 8)), 16)
     let st = raw.data(s)
     let kp = addr(c.rk)
     match c.nr {
@@ -577,7 +579,7 @@ pub fn (c: Cipher) encrypt_block(b: Bytes) -> Bytes {
   }
   var io = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), 0, 0, 0, 0, 0, 0]
   encrypt_n(c, io, 1)
-  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), io[0], 8), io[1], 8).bytes()
+  rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, io[0]), 8, io[1]), 16).bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -697,7 +699,7 @@ pub fn (c: Cipher) decrypt_block(b: Bytes) -> Bytes {
   if (c.hw & cpu.HW_AES) != 0 {
     // as encrypt_block: the CPU's rounds in place in the result's 16 bytes
     // (decrypt4 ran hw_dec_n over four blocks, three of them zeros)
-    let s = rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), rt.bytes_word(b, 0), 8), rt.bytes_word(b, 8), 8)
+    let s = rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, rt.bytes_word(b, 0)), 8, rt.bytes_word(b, 8)), 16) // as encrypt_block
     let st = raw.data(s)
     let kp = addr(c.rk)
     match c.nr {
@@ -710,7 +712,7 @@ pub fn (c: Cipher) decrypt_block(b: Bytes) -> Bytes {
   }
   var io = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), 0, 0, 0, 0, 0, 0]
   decrypt4(c, io)
-  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), io[0], 8), io[1], 8).bytes()
+  rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, io[0]), 8, io[1]), 16).bytes()
 }
 
 /// The CTR keystream of n blocks from the 128 bit big endian counter
@@ -1075,15 +1077,42 @@ fn (g: Gcm) ghash_o(y1a: Int, y0a: Int, b: Bytes, o: Int, n: Int) -> (Int, Int) 
 /// The AES-GCM key of a 16, 24, or 32 byte AES key.
 pub fn new_gcm(key: Bytes) -> Gcm {
   let c = schedule(key, false)
-  // H is one block: with AES instructions only that one is encrypted
-  var io = [0, 0, 0, 0, 0, 0, 0, 0]
-  encrypt_n(c, io, 1)
-  let h1 = io[0].swap_bytes()
-  let h0 = io[1].swap_bytes()
+  let clmul = (c.hw & cpu.HW_CLMUL) != 0
+  let xinv = cpu.gcm8_xinv()
+  // one list for both tables, its words stored through its address
+  // (a key a connection: a concatenation a power was 8 lists and copies,
+  // task #271; the pushes' checks and zero_ints' mem_set were a tenth
+  // of a key after it, task #87, 2026-11-19)
+  let hk = if clmul { raw.ints_unset(if xinv { 48 } else { 24 }) } else { [] }
+  let hp = addr(hk)
+  // H is one block: with AES instructions only that one is encrypted, in
+  // place in hk's first two words (their powers overwrite them below), so
+  // a key makes no io list (task #448: a list allocation and its free were
+  // about a tenth of a key, callgrind, 2026-11-19)
+  var h1 = 0
+  var h0 = 0
+  if clmul && (c.hw & cpu.HW_AES) != 0 {
+    rt.mem_store(hp, 0, 0, 8)
+    rt.mem_store(hp, 8, 0, 8)
+    let kp = addr(c.rk)
+    match c.nr {
+      10 => cpu.aes_enc10(hp, kp)
+      12 => cpu.aes_enc12(hp, kp)
+      _ => cpu.aes_enc14(hp, kp)
+    }
+    keep(c.rk)
+    h1 = rt.mem_load(hp, 0, 8).swap_bytes()
+    h0 = rt.mem_load(hp, 8, 8).swap_bytes()
+  } else {
+    var io = [0, 0, 0, 0, 0, 0, 0, 0]
+    encrypt_n(c, io, 1)
+    h1 = io[0].swap_bytes()
+    h0 = io[1].swap_bytes()
+  }
   let h0r = rev64(h0)
   let h1r = rev64(h1)
   let g = Gcm{c: c, hw: c.hw, h0: h0, h1: h1, h2: h0 ^ h1, h0r: h0r, h1r: h1r, h2r: h0r ^ h1r, hk: []}
-  if (c.hw & cpu.HW_CLMUL) == 0 {
+  if !clmul {
     return g
   }
   // H^8 to H (cpu.aes_gcm8's eight entries); the four block kernels and
@@ -1102,30 +1131,32 @@ pub fn new_gcm(key: Bytes) -> Gcm {
   let (v1, v0) = if arm { g.mul_hw(u1, u0) } else { (0, 0) }
   let (w1, w0) = if arm { g.mul_hw(v1, v0) } else { (0, 0) }
   let (z1, z0) = if arm { g.mul_hw(w1, w0) } else { (0, 0) }
-  let xinv = cpu.gcm8_xinv()
-  // one list for both tables, its words stored through its address
-  // (a key a connection: a concatenation a power was 8 lists and copies,
-  // task #271; the pushes' checks and zero_ints' mem_set were a tenth
-  // of a key after it, task #87, 2026-11-19)
-  let hk = raw.ints_unset(if xinv { 48 } else { 24 })
-  let hp = addr(hk)
-  let pw = [z0, z1, w0, w1, v0, v1, u0, u1, t0, t1, r0, r1, q0, q1, h0, h1]
-  for i in 0..8 {
-    let p0 = pw[2 * i]
-    let p1 = pw[2 * i + 1]
-    rt.mem_store(hp, 8 * (3 * i), p0, 8)
-    rt.mem_store(hp, 8 * (3 * i + 1), p1, 8)
-    rt.mem_store(hp, 8 * (3 * i + 2), p0 ^ p1, 8)
-    if xinv {
-      // arm64's and amd64's eight block kernels read the eight powers times x^-1, from
-      // HK8X (Go's table form, so its reduction needs no shift by one)
-      let (x1, x0) = cpu.ghash8_xinv(p1, p0)
-      rt.mem_store(hp, 8 * (24 + 3 * i), x0, 8)
-      rt.mem_store(hp, 8 * (25 + 3 * i), x1, 8)
-      rt.mem_store(hp, 8 * (26 + 3 * i), x0 ^ x1, 8)
-    }
-  }
+  // H^8 first, H last; no list of the powers (task #448, as io above)
+  put_power(hp, 0, z0, z1, xinv)
+  put_power(hp, 1, w0, w1, xinv)
+  put_power(hp, 2, v0, v1, xinv)
+  put_power(hp, 3, u0, u1, xinv)
+  put_power(hp, 4, t0, t1, xinv)
+  put_power(hp, 5, r0, r1, xinv)
+  put_power(hp, 6, q0, q1, xinv)
+  put_power(hp, 7, h0, h1, xinv)
   g with {hk: hk}
+}
+
+/// Entry i of new_gcm's power table at hp: the power p1:p0 and their xor,
+/// and with xinv the power times x^-1 at 24 words on (arm64's and amd64's
+/// eight block kernels read it from HK8X, Go's table form, so its
+/// reduction needs no shift by one).
+fn put_power(hp: Int, i: Int, p0: Int, p1: Int, xinv: Bool) {
+  rt.mem_store(hp, 8 * (3 * i), p0, 8)
+  rt.mem_store(hp, 8 * (3 * i + 1), p1, 8)
+  rt.mem_store(hp, 8 * (3 * i + 2), p0 ^ p1, 8)
+  if xinv {
+    let (x1, x0) = cpu.ghash8_xinv(p1, p0)
+    rt.mem_store(hp, 8 * (24 + 3 * i), x0, 8)
+    rt.mem_store(hp, 8 * (25 + 3 * i), x1, 8)
+    rt.mem_store(hp, 8 * (26 + 3 * i), x0 ^ x1, 8)
+  }
 }
 
 /// The first n bytes of src xor the key stream from counter ctr (32
@@ -1457,7 +1488,7 @@ fn tail_word(src: Bytes, off: Int, n: Int) -> Int {
 /// aad.
 fn (g: Gcm) tag(nonce: Bytes, data: Bytes, n: Int, aad: Bytes) -> Bytes {
   let (t0, t1) = g.tag_w(rt.bytes_word(nonce, 0), le32(nonce, 8), data, n, aad)
-  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), t0, 8), t1, 8).bytes()
+  rt.rs_set_len(rt.rs_put_word(rt.rs_put_word(rt.rs_with_cap(16), 0, t0), 8, t1), 16).bytes() // inline stores (encrypt_block)
 }
 
 /// tag's two little endian words, the nonce as ctr_w's: no string for
