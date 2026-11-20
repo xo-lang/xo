@@ -20,3 +20,12 @@ test "save_regs leaves one caller saved register for a spilled operand" {
   expect(s.contains(c[c.len() - 1])) == false
   expect(save_regs([9]).len()) == 0
 }
+
+test "first_at finds the first hungry point at or past a position" {
+  let xs = [5, 9, 9, 21]
+  expect(first_at(xs, 0)) == 0
+  expect(first_at(xs, 9)) == 1
+  expect(first_at(xs, 10)) == 3
+  expect(first_at(xs, 22)) == 4
+  expect(first_at([], 3)) == 0
+}

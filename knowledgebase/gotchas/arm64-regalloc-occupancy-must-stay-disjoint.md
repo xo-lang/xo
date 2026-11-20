@@ -39,3 +39,18 @@ is free at that instruction. Once saved values filled every
 caller-saved register, `xo.mlog.vals`'s `madd` had none left, and xo
 did not build itself. `save_regs` keeps the last caller-saved register
 out of the save path.
+
+2026-11-20 (task #465): one register was not enough either. A template
+that writes registers of its own or names x16 or x17 (windows/arm64's
+reference count decrement, `ldxr x17 ... stxr w15 ...`, which has no LSE
+form there) reloads even its first spilled operand into a caller-saved
+register, and it writes x15, the one `save_regs` leaves. With saved
+values in the others, amqp.st_begin failed with "no free register for a
+spilled operand", so `xo dev stdobj --target=windows/arm64` and
+TestSepcompLinksWindows/arm64 were red from fc8c0a611 on. The save path
+now counts the saved values over each such instruction
+(`hungry_points`) and keeps HUNGRY_FREE (2) of `save_regs`'s registers
+clear of them there; a value that would be one too many spills as it did
+before call_saves. A new template with clobbers needs nothing more; one
+that needs more than two registers beyond its clobbers raises
+HUNGRY_FREE.

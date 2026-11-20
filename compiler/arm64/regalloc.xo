@@ -432,6 +432,11 @@ fn (var g: G) regalloc() {
   // Position, block, index, the block's weight, and whether it has a pad
   let call_saves = pass_on(g.m, "call_saves")
   var save_calls: List[(Int, Int, Int, Float, Bool)] = []
+  // hungry_points and, for each, the saved values in caller saved
+  // registers over it; found when the first value is to be saved
+  var hungry: List[Int] = []
+  var hungry_n: List[Int] = []
+  var hungry_done = false
   // the instructions that write registers besides their definitions:
   // position and registers
   var clobs: List[(Int, List[Int], Bool)] = []
@@ -1026,13 +1031,43 @@ fn (var g: G) regalloc() {
           }
         }
         if cost > 0.0 && cost < weight[v] {
-          for r in save_regs(if fp { fp_c } else { gp_c }) {
-            if !overlaps_sorted(occ2[r], ranges[v]) && !barred[v].contains(r) {
-              chosen = r
-              break
+          // the instructions in v's ranges that need caller saved
+          // registers of their own (hungry_points), each of which keeps
+          // HUNGRY_FREE of save_regs's clear of saved values
+          var hp: List[Int] = []
+          var room = true
+          if !fp {
+            if !hungry_done {
+              hungry = g.hungry_points()
+              for _ in hungry {
+                hungry_n.push(0)
+              }
+              hungry_done = true
+            }
+            let hlim = save_regs(gp_c).len() - HUNGRY_FREE
+            for rr in ranges[v] {
+              var p = first_at(hungry, rng_s(rr))
+              while p < hungry.len() && hungry[p] <= rng_e(rr) {
+                hp.push(p)
+                if hungry_n[p] >= hlim {
+                  room = false
+                }
+                p += 1
+              }
+            }
+          }
+          if room {
+            for r in save_regs(if fp { fp_c } else { gp_c }) {
+              if !overlaps_sorted(occ2[r], ranges[v]) && !barred[v].contains(r) {
+                chosen = r
+                break
+              }
             }
           }
           if chosen >= 0 {
+            for p in hp {
+              hungry_n[p] += 1
+            }
             g.loc[v] = Loc{reg: chosen, slot: 0}
             insert_merged(occ, chosen, ranges[v])
             insert_ranges(occ2, chosen, ranges[v])
@@ -1331,6 +1366,52 @@ fn insert_merged(var lists: List[List[Int]], i: Int, rs: List[Int]) {
 /// none, task #381).
 fn save_regs(gp_c: List[Int]) -> List[Int] {
   if gp_c.len() < 2 { [] } else { gp_c[0..gp_c.len() - 1] }
+}
+
+/// The caller saved registers of save_regs that stay clear of saved
+/// values at each of hungry_points.
+const HUNGRY_FREE = 2
+
+/// The positions, ascending, of the plain instructions that take caller
+/// saved registers beyond their operands': a template that writes
+/// registers of its own (clobbers) or names x16 or x17, so its spilled
+/// operands are reloaded into caller saved registers free there (emit.xo
+/// scratch_reg) and not into the two scratch registers. The one register
+/// save_regs leaves is not enough at these (task #465: windows/arm64's
+/// reference count decrement, `ldxr x17 ... stxr w15`, writes x15, the
+/// register left, and its spilled address had none with a saved value in
+/// every other: "no free register for a spilled operand" in
+/// amqp.st_begin, so `xo dev stdobj --target=windows/arm64` failed).
+fn (g: G) hungry_points() -> List[Int] {
+  var out: List[Int] = []
+  for b in g.order {
+    let first = g.blocks[b].start / 4
+    for (j, inst) in g.blocks[b].insts.indexed() {
+      if inst.kind != K_PLAIN {
+        continue
+      }
+      let t = inst.text
+      if !inst.clobbers.is_empty() || t.contains("x16") || t.contains("x17") || t.contains("w16") || t.contains("w17") {
+        out.push(4 * (first + j) + 1)
+      }
+    }
+  }
+  out.sort()
+}
+
+/// The index of the first of the ascending xs at or past at.
+fn first_at(xs: List[Int], at: Int) -> Int {
+  var lo = 0
+  var hi = xs.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if xs[mid] < at {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo
 }
 
 fn insert_ranges(var lists: List[List[Int]], i: Int, rs: List[Int]) {
