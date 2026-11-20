@@ -262,6 +262,14 @@ lane's `-max`) says why in its report.
   the native inliner (a function every caller inlined is gone from
   inline; `call sq` becomes its body). `--stage=rc` marks borrowed
   parameters (`borrow v1`). Without --fn the dump is as before.
+- The machine code the build makes for one function (task #468,
+  2026-11-20): `xo asm --backend=arm64 --fn=NAME DIR` (`--fn` repeats;
+  amd64 too, not llvm) prints only NAME's sections of `xo asm`'s text,
+  from the build's own pipeline (packed byte lists, `XO_PASSES`, every
+  build pass). `xo dev dump asm --fn=NAME DIR` without --ssa runs that
+  same build (its old output came from the dump's own pipeline and was
+  not the build's code; it printed every function). NAME matches as in
+  dump ssa: `main` also names std's `cabi_c.main`, so pick a unique name.
 - `XO_POISON_FRAMES=1` fills frame slots with a poison pattern, so a
   read before a write shows up at once.
 - `XO_DCE=off|debug|list` controls and lists native dead function

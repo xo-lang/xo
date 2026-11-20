@@ -1621,6 +1621,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let tcode = with_target_attrs(ir, clang_target_attrs(os, cc, attr_flags), tgoarch == "riscv64")
     let code = if tgoarch == "riscv64" { with_target_abi(tcode, "lp64d") } else { tcode }
     if o.cmd == "asm" {
+      if !o.asm_fns.is_empty() {
+        fail(os, "xo asm --fn selects functions of the arm64 and amd64 backends' assembly, not LLVM's")
+      }
       os.stdio.print(code)
       lap(os, phases, "print", t)
       return Native{pc: c.parse_cache}
@@ -2160,7 +2163,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // the whole text: empty with parts (p.text() joins them where read)
     let code = p.asm
     if o.cmd == "asm" {
-      os.stdio.print(p.text())
+      os.stdio.print(if o.asm_fns.is_empty() { p.text() } else { arm64.func_sections(p.text(), o.asm_fns) })
       lap(os, phases, "print", t)
       continue
     }

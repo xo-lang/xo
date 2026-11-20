@@ -23,6 +23,8 @@ struct Opts {
   cc: Str = ""
   out: Str = ""
   asm_path: Str = ""
+  // xo asm --fn=NAME (repeated): only those functions (task #468)
+  asm_fns: List[Str] = []
   /// --tzdata: "embedded" (the default, as cmd/xo's flag) or "system".
   tzdata: Str = "embedded"
   /// --layout: a layout file (decision 0403), "" for ./xo.layout of the
@@ -192,7 +194,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "lib", "profile", "check", "std-module", "grace", "opt", "since"]
+  ["o", "fn", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "lib", "profile", "check", "std-module", "grace", "opt", "since"]
 }
 
 /// The boolean flags.
@@ -204,7 +206,7 @@ fn bool_flags() -> List[Str] {
 /// build, run, and test print `xo`'s usage (compiler/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho --lib=shared|static -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --versioninfo=FILE.json --icon=FILE.ico --manifest=FILE --entitlement=KEY --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --check=free,guard,leak|all --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --fn=NAME (asm: that function only) --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho --lib=shared|static -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --versioninfo=FILE.json --icon=FILE.ico --manifest=FILE --entitlement=KEY --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --check=free,guard,leak|all --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -754,6 +756,11 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.cc = look_path(os, v)
   } else if name == "asm" {
     o.asm_path = v
+  } else if name == "fn" {
+    if o.cmd != "asm" {
+      usage(os, o.cmd, "--fn is a flag of xo asm")
+    }
+    o.asm_fns.push(v)
   } else if name == "as" {
     o.assembler = v
   } else if name == "lib" {

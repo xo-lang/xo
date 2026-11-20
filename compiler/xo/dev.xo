@@ -261,6 +261,35 @@ fn build_each_cmd(os: Os, args: List[Str]) -> Int {
   0
 }
 
+/// dump_asm_fn is `xo dev dump asm --fn=NAME DIR` without --ssa: the
+/// functions as `xo asm --backend=arm64 --fn=NAME DIR` prints them, from
+/// the build's own pipeline (task #468: the dump's pipeline left byte
+/// lists unpacked and read no XO_PASSES, so its code was not the build's).
+fn dump_asm_fn(os: Os, args: List[Str]) -> Int {
+  var flags = ["asm", "--backend=arm64"]
+  var dirs: List[Str] = []
+  for a in args {
+    if a.starts_with("--fn=") || a.starts_with("--std=") || a.starts_with("--wd=") {
+      flags.push(a)
+    } else if a.starts_with("--os=") {
+      flags.push("--target=${a.trim_prefix("--os=")}/arm64")
+    } else if a.starts_with("--") {
+      os.stdio.eprintln("xo dev dump asm: ${a} does not go with --fn (which prints the build's code, as xo asm --fn does); leave out --fn for the whole dump")
+      return 2
+    } else {
+      dirs.push(a)
+    }
+  }
+  if dirs.is_empty() {
+    os.stdio.eprintln("usage: xo dev dump asm --fn=NAME [--ssa=rc|inline] [--os=darwin|linux] DIR")
+    return 2
+  }
+  let o = parse_args(os, flags + dirs)
+  let ctx = Ctx{goos: host_os(os), std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, host_os(os))}
+  let _nb = build_native(os, ctx, o, "arm64")
+  0
+}
+
 /// dump_cmd is `xo dev dump KIND args...`: the component's command line,
 /// with --std of this xo unless args name one.
 fn dump_cmd(os: Os, args: List[Str]) -> Int {
@@ -277,7 +306,7 @@ fn dump_cmd(os: Os, args: List[Str]) -> Int {
     "ast" => parser.dump_main(os, rest)
     "types" => check.dump_main(os, rest)
     "ssa" => ssa.dump_main(os, rest)
-    "asm" => arm64.dump_main(os, rest)
+    "asm" => if rest.any(fn(a: Str) { a.starts_with("--fn=") }) && !rest.any(fn(a: Str) { a.starts_with("--ssa=") }) { dump_asm_fn(os, rest) } else { arm64.dump_main(os, rest) }
     "llvm" => llvm.dump_main(os, rest)
     "go" => gen.dump_main(os, rest)
     _ => {
