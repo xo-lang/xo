@@ -1164,7 +1164,7 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], tailbig: Map[Str
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m.funcs[ci]) {
+      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m, m.funcs[ci]) {
         return v
       }
     }
@@ -1252,7 +1252,7 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], tailbig
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m.funcs[ci]) {
+      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m, m.funcs[ci]) {
         return v
       }
     }
@@ -1280,7 +1280,7 @@ fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], tailbig: Ma
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m.funcs[ci]) {
+      if ssa.pad_of(x.pi) < 0 || m.funcs[ci].results.len() == 1 || pad_tuple_ok(m, m.funcs[ci]) {
         return v
       }
     }
@@ -1647,7 +1647,12 @@ fn return_count(f: ssa.Func) -> Int {
 /// the call did (task #418, 2026-11-19: std/brotli's gs_swap and
 /// test/codegen/varlistset's helpers, each a `var` List's element store,
 /// were calls at every site holding a counted value; the module verifier
-/// checks each copy under XO_INLINE_STRICT=1).
-fn pad_tuple_ok(g: ssa.Func) -> Bool {
-  !g.var_params.is_empty() && g.results.len() == g.var_params.len() + 1
+/// checks each copy under XO_INLINE_STRICT=1). Only with the fold_tuples
+/// pass on: the copy returns through a tuple, and until fold_tuple_fields
+/// replaces its field reads by the operands the written back list is a
+/// leaf of the tuple, which no landing of the caller releases (task
+/// #461: with XO_PASSES=-fold_tuples the inlined module did not verify,
+/// prof.trace_text_at's edge into its cleanup held one leaf more).
+fn pad_tuple_ok(m: ssa.Module, g: ssa.Func) -> Bool {
+  pass_on(m, "fold_tuples") && !g.var_params.is_empty() && g.results.len() == g.var_params.len() + 1
 }

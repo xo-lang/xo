@@ -123,3 +123,13 @@ callgrind, linux/arm64), enc6 the same (+0.03%), the binary's .text +1.0%.
 Each copy verifies under XO_INLINE_STRICT=1 (test/codegen/varlistset, the
 golden varlist_set_fault). A helper that stores a non-`var` parameter
 (`d[i] = s`) stays a call.
+
+2026-11-20 (task #461): pad_tuple_ok holds only while the fold_tuples
+pass is on. The copy returns through a tuple, and until fold_tuple_fields
+replaces its field reads by the operands, the written back list is a leaf
+of the tuple that no landing of the caller releases: with
+`XO_PASSES=-fold_tuples` the inlined module did not verify
+(prof.trace_text_at, in every program's runtime; TestGoldenPassesOff
+pass_struct_spills/fold_tuples, found by `git bisect` over
+b4c777cf4..b311ded6c with a build under XO_INLINE_STRICT=1 as the test).
+TestGoldenPassesOff now runs varlist_set_fault with fold_tuples off.

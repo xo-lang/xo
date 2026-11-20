@@ -35,6 +35,7 @@ var passHuntTargets = map[string][]string{
 	"pass_slp_pairs":         {"slp_f64", "reuse_loads", "cluster_mem"},
 	"pass_spill_swaps":       {"shrink_split", "slot_group", "arg_slots", "cold_saves", "copy_prop", "hoist_consts"},
 	"pass_stack_bb":          {"stack_small"},
+	"varlist_set_fault":      {"fold_tuples"}, // task #461: a var List callee inlined at a padded call returns through a tuple
 	"pass_stack_esc":         {"stack_small"},
 	"pass_stack_uuid":        {"stack_small"},
 	"pass_struct_spills":     {"slot_group", "arg_slots", "cluster_mem", "reuse_loads", "stack_small", "fold_tuples"},
