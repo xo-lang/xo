@@ -109,6 +109,9 @@ struct F {
   out: List[Str] = []
   ind: Int = 1
   names: Map[Int, Str] = {}
+  /// `let` bindings of a long plain string literal: the variable to the
+  /// quoted text (aligned_lit)
+  str_lets: Map[Int, Str] = {}
   used: Map[Str, Int] = {}
   frames: List[Frame] = []
   fr: Int = -1
@@ -1346,6 +1349,11 @@ fn (var g: Gen) let_stmt(s: Stmt) {
     BindPat(name: name, ..) => {
       let v = g.var_of(name)
       g.note_binding(value, v)
+      if v >= 0 {
+        if let Some(q) = plain_long_lit(value) {
+          g.f.str_lets[v] = q
+        }
+      }
       let code = g.val(value)
       if v < 0 {
         g.line("_ = ${code}")

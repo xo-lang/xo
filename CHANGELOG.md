@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Perf (Go backend; task #467): `.bytes()` on a plain string literal of 32 bytes or more (or on a `let` bound to one) reads one package level copy on a 32-byte boundary (rt.AlignedBytes), made once at init, so Go's vector byte searches run no partial head block; bench/perf/gobridge bytes 50000000 on linux/arm64 host 1: wall 135.1 to 113.4 ms (`xo bench --ab`, B/A 0.839).
 - Fix (Go backend; task #429): `Str.clone()` and `Bytes.clone()` copy into a buffer of their own, as on native targets; they returned their argument, so a clone of a slice kept the whole source alive.
 - Fix (xo symbols): a NAME pattern that matches no declaration exits 1 with "no declaration matches NAME", as xo def, refs and doc do (decision 0261); it exited 0 with nothing printed. Found by the new CLI class guard, cmd/xo TestCLIMatrix (task #361), which runs 15 subcommands from a subdirectory, from outside the module, with absolute paths, a stale PWD, an unreadable file and a C:\ path, and checks the exit code and that no file changed.
 - Perf (Go backend; task #429): a `match` whose arms are all Str or Int literals (or-patterns of them) and an optional `_`, with no guard, is a Go `switch` on the subject, which Go compiles to a length and binary search dispatch, in place of a chain of `==` tests; a value an earlier arm lists is dropped, as the chain never reached it. Output is unchanged.

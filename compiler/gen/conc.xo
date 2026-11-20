@@ -57,7 +57,59 @@ fn (var g: Gen) special_std(x: Expr, ci: check.CallInfo) -> (Str, Int, Bool) {
     }
     return ("${r}GroupSpawnBackground(tk, ${codes[0]}, ${codes[1]})", CK_VOID, true)
   }
+  if !ci.recv.is_empty() && g.is_std_method(fo, "prelude", "Str", "bytes") {
+    if let Some(q) = g.aligned_lit(ci.recv[0]) {
+      return (g.aligned_bytes(q), CK_VALUE, true)
+    }
+  }
   ("", CK_VALUE, false)
+}
+
+/// The shortest literal whose `.bytes()` gets an aligned copy: one 32-byte
+/// vector block (task #467).
+const ALIGN_LIT_MIN = 32
+
+/// The quoted text of a plain string literal (no interpolation) of at least
+/// ALIGN_LIT_MIN bytes, else None.
+fn plain_long_lit(e: Expr) -> Str? {
+  if let StringLit(s) = unparen(e) {
+    if s.parts.len() == 1 && s.parts[0].expr is None && s.parts[0].text.len() >= ALIGN_LIT_MIN {
+      return Some(s.parts[0].text.quote())
+    }
+  }
+  None
+}
+
+/// The quoted text when e is a long plain string literal or a `let` bound
+/// to one in this function (aligned_bytes).
+fn (g: Gen) aligned_lit(e: Expr) -> Str? {
+  if let Some(q) = plain_long_lit(e) {
+    return Some(q)
+  }
+  if let Ident(id) = unparen(e) {
+    let v = g.var_of(id)
+    if v >= 0 {
+      return g.f.str_lets.get(v)
+    }
+  }
+  None
+}
+
+/// `.bytes()` on a long literal (task #467): a package variable holding a
+/// copy whose data starts on a 32-byte boundary, made once at package
+/// init. A Go string literal lands at any offset in rodata, and a vector
+/// loop over it (IndexByte, Equal) then runs a partial head block on every
+/// call; an aligned start runs whole blocks only. Bytes is immutable, so
+/// every use shares the copy.
+fn (var g: Gen) aligned_bytes(q: Str) -> Str {
+  if let Some(n) = g.pkgs[g.p].alits.get(q) {
+    return n
+  }
+  let n = "xo_alit${g.pkgs[g.p].alits.len()}"
+  g.pkgs[g.p].alits[q] = n
+  g.pkgs[g.p].keep[g.pkgs[g.p].out.len()] = true
+  g.pout("var ${n} = ${g.rt()}AlignedBytes(${q})\n")
+  n
 }
 
 /// The operands val(receiver), val(arg).

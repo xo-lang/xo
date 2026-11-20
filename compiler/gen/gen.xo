@@ -147,6 +147,9 @@ struct Pkg {
   tmps: Map[Int, Int] = {}
   /// interface adapters made: `<from>|<to>` to the adapter's name
   adapt: Map[Str, Str] = {}
+  /// aligned literal copies made (aligned_bytes): quoted text to the
+  /// package variable's name
+  alits: Map[Str, Str] = {}
   tests: List[TestRef] = []
   in_rt: Bool = false
   ms: MonoState = MonoState{}
