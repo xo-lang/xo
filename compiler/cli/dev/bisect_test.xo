@@ -1,0 +1,57 @@
+// Tests of xo dev bisect-pass (task #459: --self and --ref=want).
+
+test "pick_ref defaults and refusals" {
+  expect(pick_ref("", "")) == "go"
+  expect(pick_ref("", "/src")) == "off"
+  expect(pick_ref("want", "/src")) == "want"
+  expect(pick_ref("off", "")) == "off"
+  // the Go backend does not build xo, so --self cannot compare with it
+  expect(pick_ref("go", "/src")) == ""
+  expect(pick_ref("nope", "")) == ""
+}
+
+test "narrow finds the first diverging prefix in log steps" {
+  for n in [1, 2, 3, 7, 20] {
+    for bad in 1..n + 1 {
+      // the run with the first k passes on is alike while k < bad
+      var lo = 0
+      var hi = n
+      var asked = 0
+      while hi - lo > 1 {
+        asked += 1
+        (lo, hi) = narrow(lo, hi, (lo + hi) / 2 < bad)
+      }
+      expect(hi) == bad
+      expect(asked <= 5) == true
+    }
+  }
+}
+
+test "narrow finds the first needed pass when all off diverges (#461)" {
+  for n in [1, 2, 3, 7, 20] {
+    for need in 1..n + 1 {
+      // the run with the first k passes on diverges while k < need
+      var lo = 0
+      var hi = n
+      while hi - lo > 1 {
+        let ok = (lo + hi) / 2 >= need
+        (lo, hi) = narrow(lo, hi, !ok)
+      }
+      expect(hi) == need
+    }
+  }
+}
+
+test "pass_spec turns each pass off" {
+  expect(pass_spec([])) == ""
+  expect(pass_spec(["licm", "dce"])) == "-licm,-dce"
+}
+
+test "a saved attempt reads back as it was" {
+  let r = Attempt{run: "exit 0\n--- stdout\nF x\n--- stderr\n".bytes()}
+  expect(alike(unsaved(saved(r)) ?? Attempt{failed: "none"}, r)) == true
+  let f = Attempt{failed: "xo: error: boom"}
+  expect((unsaved(saved(f)) ?? Attempt{}).failed) == "xo: error: boom"
+  expect(unsaved("".bytes()).is_none()) == true
+  expect(unsaved("junk".bytes()).is_none()) == true
+}

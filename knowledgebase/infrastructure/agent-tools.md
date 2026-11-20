@@ -24,7 +24,7 @@ prints this table's rows for the task's kind (from the title when no
 | Too slow | `XO_PROF=cpu` / `xo run --profile=cpu`, callgrind for instruction counts | `xo bench --ab` is the only proof of a speedup (decision 0340); a slow build: `xo build --phase-times` before any hypothesis |
 | Slow on one linux host only, the same on the Mac | on that host: `perf record`, then `perf script -F ip \| sort \| uniq -c` mapped with `go tool objdump` (gotchas/perf-annotate-empty-on-host2.md) | a load whose block covers a store of the same iteration (gotchas/host2-store-forwarding-stall.md); alternate the A and B binaries in one lease before blaming the host |
 | Hang or deadlock | `xo debug -p PID --batch -c tasks -c 'task N bt' PROG` (attaches, lists every task and what it waits on, detaches) | `--race` on llvm for a data race; the crash report and `xo dev symbolize` for a fault |
-| Wrong output, miscompile | `xo dev bisect-pass DIR`, `XO_PASSES=-name`, `XO_LOWER=-name` | `reduce-diff.py --crash` to shrink; `xo dev dump ssa --fn=NAME` |
+| Wrong output, miscompile | `xo dev bisect-pass DIR`, `XO_PASSES=-name`, `XO_LOWER=-name`; only an xo built natively compiles DIR wrong: `scripts/bisect-pass-self.sh` on that host | `reduce-diff.py --crash` to shrink; `xo dev dump ssa --fn=NAME` |
 | Fails on main, worked before | `scripts/bisect.sh` (Testing); on a host for a failure seen only there: `amd64-run.sh REV NAME script scripts/bisect.sh TEST GOOD BAD` | message the lead with good and bad commits |
 | Fails on one host only | "A failure seen on one host only" below: observe on that host first | |
 | Flaky or rare failure | `stdproven stress` / `race` sharded to the offload hosts (Std maturity evidence) | a failing seed or count kept as the regression test |
@@ -213,7 +213,26 @@ lane's `-max`) says why in its report.
   turns on one a target leaves off (none today: hollow is on for
   darwin/amd64 too since 2026-10-26);
   `xo dev bisect-pass
-  DIR` finds the first pass that changes a program's output.
+  DIR` finds the first pass that changes a program's output
+  (`--ref=go|off|want`: the Go backend's run, every pass off, or DIR's
+  want.txt). When every pass on matches and every pass off does not, it
+  names the first pass the run needs instead ("first needed pass", task
+  #459): code that relies on a pass, as std's sort_in_place relied on
+  addr_keep (#461; at b691c5cd2^ `--ref=want` on golden addr_keep_cross
+  named addr_keep in about a minute, and reported no divergence with
+  b691c5cd2's prelude). Use `--ref=want` or `go` there: `off` takes the
+  broken run as the reference and names an unrelated pass (map_core).
+- A miscompile inside xo (task #459, 2026-11-20): when only an xo built
+  by the native backend on a host compiles DIR wrong (#446: the xo built
+  on linux/amd64 compiled native_json wrong, a binary cross built on the
+  Mac ran right), `xo dev bisect-pass --self=TOP DIR` bisects the passes
+  of xo's own build: each step builds TOP's compiler/xo with a pass
+  prefix and has that xo build and run DIR (reference `off` or `want`).
+  On the linux/amd64 host, from the Mac: `amd64-run.sh REV NAME script
+  scripts/bisect-pass-self.sh --ref=want DIR` (REV committed; each step
+  is an xo build, so a run takes several leases of the amd64 lane's 45
+  minutes: start the same command again and it resumes from the attempts
+  saved under ~/xo-work/bisect-self/COMMIT-DIRNAME).
 - `XO_PASSES=+deadw,+deadw_poison` (decision 0624, 2026-11-13): with
   +deadw a returned enum's words past its active variant are not
   written; +deadw_poison writes 0xDEADBEEFDEADBEEF there instead. Run a
