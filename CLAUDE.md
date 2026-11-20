@@ -37,7 +37,7 @@ differs from this file, this file is current.
 
 1. Start: read this file, your resume note (the path the lead gave you),
    and agent-tools.md; `XW_AS=NAME ~/xo-lead/xw/bin/xw queue NAME` for
-   your queue (NAME: xo-lang-1, xo-lang-2, xo-lang-3, azure-1, xw-1; ADR
+   your queue (NAME: xo-lang-1, xo-4c, xw-1; ADR
    0658). Ack each assigned task and each decision sent to you in the
    same tool round (`xw task ack ID`, `xw ack ID`; `xw decisions --open
    --agent NAME`). Your top task is the next item; a task marked
@@ -160,14 +160,16 @@ only in a note, a chat or a message:
 - Commands written for the owner (OWNER-*.md kits, notes) are one line
   each, with no `\` continuations (`grep -c '\\$' FILE` gives 0).
 
-## Agents (as of 2026-11-10)
+## Agents (as of 2026-11-20)
+
+A closed agent is gone for good (owner, 2026-11-20, xw decision #225):
+never assign it work or wait on it; the lead moves its area and open
+tasks to a current agent. Retired: Xo Lang 2, Xo Lang 3, Azure 1.
 
 | Session | Area |
 |---|---|
-| Xo Lang 1 | compiler, backends (arm64, x86-64, LLVM), new targets (FreeBSD, riscv64), the language |
-| Xo Lang 2 | toolchain, releases, Windows (native windows/arm64), website, browser playground |
-| Xo Lang 3 | std (ports from Go's standard library, std/changes logs) |
-| Azure 1 (tab "Xo AWS") | cloud SDKs, editors and LSP, pkg.xolang.org |
+| Xo Lang 1 | compiler, backends (arm64, x86-64, LLVM), new targets (FreeBSD, riscv64), the language, toolchain, Windows |
+| xo-4c | std/ui, std (ports, std/changes logs), the cloud SDKs, website articles |
 | xw-1 | workstream (xw), the agent work system (decision 0658; private repo xo-lang/workstream) |
 | Xo Lead | merges, tiers, hosts, owner decisions |
 
