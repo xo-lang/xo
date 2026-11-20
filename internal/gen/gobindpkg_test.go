@@ -21,7 +21,7 @@ func TestGoBindOwnPackage(t *testing.T) {
 	tree := filepath.Join(dir, "gotree")
 	res, err := xotool.Build([]string{src}, xotool.Options{Out: filepath.Join(dir, "prog"), Flags: []string{"--go-tree=" + tree}})
 	if err != nil || res.Failed {
-		t.Fatalf("the Go build failed: %v\n%s", err, diagText(res))
+		t.Fatalf("the Go build failed: %v\n%s", err, buildText(res))
 	}
 	if m, _ := filepath.Glob(filepath.Join(tree, "rt", "xo_gobind_*.go")); len(m) > 0 {
 		t.Errorf("adapters in the runtime package: %v", m)

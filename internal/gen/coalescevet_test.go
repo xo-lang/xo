@@ -44,7 +44,7 @@ fn main(os: Os) {
 	tree := filepath.Join(dir, "gotree")
 	res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(dir, "prog"), Flags: []string{"--go-tree=" + tree}})
 	if err != nil || res.Failed {
-		t.Fatalf("the Go build failed: %v\n%s", err, diagText(res))
+		t.Fatalf("the Go build failed: %v\n%s", err, buildText(res))
 	}
 	// the program's package is under m/ (as in TestArithProps)
 	if out, err := run(tree, "go", "vet", ".", "./m/..."); err != nil {

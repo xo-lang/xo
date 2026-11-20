@@ -138,7 +138,7 @@ func TestArithProperty(t *testing.T) {
 			tree := filepath.Join(dir, "gotree")
 			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(dir, "prog"), Flags: []string{"--go-tree=" + tree}})
 			if err != nil || res.Failed {
-				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, diagText(res), numbered(src))
+				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, buildText(res), numbered(src))
 			}
 			pkgs := []string{"."}
 			if _, err := os.Stat(filepath.Join(tree, "m")); err == nil {

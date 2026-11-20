@@ -55,7 +55,7 @@ func TestStackSmallProperty(t *testing.T) {
 			}
 			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(out, "prog")})
 			if err != nil || res.Failed {
-				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, diagText(res), numbered(src))
+				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, buildText(res), numbered(src))
 			}
 			nres, err := xotool.Build([]string{dir}, xotool.Options{Backend: native, Out: filepath.Join(out, "prog-native")})
 			if err != nil || nres.Failed {

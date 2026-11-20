@@ -34,7 +34,7 @@ func TestGoProtoNotKept(t *testing.T) {
 			tree := filepath.Join(dir, "gotree")
 			res, err := xotool.Build([]string{src}, xotool.Options{NoMono: noMono, Out: filepath.Join(dir, "prog"), Flags: []string{"--go-tree=" + tree}})
 			if err != nil || res.Failed {
-				t.Fatalf("the Go build failed: %v\n%s", err, diagText(res))
+				t.Fatalf("the Go build failed: %v\n%s", err, buildText(res))
 			}
 			var text strings.Builder
 			err = filepath.Walk(tree, func(p string, info os.FileInfo, err error) error {
