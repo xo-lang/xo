@@ -40,7 +40,7 @@ test "an empty document encodes to yaml.v3's error" {
 
 // A sequence or mapping as a key ends to_json with yaml.v3's error, the key
 // written as Go's %#v of it (it was the typed decode's "cannot unmarshal
-// !!seq into string"). The texts are yaml.v3 v3.0.1's.
+// !!seq into Str"). The texts are yaml.v3 v3.0.1's.
 test "a collection key ends to_json as yaml.v3's invalid map key" {
   let cases: List[(Str, Str)] = [
     ("{[.]}", "yaml: invalid map key: []interface {}{\".\"}"),

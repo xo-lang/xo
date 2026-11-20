@@ -50,6 +50,22 @@ fn (var em: Emit) ln(s: Str, sp: Span) {
   em.spans.push(sp)
 }
 
+/// The range of a sized integer type derive Yaml reads, as (signed, lo, hi)
+/// source text.
+fn yaml_sized(n: Str) -> (Bool, Str, Str)? {
+  match n {
+    "Int8" => Some((true, "-128", "127"))
+    "Int16" => Some((true, "-32768", "32767"))
+    "Int32" => Some((true, "-2147483648", "2147483647"))
+    "Int64" => Some((true, "Int.min", "Int.max"))
+    "UInt8" => Some((false, "0", "255"))
+    "UInt16" => Some((false, "0", "65535"))
+    "UInt32" => Some((false, "0", "4294967295"))
+    "UInt64" => Some((false, "0", "UInt64.max"))
+    _ => None
+  }
+}
+
 fn is_scalar_name(n: Str) -> Bool {
   n is "Str" | "Int" | "Float" | "Bool"
 }
@@ -553,6 +569,21 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
         }
         return Some((fnn, zero, e))
       }
+      if path.len() == 1 && args.is_empty() {
+        if let Some((signed, lo, hi)) = yaml_sized(n) {
+          if !done.contains(h) {
+            done[h] = true
+            if signed {
+              e.ln("${osig} { let (ok, v) = yaml.to_sint(d, i, st, \"${n}\", ${lo}, ${hi})?; Ok((ok, ${n}(v))) }", sp)
+            } else if n == "UInt64" {
+              e.ln("${osig} { yaml.to_uint(d, i, st, \"${n}\", ${hi}) }", sp)
+            } else {
+              e.ln("${osig} { let (ok, v) = yaml.to_uint(d, i, st, \"${n}\", ${hi})?; Ok((ok, ${n}(v.to_bits()))) }", sp)
+            }
+          }
+          return Some((h, "${n}(0)", e))
+        }
+      }
       if path.len() == 2 && args.is_empty() && n == "Node" && text(path[0].name) == "yaml" {
         return Some(("yaml.to_node_field", "yaml.zero_node()", e))
       }
@@ -907,6 +938,13 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
         }
         return Some((h, e))
       }
+      if path.len() == 1 && args.is_empty() && yaml_sized(n) != None {
+        if !done.contains(h) {
+          done[h] = true
+          e.ln(if n == "UInt64" { "${sig} { yaml.put_uint(w, v) }" } else { "${sig} { yaml.put_int(w, Int(v)) }" }, sp)
+        }
+        return Some((h, e))
+      }
       if path.len() == 2 && args.is_empty() && n == "Node" && text(path[0].name) == "yaml" {
         return Some(("yaml.put_node", e))
       }
@@ -1039,7 +1077,9 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
         "Duration" => "v.${f}.nanos() == 0"
         "Time" => "v.${f} == Time.UNIX_EPOCH"
         "Bytes" => "v.${f}.len() == 0"
-        _ => if tx.starts_with("List[") || tx.starts_with("Map[") {
+        _ => if yaml_sized(tx) != None {
+          "v.${f} == ${tx}(0)"
+        } else if tx.starts_with("List[") || tx.starts_with("Map[") {
           "v.${f}.len() == 0"
         } else if tx.ends_with("?") || tx.starts_with("Option[") {
           "v.${f} == None"

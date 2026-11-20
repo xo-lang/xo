@@ -1,5 +1,27 @@
 # std/yaml changes
 
+## 2026-11-20: fix: derive Yaml reads and writes sized integer fields
+
+- Kind: fix
+- Commit: this push
+- Found by: task #239 (a test struct with an Int32 field did not build: `yaml_zero__Int32` not found; xw decision #222)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (d.scalar: OverflowInt and OverflowUint, a float through int64(f) or uint64(f))
+- Test: internal/stdtest/testdata/corpus/yaml (SZ, scripts/stdcorpus/yamloracle szCases)
+- Shipped in: not yet released
+
+A struct that derives Yaml may hold `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32` and `UInt64` fields (and lists, maps and options of them): a value that overflows the field is yaml.v3's type error (`cannot unmarshal !!int `128` into Int8`), a float is truncated as Go's conversion on arm64 does (`a: 1.5` is 1; an unsigned field takes `-1.0` as 0 and 2^64 as `UInt64.max`), and `UInt64` reads and writes all 64 bits. Before, such a struct did not compile.
+
+## 2026-11-20: behavior: decode errors spell the type as Xo does
+
+- Kind: behavior
+- Commit: this push
+- Found by: task #239 (xw decision #222)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (d.terror writes `cannot unmarshal TAG into TYPE` with TYPE from reflect)
+- Test: internal/stdtest/testdata/corpus/yaml and yamlfuzz (scripts/stdcorpus/yamloracle norm maps Go's names to Xo's)
+- Shipped in: not yet released
+
+A decode error names the target type in Xo's spelling everywhere: `Int`, `Str`, `Float`, `Bool`, `Bytes`, `UInt8`, `Duration`, `Time` and `time.Civil` for scalars, as `List[Int]`, `Map[Str, Str]` and struct names already were. yaml.v3 names Go's types (`int`, `string`, `float64`, `bool`, `[]uint8`, `uint8`, `time.Duration`, `time.Time`); the rest of the message is yaml.v3's, so `cannot unmarshal !!str `x` into int` is now `cannot unmarshal !!str `x` into Int`. Before, scalars used Go's names and composites Xo's.
+
 ## 2026-11-20: fix: decode_all reads the stream as yaml.v3's Decoder, and a custom tag on a Duration is its text
 
 - Kind: fix

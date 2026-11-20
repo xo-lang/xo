@@ -10512,7 +10512,7 @@ fn encode_node(n: Node, indent: Int = 4) -> Str ! YamlErr
 fn to_json(text: Str) -> Str ! YamlErr
 ```
 
-- `derive Yaml` (structs only, no type parameters) maps Str, Int, Float, Bool, Duration, Bytes, Time, `time.Civil`, `yaml.Node`, an Option, a List, a Map[Str, V] of those, or a
+- `derive Yaml` (structs only, no type parameters) maps Str, Int, the sized integers (Int8 to UInt64, with yaml.v3's overflow errors), Float, Bool, Duration, Bytes, Time, `time.Civil`, `yaml.Node`, an Option, a List, a Map[Str, V] of those, or a
   struct that derives Yaml (`XO0425` for another type). A field's key is its `yaml "name,options"` string, else its `as` string
   (shared with Json), else its name. Options are `omitempty` (also in the shared `as "name,omitempty"`), `flow` (only in
   `yaml "name,flow"`) and `inline` (a field that is a struct deriving Yaml, read and written in the enclosing mapping); the name

@@ -11,6 +11,8 @@ the text of every entry is unchanged).
 
 - std/htmlparse (task #240, b49): `parse_fragment` in an svg or math context no longer hangs on `</html><template><d></template><r>`. It now returns Go's errors where x/net/html recovers a panic: an index error for an empty template stack, and a nil dereference for text after `</html>`.
 - std/htmltok (task #240, b51): a tag with many attributes drops duplicates in linear time (40,000 attributes took 13 s), as x/net/html's attrNames map does.
+- std/yaml (task #239): `derive Yaml` takes `Int8` to `UInt64` fields, with yaml.v3's overflow errors; such a struct did not compile.
+- std/yaml (task #239, xw decision #222): decode errors spell the target type as Xo does (`into Int`, `into Str`, `into Duration`; were Go's `int`, `string`, `time.Duration`). Breaking for code that matches those messages: match the Xo names.
 - std/yaml (task #239, b39, b40): `decode_all` reports a document's type error before a later syntax error and keeps anchors for the rest of the stream, as yaml.v3's Decoder; a Duration field reads `!custom 1s` as its text.
 - std/yaml (task #239, xw decision #221): `to_json` writes an integer past Int that fits uint64 (`9223372036854775808`, `0xFFFFFFFFFFFFFFFF`) as its exact digits, as yaml.v3 with json.Marshal (was a rounded float); `!!float 9223372036854775808` is yaml.v3's resolve error.
 - std/yaml (task #239): input starting with a UTF-8 BOM decoded only its first line (later lines and their syntax errors were dropped); it now reads as yaml.v3 does.

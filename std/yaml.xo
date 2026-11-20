@@ -7,7 +7,9 @@ use std/time
 
 /// Displays as `yaml: line 3: mapping values are not allowed in this context`;
 /// type mismatches as `yaml: unmarshal errors:\n  line 2: cannot unmarshal !!str
-/// `x` into int`, all of them together.
+/// `x` into Int`, all of them together. The message is yaml.v3's with the
+/// type spelled as Xo spells it (`Int`, `Str`, `List[Int]`, `Duration`, where
+/// yaml.v3 says `int`, `string`, `[]int`, `time.Duration`).
 struct YamlErr {
   line: Int
   msg: Str
@@ -126,6 +128,9 @@ fn is_null(d: Doc, i: Int) -> Bool
 /// only an explicit tag that its text does not fit ends the decode.
 fn to_str(d: Doc, i: Int, var st: Dec) -> (Bool, Str) ! YamlErr
 fn to_int(d: Doc, i: Int, var st: Dec) -> (Bool, Int) ! YamlErr
+/// A sized integer field: into names its type, lo and hi its range.
+fn to_sint(d: Doc, i: Int, var st: Dec, into: Str, lo: Int, hi: Int) -> (Bool, Int) ! YamlErr
+fn to_uint(d: Doc, i: Int, var st: Dec, into: Str, hi: UInt64) -> (Bool, UInt64) ! YamlErr
 fn to_float(d: Doc, i: Int, var st: Dec) -> (Bool, Float) ! YamlErr
 fn to_bool(d: Doc, i: Int, var st: Dec) -> (Bool, Bool) ! YamlErr
 /// The items of a sequence node (what names the target type in the error).
@@ -175,6 +180,7 @@ fn seq_end(var w: Enc)
 fn put_null(var w: Enc)
 fn put_bool(var w: Enc, b: Bool)
 fn put_int(var w: Enc, n: Int)
+fn put_uint(var w: Enc, u: UInt64)
 fn put_float(var w: Enc, f: Float)
 /// A string as yaml.v3 writes it: quoted when it would read back as another
 /// type, a literal block when it has a line break (flow: quoted instead).

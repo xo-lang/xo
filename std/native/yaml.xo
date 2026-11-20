@@ -3717,7 +3717,7 @@ fn to_str_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Str) ! yaml.Yam
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    type_err(d, i, "string", st)
+    type_err(d, i, "Str", st)
     return Ok((false, ""))
   }
   if let Some(e) = check_tag(d, i) {
@@ -3816,7 +3816,7 @@ fn to_int_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Int) ! yaml.Yam
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    type_err(d, i, "int", st)
+    type_err(d, i, "Int", st)
     return Ok((false, 0))
   }
   if let Some(e) = check_tag(d, i) {
@@ -3828,8 +3828,128 @@ fn to_int_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Int) ! yaml.Yam
   if let Some(v) = int_of(d, n) {
     return Ok((true, v))
   }
-  type_err(d, i, "int", st)
+  type_err(d, i, "Int", st)
   Ok((false, 0))
+}
+
+fn to_sint(d: yaml.Doc, i0: Int, var st: yaml.Dec, into: Str, lo: Int, hi: Int) -> (Bool, Int) ! yaml.YamlErr {
+  let entered = tick(d, i0, st)?
+  let r = to_sint_body(d, i0, st, into, lo, hi)
+  leave(st, entered)
+  r
+}
+
+fn to_sint_body(d: yaml.Doc, i0: Int, var st: yaml.Dec, into: Str, lo: Int, hi: Int) -> (Bool, Int) ! yaml.YamlErr {
+  let i = res(d, i0)
+  let n = d.nodes[i]
+  if n.kind != K_SCALAR {
+    type_err(d, i, into, st)
+    return Ok((false, 0))
+  }
+  if let Some(e) = check_tag(d, i) {
+    return Err(e)
+  }
+  if n.tag == "!!null" {
+    return Ok((false, 0))
+  }
+  // yaml.v3 sets the field when the value (a float through Go's int64(f))
+  // does not overflow it
+  if let Some(v) = int_of(d, n) {
+    if v >= lo && v <= hi {
+      return Ok((true, v))
+    }
+  }
+  type_err(d, i, into, st)
+  Ok((false, 0))
+}
+
+fn to_uint(d: yaml.Doc, i0: Int, var st: yaml.Dec, into: Str, hi: UInt64) -> (Bool, UInt64) ! yaml.YamlErr {
+  let entered = tick(d, i0, st)?
+  let r = to_uint_body(d, i0, st, into, hi)
+  leave(st, entered)
+  r
+}
+
+fn to_uint_body(d: yaml.Doc, i0: Int, var st: yaml.Dec, into: Str, hi: UInt64) -> (Bool, UInt64) ! yaml.YamlErr {
+  let i = res(d, i0)
+  let n = d.nodes[i]
+  if n.kind != K_SCALAR {
+    type_err(d, i, into, st)
+    return Ok((false, 0))
+  }
+  if let Some(e) = check_tag(d, i) {
+    return Err(e)
+  }
+  if n.tag == "!!null" {
+    return Ok((false, 0))
+  }
+  if let Some(u) = uint_of(d, n) {
+    if u <= hi {
+      return Ok((true, u))
+    }
+  }
+  type_err(d, i, into, st)
+  Ok((false, 0))
+}
+
+/// The value yaml.v3 puts in an unsigned field: a non-negative int, or a float
+/// at most MaxUint64 (2^64 as a float64) through Go's uint64(f), which
+/// saturates on arm64 (-1.0 is 0, 2^64 is MaxUint64).
+fn uint_of(d: yaml.Doc, n: yaml.RawNode) -> UInt64? {
+  if n.tag == "!!int" {
+    if let Some(v) = int_of(d, n) {
+      return if v >= 0 { Some(UInt64.from_bits(v)) } else { None }
+    }
+    return uint64_of(n.value.replace("_", ""))
+  }
+  if n.tag != "!!float" {
+    return None
+  }
+  let f = float_val(d, n) ?? return None
+  if f.is_nan() || f > 18446744073709551615.0 {
+    return None
+  }
+  if f <= 0.0 {
+    return Some(0)
+  }
+  if f >= 18446744073709551615.0 {
+    return Some(UInt64.max)
+  }
+  if f < 9223372036854775808.0 {
+    return Some(UInt64.from_bits(Int(f)))
+  }
+  Some(UInt64.from_bits(Int(f - 9223372036854775808.0)) + UInt64.from_bits(Int.min))
+}
+
+/// The value of n in a Float field, or None for a type error.
+fn float_val(d: yaml.Doc, n: yaml.RawNode) -> Float? {
+  if n.tag == "!!int" {
+    if let Some(v) = int_of(d, n) {
+      return Some(Float(v))
+    }
+    if let Some(f) = Float.parse(n.value.replace("_", "")) {
+      return Some(f)
+    }
+  }
+  if let Some(f) = float_as_int(d, n) {
+    return Some(f)
+  }
+  if n.tag == "!!float" {
+    let v = n.value
+    if v == ".nan" || v == ".NaN" || v == ".NAN" {
+      return Some(Float.from_bits(9221120237041090560))
+    }
+    if v == ".inf" || v == ".Inf" || v == ".INF" || v == "+.inf" || v == "+.Inf" || v == "+.INF" {
+      return Some(Float.from_bits(9218868437227405312))
+    }
+    if v == "-.inf" || v == "-.Inf" || v == "-.INF" {
+      return Some(Float.from_bits(-4503599627370496))
+    }
+    if let Some(f) = Float.parse(v.replace("_", "")) {
+      return Some(f)
+    }
+  }
+  None
 }
 
 fn to_float(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Float) ! yaml.YamlErr {
@@ -3843,7 +3963,7 @@ fn to_float_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Float) ! yaml
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    type_err(d, i, "float64", st)
+    type_err(d, i, "Float", st)
     return Ok((false, 0.0))
   }
   if let Some(e) = check_tag(d, i) {
@@ -3852,33 +3972,10 @@ fn to_float_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Float) ! yaml
   if n.tag == "!!null" {
     return Ok((false, 0.0))
   }
-  if n.tag == "!!int" {
-    if let Some(v) = int_of(d, n) {
-      return Ok((true, Float(v)))
-    }
-    if let Some(f) = Float.parse(n.value.replace("_", "")) {
-      return Ok((true, f))
-    }
-  }
-  if let Some(f) = float_as_int(d, n) {
+  if let Some(f) = float_val(d, n) {
     return Ok((true, f))
   }
-  if n.tag == "!!float" {
-    let v = n.value
-    if v == ".nan" || v == ".NaN" || v == ".NAN" {
-      return Ok((true, Float.from_bits(9221120237041090560)))
-    }
-    if v == ".inf" || v == ".Inf" || v == ".INF" || v == "+.inf" || v == "+.Inf" || v == "+.INF" {
-      return Ok((true, Float.from_bits(9218868437227405312)))
-    }
-    if v == "-.inf" || v == "-.Inf" || v == "-.INF" {
-      return Ok((true, Float.from_bits(-4503599627370496)))
-    }
-    if let Some(f) = Float.parse(v.replace("_", "")) {
-      return Ok((true, f))
-    }
-  }
-  type_err(d, i, "float64", st)
+  type_err(d, i, "Float", st)
   Ok((false, 0.0))
 }
 
@@ -3893,7 +3990,7 @@ fn to_bool_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bool) ! yaml.Y
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    type_err(d, i, "bool", st)
+    type_err(d, i, "Bool", st)
     return Ok((false, false))
   }
   if let Some(e) = check_tag(d, i) {
@@ -3912,7 +4009,7 @@ fn to_bool_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bool) ! yaml.Y
   if v == "n" || v == "N" || v == "no" || v == "No" || v == "NO" || v == "off" || v == "Off" || v == "OFF" {
     return Ok((true, false))
   }
-  type_err(d, i, "bool", st)
+  type_err(d, i, "Bool", st)
   Ok((false, false))
 }
 
@@ -4143,7 +4240,7 @@ fn bad_key(d: yaml.Doc, v: Int, var st: yaml.Dec) -> Bool ! yaml.YamlErr {
       return Err(e)
     }
   }
-  type_err(d, ki, "string", st)
+  type_err(d, ki, "Str", st)
   Ok(true)
 }
 
@@ -4169,7 +4266,16 @@ fn pairs(d: yaml.Doc, i0: Int, what: Str, var st: yaml.Dec) -> (Bool, List[(Str,
 /// (`9223372036854775808`, `0x8000000000000000`): yaml.v3 decodes such a
 /// scalar as uint64, which json.Marshal writes exactly (xw decision #221).
 fn uint64_text(plain: Str) -> Str? {
-  if !is_uint64(plain) || Int.parse_base(plain, 0) != None {
+  if Int.parse_base(plain, 0) != None {
+    return None
+  }
+  let u = uint64_of(plain) ?? return None
+  Some("${u}")
+}
+
+/// The value of plain when is_uint64 holds.
+fn uint64_of(plain: Str) -> UInt64? {
+  if !is_uint64(plain) {
     return None
   }
   let b = plain.bytes()
@@ -4198,7 +4304,7 @@ fn uint64_text(plain: Str) -> Str? {
     u = u * base + UInt64(dg)
     i += 1
   }
-  Some("${u}")
+  Some(u)
 }
 
 /// Whether plain is a non-negative integer (base prefix 0x, 0b, 0o, or decimal and
@@ -5785,6 +5891,10 @@ fn put_int(var w: yaml.Enc, n: Int) {
   put_raw(w, "${n}", S_PLAIN)
 }
 
+fn put_uint(var w: yaml.Enc, u: UInt64) {
+  put_raw(w, "${u}", S_PLAIN)
+}
+
 fn put_float(var w: yaml.Enc, f: Float) {
   var s = f.to_general(-1)
   if f.is_nan() {
@@ -5994,7 +6104,7 @@ fn to_duration_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Duration) 
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_SCALAR {
-    type_err(d, i, "time.Duration", st)
+    type_err(d, i, "Duration", st)
     return Ok((false, Duration.from_nanos(0)))
   }
   if let Some(e) = check_tag(d, i) {
@@ -6010,7 +6120,7 @@ fn to_duration_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Duration) 
       return Ok((true, v))
     }
   }
-  type_err(d, i, "time.Duration", st)
+  type_err(d, i, "Duration", st)
   Ok((false, Duration.from_nanos(0)))
 }
 
@@ -6033,7 +6143,7 @@ fn to_bytes_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bytes) ! yaml
         return Err(e)
       }
     }
-    type_err(d, i, "[]uint8", st)
+    type_err(d, i, "Bytes", st)
     return Ok((false, b""))
   }
   var out = BytesBuilder.new()
@@ -6042,7 +6152,7 @@ fn to_bytes_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bytes) ! yaml
     let cn = d.nodes[ci]
     let entered = tick(d, c, st)?
     if cn.kind != K_SCALAR {
-      type_err(d, ci, "uint8", st)
+      type_err(d, ci, "UInt8", st)
       leave(st, entered)
       continue
     }
@@ -6061,7 +6171,7 @@ fn to_bytes_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Bytes) ! yaml
         continue
       }
     }
-    type_err(d, ci, "uint8", st)
+    type_err(d, ci, "UInt8", st)
     leave(st, entered)
   }
   Ok((true, out.freeze()))
@@ -6573,7 +6683,7 @@ fn to_time_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Time) ! yaml.Y
     return Ok((false, Time.UNIX_EPOCH))
   }
   if n.kind != K_SCALAR {
-    type_err(d, i, "time.Time", st)
+    type_err(d, i, "Time", st)
     return Ok((false, Time.UNIX_EPOCH))
   }
   if let Some(e) = check_tag(d, i) {
@@ -6592,7 +6702,7 @@ fn to_time_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Time) ! yaml.Y
       if hi && lo {
         return Ok((true, Time.UNIX_EPOCH + Duration.from_nanos(if secs >= 0 { secs * 1000000000 + p[6] } else { (secs + 1) * 1000000000 + (p[6] - 1000000000) })))
       }
-      type_err(d, i, "time.Time", st)
+      type_err(d, i, "Time", st)
       return Ok((false, Time.UNIX_EPOCH))
     }
   }
@@ -6626,7 +6736,7 @@ fn to_civil_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, time.Civil) !
     return Ok((false, zero))
   }
   if n.kind != K_SCALAR {
-    type_err(d, i, "time.Time", st)
+    type_err(d, i, "time.Civil", st)
     return Ok((false, zero))
   }
   if let Some(e) = check_tag(d, i) {

@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,7 +98,7 @@ func deepShow(in string) (out string) {
 	}()
 	var d Deep
 	if err := yaml.Unmarshal([]byte(in), &d); err != nil {
-		return "ERR " + strconv.Quote(err.Error())
+		return "ERR " + strconv.Quote(norm(err.Error()))
 	}
 	n := 0
 	for _, a := range d.D {
@@ -387,6 +388,46 @@ var ndCases = []string{
 	"n: {a: 1, a: 2}\n",
 }
 
+// Sz has a field of each sized integer type (task #239: derive Yaml took
+// them for structs).
+type Sz struct {
+	A int8   `yaml:"a"`
+	B int16  `yaml:"b"`
+	C int32  `yaml:"c"`
+	D int64  `yaml:"d"`
+	E uint8  `yaml:"e"`
+	F uint16 `yaml:"f"`
+	G uint32 `yaml:"g"`
+	H uint64 `yaml:"h"`
+}
+
+var szCases = []string{
+	"a: 1\nb: 2\nc: 3\nd: 4\ne: 5\nf: 6\ng: 7\nh: 8\n", "a: -128\nb: -32768\nc: -2147483648\nd: -9223372036854775808\n",
+	"a: 127\nb: 32767\nc: 2147483647\nd: 9223372036854775807\ne: 255\nf: 65535\ng: 4294967295\nh: 18446744073709551615\n",
+	"a: 128\n", "a: -129\n", "b: 32768\n", "c: 2147483648\n", "c: -2147483649\n", "d: 9223372036854775808\n",
+	"e: 256\n", "e: -1\n", "f: 65536\n", "g: 4294967296\n", "g: -1\n", "h: 18446744073709551616\n", "h: -1\n",
+	"a: 0x7f\nh: 0xffffffffffffffff\n", "a: 0b101\ne: 0o17\n", "a: 1.0\ne: 2.0\nh: 3.0\n", "a: 1.5\n", "e: -1.0\n", "h: 1e19\n", "h: 1e20\n",
+	"a: x\n", "e: true\n", "c: [1]\n", "h: {a: 1}\n", "a: ~\ne: null\n", "a: !!str 1\n", "a: \"1\"\n", "a: 1_0\nh: 1_000\n", "a: +5\ne: +5\n",
+	"a: 200\nb: x\nh: -2\n",
+}
+
+func szShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	var t Sz
+	if err := yaml.Unmarshal([]byte(in), &t); err != nil {
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	b, err := yaml.Marshal(t)
+	if err != nil {
+		return "ERRM " + err.Error()
+	}
+	return fmt.Sprintf("a=%d b=%d c=%d d=%d e=%d f=%d g=%d h=%d | %s", t.A, t.B, t.C, t.D, t.E, t.F, t.G, t.H, b)
+}
+
 type Tm struct {
 	T time.Time  `yaml:"t"`
 	P *time.Time `yaml:"p"`
@@ -439,7 +480,7 @@ func cvShow(in string) (out string) {
 		if strings.HasPrefix(err.Error(), "parsing time") {
 			return "ERRPARSE"
 		}
-		return "ERR " + strconv.Quote(norm(err.Error()))
+		return "ERR " + strconv.Quote(strings.ReplaceAll(norm(err.Error()), "into Time", "into time.Civil"))
 	}
 	if t.T.IsZero() {
 		return "SKIP"
@@ -541,10 +582,36 @@ func fl(f float64) string {
 }
 
 // norm names the Go types in an error as Xo does.
+// xoNames are the Xo spellings of the Go types yaml.v3's errors name: Xo's
+// errors name the Xo type (xw decision #222, std/changes/yaml.md).
+var xoNames = map[string]string{
+	"string": "Str", "int": "Int", "float64": "Float", "bool": "Bool", "[]uint8": "Bytes",
+	"int8": "Int8", "int16": "Int16", "int32": "Int32", "int64": "Int64",
+	"uint8": "UInt8", "uint16": "UInt16", "uint32": "UInt32", "uint64": "UInt64",
+	"float32": "Float32", "time.Duration": "Duration", "time.Time": "Time",
+}
+
+// xoType spells the Go type t as Xo does.
+func xoType(t string) string {
+	if x, ok := xoNames[t]; ok {
+		return x
+	}
+	if strings.HasPrefix(t, "[]") {
+		return "List[" + xoType(t[2:]) + "]"
+	}
+	if strings.HasPrefix(t, "map[") {
+		if k := strings.Index(t, "]"); k > 0 {
+			return "Map[" + xoType(t[4:k]) + ", " + xoType(t[k+1:]) + "]"
+		}
+	}
+	return strings.TrimPrefix(t, "main.")
+}
+
+var intoType = regexp.MustCompile(`into ([^ "\n]+)`)
+
 func norm(s string) string {
+	s = intoType.ReplaceAllStringFunc(s, func(m string) string { return "into " + xoType(m[5:]) })
 	s = strings.ReplaceAll(s, "main.", "")
-	s = strings.ReplaceAll(s, "[]int", "List[Int]")
-	s = strings.ReplaceAll(s, "map[string]string", "Map[Str, Str]")
 	// yaml.v3 cuts a long value at 7 bytes, maybe inside a rune; an Xo Str is valid text
 	return strings.ToValidUTF8(s, "\ufffd")
 }
@@ -782,6 +849,27 @@ fn show_nd(text: Str) -> Str {
         dump_node(out, t.n, 0)
       }
       out.freeze()
+    }
+  }
+}
+
+struct Sz {
+  a: Int8
+  b: Int16
+  c: Int32
+  d: Int64
+  e: UInt8
+  f: UInt16
+  g: UInt32
+  h: UInt64
+} derive Yaml
+
+fn show_sz(text: Str) -> Str {
+  match yaml.decode[Sz](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => match yaml.encode_value[Sz](t) {
+      Err(e) => "ERRM ${e.display()}"
+      Ok(b) => "a=${t.a} b=${t.b} c=${t.c} d=${t.d} e=${t.e} f=${t.f} g=${t.g} h=${t.h} | ${b}"
     }
   }
 }
@@ -1057,6 +1145,11 @@ const CASES: List[(Str, Str)] = [
 		fmt.Fprintf(&ndOut, "  (%s, %d, %s),\n", xq(d), i, xq(string(mb)))
 	}
 	fmt.Fprintf(&o, "/// (a document, what yaml.v3 writes for an Nd whose n is the value of its first key; a is the index)\nconst ND_MARSHALED: List[(Str, Int, Str)] = [\n%s]\n\n", ndOut.String())
+	o.WriteString("/// (a document, what yaml.v3 decodes it into Sz as and marshals back)\nconst SZ: List[(Str, Str)] = [\n")
+	for _, d := range szCases {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(szShow(d)))
+	}
+	o.WriteString("]\n\n")
 	o.WriteString("/// (a document, what yaml.v3 decodes it into Tm as: the UnixNano of t and p; RANGE outside int64 nanoseconds, ERRPARSE for Time.UnmarshalText's error)\nconst TM: List[(Str, Str)] = [\n")
 	for _, d := range tmCases {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(tmShow(d)))
@@ -1256,6 +1349,12 @@ test "an inline map takes the keys no field does, as yaml.v3's" {
   for (text, want, strict_want) in IM {
     expect(show_im(text, false)) == want
     expect(show_im(text, true)) == strict_want
+  }
+}
+
+test "sized integer fields decode and encode as yaml.v3's" {
+  for (text, want) in SZ {
+    expect(show_sz(text)) == want
   }
 }
 
