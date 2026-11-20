@@ -397,7 +397,11 @@ yourself.
   mark (`HEAVYD_STALL_STOP_MIN`, 90 minutes for llvm; 0: never) is
   stopped with rc 131 and a `STALLED-STOP` line, so the lane's waiters
   start (#449, 2026-11-19: xw1-425mon held pass4 2h34m with no line,
-  beats included, while repro2 waited 2h14m).
+  beats included, while repro2 waited 2h14m). On an offload host the
+  beats reach the Mac's gate log as `offload-gate: beat: ...` lines as
+  they come (offload-gate-remote.sh og_progress, 2026-11-19); before,
+  only step ends streamed, so a healthy llvm step past 90 minutes would
+  have been stopped. Last verified: 2026-11-19.
 - A gate step that hangs or runs far past its usual time (lead,
   2026-11-07): before blaming your change or the gate, run the same
   step at main as a control with a go test `-timeout` a few times its
