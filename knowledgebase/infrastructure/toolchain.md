@@ -324,7 +324,28 @@ and runs `gh release create`. The order:
    release-publish.sh refuses a tag with no ok row (decision 0615, owner,
    2026-11-12). Last verified: 2026-11-12;
 4. in `../xo-publish`, `scripts/release.sh`, then release-verify.sh per
-   host. The release agent runs this step, not the owner. On the Mac it
+   host. The release host sets
+   `XO_CLANG=~/xo-tools/winxc/LLVM-23.1.3-macOS-ARM64/bin/clang` (with
+   `llvm-nm` beside it, which sqlite-prebuilt.sh runs) and
+   `XO_WINSYSROOT=~/xo-tools/winxc/winsysroot` (LLVM 23.1.3 and xwin
+   0.10.0's sysroot, both already on the Mac: "Windows cross builds on
+   the Mac" below has the install recipe, no system install), which
+   std/sqlite's prebuilt windows object needs; the lead's
+   `~/xo-lead/release-win.env` holds the two (source it before
+   release.sh). Each prebuilt object has a build record beside it,
+   `sqlite.o.build` or `sqlite.obj.build` (xw decision 238, owner
+   2026-11-20): the SQLite version, the compiler's --version line, and
+   for windows the SDK and MSVC versions of the sysroot; release.sh
+   ships it and release-verify.sh fails an archive whose object has
+   none. Since 2026-11-20 (task
+   #244) release.sh stops without them (`XO_RELEASE_NO_WIN_SQLITE=1` to
+   release without the object) and release-verify.sh fails a windows
+   archive with no `lib/xo/sqlite/windows-amd64/sqlite.obj`
+   (`XO_VERIFY_NO_SQLITE=1`): every release through 0.51.1 was cut with
+   neither set and shipped no object, so a windows/amd64 std/sqlite
+   build asked for clang (the owner's 0.51.1 Windows evaluation, bug
+   24). Last verified: 2026-11-20 (both paths exist).
+   The release agent runs this step, not the owner. On the Mac it
    goes through heavy.sh (`HEAVY_CLASS=bulk HEAVY_DARWIN=1
    HEAVY_MAX_GB=20 ~/xo-lead/agents/heavy.sh release scripts/release.sh
    VERSION`). It builds cold: XO_BACKEND_CACHE, XO_FE_CACHE, XO_CHK_CACHE
@@ -4051,12 +4072,12 @@ spec core 4.5.
 - SQLite prebuilt objects (Last verified: 2026-11-07):
   `scripts/sqlite-prebuilt.sh REPO XO PLAT...` compiles the amalgamation,
   xo_sqlite.c and the std adapter as one unit into
-  `<root>/sqlite/rel/<plat>.o` with a `.key` (sha256 over the sources,
+  `<root>/lib/xo/sqlite/<plat>/sqlite.o` (`sqlite.obj` for windows) with a `.key` (sha256 over the sources,
   cffi.xo `sqlite_key`) and `.sha256`; windows-amd64 needs `XO_CLANG`
   and `XO_WINSYSROOT` and checks every undefined symbol is in
   peimports.xo or the CRT shim (cabi_wincrt.xo). xo uses the object when
-  its key matches (`<root>/sqlite/rel` or an install's
-  `lib/xo/sqlite/rel`), else compiles the C sources; a prebuilt object
+  its key matches (`sqlite/<plat>/` or `lib/xo/sqlite/<plat>/` beside
+  std, cffi.xo), else compiles the C sources; a prebuilt object
   lets a windows/amd64 build link with no clang or sysroot.
   windows-arm64 (2026-11-15, decision 0569 stage 6) is the same for
   aarch64-pc-windows-msvc: its object may also need `__chkstk` and the

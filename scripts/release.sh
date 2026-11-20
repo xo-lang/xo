@@ -118,6 +118,9 @@
 # has no windows/aarch64 platform, and no prebuilt sqlite object yet: a
 # windows/arm64 std/sqlite build compiles sqlite3.c with clang against
 # the installed SDK or XO_WINSYSROOT),
+# XO_RELEASE_NO_WIN_SQLITE=1 (no prebuilt std/sqlite object for
+# windows/amd64; without it the script stops when XO_CLANG or
+# XO_WINSYSROOT is unset),
 # XO_RELEASE_DRY_RUN=1 (run the checks, then print each step's command
 # instead of running it: nothing is built, written, or deleted).
 set -euo pipefail
@@ -300,8 +303,13 @@ if [ -n "${XO_CLANG:-}" ] && [ -n "${XO_WINSYSROOT:-}" ]; then
 	sq_plats="$sq_plats windows-amd64"
 	# windows/arm64's too with its archive (decision 0569 stage 6)
 	[ "$winarm" = 1 ] && sq_plats="$sq_plats windows-arm64"
+elif [ "${XO_RELEASE_NO_WIN_SQLITE:-}" = 1 ] || [ "${XO_RELEASE_WINDOWS:-}" = 0 ]; then
+	echo "== sqlite prebuilt: no windows-amd64 object (XO_RELEASE_NO_WIN_SQLITE=1 or no windows archive): a windows/amd64 std/sqlite build then needs clang, and release-verify.sh fails the windows archive without XO_VERIFY_NO_SQLITE=1" >&2
 else
-	echo "== sqlite prebuilt: no windows-amd64 object (set XO_CLANG and XO_WINSYSROOT): a windows/amd64 std/sqlite build then needs XO_WINSYSROOT" >&2
+	# a release without it shipped (0.51.1, the owner's Windows
+	# evaluation, bug 24, task #244): this was a warning in a long log
+	echo "release.sh: std/sqlite's prebuilt windows-amd64 object needs XO_CLANG and XO_WINSYSROOT (scripts/sqlite-prebuilt.sh); set them, or XO_RELEASE_NO_WIN_SQLITE=1 to release without it" >&2
+	exit 1
 fi
 run bash scripts/sqlite-prebuilt.sh "$repo" "$host_xo" $sq_plats >&2
 

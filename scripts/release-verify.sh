@@ -87,6 +87,13 @@ check() {
   fi
 }
 echo "host $host; archive $(basename "$archive"); $(uname -sr)"
+# every prebuilt std/sqlite object in the archive has its build record
+# (scripts/sqlite-prebuilt.sh, xw decision 238, owner 2026-11-20)
+for sqo in "$rel"/lib/xo/sqlite/*/sqlite.o "$rel"/lib/xo/sqlite/*/sqlite.obj; do
+  [ -f "$sqo" ] || continue
+  f=${sqo#"$rel"/}.build
+  if grep -q '^sqlite: [0-9]' "$rel/$f" 2>/dev/null && grep -q '^compiler: .' "$rel/$f"; then pass "layout-$f"; else fail "layout-$f"; fi
+done
 case "$(basename "$archive")" in
   *-windows-*)
     for f in xo.exe xo-gobind.exe; do
@@ -99,6 +106,17 @@ case "$(basename "$archive")" in
     done
     for f in lib/xo/std/prelude.xo lib/xo/go.mod lib/xo/cmd/xo-gobind/main.go LICENSE THIRD_PARTY_NOTICES; do
       if [ -f "$rel/$f" ]; then pass "layout-$f"; else fail "layout-$f"; fi
+    done
+    # std/sqlite's prebuilt object (decision 0534 stage 2), which a
+    # windows/amd64 program using std/sqlite links with no C compiler:
+    # 0.51.1's archive had none (release.sh only warned when XO_CLANG or
+    # XO_WINSYSROOT was unset), so `xo build` asked for clang (the
+    # owner's 0.51.1 Windows evaluation, bug 24, task #244).
+    # XO_VERIFY_NO_SQLITE=1 for an archive built without it on purpose.
+    for f in sqlite.obj sqlite.obj.key sqlite.obj.sha256; do
+      f=lib/xo/sqlite/windows-amd64/$f
+      if [ "${XO_VERIFY_NO_SQLITE:-}" = 1 ]; then echo "UNSUPPORTED layout-$f (XO_VERIFY_NO_SQLITE=1)"
+      elif [ -s "$rel/$f" ]; then pass "layout-$f"; else fail "layout-$f"; fi
     done
     echo "release-verify: $fails failed (a windows archive: run it with scripts/ci/release-smoke.sh on Windows)"
     [ "$fails" = 0 ]

@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -124,5 +126,37 @@ func TestCLibWindowsDLL(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCLibWindowsDLLHostDefault (task #244, the owner's 0.51.1 Windows
+// evaluation, bug 23): on a Windows host `xo build --lib=shared` with no
+// --targets builds the host's DLL. It took the cc steps of darwin and
+// linux and failed with "prog-windows.0.s: not an x86-64 or ARM64 COFF
+// object"; only --targets=windows/amd64 built one.
+func TestCLibWindowsDLLHostDefault(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the default target of a library build on a Windows host (compiler/xo opts_test.xo covers the choice on every host)")
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module example.com/min\nedition preview\n",
+		"min.xo": "pub fn add(a: Int, b: Int) -> Int as c \"min_add\" { a + b }\n",
+	})
+	dll := filepath.Join(dir, "min.dll")
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"build", "--lib=shared", "-o", dll, dir}, &out, &errOut); code != 0 {
+		t.Fatalf("xo build: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	name, exports, f := peExports(t, dll)
+	if f.Characteristics&pe.IMAGE_FILE_DLL == 0 {
+		t.Errorf("Characteristics %#x: no IMAGE_FILE_DLL", f.Characteristics)
+	}
+	if name != "min.dll" || !slices.Contains(exports, "min_add") {
+		t.Errorf("export directory %q: %v, want min.dll with min_add", name, exports)
+	}
+	for _, side := range []string{"min.h", "min.lib"} {
+		if _, err := os.Stat(filepath.Join(dir, side)); err != nil {
+			t.Errorf("no %s beside the DLL: %v", side, err)
+		}
 	}
 }

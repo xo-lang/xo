@@ -20,3 +20,21 @@ test "every classified path variable is a PATH_ENV entry" {
     expect(PATH_ENV.contains(n)) == true
   }
 }
+
+// Task #244 (the owner's 0.51.1 Windows evaluation, bug 23): a library
+// build with no --targets on a Windows host builds the host's DLL, by
+// the steps --targets=windows/ARCH chooses.
+test "a library build with no targets names the windows host's target" {
+  let host = host_arch()
+  if host is "arm64" | "amd64" {
+    expect(lib_host_targets(Opts{lib: "shared"}, "windows")) == "windows/${host}"
+  }
+  expect(lib_host_targets(Opts{lib: "shared", backend: "arm64"}, "windows")) == "windows/arm64"
+  expect(lib_host_targets(Opts{lib: "shared", backend: "amd64"}, "windows")) == "windows/amd64"
+  // given targets, other hosts and programs are as they were
+  expect(lib_host_targets(Opts{lib: "shared", targets: "windows/arm64"}, "windows")) == "windows/arm64"
+  expect(lib_host_targets(Opts{lib: "shared", targets: "wasip1/wasm"}, "windows")) == "wasip1/wasm"
+  expect(lib_host_targets(Opts{lib: "shared"}, "linux")) == ""
+  expect(lib_host_targets(Opts{lib: "static"}, "darwin")) == ""
+  expect(lib_host_targets(Opts{}, "windows")) == ""
+}

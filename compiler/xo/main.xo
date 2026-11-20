@@ -248,6 +248,7 @@ fn main(os0: Os) ! {
     }
   }
   let goos = host_os(os)
+  o.targets = lib_host_targets(o, goos)
   var ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos), tools: Some(Mutex[Map[Str, Str]].new({})), std_trees: Some(Mutex[Map[Str, Str]].new({}))}
   ctx.phases = o.phases
   ctx.bin_cache = bin_cache_dir(os, ctx, o.cmd == "test")
@@ -1145,6 +1146,21 @@ fn in_scope(os: Os, o: Opts, ds: List[check.Diag]) -> List[check.Diag] {
     os.stdio.eprintln("xo: ${left} warning${if left == 1 { "" } else { "s" }} in files outside the directories built (XO_WARNINGS=all prints them)")
   }
   out
+}
+
+/// A library build's targets: with none given on a Windows host, the
+/// host's own, named. The DLL's steps (Xo's assembler and PE linker, the
+/// import library, the lazy runtime start) are chosen by
+/// `--targets=windows/...`, and with none `xo build --lib=shared` took
+/// the cc steps of darwin and linux and handed the PE linker assembly
+/// text ("prog-windows.0.s: not an x86-64 or ARM64 COFF object"; the
+/// owner's 0.51.1 Windows evaluation, bug 23, task #244).
+fn lib_host_targets(o: Opts, goos: Str) -> Str {
+  if o.lib.is_empty() || !o.targets.is_empty() || goos != "windows" {
+    return o.targets
+  }
+  let arch = if o.backend is "arm64" | "amd64" { o.backend } else { host_arch() }
+  if arch is "arm64" | "amd64" { "windows/${arch}" } else { o.targets }
 }
 
 /// The default native backend (decision 0270): arm64 or amd64 for the

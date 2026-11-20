@@ -5,6 +5,9 @@
 # windows), its .sha256, and its .key (compiler/xo cffi.xo
 # sqlite_key: xo links the object in place of the three sources only
 # while the key matches).
+# Beside them its build record, .build (xw decision 238): the SQLite
+# version (std/native/sqlite/VERSION), the compiler's --version line,
+# and for windows the SDK and MSVC versions of XO_WINSYSROOT.
 #
 # The object is one compile of sqlite3.c, xo_sqlite.c and the binding's
 # `use c` adapter (std/native/.xo/cbind/c_xo_sqlite_*.c, which XO writes
@@ -109,6 +112,27 @@ for s in sys.stdin.read().split():
 if bad:
     sys.exit("sqlite-prebuilt.sh: " + sys.argv[2] + " object needs symbols nothing defines: " + " ".join(bad))
 ' "$repo" "$plat"
+	fi
+	# the build record beside the object (owner, 2026-11-20, xw decision
+	# 238): what was compiled and with what, for whoever asks which
+	# SQLite and which toolchain a release's object came from. No paths
+	# (a release host's directories are private) and no date (two builds
+	# of one input give one record).
+	{
+		echo "object: sqlite.$ext ($plat)"
+		echo "sqlite: $(sed -n '1s/^SQLite \([0-9.]*\).*/\1/p' "$src/VERSION")"
+		echo "sqlite3.c sha256: $(shasum -a 256 "$src/sqlite3.c" | cut -d' ' -f1)"
+		echo "key: $(cat "$obj.key")"
+		echo "compiler: $("${cmd[0]}" --version 2>/dev/null | head -1)"
+		if [ "$goos" = windows ]; then
+			echo "windows sdk: $(ls "$XO_WINSYSROOT/Windows Kits/10/Include" 2>/dev/null | sort -V | tail -1)"
+			echo "msvc: $(ls "$XO_WINSYSROOT/VC/Tools/MSVC" 2>/dev/null | sort -V | tail -1)"
+		fi
+	} > "$obj.build"
+	if grep -q ': *$' "$obj.build"; then
+		echo "sqlite-prebuilt.sh: $plat: a line of the build record is empty:" >&2
+		cat "$obj.build" >&2
+		exit 1
 	fi
 	echo "$plat: $obj ($(wc -c < "$obj") bytes), key $(cat "$obj.key")" >&2
 done
