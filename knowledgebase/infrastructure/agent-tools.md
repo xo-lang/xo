@@ -1239,6 +1239,16 @@ section 3, amended 2026-11-14); the prelude's own hash is that runtime (std/prel
   hit 2026-11-04 and 2026-11-08); those modes warn without it (lead,
   2026-11-08). A pass change (a compiler/ source the xo runs) needs no
   stage2: the seed compiles the new pass code into xo.
+  `scorecard [FLAG...] [TWIN_DIR...]` as the mode is decision 0727's
+  scorecard of a compiler-wide change (task #478, scripts/scorecard, run
+  from NEW's tree): every std bench twin's Xo/Go ratio for A and B
+  (decision 0726: median of per-round ratios, at least 30 rounds; twincheck
+  `-xo-b`), each test/codegen program's own functions' instruction count
+  in `xo asm` with the functions that changed, and compiler/xo's build
+  wall and phase medians (`-self-rounds N`, default 3). Narrow it with
+  twin dirs (`bench/perf/adler32`), `-corpus-run RE`, `-twins=false`,
+  `-corpus ""` or `-self ""`; locally: `XO_CLI=A XO_STD=A/std go run
+  ./scripts/scorecard -b B -std-b B/std` under heavy.sh (2026-11-20).
   `AB_DRIVER=REV` builds a third xo at REV that runs `xo bench --ab`
   instead of NEW's: use `AB_DRIVER=origin/main` to rerun an old pair,
   whose own xo bench is older than the round-order fix (4bd89c76b, task

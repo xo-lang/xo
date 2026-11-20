@@ -18,6 +18,14 @@
 // Go re-survey), not an --ab: a claim about one change still takes
 // `xo bench --ab` on an offload host.
 //
+// -xo-b CMD (with -time N) also builds each Xo program with a second xo
+// (B; -std-b DIR is its std, as XO_STD) and times A, Go, B, Go per round:
+// an A/B of two compilers against the same Go twin (decision 0727's
+// scorecard, scripts/scorecard). Each side's ratio pairs its run with the
+// Go run after it, and the line `ab NAME go MS a MS b MS ra R rb R rounds
+// N` reads the median of the per-round ratios, with -time's round rule
+// (decision 0726).
+//
 // A bench directory's twin.txt says how to run it (internal/twincheck has
 // the format: cases, arguments, compare fields, env, skip). Exit 1 when a
 // case's output differs or a program does not build.
@@ -47,12 +55,24 @@ func main() {
 	timeout := flag.Duration("timeout", 5*time.Minute, "per build and per run")
 	keep := flag.Bool("keep", false, "keep the built binaries and say where")
 	times := flag.Int("time", 0, "time each agreeing case's two programs this many times (medians, Xo over Go)")
+	xoB := flag.String("xo-b", "", "with -time: a second xo (B), timed against the same Go twin (decision 0727)")
+	stdB := flag.String("std-b", "", "with -xo-b: B's std directory (XO_STD for B's builds)")
 	flag.Parse()
+	if *xoB != "" && *times == 0 {
+		fmt.Fprintln(os.Stderr, "twincheck: -xo-b needs -time N")
+		os.Exit(2)
+	}
+	ab = abSide{xo: *xoB, std: *stdB}
 	if err := run(*verbose, *timeout, *keep, *times, flag.Args()); err != nil {
 		fmt.Fprintln(os.Stderr, "twincheck:", err)
 		os.Exit(1)
 	}
 }
+
+// abSide is -xo-b's compiler: its command and std ("" when not set).
+type abSide struct{ xo, std string }
+
+var ab abSide
 
 type checker struct {
 	root    string
@@ -124,7 +144,13 @@ func run(verbose bool, timeout time.Duration, keep bool, times int, dirs []strin
 				if verbose {
 					fmt.Printf("%s: ok\n", name)
 				}
-				if c.times > 0 {
+				if c.times > 0 && ab.xo != "" {
+					if line, err := c.timeAB(d, cs, name); err != nil {
+						fmt.Printf("%s: time: %v\n", name, err)
+					} else {
+						fmt.Println(line)
+					}
+				} else if c.times > 0 {
 					if line, err := c.timeCase(d, cs, name); err != nil {
 						fmt.Printf("%s: time: %v\n", name, err)
 					} else {
@@ -174,7 +200,13 @@ func (c *checker) check(d *twincheck.Dir, cs twincheck.Case) (string, error) {
 // buildXo builds the Xo program (a file, or a program directory), once per
 // program.
 func (c *checker) buildXo(rel, prog, backend string) (string, error) {
-	key := "xo:" + rel + "/" + prog + ":" + backend
+	return c.buildXoWith(c.xo, "", "xo:", rel, prog, backend)
+}
+
+// buildXoWith builds it with the xo command xo (std: its XO_STD, "" for
+// the environment's); prefix keeps each compiler's builds apart.
+func (c *checker) buildXoWith(xo []string, std, prefix, rel, prog, backend string) (string, error) {
+	key := prefix + rel + "/" + prog + ":" + backend
 	if b, ok := c.builds[key]; ok {
 		return b.path, b.err
 	}
@@ -186,17 +218,20 @@ func (c *checker) buildXo(rel, prog, backend string) (string, error) {
 	out := c.bin(key)
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
-	args := append(append([]string{}, c.xo[1:]...), "build", "-o", out)
+	args := append(append([]string{}, xo[1:]...), "build", "-o", out)
 	if backend != "" {
 		args = append(args, "--backend="+backend)
 	}
 	args = append(args, dir)
-	cmd := exec.CommandContext(ctx, c.xo[0], args...)
+	cmd := exec.CommandContext(ctx, xo[0], args...)
+	if std != "" {
+		cmd.Env = append(os.Environ(), "XO_STD="+std)
+	}
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err := cmd.Run()
 	if err != nil {
-		err = fmt.Errorf("building xo %s: %v\n%s", dir, err, tail(buf.String()))
+		err = fmt.Errorf("building xo %s with %s: %v\n%s", dir, xo[0], err, tail(buf.String()))
 	}
 	c.builds[key] = built{out, err}
 	return out, err
@@ -317,6 +352,59 @@ func (c *checker) timeCase(d *twincheck.Dir, cs twincheck.Case, name string) (st
 		}
 	}
 	return fmt.Sprintf("time %s xo %.1f go %.1f ratio %.3f", strings.ReplaceAll(name, " ", "/"), median(xs), median(gs), roundRatio(xs, gs)), nil
+}
+
+// timeAB times the case's Xo program built by A (c.xo) and by B (-xo-b)
+// against its Go twin: rounds of A, Go, B, Go, each side's ratio taken
+// against the Go run after it (decision 0726: a slow phase of the host
+// hits both runs of a pair). It checks B's output against Go's first.
+func (c *checker) timeAB(d *twincheck.Dir, cs twincheck.Case, name string) (string, error) {
+	dir := filepath.Join(c.root, d.Path)
+	aBin, err := c.buildXo(d.Path, cs.Xo, d.Backend)
+	if err != nil {
+		return "", err
+	}
+	bBin, err := c.buildXoWith(strings.Fields(ab.xo), ab.std, "xob:", d.Path, cs.Xo, d.Backend)
+	if err != nil {
+		return "", err
+	}
+	goBin, err := c.buildGo(d, cs.Go)
+	if err != nil {
+		return "", err
+	}
+	env := append(os.Environ(), d.Env...)
+	bOut, err := c.exec(bBin, dir, cs.XoArgs, env)
+	if err != nil {
+		return "", fmt.Errorf("B's Xo program: %v", err)
+	}
+	goOut, err := c.exec(goBin, dir, cs.GoArgs, env)
+	if err != nil {
+		return "", fmt.Errorf("the Go twin: %v", err)
+	}
+	if diff := twincheck.Compare(bOut, goOut, d.Fields); diff != "" {
+		return "", fmt.Errorf("B's Xo program differs from the Go twin: %s", diff)
+	}
+	run := func(bin string, args []string) (float64, error) {
+		t := time.Now()
+		if _, err := c.exec(bin, dir, args, os.Environ()); err != nil {
+			return 0, err
+		}
+		return float64(time.Since(t).Microseconds()) / 1000, nil
+	}
+	var as, bs, ga, gb []float64
+	for i := 0; i < c.times || moreRounds(as, ga) || moreRounds(bs, gb); i++ {
+		var r [4]float64
+		for j, side := range []struct {
+			bin  string
+			args []string
+		}{{aBin, cs.XoArgs}, {goBin, cs.GoArgs}, {bBin, cs.XoArgs}, {goBin, cs.GoArgs}} {
+			if r[j], err = run(side.bin, side.args); err != nil {
+				return "", err
+			}
+		}
+		as, ga, bs, gb = append(as, r[0]), append(ga, r[1]), append(bs, r[2]), append(gb, r[3])
+	}
+	return fmt.Sprintf("ab %s go %.1f a %.1f b %.1f ra %.3f rb %.3f rounds %d", strings.ReplaceAll(name, " ", "/"), median(append(append([]float64{}, ga...), gb...)), median(as), median(bs), roundRatio(as, ga), roundRatio(bs, gb), len(as)), nil
 }
 
 // moreRounds reports whether a case past its -time rounds runs another:

@@ -43,7 +43,9 @@ checks integer adds for overflow, a cost Go does not pay (#423).
   up every program.
 - A broad scorecard and a compile time budget are needed before the
   first such change lands (task for xw-1: one command that runs the
-  set and prints per row ratios plus compile time).
+  set and prints per row ratios plus compile time). Done 2026-11-20
+  (task #478): `OFFLOAD_ENV=offload-arm64b.env ab-host.sh BASE NEW NAME
+  -- scorecard` (agent-tools.md).
 - Speed claims still need `xo bench --ab` (0340).
 
 ## Alternatives
