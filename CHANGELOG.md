@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - std/yaml (task #239, xw decision #224): `to_json` escapes `<`, `>`, `&`, U+2028 and U+2029 in strings (`\u003c` and so on), as json.Marshal and std/json's default writer; JSON consumers see the same text, byte comparisons against the old output change.
+- Fix (`xo fix`; task #537): `xo fix ./...` at a workspace's root checks one member module at a time, as `xo check ./...` does (decision 0513); it held one checker for every member, and on a workspace of 673 modules peaked at 17 to 20 GB (1.3 GB now, 58 s). `xo fix --vet=CODES ./...` still checks the workspace in one checker.
 - std/htmlparse (task #240, b49): `parse_fragment` in an svg or math context no longer hangs on `</html><template><d></template><r>`. It now returns Go's errors where x/net/html recovers a panic: an index error for an empty template stack, and a nil dereference for text after `</html>`.
 - std/htmltok (task #240, b51): a tag with many attributes drops duplicates in linear time (40,000 attributes took 13 s), as x/net/html's attrNames map does.
 - std/yaml (task #239): `derive Yaml` takes `Int8` to `UInt64` fields, with yaml.v3's overflow errors; such a struct did not compile.

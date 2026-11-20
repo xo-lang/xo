@@ -185,7 +185,14 @@ fn fix_run(os: Os, ctx: Ctx, dirs: List[Str], rws: List[Rewriter], dry: Bool, ve
   seen[state_key(cur)] = true
   while res.rounds < MAX_ROUNDS {
     res.rounds += 1
-    let s = load(os, ctx, dirs, true, cur)?
+    // A walk of a workspace holds one member's checker at a time, as
+    // `xo check` does (decision 0513, load_each): with one checker for
+    // every member, `xo fix ./...` on a workspace of 673 modules (2,723
+    // files) peaked at 17 to 20 GB (task #537). Not with --vet, whose
+    // fixes are read from the session's one checker below.
+    var cx = ctx
+    cx.per_module = vet_codes.is_empty()
+    let s = load(os, cx, dirs, true, cur)?
     var remaining: List[Diag] = []
     for d in s.diags {
       if is_error(d) {

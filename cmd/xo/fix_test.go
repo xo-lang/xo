@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -292,5 +293,57 @@ fn main(os: Os) {
 	errOut.Reset()
 	if code := run(t, []string{"run", mod}, &out, &errOut); code != 0 || out.String() != "1\n1 2 2 1 [0, 1, 0]\n" {
 		t.Errorf("run after fix: exit %d: %q %s\n%s", code, out.String(), errOut.String(), got)
+	}
+}
+
+// TestFixWorkspaceMemory (task #537): `xo fix ./...` at the root of a
+// workspace holds one member's checker at a time, as `xo check ./...`
+// does (decision 0513). With one checker for every member it held all
+// their trees at once: on a workspace of 673 modules it peaked at 17 to
+// 20 GB (1.3 GB a member at a time), and here, twelve members of 1.4 MB
+// each, it needed over 3,000 MB (4.1 GB resident) where a member at a
+// time passes under 700 MB. Every member's missing effect is still
+// fixed.
+func TestFixWorkspaceMemory(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("checks 17 MB of generated source")
+	}
+	const members = 12
+	files := map[string]string{}
+	var work strings.Builder
+	// a root module beside the members, as an SDK's tree has (the split
+	// of decision 0513 needs packages outside the members: its base)
+	work.WriteString("xo preview\nuse .\n")
+	files["w/xo.mod"] = "module example.com/w\n"
+	files["w/main.xo"] = "fn main(os: Os) {\n  os.stdio.println(\"root\")\n}\n"
+	for m := 0; m < members; m++ {
+		var b strings.Builder
+		// the fixable diagnostic: twice performs fx and does not say so
+		b.WriteString("pub fn twice[fx: Effects](f: fn() -> Int uses fx) -> Int {\n  f() + f()\n}\n\n")
+		for k := 0; b.Len() < 1400000; k++ {
+			fmt.Fprintf(&b, "fn f%d(a: Int) -> Int {\n  let b = a * %d + 1\n  if b > 3 {\n    return b - 1\n  }\n  b\n}\n\n", k, k%97+2)
+		}
+		b.WriteString("fn main(os: Os) {\n  os.stdio.println(\"${twice(fn() -> Int { f0(2) })}\")\n}\n")
+		files[fmt.Sprintf("w/m%d/xo.mod", m)] = fmt.Sprintf("module example.com/m%d\n", m)
+		files[fmt.Sprintf("w/m%d/main.xo", m)] = b.String()
+		fmt.Fprintf(&work, "use ./m%d\n", m)
+	}
+	files["w/xo.work"] = work.String()
+	root := filepath.Join(writeFiles(t, files), "w")
+	w := xoCmd(t, "fix", "./...")
+	cmd := command(t, w[0], w[1:]...)
+	cmd.Dir = root
+	cmd.Env = append(cmd.Environ(), "XO_MAX_MEM=1500M", "PWD="+root)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("xo fix ./... under XO_MAX_MEM=1500M: %v\n%.3000s", err, out.String())
+	}
+	for m := 0; m < members; m++ {
+		b, _ := os.ReadFile(filepath.Join(root, fmt.Sprintf("m%d", m), "main.xo"))
+		if !strings.Contains(string(b), "-> Int uses fx {\n  f() + f()") {
+			t.Fatalf("member m%d is not fixed:\n%.300s\n%.2000s", m, b, out.String())
+		}
 	}
 }
