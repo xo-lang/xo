@@ -605,7 +605,14 @@ fn (var g: G) fconst_label(bits: Int) -> Str {
   if let Some(l) = g.fclabels.get(bits) {
     return l
   }
-  let l = g.local("${g.lbl_prefix()}_fc${g.fconsts.len()}")
+  // isel runs before emit and x86_emit number the function (g.nfunc +=
+  // 1), so the plain prefix is the next number: lbl_prefix here named
+  // the constants with the previous function's number, which the
+  // canonical text (FP_TOKEN, placed with this function's) did not, and
+  // a windows/amd64 build's PDB GUID differed with the back-end cache on
+  // and off (task #462, TestBackendCacheEditIdentity)
+  let pre = if g.canon { FP_TOKEN } else { "${g.ns}f${g.nfunc + 1}" }
+  let l = g.local("${pre}_fc${g.fconsts.len()}")
   // two words: the assembler takes only .long in code (as jump tables)
   g.fconsts.push("\t.p2align 3\n${l}:\n\t.long ${bits & 0xffffffff}\n\t.long ${(bits >> 32) & 0xffffffff}\n")
   g.fclabels[bits] = l

@@ -40,3 +40,12 @@ facts directory of copies, the cache off) and requires one binary. The
 rule, sharpened: nothing in the output comes from a cache key, keyed or
 not; hash the content the key stands for.
 
+
+Observed again 2026-11-20 (task #462): the float constant labels of
+3a80fdd33 (isel.xo fconst_label) took `lbl_prefix()` during isel, before
+emit numbers the function, so the plain text named them `f23_fc0` while
+the canonical text's token was placed as `f24_fc0`. Only windows/amd64
+showed it, since its PDB GUID hashes each part's text. Fix: isel names
+a label with the number emit will give (`g.nfunc + 1`), or the token.
+Found by diffing the part texts the PDB seed hashes, cache on against
+off.
