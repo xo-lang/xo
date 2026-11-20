@@ -1213,7 +1213,9 @@ for step in "$@"; do
     steps="$steps $step" ;;
   selftest-fail|selftest-sleep|selftest-ok|selftest-tmp|selftest-json)
     if [ "${XO_GATE_SELFTEST:-0}" = 1 ]; then steps="$steps $step"; else echo "gate.sh: $step is a test step (XO_GATE_SELFTEST=1)"; failed=1; fi ;;
-  *) echo "gate.sh: unknown step $step"; failed=1 ;;
+  # an unknown name is the gate's failure by name (#533, 2026-11-20: stdmods
+  # was reported as "hostcheck failed", the last pre-check before the loop)
+  *) echo "gate.sh: unknown step $step"; failed=1; ff_by=${ff_by:-"unknown step $step"} ;;
   esac
 done
 # arm64's golden selection (lead, 2026-11-14, owner's test-time plan:
@@ -2157,7 +2159,8 @@ else
   echo "gate.sh: steps took $(($(date +%s) - tsteps)) s"
 fi
 if [ "$ff" = 1 ]; then
-  echo "FAIL-FAST: $ff_by failed, so the gate stopped there; stopped while running:${ff_stopped:- none}; not run:${ff_skipped:- none} (XO_GATE_FAILFAST=0 runs every step)"
+  case $ff_by in "unknown step "*) ff_what=$ff_by ;; *) ff_what="$ff_by failed" ;; esac
+  echo "FAIL-FAST: $ff_what, so the gate stopped there; stopped while running:${ff_stopped:- none}; not run:${ff_skipped:- none} (XO_GATE_FAILFAST=0 runs every step)"
 fi
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
 # pushq-ran (lead, 2026-11-06 bottleneck review: 6 pushes in 3 hours were
