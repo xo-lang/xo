@@ -1657,8 +1657,19 @@ prove_wasm() {
   # sets pushq.sh names
   local g f0
   g=$(echo "$ch" | sed -n 's|^internal/[a-z0-9]*/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)
+  # a change to the HTTP runtime adds three server goldens: 017a4113a
+  # (task #286) left a fiber switch reachable on wasm in h2_pump, and
+  # every wasip2 http golden stopped building with no golden touched
+  # (task #492)
+  if echo "$ch" | grep -q -E '^std/native/(http[a-z0-9_]*|llrt/http[a-z0-9_]*)\.xo$'; then
+    g="${g:+$g,}http_h2c,http_duplex,http_pipe"
+  fi
   f0=$failed; failed=0
-  XO_WASM_GOLDENS="${g:+$g,}conc_*,atomic_ops,map_*" full wasm ./internal/selfhost -run '^TestSelfhostWasm$'
+  # XO_GATE_WASM_ALL=1: every golden on both runners (a fix to a wasm
+  # regression on main proves itself on the whole suite)
+  local w1="${g:+$g,}conc_*,atomic_ops,map_*" w2="${g:+$g,}conc_*,atomic_ops,map_*,file_*,fs_*"
+  [ "${XO_GATE_WASM_ALL:-0}" = 1 ] && { w1=; w2=; }
+  XO_WASM_GOLDENS="$w1" full wasm ./internal/selfhost -run '^TestSelfhostWasm$'
   # the same goldens and the file ones as wasip2/wasm commands under
   # wasmtime (TestWasmCommandGoldens): the Node runner above runs the
   # preview 1 build, which hid a component-only fd_seek stub until the
@@ -1668,7 +1679,7 @@ prove_wasm() {
   local wp=$PATH
   [ -d /work/tools/bin ] && wp=/work/tools/bin:$PATH
   if PATH=$wp command -v wasmtime >/dev/null && PATH=$wp command -v wasm-tools >/dev/null; then
-    PATH=$wp XO_TEST_WASM_TOOLS=1 XO_WASM_GOLDENS="${g:+$g,}conc_*,atomic_ops,map_*,file_*,fs_*" full wasmcmd ./internal/selfhost -run '^TestWasmCommandGoldens$'
+    PATH=$wp XO_TEST_WASM_TOOLS=1 XO_WASM_GOLDENS="$w2" full wasmcmd ./internal/selfhost -run '^TestWasmCommandGoldens$'
   else
     echo "wasmcmd: skipped (no wasmtime or wasm-tools here; an offload host runs it)"
   fi

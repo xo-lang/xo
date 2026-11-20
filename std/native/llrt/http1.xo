@@ -3483,10 +3483,15 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
     // to SRC_YIELDS times, before the read tick (task #286: each such
     // message waited for the tick, 11 ms a round); with nothing written
     // the pump reads at once (a stream that only receives)
-    if x.src_wait && x.src_soon && x.src_yields < SRC_YIELDS && target.arch != TargetArch.Wasm32 {
-      x.src_yields += 1
-      pool.yield_now()
-      continue
+    // (the target test stands alone so wasm never lowers yield_now's
+    // fiber switch: a target test inside an && chain is not folded, task
+    // #492)
+    if target.arch != TargetArch.Wasm32 {
+      if x.src_wait && x.src_soon && x.src_yields < SRC_YIELDS {
+        x.src_yields += 1
+        pool.yield_now()
+        continue
+      }
     }
     // then read with a short deadline, and poll the source again (the
     // request deadline is put back)

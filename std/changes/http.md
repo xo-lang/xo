@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-20: fix: programs serving HTTP build for wasm again
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1's bisect of 58 failing wasm goldens on main (task #488) to 745cbde2b (task #286)
+- Go reference: not applicable
+- Change: h2_pump's yield before its read tick was guarded by a target test at the end of an && chain, which does not prune, so the wasm build reached the native fiber switch and `xo build --targets=wasip2/wasm` of any HTTP server failed ("does not support the call `rt.stack_switch`"); the target test now stands alone
+- Measured: not applicable
+- Test: TestWasmCommandGoldens and TestSelfhostWasm unfiltered (http_h2c, http_duplex, http_pipe and 55 more fail before); the gate's wasm step now runs those three for any HTTP runtime change
+
 ## 2026-11-20: fix: over HTTP/2 and for handle_stream routes the Router sees the escaped path too
 
 - Kind: fix, security
