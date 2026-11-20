@@ -1,0 +1,12 @@
+# fxamacker/cbor v2.9.0's test tables (the version go/go.mod requires) run through std/cbor
+# (stdproven gotests, decision 0720, task #403): PKG FILE VAR FIELDS KIND
+# diag: Diagnose with the default options (a row's own DiagOptions are not read)
+# decode: Unmarshal into an any, then the item's diagnostic notation
+github.com/fxamacker/cbor/v2 diagnose_test.go TestDiagnosticNotationExamples.testCases cbor diag
+github.com/fxamacker/cbor/v2 diagnose_test.go TestDiagnoseByteString.testCases cbor diag
+github.com/fxamacker/cbor/v2 diagnose_test.go TestDiagnoseTextString.testCases cbor diag
+github.com/fxamacker/cbor/v2 diagnose_test.go TestDiagnoseInvalidTextString.testCases cbor diag
+github.com/fxamacker/cbor/v2 diagnose_test.go TestDiagnoseFloatingPointNumber.testCases cbor diag
+github.com/fxamacker/cbor/v2 diagnose_test.go TestDiagnoseTag.testCases cbor diag
+github.com/fxamacker/cbor/v2 decode_test.go unmarshalTests data decode
+github.com/fxamacker/cbor/v2 decode_test.go invalidCBORUnmarshalTests data decode

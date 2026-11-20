@@ -276,3 +276,24 @@ test "typed readers: untagged and self-described values alike" {
   expect(to_int(Value.Uint(n: UInt64.from_bits(-1)), st).0) == false
   expect(to_str(from_int(1), st).0) == false
 }
+
+test "TestDiagnose: indefinite lengths keep their marks, bignum tags need bytes" {
+  let cases = [
+    ("5f42010243030405ff", "(_ h'0102', h'030405')"),
+    ("7f657374726561646d696e67ff", "(_ \"strea\", \"ming\")"),
+    ("5fff", "''_"),
+    ("7fff", "\"\"_"),
+    ("9fff", "[_ ]"),
+    ("83019f0203ff820405", "[1, [_ 2, 3], [4, 5]]"),
+    ("bf61610161629f0203ffff", "{_ \"a\": 1, \"b\": [_ 2, 3]}"),
+    ("c249010000000000000000", "18446744073709551616"),
+    ("3bffffffffffffffff", "-18446744073709551616"),
+    ("f97e00", "NaN"),
+    ("f8ff", "simple(255)"),
+  ]
+  for c in cases {
+    expect(diagnose(Bytes.from_hex(c.0) ?? b"")) == Ok(c.1)
+  }
+  expect(diagnose(Bytes.from_hex("c201") ?? b"")) == Err(CborErr.Type(msg: "tag number 2 must be followed by byte string, got positive integer"))
+  expect(diagnose(Bytes.from_hex("0000") ?? b"") is Err(_)) == true
+}

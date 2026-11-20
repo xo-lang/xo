@@ -226,6 +226,15 @@ fn well_formed(data: Bytes, max_depth: Int = 128) -> Bool
 /// is written as its definite value.
 fn (v: Value) diagnostic() -> Str
 
+/// fxamacker's Diagnose: the diagnostic notation of the one item in data,
+/// read from its bytes, so an indefinite length keeps its mark as RFC 8949
+/// Section 8.1 writes it: `[_ 1, 2]`, `{_ "a": 1}`, `(_ h'01', h'02')` for
+/// the chunks of a string, `''_` and `""_` for one with none. Otherwise as
+/// `diagnostic`. The errors are `decode`'s, and `Type` for tag 2 or 3 over
+/// anything but a byte string (`tag number 2 must be followed by byte
+/// string, got positive integer`).
+fn diagnose(data: Bytes) -> Str ! CborErr
+
 /// How `diagnostic_with` writes byte strings (fxamacker's
 /// ByteStringEncoding, RFC 8949 8 and 8610 G.2): `h'..'` base16, `b32'..'`
 /// base32, `h32'..'` base32hex, `b64'..'` base64url, all unpadded.

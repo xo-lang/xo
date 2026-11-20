@@ -10013,6 +10013,7 @@ struct DecodeOptions { max_depth: Int = 128, reject_dup_keys: Bool = false, max_
 fn decode_with(data: Bytes, opts: DecodeOptions) -> Value ! CborErr                 // fxamacker's DecOptions
 fn decode_prefix_with(data: Bytes, opts: DecodeOptions) -> (Value, Int) ! CborErr
 fn (v: Value) diagnostic() -> Str
+fn diagnose(data: Bytes) -> Str ! CborErr            // fxamacker's Diagnose: from the bytes, indefinite lengths keep `_` ([_ 1], (_ h'01'), ''_)
 enum DiagBytes { Base16, Base32, Base32Hex, Base64 }   // h'..', b32'..', h32'..', b64'..' (base64url), unpadded
 fn (v: Value) diagnostic_with(bytes: DiagBytes) -> Str
 struct Raw { bytes: Bytes }                         // RawMessage: a derive Cbor field kept as its encoding (preferred serialization); empty is null

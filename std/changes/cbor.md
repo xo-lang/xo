@@ -1,5 +1,14 @@
 # std/cbor changes
 
+## 2026-11-19: feature: diagnose, the notation of the bytes
+
+- Kind: feature
+- Commit: this push
+- Found by: stdproven gotests (decision 0720, task #403): fxamacker's TestDiagnosticNotationExamples, TestDiagnoseByteString and TestDiagnoseTextString write indefinite lengths with their marks (`[_ 1]`, `(_ h'01', h'02')`, `''_`), which `Value.diagnostic` cannot (the Value holds the definite item), and TestDiagnoseTag refuses tags 2 and 3 over a non byte string
+- Go reference: fxamacker/cbor v2.9.0 diagnose.go (Diagnose with the default DiagOptions)
+- Test: std/cbor_test.xo "TestDiagnose: indefinite lengths keep their marks, bignum tags need bytes"; std/evidence/cbor/gotests (289 cases over 8 fxamacker tables, 0 mismatches)
+- Timing: none (a walk of the bytes after decode)
+
 
 ## 2026-11-16: fix: a tagged NaN map key is not a duplicate
 

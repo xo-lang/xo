@@ -1122,6 +1122,118 @@ fn value_diagnostic(v: cbor.Value) -> Str {
   parts.join("")
 }
 
+/// fxamacker's Diagnose: the notation of the item at d.pos, read from its
+/// bytes, so indefinite lengths keep their `_` marks (`[_ 1]`, `(_ h'01',
+/// h'02')`, `''_` for no chunks). The data was decoded first, so it is well
+/// formed; a bignum tag over anything but a byte string is the error
+/// fxamacker's Diagnose gives.
+fn diag_raw(var d: Dec, var out: List[Str]) -> () ! cbor.CborErr {
+  let (major, ai, n) = read_head(d)?
+  if ai == 31 && (major == 2 || major == 3) {
+    if d.data[d.pos] == UInt8(255) {
+      d.pos += 1
+      out.push(if major == 2 { "''_" } else { "\"\"_" })
+      return
+    }
+    out.push("(_ ")
+    var first = true
+    while d.data[d.pos] != UInt8(255) {
+      if !first {
+        out.push(", ")
+      }
+      first = false
+      diag_raw(d, out)?
+    }
+    d.pos += 1
+    out.push(")")
+    return
+  }
+  if major == 0 {
+    out.push(u64_text(UInt64.from_bits(n)))
+    return
+  }
+  if major == 1 {
+    out.push("-" + big_decimal(be8(UInt64.from_bits(n)), true))
+    return
+  }
+  if major == 2 {
+    out.push(diag_bytes(d.data[d.pos..(d.pos + n)], cbor.DiagBytes.Base16))
+    d.pos += n
+    return
+  }
+  if major == 3 {
+    out.push(diag_text(read_text(d, ai, n)?))
+    return
+  }
+  if major == 4 || major == 5 {
+    out.push(if major == 4 { "[" } else { "{" })
+    if ai == 31 {
+      out.push("_ ")
+    }
+    var i = 0
+    while true {
+      if ai == 31 && d.data[d.pos] == UInt8(255) {
+        break
+      }
+      if ai != 31 && i >= n {
+        break
+      }
+      if i > 0 {
+        out.push(", ")
+      }
+      diag_raw(d, out)?
+      if major == 5 {
+        out.push(": ")
+        diag_raw(d, out)?
+      }
+      i += 1
+    }
+    if ai == 31 {
+      d.pos += 1
+    }
+    out.push(if major == 4 { "]" } else { "}" })
+    return
+  }
+  if major == 6 {
+    if n == 2 || n == 3 {
+      let cm = Int(d.data[d.pos]) >> 5
+      if cm != 2 {
+        return Err(cbor.CborErr.Type(msg: "tag number ${n} must be followed by byte string, got ${major_name(cm)}"))
+      }
+      let (_, bai, bn) = read_head(d)?
+      let b = if bai == 31 { read_chunks(d, 2)? } else {
+        let c = d.data[d.pos..(d.pos + bn)]
+        d.pos += bn
+        c
+      }
+      out.push(if n == 2 { big_decimal(b, false) } else { "-" + big_decimal(b, true) })
+      return
+    }
+    out.push(u64_text(UInt64.from_bits(n)) + "(")
+    diag_raw(d, out)?
+    out.push(")")
+    return
+  }
+  out.push(match ai {
+    20 => "false"
+    21 => "true"
+    22 => "null"
+    23 => "undefined"
+    25 => diag_float(float_of_half(n))
+    26 => diag_float(float_of_single(n))
+    27 => diag_float(Float.from_bits(n))
+    _ => "simple(${n})"
+  })
+}
+
+fn diagnose(data: Bytes) -> Str ! cbor.CborErr {
+  decode(data, 128, false)?
+  var d = Dec{data: data, max_depth: 128, dup: false}
+  var parts: List[Str] = []
+  diag_raw(d, parts)?
+  parts.join("")
+}
+
 // ---------------------------------------------------------------------------
 // The JSON bridge (RFC 8949 Section 6)
 
