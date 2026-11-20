@@ -112,12 +112,75 @@ func OptionalTag(m string) string { return "xo_no_" + m }
 func Optional(root string) map[string]bool { return stdList(root, "go_optional.txt") }
 
 // buildLine is the //go:build line of module m's generated files, or ""
-// when m is not optional.
-func buildLine(optional map[string]bool, m string) string {
+// when m is neither optional nor reaching std/http.
+func buildLine(optional, http map[string]bool, m string) string {
+	if (http[m] && !httpKept[m]) || strings.HasSuffix(m, httpSplit) {
+		// a program that does not reach std/http is built with xo_nohttp,
+		// and reaches no module that uses it (task #472)
+		return "//go:build !xo_nohttp\n\n"
+	}
 	if !optional[m] {
 		return ""
 	}
 	return "//go:build !" + OptionalTag(m) + "\n\n"
+}
+
+// httpKept is the modules reaching std/http whose types std/rt's hand
+// written runtime uses in every program (std/testing's fakes, in the
+// capability code): only their declarations that name a type of a module
+// left out under xo_nohttp go to the split files (httpSplit).
+var httpKept = map[string]bool{"testing": true}
+
+// httpSplit is the suffix of the group of an untagged module's
+// declarations that name a type of a module left out under xo_nohttp:
+// std_gen_M_nethttp.go and std_sigs_M_nethttp.go carry !xo_nohttp.
+const httpSplit = "_nethttp"
+
+// HTTPReaching is the std modules that reach std/http (it among them)
+// through the `use std/X` lines of std/M.xo and std/native/M.xo: their
+// std/rt Go is left out of a program built with xo_nohttp (task #472).
+func HTTPReaching(root string) map[string]bool {
+	uses := map[string][]string{}
+	read := func(f string) []string {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return nil
+		}
+		var out []string
+		for _, l := range strings.Split(string(b), "\n") {
+			if rest, ok := strings.CutPrefix(l, "use std/"); ok {
+				name, _, _ := strings.Cut(strings.TrimSpace(rest), "/")
+				name, _, _ = strings.Cut(name, " ")
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	files, _ := filepath.Glob(filepath.Join(root, "std", "*.xo"))
+	for _, f := range files {
+		m := strings.TrimSuffix(filepath.Base(f), ".xo")
+		if strings.HasSuffix(m, "_test") {
+			continue
+		}
+		uses[m] = append(read(f), read(filepath.Join(root, "std", "native", m+".xo"))...)
+	}
+	out := map[string]bool{"http": true}
+	for changed := true; changed; {
+		changed = false
+		for m, us := range uses {
+			if out[m] {
+				continue
+			}
+			for _, u := range us {
+				if out[u] {
+					out[m] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	return out
 }
 
 // stdList reads std/name: one `std/M` a line, `#` comments, as M.
@@ -232,6 +295,8 @@ func Recorded(root string) (map[string]string, error) {
 			return nil, err
 		}
 		m := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "std_gen_"), ".go")
+		// a split file (httpSplit) records its module's hash
+		m = strings.TrimSuffix(m, httpSplit)
 		out[m] = ""
 		for _, l := range strings.SplitN(string(data), "\n", 5) {
 			if strings.HasPrefix(l, hashPrefix) {
@@ -284,6 +349,7 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 		return nil, err
 	}
 	optional := Optional(root)
+	httpMods := HTTPReaching(root)
 	dir, err := os.MkdirTemp("", "xo-stdgen-")
 	if err != nil {
 		return nil, err
@@ -350,7 +416,30 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	chunks, err := split(whole, func(d ast.Decl) string {
+	// a declaration of a module kept under xo_nohttp that names a type of
+	// one left out goes to the module's split group (task #472)
+	names := func(n ast.Node, g string) string {
+		if g == skipDecl || (httpMods[g] && !httpKept[g]) {
+			return g
+		}
+		hit := false
+		ast.Inspect(n, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				if p, _, ok := strings.Cut(id.Name, "_"); ok {
+					q := strings.ToLower(p)
+					if httpMods[q] && !httpKept[q] {
+						hit = true
+					}
+				}
+			}
+			return !hit
+		})
+		if hit {
+			return g + httpSplit
+		}
+		return g
+	}
+	declGroup := func(d ast.Decl) string {
 		switch d := d.(type) {
 		case *ast.GenDecl:
 			if len(d.Specs) > 0 {
@@ -390,13 +479,14 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 			return group(d.Name.Name)
 		}
 		return "prelude"
-	})
+	}
+	chunks, err := split(whole, func(d ast.Decl) string { return names(d, declGroup(d)) })
 	if err != nil {
 		return nil, err
 	}
 	for g, body := range chunks {
 		var b strings.Builder
-		b.WriteString(lines[0] + "\n" + lines[1] + "\n" + hashPrefix + hashes[g] + "\n\n" + buildLine(optional, g) + "package rt\n\n")
+		b.WriteString(lines[0] + "\n" + lines[1] + "\n" + hashPrefix + hashes[strings.TrimSuffix(g, httpSplit)] + "\n\n" + buildLine(optional, httpMods, g) + "package rt\n\n")
 		if strings.Contains(body, "strings.") {
 			b.WriteString("import \"strings\"\n\n")
 		}
@@ -424,6 +514,9 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 				return nil, fmt.Errorf("std sigs: %q", t)
 			}
 			g := group(strings.TrimSpace(t[i+2:]))
+			if e, err := parser.ParseExpr(strings.TrimSpace(t[2:i])); err == nil {
+				g = names(e, g)
+			}
 			byGroup[g] = append(byGroup[g], t)
 		case !inVar && !strings.HasPrefix(t, "package ") && (strings.HasPrefix(t, "//") || t == ""):
 			if !strings.HasPrefix(t, "// Code generated") && !strings.HasPrefix(t, "// Regenerate") {
@@ -433,7 +526,7 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	}
 	for g, specs := range byGroup {
 		var b strings.Builder
-		b.WriteString(lines[0] + "\n" + lines[1] + "\n\n" + buildLine(optional, g) + "package rt\n\n")
+		b.WriteString(lines[0] + "\n" + lines[1] + "\n\n" + buildLine(optional, httpMods, g) + "package rt\n\n")
 		for _, h := range head {
 			if h != "" {
 				b.WriteString(h + "\n")

@@ -61,7 +61,6 @@ var fxPayloads = func() map[string]reflect.Type {
 	for _, v := range []any{
 		FsErr_NotFound{}, FsErr_Exists{}, FsErr_NotEmpty{}, FsErr_NotDir{}, FsErr_IsDir{}, FsErr_Denied{}, FsErr_Io{},
 		NetErr_InvalidAddr{}, NetErr_Io{}, IoErr_Io{}, EnvErr_Missing{}, ProcErr_NotFound{}, ProcErr_Io{},
-		Http_ClientErr_InvalidUrl{}, Http_ClientErr_Connect{}, Http_ClientErr_Protocol{}, Http_HttpErr_Io{},
 	} {
 		t := reflect.TypeOf(v)
 		m[t.Name()] = t

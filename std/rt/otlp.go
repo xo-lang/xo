@@ -1,3 +1,5 @@
+//go:build !xo_nohttp
+
 package rt
 
 import "strconv"

@@ -1,3 +1,5 @@
+//go:build !xo_nohttp
+
 package rt
 
 // http.gzip_responses on the Go backend (std.md 4.7, decision 0305):

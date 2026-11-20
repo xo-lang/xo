@@ -21,7 +21,13 @@ with the tag.
 
 ## Fix
 
-Keep every net/http use in http_net.go and give each function other
-files call a stub in http_nonet.go (here `openNet`). Gate a std/rt change
+Keep every net/http and Http_ use in a `//go:build !xo_nohttp` file
+(since task #472, 2026-11-20: http*.go, std_gen_http.go and the `*_http.go`
+halves of testing, replay, attenuate, arena, headers, stubs, fxcodec) and
+give each name the untagged files use a stand in in a `xo_nohttp` file
+(testing_nohttp.go's empty fakeReq and memRouter, replay_nohttp.go's
+rpServer and fireRequest). An untagged struct field of an http type goes
+through an alias that each side defines. TestStdRTNoHTTPDeps fails when
+the xo_nohttp build imports any net/http package. Gate a std/rt change
 with `go build -tags xo_nohttp ./std/rt` and
 `go test -short ./internal/devgoldens ./cmd/xo -run 'Go|Replay|Holes'`.

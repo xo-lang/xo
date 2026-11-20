@@ -78,3 +78,28 @@ func TestStdRTBuildTags(t *testing.T) {
 		}
 	}
 }
+
+// TestStdRTNoHTTPDeps checks that std/rt built with xo_nohttp (a Go
+// backend program that does not reach std/http, compiler/gen/gen.xo)
+// imports no net/http package, whose init ran at every such program's
+// start (about 0.08 ms on linux/arm64 host 2, task #429). Before task
+// #472 the untagged files (testing.go's fake network, replay.go's
+// servers, attenuate.go's dispatch, the hand written std/http methods)
+// still imported it.
+func TestStdRTNoHTTPDeps(t *testing.T) {
+	cmd := exec.Command("go", "list", "-deps", "-tags", "xo_nohttp", "./std/rt")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list -deps -tags xo_nohttp ./std/rt: %v", err)
+	}
+	var bad []string
+	for _, p := range strings.Fields(string(out)) {
+		if p == "net/http" || strings.HasPrefix(p, "net/http/") {
+			bad = append(bad, p)
+		}
+	}
+	if len(bad) > 0 {
+		t.Errorf("std/rt under xo_nohttp imports %s: a file that uses Http_ types or net/http needs //go:build !xo_nohttp (and a stub in a xo_nohttp file for what the rest calls)", strings.Join(bad, ", "))
+	}
+}

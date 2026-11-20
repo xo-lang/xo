@@ -1,3 +1,5 @@
+//go:build !xo_nohttp
+
 package rt
 
 // Cookies on the Go backend (std.md 4.3, decision 0288): net/http's own

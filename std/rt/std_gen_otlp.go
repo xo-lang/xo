@@ -2,6 +2,8 @@
 // Regenerate with: go run ./scripts/stdgen
 // Declarations: sha256:c6739d5845373565326988e59c075309
 
+//go:build !xo_nohttp
+
 package rt
 
 import "strings"

@@ -1,3 +1,5 @@
+//go:build !xo_nohttp
+
 package rt
 
 // Grpc_pure1 is std/grpc's pure1 (decision 0703): the Go backend has no

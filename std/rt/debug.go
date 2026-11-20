@@ -1,3 +1,5 @@
+//go:build !xo_nohttp
+
 package rt
 
 // std/debug on the Go backend (decision 0325): the same routes over

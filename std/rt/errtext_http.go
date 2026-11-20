@@ -1,3 +1,5 @@
+//go:build !xo_nohttp
+
 package rt
 
 // Plain error messages (decision 0358): the same texts as the native
@@ -42,4 +44,3 @@ func (v Http_CookieErr) M_display(*Task) string { return v.F_msg }
 func (v Http_TlsErr) M_display(*Task) string { return v.F_msg }
 
 // M_display is `e.display()`.
-func (v Tls_TlsErr) M_display(*Task) string { return v.F_msg }

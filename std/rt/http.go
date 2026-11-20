@@ -1,3 +1,5 @@
+//go:build !xo_nohttp
+
 package rt
 
 import (
@@ -748,38 +750,6 @@ func (r Http_Request) M_query(_ *Task, name string) Option[string] {
 // (std.md 4.3). A name with a byte outside a token matches only exactly.
 func (r Http_Request) M_header(_ *Task, name string) Option[string] {
 	return headerGet(r.F_headers, name)
-}
-
-func headerGet(h Map[string, string], name string) Option[string] {
-	if v := Map_get(nil, h, textproto.CanonicalMIMEHeaderKey(name)); v.Some {
-		return v
-	}
-	if !isTokenName(name) {
-		return Option[string]{}
-	}
-	for k, v := range Map_All(h) {
-		if strings.EqualFold(k, name) {
-			return Some(v)
-		}
-	}
-	return Option[string]{}
-}
-
-// isTokenName is httpguts.ValidHeaderFieldName: one or more token bytes.
-func isTokenName(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
-			c == '!' || c >= '#' && c <= '\'' || c == '*' || c == '+' || c == '-' ||
-			c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~'
-		if !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // M_without_header is `req.without_header(name)` (Go's Header.Del).
@@ -2128,15 +2098,6 @@ func urlStringPath(u Http_Url, path string) string {
 		b.WriteString(url.QueryEscape(k) + "=" + url.QueryEscape(v))
 	}
 	return b.String()
-}
-
-// sortStrings sorts in place (insertion sort; small inputs).
-func sortStrings(xs []string) {
-	for i := 1; i < len(xs); i++ {
-		for j := i; j > 0 && xs[j] < xs[j-1]; j-- {
-			xs[j], xs[j-1] = xs[j-1], xs[j]
-		}
-	}
 }
 
 // queryEq compares two query maps without Map's XoEq, which the Go

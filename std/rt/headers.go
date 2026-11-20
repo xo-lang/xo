@@ -71,49 +71,36 @@ func withValues(tk *Task, h Map[string, string], fs []string, k string, vs []str
 	return h, out
 }
 
-// M_header_values is `r.header_values(name)`.
-func (r Http_Request) M_header_values(_ *Task, name string) List[string] {
-	return ListOf(valuesOf(r.F_headers, r.XFields, name)...)
-}
-
-// M_add_header is `r.add_header(name, value)`.
-func (r Http_Request) M_add_header(tk *Task, name, value string) Http_Request {
-	k := textproto.CanonicalMIMEHeaderKey(name)
-	r.F_headers, r.XFields = withValues(tk, r.F_headers, r.XFields, k, append(valuesOf(r.F_headers, r.XFields, k), value))
-	return r
-}
-
-// M_header_values is `r.header_values(name)`.
-func (r Http_Response) M_header_values(_ *Task, name string) List[string] {
-	return ListOf(valuesOf(r.F_headers, r.XFields, name)...)
-}
-
-// M_add_header is `r.add_header(name, value)`.
-func (r Http_Response) M_add_header(tk *Task, name, value string) Http_Response {
-	k := textproto.CanonicalMIMEHeaderKey(name)
-	r.F_headers, r.XFields = withValues(tk, r.F_headers, r.XFields, k, append(valuesOf(r.F_headers, r.XFields, k), value))
-	return r
-}
-
-// M_with_cookie is `r.with_cookie(c)`: Go's SetCookie.
-func (r Http_Response) M_with_cookie(tk *Task, c Http_Cookie) Http_Response {
-	if v := goCookie(c).String(); v != "" {
-		return r.M_add_header(tk, "Set-Cookie", v)
+// headerGet is a header map's value for name, matched as Go's
+// CanonicalMIMEHeaderKey, then case-insensitively for a token name.
+func headerGet(h Map[string, string], name string) Option[string] {
+	if v := Map_get(nil, h, textproto.CanonicalMIMEHeaderKey(name)); v.Some {
+		return v
 	}
-	return r
-}
-
-// M_cookies is `r.cookies()`: Go's readSetCookies.
-func (r Http_Response) M_cookies(*Task) List[Http_Cookie] {
-	vs := valuesOf(r.F_headers, r.XFields, "Set-Cookie")
-	if len(vs) > 3000 {
-		return ListOf[Http_Cookie]()
+	if !isTokenName(name) {
+		return Option[string]{}
 	}
-	var out []Http_Cookie
-	for _, v := range vs {
-		if g, err := httpParseSetCookie(v); err == nil {
-			out = append(out, xoCookie(g))
+	for k, v := range Map_All(h) {
+		if strings.EqualFold(k, name) {
+			return Some(v)
 		}
 	}
-	return ListOf(out...)
+	return Option[string]{}
+}
+
+// isTokenName is httpguts.ValidHeaderFieldName: one or more token bytes.
+func isTokenName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			c == '!' || c >= '#' && c <= '\'' || c == '*' || c == '+' || c == '-' ||
+			c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~'
+		if !ok {
+			return false
+		}
+	}
+	return true
 }

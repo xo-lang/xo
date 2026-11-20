@@ -1,3 +1,5 @@
+//go:build !xo_nohttp
+
 package rt
 
 // std/websocket on the Go backend (decision 0313): gorilla/websocket's

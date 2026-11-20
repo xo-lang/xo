@@ -1290,3 +1290,6 @@ func echKeysOf(keys List[Tls_EchKey]) []tls.EncryptedClientHelloKey {
 	}
 	return out
 }
+
+// (moved from errtext_http.go: std/tls is in programs without std/http)
+func (v Tls_TlsErr) M_display(*Task) string { return v.F_msg }
