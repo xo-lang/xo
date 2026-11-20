@@ -54,8 +54,11 @@ HOURLY_BUILD_MAX_MIN (60, xobuild plus memory guard and codegen),
 HOURLY_DOCKER_MAX_MIN (20), HOURLY_RSS_MAX_MIN (10), HOURLY_VET_MAX_MIN
 (15), HOURLY_AMD64_MAX_MIN (30), HOURLY_GATETIME_MAX_MIN (15); the -short
 step keeps HOURLY_SHORT_MAX_MIN (120) through offload-gate.sh
-(hourly_step_test.sh). A stopped Docker step can leave its container
-running until `docker-up.sh stop`. Last verified: 2026-11-20.
+(hourly_step_test.sh). A Docker step runs with XO_DOCKER_NAME
+(hourly-smoke-PID-T0, hourly-rss-PID-T0), which docker-linux.sh gives its
+container; a stop removes that one container by name (`docker rm -f`,
+never a pattern; #514), and the timeout line ends `container NAME
+removed`. Last verified: 2026-11-20.
 
 When no host answers, tier.sh runs every step on the Mac as
 before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`

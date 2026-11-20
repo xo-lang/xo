@@ -68,7 +68,11 @@ fi
 # on this Mac, in heavyd's queue (heavy.sh --status); with no daemon
 # (exit 75), or XO_DOCKER_NO_LANE=1, it runs at once as before
 hd=${XO_LEAD_DIR:-$HOME/xo-lead}/agents/heavyd
-run=(docker run --rm --platform "linux/$arch" "$user" -v "$repo:/xo$ro" -v "$work:/work" -w /work \
+# XO_DOCKER_NAME names the container, so a caller that stops this run
+# (hourly.sh's step_limit, task #514) removes that container and no other
+name=()
+[ -n "${XO_DOCKER_NAME:-}" ] && name=(--name "$XO_DOCKER_NAME")
+run=(docker run --rm ${name[@]+"${name[@]}"} --platform "linux/$arch" "$user" -v "$repo:/xo$ro" -v "$work:/work" -w /work \
   -e HOME=/work/home "$image" sh -c "mkdir -p /work/home && $*")
 if [ -x "$hd" ] && [ -z "${HEAVY_LANE:-}" ] && [ -z "${XO_DOCKER_NO_LANE:-}" ]; then
   rc=0; "$hd" lease "-name=docker $arch" docker -- "${run[@]}" || rc=$?
