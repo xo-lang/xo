@@ -55,6 +55,7 @@ const R_PREFIX = 184
 const C_PD = 0
 const C_FD = 8
 const C_WHEN = 16
+const RELAXED = 0
 const C_BUF = 24
 const C_N = 32
 const C_CAP = 40
@@ -76,6 +77,14 @@ fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
 fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
 
+/// A connection's deadline word (C_WHEN), read and written as a relaxed
+/// atomic: a duplex body's feeder on another thread puts it in the past to
+/// end the pump's read (h2_wake_rec, task #293), so it is shared (TSan
+/// found the plain store racing fill's load: task #456). The wake itself is
+/// ordered by pd_kick, under the descriptor's lock.
+fn when_ld(c: Int) -> Int { rt.slot_load(c, C_WHEN / 8, RELAXED) }
+fn when_st(c: Int, v: Int) { rt.slot_store(c, C_WHEN / 8, v, RELAXED) }
+
 /// The record of r.
 fn rec(r: rthttp.CResp) -> Int { rt.obj_addr(r) }
 
@@ -88,7 +97,7 @@ pub fn rec_addr(r: rthttp.CResp) -> Int { rec(r) }
 pub fn h2_wake_rec(rc: Int) {
   let x = ld(rc, R_H2)
   let c = if x != 0 && ld(x, X_PC) != 0 { ld(x, X_PC) + P_C } else { rc + R_C }
-  st(c, C_WHEN, 1)
+  when_st(c, 1)
   let tls = ld(c, C_TLS)
   if tls != 0 {
     tlsio.set_when(tls, 1)
@@ -197,7 +206,7 @@ fn fill_plain(c: Int, fd: Int, p: Int, n: Int, cap: Int) -> Int {
     if !would_block(r) {
       return CC_ERR
     }
-    let w = poll.pd_wait(ld(c, C_PD), false, ld(c, C_WHEN))
+    let w = poll.pd_wait(ld(c, C_PD), false, when_ld(c))
     if w != poll.READY {
       return wait_res(w)
     }
@@ -242,7 +251,7 @@ fn recv_at(c: Int, p: Int, room: Int) -> Int {
     if !would_block(r) {
       break
     }
-    let w = poll.pd_wait(pd, false, ld(c, C_WHEN))
+    let w = poll.pd_wait(pd, false, when_ld(c))
     if w != poll.READY {
       res = -wait_res(w)
       break
@@ -302,7 +311,7 @@ fn fill_wasm(c: Int) -> Int {
       st(c, C_CAP, cap)
     }
   }
-  let k = netwasi.hc_recv(ld(c, C_PD), ld(c, C_BUF) + n, cap - n, ld(c, C_WHEN))
+  let k = netwasi.hc_recv(ld(c, C_PD), ld(c, C_BUF) + n, cap - n, when_ld(c))
   if k > 0 {
     st(c, C_N, n + k)
     return CC_OK
@@ -317,7 +326,7 @@ fn fill_wasm(c: Int) -> Int {
 /// Writes the n bytes at p on connection c: CC_OK or the failure.
 pub fn send(c: Int, p: Int, n: Int) -> Int {
   if target.arch == TargetArch.Wasm32 && ld(c, C_TLS) == 0 {
-    let w = netwasi.hc_send(ld(c, C_PD), p, n, ld(c, C_WHEN))
+    let w = netwasi.hc_send(ld(c, C_PD), p, n, when_ld(c))
     return if w == 0 { CC_OK } else if w == -2 { CC_TIMEOUT } else { CC_ERR }
   }
   let tls = ld(c, C_TLS)
@@ -351,7 +360,7 @@ fn send_plain(c: Int, fd: Int, p: Int, n: Int) -> Int {
     if !would_block(w) {
       return CC_ERR
     }
-    let r = poll.pd_wait(ld(c, C_PD), true, ld(c, C_WHEN))
+    let r = poll.pd_wait(ld(c, C_PD), true, when_ld(c))
     if r != poll.READY {
       return wait_res(r)
     }
@@ -621,7 +630,7 @@ pub fn read_direct(r: rthttp.CResp, p: Int, n: Int) -> Int {
     return 0
   }
   if target.arch == TargetArch.Wasm32 && ld(c, C_TLS) == 0 {
-    let k = netwasi.hc_recv(ld(c, C_PD), p, n, ld(c, C_WHEN))
+    let k = netwasi.hc_recv(ld(c, C_PD), p, n, when_ld(c))
     if k == 0 {
       rt.mem_store(c, C_EOF, 1, 4)
     }
@@ -678,7 +687,7 @@ fn read_plain(c: Int, fd: Int, p: Int, n: Int) -> Int {
     if !would_block(k) {
       return 0 - CC_ERR
     }
-    let w = poll.pd_wait(ld(c, C_PD), false, ld(c, C_WHEN))
+    let w = poll.pd_wait(ld(c, C_PD), false, when_ld(c))
     if w != poll.READY {
       return 0 - wait_res(w)
     }
@@ -1230,7 +1239,7 @@ fn h1_take(a: Int, roots: Int, kp: Int, kn: Int, dl: Int, tr: List[fn(Int, Str) 
     trace_reused(tr, pc)
     rt.mem_copy(a + R_C, pc + P_C, 72)
     st(a, R_CN, ld(pc, P_CN))
-    st(a + R_C, C_WHEN, dl)
+    when_st(a + R_C, dl)
     let t = ld(a + R_C, C_TLS)
     if t != 0 {
       tlsio.set_when(t, dl)
@@ -1441,7 +1450,7 @@ pub fn exchange_start(r: Int, pc: Int, pooled: Int, body: Int, bn: Int, when: In
   st(x, X_BODY, b)
   st(x, X_BN, bn)
   st(r, R_H2, x)
-  st(pc + P_C, C_WHEN, when)
+  when_st(pc + P_C, when)
   let tls = ld(pc + P_C, C_TLS)
   if tls != 0 {
     tlsio.set_when(tls, when)
@@ -1841,7 +1850,7 @@ fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: In
   trace(tr, TR_CONNECT_DONE, "tcp\u{1}" + addr)
   let c = r + R_C
   st(c, C_PD, cna)
-  st(c, C_WHEN, dl)
+  when_st(c, dl)
   st(r, R_CN, cna)
   if https {
     // tlsio reads and writes the Conn itself on wasm (its pd)
@@ -1934,7 +1943,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
   let c = r + R_C
   st(c, C_PD, pd)
   rt.mem_store(c, C_FD, rt.mem_load(pd, 8, 4), 4)
-  st(c, C_WHEN, dl)
+  when_st(c, dl)
   if !target_addr.is_empty() {
     // through a proxy (decision 0617 B): a CONNECT tunnel to the target,
     // then TLS to it over the tunnel
@@ -2015,10 +2024,10 @@ pub fn set_deadline(r: rthttp.CResp, timeout: Int) {
   let when = if timeout > 0 { cl_deadline(timeout) } else { 0 }
   let x = ld(rec(r), R_H2)
   if x != 0 && ld(x, X_PC) != 0 {
-    st(ld(x, X_PC) + P_C, C_WHEN, when)
+    when_st(ld(x, X_PC) + P_C, when)
     return
   }
-  st(rec(r) + R_C, C_WHEN, when)
+  when_st(rec(r) + R_C, when)
 }
 
 /// r's connection's deadline (0: none), and puts it back (set_deadline's
@@ -2026,15 +2035,15 @@ pub fn set_deadline(r: rthttp.CResp, timeout: Int) {
 pub fn get_deadline(r: rthttp.CResp) -> Int {
   let x = ld(rec(r), R_H2)
   if x != 0 && ld(x, X_PC) != 0 {
-    return ld(ld(x, X_PC) + P_C, C_WHEN)
+    return when_ld(ld(x, X_PC) + P_C)
   }
-  ld(rec(r) + R_C, C_WHEN)
+  when_ld(rec(r) + R_C)
 }
 
 pub fn put_deadline(r: rthttp.CResp, when: Int) {
   let x = ld(rec(r), R_H2)
   let c = if x != 0 && ld(x, X_PC) != 0 { ld(x, X_PC) + P_C } else { rec(r) + R_C }
-  st(c, C_WHEN, when)
+  when_st(c, when)
   // a TLS connection's reads wait on tlsio's own deadline: without it the
   // h2 pump's short read tick (a duplex body's next piece, the keepalive
   // PING) waited for the request's deadline over TLS (b24, 2026-11-04)

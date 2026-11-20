@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-20: fix: a duplex HTTP/2 body's wake no longer races the pump's read deadline
+
+- Kind: fix
+- Commit: this push
+- Found by: stdproven race (internal/llvm TestGoldenTasks/http_duplex under ThreadSanitizer, 2 of 20 on linux/arm64 host 2; task #456), bisected to 48f4957fa (task #293)
+- Go reference: not applicable (Xo's own wake of h2_pump's read)
+- Change: the feeder of a duplex body, another task on another thread, ends the pump's read by putting the connection's deadline in the past; that word was a plain store racing the read loop's plain load. Every access to the deadline word is now a relaxed atomic (the wake stays ordered by pd_kick under the descriptor's lock)
+- Measured: not applicable
+- Test: TestGoldenTasks/http_duplex under TSan, -count=40 on host 2 (fails before: a data race in poll_source's feeder)
+
 ## 2026-11-19: fix: file_server answers 403 for a directory it may not read
 
 - Kind: fix
