@@ -1,9 +1,11 @@
 # 0728: a multiplexing native HTTP/2 client
 
-Status: Proposed (xo-4c, 2026-11-20, task #494; the owner decides, xw
-ask filed by the lead). Would supersede the "A multiplexing native
-client ... left for later" alternative and the first "Remaining
-differences" item of decision 0121. No code until the owner answers.
+Status: Proposed (xo-4c, 2026-11-20, task #494). The owner approved
+the direction on 2026-11-20 (xw ask #209, decision #212): the
+implementation lands after the 0.55.0 release, and this record becomes
+Accepted with the push that implements it. Would supersede the "A
+multiplexing native client ... left for later" alternative and the
+first "Remaining differences" item of decision 0121.
 
 ## Context
 
