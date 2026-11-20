@@ -32,6 +32,6 @@ inner:
         - ""
 orders v1 8080 2 3 3 true
 yaml: unmarshal errors:
-  line 1: cannot unmarshal !!str `abc` into int
-  line 2: cannot unmarshal !!str `x` into float64
+  line 1: cannot unmarshal !!str `abc` into Int
+  line 2: cannot unmarshal !!str `x` into Float
 --- stderr

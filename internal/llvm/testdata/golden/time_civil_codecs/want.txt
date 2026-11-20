@@ -2,18 +2,18 @@ exit 0
 --- stdout
 "at: 0001-01-01T00:00:00Z\n": unix -62135596800 ns 0 off 0 out "at: 0001-01-01T00:00:00Z\n"
   Time err yaml: unmarshal errors:
-  line 1: cannot unmarshal !!timestamp `0001-01...` into time.Time
+  line 1: cannot unmarshal !!timestamp `0001-01...` into Time
 "at: 9999-12-31T23:59:59.999999999Z\n": unix 253402300799 ns 999999999 off 0 out "at: 9999-12-31T23:59:59.999999999Z\n"
   Time err yaml: unmarshal errors:
-  line 1: cannot unmarshal !!timestamp `9999-12...` into time.Time
+  line 1: cannot unmarshal !!timestamp `9999-12...` into Time
 "at: 1600-02-29T12:00:00+05:30\n": unix -11670975000 ns 0 off 19800 out "at: 1600-02-29T12:00:00+05:30\n"
   Time err yaml: unmarshal errors:
-  line 1: cannot unmarshal !!timestamp `1600-02...` into time.Time
+  line 1: cannot unmarshal !!timestamp `1600-02...` into Time
 "at: \"0001-01-01T00:00:00Z\"\n": unix -62135596800 ns 0 off 0 out "at: 0001-01-01T00:00:00Z\n"
   Time err yaml: parsing time "0001-01-01T00:00:00Z" as "2006-01-02T15:04:05Z07:00": cannot parse
 "at: !!timestamp 9999-12-31\n": unix 253402214400 ns 0 off 0 out "at: 9999-12-31T00:00:00Z\n"
   Time err yaml: unmarshal errors:
-  line 1: cannot unmarshal !!timestamp `9999-12-31` into time.Time
+  line 1: cannot unmarshal !!timestamp `9999-12-31` into Time
 "at: 2024-06-01 12:00:00\n": unix 1717243200 ns 0 off 0 out "at: 2024-06-01T12:00:00Z\n"
   Time 2024-06-01T12:00:00Z
 json 1: unix -62135596800 back {"id":1,"at":"0001-01-01T00:00:00Z"}
