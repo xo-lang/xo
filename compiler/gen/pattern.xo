@@ -421,6 +421,10 @@ fn (var g: Gen) match_expr(e: Expr, d: Dest) {
     g.line("panic(${g.rt()}Unreachable(${g.loc(span).quote()}))")
     return
   }
+  if let Some(cases) = g.switch_cases(arms, st) {
+    g.switch_match(span, subj, arms, cases, d)
+    return
+  }
   let label = g.tmp("M")
   // the arms are generated first: the label is declared only if an arm
   // breaks to it, and an arm that ends in return or panic gets no break
@@ -476,6 +480,130 @@ fn (var g: Gen) match_expr(e: Expr, d: Dest) {
   g.line("switch {")
   g.line("default:")
   g.write(body)
+  g.line("}")
+}
+
+/// One arm of a match lowered to a Go switch (switch_cases): its case
+/// values, or the default arm, or an arm left out because every value
+/// it lists an earlier arm took.
+struct SwitchArm {
+  vals: List[Str] = []
+  wild: Bool = false
+  dead: Bool = false
+}
+
+/// The arms of a match on a Str or Int subject as the cases of a Go
+/// switch, when every arm is literals (an or-pattern of them too) or a
+/// wildcard, none has a guard, and there are at least two values: a
+/// string switch is a length dispatch in Go, where the chain of ==
+/// compared each value in turn (task #429, std/go's gobridge twin:
+/// 4.3 ms against 5.5 to 7.2 ms for 10M three-arm matches). A value an
+/// earlier arm lists is dropped (Go rejects a duplicate case; the first
+/// arm wins, as in the chain), and the arms after a wildcard are dead.
+/// None keeps the chain.
+fn (var g: Gen) switch_cases(arms: List[parser.MatchArm], st: Int) -> List[SwitchArm]? {
+  let gt = g.go_type(st)
+  let is_str = gt == "string"
+  if !is_str && gt != "int64" {
+    return None
+  }
+  var out: List[SwitchArm] = []
+  var seen: Set[Str] = #{}
+  var n = 0
+  var after_wild = false
+  for arm in arms {
+    if arm.guard != None {
+      return None
+    }
+    if after_wild {
+      out.push(SwitchArm{dead: true})
+      continue
+    }
+    let alts = match arm.pattern {
+      WildcardPat(..) => {
+        out.push(SwitchArm{wild: true})
+        after_wild = true
+        continue
+      }
+      OrPat(alts: alts, ..) => alts
+      LitPat(..) => [arm.pattern]
+      _ => return None
+    }
+    var vals: List[Str] = []
+    for a in alts {
+      let (key, code) = match g.switch_value(a, st, is_str) {
+        Some(kc) => kc
+        None => return None
+      }
+      if seen.contains(key) {
+        continue
+      }
+      seen.add(key)
+      vals.push(code)
+      n += 1
+    }
+    out.push(if vals.is_empty() { SwitchArm{dead: true} } else { SwitchArm{vals: vals} })
+  }
+  if n < 2 { None } else { Some(out) }
+}
+
+/// A literal pattern's value as a Go switch case and the key that finds
+/// a duplicate: a Str literal (quoted from its bytes, so one value has
+/// one spelling) or a decimal Int literal (by its value); None for any
+/// other pattern, which keeps the chain.
+fn (var g: Gen) switch_value(p: Pattern, st: Int, is_str: Bool) -> (Str, Str)? {
+  let v = match p {
+    LitPat(value: value, ..) => value
+    _ => return None
+  }
+  if is_str {
+    if let StringLit(_) = v {
+      let code = g.lit_pat_value(v, st)
+      return Some((code, code))
+    }
+    return None
+  }
+  let (neg, lit) = match v {
+    IntLit(value: value, ..) => (false, check.text(value))
+    UnaryExpr(op: op, x: IntLit(value: value, ..), ..) if op == Kind.Minus => (true, check.text(value))
+    _ => return None
+  }
+  for c in lit.bytes() {
+    if c < '0' || c > '9' {
+      return None
+    }
+  }
+  let n = Int.parse(if neg { "-" + lit } else { lit }) ?? return None
+  Some(("${n}", g.lit_pat_value(v, st)))
+}
+
+/// A match lowered to a Go switch on subj (switch_cases): Go's switch
+/// does not fall through, so no arm breaks to a label.
+fn (var g: Gen) switch_match(span: Span, subj: Str, arms: List[parser.MatchArm], cases: List[SwitchArm], d: Dest) {
+  g.line("switch ${subj} {")
+  var has_default = false
+  for i in 0..arms.len() {
+    let c = cases[i]
+    if c.dead {
+      continue
+    }
+    g.at(arms[i].span)
+    if c.wild {
+      g.line("default:")
+      has_default = true
+    } else {
+      g.line("case ${c.vals.join(", ")}:")
+    }
+    g.f.ind += 1
+    g.arm_body(arms[i].body, d)
+    g.f.ind -= 1
+  }
+  if !has_default {
+    g.line("default:")
+    g.f.ind += 1
+    g.line("panic(${g.rt()}Unreachable(${g.loc(span).quote()}))")
+    g.f.ind -= 1
+  }
   g.line("}")
 }
 

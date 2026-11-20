@@ -2274,16 +2274,11 @@ x_L218:
 				continue x_L218
 			}
 			var x_v221 bool
-		x_M222:
-			switch {
+			switch v_v {
+			case int64(45), int64(46), int64(95), int64(58), int64(126), int64(33), int64(36), int64(38), int64(39), int64(40), int64(41), int64(42), int64(43), int64(44), int64(59), int64(61), int64(37), int64(64):
+				x_v221 = true
 			default:
-				if (v_v == int64(45)) || (v_v == int64(46)) || (v_v == int64(95)) || (v_v == int64(58)) || (v_v == int64(126)) || (v_v == int64(33)) || (v_v == int64(36)) || (v_v == int64(38)) || (v_v == int64(39)) || (v_v == int64(40)) || (v_v == int64(41)) || (v_v == int64(42)) || (v_v == int64(43)) || (v_v == int64(44)) || (v_v == int64(59)) || (v_v == int64(61)) || (v_v == int64(37)) || (v_v == int64(64)) {
-					x_v221 = true
-					break x_M222
-				}
-				{
-					x_v221 = false
-				}
+				x_v221 = false
 			}
 			var v_ok bool = x_v221
 			_ = v_ok
@@ -2305,9 +2300,9 @@ func Url_resolve_path(tk *Task, v_base string, v_r string) string {
 		v_full = v_base
 	} else {
 		if !(Str_starts_with(tk, v_r, "/")) {
-			x_l223 := Str_rfind(tk, v_base, "/")
-			if x_l223.Some {
-				var v_i int64 = x_l223.V
+			x_l222 := Str_rfind(tk, v_base, "/")
+			if x_l222.Some {
+				var v_i int64 = x_l222.V
 				_ = v_i
 				v_full = (StrSlice(v_base, int64(0), AddIUp(v_i, int64(1), "std/url.xo:1179:22"), true, true, "std/url.xo:1179:14") + v_r)
 			}
@@ -2325,7 +2320,7 @@ func Url_resolve_path(tk *Task, v_base string, v_r string) string {
 	_ = v_size
 	var v_end int64 = v_n
 	_ = v_end
-x_L224:
+x_L223:
 	for {
 		if !(true) {
 			break
@@ -2362,7 +2357,7 @@ x_L224:
 				}
 			}
 			if v_i_1 < int64(0) {
-				break x_L224
+				break x_L223
 			}
 			v_end = v_i_1
 		}
@@ -2382,7 +2377,7 @@ x_L224:
 	_ = v_e
 	var v_from int64 = int64(0)
 	_ = v_from
-x_L226:
+x_L225:
 	for {
 		if !(true) {
 			break
@@ -2410,7 +2405,7 @@ x_L226:
 			v_prev = v_k_1
 			v_e = AddIUp(v_e, int64(1), "std/url.xo:1242:5")
 			if v_i_2 >= v_n {
-				break x_L226
+				break x_L225
 			}
 			v_from = (v_i_2 + int64(1))
 		}
@@ -2418,14 +2413,14 @@ x_L226:
 	if v_prev != int64(0) {
 		v_out.M_write_byte(tk, uint8(47))
 	}
-	x_t228 := Bytes_to_str(tk, v_out.M_freeze(tk))
-	var x_c229 string
-	if x_t228.Some {
-		x_c229 = x_t228.V
+	x_t227 := Bytes_to_str(tk, v_out.M_freeze(tk))
+	var x_c228 string
+	if x_t227.Some {
+		x_c228 = x_t227.V
 	} else {
-		x_c229 = ""
+		x_c228 = ""
 	}
-	var v_t string = x_c229
+	var v_t string = x_c228
 	_ = v_t
 	if (Str_len(tk, v_t) > int64(1)) && (BytesAt(Str_bytes(tk, v_t), int64(1), "std/url.xo:1253:21") == uint8(47)) {
 		return StrSlice(v_t, int64(1), Str_len(tk, v_t), true, true, "std/url.xo:1254:12")
@@ -2448,9 +2443,9 @@ func Url_split_host_port(tk *Task, v_hp string) Tuple2[string, string] {
 	_ = v_host
 	var v_port string = ""
 	_ = v_port
-	x_l230 := Str_rfind(tk, v_hp, ":")
-	if x_l230.Some {
-		var v_c int64 = x_l230.V
+	x_l229 := Str_rfind(tk, v_hp, ":")
+	if x_l229.Some {
+		var v_c int64 = x_l229.V
 		_ = v_c
 		if Url_valid_port(tk, StrSlice(v_hp, v_c, Str_len(tk, v_hp), true, true, "std/url.xo:1277:19")) {
 			v_host = StrSlice(v_hp, int64(0), v_c, true, true, "std/url.xo:1278:14")
@@ -2466,18 +2461,18 @@ func Url_split_host_port(tk *Task, v_hp string) Tuple2[string, string] {
 func (v_u Url_Url) M_joined(tk *Task, v_elems List[string]) Tuple2[Url_Url, Option[Url_EscapeErr]] {
 	var v_all List[string] = ListOf[string](v_u.M_escaped_path(tk))
 	_ = v_all
-	x_it231 := v_elems
-	for _, x_e233 := range List_Items(x_it231) {
-		x_el234 := x_e233
-		_ = x_el234
-		var v_e string = x_el234
+	x_it230 := v_elems
+	for _, x_e232 := range List_Items(x_it230) {
+		x_el233 := x_e232
+		_ = x_el233
+		var v_e string = x_el233
 		_ = v_e
 		{
-			x_pv235 := v_e
+			x_pv234 := v_e
 			if List_CanPush(v_all) {
-				v_all = List_PushFast(v_all, x_pv235)
+				v_all = List_PushFast(v_all, x_pv234)
 			} else {
-				v_all = List_PushSlow(v_all, x_pv235)
+				v_all = List_PushSlow(v_all, x_pv234)
 			}
 			_ = Unit{}
 		}
@@ -2505,19 +2500,19 @@ func (v_u Url_Url) M_joined(tk *Task, v_elems List[string]) Tuple2[Url_Url, Opti
 func Url_go_join(tk *Task, v_elems List[string]) string {
 	var v_parts List[string] = List[string]{}
 	_ = v_parts
-	x_it236 := v_elems
-	for _, x_e238 := range List_Items(x_it236) {
-		x_el239 := x_e238
-		_ = x_el239
-		var v_e string = x_el239
+	x_it235 := v_elems
+	for _, x_e237 := range List_Items(x_it235) {
+		x_el238 := x_e237
+		_ = x_el238
+		var v_e string = x_el238
 		_ = v_e
 		{
 			if v_e != "" {
-				x_pv240 := v_e
+				x_pv239 := v_e
 				if List_CanPush(v_parts) {
-					v_parts = List_PushFast(v_parts, x_pv240)
+					v_parts = List_PushFast(v_parts, x_pv239)
 				} else {
-					v_parts = List_PushSlow(v_parts, x_pv240)
+					v_parts = List_PushSlow(v_parts, x_pv239)
 				}
 				_ = Unit{}
 			}
@@ -2545,7 +2540,7 @@ func Url_clean_path(tk *Task, v_p string) string {
 	_ = v_skip
 	var v_end int64 = v_n
 	_ = v_end
-x_L241:
+x_L240:
 	for {
 		if !(true) {
 			break
@@ -2581,7 +2576,7 @@ x_L241:
 				}
 			}
 			if v_i < int64(0) {
-				break x_L241
+				break x_L240
 			}
 			v_end = v_i
 		}
@@ -2598,10 +2593,10 @@ x_L241:
 	var v_any bool = false
 	_ = v_any
 	if !(v_rooted) {
-		x_it243 := Range[int64]{Lo: int64(0), Hi: v_skip, Incl: false}
-		for x_i245 := x_it243.Lo; x_i245 < x_it243.Hi; x_i245++ {
-			x_el246 := x_i245
-			_ = x_el246
+		x_it242 := Range[int64]{Lo: int64(0), Hi: v_skip, Incl: false}
+		for x_i244 := x_it242.Lo; x_i244 < x_it242.Hi; x_i244++ {
+			x_el245 := x_i244
+			_ = x_el245
 			{
 				if v_any {
 					v_out.M_write_byte(tk, uint8(47))
@@ -2616,7 +2611,7 @@ x_L241:
 	_ = v_e
 	var v_from int64 = int64(0)
 	_ = v_from
-x_L247:
+x_L246:
 	for {
 		if !(true) {
 			break
@@ -2641,7 +2636,7 @@ x_L247:
 			}
 			v_e = AddIUp(v_e, int64(1), "std/url.xo:1397:5")
 			if v_i_1 >= v_n {
-				break x_L247
+				break x_L246
 			}
 			v_from = (v_i_1 + int64(1))
 		}
@@ -2649,12 +2644,12 @@ x_L247:
 	if !(v_rooted) && !(v_any) {
 		return "."
 	}
-	x_t249 := Bytes_to_str(tk, v_out.M_freeze(tk))
-	var x_c250 string
-	if x_t249.Some {
-		x_c250 = x_t249.V
+	x_t248 := Bytes_to_str(tk, v_out.M_freeze(tk))
+	var x_c249 string
+	if x_t248.Some {
+		x_c249 = x_t248.V
 	} else {
-		x_c250 = ""
+		x_c249 = ""
 	}
-	return x_c250
+	return x_c249
 }

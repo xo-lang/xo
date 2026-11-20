@@ -1,0 +1,49 @@
+// A match on Str or Int literals, lowered to a Go switch on the Go
+// backend (task #429): the wildcard arm, a value two arms list (the first
+// wins), the empty string, an or-pattern, a break and a continue out of
+// an arm, a match expression, and a guarded match, which keeps the chain.
+
+fn kind(w: Str) -> Str {
+  match w {
+    "" => "empty"
+    "a" | "b" => "ab"
+    "b" => "dead b"
+    "c" | "a" => "c"
+    _ => "other"
+  }
+}
+
+fn small(n: Int) -> Str {
+  match n {
+    0 => "zero"
+    1 | -1 => "one"
+    1 => "dead one"
+    _ => "many"
+  }
+}
+
+fn guarded(n: Int) -> Str {
+  match n {
+    1 if false => "never"
+    1 => "one"
+    _ => "other"
+  }
+}
+
+fn main(os: Os) {
+  for w in ["", "a", "b", "c", "d", "ab"] {
+    os.stdio.println("${w.quote()} ${kind(w)}")
+  }
+  for n in [0, 1, -1, 2] {
+    os.stdio.println("${n} ${small(n)} ${guarded(n)}")
+  }
+  var seen = 0
+  for w in ["x", "skip", "y", "stop", "z"] {
+    match w {
+      "skip" => continue
+      "stop" => break
+      _ => seen += 1
+    }
+  }
+  os.stdio.println("seen ${seen}")
+}

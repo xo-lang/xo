@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+"" empty
+"a" ab
+"b" ab
+"c" c
+"d" other
+"ab" other
+0 zero other
+1 one one
+-1 one other
+2 many other
+seen 2
+--- stderr

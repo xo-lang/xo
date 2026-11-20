@@ -20,14 +20,13 @@ fn main(os: Os) {
   let b = s.bytes()
   var sum = 0
   for i in 0..n {
-    if w == "str" {
-      sum += strings.index(s, "z") + i % 3
-    } else if w == "bytes" {
-      sum += bytes.index_byte(b, UInt8(122)) + i % 3
-    } else if w == "int" {
-      sum += strconv.itoa(i).len()
-    } else {
-      sum += i % 3
+    // a match, as the Go twin's switch (task #429): on the Go backend
+    // both are a Go switch on w
+    match w {
+      "str" => sum += strings.index(s, "z") + i % 3
+      "bytes" => sum += bytes.index_byte(b, UInt8(122)) + i % 3
+      "int" => sum += strconv.itoa(i).len()
+      _ => sum += i % 3
     }
   }
   os.stdio.println("${w} ${sum}")

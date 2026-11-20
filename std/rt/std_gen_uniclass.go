@@ -13,604 +13,404 @@ var Uniclass_TABLES = func() Bytes {
 }()
 
 func Uniclass_class_of(tk *Task, v_name string) Tuple3[int64, int64, int64] {
-	switch {
+	switch v_name {
+	case "Adlam":
+		return Tuple3[int64, int64, int64]{F0: int64(0), F1: int64(-1), F2: int64(1)}
+	case "Ahom":
+		return Tuple3[int64, int64, int64]{F0: int64(1), F1: int64(-1), F2: int64(1)}
+	case "Arabic":
+		return Tuple3[int64, int64, int64]{F0: int64(2), F1: int64(-1), F2: int64(1)}
+	case "Armenian":
+		return Tuple3[int64, int64, int64]{F0: int64(3), F1: int64(-1), F2: int64(1)}
+	case "Assigned":
+		return Tuple3[int64, int64, int64]{F0: int64(4), F1: int64(4), F2: int64(-1)}
+	case "Avestan":
+		return Tuple3[int64, int64, int64]{F0: int64(5), F1: int64(-1), F2: int64(1)}
+	case "Balinese":
+		return Tuple3[int64, int64, int64]{F0: int64(6), F1: int64(-1), F2: int64(1)}
+	case "Bamum":
+		return Tuple3[int64, int64, int64]{F0: int64(7), F1: int64(-1), F2: int64(1)}
+	case "Batak":
+		return Tuple3[int64, int64, int64]{F0: int64(8), F1: int64(-1), F2: int64(1)}
+	case "Bengali":
+		return Tuple3[int64, int64, int64]{F0: int64(9), F1: int64(-1), F2: int64(1)}
+	case "Bhaiksuki":
+		return Tuple3[int64, int64, int64]{F0: int64(10), F1: int64(-1), F2: int64(1)}
+	case "Bopomofo":
+		return Tuple3[int64, int64, int64]{F0: int64(11), F1: int64(-1), F2: int64(1)}
+	case "Brahmi":
+		return Tuple3[int64, int64, int64]{F0: int64(12), F1: int64(-1), F2: int64(1)}
+	case "Braille":
+		return Tuple3[int64, int64, int64]{F0: int64(13), F1: int64(-1), F2: int64(1)}
+	case "Buginese":
+		return Tuple3[int64, int64, int64]{F0: int64(14), F1: int64(-1), F2: int64(1)}
+	case "Buhid":
+		return Tuple3[int64, int64, int64]{F0: int64(15), F1: int64(-1), F2: int64(1)}
+	case "C":
+		return Tuple3[int64, int64, int64]{F0: int64(16), F1: int64(-1), F2: int64(1)}
+	case "Carian":
+		return Tuple3[int64, int64, int64]{F0: int64(17), F1: int64(-1), F2: int64(1)}
+	case "Casedletter":
+		return Tuple3[int64, int64, int64]{F0: int64(18), F1: int64(-1), F2: int64(1)}
+	case "Cc":
+		return Tuple3[int64, int64, int64]{F0: int64(19), F1: int64(-1), F2: int64(1)}
+	case "Cf":
+		return Tuple3[int64, int64, int64]{F0: int64(20), F1: int64(-1), F2: int64(1)}
+	case "Chakma":
+		return Tuple3[int64, int64, int64]{F0: int64(21), F1: int64(-1), F2: int64(1)}
+	case "Cham":
+		return Tuple3[int64, int64, int64]{F0: int64(22), F1: int64(-1), F2: int64(1)}
+	case "Cherokee":
+		return Tuple3[int64, int64, int64]{F0: int64(23), F1: int64(-1), F2: int64(1)}
+	case "Chorasmian":
+		return Tuple3[int64, int64, int64]{F0: int64(24), F1: int64(-1), F2: int64(1)}
+	case "Closepunctuation":
+		return Tuple3[int64, int64, int64]{F0: int64(25), F1: int64(-1), F2: int64(1)}
+	case "Cn":
+		return Tuple3[int64, int64, int64]{F0: int64(4), F1: int64(-1), F2: int64(1)}
+	case "Cntrl":
+		return Tuple3[int64, int64, int64]{F0: int64(19), F1: int64(-1), F2: int64(1)}
+	case "Co":
+		return Tuple3[int64, int64, int64]{F0: int64(26), F1: int64(-1), F2: int64(1)}
+	case "Combiningmark":
+		return Tuple3[int64, int64, int64]{F0: int64(27), F1: int64(28), F2: int64(1)}
+	case "Common":
+		return Tuple3[int64, int64, int64]{F0: int64(29), F1: int64(30), F2: int64(1)}
+	case "Connectorpunctuation":
+		return Tuple3[int64, int64, int64]{F0: int64(31), F1: int64(-1), F2: int64(1)}
+	case "Control":
+		return Tuple3[int64, int64, int64]{F0: int64(19), F1: int64(-1), F2: int64(1)}
+	case "Coptic":
+		return Tuple3[int64, int64, int64]{F0: int64(32), F1: int64(-1), F2: int64(1)}
+	case "Cs":
+		return Tuple3[int64, int64, int64]{F0: int64(33), F1: int64(-1), F2: int64(1)}
+	case "Cuneiform":
+		return Tuple3[int64, int64, int64]{F0: int64(34), F1: int64(-1), F2: int64(1)}
+	case "Currencysymbol":
+		return Tuple3[int64, int64, int64]{F0: int64(35), F1: int64(-1), F2: int64(1)}
+	case "Cypriot":
+		return Tuple3[int64, int64, int64]{F0: int64(36), F1: int64(-1), F2: int64(1)}
+	case "Cyrillic":
+		return Tuple3[int64, int64, int64]{F0: int64(37), F1: int64(-1), F2: int64(1)}
+	case "Dashpunctuation":
+		return Tuple3[int64, int64, int64]{F0: int64(38), F1: int64(-1), F2: int64(1)}
+	case "Decimalnumber":
+		return Tuple3[int64, int64, int64]{F0: int64(39), F1: int64(-1), F2: int64(1)}
+	case "Deseret":
+		return Tuple3[int64, int64, int64]{F0: int64(40), F1: int64(-1), F2: int64(1)}
+	case "Devanagari":
+		return Tuple3[int64, int64, int64]{F0: int64(41), F1: int64(-1), F2: int64(1)}
+	case "Digit":
+		return Tuple3[int64, int64, int64]{F0: int64(39), F1: int64(-1), F2: int64(1)}
+	case "Dogra":
+		return Tuple3[int64, int64, int64]{F0: int64(42), F1: int64(-1), F2: int64(1)}
+	case "Duployan":
+		return Tuple3[int64, int64, int64]{F0: int64(43), F1: int64(-1), F2: int64(1)}
+	case "Elbasan":
+		return Tuple3[int64, int64, int64]{F0: int64(44), F1: int64(-1), F2: int64(1)}
+	case "Elymaic":
+		return Tuple3[int64, int64, int64]{F0: int64(45), F1: int64(-1), F2: int64(1)}
+	case "Enclosingmark":
+		return Tuple3[int64, int64, int64]{F0: int64(46), F1: int64(-1), F2: int64(1)}
+	case "Ethiopic":
+		return Tuple3[int64, int64, int64]{F0: int64(47), F1: int64(-1), F2: int64(1)}
+	case "Finalpunctuation":
+		return Tuple3[int64, int64, int64]{F0: int64(48), F1: int64(-1), F2: int64(1)}
+	case "Format":
+		return Tuple3[int64, int64, int64]{F0: int64(20), F1: int64(-1), F2: int64(1)}
+	case "Georgian":
+		return Tuple3[int64, int64, int64]{F0: int64(49), F1: int64(-1), F2: int64(1)}
+	case "Glagolitic":
+		return Tuple3[int64, int64, int64]{F0: int64(50), F1: int64(-1), F2: int64(1)}
+	case "Gothic":
+		return Tuple3[int64, int64, int64]{F0: int64(51), F1: int64(-1), F2: int64(1)}
+	case "Grantha":
+		return Tuple3[int64, int64, int64]{F0: int64(52), F1: int64(-1), F2: int64(1)}
+	case "Greek":
+		return Tuple3[int64, int64, int64]{F0: int64(53), F1: int64(54), F2: int64(1)}
+	case "Gujarati":
+		return Tuple3[int64, int64, int64]{F0: int64(55), F1: int64(-1), F2: int64(1)}
+	case "Gurmukhi":
+		return Tuple3[int64, int64, int64]{F0: int64(56), F1: int64(-1), F2: int64(1)}
+	case "Han":
+		return Tuple3[int64, int64, int64]{F0: int64(57), F1: int64(-1), F2: int64(1)}
+	case "Hangul":
+		return Tuple3[int64, int64, int64]{F0: int64(58), F1: int64(-1), F2: int64(1)}
+	case "Hanunoo":
+		return Tuple3[int64, int64, int64]{F0: int64(59), F1: int64(-1), F2: int64(1)}
+	case "Hatran":
+		return Tuple3[int64, int64, int64]{F0: int64(60), F1: int64(-1), F2: int64(1)}
+	case "Hebrew":
+		return Tuple3[int64, int64, int64]{F0: int64(61), F1: int64(-1), F2: int64(1)}
+	case "Hiragana":
+		return Tuple3[int64, int64, int64]{F0: int64(62), F1: int64(-1), F2: int64(1)}
+	case "Inherited":
+		return Tuple3[int64, int64, int64]{F0: int64(63), F1: int64(64), F2: int64(1)}
+	case "Initialpunctuation":
+		return Tuple3[int64, int64, int64]{F0: int64(65), F1: int64(-1), F2: int64(1)}
+	case "Javanese":
+		return Tuple3[int64, int64, int64]{F0: int64(66), F1: int64(-1), F2: int64(1)}
+	case "Kaithi":
+		return Tuple3[int64, int64, int64]{F0: int64(67), F1: int64(-1), F2: int64(1)}
+	case "Kannada":
+		return Tuple3[int64, int64, int64]{F0: int64(68), F1: int64(-1), F2: int64(1)}
+	case "Katakana":
+		return Tuple3[int64, int64, int64]{F0: int64(69), F1: int64(-1), F2: int64(1)}
+	case "Kawi":
+		return Tuple3[int64, int64, int64]{F0: int64(70), F1: int64(-1), F2: int64(1)}
+	case "Kharoshthi":
+		return Tuple3[int64, int64, int64]{F0: int64(71), F1: int64(-1), F2: int64(1)}
+	case "Khmer":
+		return Tuple3[int64, int64, int64]{F0: int64(72), F1: int64(-1), F2: int64(1)}
+	case "Khojki":
+		return Tuple3[int64, int64, int64]{F0: int64(73), F1: int64(-1), F2: int64(1)}
+	case "Khudawadi":
+		return Tuple3[int64, int64, int64]{F0: int64(74), F1: int64(-1), F2: int64(1)}
+	case "L":
+		return Tuple3[int64, int64, int64]{F0: int64(75), F1: int64(76), F2: int64(1)}
+	case "Lao":
+		return Tuple3[int64, int64, int64]{F0: int64(77), F1: int64(-1), F2: int64(1)}
+	case "Latin":
+		return Tuple3[int64, int64, int64]{F0: int64(78), F1: int64(-1), F2: int64(1)}
+	case "Lc":
+		return Tuple3[int64, int64, int64]{F0: int64(18), F1: int64(-1), F2: int64(1)}
+	case "Lepcha":
+		return Tuple3[int64, int64, int64]{F0: int64(79), F1: int64(-1), F2: int64(1)}
+	case "Letter":
+		return Tuple3[int64, int64, int64]{F0: int64(75), F1: int64(76), F2: int64(1)}
+	case "Letternumber":
+		return Tuple3[int64, int64, int64]{F0: int64(80), F1: int64(-1), F2: int64(1)}
+	case "Limbu":
+		return Tuple3[int64, int64, int64]{F0: int64(81), F1: int64(-1), F2: int64(1)}
+	case "Lineseparator":
+		return Tuple3[int64, int64, int64]{F0: int64(82), F1: int64(-1), F2: int64(1)}
+	case "Lisu":
+		return Tuple3[int64, int64, int64]{F0: int64(83), F1: int64(-1), F2: int64(1)}
+	case "Ll":
+		return Tuple3[int64, int64, int64]{F0: int64(84), F1: int64(85), F2: int64(1)}
+	case "Lm":
+		return Tuple3[int64, int64, int64]{F0: int64(86), F1: int64(-1), F2: int64(1)}
+	case "Lo":
+		return Tuple3[int64, int64, int64]{F0: int64(87), F1: int64(-1), F2: int64(1)}
+	case "Lowercaseletter":
+		return Tuple3[int64, int64, int64]{F0: int64(84), F1: int64(85), F2: int64(1)}
+	case "Lt":
+		return Tuple3[int64, int64, int64]{F0: int64(88), F1: int64(89), F2: int64(1)}
+	case "Lu":
+		return Tuple3[int64, int64, int64]{F0: int64(90), F1: int64(91), F2: int64(1)}
+	case "Lycian":
+		return Tuple3[int64, int64, int64]{F0: int64(92), F1: int64(-1), F2: int64(1)}
+	case "Lydian":
+		return Tuple3[int64, int64, int64]{F0: int64(93), F1: int64(-1), F2: int64(1)}
+	case "M":
+		return Tuple3[int64, int64, int64]{F0: int64(27), F1: int64(28), F2: int64(1)}
+	case "Mahajani":
+		return Tuple3[int64, int64, int64]{F0: int64(94), F1: int64(-1), F2: int64(1)}
+	case "Makasar":
+		return Tuple3[int64, int64, int64]{F0: int64(95), F1: int64(-1), F2: int64(1)}
+	case "Malayalam":
+		return Tuple3[int64, int64, int64]{F0: int64(96), F1: int64(-1), F2: int64(1)}
+	case "Mandaic":
+		return Tuple3[int64, int64, int64]{F0: int64(97), F1: int64(-1), F2: int64(1)}
+	case "Manichaean":
+		return Tuple3[int64, int64, int64]{F0: int64(98), F1: int64(-1), F2: int64(1)}
+	case "Marchen":
+		return Tuple3[int64, int64, int64]{F0: int64(99), F1: int64(-1), F2: int64(1)}
+	case "Mark":
+		return Tuple3[int64, int64, int64]{F0: int64(27), F1: int64(28), F2: int64(1)}
+	case "Mathsymbol":
+		return Tuple3[int64, int64, int64]{F0: int64(100), F1: int64(-1), F2: int64(1)}
+	case "Mc":
+		return Tuple3[int64, int64, int64]{F0: int64(101), F1: int64(-1), F2: int64(1)}
+	case "Me":
+		return Tuple3[int64, int64, int64]{F0: int64(46), F1: int64(-1), F2: int64(1)}
+	case "Medefaidrin":
+		return Tuple3[int64, int64, int64]{F0: int64(102), F1: int64(-1), F2: int64(1)}
+	case "Miao":
+		return Tuple3[int64, int64, int64]{F0: int64(103), F1: int64(-1), F2: int64(1)}
+	case "Mn":
+		return Tuple3[int64, int64, int64]{F0: int64(104), F1: int64(105), F2: int64(1)}
+	case "Modi":
+		return Tuple3[int64, int64, int64]{F0: int64(106), F1: int64(-1), F2: int64(1)}
+	case "Modifierletter":
+		return Tuple3[int64, int64, int64]{F0: int64(86), F1: int64(-1), F2: int64(1)}
+	case "Modifiersymbol":
+		return Tuple3[int64, int64, int64]{F0: int64(107), F1: int64(-1), F2: int64(1)}
+	case "Mongolian":
+		return Tuple3[int64, int64, int64]{F0: int64(108), F1: int64(-1), F2: int64(1)}
+	case "Mro":
+		return Tuple3[int64, int64, int64]{F0: int64(109), F1: int64(-1), F2: int64(1)}
+	case "Multani":
+		return Tuple3[int64, int64, int64]{F0: int64(110), F1: int64(-1), F2: int64(1)}
+	case "Myanmar":
+		return Tuple3[int64, int64, int64]{F0: int64(111), F1: int64(-1), F2: int64(1)}
+	case "N":
+		return Tuple3[int64, int64, int64]{F0: int64(112), F1: int64(-1), F2: int64(1)}
+	case "Nabataean":
+		return Tuple3[int64, int64, int64]{F0: int64(113), F1: int64(-1), F2: int64(1)}
+	case "Nandinagari":
+		return Tuple3[int64, int64, int64]{F0: int64(114), F1: int64(-1), F2: int64(1)}
+	case "Nd":
+		return Tuple3[int64, int64, int64]{F0: int64(39), F1: int64(-1), F2: int64(1)}
+	case "Newa":
+		return Tuple3[int64, int64, int64]{F0: int64(115), F1: int64(-1), F2: int64(1)}
+	case "Nko":
+		return Tuple3[int64, int64, int64]{F0: int64(116), F1: int64(-1), F2: int64(1)}
+	case "Nl":
+		return Tuple3[int64, int64, int64]{F0: int64(80), F1: int64(-1), F2: int64(1)}
+	case "No":
+		return Tuple3[int64, int64, int64]{F0: int64(117), F1: int64(-1), F2: int64(1)}
+	case "Nonspacingmark":
+		return Tuple3[int64, int64, int64]{F0: int64(104), F1: int64(105), F2: int64(1)}
+	case "Number":
+		return Tuple3[int64, int64, int64]{F0: int64(112), F1: int64(-1), F2: int64(1)}
+	case "Nushu":
+		return Tuple3[int64, int64, int64]{F0: int64(118), F1: int64(-1), F2: int64(1)}
+	case "Ogham":
+		return Tuple3[int64, int64, int64]{F0: int64(119), F1: int64(-1), F2: int64(1)}
+	case "Openpunctuation":
+		return Tuple3[int64, int64, int64]{F0: int64(120), F1: int64(-1), F2: int64(1)}
+	case "Oriya":
+		return Tuple3[int64, int64, int64]{F0: int64(121), F1: int64(-1), F2: int64(1)}
+	case "Osage":
+		return Tuple3[int64, int64, int64]{F0: int64(122), F1: int64(-1), F2: int64(1)}
+	case "Osmanya":
+		return Tuple3[int64, int64, int64]{F0: int64(123), F1: int64(-1), F2: int64(1)}
+	case "Other":
+		return Tuple3[int64, int64, int64]{F0: int64(16), F1: int64(-1), F2: int64(1)}
+	case "Otherletter":
+		return Tuple3[int64, int64, int64]{F0: int64(87), F1: int64(-1), F2: int64(1)}
+	case "Othernumber":
+		return Tuple3[int64, int64, int64]{F0: int64(117), F1: int64(-1), F2: int64(1)}
+	case "Otherpunctuation":
+		return Tuple3[int64, int64, int64]{F0: int64(124), F1: int64(-1), F2: int64(1)}
+	case "Othersymbol":
+		return Tuple3[int64, int64, int64]{F0: int64(125), F1: int64(-1), F2: int64(1)}
+	case "P":
+		return Tuple3[int64, int64, int64]{F0: int64(126), F1: int64(-1), F2: int64(1)}
+	case "Palmyrene":
+		return Tuple3[int64, int64, int64]{F0: int64(127), F1: int64(-1), F2: int64(1)}
+	case "Paragraphseparator":
+		return Tuple3[int64, int64, int64]{F0: int64(128), F1: int64(-1), F2: int64(1)}
+	case "Pc":
+		return Tuple3[int64, int64, int64]{F0: int64(31), F1: int64(-1), F2: int64(1)}
+	case "Pd":
+		return Tuple3[int64, int64, int64]{F0: int64(38), F1: int64(-1), F2: int64(1)}
+	case "Pe":
+		return Tuple3[int64, int64, int64]{F0: int64(25), F1: int64(-1), F2: int64(1)}
+	case "Pf":
+		return Tuple3[int64, int64, int64]{F0: int64(48), F1: int64(-1), F2: int64(1)}
+	case "Phoenician":
+		return Tuple3[int64, int64, int64]{F0: int64(129), F1: int64(-1), F2: int64(1)}
+	case "Pi":
+		return Tuple3[int64, int64, int64]{F0: int64(65), F1: int64(-1), F2: int64(1)}
+	case "Po":
+		return Tuple3[int64, int64, int64]{F0: int64(124), F1: int64(-1), F2: int64(1)}
+	case "Privateuse":
+		return Tuple3[int64, int64, int64]{F0: int64(26), F1: int64(-1), F2: int64(1)}
+	case "Ps":
+		return Tuple3[int64, int64, int64]{F0: int64(120), F1: int64(-1), F2: int64(1)}
+	case "Punct":
+		return Tuple3[int64, int64, int64]{F0: int64(126), F1: int64(-1), F2: int64(1)}
+	case "Punctuation":
+		return Tuple3[int64, int64, int64]{F0: int64(126), F1: int64(-1), F2: int64(1)}
+	case "Rejang":
+		return Tuple3[int64, int64, int64]{F0: int64(130), F1: int64(-1), F2: int64(1)}
+	case "Runic":
+		return Tuple3[int64, int64, int64]{F0: int64(131), F1: int64(-1), F2: int64(1)}
+	case "S":
+		return Tuple3[int64, int64, int64]{F0: int64(132), F1: int64(-1), F2: int64(1)}
+	case "Samaritan":
+		return Tuple3[int64, int64, int64]{F0: int64(133), F1: int64(-1), F2: int64(1)}
+	case "Saurashtra":
+		return Tuple3[int64, int64, int64]{F0: int64(134), F1: int64(-1), F2: int64(1)}
+	case "Sc":
+		return Tuple3[int64, int64, int64]{F0: int64(35), F1: int64(-1), F2: int64(1)}
+	case "Separator":
+		return Tuple3[int64, int64, int64]{F0: int64(135), F1: int64(-1), F2: int64(1)}
+	case "Sharada":
+		return Tuple3[int64, int64, int64]{F0: int64(136), F1: int64(-1), F2: int64(1)}
+	case "Shavian":
+		return Tuple3[int64, int64, int64]{F0: int64(137), F1: int64(-1), F2: int64(1)}
+	case "Siddham":
+		return Tuple3[int64, int64, int64]{F0: int64(138), F1: int64(-1), F2: int64(1)}
+	case "Sinhala":
+		return Tuple3[int64, int64, int64]{F0: int64(139), F1: int64(-1), F2: int64(1)}
+	case "Sk":
+		return Tuple3[int64, int64, int64]{F0: int64(107), F1: int64(-1), F2: int64(1)}
+	case "Sm":
+		return Tuple3[int64, int64, int64]{F0: int64(100), F1: int64(-1), F2: int64(1)}
+	case "So":
+		return Tuple3[int64, int64, int64]{F0: int64(125), F1: int64(-1), F2: int64(1)}
+	case "Sogdian":
+		return Tuple3[int64, int64, int64]{F0: int64(140), F1: int64(-1), F2: int64(1)}
+	case "Soyombo":
+		return Tuple3[int64, int64, int64]{F0: int64(141), F1: int64(-1), F2: int64(1)}
+	case "Spaceseparator":
+		return Tuple3[int64, int64, int64]{F0: int64(142), F1: int64(-1), F2: int64(1)}
+	case "Spacingmark":
+		return Tuple3[int64, int64, int64]{F0: int64(101), F1: int64(-1), F2: int64(1)}
+	case "Sundanese":
+		return Tuple3[int64, int64, int64]{F0: int64(143), F1: int64(-1), F2: int64(1)}
+	case "Surrogate":
+		return Tuple3[int64, int64, int64]{F0: int64(33), F1: int64(-1), F2: int64(1)}
+	case "Symbol":
+		return Tuple3[int64, int64, int64]{F0: int64(132), F1: int64(-1), F2: int64(1)}
+	case "Syriac":
+		return Tuple3[int64, int64, int64]{F0: int64(144), F1: int64(-1), F2: int64(1)}
+	case "Tagalog":
+		return Tuple3[int64, int64, int64]{F0: int64(145), F1: int64(-1), F2: int64(1)}
+	case "Tagbanwa":
+		return Tuple3[int64, int64, int64]{F0: int64(146), F1: int64(-1), F2: int64(1)}
+	case "Takri":
+		return Tuple3[int64, int64, int64]{F0: int64(147), F1: int64(-1), F2: int64(1)}
+	case "Tamil":
+		return Tuple3[int64, int64, int64]{F0: int64(148), F1: int64(-1), F2: int64(1)}
+	case "Tangsa":
+		return Tuple3[int64, int64, int64]{F0: int64(149), F1: int64(-1), F2: int64(1)}
+	case "Tangut":
+		return Tuple3[int64, int64, int64]{F0: int64(150), F1: int64(-1), F2: int64(1)}
+	case "Telugu":
+		return Tuple3[int64, int64, int64]{F0: int64(151), F1: int64(-1), F2: int64(1)}
+	case "Thaana":
+		return Tuple3[int64, int64, int64]{F0: int64(152), F1: int64(-1), F2: int64(1)}
+	case "Thai":
+		return Tuple3[int64, int64, int64]{F0: int64(153), F1: int64(-1), F2: int64(1)}
+	case "Tibetan":
+		return Tuple3[int64, int64, int64]{F0: int64(154), F1: int64(-1), F2: int64(1)}
+	case "Tifinagh":
+		return Tuple3[int64, int64, int64]{F0: int64(155), F1: int64(-1), F2: int64(1)}
+	case "Tirhuta":
+		return Tuple3[int64, int64, int64]{F0: int64(156), F1: int64(-1), F2: int64(1)}
+	case "Titlecaseletter":
+		return Tuple3[int64, int64, int64]{F0: int64(88), F1: int64(89), F2: int64(1)}
+	case "Toto":
+		return Tuple3[int64, int64, int64]{F0: int64(157), F1: int64(-1), F2: int64(1)}
+	case "Ugaritic":
+		return Tuple3[int64, int64, int64]{F0: int64(158), F1: int64(-1), F2: int64(1)}
+	case "Unassigned":
+		return Tuple3[int64, int64, int64]{F0: int64(4), F1: int64(-1), F2: int64(1)}
+	case "Uppercaseletter":
+		return Tuple3[int64, int64, int64]{F0: int64(90), F1: int64(91), F2: int64(1)}
+	case "Vai":
+		return Tuple3[int64, int64, int64]{F0: int64(159), F1: int64(-1), F2: int64(1)}
+	case "Vithkuqi":
+		return Tuple3[int64, int64, int64]{F0: int64(160), F1: int64(-1), F2: int64(1)}
+	case "Wancho":
+		return Tuple3[int64, int64, int64]{F0: int64(161), F1: int64(-1), F2: int64(1)}
+	case "Yezidi":
+		return Tuple3[int64, int64, int64]{F0: int64(162), F1: int64(-1), F2: int64(1)}
+	case "Yi":
+		return Tuple3[int64, int64, int64]{F0: int64(163), F1: int64(-1), F2: int64(1)}
+	case "Z":
+		return Tuple3[int64, int64, int64]{F0: int64(135), F1: int64(-1), F2: int64(1)}
+	case "Zl":
+		return Tuple3[int64, int64, int64]{F0: int64(82), F1: int64(-1), F2: int64(1)}
+	case "Zp":
+		return Tuple3[int64, int64, int64]{F0: int64(128), F1: int64(-1), F2: int64(1)}
+	case "Zs":
+		return Tuple3[int64, int64, int64]{F0: int64(142), F1: int64(-1), F2: int64(1)}
 	default:
-		if v_name == "Adlam" {
-			return Tuple3[int64, int64, int64]{F0: int64(0), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Ahom" {
-			return Tuple3[int64, int64, int64]{F0: int64(1), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Arabic" {
-			return Tuple3[int64, int64, int64]{F0: int64(2), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Armenian" {
-			return Tuple3[int64, int64, int64]{F0: int64(3), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Assigned" {
-			return Tuple3[int64, int64, int64]{F0: int64(4), F1: int64(4), F2: int64(-1)}
-		}
-		if v_name == "Avestan" {
-			return Tuple3[int64, int64, int64]{F0: int64(5), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Balinese" {
-			return Tuple3[int64, int64, int64]{F0: int64(6), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Bamum" {
-			return Tuple3[int64, int64, int64]{F0: int64(7), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Batak" {
-			return Tuple3[int64, int64, int64]{F0: int64(8), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Bengali" {
-			return Tuple3[int64, int64, int64]{F0: int64(9), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Bhaiksuki" {
-			return Tuple3[int64, int64, int64]{F0: int64(10), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Bopomofo" {
-			return Tuple3[int64, int64, int64]{F0: int64(11), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Brahmi" {
-			return Tuple3[int64, int64, int64]{F0: int64(12), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Braille" {
-			return Tuple3[int64, int64, int64]{F0: int64(13), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Buginese" {
-			return Tuple3[int64, int64, int64]{F0: int64(14), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Buhid" {
-			return Tuple3[int64, int64, int64]{F0: int64(15), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "C" {
-			return Tuple3[int64, int64, int64]{F0: int64(16), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Carian" {
-			return Tuple3[int64, int64, int64]{F0: int64(17), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Casedletter" {
-			return Tuple3[int64, int64, int64]{F0: int64(18), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cc" {
-			return Tuple3[int64, int64, int64]{F0: int64(19), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cf" {
-			return Tuple3[int64, int64, int64]{F0: int64(20), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Chakma" {
-			return Tuple3[int64, int64, int64]{F0: int64(21), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cham" {
-			return Tuple3[int64, int64, int64]{F0: int64(22), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cherokee" {
-			return Tuple3[int64, int64, int64]{F0: int64(23), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Chorasmian" {
-			return Tuple3[int64, int64, int64]{F0: int64(24), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Closepunctuation" {
-			return Tuple3[int64, int64, int64]{F0: int64(25), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cn" {
-			return Tuple3[int64, int64, int64]{F0: int64(4), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cntrl" {
-			return Tuple3[int64, int64, int64]{F0: int64(19), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Co" {
-			return Tuple3[int64, int64, int64]{F0: int64(26), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Combiningmark" {
-			return Tuple3[int64, int64, int64]{F0: int64(27), F1: int64(28), F2: int64(1)}
-		}
-		if v_name == "Common" {
-			return Tuple3[int64, int64, int64]{F0: int64(29), F1: int64(30), F2: int64(1)}
-		}
-		if v_name == "Connectorpunctuation" {
-			return Tuple3[int64, int64, int64]{F0: int64(31), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Control" {
-			return Tuple3[int64, int64, int64]{F0: int64(19), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Coptic" {
-			return Tuple3[int64, int64, int64]{F0: int64(32), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cs" {
-			return Tuple3[int64, int64, int64]{F0: int64(33), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cuneiform" {
-			return Tuple3[int64, int64, int64]{F0: int64(34), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Currencysymbol" {
-			return Tuple3[int64, int64, int64]{F0: int64(35), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cypriot" {
-			return Tuple3[int64, int64, int64]{F0: int64(36), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Cyrillic" {
-			return Tuple3[int64, int64, int64]{F0: int64(37), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Dashpunctuation" {
-			return Tuple3[int64, int64, int64]{F0: int64(38), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Decimalnumber" {
-			return Tuple3[int64, int64, int64]{F0: int64(39), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Deseret" {
-			return Tuple3[int64, int64, int64]{F0: int64(40), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Devanagari" {
-			return Tuple3[int64, int64, int64]{F0: int64(41), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Digit" {
-			return Tuple3[int64, int64, int64]{F0: int64(39), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Dogra" {
-			return Tuple3[int64, int64, int64]{F0: int64(42), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Duployan" {
-			return Tuple3[int64, int64, int64]{F0: int64(43), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Elbasan" {
-			return Tuple3[int64, int64, int64]{F0: int64(44), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Elymaic" {
-			return Tuple3[int64, int64, int64]{F0: int64(45), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Enclosingmark" {
-			return Tuple3[int64, int64, int64]{F0: int64(46), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Ethiopic" {
-			return Tuple3[int64, int64, int64]{F0: int64(47), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Finalpunctuation" {
-			return Tuple3[int64, int64, int64]{F0: int64(48), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Format" {
-			return Tuple3[int64, int64, int64]{F0: int64(20), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Georgian" {
-			return Tuple3[int64, int64, int64]{F0: int64(49), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Glagolitic" {
-			return Tuple3[int64, int64, int64]{F0: int64(50), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Gothic" {
-			return Tuple3[int64, int64, int64]{F0: int64(51), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Grantha" {
-			return Tuple3[int64, int64, int64]{F0: int64(52), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Greek" {
-			return Tuple3[int64, int64, int64]{F0: int64(53), F1: int64(54), F2: int64(1)}
-		}
-		if v_name == "Gujarati" {
-			return Tuple3[int64, int64, int64]{F0: int64(55), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Gurmukhi" {
-			return Tuple3[int64, int64, int64]{F0: int64(56), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Han" {
-			return Tuple3[int64, int64, int64]{F0: int64(57), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Hangul" {
-			return Tuple3[int64, int64, int64]{F0: int64(58), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Hanunoo" {
-			return Tuple3[int64, int64, int64]{F0: int64(59), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Hatran" {
-			return Tuple3[int64, int64, int64]{F0: int64(60), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Hebrew" {
-			return Tuple3[int64, int64, int64]{F0: int64(61), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Hiragana" {
-			return Tuple3[int64, int64, int64]{F0: int64(62), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Inherited" {
-			return Tuple3[int64, int64, int64]{F0: int64(63), F1: int64(64), F2: int64(1)}
-		}
-		if v_name == "Initialpunctuation" {
-			return Tuple3[int64, int64, int64]{F0: int64(65), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Javanese" {
-			return Tuple3[int64, int64, int64]{F0: int64(66), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Kaithi" {
-			return Tuple3[int64, int64, int64]{F0: int64(67), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Kannada" {
-			return Tuple3[int64, int64, int64]{F0: int64(68), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Katakana" {
-			return Tuple3[int64, int64, int64]{F0: int64(69), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Kawi" {
-			return Tuple3[int64, int64, int64]{F0: int64(70), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Kharoshthi" {
-			return Tuple3[int64, int64, int64]{F0: int64(71), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Khmer" {
-			return Tuple3[int64, int64, int64]{F0: int64(72), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Khojki" {
-			return Tuple3[int64, int64, int64]{F0: int64(73), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Khudawadi" {
-			return Tuple3[int64, int64, int64]{F0: int64(74), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "L" {
-			return Tuple3[int64, int64, int64]{F0: int64(75), F1: int64(76), F2: int64(1)}
-		}
-		if v_name == "Lao" {
-			return Tuple3[int64, int64, int64]{F0: int64(77), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Latin" {
-			return Tuple3[int64, int64, int64]{F0: int64(78), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Lc" {
-			return Tuple3[int64, int64, int64]{F0: int64(18), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Lepcha" {
-			return Tuple3[int64, int64, int64]{F0: int64(79), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Letter" {
-			return Tuple3[int64, int64, int64]{F0: int64(75), F1: int64(76), F2: int64(1)}
-		}
-		if v_name == "Letternumber" {
-			return Tuple3[int64, int64, int64]{F0: int64(80), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Limbu" {
-			return Tuple3[int64, int64, int64]{F0: int64(81), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Lineseparator" {
-			return Tuple3[int64, int64, int64]{F0: int64(82), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Lisu" {
-			return Tuple3[int64, int64, int64]{F0: int64(83), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Ll" {
-			return Tuple3[int64, int64, int64]{F0: int64(84), F1: int64(85), F2: int64(1)}
-		}
-		if v_name == "Lm" {
-			return Tuple3[int64, int64, int64]{F0: int64(86), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Lo" {
-			return Tuple3[int64, int64, int64]{F0: int64(87), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Lowercaseletter" {
-			return Tuple3[int64, int64, int64]{F0: int64(84), F1: int64(85), F2: int64(1)}
-		}
-		if v_name == "Lt" {
-			return Tuple3[int64, int64, int64]{F0: int64(88), F1: int64(89), F2: int64(1)}
-		}
-		if v_name == "Lu" {
-			return Tuple3[int64, int64, int64]{F0: int64(90), F1: int64(91), F2: int64(1)}
-		}
-		if v_name == "Lycian" {
-			return Tuple3[int64, int64, int64]{F0: int64(92), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Lydian" {
-			return Tuple3[int64, int64, int64]{F0: int64(93), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "M" {
-			return Tuple3[int64, int64, int64]{F0: int64(27), F1: int64(28), F2: int64(1)}
-		}
-		if v_name == "Mahajani" {
-			return Tuple3[int64, int64, int64]{F0: int64(94), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Makasar" {
-			return Tuple3[int64, int64, int64]{F0: int64(95), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Malayalam" {
-			return Tuple3[int64, int64, int64]{F0: int64(96), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Mandaic" {
-			return Tuple3[int64, int64, int64]{F0: int64(97), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Manichaean" {
-			return Tuple3[int64, int64, int64]{F0: int64(98), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Marchen" {
-			return Tuple3[int64, int64, int64]{F0: int64(99), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Mark" {
-			return Tuple3[int64, int64, int64]{F0: int64(27), F1: int64(28), F2: int64(1)}
-		}
-		if v_name == "Mathsymbol" {
-			return Tuple3[int64, int64, int64]{F0: int64(100), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Mc" {
-			return Tuple3[int64, int64, int64]{F0: int64(101), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Me" {
-			return Tuple3[int64, int64, int64]{F0: int64(46), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Medefaidrin" {
-			return Tuple3[int64, int64, int64]{F0: int64(102), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Miao" {
-			return Tuple3[int64, int64, int64]{F0: int64(103), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Mn" {
-			return Tuple3[int64, int64, int64]{F0: int64(104), F1: int64(105), F2: int64(1)}
-		}
-		if v_name == "Modi" {
-			return Tuple3[int64, int64, int64]{F0: int64(106), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Modifierletter" {
-			return Tuple3[int64, int64, int64]{F0: int64(86), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Modifiersymbol" {
-			return Tuple3[int64, int64, int64]{F0: int64(107), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Mongolian" {
-			return Tuple3[int64, int64, int64]{F0: int64(108), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Mro" {
-			return Tuple3[int64, int64, int64]{F0: int64(109), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Multani" {
-			return Tuple3[int64, int64, int64]{F0: int64(110), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Myanmar" {
-			return Tuple3[int64, int64, int64]{F0: int64(111), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "N" {
-			return Tuple3[int64, int64, int64]{F0: int64(112), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Nabataean" {
-			return Tuple3[int64, int64, int64]{F0: int64(113), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Nandinagari" {
-			return Tuple3[int64, int64, int64]{F0: int64(114), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Nd" {
-			return Tuple3[int64, int64, int64]{F0: int64(39), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Newa" {
-			return Tuple3[int64, int64, int64]{F0: int64(115), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Nko" {
-			return Tuple3[int64, int64, int64]{F0: int64(116), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Nl" {
-			return Tuple3[int64, int64, int64]{F0: int64(80), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "No" {
-			return Tuple3[int64, int64, int64]{F0: int64(117), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Nonspacingmark" {
-			return Tuple3[int64, int64, int64]{F0: int64(104), F1: int64(105), F2: int64(1)}
-		}
-		if v_name == "Number" {
-			return Tuple3[int64, int64, int64]{F0: int64(112), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Nushu" {
-			return Tuple3[int64, int64, int64]{F0: int64(118), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Ogham" {
-			return Tuple3[int64, int64, int64]{F0: int64(119), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Openpunctuation" {
-			return Tuple3[int64, int64, int64]{F0: int64(120), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Oriya" {
-			return Tuple3[int64, int64, int64]{F0: int64(121), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Osage" {
-			return Tuple3[int64, int64, int64]{F0: int64(122), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Osmanya" {
-			return Tuple3[int64, int64, int64]{F0: int64(123), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Other" {
-			return Tuple3[int64, int64, int64]{F0: int64(16), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Otherletter" {
-			return Tuple3[int64, int64, int64]{F0: int64(87), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Othernumber" {
-			return Tuple3[int64, int64, int64]{F0: int64(117), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Otherpunctuation" {
-			return Tuple3[int64, int64, int64]{F0: int64(124), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Othersymbol" {
-			return Tuple3[int64, int64, int64]{F0: int64(125), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "P" {
-			return Tuple3[int64, int64, int64]{F0: int64(126), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Palmyrene" {
-			return Tuple3[int64, int64, int64]{F0: int64(127), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Paragraphseparator" {
-			return Tuple3[int64, int64, int64]{F0: int64(128), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Pc" {
-			return Tuple3[int64, int64, int64]{F0: int64(31), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Pd" {
-			return Tuple3[int64, int64, int64]{F0: int64(38), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Pe" {
-			return Tuple3[int64, int64, int64]{F0: int64(25), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Pf" {
-			return Tuple3[int64, int64, int64]{F0: int64(48), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Phoenician" {
-			return Tuple3[int64, int64, int64]{F0: int64(129), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Pi" {
-			return Tuple3[int64, int64, int64]{F0: int64(65), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Po" {
-			return Tuple3[int64, int64, int64]{F0: int64(124), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Privateuse" {
-			return Tuple3[int64, int64, int64]{F0: int64(26), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Ps" {
-			return Tuple3[int64, int64, int64]{F0: int64(120), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Punct" {
-			return Tuple3[int64, int64, int64]{F0: int64(126), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Punctuation" {
-			return Tuple3[int64, int64, int64]{F0: int64(126), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Rejang" {
-			return Tuple3[int64, int64, int64]{F0: int64(130), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Runic" {
-			return Tuple3[int64, int64, int64]{F0: int64(131), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "S" {
-			return Tuple3[int64, int64, int64]{F0: int64(132), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Samaritan" {
-			return Tuple3[int64, int64, int64]{F0: int64(133), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Saurashtra" {
-			return Tuple3[int64, int64, int64]{F0: int64(134), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Sc" {
-			return Tuple3[int64, int64, int64]{F0: int64(35), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Separator" {
-			return Tuple3[int64, int64, int64]{F0: int64(135), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Sharada" {
-			return Tuple3[int64, int64, int64]{F0: int64(136), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Shavian" {
-			return Tuple3[int64, int64, int64]{F0: int64(137), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Siddham" {
-			return Tuple3[int64, int64, int64]{F0: int64(138), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Sinhala" {
-			return Tuple3[int64, int64, int64]{F0: int64(139), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Sk" {
-			return Tuple3[int64, int64, int64]{F0: int64(107), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Sm" {
-			return Tuple3[int64, int64, int64]{F0: int64(100), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "So" {
-			return Tuple3[int64, int64, int64]{F0: int64(125), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Sogdian" {
-			return Tuple3[int64, int64, int64]{F0: int64(140), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Soyombo" {
-			return Tuple3[int64, int64, int64]{F0: int64(141), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Spaceseparator" {
-			return Tuple3[int64, int64, int64]{F0: int64(142), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Spacingmark" {
-			return Tuple3[int64, int64, int64]{F0: int64(101), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Sundanese" {
-			return Tuple3[int64, int64, int64]{F0: int64(143), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Surrogate" {
-			return Tuple3[int64, int64, int64]{F0: int64(33), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Symbol" {
-			return Tuple3[int64, int64, int64]{F0: int64(132), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Syriac" {
-			return Tuple3[int64, int64, int64]{F0: int64(144), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Tagalog" {
-			return Tuple3[int64, int64, int64]{F0: int64(145), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Tagbanwa" {
-			return Tuple3[int64, int64, int64]{F0: int64(146), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Takri" {
-			return Tuple3[int64, int64, int64]{F0: int64(147), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Tamil" {
-			return Tuple3[int64, int64, int64]{F0: int64(148), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Tangsa" {
-			return Tuple3[int64, int64, int64]{F0: int64(149), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Tangut" {
-			return Tuple3[int64, int64, int64]{F0: int64(150), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Telugu" {
-			return Tuple3[int64, int64, int64]{F0: int64(151), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Thaana" {
-			return Tuple3[int64, int64, int64]{F0: int64(152), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Thai" {
-			return Tuple3[int64, int64, int64]{F0: int64(153), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Tibetan" {
-			return Tuple3[int64, int64, int64]{F0: int64(154), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Tifinagh" {
-			return Tuple3[int64, int64, int64]{F0: int64(155), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Tirhuta" {
-			return Tuple3[int64, int64, int64]{F0: int64(156), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Titlecaseletter" {
-			return Tuple3[int64, int64, int64]{F0: int64(88), F1: int64(89), F2: int64(1)}
-		}
-		if v_name == "Toto" {
-			return Tuple3[int64, int64, int64]{F0: int64(157), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Ugaritic" {
-			return Tuple3[int64, int64, int64]{F0: int64(158), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Unassigned" {
-			return Tuple3[int64, int64, int64]{F0: int64(4), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Uppercaseletter" {
-			return Tuple3[int64, int64, int64]{F0: int64(90), F1: int64(91), F2: int64(1)}
-		}
-		if v_name == "Vai" {
-			return Tuple3[int64, int64, int64]{F0: int64(159), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Vithkuqi" {
-			return Tuple3[int64, int64, int64]{F0: int64(160), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Wancho" {
-			return Tuple3[int64, int64, int64]{F0: int64(161), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Yezidi" {
-			return Tuple3[int64, int64, int64]{F0: int64(162), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Yi" {
-			return Tuple3[int64, int64, int64]{F0: int64(163), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Z" {
-			return Tuple3[int64, int64, int64]{F0: int64(135), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Zl" {
-			return Tuple3[int64, int64, int64]{F0: int64(82), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Zp" {
-			return Tuple3[int64, int64, int64]{F0: int64(128), F1: int64(-1), F2: int64(1)}
-		}
-		if v_name == "Zs" {
-			return Tuple3[int64, int64, int64]{F0: int64(142), F1: int64(-1), F2: int64(1)}
-		}
-		{
-			return Tuple3[int64, int64, int64]{F0: int64(-1), F1: int64(-1), F2: int64(0)}
-		}
+		return Tuple3[int64, int64, int64]{F0: int64(-1), F1: int64(-1), F2: int64(0)}
 	}
 }
