@@ -32,6 +32,15 @@ const stressMarkHalfway = "  let mark_s = minutes * 30\n  let bound = if minutes
 // stressHalfway: the programs that take stressMarkHalfway's mark.
 var stressHalfway = map[string]bool{"grpcreflect": true}
 
+// stressInTest: the programs whose resident set is sampled inside the
+// test file they write and run with xo test (std/testing's fakes live
+// only in tests), so they carry no rss_medians helper; each must hold
+// the median lines named here (lead 2026-11-20: f1dc7986c added
+// testing's program after this test, and main failed -short).
+var stressInTest = map[string][]string{
+	"testing": {"let mark = median(rss, 15, 18)", "let last = median(rss, 27, 30)", "last - mark > mark / 10 && last - mark > 4 * 1048576"},
+}
+
 func TestStressRssMedians(t *testing.T) {
 	root, err := xotool.Root()
 	if err != nil {
@@ -48,6 +57,14 @@ func TestStressRssMedians(t *testing.T) {
 			t.Fatal(err)
 		}
 		s := string(b)
+		if want, ok := stressInTest[filepath.Base(filepath.Dir(filepath.Dir(p)))]; ok {
+			for _, w := range want {
+				if !strings.Contains(s, w) {
+					t.Errorf("%s: no %q (its in-test median rule)", p, w)
+				}
+			}
+			continue
+		}
 		i := strings.Index(s, "\n/// The resident set early and late")
 		if i < 0 || !strings.Contains(s, "let (at_mark, last) = rss_medians(") {
 			t.Errorf("%s: no rss_medians (decision 0616's median rule)", p)
