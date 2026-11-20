@@ -1714,17 +1714,17 @@ fn spec_send(fos: List[Int], work: Chan[Int], claimed: Mutex[Map[Int, Bool]], st
 /// worker's prelude.result_map_err[Str, FsErr, Str] replayed for another
 /// instance of that name, XO1510).
 fn (var b: Builder) spec_inst_key(fo: Int, sub: Map[Int, Int]) -> Str {
-  var ns: List[Str] = []
   var cs: List[Str] = []
   for tp in b.type_params(fo) {
     let t = sub.get(tp) ?? -1
     if t < 0 {
       return ""
     }
-    ns.push(b.m.types[b.typ(t)].name)
     cs.push(b.type_name(b.impl_named(t)))
   }
-  "inst ${b.fe_own_flags()} ${fo}:${b.func_name(fo)}[${ns.join(", ")}]|${cs.join(", ")}"
+  // the instance's name holds the checker's types since task #469
+  // (declare0), as this key's second part always did
+  "inst ${b.fe_own_flags()} ${fo}:${b.func_name(fo)}[${cs.join(", ")}]|${cs.join(", ")}"
 }
 
 /// f without its body: block 0 with its parameters, and every field a
@@ -3571,22 +3571,25 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
     }
   }
   var name = b.func_name(fo)
+  // an instance is named by its type arguments as the program wrote them
+  // (the checker's types), never by the types they lower to: Str and
+  // Bytes, or Int, Duration and Time, lower to one type, and two instances
+  // named alike were one symbol. Which body it held was the order they
+  // were met in (`#2` for the second), so a program and std's store, each
+  // meeting one first, linked the wrong one: json.encode_str("aé") ran
+  // std's encode_str[Bytes] and printed base64 (task #469)
+  var cs: List[Str] = []
+  for t in targs {
+    let it = b.impl_named(t)
+    // by module path when another module's type shares the name
+    // (impl_text)
+    cs.push(b.type_name(it))
+  }
   if !sargs.is_empty() {
-    var ns: List[Str] = []
-    for t in sargs {
-      ns.push(b.m.types[t].name)
-    }
-    name = "${name}[${ns.join(", ")}]"
+    name = "${name}[${cs.join(", ")}]"
   }
   var key = "${fo}:${name}"
   if !targs.is_empty() {
-    var cs: List[Str] = []
-    for t in targs {
-      let it = b.impl_named(t)
-      // by module path when another module's type shares the name
-      // (impl_text)
-      cs.push(b.type_name(it))
-    }
     key = "${key}|${cs.join(", ")}"
     if let Some(f) = b.funcs.get(key) {
       b.declaring = was

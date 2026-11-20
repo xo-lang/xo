@@ -1,0 +1,39 @@
+// Task #469: a generic's instances are named by their type arguments as
+// written, not by the types they lower to. Duration and Int (and Str and
+// Bytes) lower to one type, so the two instances had one name: a function
+// value of the Int instance got the Duration one met before it (`<2ns>`
+// below), and across a program and std's store one symbol held either
+// body (json.encode_str("aé") printed the base64 std's Bytes instance
+// writes).
+use std/json
+
+fn show[T: Display](x: T) -> Str {
+  "<${x}>"
+}
+
+fn first[T: Display](xs: List[T]) -> Str {
+  show(xs[0])
+}
+
+fn size[T](x: T, n: Int) -> Int {
+  n
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  // Duration first, then Int
+  let fd: fn(Duration) -> Str = show
+  let fi: fn(Int) -> Str = show
+  os.stdio.println("${fd(Duration.from_secs_int(k + 2))} ${fi(k + 2)}")
+  os.stdio.println("${show(Duration.from_secs_int(3))} ${show(3)}")
+  os.stdio.println("${first([Duration.from_secs_int(4)])} ${first([4])}")
+  // Int first, then Duration, through another generic
+  let gi: fn(List[Int]) -> Str = first
+  let gd: fn(List[Duration]) -> Str = first
+  os.stdio.println("${gi([5])} ${gd([Duration.from_secs_int(5)])}")
+  // Str and Bytes
+  let sb: fn(Bytes, Int) -> Int = size
+  let ss: fn(Str, Int) -> Int = size
+  os.stdio.println("${sb(b"ab", 1)} ${ss("ab", 2)}")
+  os.stdio.println("${json.encode_str("aé")} ${json.encode_str("é😀")} ${json.encode_str("plain")}")
+}

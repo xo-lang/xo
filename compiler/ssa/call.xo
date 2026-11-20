@@ -928,7 +928,10 @@ fn (var b: Builder) func_value(fo: Int, e: Expr) -> Int {
     }
     let at = b.apply(ta)
     targs.push(at)
-    names.push(b.m.types[b.typ(at)].name)
+    // by the checker's type, as the instance is named (declare0): the
+    // lowered type's name gave `fn(Int) -> Str` the thunk of the
+    // Duration instance met before it (task #469)
+    names.push(b.type_name(b.impl_named(at)))
   }
   var key = "${fo}:${b.func_name(fo)}"
   if !names.is_empty() {
