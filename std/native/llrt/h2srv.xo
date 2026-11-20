@@ -1102,7 +1102,7 @@ fn gone_close(st: Int) {
   for i in 0..ld(st, S_GONE + 8) / 8 {
     let ch = rt.mem_load(p, 8 * i, 8)
     let _c = rt.call_c2(rt.fn_addr("chan_close"), ch, 0)
-    if rc.dec(ch) != 0 {
+    if obj.h_dec(ch) != 0 {
       obj.h_free_n(ch)
     }
   }

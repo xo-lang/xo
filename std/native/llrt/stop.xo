@@ -359,7 +359,7 @@ pub fn unroot(n: Int) -> Int {
 /// Drops a reference to the stopping channel ch (tasks.xo h_release,
 /// which sits above this module): the last one frees it.
 fn h_release(ch: Int) {
-  if rc.dec(ch) != 0 {
+  if obj.h_dec(ch) != 0 {
     obj.h_free_n(ch)
   }
 }

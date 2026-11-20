@@ -418,10 +418,30 @@ pub fn rc_free_n(p: Int) {
   rl_free_n(p, 0, 0)
 }
 
+/// The runtime's own release of a reference to the handle p (tasks.xo
+/// h_release, stop.xo, h2srv.xo): rc.dec, 1 when it was the last one (the
+/// caller then calls h_free_n). In a --race build the runtime is not
+/// instrumented (decision 0273 mode 2), so ThreadSanitizer saw neither
+/// this decrement nor the one that frees: a task that read a channel's
+/// record and released it here, and the handler's task that then freed
+/// it on another thread, were a data race to it (ClientStream.read
+/// against free, internal/llvm TestRaceOrphanScope in 10 of 34 gate
+/// runs, task #437). The release tells it this thread's accesses come
+/// before the decrement; h_free_n's acquire pairs with it and with the
+/// atomic decrements of instrumented code, which it sees.
+pub fn h_dec(p: Int) -> Int {
+  sanhook.release(p)
+  rc.dec(p)
+}
+
 /// Frees the handle p whose count reached zero, for generated code
 /// (xo_h_free): its free function (word 1), unless a real-time section
 /// defers it.
 pub fn h_free_n(p: Int) {
+  // the last reference: the other holders' releases happened before
+  // (their decrements), told to ThreadSanitizer, which does not see the
+  // runtime's atomics and has the free as a write (h_dec; task #437)
+  sanhook.acquire(p)
   let h = heap_word() & -2
   if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt_defer(h, RT_HANDLE, p, 0, 0) {
     return

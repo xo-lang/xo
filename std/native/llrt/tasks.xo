@@ -540,7 +540,7 @@ pub fn h_release(p: Int) {
     rt.wasi_h_release(p)
     return
   }
-  if rc.dec(p) != 0 {
+  if obj.h_dec(p) != 0 {
     obj.h_free_n(p)
   }
 }

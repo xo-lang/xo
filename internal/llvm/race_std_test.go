@@ -150,3 +150,60 @@ func TestRaceRuntimeCallsNotForced(t *testing.T) {
 		t.Fatalf("--race forces the runtime's inline into an instrumented function: %s", strings.TrimSpace(l))
 	}
 }
+
+// TestRaceRuntimeHandleRelease (task #437) checks http_h2_config's
+// --race IR: the runtime's own releases of a handle (tasks.h_release,
+// stop.h_release, h2srv.gone_close) go through obj.h_dec, which tells
+// ThreadSanitizer the release before its decrement, and obj.h_free_n
+// tells it the acquire before the free, as the generated drop code does
+// (obj.dec_shared_race). The runtime is not instrumented in a --race
+// build (decision 0273 mode 2), so without them ThreadSanitizer saw a
+// free on one thread and an earlier read of the handle's count word on
+// another with no order between them: TestRaceOrphanScope failed in 9
+// of 34 gate runs on the 20 CPU hosts (the main thread's free in
+// obj.h_free_n against the test fiber's read in ClientStream.read) and
+// in none of 1,560 runs outside a gate, so this test reads the code.
+func TestRaceRuntimeHandleRelease(t *testing.T) {
+	ir, err := xotool.LLVMIRRace(filepath.Join("testdata", "golden", "http_h2_config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := func(name string) string {
+		var b strings.Builder
+		in := false
+		for _, l := range strings.Split(string(ir), "\n") {
+			if strings.HasPrefix(l, "define ") && strings.Contains(l, "@\"x."+name+"\"(") {
+				in = true
+				continue
+			}
+			if in && l == "}" {
+				return b.String()
+			}
+			if in {
+				b.WriteString(l)
+				b.WriteByte('\n')
+			}
+		}
+		t.Fatalf("no function %s in the IR", name)
+		return ""
+	}
+	calls := func(fn, callee string) bool {
+		return strings.Contains(body(fn), "@\"x."+callee+"\"(")
+	}
+	for _, fn := range []string{"tasks.h_release", "stop.h_release", "h2srv.gone_close"} {
+		if !calls(fn, "obj.h_dec") {
+			t.Errorf("%s does not release through obj.h_dec", fn)
+		}
+		if calls(fn, "rc.dec") {
+			t.Errorf("%s decrements the count itself (rc.dec), with no release told to ThreadSanitizer", fn)
+		}
+	}
+	dec := body("obj.h_dec")
+	rel, d := strings.Index(dec, "@\"x.sanhook.release\"("), strings.Index(dec, "@\"x.rc.dec\"(")
+	if rel < 0 || d < 0 || rel > d {
+		t.Errorf("obj.h_dec does not call sanhook.release before rc.dec:\n%s", dec)
+	}
+	if !calls("obj.h_free_n", "sanhook.acquire") {
+		t.Errorf("obj.h_free_n does not call sanhook.acquire before the free")
+	}
+}
