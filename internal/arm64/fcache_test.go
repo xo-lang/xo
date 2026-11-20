@@ -1073,7 +1073,10 @@ func TestModuleCheckAuto(t *testing.T) {
 					t.Errorf("%s: the warm build fell back:\n%s", filepath.Base(d), log)
 				}
 				if !bytes.Equal(warm, off) {
-					t.Errorf("%s: the warm build with XO_CHK_CACHE=auto differs from the cache-off build", filepath.Base(d))
+					// where, and both binaries kept (task #476: sql_conv
+					// differed on host 3 twice, 2026-11-19 and 11-20, and the
+					// test kept nothing to look at)
+					t.Errorf("%s: the warm build with XO_CHK_CACHE=auto differs from the cache-off build: %s%s", filepath.Base(d), warmDiff(warm, off), keepWarmDiff("chkauto-"+filepath.Base(d), warm, off))
 				}
 				if skipped.MatchString(log) {
 					nskip.Add(1)

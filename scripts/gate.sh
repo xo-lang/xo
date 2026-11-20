@@ -72,7 +72,7 @@
 #            named when the branch changes compiler/ (warmseq_change);
 #            XO_WARMSEQ=modules or all for wider sets
 #            (a build that differs from its cold one is kept in the
-#            logs' warmseq-keep/, warm and cold, task #471)
+#            keep dir's warmseq-keep/, warm and cold, task #471)
 #   chkcache the module check cache's auto mode against a cold check
 #            (internal/arm64 TestModuleCheckAuto, ...Generic, ...Zones):
 #            run after the steps named when the branch changes
@@ -180,6 +180,11 @@ shift
 # nothing of xo's to build or test
 [ -d "$wt/compiler/xo" ] && [ -f "$wt/scripts/gate.sh" ] || { echo "gate.sh: $wt is not an xo checkout (no compiler/xo); give WORKTREE as the xo worktree you gate"; exit 2; }
 logs=${XO_GATE_LOGS:-${TMPDIR:-/tmp}/xo-gate-$(basename "$wt")}
+# where a step keeps binaries that differ (warmseq #471, chkcache #476):
+# GATE_KEEP (offload-gate-remote.sh sets it to the host's
+# /work/offgate-keep/NAME, kept 3 days; the logs are removed with the
+# gate's worktree), else the logs
+gate_keep=${GATE_KEEP:-$logs}
 mkdir -p "$logs"
 # the logs and the scratch stay outside the worktree (task #168; memory
 # "Gate output outside worktree": 2026-10-21 a git add -A after a gate
@@ -1569,9 +1574,9 @@ run_step_body() {
     git worktree remove --force "$pw/tree" >/dev/null 2>&1
     rm -rf "${pw:?}" ;;
   chkcache)
-    full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
+    XO_WARMSEQ_KEEP=$gate_keep/chkcache-keep full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
   warmseq)
-    XO_WARMSEQ_KEEP=$logs/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$' ;;
+    XO_WARMSEQ_KEEP=$gate_keep/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$' ;;
   stdwasm)
     # every std test module under `xo test --backend=wasm` (decision 0610),
     # Node's WASI as the runner: a module passes when its summary line is
@@ -1613,10 +1618,10 @@ run_step_body() {
 after_steps() {
   ir_first_wait after
   if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
-    full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
+    XO_WARMSEQ_KEEP=$gate_keep/chkcache-keep full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
   fi
   if [ "$warmseq_ran" = 0 ] && [ "${XO_GATE_WARMSEQ:-1}" != 0 ] && warmseq_change; then
-    XO_WARMSEQ_KEEP=$logs/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$'
+    XO_WARMSEQ_KEEP=$gate_keep/warmseq-keep full warmseq ./internal/arm64 -run '^(TestWarmBuildSequence|TestFrontCacheVerifyAcrossPrograms)$'
   fi
   if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
     full scale ./internal/arm64 -run '^TestSwitch65535Arms$'

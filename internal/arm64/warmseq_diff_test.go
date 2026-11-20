@@ -6,6 +6,7 @@ import (
 	"debug/macho"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -28,7 +29,58 @@ func warmDiff(warm, cold []byte) string {
 	if sec := sectionAt(cold, off); sec != "" {
 		s += " in " + sec
 	}
+	if sym := symbolAt(cold, off); sym != "" {
+		s += " at " + sym
+	}
 	return s
+}
+
+// symbolAt names the symbol that holds bin's file offset off, as
+// NAME+0xDELTA (the nearest symbol at or below its address in the same
+// section), "" when there is none: which function or datum differs, for
+// a difference whose binaries were not kept (task #476).
+func symbolAt(bin []byte, off int) string {
+	o := uint64(off)
+	if f, err := elf.NewFile(bytes.NewReader(bin)); err == nil {
+		syms, _ := f.Symbols()
+		for i, s := range f.Sections {
+			if s.Type == elf.SHT_NOBITS || o < s.Offset || o >= s.Offset+s.FileSize {
+				continue
+			}
+			addr := s.Addr + (o - s.Offset)
+			best := -1
+			for j, y := range syms {
+				if int(y.Section) == i && y.Name != "" && y.Value <= addr && (best < 0 || y.Value > syms[best].Value) {
+					best = j
+				}
+			}
+			if best >= 0 {
+				return fmt.Sprintf("%s+%#x", syms[best].Name, addr-syms[best].Value)
+			}
+			return ""
+		}
+		return ""
+	}
+	if f, err := macho.NewFile(bytes.NewReader(bin)); err == nil && f.Symtab != nil {
+		for i, s := range f.Sections {
+			if o < uint64(s.Offset) || o >= uint64(s.Offset)+s.Size {
+				continue
+			}
+			addr := s.Addr + (o - uint64(s.Offset))
+			best := -1
+			for j, y := range f.Symtab.Syms {
+				if int(y.Sect) == i+1 && y.Name != "" && y.Value <= addr && (best < 0 || y.Value > f.Symtab.Syms[best].Value) {
+					best = j
+				}
+			}
+			if best >= 0 {
+				y := f.Symtab.Syms[best]
+				return fmt.Sprintf("%s+%#x", y.Name, addr-y.Value)
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // sectionAt names the section of bin's file offset off, "" when bin is
@@ -103,5 +155,62 @@ func TestWarmDiff(t *testing.T) {
 		t.Error("keepWarmDiff kept nothing")
 	} else if b, err := os.ReadFile(filepath.Join(os.Getenv("XO_WARMSEQ_KEEP"), "p", "warm")); err != nil || !bytes.Equal(b, warm[:8]) {
 		t.Errorf("kept warm = %v, %v", b, err)
+	}
+}
+
+// TestSymbolAt: symbolAt names the function at a file offset of a small
+// Go program built here (ELF on linux, Mach-O on darwin; the test binary
+// itself has no symbol table, since go test links with -s), 4 bytes into
+// it.
+func TestSymbolAt(t *testing.T) {
+	gobin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go tool")
+	}
+	dir := t.TempDir()
+	src := "package main\n\n//go:noinline\nfunc symbolTarget(n int) int { return n*7 + 1 }\n\nfunc main() { println(symbolTarget(3)) }\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(dir, "p")
+	cmd := exec.Command(gobin, "build", "-o", exe, "main.go")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GO111MODULE=off", "GOFLAGS=")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	bin, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// debug/macho names it without nm's leading underscore
+	const want = "main.symbolTarget"
+	off, name := -1, ""
+	if f, err := elf.NewFile(bytes.NewReader(bin)); err == nil {
+		syms, _ := f.Symbols()
+		for _, y := range syms {
+			if y.Name == want && int(y.Section) < len(f.Sections) {
+				s := f.Sections[y.Section]
+				off, name = int(s.Offset+(y.Value-s.Addr))+4, y.Name
+				break
+			}
+		}
+	} else if f, err := macho.NewFile(bytes.NewReader(bin)); err == nil && f.Symtab != nil {
+		for _, y := range f.Symtab.Syms {
+			if (y.Name == want || y.Name == "_"+want) && y.Sect > 0 && int(y.Sect) <= len(f.Sections) {
+				s := f.Sections[y.Sect-1]
+				off, name = int(uint64(s.Offset)+(y.Value-s.Addr))+4, y.Name
+				break
+			}
+		}
+	}
+	if off < 0 {
+		t.Fatalf("no %s symbol in %s", want, exe)
+	}
+	if got := symbolAt(bin, off); got != name+"+0x4" {
+		t.Errorf("symbolAt(%#x) = %q, want %q", off, got, name+"+0x4")
+	}
+	if got := symbolAt([]byte("not a binary"), 3); got != "" {
+		t.Errorf("symbolAt(not a binary) = %q, want empty", got)
 	}
 }
