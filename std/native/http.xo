@@ -4292,16 +4292,13 @@ fn client_h2c(c: Client) -> Bool {
 fn (c: Client) with_h2_config(cfg: http.H2Config) -> Client { c with {h2cfg: Some(cfg)} }
 
 fn (c: Client) with_idle_pings(tasks: task.Group, clock: Clock) -> Client uses clock {
-  if target.arch != TargetArch.Wasm32 {
-    // with no connection due, it looks again after send_ping_timeout
-    // (at most 1 s), so a connection pooled while it sleeps is not
-    // pinged late
-    let tick = match c.h2cfg {
-      Some(f) if f.send_ping_timeout > 0s && f.send_ping_timeout < 1s => f.send_ping_timeout
-      _ => 1s
-    }
-    tasks.spawn_background(fn() uses (clock, sync) { idle_pinger(clock, tick) })
+  // with no connection due, it looks again after send_ping_timeout (at
+  // most 1 s), so a connection pooled while it sleeps is not pinged late
+  let tick = match c.h2cfg {
+    Some(f) if f.send_ping_timeout > 0s && f.send_ping_timeout < 1s => f.send_ping_timeout
+    _ => 1s
   }
+  tasks.spawn_background(fn() uses (clock, sync) { idle_pinger(clock, tick) })
   c with {idle_pings: true}
 }
 

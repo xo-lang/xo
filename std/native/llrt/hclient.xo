@@ -1065,7 +1065,9 @@ pub fn idle_ping_take() -> (Int, Int) {
 /// http1.h2_idle_ping runs it, and h2_end gives pc back to the pool (its
 /// idle time kept) or closes it.
 pub fn idle_ping_start(pc: Int) -> rthttp.CResp {
-  let r = tasks.new_handle(R_SIZE, rt.fn_addr("cresp_free"))
+  // wasm has no function addresses: its handle frees through the hook,
+  // as cl_start's (task #492: rt.fn_addr faulted the pinger on wasip2)
+  let r = if target.arch == TargetArch.Wasm32 { rt.wasi_handle_new(R_SIZE, rt.wasi_hook("cresp_free")) } else { tasks.new_handle(R_SIZE, rt.fn_addr("cresp_free")) }
   st(r, R_PREFIX, cstr_dup(""))
   exchange_start(r, pc, 1, 0, 0, 0)
   st(ld(r, R_H2), X_PING, 1)

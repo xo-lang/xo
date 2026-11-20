@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-20: fix: Client.with_idle_pings pings on wasm (wasip2)
+
+- Kind: fix
+- Commit: this push
+- Found by: task #492 (full wasm follow-up: the http_idle_pings golden printed "idle pings no" on wasip2, where the pinger was never started)
+- Go reference: golang.org/x/net/http2 Transport ReadIdleTimeout (healthCheck)
+- Test: internal/selfhost TestWasmCommandGoldens http_idle_pings (failed on wasip2 before: idle pings no, then a fault at rt.fn_addr with the pinger on)
+- Timing: none
+- Shipped in: not yet released
+
 ## 2026-11-20: fix: programs serving HTTP build for wasm again
 
 - Kind: fix

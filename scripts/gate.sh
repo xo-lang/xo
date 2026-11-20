@@ -1662,7 +1662,7 @@ prove_wasm() {
   # every wasip2 http golden stopped building with no golden touched
   # (task #492)
   if echo "$ch" | grep -q -E '^std/native/(http[a-z0-9_]*|llrt/http[a-z0-9_]*)\.xo$'; then
-    g="${g:+$g,}http_h2c,http_duplex,http_pipe"
+    g="${g:+$g,}http_h2c,http_duplex,http_pipe,http_idle_pings"
   fi
   f0=$failed; failed=0
   # XO_GATE_WASM_ALL=1: every golden on both runners (a fix to a wasm
