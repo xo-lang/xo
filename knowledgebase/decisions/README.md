@@ -716,3 +716,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0724](0724-arm64-loop-split.md): Accepted (xo-lang-1, 2026-11-19, #426): arm64 splits a call free inner loop out of the ranges a first register allocation spilled around it
 - [0725](0725-json-map-key-path-quoted.md): Accepted (xo-lang-3, 2026-11-19, #241 b42): a Map key in a json error path is ["KEY"], quoted, so a peer cannot forge a log line; decode_go leaves keys out of the Go struct field name, as encoding/json
 - [0726](0726-perf-interleaved-ratio-statistic.md): Proposed (xo-4c, 2026-11-20, #429): perf evidence reads interleaved Xo/Go rounds as the median of per-round ratios, since host 2 timings are bimodal run to run
+- [0727](0727-perf-after-proven-compiler-wide.md): Accepted (owner, 2026-11-20): after std Proven, per module tuning stops at 1.05 of Go; performance work is compiler wide, scored on a broad set with a compile time budget
