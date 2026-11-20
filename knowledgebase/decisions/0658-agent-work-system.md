@@ -205,6 +205,15 @@ lead), workstream c1d23ad and after:
   (`xw cc-inbox`, migration 19), after every agent missed decision #28
   for 18 minutes. A Stop blocks once with them; the hook waits at most 4
   seconds and prints nothing when xw is down.
+- Lead alerts (xw #502, decision #211, 2026-11-20): new open alerts reach
+  the lead like an agent's tasks: the wake pass wakes an idle lead session
+  with up to 10 alerts raised in the last 2 hours, and its hook (prompt,
+  Stop, PostToolUse) shows them while it is busy, each once per session
+  between the two. The lead runs no `xw alerts --wait` loop: the
+  no-alert-wait problem and the Stop re-arm (#52) are gone
+  (`xw cc-stop-check` prints nothing), and a wake xw could not deliver is
+  a wake-failed alert. About 11 re-arms in 3 hours were the lead's largest
+  source of counted polls.
 - Cards and `xw status`: the newest gate's result, worktrees gated but
   not pushed (newest gate passed on a HEAD not on main, no push since),
   and "no task started" when an agent works while its card's task is
