@@ -1827,7 +1827,10 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   the worktree onto origin/main (Markdown add/add conflicts resolved
   as in the lane) and runs every check: the content rules, stdcorpus
   -check, the fast repo checks (internal/repotest and the two listed
-  tests), stdgen -check, the prelude interface check, TestStdChecks,
+  tests; repotest's 8 slow tests, pushq.sh's `pq_fast_slow`, are skipped
+  unless the push changes their inputs, task #539, 2026-11-20: 98 s at
+  Mac load 30 to 42 instead of 814 s; the 2 hour main tier runs them),
+  stdgen -check, the prelude interface check, TestStdChecks,
   TestVetCostStd and the new goldens. A failed check ends the push
   there, before the wait (log lines say `(before the lane)`). The lane
   run then rebases and pushes, and reruns a check only when this push and
