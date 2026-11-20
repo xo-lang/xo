@@ -6609,7 +6609,14 @@ fn to_json(text: Str) -> Str ! yaml.YamlErr {
   }
   var out: List[Str] = []
   json_text(v, out)
-  Ok(out.join(""))
+  Ok(json_html_escape(out.join("")))
+}
+
+/// <, >, & and U+2028/U+2029 as \u escapes, as json.Marshal and
+/// std/json's default writer (decision #224): JSON text has them only
+/// inside strings, so the whole text is rewritten.
+fn json_html_escape(s: Str) -> Str {
+  s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("\u{2028}", "\\u2028").replace("\u{2029}", "\\u2029")
 }
 
 const U64_KIND = "yaml-uint64"

@@ -1,5 +1,16 @@
 # std/yaml changes
 
+## 2026-11-20: behavior: to_json escapes <, >, & and U+2028/U+2029
+
+- Kind: behavior
+- Commit: this push
+- Found by: task #239 (xw decision #224)
+- Go reference: encoding/json encode.go (Marshal's HTMLEscape: `\u003c`, `\u003e`, `\u0026`, `\u2028`, `\u2029`)
+- Test: internal/stdtest/testdata/corpus/yaml (scripts/stdcorpus/yamloracle cases/c493.yaml; the oracle's jsonShow no longer turns SetEscapeHTML off)
+- Shipped in: not yet released
+
+`yaml.to_json` writes `<`, `>`, `&`, U+2028 and U+2029 inside strings as `\u003c`, `\u003e`, `\u0026`, `\u2028` and `\u2029`, as json.Marshal and std/json's default writer do; they were written as is.
+
 ## 2026-11-20: fix: derive Yaml reads and writes sized integer fields
 
 - Kind: fix

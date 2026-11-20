@@ -317,7 +317,6 @@ func jsonShow(in string) (out string) {
 	}
 	var jb bytes.Buffer
 	enc := json.NewEncoder(&jb)
-	enc.SetEscapeHTML(false) // to_json writes < > & as they are, which is valid JSON
 	if err := enc.Encode(v); err != nil {
 		return "ERR"
 	}
