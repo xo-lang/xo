@@ -1,6 +1,6 @@
 # 0121: HTTP/2 over TLS on every backend
 
-Status: Accepted (2026-10-10), implemented. Supersedes point 2 of 0106
+Status: Accepted (2026-10-10), implemented. Its "multiplexing native client left for later" alternative and first "Remaining differences" item are superseded by 0728 (2026-11-20). Supersedes point 2 of 0106
 ("HTTP/1.1 only, also over TLS"), as 0106's owner confirmation
 anticipated. Implemented in `std/rt/http_net.go` (Go backend),
 `std/llrt/xo_h2.c` (native server and client), hooks in
