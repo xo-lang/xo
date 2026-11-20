@@ -34,7 +34,8 @@ exit 0
 "a = 0x" -> toml: line 1: bad value "0x"
 "a = 99999999999999999999" -> toml: line 1: bad value "99999999999999999999"
 "a = nan" -> toml: line 1: nan cannot be decoded: JSON has no form for inf and nan
-"a = \"\\x41\"" -> toml: line 1: unknown escape \x
+"a = \"\\x41\"" -> {"a":"A"}
+"a = \"\\q\"" -> toml: line 1: unknown escape \q
 "a = \"\\uD800\"" -> toml: line 1: bad unicode escape \uD800
 "a = \"x\ny\"" -> toml: line 1: string not closed
 "a = '''x" -> toml: line 1: multi-line string not closed
