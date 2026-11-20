@@ -58,6 +58,14 @@ fn uuid_word(b: Bytes, i: Int) -> Int
 /// would make eight checked byte loads (std/brotli's ld64); fewer than 8
 /// bytes from i faults.
 fn le_word(b: Bytes, i: Int) -> Int
+/// The word of the 4 bytes b[i..i + 4], the first byte lowest (Go's
+/// binary.LittleEndian.Uint32(b[i:])): one load on the native targets,
+/// where a List[UInt8] is packed (decision 0369), and four checked byte
+/// reads otherwise (std/brotli's ldl32, read for every hashed position);
+/// fewer than 4 bytes from i faults.
+fn list_le32(b: List[UInt8], i: Int) -> Int
+/// list_le32 for the 8 bytes b[i..i + 8] (binary.LittleEndian.Uint64).
+fn list_le64(b: List[UInt8], i: Int) -> Int
 
 /// A primitive of the native TLS stack's (work item B31, decision 0202)
 /// for the golden tests that diff it against Go's crypto (std/rt's

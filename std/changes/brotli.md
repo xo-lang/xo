@@ -1,5 +1,17 @@
 # std/brotli changes
 
+## 2026-11-20: perf: qualities 5 to 9 store a range of positions in one loop over the tables
+
+- Kind: perf
+- Commit: this push
+- Found by: task #271, callgrind per function and line of bench/perf/brotli enc6 (linux/arm64 in Docker, at b1a5a3d4f): storing a position in the H5 and H6 hashers took 30.6% of the instructions, about 90 a position: a dispatch on the hasher's type, a call of hash_h5, four and eight checked byte reads for its word, two checked shifts by a variable, and two table writes that each loaded the table from the encoder, tested it for sharing and stored it back
+- Go reference: andybalholm/brotli h5.go and h6.go (Store, StoreRange), encoding/binary's LittleEndian.Uint32 and Uint64
+- Change: hasher_store_range runs store_range_h5 for the H5 and H6 hashers: the two tables leave the encoder for the call (one owner each, written in place) and the hasher's words are locals; ldl32 and ldl64 are one load each (internal.list_le32 and list_le64 on the packed list); store_h5's shifts are the unchecked ones
+- Measured: `go run ./scripts/stdproven perf -rounds 9` on linux/arm64 host 2, four runs of a scratch clone of main with this change: enc6 0.903 to 0.925 of Go (main: 1.018 to 1.065), enc11 1.015 to 1.019 (main: 1.032 to 1.054). On the Mac (`/usr/bin/time -l`, two runs each): enc6 706,196,893 to 489,772,045 instructions retired and 117 to 119 M cycles to 97 to 100 M. Callgrind for the word reads alone (cgab l271m2): enc6 -1.34%
+- Test: std/brotli_test.xo "ldl32 and ldl64 are the ring buffer's little endian words"; `xo test --std-module brotli` (10 pass); bench/perf/brotli enc1, enc6 and enc11 print the same sums
+- Affected: none (no behavior change; a word read past the ring buffer's end faults as "list_le32: fewer than 4 bytes of the list at the index" where a byte index faulted)
+- Shipped in: not yet released
+
 ## 2026-11-20: perf: quality 10 and 11 read the short distance codes with shifts by constants
 
 - Kind: perf

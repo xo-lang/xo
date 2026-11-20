@@ -788,6 +788,38 @@ pub fn le_word(b: Bytes, i: Int) -> Int {
   rt.bytes_word(b, i)
 }
 
+/// One load of the packed bytes (decision 0369: one byte an element at
+/// rt.layout(2) of the list's object); wasm keeps a word an element
+/// (gotchas/packed-list-raw-copy-wasm.md) and reads the four. A b too
+/// short for it faults, with a constant message: one built from i and the
+/// length gave every caller a frame (std/brotli's hash_h5).
+pub fn list_le32(b: List[UInt8], i: Int) -> Int {
+  if i < 0 || i > b.len() - 4 {
+    fault("list_le32: fewer than 4 bytes of the list at the index")
+  }
+  if target.arch == TargetArch.Wasm32 {
+    return Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
+  }
+  rt.mem_load(rt.obj_addr(b).wrapping_add(rt.layout(2)), i, 4)
+}
+
+/// list_le32 for 8 bytes.
+pub fn list_le64(b: List[UInt8], i: Int) -> Int {
+  if i < 0 || i > b.len() - 8 {
+    fault("list_le64: fewer than 8 bytes of the list at the index")
+  }
+  if target.arch == TargetArch.Wasm32 {
+    var v = 0
+    var k = 7
+    while k >= 0 {
+      v = v.wrapping_shl(8) | Int(b[i + k])
+      k -= 1
+    }
+    return v
+  }
+  rt.mem_load(rt.obj_addr(b).wrapping_add(rt.layout(2)), i, 8)
+}
+
 pub fn uuid_half(s: Bytes, off: Int, dashed: Bool, half: Int) -> Int? {
   let n = if dashed { 36 } else { 32 }
   if off < 0 || s.len() - off < n {

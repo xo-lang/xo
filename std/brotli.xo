@@ -3515,19 +3515,14 @@ struct Enc {
 fn min_i(a: Int, b: Int) -> Int { if a < b { a } else { b } }
 fn max_i(a: Int, b: Int) -> Int { if a > b { a } else { b } }
 
-fn ldl64(b: List[UInt8], i: Int) -> Int {
-  var v = 0
-  var k = 7
-  while k >= 0 {
-    v = v.wrapping_shl(8) | Int(b[i + k])
-    k -= 1
-  }
-  v
-}
+/// The 8 and 4 byte little endian words of the ring buffer at i: one
+/// load each on the native targets (internal.list_le64 and list_le32,
+/// task #271: four and eight checked byte reads for every hashed position
+/// were 23% of quality 6's time on linux/arm64, where Go's
+/// binary.LittleEndian reads are one load).
+fn ldl64(b: List[UInt8], i: Int) -> Int { internal.list_le64(b, i) }
 
-fn ldl32(b: List[UInt8], i: Int) -> Int {
-  Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
-}
+fn ldl32(b: List[UInt8], i: Int) -> Int { internal.list_le32(b, i) }
 
 /// findMatchLengthWithLimit over the ring buffer.
 fn rb_match(b: List[UInt8], a: Int, c: Int, limit: Int) -> Int {
@@ -3729,8 +3724,49 @@ fn hasher_store(var e: Enc, ix: Int) {
 }
 
 fn hasher_store_range(var e: Enc, from: Int, to: Int) {
+  if e.h_type == 5 || e.h_type == 6 {
+    // the tables leave `e` for the call, so each has one owner and is
+    // written in place: passed as `e.buckets`, `e` still held it and the
+    // first write copied all of it (2 MB a call: enc6 ran three times
+    // its instructions)
+    var bk = e.buckets
+    e.buckets = []
+    var num = e.h_num
+    e.h_num = []
+    store_range_h5(bk, num, e.rb.buf, e.rb.mask, from, to, e.h_type == 6, e.h_mask64, e.h_bucket_bits, e.h_block_bits)
+    e.buckets = bk
+    e.h_num = num
+    return
+  }
   for i in from..to {
     hasher_store(e, i)
+  }
+}
+
+/// store_h5 for the positions from..to (hash_h5's two hashes): the two
+/// tables are `var` parameters and the hasher's words are locals, so a
+/// position stored is the hash, two reads and two writes. Through `e`,
+/// one at a time, each was a call of hash_h5, a dispatch on the hasher's
+/// type and two writes that each loaded their table from `e`, tested it
+/// for sharing and stored it back: about 90 instructions a position
+/// against 15 in Go's StoreRange (task #271, callgrind of bench/perf/
+/// brotli enc6: 30.6% of its instructions).
+fn store_range_h5(var bk: List[UInt32], var num: List[Int], b: List[UInt8], mask: Int, from: Int, to: Int, h6: Bool, mask64: Int, bucket_bits: Int, block_bits: Int) {
+  let one = 1
+  let bmask = one.wrapping_shl(block_bits) - 1
+  var ix = from
+  while ix < to {
+    let i = ix & mask
+    var key = 0
+    if h6 {
+      key = (ldl64(b, i) & mask64).wrapping_mul(0x1FE35A7BD3579BD3).shr_logical(64 - bucket_bits)
+    } else {
+      key = ((ldl32(b, i) * 0x1E35A7BD) & MASK32) >> (32 - bucket_bits)
+    }
+    let n = num[key]
+    bk[key.wrapping_shl(block_bits) + (n & bmask)] = UInt32(ix & MASK32)
+    num[key] = (n + 1) & 0xFFFF
+    ix += 1
   }
 }
 
@@ -6340,7 +6376,12 @@ fn hash_h5(var e: Enc, i: Int) -> Int {
 fn store_h5(var e: Enc, ix: Int) {
   let key = hash_h5(e, ix & e.rb.mask)
   let n = e.h_num[key]
-  e.buckets[(key << e.h_block_bits) + (n & ((1 << e.h_block_bits) - 1))] = UInt32(ix & MASK32)
+  // block bits is at most 10 and key below 2^15: the shifts cannot lose
+  // a bit, so they are the unchecked ones (a checked `<<` by a variable
+  // is five instructions, twice for every position stored; task #271)
+  let bb = e.h_block_bits
+  let one = 1
+  e.buckets[key.wrapping_shl(bb) + (n & (one.wrapping_shl(bb) - 1))] = UInt32(ix & MASK32)
   e.h_num[key] = (n + 1) & 0xFFFF
 }
 

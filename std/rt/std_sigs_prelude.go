@@ -16,6 +16,8 @@ var (
 	_ func(*Task, int64, int64) Bytes                                                                      = Internal_uuid_bytes_words
 	_ func(*Task, Bytes, int64) int64                                                                      = Internal_uuid_word
 	_ func(*Task, Bytes, int64) int64                                                                      = Internal_le_word
+	_ func(*Task, List[uint8], int64) int64                                                                = Internal_list_le32
+	_ func(*Task, List[uint8], int64) int64                                                                = Internal_list_le64
 	_ func(*Task, string, Bytes, Bytes, Bytes, Bytes) Bytes                                                = Internal_crypto_op
 	_ func(*Task, List[int64], int64, int64)                                                               = Internal_list_swap_at
 	_ func(*Task, List[int64], List[int64], List[int64])                                                   = Internal_list_swap_both

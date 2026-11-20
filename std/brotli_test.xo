@@ -48,6 +48,24 @@ fn outcome(data: Bytes) -> Str {
 
 // first: mem_peak is the run's high-water mark, so a test after a larger
 // allocation could not see this one's
+test "ldl32 and ldl64 are the ring buffer's little endian words" {
+  var b: List[UInt8] = []
+  for i in 0..40 {
+    b.push(UInt8((i * 37 + 200) & 255))
+  }
+  for i in 0..33 {
+    var w = 0
+    var k = 7
+    while k >= 0 {
+      w = w.wrapping_shl(8) | Int(b[i + k])
+      k -= 1
+    }
+    expect(ldl64(b, i)) == w
+    expect(ldl32(b, i)) == w & 0xFFFFFFFF
+  }
+  expect(ldl32(b, 36)) == Int(b[36]) | (Int(b[37]) << 8) | (Int(b[38]) << 16) | (Int(b[39]) << 24)
+}
+
 test "a quality 9 encode holds its hash table as Go's uint32s, 32 MB, not 64" {
   var b = BytesBuilder.new()
   for i in 0..400 {
