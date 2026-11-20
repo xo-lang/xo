@@ -9,6 +9,12 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+## v0.55.0 (2026-11-20)
+The release in which every std module is Proven (96 of 96 on features, tests
+and performance, decision 0726), from 0.51.1: 0.52, 0.53 and 0.54 were
+internal toolchain versions. The release notes (the GitHub release) group these
+entries; the breaking changes come first, each with its migration.
+
 - Fix (build, JSON; task #566): a std type's own JSON form (time.Date, uuid.Uuid, sql.Numeric, big.BigInt, big.BigFloat, big.BigRat) is kept when a separately compiled build reads std's declarations from its cached record. Such a build, any build after the first on a machine, decoded and encoded these types field by field: a Date in a request body was "expected object", and its range checks were skipped for the object form. No release had it: the types got their forms on 2026-11-16, after 0.51.1.
 - Fix (build cache; task #557): a build no longer prints "the front end cache entry ... (closure grpc.serve_call.fnN ...: its entry missed: read xo.droplist[...]) did not replay" and builds twice, when a program using std/grpc is built after another one whose earlier code had made the same list drop function. The output was right; only the warning and the second build go away.
 - Fix (`--race`; task #558): `xo build|run|test --race` of a program that compiles `use c` sources builds with the LLVM backend (clang compiles the C with ThreadSanitizer). With a release's race runtime installed it stopped at "--ld=macho links no C sources ... link with cc" on Linux and "--race on the arm64 backend links with Xo's linker" on macOS. Such a build needs clang; programs using only std/sqlite's prebuilt object still build natively.
