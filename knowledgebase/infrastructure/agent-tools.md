@@ -2200,9 +2200,11 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     wrapper over xw. Last verified: 2026-11-15.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision
   number, `~/xo-lead/agents/code-claim.sh PREFIX WHO [WHAT]` for a
-  diagnostic code (PREFIX is the family, `XO09` or `XO13`): each takes a
-  lock, reads origin/main and its claims file (~/xo-lead/adr-claims.txt,
-  ~/xo-lead/code-claims.txt), records the next free one, and prints it.
+  diagnostic code (PREFIX is the family, `XO09` or `XO13`): each reads
+  origin/main (and the old claims files, ~/xo-lead/adr-claims.txt and
+  code-claims.txt, read only since #316) and records the next free one
+  as an xw claim (`xw claim`; `xw claims adr|code` lists them), and
+  prints it. Last verified: 2026-11-20.
   Claim before writing the code into a branch; a claimed code is never
   given out again, even if its branch is dropped (core 10: a code keeps
   its meaning). A code used twice on main fails -short
