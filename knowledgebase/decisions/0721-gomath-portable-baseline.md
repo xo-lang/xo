@@ -66,3 +66,26 @@ math. Decision 0287 is unchanged.
   moves Xo's results on every backend and target; rejected (lead,
   2026-11-19).
 - Drop the four rows from the perf set: hides what a Go user would see.
+
+## Amendment 2026-11-19: random's zipf (owner, xw ask #197, xw decision #198)
+
+random.Zipf.draw is Go's Zipf.Uint64 (math/rand/v2 zipf.go) line for
+line; its time is in math.Exp and math.Log (XO_PROF on the linux/amd64
+host: exp 52%, log 18% of 30M draws). On amd64 Go's package math runs
+assembly for both (exp_amd64.s with VFMADD213SD under useFMA, and
+log_amd64.s; haveArchExp and haveArchLog are true in exp_asm.go and
+log_asm.go), whose results Xo cannot produce under 0287.
+
+bench/perf/random's zipf row therefore runs Go's Zipf with Go's portable
+Exp and Log (gmExp, gmLog: the copy bench/perf/gomath/twin.go.txt holds
+from std/rt/gomath_gen.go), with package math's rand.Zipf beside it as
+`- - zipf -- zipf pkg`. linux/amd64 host, stdproven perf -rounds 9, 2026-11-19 (on main
+1cc8f1e2b; std/evidence/random/perf.md):
+
+| work | Go portable ms | Xo ms | Xo / Go | Go package math ms |
+|---|---|---|---|---|
+| zipf | 36.4 | 33.3 | 0.913 | 26.9 |
+
+This is the first row outside bench/perf/gomath on this list: a
+module whose Go twin spends its time in package math's assembly joins
+it the same way, by an amendment naming the assembly with a timing table.

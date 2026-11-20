@@ -1,8 +1,10 @@
 # twincheck: random: six workloads (none is the setup alone); the draws are random on both sides, so only the workload and the draw count are compared.
+# zipf runs Go's Zipf on Go's portable Exp and Log; "zipf pkg" times package math's rand.Zipf beside it (decision 0721, amendment 2026-11-19).
 compare fields 2
 - - none
 - - normal
 - - exp
 - - perm
 - - zipf
+- - zipf -- zipf pkg
 - - draw
