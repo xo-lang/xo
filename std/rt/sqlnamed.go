@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 // sql.named on the Go backend: a port of pgx v5.12.0 named_args.go
 // (NamedArgs and StrictNamedArgs RewriteQuery and its lexer), Copyright
 // (c) 2013-2021 Jack Christensen, MIT License. Byte based, as

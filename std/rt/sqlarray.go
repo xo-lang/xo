@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 // Arrays' elements on the Go backend (decision 0679): pgx's array text
 // format (pgtype/array.go parseUntypedTextArray) for one dimension, the
 // same as std/native/sql.xo's arr_split.

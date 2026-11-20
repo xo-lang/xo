@@ -1,3 +1,5 @@
+//go:build !xo_no_tls
+
 package rt
 
 import (

@@ -1,3 +1,5 @@
+//go:build !xo_no_x509
+
 // Vendored from golang.org/x/crypto/pkcs12 (v0.58.0) for the Go backend's x509.parse_pkcs12:
 // the package and its internal/rc2 in one file, every top level name prefixed xp12_.
 // Copyright 2015 The Go Authors. All rights reserved. Use of this source code is

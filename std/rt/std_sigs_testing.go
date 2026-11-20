@@ -7,7 +7,6 @@ package rt
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
 	_ func(*Task) List[Log_Record]                                                          = Testing_logs
-	_ func(*Task, string) Result[Sql_Db, Sql_SqlErr]                                        = Testing_fake_db
 	_ func(*Testing_FakeNet, *Task, string) Result[Listener, NetErr]                        = (*Testing_FakeNet).M_listen
 	_ func(*Testing_FakeNet, *Task, string) Result[Conn, NetErr]                            = (*Testing_FakeNet).M_dial
 	_ func(*Testing_FakeNet, *Task, string, Duration) Result[Conn, NetErr]                  = (*Testing_FakeNet).M_dial_timeout

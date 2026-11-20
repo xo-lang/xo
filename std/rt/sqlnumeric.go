@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 // Postgres numeric on the Go backend (decision 0681): a port of pgx
 // v5.12.0 pgtype/numeric.go (parseNumericString,
 // parseScientificNumericString, numberTextBytes, encodeNumericText,

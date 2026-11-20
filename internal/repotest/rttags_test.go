@@ -5,9 +5,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/stdgen"
 )
 
 // TestStdRTBuildTags builds std/rt under each xo_* build tag its files
@@ -50,6 +53,7 @@ func TestStdRTBuildTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	all := []string{"xo_nohttp", "xo_gotimers"}
+	var optional []string
 	for _, l := range strings.Split(string(opt), "\n") {
 		l = strings.TrimSpace(l)
 		if l == "" || strings.HasPrefix(l, "#") {
@@ -60,10 +64,34 @@ func TestStdRTBuildTags(t *testing.T) {
 			t.Errorf("std/go_optional.txt lists %s, but no //go:build line in std/rt names %s", l, x)
 		}
 		all = append(all, x)
+		optional = append(optional, strings.TrimPrefix(l, "std/"))
+	}
+	// a program that does not reach module m reaches no module that uses
+	// m either (stdgen.Reaching), so m's tag is built with theirs: alone,
+	// xo_no_tls would leave out types that std/http's Go names
+	with := func(m string) string {
+		r := stdgen.Reaching(root, m)
+		var ts []string
+		if r["http"] {
+			ts = append(ts, "xo_nohttp")
+		}
+		for _, o := range optional {
+			if r[o] {
+				ts = append(ts, "xo_no_"+o)
+			}
+		}
+		return strings.Join(ts, ",")
 	}
 	tags := []string{"", strings.Join(all, ",")}
 	for x := range seen {
-		tags = append(tags, x)
+		switch m, ok := strings.CutPrefix(x, "xo_no_"); {
+		case x == "xo_nohttp":
+			tags = append(tags, with("http"))
+		case ok && slices.Contains(optional, m):
+			tags = append(tags, with(m))
+		default:
+			tags = append(tags, x)
+		}
 	}
 	sort.Strings(tags)
 	for _, x := range tags {
@@ -79,27 +107,50 @@ func TestStdRTBuildTags(t *testing.T) {
 	}
 }
 
-// TestStdRTNoHTTPDeps checks that std/rt built with xo_nohttp (a Go
-// backend program that does not reach std/http, compiler/gen/gen.xo)
-// imports no net/http package, whose init ran at every such program's
-// start (about 0.08 ms on linux/arm64 host 2, task #429). Before task
-// #472 the untagged files (testing.go's fake network, replay.go's
-// servers, attenuate.go's dispatch, the hand written std/http methods)
-// still imported it.
+// TestStdRTNoHTTPDeps checks that std/rt built for a Go backend program
+// that does not reach std/http (compiler/gen/gen.xo's xo_nohttp) imports
+// no net/http package, and one that does not reach std/tls, std/x509 or
+// std/crypto (their xo_no_ tags, with the tags of the modules reaching
+// them) no crypto/tls or crypto/x509: each package's init ran at every
+// such program's start (net/http about 0.08 ms, crypto/tls 0.06, x509
+// 0.04 on linux/arm64 host 2, task #429). Before task #472 the untagged
+// files (testing.go's fake network, replay.go's servers, attenuate.go's
+// dispatch, the std/http, std/tls and std/x509 methods) imported them.
 func TestStdRTNoHTTPDeps(t *testing.T) {
-	cmd := exec.Command("go", "list", "-deps", "-tags", "xo_nohttp", "./std/rt")
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("go list -deps -tags xo_nohttp ./std/rt: %v", err)
-	}
-	var bad []string
-	for _, p := range strings.Fields(string(out)) {
-		if p == "net/http" || strings.HasPrefix(p, "net/http/") {
-			bad = append(bad, p)
+	gates := stdgen.Gates(root)
+	// a program that does not reach m reaches no module that uses m
+	with := func(m string) string {
+		r := stdgen.Reaching(root, m)
+		var ts []string
+		for _, g := range gates {
+			if r[g.Mod] {
+				ts = append(ts, g.Tag)
+			}
 		}
+		return strings.Join(ts, ",")
 	}
-	if len(bad) > 0 {
-		t.Errorf("std/rt under xo_nohttp imports %s: a file that uses Http_ types or net/http needs //go:build !xo_nohttp (and a stub in a xo_nohttp file for what the rest calls)", strings.Join(bad, ", "))
+	for _, c := range []struct{ mod, pkg string }{
+		{"http", "net/http"},
+		{"tls", "crypto/tls"},
+		// std/crypto's key parsing (cryptokeys.go) is crypto/x509's, so
+		// only a program not reaching std/crypto leaves it out
+		{"crypto", "crypto/x509"},
+	} {
+		tags := with(c.mod)
+		cmd := exec.Command("go", "list", "-deps", "-tags", tags, "./std/rt")
+		cmd.Dir = root
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list -deps -tags %s ./std/rt: %v", tags, err)
+		}
+		var bad []string
+		for _, p := range strings.Fields(string(out)) {
+			if p == c.pkg || strings.HasPrefix(p, c.pkg+"/") {
+				bad = append(bad, p)
+			}
+		}
+		if len(bad) > 0 {
+			t.Errorf("std/rt under %s (a program not reaching std/%s) imports %s: a file that uses the module's types or %s needs its //go:build line, with a stand in under the tag for what the rest calls", tags, c.mod, strings.Join(bad, ", "), c.pkg)
+		}
 	}
 }

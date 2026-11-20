@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 package rt
 
 // M_display is `e.display()`: plain text (decision 0358), the same as

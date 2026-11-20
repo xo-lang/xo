@@ -28,6 +28,14 @@ give each name the untagged files use a stand in in a `xo_nohttp` file
 (testing_nohttp.go's empty fakeReq and memRouter, replay_nohttp.go's
 rpServer and fireRequest). An untagged struct field of an http type goes
 through an alias that each side defines. TestStdRTNoHTTPDeps fails when
-the xo_nohttp build imports any net/http package. Gate a std/rt change
+the xo_nohttp build imports any net/http package. The same holds for
+std/go_optional.txt's modules (std/crypto, std/tls, std/x509 since
+2026-11-20): a hand written file using a module's types carries
+`!xo_no_M` for the module that it reaches with the fewest users (the sql*.go
+files carry `!xo_no_crypto`), and scripts/stdgen gives each generated
+module the tags of every gated module it reaches (stdgen.Gates and
+needs). TestStdRTBuildTags builds each tag with the tags of the modules
+that reach it, the sets a real program gets; alone, xo_no_tls would
+leave out types std/http names. Gate a std/rt change
 with `go build -tags xo_nohttp ./std/rt` and
 `go test -short ./internal/devgoldens ./cmd/xo -run 'Go|Replay|Holes'`.

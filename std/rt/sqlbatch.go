@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 package rt
 
 // std/sql batches and pipelines (decision 0648 item 15, pgx's SendBatch

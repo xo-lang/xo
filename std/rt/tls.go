@@ -1,3 +1,5 @@
+//go:build !xo_no_tls
+
 package rt
 
 // std/tls on the Go backend (spec/std.md 27, decision 0281): crypto/tls's
@@ -22,20 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 )
-
-// upgradedConns are the connections std/tls took over: their own read
-// and write fail (a Conn is copied by value, so the mark lives here).
-var upgradedConns sync.Map
-
-const upgradedText = "use of a connection upgraded to TLS"
-
-func connUpgraded(c net.Conn) bool {
-	if c == nil {
-		return false
-	}
-	_, ok := upgradedConns.Load(c)
-	return ok
-}
 
 // Tls_Roots is a std/tls Roots: a certificate pool.
 type Tls_Roots struct{ pool *x509.CertPool }

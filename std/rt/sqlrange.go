@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 // Postgres ranges and multiranges on the Go backend (decision 0679): a
 // port of pgx v5.12.0 pgtype/range.go (parseUntypedTextRange,
 // rangeParseValue, rangeParseQuotedValue) and pgtype/multirange.go

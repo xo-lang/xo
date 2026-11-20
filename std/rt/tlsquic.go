@@ -1,3 +1,5 @@
+//go:build !xo_no_tls
+
 package rt
 
 // std/tls QUIC (decision 0644 T14): Go's QUICConn, as it is.

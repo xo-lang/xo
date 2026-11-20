@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 // Postgres large objects on the Go backend (decision 0679): a port of pgx
 // v5.12.0 large_objects.go (LargeObjects.Create, Open, Unlink;
 // LargeObject.Write, Read, Seek, Tell, Truncate, Close), Copyright (c)

@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 // Postgres composites and records on the Go backend (decision 0679): a
 // port of pgx v5.12.0 pgtype/composite.go (CompositeTextScanner,
 // CompositeTextBuilder, quoteCompositeFieldIfNeeded), Copyright (c)

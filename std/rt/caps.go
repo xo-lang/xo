@@ -1802,3 +1802,19 @@ func (c Conn) M_close_write(tk *Task) Result[Unit, NetErr] {
 	}
 	return Ok[Unit, NetErr](Unit{})
 }
+
+// connUpgraded and its map stay in every program: caps.go's Conn
+// methods check them, and only std/tls (tls.go) marks a connection.
+// upgradedConns are the connections std/tls took over: their own read
+// and write fail (a Conn is copied by value, so the mark lives here).
+var upgradedConns sync.Map
+
+const upgradedText = "use of a connection upgraded to TLS"
+
+func connUpgraded(c net.Conn) bool {
+	if c == nil {
+		return false
+	}
+	_, ok := upgradedConns.Load(c)
+	return ok
+}

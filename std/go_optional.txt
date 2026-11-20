@@ -9,3 +9,6 @@ std/template
 std/xml
 std/archive
 std/gif
+std/crypto
+std/tls
+std/x509

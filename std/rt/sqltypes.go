@@ -1,3 +1,5 @@
+//go:build !xo_no_crypto
+
 package rt
 
 // The typed readers of Postgres types and their parameters (decision

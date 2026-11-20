@@ -111,18 +111,96 @@ func OptionalTag(m string) string { return "xo_no_" + m }
 // Optional is the modules std/go_optional.txt lists.
 func Optional(root string) map[string]bool { return stdList(root, "go_optional.txt") }
 
-// buildLine is the //go:build line of module m's generated files, or ""
-// when m is neither optional nor reaching std/http.
-func buildLine(optional, http map[string]bool, m string) string {
-	if (http[m] && !httpKept[m]) || strings.HasSuffix(m, httpSplit) {
-		// a program that does not reach std/http is built with xo_nohttp,
-		// and reaches no module that uses it (task #472)
-		return "//go:build !xo_nohttp\n\n"
+// Gate is a build tag that a program not reaching std module Mod is
+// built with (xo_nohttp for std/http, OptionalTag for the modules of
+// std/go_optional.txt), with the modules that reach Mod: their std/rt Go
+// is left out under the tag (task #472).
+type Gate struct {
+	Tag, Mod string
+	Reach    map[string]bool
+}
+
+// Gates is std/http's gate and each optional module's, in that order.
+func Gates(root string) []Gate {
+	gs := []Gate{{"xo_nohttp", "http", Reaching(root, "http")}}
+	var opt []string
+	for m := range Optional(root) {
+		opt = append(opt, m)
 	}
-	if !optional[m] {
+	sort.Strings(opt)
+	for _, m := range opt {
+		gs = append(gs, Gate{OptionalTag(m), m, Reaching(root, m)})
+	}
+	return gs
+}
+
+// needs is the gates whose module a declaration naming the types of mods
+// reaches, less each implied by another: a program that does not reach A
+// reaches no module that uses A, so when B reaches A, B's gate is left
+// out under A's tag too and !A follows from !B.
+func needs(gs []Gate, mods map[string]bool) []Gate {
+	var in []Gate
+	for _, g := range gs {
+		for m := range mods {
+			if g.Reach[m] && !httpKept[m] {
+				in = append(in, g)
+				break
+			}
+		}
+	}
+	var out []Gate
+	for i, a := range in {
+		implied := false
+		for j, b := range in {
+			if i != j && subset(b.Reach, a.Reach) && (len(b.Reach) < len(a.Reach) || j < i) {
+				implied = true
+				break
+			}
+		}
+		if !implied {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func subset(a, b map[string]bool) bool {
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// splitSuffix names the group of a kept module's declarations that need
+// gates: _nethttp for std/http's, _nettls for std/tls's, and so on.
+func splitSuffix(gs []Gate) string {
+	var b strings.Builder
+	for _, g := range gs {
+		b.WriteString(httpSplitPrefix + g.Mod)
+	}
+	return b.String()
+}
+
+// splitBase is the module of a group, without its split suffix.
+func splitBase(g string) string {
+	if i := strings.Index(g, httpSplitPrefix); i > 0 {
+		return g[:i]
+	}
+	return g
+}
+
+// buildLine is the //go:build line of a generated file needing gates.
+func buildLine(gs []Gate) string {
+	if len(gs) == 0 {
 		return ""
 	}
-	return "//go:build !" + OptionalTag(m) + "\n\n"
+	var ts []string
+	for _, g := range gs {
+		ts = append(ts, "!"+g.Tag)
+	}
+	return "//go:build " + strings.Join(ts, " && ") + "\n\n"
 }
 
 // httpKept is the modules reaching std/http whose types std/rt's hand
@@ -131,15 +209,21 @@ func buildLine(optional, http map[string]bool, m string) string {
 // left out under xo_nohttp go to the split files (httpSplit).
 var httpKept = map[string]bool{"testing": true}
 
-// httpSplit is the suffix of the group of an untagged module's
-// declarations that name a type of a module left out under xo_nohttp:
-// std_gen_M_nethttp.go and std_sigs_M_nethttp.go carry !xo_nohttp.
-const httpSplit = "_nethttp"
+// httpSplitPrefix starts the suffix of the group of a kept module's
+// declarations that name a type of a module left out under a gate:
+// std_gen_testing_nethttp.go carries !xo_nohttp, _nettls !xo_no_tls.
+// No std module's name contains it.
+const httpSplitPrefix = "_net"
 
 // HTTPReaching is the std modules that reach std/http (it among them)
 // through the `use std/X` lines of std/M.xo and std/native/M.xo: their
 // std/rt Go is left out of a program built with xo_nohttp (task #472).
-func HTTPReaching(root string) map[string]bool {
+func HTTPReaching(root string) map[string]bool { return Reaching(root, "http") }
+
+// Reaching is the std modules that reach std/target (it among them)
+// through the `use std/X` lines of std/M.xo and std/native/M.xo: a program
+// that does not reach target reaches none of them either.
+func Reaching(root, target string) map[string]bool {
 	uses := map[string][]string{}
 	read := func(f string) []string {
 		b, err := os.ReadFile(f)
@@ -164,7 +248,7 @@ func HTTPReaching(root string) map[string]bool {
 		}
 		uses[m] = append(read(f), read(filepath.Join(root, "std", "native", m+".xo"))...)
 	}
-	out := map[string]bool{"http": true}
+	out := map[string]bool{target: true}
 	for changed := true; changed; {
 		changed = false
 		for m, us := range uses {
@@ -295,8 +379,8 @@ func Recorded(root string) (map[string]string, error) {
 			return nil, err
 		}
 		m := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "std_gen_"), ".go")
-		// a split file (httpSplit) records its module's hash
-		m = strings.TrimSuffix(m, httpSplit)
+		// a split file (httpSplitPrefix) records its module's hash
+		m = splitBase(m)
 		out[m] = ""
 		for _, l := range strings.SplitN(string(data), "\n", 5) {
 			if strings.HasPrefix(l, hashPrefix) {
@@ -348,8 +432,15 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	optional := Optional(root)
-	httpMods := HTTPReaching(root)
+	gates := Gates(root)
+	// each group's gates: a module's own, or a split group's
+	groupNeeds := map[string][]Gate{}
+	needsOf := func(g string) []Gate {
+		if n, ok := groupNeeds[g]; ok {
+			return n
+		}
+		return needs(gates, map[string]bool{g: true})
+	}
 	dir, err := os.MkdirTemp("", "xo-stdgen-")
 	if err != nil {
 		return nil, err
@@ -419,23 +510,22 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	// a declaration of a module kept under xo_nohttp that names a type of
 	// one left out goes to the module's split group (task #472)
 	names := func(n ast.Node, g string) string {
-		if g == skipDecl || (httpMods[g] && !httpKept[g]) {
+		if g == skipDecl || len(needsOf(g)) > 0 {
 			return g
 		}
-		hit := false
+		hit := map[string]bool{}
 		ast.Inspect(n, func(n ast.Node) bool {
 			if id, ok := n.(*ast.Ident); ok {
 				if p, _, ok := strings.Cut(id.Name, "_"); ok {
-					q := strings.ToLower(p)
-					if httpMods[q] && !httpKept[q] {
-						hit = true
-					}
+					hit[strings.ToLower(p)] = true
 				}
 			}
-			return !hit
+			return true
 		})
-		if hit {
-			return g + httpSplit
+		if n := needs(gates, hit); len(n) > 0 {
+			sg := g + splitSuffix(n)
+			groupNeeds[sg] = n
+			return sg
 		}
 		return g
 	}
@@ -486,7 +576,7 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	}
 	for g, body := range chunks {
 		var b strings.Builder
-		b.WriteString(lines[0] + "\n" + lines[1] + "\n" + hashPrefix + hashes[strings.TrimSuffix(g, httpSplit)] + "\n\n" + buildLine(optional, httpMods, g) + "package rt\n\n")
+		b.WriteString(lines[0] + "\n" + lines[1] + "\n" + hashPrefix + hashes[splitBase(g)] + "\n\n" + buildLine(needsOf(g)) + "package rt\n\n")
 		if strings.Contains(body, "strings.") {
 			b.WriteString("import \"strings\"\n\n")
 		}
@@ -526,7 +616,7 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	}
 	for g, specs := range byGroup {
 		var b strings.Builder
-		b.WriteString(lines[0] + "\n" + lines[1] + "\n\n" + buildLine(optional, httpMods, g) + "package rt\n\n")
+		b.WriteString(lines[0] + "\n" + lines[1] + "\n\n" + buildLine(needsOf(g)) + "package rt\n\n")
 		for _, h := range head {
 			if h != "" {
 				b.WriteString(h + "\n")
