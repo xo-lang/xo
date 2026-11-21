@@ -1,8 +1,10 @@
 package repotest
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,5 +20,30 @@ func TestTierCheck(t *testing.T) {
 	out, err := exec.Command("bash", s).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", s, err, out)
+	}
+}
+
+// TestTierHeavyClass: every heavy.sh run in scripts/lead/tier.sh is bulk
+// class with HEAVY_DARWIN=1 (task #556): a tier step runs for minutes on
+// the Mac, and the docs step (docs-check.sh, 12+ min in tier 918) ran as
+// gate class, which raised the wrong-class alert (#97144) every tier.
+func TestTierHeavyClass(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "scripts", "lead", "tier.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := strings.ReplaceAll(string(b), "\\\n", " ")
+	n := 0
+	for i, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") || !strings.Contains(line, "agents/heavy.sh\" \"") {
+			continue
+		}
+		n++
+		if !strings.Contains(line, "HEAVY_CLASS=bulk") || !strings.Contains(line, "HEAVY_DARWIN=1") {
+			t.Errorf("tier.sh logical line %d runs heavy.sh without HEAVY_CLASS=bulk HEAVY_DARWIN=1: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+	if n == 0 {
+		t.Fatal("found no heavy.sh run in tier.sh")
 	}
 }
