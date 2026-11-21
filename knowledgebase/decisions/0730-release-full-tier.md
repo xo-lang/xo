@@ -39,6 +39,9 @@ is installed, likely shipped in 0.51.1 (unverified). Notes:
   so a release tier mostly confirms a known state.
 - Bugs found after each release are counted in xw (task #564), so this
   rule's effect is measured against earlier releases.
+- `scripts/lead/tier-check.py N` (task #567) lists a finished tier's
+  steps as PASS, FAIL or NO-RESULT (item 3) and exits 0 only when every
+  step passes: the readiness line for OWNER-TAG.md.
 
 ## Alternatives
 
