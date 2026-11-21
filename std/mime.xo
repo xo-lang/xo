@@ -868,56 +868,81 @@ fn decode_header_by[fx: Effects](header: Str, other: fn(Str, Bytes) -> Str ! Mim
   }
   var buf = StrBuilder.new()
   buf.write(header[0..first])
-  var h = header[first..]
+  // p is where the undecoded rest starts: offsets into header, never a
+  // re-sliced tail, since a wasm Str slice copies (decision 0330) and a
+  // tail re-sliced per word made this quadratic there (task #559)
+  var p = first
   var between = false
   while true {
-    let start = match h.find("=?") {
+    let start = match find_from(header, "=?", p) {
       Some(i) => i
       None => break
     }
     var cur = start + 2
-    let i = match h[cur..].find("?") {
+    let q = match find_from(header, "?", cur) {
       Some(x) => x
       None => break
     }
-    let charset = h[cur..cur + i]
-    cur += i + 1
-    if h.len() < cur + 4 {
+    let charset = header[cur..q]
+    cur = q + 1
+    if header.len() < cur + 4 {
       break
     }
-    let enc = h.bytes()[cur]
+    let enc = header.bytes()[cur]
     cur += 1
-    if h.bytes()[cur] != '?' {
+    if header.bytes()[cur] != '?' {
       break
     }
     cur += 1
-    let j = match h[cur..].find("?=") {
+    let e = match find_from(header, "?=", cur) {
       Some(x) => x
       None => break
     }
-    let text = h[cur..cur + j]
-    let end = cur + j + 2
+    let text = header[cur..e]
+    let end = e + 2
     match word_content(enc, text) {
       Ok(content) => {
-        if start > 0 && (!between || has_non_ws(h[0..start])) {
-          buf.write(h[0..start])
+        if start > p && (!between || has_non_ws(header[p..start])) {
+          buf.write(header[p..start])
         }
         buf.write(match known_charset(charset, content) {
           Some(t) => t
           None => other(charset, content)?
         })
-        h = h[end..]
+        p = end
         between = true
       }
       Err(_) => {
         between = false
-        buf.write(h[0..end])
-        h = h[end..]
+        buf.write(header[p..end])
+        p = end
       }
     }
   }
-  buf.write(h)
+  buf.write(header[p..])
   buf.freeze()
+}
+
+/// The byte offset of the first sub in s at or after from (Go's
+/// strings.Index(s[from:], sub) + from), found without slicing s
+fn find_from(s: Str, sub: Str, from: Int) -> Int? {
+  let b = s.bytes()
+  let w = sub.bytes()
+  let m = w.len()
+  var i = from
+  while i + m <= b.len() {
+    if b[i] == w[0] {
+      var k = 1
+      while k < m && b[i + k] == w[k] {
+        k += 1
+      }
+      if k == m {
+        return Some(i)
+      }
+    }
+    i += 1
+  }
+  None
 }
 
 const INVALID_WORD: Str = "mime: invalid RFC 2047 encoded-word"

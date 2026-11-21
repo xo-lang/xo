@@ -1596,8 +1596,8 @@ x_M139:
 	var v_buf StrBuilder = StrBuilder_new(tk)
 	_ = v_buf
 	v_buf.M_write(tk, StrSlice(v_header, int64(0), v_first, true, true, "std/mime.xo:870:13"))
-	var v_h string = StrSlice(v_header, v_first, 0, true, false, "std/mime.xo:871:11")
-	_ = v_h
+	var v_p int64 = v_first
+	_ = v_p
 	var v_between bool = false
 	_ = v_between
 x_L140:
@@ -1607,7 +1607,7 @@ x_L140:
 		}
 		{
 			var x_v141 int64
-			x_m142 := Str_find(tk, v_h, "=?")
+			x_m142 := Mime_find_from(tk, v_header, "=?", v_p)
 			_ = x_m142
 		x_M143:
 			switch {
@@ -1621,14 +1621,14 @@ x_L140:
 				if !x_m142.Some {
 					break x_L140
 				}
-				panic(Unreachable("std/mime.xo:874:17"))
+				panic(Unreachable("std/mime.xo:877:17"))
 			}
 			var v_start int64 = x_v141
 			_ = v_start
-			var v_cur int64 = AddIUp(v_start, int64(2), "std/mime.xo:878:15")
+			var v_cur int64 = AddIUp(v_start, int64(2), "std/mime.xo:881:15")
 			_ = v_cur
 			var x_v144 int64
-			x_m145 := Str_find(tk, StrSlice(v_h, v_cur, 0, true, false, "std/mime.xo:879:19"), "?")
+			x_m145 := Mime_find_from(tk, v_header, "?", v_cur)
 			_ = x_m145
 		x_M146:
 			switch {
@@ -1642,25 +1642,25 @@ x_L140:
 				if !x_m145.Some {
 					break x_L140
 				}
-				panic(Unreachable("std/mime.xo:879:13"))
+				panic(Unreachable("std/mime.xo:882:13"))
 			}
-			var v_i_2 int64 = x_v144
-			_ = v_i_2
-			var v_charset string = StrSlice(v_h, v_cur, AddS(v_cur, v_i_2, "std/mime.xo:883:26"), true, true, "std/mime.xo:883:19")
+			var v_q int64 = x_v144
+			_ = v_q
+			var v_charset string = StrSlice(v_header, v_cur, v_q, true, true, "std/mime.xo:886:19")
 			_ = v_charset
-			v_cur = AddS(v_cur, AddIUp(v_i_2, int64(1), "std/mime.xo:884:12"), "std/mime.xo:884:5")
-			if Str_len(tk, v_h) < AddIUp(v_cur, int64(4), "std/mime.xo:885:18") {
+			v_cur = AddIUp(v_q, int64(1), "std/mime.xo:887:11")
+			if Str_len(tk, v_header) < AddIUp(v_cur, int64(4), "std/mime.xo:888:23") {
 				break x_L140
 			}
-			var v_enc uint8 = BytesAt(Str_bytes(tk, v_h), v_cur, "std/mime.xo:888:15")
+			var v_enc uint8 = BytesAt(Str_bytes(tk, v_header), v_cur, "std/mime.xo:891:15")
 			_ = v_enc
-			v_cur = AddIUp(v_cur, int64(1), "std/mime.xo:889:5")
-			if BytesAt(Str_bytes(tk, v_h), v_cur, "std/mime.xo:890:8") != uint8(63) {
+			v_cur = AddIUp(v_cur, int64(1), "std/mime.xo:892:5")
+			if BytesAt(Str_bytes(tk, v_header), v_cur, "std/mime.xo:893:8") != uint8(63) {
 				break x_L140
 			}
-			v_cur = AddIUp(v_cur, int64(1), "std/mime.xo:893:5")
+			v_cur = AddIUp(v_cur, int64(1), "std/mime.xo:896:5")
 			var x_v147 int64
-			x_m148 := Str_find(tk, StrSlice(v_h, v_cur, 0, true, false, "std/mime.xo:894:19"), "?=")
+			x_m148 := Mime_find_from(tk, v_header, "?=", v_cur)
 			_ = x_m148
 		x_M149:
 			switch {
@@ -1674,13 +1674,13 @@ x_L140:
 				if !x_m148.Some {
 					break x_L140
 				}
-				panic(Unreachable("std/mime.xo:894:13"))
+				panic(Unreachable("std/mime.xo:897:13"))
 			}
-			var v_j int64 = x_v147
-			_ = v_j
-			var v_text string = StrSlice(v_h, v_cur, AddS(v_cur, v_j, "std/mime.xo:898:23"), true, true, "std/mime.xo:898:16")
+			var v_e int64 = x_v147
+			_ = v_e
+			var v_text string = StrSlice(v_header, v_cur, v_e, true, true, "std/mime.xo:901:16")
 			_ = v_text
-			var v_end int64 = AddIUp(AddS(v_cur, v_j, "std/mime.xo:899:15"), int64(2), "std/mime.xo:899:15")
+			var v_end int64 = AddIUp(v_e, int64(2), "std/mime.xo:902:15")
 			_ = v_end
 			x_m150 := Mime_word_content(tk, v_enc, v_text)
 			_ = x_m150
@@ -1691,8 +1691,8 @@ x_L140:
 					var v_content Bytes = x_m150.V
 					_ = v_content
 					{
-						if (v_start > int64(0)) && (!(v_between) || Mime_has_non_ws(tk, StrSlice(v_h, int64(0), v_start, true, true, "std/mime.xo:902:49"))) {
-							v_buf.M_write(tk, StrSlice(v_h, int64(0), v_start, true, true, "std/mime.xo:903:21"))
+						if (v_start > v_p) && (!(v_between) || Mime_has_non_ws(tk, StrSlice(v_header, v_p, v_start, true, true, "std/mime.xo:905:49"))) {
+							v_buf.M_write(tk, StrSlice(v_header, v_p, v_start, true, true, "std/mime.xo:906:21"))
 						}
 						var x_v152 string
 						x_m153 := Mime_known_charset(tk, v_charset, v_content)
@@ -1709,15 +1709,15 @@ x_L140:
 							if !x_m153.Some {
 								x_r155 := v_other(tk, v_charset, v_content)
 								if !x_r155.Ok {
-									return ErrTr[string](x_r155.E, Frame2(x_r155.Tr, "mime.decode_header_by", "std/mime.xo:907", "header other", v_header, v_other))
+									return ErrTr[string](x_r155.E, Frame2(x_r155.Tr, "mime.decode_header_by", "std/mime.xo:910", "header other", v_header, v_other))
 								}
 								x_v152 = x_r155.V
 								break x_M154
 							}
-							panic(Unreachable("std/mime.xo:905:19"))
+							panic(Unreachable("std/mime.xo:908:19"))
 						}
 						v_buf.M_write(tk, x_v152)
-						v_h = StrSlice(v_h, v_end, 0, true, false, "std/mime.xo:909:13")
+						v_p = v_end
 						v_between = true
 					}
 					break x_M151
@@ -1725,17 +1725,52 @@ x_L140:
 				if !x_m150.Ok {
 					{
 						v_between = false
-						v_buf.M_write(tk, StrSlice(v_h, int64(0), v_end, true, true, "std/mime.xo:914:19"))
-						v_h = StrSlice(v_h, v_end, 0, true, false, "std/mime.xo:915:13")
+						v_buf.M_write(tk, StrSlice(v_header, v_p, v_end, true, true, "std/mime.xo:917:19"))
+						v_p = v_end
 					}
 					break x_M151
 				}
-				panic(Unreachable("std/mime.xo:900:5"))
+				panic(Unreachable("std/mime.xo:903:5"))
 			}
 		}
 	}
-	v_buf.M_write(tk, v_h)
+	v_buf.M_write(tk, StrSlice(v_header, v_p, 0, true, false, "std/mime.xo:922:13"))
 	return Ok[string, Mime_MimeErr](v_buf.M_freeze(tk))
+}
+
+func Mime_find_from(tk *Task, v_s string, v_sub string, v_from int64) Option[int64] {
+	var v_b Bytes = Str_bytes(tk, v_s)
+	_ = v_b
+	var v_w Bytes = Str_bytes(tk, v_sub)
+	_ = v_w
+	var v_m int64 = Bytes_len(tk, v_w)
+	_ = v_m
+	var v_i int64 = v_from
+	_ = v_i
+	for {
+		if !(AddS(v_i, v_m, "std/mime.xo:933:9") <= Bytes_len(tk, v_b)) {
+			break
+		}
+		{
+			if BytesAt(v_b, v_i, "std/mime.xo:934:8") == BytesAt(v_w, int64(0), "std/mime.xo:934:16") {
+				var v_k int64 = int64(1)
+				_ = v_k
+				for {
+					if !((v_k < v_m) && (BytesAt(v_b, AddS(v_i, v_k, "std/mime.xo:936:24"), "std/mime.xo:936:22") == BytesAt(v_w, v_k, "std/mime.xo:936:34"))) {
+						break
+					}
+					{
+						v_k = (v_k + int64(1))
+					}
+				}
+				if v_k == v_m {
+					return Some[int64](v_i)
+				}
+			}
+			v_i = AddS(v_i, int64(1), "std/mime.xo:943:5")
+		}
+	}
+	return None[int64]()
 }
 
 var Mime_INVALID_WORD = func() string {
@@ -1751,11 +1786,11 @@ var Mime_MAX_BASE64_LEN = func() int64 {
 }()
 
 func Mime_needs_encoding(tk *Task, v_s string) bool {
-	x_it156 := Str_runes(tk, v_s)
-	for _, x_e158 := range List_Items(x_it156) {
-		x_el159 := x_e158
-		_ = x_el159
-		var v_r Rune = x_el159
+	x_it158 := Str_runes(tk, v_s)
+	for _, x_e160 := range List_Items(x_it158) {
+		x_el161 := x_e160
+		_ = x_el161
+		var v_r Rune = x_el161
 		_ = v_r
 		{
 			if ((v_r < Rune(32)) || (v_r > Rune(126))) && (v_r != Rune(9)) {
@@ -1771,8 +1806,8 @@ func Mime_is_utf8_name(tk *Task, v_charset string) bool {
 }
 
 func Mime_enc_letter(tk *Task, v_e Mime_WordEncoding) string {
-	x_t160 := v_e
-	if x_t160.Tag == 1 {
+	x_t162 := v_e
+	if x_t162.Tag == 1 {
 		return "b"
 	} else {
 		return "q"
@@ -1795,8 +1830,8 @@ func Mime_split_word(tk *Task, v_buf *StrBuilder, v_charset string, v_e Mime_Wor
 }
 
 func Mime_rune_len_at(tk *Task, v_b Bytes, v_i int64) int64 {
-	x_a161 := v_i
-	return Bytes_decode_rune(tk, v_b, x_a161).F1
+	x_a163 := v_i
+	return Bytes_decode_rune(tk, v_b, x_a163).F1
 }
 
 func Mime_b_encode(tk *Task, v_buf *StrBuilder, v_charset string, v_e Mime_WordEncoding, v_s Bytes) {
@@ -1817,18 +1852,18 @@ func Mime_b_encode(tk *Task, v_buf *StrBuilder, v_charset string, v_e Mime_WordE
 		{
 			var v_n int64 = Mime_rune_len_at(tk, v_s, v_i)
 			_ = v_n
-			if AddS(v_cur, v_n, "std/mime.xo:966:8") <= Mime_MAX_BASE64_LEN {
-				v_cur = AddS(v_cur, v_n, "std/mime.xo:967:7")
+			if AddS(v_cur, v_n, "std/mime.xo:991:8") <= Mime_MAX_BASE64_LEN {
+				v_cur = AddS(v_cur, v_n, "std/mime.xo:992:7")
 			} else {
-				(*v_buf).M_write(tk, Bytes_to_base64(tk, BytesSlice(v_s, v_last, v_i, true, true, "std/mime.xo:969:17")))
+				(*v_buf).M_write(tk, Bytes_to_base64(tk, BytesSlice(v_s, v_last, v_i, true, true, "std/mime.xo:994:17")))
 				Mime_split_word(tk, &(*v_buf), v_charset, v_e)
 				v_last = v_i
 				v_cur = v_n
 			}
-			v_i = AddS(v_i, v_n, "std/mime.xo:974:5")
+			v_i = AddS(v_i, v_n, "std/mime.xo:999:5")
 		}
 	}
-	(*v_buf).M_write(tk, Bytes_to_base64(tk, BytesSlice(v_s, v_last, 0, true, false, "std/mime.xo:976:13")))
+	(*v_buf).M_write(tk, Bytes_to_base64(tk, BytesSlice(v_s, v_last, 0, true, false, "std/mime.xo:1001:13")))
 	return
 }
 
@@ -1854,17 +1889,17 @@ func Mime_q_encode(tk *Task, v_buf *StrBuilder, v_charset string, v_e Mime_WordE
 			_ = v_n
 			var v_el int64 = int64(1)
 			_ = v_el
-			if !(Mime_q_plain(tk, BytesAt(v_s, v_i, "std/mime.xo:991:17"))) {
+			if !(Mime_q_plain(tk, BytesAt(v_s, v_i, "std/mime.xo:1016:17"))) {
 				v_n = Mime_rune_len_at(tk, v_s, v_i)
-				v_el = MulKI(int64(3), v_n, -3074457345618258602, 3074457345618258602, "std/mime.xo:993:12")
+				v_el = MulKI(int64(3), v_n, -3074457345618258602, 3074457345618258602, "std/mime.xo:1018:12")
 			}
-			if AddS(v_cur, v_el, "std/mime.xo:995:8") > Mime_MAX_CONTENT_LEN {
+			if AddS(v_cur, v_el, "std/mime.xo:1020:8") > Mime_MAX_CONTENT_LEN {
 				Mime_split_word(tk, &(*v_buf), v_charset, v_e)
 				v_cur = int64(0)
 			}
-			Mime_write_q(tk, &(*v_buf), BytesSlice(v_s, v_i, AddS(v_i, v_n, "std/mime.xo:999:23"), true, true, "std/mime.xo:999:18"))
-			v_cur = AddS(v_cur, v_el, "std/mime.xo:1000:5")
-			v_i = AddS(v_i, v_n, "std/mime.xo:1001:5")
+			Mime_write_q(tk, &(*v_buf), BytesSlice(v_s, v_i, AddS(v_i, v_n, "std/mime.xo:1024:23"), true, true, "std/mime.xo:1024:18"))
+			v_cur = AddS(v_cur, v_el, "std/mime.xo:1025:5")
+			v_i = AddS(v_i, v_n, "std/mime.xo:1026:5")
 		}
 	}
 	return
@@ -1873,11 +1908,11 @@ func Mime_q_encode(tk *Task, v_buf *StrBuilder, v_charset string, v_e Mime_WordE
 func Mime_write_q(tk *Task, v_buf *StrBuilder, v_s Bytes) {
 	var v_out BytesBuilder = BytesBuilder_with_capacity(tk, (Bytes_len(tk, v_s) * int64(3)))
 	_ = v_out
-	x_it164 := v_s
-	for x_bi166 := 0; x_bi166 < len(x_it164); x_bi166++ {
-		x_el167 := x_it164[x_bi166]
-		_ = x_el167
-		var v_c uint8 = x_el167
+	x_it166 := v_s
+	for x_bi168 := 0; x_bi168 < len(x_it166); x_bi168++ {
+		x_el169 := x_it166[x_bi168]
+		_ = x_el169
+		var v_c uint8 = x_el169
 		_ = v_c
 		{
 			if v_c == uint8(32) {
@@ -1887,35 +1922,35 @@ func Mime_write_q(tk *Task, v_buf *StrBuilder, v_s Bytes) {
 					v_out.M_write_byte(tk, v_c)
 				} else {
 					v_out.M_write_byte(tk, uint8(61))
-					v_out.M_write_byte(tk, BytesAt(Str_bytes(tk, Mime_UPPER_HEX), (int64(v_c)>>int64(4)), "std/mime.xo:1014:22"))
-					v_out.M_write_byte(tk, BytesAt(Str_bytes(tk, Mime_UPPER_HEX), (int64(v_c)&int64(15)), "std/mime.xo:1015:22"))
+					v_out.M_write_byte(tk, BytesAt(Str_bytes(tk, Mime_UPPER_HEX), (int64(v_c)>>int64(4)), "std/mime.xo:1039:22"))
+					v_out.M_write_byte(tk, BytesAt(Str_bytes(tk, Mime_UPPER_HEX), (int64(v_c)&int64(15)), "std/mime.xo:1040:22"))
 				}
 			}
 		}
 	}
-	x_t168 := Bytes_to_str(tk, v_out.M_freeze(tk))
-	var x_c169 string
-	if x_t168.Some {
-		x_c169 = x_t168.V
+	x_t170 := Bytes_to_str(tk, v_out.M_freeze(tk))
+	var x_c171 string
+	if x_t170.Some {
+		x_c171 = x_t170.V
 	} else {
-		x_c169 = ""
+		x_c171 = ""
 	}
-	(*v_buf).M_write(tk, x_c169)
+	(*v_buf).M_write(tk, x_c171)
 	return
 }
 
 func Mime_count_q(tk *Task, v_b Bytes) int64 {
 	var v_n int64 = int64(0)
 	_ = v_n
-	x_it170 := v_b
-	for x_bi172 := 0; x_bi172 < len(x_it170); x_bi172++ {
-		x_el173 := x_it170[x_bi172]
-		_ = x_el173
-		var v_c uint8 = x_el173
+	x_it172 := v_b
+	for x_bi174 := 0; x_bi174 < len(x_it172); x_bi174++ {
+		x_el175 := x_it172[x_bi174]
+		_ = x_el175
+		var v_c uint8 = x_el175
 		_ = v_c
 		{
 			if v_c == uint8(63) {
-				v_n = AddIUp(v_n, int64(1), "std/mime.xo:1026:7")
+				v_n = AddIUp(v_n, int64(1), "std/mime.xo:1051:7")
 			}
 		}
 	}
@@ -1924,9 +1959,9 @@ func Mime_count_q(tk *Task, v_b Bytes) int64 {
 
 func Mime_word_content(tk *Task, v_enc uint8, v_text string) Result[Bytes, Mime_MimeErr] {
 	if (v_enc == uint8(66)) || (v_enc == uint8(98)) {
-		x_l174 := Bytes_from_base64(tk, v_text)
-		if x_l174.Some {
-			var v_b Bytes = x_l174.V
+		x_l176 := Bytes_from_base64(tk, v_text)
+		if x_l176.Some {
+			var v_b Bytes = x_l176.V
 			_ = v_b
 			return Ok[Bytes, Mime_MimeErr](v_b)
 		}
@@ -1948,7 +1983,7 @@ func Mime_q_decode(tk *Task, v_s Bytes) Result[Bytes, Mime_MimeErr] {
 			break
 		}
 		{
-			var v_c uint8 = BytesAt(v_s, v_i, "std/mime.xo:1049:13")
+			var v_c uint8 = BytesAt(v_s, v_i, "std/mime.xo:1074:13")
 			_ = v_c
 			if v_c == uint8(95) {
 				v_out.M_write_byte(tk, uint8(32))
@@ -1957,19 +1992,19 @@ func Mime_q_decode(tk *Task, v_s Bytes) Result[Bytes, Mime_MimeErr] {
 					if (v_i + int64(2)) >= Bytes_len(tk, v_s) {
 						return Err[Bytes](Mime_err(tk, Mime_INVALID_WORD))
 					}
-					x_r176 := Mime_from_hex(tk, BytesAt(v_s, (v_i+int64(1)), "std/mime.xo:1056:25"))
-					if !x_r176.Ok {
-						return ErrTr[Bytes](x_r176.E, Frame1(x_r176.Tr, "mime.q_decode", "std/mime.xo:1056", "s", v_s))
+					x_r178 := Mime_from_hex(tk, BytesAt(v_s, (v_i+int64(1)), "std/mime.xo:1081:25"))
+					if !x_r178.Ok {
+						return ErrTr[Bytes](x_r178.E, Frame1(x_r178.Tr, "mime.q_decode", "std/mime.xo:1081", "s", v_s))
 					}
-					var v_hi int64 = x_r176.V
+					var v_hi int64 = x_r178.V
 					_ = v_hi
-					x_r177 := Mime_from_hex(tk, BytesAt(v_s, (v_i+int64(2)), "std/mime.xo:1057:25"))
-					if !x_r177.Ok {
-						return ErrTr[Bytes](x_r177.E, Frame1(x_r177.Tr, "mime.q_decode", "std/mime.xo:1057", "s", v_s))
+					x_r179 := Mime_from_hex(tk, BytesAt(v_s, (v_i+int64(2)), "std/mime.xo:1082:25"))
+					if !x_r179.Ok {
+						return ErrTr[Bytes](x_r179.E, Frame1(x_r179.Tr, "mime.q_decode", "std/mime.xo:1082", "s", v_s))
 					}
-					var v_lo int64 = x_r177.V
+					var v_lo int64 = x_r179.V
 					_ = v_lo
-					v_out.M_write_byte(tk, ConvS_uint8(AddS(MulIK(v_hi, int64(16), -576460752303423488, 576460752303423487, "std/mime.xo:1058:28"), v_lo, "std/mime.xo:1058:28"), "std/mime.xo:1058:22"))
+					v_out.M_write_byte(tk, ConvS_uint8(AddS(MulIK(v_hi, int64(16), -576460752303423488, 576460752303423487, "std/mime.xo:1083:28"), v_lo, "std/mime.xo:1083:28"), "std/mime.xo:1083:22"))
 					v_i = (v_i + int64(2))
 				} else {
 					if ((((v_c <= uint8(126)) && (v_c >= uint8(32))) || (v_c == uint8(10))) || (v_c == uint8(13))) || (v_c == uint8(9)) {
@@ -1987,13 +2022,13 @@ func Mime_q_decode(tk *Task, v_s Bytes) Result[Bytes, Mime_MimeErr] {
 
 func Mime_from_hex(tk *Task, v_b uint8) Result[int64, Mime_MimeErr] {
 	if (v_b >= uint8(48)) && (v_b <= uint8(57)) {
-		return Ok[int64, Mime_MimeErr](int64(Sub_uint8(v_b, uint8(48), "std/mime.xo:1072:16")))
+		return Ok[int64, Mime_MimeErr](int64(Sub_uint8(v_b, uint8(48), "std/mime.xo:1097:16")))
 	}
 	if (v_b >= uint8(65)) && (v_b <= uint8(70)) {
-		return Ok[int64, Mime_MimeErr]((int64(Sub_uint8(v_b, uint8(65), "std/mime.xo:1075:16")) + int64(10)))
+		return Ok[int64, Mime_MimeErr]((int64(Sub_uint8(v_b, uint8(65), "std/mime.xo:1100:16")) + int64(10)))
 	}
 	if (v_b >= uint8(97)) && (v_b <= uint8(102)) {
-		return Ok[int64, Mime_MimeErr]((int64(Sub_uint8(v_b, uint8(97), "std/mime.xo:1078:16")) + int64(10)))
+		return Ok[int64, Mime_MimeErr]((int64(Sub_uint8(v_b, uint8(97), "std/mime.xo:1103:16")) + int64(10)))
 	}
 	return Err[int64](Mime_err(tk, ("mime: invalid hex byte " + Mime_hex_byte(tk, v_b))))
 }
@@ -2001,23 +2036,23 @@ func Mime_from_hex(tk *Task, v_b uint8) Result[int64, Mime_MimeErr] {
 func Mime_hex_byte(tk *Task, v_b uint8) string {
 	var v_h string = "0123456789abcdef"
 	_ = v_h
-	return (("0x" + StrSlice(v_h, (int64(v_b)>>int64(4)), ((int64(v_b)>>int64(4))+int64(1)), true, true, "std/mime.xo:1086:10")) + StrSlice(v_h, (int64(v_b)&int64(15)), ((int64(v_b)&int64(15))+int64(1)), true, true, "std/mime.xo:1086:48"))
+	return (("0x" + StrSlice(v_h, (int64(v_b)>>int64(4)), ((int64(v_b)>>int64(4))+int64(1)), true, true, "std/mime.xo:1111:10")) + StrSlice(v_h, (int64(v_b)&int64(15)), ((int64(v_b)&int64(15))+int64(1)), true, true, "std/mime.xo:1111:48"))
 }
 
 func Mime_convert_charset(tk *Task, v_charset string, v_content Bytes) Result[string, Mime_MimeErr] {
-	x_m178 := Mime_known_charset(tk, v_charset, v_content)
-	_ = x_m178
+	x_m180 := Mime_known_charset(tk, v_charset, v_content)
+	_ = x_m180
 	switch {
 	default:
-		if x_m178.Some {
-			var v_t string = x_m178.V
+		if x_m180.Some {
+			var v_t string = x_m180.V
 			_ = v_t
 			return Ok[string, Mime_MimeErr](v_t)
 		}
-		if !x_m178.Some {
+		if !x_m180.Some {
 			return Err[string](Mime_err(tk, ("mime: unhandled charset " + Str_quote(tk, v_charset))))
 		}
-		panic(Unreachable("std/mime.xo:1090:3"))
+		panic(Unreachable("std/mime.xo:1115:3"))
 	}
 }
 
@@ -2030,14 +2065,14 @@ func Mime_known_charset(tk *Task, v_charset string, v_content Bytes) Option[stri
 	if v_l == "iso-8859-1" {
 		var v_out StrBuilder = StrBuilder_new(tk)
 		_ = v_out
-		x_it180 := v_content
-		for x_bi182 := 0; x_bi182 < len(x_it180); x_bi182++ {
-			x_el183 := x_it180[x_bi182]
-			_ = x_el183
-			var v_c uint8 = x_el183
+		x_it182 := v_content
+		for x_bi184 := 0; x_bi184 < len(x_it182); x_bi184++ {
+			x_el185 := x_it182[x_bi184]
+			_ = x_el185
+			var v_c uint8 = x_el185
 			_ = v_c
 			{
-				v_out.M_write(tk, Display(tk, RuneOf(int64(v_c), "std/mime.xo:1106:20")))
+				v_out.M_write(tk, Display(tk, RuneOf(int64(v_c), "std/mime.xo:1131:20")))
 			}
 		}
 		return Some[string](v_out.M_freeze(tk))
@@ -2045,20 +2080,20 @@ func Mime_known_charset(tk *Task, v_charset string, v_content Bytes) Option[stri
 	if v_l == "us-ascii" {
 		var v_out_1 StrBuilder = StrBuilder_new(tk)
 		_ = v_out_1
-		x_it184 := v_content
-		for x_bi186 := 0; x_bi186 < len(x_it184); x_bi186++ {
-			x_el187 := x_it184[x_bi186]
-			_ = x_el187
-			var v_c_1 uint8 = x_el187
+		x_it186 := v_content
+		for x_bi188 := 0; x_bi188 < len(x_it186); x_bi188++ {
+			x_el189 := x_it186[x_bi188]
+			_ = x_el189
+			var v_c_1 uint8 = x_el189
 			_ = v_c_1
 			{
-				var x_v188 string
+				var x_v190 string
 				if v_c_1 >= uint8(128) {
-					x_v188 = "�"
+					x_v190 = "�"
 				} else {
-					x_v188 = Display(tk, RuneOf(int64(v_c_1), "std/mime.xo:1113:54"))
+					x_v190 = Display(tk, RuneOf(int64(v_c_1), "std/mime.xo:1138:54"))
 				}
-				v_out_1.M_write(tk, x_v188)
+				v_out_1.M_write(tk, x_v190)
 			}
 		}
 		return Some[string](v_out_1.M_freeze(tk))
@@ -2067,9 +2102,9 @@ func Mime_known_charset(tk *Task, v_charset string, v_content Bytes) Option[stri
 }
 
 func Mime_to_text(tk *Task, v_b Bytes) string {
-	x_l189 := Bytes_to_str(tk, v_b)
-	if x_l189.Some {
-		var v_s string = x_l189.V
+	x_l191 := Bytes_to_str(tk, v_b)
+	if x_l191.Some {
+		var v_s string = x_l191.V
 		_ = v_s
 		return v_s
 	}
@@ -2082,26 +2117,26 @@ func Mime_to_text(tk *Task, v_b Bytes) string {
 			break
 		}
 		{
-			x_a191 := v_i
-			x_let192 := Bytes_decode_rune(tk, v_b, x_a191)
-			_ = x_let192
-			var v_r Rune = x_let192.F0
+			x_a193 := v_i
+			x_let194 := Bytes_decode_rune(tk, v_b, x_a193)
+			_ = x_let194
+			var v_r Rune = x_let194.F0
 			_ = v_r
-			var v_n int64 = x_let192.F1
+			var v_n int64 = x_let194.F1
 			_ = v_n
 			v_out.M_write(tk, Display(tk, v_r))
-			v_i = AddS(v_i, v_n, "std/mime.xo:1130:5")
+			v_i = AddS(v_i, v_n, "std/mime.xo:1155:5")
 		}
 	}
 	return v_out.M_freeze(tk)
 }
 
 func Mime_has_non_ws(tk *Task, v_s string) bool {
-	x_it193 := Str_bytes(tk, v_s)
-	for x_bi195 := 0; x_bi195 < len(x_it193); x_bi195++ {
-		x_el196 := x_it193[x_bi195]
-		_ = x_el196
-		var v_c uint8 = x_el196
+	x_it195 := Str_bytes(tk, v_s)
+	for x_bi197 := 0; x_bi197 < len(x_it195); x_bi197++ {
+		x_el198 := x_it195[x_bi197]
+		_ = x_el198
+		var v_c uint8 = x_el198
 		_ = v_c
 		{
 			if !((((v_c == uint8(32)) || (v_c == uint8(9))) || (v_c == uint8(10))) || (v_c == uint8(13))) {
@@ -2114,13 +2149,13 @@ func Mime_has_non_ws(tk *Task, v_s string) bool {
 
 func Mime_b64_val(tk *Task, v_c uint8) int64 {
 	if (v_c >= uint8(65)) && (v_c <= uint8(90)) {
-		return int64(Sub_uint8(v_c, uint8(65), "std/mime.xo:1146:40"))
+		return int64(Sub_uint8(v_c, uint8(65), "std/mime.xo:1171:40"))
 	}
 	if (v_c >= uint8(97)) && (v_c <= uint8(122)) {
-		return (int64(Sub_uint8(v_c, uint8(97), "std/mime.xo:1147:40")) + int64(26))
+		return (int64(Sub_uint8(v_c, uint8(97), "std/mime.xo:1172:40")) + int64(26))
 	}
 	if (v_c >= uint8(48)) && (v_c <= uint8(57)) {
-		return (int64(Sub_uint8(v_c, uint8(48), "std/mime.xo:1148:40")) + int64(52))
+		return (int64(Sub_uint8(v_c, uint8(48), "std/mime.xo:1173:40")) + int64(52))
 	}
 	if v_c == uint8(43) {
 		return int64(62)
@@ -2143,7 +2178,7 @@ func Mime_b64_bad_at(tk *Task, v_src Bytes) int64 {
 		{
 			var v_j int64 = int64(0)
 			_ = v_j
-		x_L198:
+		x_L200:
 			for {
 				if !(v_j < int64(4)) {
 					break
@@ -2155,22 +2190,22 @@ func Mime_b64_bad_at(tk *Task, v_src Bytes) int64 {
 						}
 						return (v_si - v_j)
 					}
-					var v_c uint8 = BytesAt(v_src, v_si, "std/mime.xo:1169:15")
+					var v_c uint8 = BytesAt(v_src, v_si, "std/mime.xo:1194:15")
 					_ = v_c
-					v_si = AddIUp(v_si, int64(1), "std/mime.xo:1170:7")
+					v_si = AddIUp(v_si, int64(1), "std/mime.xo:1195:7")
 					if Mime_b64_val(tk, v_c) >= int64(0) {
 						v_j = (v_j + int64(1))
-						continue x_L198
+						continue x_L200
 					}
 					if (v_c == uint8(13)) || (v_c == uint8(10)) {
-						continue x_L198
+						continue x_L200
 					}
 					if (v_c != uint8(61)) || (v_j < int64(2)) {
 						return (v_si - int64(1))
 					}
 					if v_j == int64(2) {
 						for {
-							if !((v_si < v_n) && ((BytesAt(v_src, v_si, "std/mime.xo:1182:26") == uint8(13)) || (BytesAt(v_src, v_si, "std/mime.xo:1182:45") == uint8(10)))) {
+							if !((v_si < v_n) && ((BytesAt(v_src, v_si, "std/mime.xo:1207:26") == uint8(13)) || (BytesAt(v_src, v_si, "std/mime.xo:1207:45") == uint8(10)))) {
 								break
 							}
 							{
@@ -2180,13 +2215,13 @@ func Mime_b64_bad_at(tk *Task, v_src Bytes) int64 {
 						if v_si == v_n {
 							return v_n
 						}
-						if BytesAt(v_src, v_si, "std/mime.xo:1186:12") != uint8(61) {
+						if BytesAt(v_src, v_si, "std/mime.xo:1211:12") != uint8(61) {
 							return (v_si - int64(1))
 						}
-						v_si = AddIUp(v_si, int64(1), "std/mime.xo:1189:9")
+						v_si = AddIUp(v_si, int64(1), "std/mime.xo:1214:9")
 					}
 					for {
-						if !((v_si < v_n) && ((BytesAt(v_src, v_si, "std/mime.xo:1191:24") == uint8(13)) || (BytesAt(v_src, v_si, "std/mime.xo:1191:43") == uint8(10)))) {
+						if !((v_si < v_n) && ((BytesAt(v_src, v_si, "std/mime.xo:1216:24") == uint8(13)) || (BytesAt(v_src, v_si, "std/mime.xo:1216:43") == uint8(10)))) {
 							break
 						}
 						{
@@ -2211,19 +2246,19 @@ func Mime_qp_encode(tk *Task, v_data Bytes, v_binary bool) Bytes {
 	_ = v_n
 	var v_i int64 = int64(0)
 	_ = v_i
-x_L201:
+x_L203:
 	for {
 		if !(v_i < v_n) {
 			break
 		}
 		{
-			var v_b uint8 = BytesAt(v_data, v_i, "std/mime.xo:1216:13")
+			var v_b uint8 = BytesAt(v_data, v_i, "std/mime.xo:1241:13")
 			_ = v_b
 			if Mime_qp_plain(tk, v_b) {
 				var v_j int64 = (v_i + int64(1))
 				_ = v_j
 				for {
-					if !((v_j < v_n) && Mime_qp_plain(tk, BytesAt(v_data, v_j, "std/mime.xo:1220:31"))) {
+					if !((v_j < v_n) && Mime_qp_plain(tk, BytesAt(v_data, v_j, "std/mime.xo:1245:31"))) {
 						break
 					}
 					{
@@ -2232,7 +2267,7 @@ x_L201:
 				}
 				v_w.M_run(tk, v_data, v_i, v_j)
 				v_i = v_j
-				continue x_L201
+				continue x_L203
 			}
 			if Mime_qp_ws(tk, v_b) || (!(v_binary) && ((v_b == uint8(10)) || (v_b == uint8(13)))) {
 				v_w.M_put(tk, v_b)
@@ -2265,7 +2300,7 @@ func Mime_qp_decode(tk *Task, v_data Bytes) Result[Bytes, Mime_MimeErr] {
 			var v_end int64 = v_at
 			_ = v_end
 			for {
-				if !((v_end < v_n) && (BytesAt(v_data, v_end, "std/mime.xo:1254:22") != uint8(10))) {
+				if !((v_end < v_n) && (BytesAt(v_data, v_end, "std/mime.xo:1279:22") != uint8(10))) {
 					break
 				}
 				{
@@ -2276,19 +2311,19 @@ func Mime_qp_decode(tk *Task, v_data Bytes) Result[Bytes, Mime_MimeErr] {
 			_ = v_full
 			var v_has_lf bool = ((v_end < v_n) && !(v_full))
 			_ = v_has_lf
-			var x_v205 int64
+			var x_v207 int64
 			if v_full {
-				x_v205 = (v_at + int64(4096))
+				x_v207 = (v_at + int64(4096))
 			} else {
 				if v_has_lf {
-					x_v205 = (v_end + int64(1))
+					x_v207 = (v_end + int64(1))
 				} else {
-					x_v205 = v_end
+					x_v207 = v_end
 				}
 			}
-			var v_stop int64 = x_v205
+			var v_stop int64 = x_v207
 			_ = v_stop
-			var v_whole Bytes = BytesSlice(v_data, v_at, v_stop, true, true, "std/mime.xo:1262:17")
+			var v_whole Bytes = BytesSlice(v_data, v_at, v_stop, true, true, "std/mime.xo:1287:17")
 			_ = v_whole
 			v_at = v_stop
 			var v_eof bool = (!(v_has_lf) && !(v_full))
@@ -2296,110 +2331,110 @@ func Mime_qp_decode(tk *Task, v_data Bytes) Result[Bytes, Mime_MimeErr] {
 			var v_k int64 = Bytes_len(tk, v_whole)
 			_ = v_k
 			for {
-				if !((v_k > int64(0)) && ((((BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1267:21") == uint8(32)) || (BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1267:43") == uint8(9))) || (BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1267:64") == uint8(13))) || (BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1267:86") == uint8(10)))) {
+				if !((v_k > int64(0)) && ((((BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1292:21") == uint8(32)) || (BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1292:43") == uint8(9))) || (BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1292:64") == uint8(13))) || (BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1292:86") == uint8(10)))) {
 					break
 				}
 				{
 					v_k = (v_k - int64(1))
 				}
 			}
-			var v_line Bytes = BytesSlice(v_whole, int64(0), v_k, true, true, "std/mime.xo:1270:16")
+			var v_line Bytes = BytesSlice(v_whole, int64(0), v_k, true, true, "std/mime.xo:1295:16")
 			_ = v_line
 			var v_tail Bytes = Bytes("")
 			_ = v_tail
-			var x_v207 List[Mime_MimeErr]
+			var x_v209 List[Mime_MimeErr]
 			if v_full {
-				x_v207 = ListOf[Mime_MimeErr](Mime_err(tk, "bufio: buffer full"))
+				x_v209 = ListOf[Mime_MimeErr](Mime_err(tk, "bufio: buffer full"))
 			} else {
-				x_v207 = List[Mime_MimeErr]{}
+				x_v209 = List[Mime_MimeErr]{}
 			}
-			var v_after List[Mime_MimeErr] = x_v207
+			var v_after List[Mime_MimeErr] = x_v209
 			_ = v_after
-			if (v_k > int64(0)) && (BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1273:17") == uint8(61)) {
+			if (v_k > int64(0)) && (BytesAt(v_whole, (v_k-int64(1)), "std/mime.xo:1298:17") == uint8(61)) {
 				var v_j int64 = v_k
 				_ = v_j
 				for {
-					if !((v_j < Bytes_len(tk, v_whole)) && ((BytesAt(v_whole, v_j, "std/mime.xo:1275:33") == uint8(32)) || (BytesAt(v_whole, v_j, "std/mime.xo:1275:51") == uint8(9)))) {
+					if !((v_j < Bytes_len(tk, v_whole)) && ((BytesAt(v_whole, v_j, "std/mime.xo:1300:33") == uint8(32)) || (BytesAt(v_whole, v_j, "std/mime.xo:1300:51") == uint8(9)))) {
 						break
 					}
 					{
 						v_j = (v_j + int64(1))
 					}
 				}
-				var v_rest Bytes = BytesSlice(v_whole, v_j, 0, true, false, "std/mime.xo:1278:18")
+				var v_rest Bytes = BytesSlice(v_whole, v_j, 0, true, false, "std/mime.xo:1303:18")
 				_ = v_rest
-				v_line = BytesSlice(v_whole, int64(0), (v_k - int64(1)), true, true, "std/mime.xo:1279:14")
-				var v_crlf_next bool = (((Bytes_len(tk, v_rest) >= int64(1)) && (BytesAt(v_rest, int64(0), "std/mime.xo:1280:42") == uint8(10))) || (((Bytes_len(tk, v_rest) >= int64(2)) && (BytesAt(v_rest, int64(0), "std/mime.xo:1280:78") == uint8(13))) && (BytesAt(v_rest, int64(1), "std/mime.xo:1280:95") == uint8(10))))
+				v_line = BytesSlice(v_whole, int64(0), (v_k - int64(1)), true, true, "std/mime.xo:1304:14")
+				var v_crlf_next bool = (((Bytes_len(tk, v_rest) >= int64(1)) && (BytesAt(v_rest, int64(0), "std/mime.xo:1305:42") == uint8(10))) || (((Bytes_len(tk, v_rest) >= int64(2)) && (BytesAt(v_rest, int64(0), "std/mime.xo:1305:78") == uint8(13))) && (BytesAt(v_rest, int64(1), "std/mime.xo:1305:95") == uint8(10))))
 				_ = v_crlf_next
 				if !(v_crlf_next) && !(((Bytes_len(tk, v_rest) == int64(0)) && (Bytes_len(tk, v_line) > int64(0))) && v_eof) {
 					v_after = ListOf[Mime_MimeErr](Mime_err(tk, ("quotedprintable: invalid bytes after =: " + Mime_qp_quote(tk, v_rest))))
 				}
 			} else {
 				if v_has_lf {
-					var x_v209 Bytes
-					if (Bytes_len(tk, v_whole) >= int64(2)) && (BytesAt(v_whole, (Bytes_len(tk, v_whole)-int64(2)), "std/mime.xo:1285:37") == uint8(13)) {
-						x_v209 = Bytes("\r\n")
+					var x_v211 Bytes
+					if (Bytes_len(tk, v_whole) >= int64(2)) && (BytesAt(v_whole, (Bytes_len(tk, v_whole)-int64(2)), "std/mime.xo:1310:37") == uint8(13)) {
+						x_v211 = Bytes("\r\n")
 					} else {
-						x_v209 = Bytes("\n")
+						x_v211 = Bytes("\n")
 					}
-					v_tail = x_v209
+					v_tail = x_v211
 				}
 			}
-			var x_v210 Bytes
+			var x_v212 Bytes
 			if Bytes_len(tk, v_tail) == int64(0) {
-				x_v210 = v_line
+				x_v212 = v_line
 			} else {
-				x_v210 = (v_line + v_tail)
+				x_v212 = (v_line + v_tail)
 			}
-			var v_l Bytes = x_v210
+			var v_l Bytes = x_v212
 			_ = v_l
 			var v_i int64 = int64(0)
 			_ = v_i
-		x_L211:
+		x_L213:
 			for {
 				if !(v_i < Bytes_len(tk, v_l)) {
 					break
 				}
 				{
-					var v_b uint8 = BytesAt(v_l, v_i, "std/mime.xo:1290:15")
+					var v_b uint8 = BytesAt(v_l, v_i, "std/mime.xo:1315:15")
 					_ = v_b
 					if v_b == uint8(61) {
-						var x_v212 int64
+						var x_v214 int64
 						if (v_i + int64(1)) < Bytes_len(tk, v_l) {
-							x_v212 = Mime_qp_hex(tk, BytesAt(v_l, (v_i+int64(1)), "std/mime.xo:1292:46"))
+							x_v214 = Mime_qp_hex(tk, BytesAt(v_l, (v_i+int64(1)), "std/mime.xo:1317:46"))
 						} else {
-							x_v212 = int64(-2)
+							x_v214 = int64(-2)
 						}
-						var v_hb int64 = x_v212
+						var v_hb int64 = x_v214
 						_ = v_hb
-						var x_v213 int64
+						var x_v215 int64
 						if (v_i + int64(2)) < Bytes_len(tk, v_l) {
-							x_v213 = Mime_qp_hex(tk, BytesAt(v_l, (v_i+int64(2)), "std/mime.xo:1293:46"))
+							x_v215 = Mime_qp_hex(tk, BytesAt(v_l, (v_i+int64(2)), "std/mime.xo:1318:46"))
 						} else {
-							x_v213 = int64(-2)
+							x_v215 = int64(-2)
 						}
-						var v_lb int64 = x_v213
+						var v_lb int64 = x_v215
 						_ = v_lb
 						if (v_hb >= int64(0)) && (v_lb >= int64(0)) {
-							v_out.M_write_byte(tk, ConvS_uint8(AddS(MulIK(v_hb, int64(16), -576460752303423488, 576460752303423487, "std/mime.xo:1295:32"), v_lb, "std/mime.xo:1295:32"), "std/mime.xo:1295:26"))
+							v_out.M_write_byte(tk, ConvS_uint8(AddS(MulIK(v_hb, int64(16), -576460752303423488, 576460752303423487, "std/mime.xo:1320:32"), v_lb, "std/mime.xo:1320:32"), "std/mime.xo:1320:26"))
 							v_i = (v_i + int64(3))
-							continue x_L211
+							continue x_L213
 						}
-						if (((v_i + int64(1)) < Bytes_len(tk, v_l)) && (BytesAt(v_l, (v_i+int64(1)), "std/mime.xo:1299:31") != uint8(13))) && (BytesAt(v_l, (v_i+int64(1)), "std/mime.xo:1299:49") != uint8(10)) {
+						if (((v_i + int64(1)) < Bytes_len(tk, v_l)) && (BytesAt(v_l, (v_i+int64(1)), "std/mime.xo:1324:31") != uint8(13))) && (BytesAt(v_l, (v_i+int64(1)), "std/mime.xo:1324:49") != uint8(10)) {
 							v_out.M_write_byte(tk, v_b)
 							v_i = (v_i + int64(1))
-							continue x_L211
+							continue x_L213
 						}
 						if (v_i + int64(2)) >= Bytes_len(tk, v_l) {
 							return Err[Bytes](Mime_err(tk, "unexpected EOF"))
 						}
-						var x_v214 uint8
+						var x_v216 uint8
 						if v_hb < int64(0) {
-							x_v214 = BytesAt(v_l, (v_i + int64(1)), "std/mime.xo:1308:31")
+							x_v216 = BytesAt(v_l, (v_i + int64(1)), "std/mime.xo:1333:31")
 						} else {
-							x_v214 = BytesAt(v_l, (v_i + int64(2)), "std/mime.xo:1308:49")
+							x_v216 = BytesAt(v_l, (v_i + int64(2)), "std/mime.xo:1333:49")
 						}
-						var v_bad uint8 = x_v214
+						var v_bad uint8 = x_v216
 						_ = v_bad
 						return Err[Bytes](Mime_err(tk, ("quotedprintable: invalid hex byte 0x" + Mime_qp_hex2(tk, v_bad))))
 					}
@@ -2411,7 +2446,7 @@ func Mime_qp_decode(tk *Task, v_data Bytes) Result[Bytes, Mime_MimeErr] {
 				}
 			}
 			if !(List_is_empty[Mime_MimeErr](tk, v_after)) {
-				return Err[Bytes](List_At(v_after, int64(0), "std/mime.xo:1318:18"))
+				return Err[Bytes](List_At(v_after, int64(0), "std/mime.xo:1343:18"))
 			}
 		}
 	}
@@ -2480,7 +2515,7 @@ func Mime_qp_plain(tk *Task, v_b uint8) bool {
 
 func (v_w *Mime_QpWriter) M_release(tk *Task) {
 	if (*v_w).F_pend >= int64(0) {
-		(*v_w).F_out.M_write_byte(tk, ConvS_uint8((*v_w).F_pend, "std/mime.xo:1343:22"))
+		(*v_w).F_out.M_write_byte(tk, ConvS_uint8((*v_w).F_pend, "std/mime.xo:1368:22"))
 		(*v_w).F_pend = int64(-1)
 		return
 	}
@@ -2501,16 +2536,16 @@ func (v_w *Mime_QpWriter) M_run(tk *Task, v_data Bytes, v_i int64, v_j int64) {
 			if (*v_w).F_col == int64(75) {
 				(*v_w).M_soft_break(tk)
 			}
-			var x_v216 int64
-			if SubS(v_j, v_at, "std/mime.xo:1357:16") < SubS(int64(75), (*v_w).F_col, "std/mime.xo:1357:25") {
-				x_v216 = v_j
+			var x_v218 int64
+			if SubS(v_j, v_at, "std/mime.xo:1382:16") < SubS(int64(75), (*v_w).F_col, "std/mime.xo:1382:25") {
+				x_v218 = v_j
 			} else {
-				x_v216 = SubS(AddIUp(v_at, int64(75), "std/mime.xo:1357:49"), (*v_w).F_col, "std/mime.xo:1357:49")
+				x_v218 = SubS(AddIUp(v_at, int64(75), "std/mime.xo:1382:49"), (*v_w).F_col, "std/mime.xo:1382:49")
 			}
-			var v_k int64 = x_v216
+			var v_k int64 = x_v218
 			_ = v_k
-			(*v_w).F_out.M_write(tk, BytesSlice(v_data, v_at, v_k, true, true, "std/mime.xo:1358:17"))
-			(*v_w).F_col = AddS((*v_w).F_col, SubS(v_k, v_at, "std/mime.xo:1359:14"), "std/mime.xo:1359:5")
+			(*v_w).F_out.M_write(tk, BytesSlice(v_data, v_at, v_k, true, true, "std/mime.xo:1383:17"))
+			(*v_w).F_col = AddS((*v_w).F_col, SubS(v_k, v_at, "std/mime.xo:1384:14"), "std/mime.xo:1384:5")
 			v_at = v_k
 		}
 	}
@@ -2536,29 +2571,29 @@ func (v_w *Mime_QpWriter) M_put(tk *Task, v_b uint8) {
 	}
 	(*v_w).M_release(tk)
 	(*v_w).F_pend = int64(v_b)
-	(*v_w).F_col = AddS((*v_w).F_col, int64(1), "std/mime.xo:1386:3")
+	(*v_w).F_col = AddS((*v_w).F_col, int64(1), "std/mime.xo:1411:3")
 	(*v_w).F_cr = false
 	return
 }
 
 func (v_w *Mime_QpWriter) M_encode(tk *Task, v_b uint8) {
-	if SubS(int64(75), (*v_w).F_col, "std/mime.xo:1391:6") < int64(3) {
+	if SubS(int64(75), (*v_w).F_col, "std/mime.xo:1416:6") < int64(3) {
 		(*v_w).M_soft_break(tk)
 	}
 	(*v_w).M_release(tk)
 	(*v_w).F_out.M_write_byte(tk, uint8(61))
 	(*v_w).F_out.M_write_byte(tk, Mime_qp_upper_hex(tk, (int64(v_b)>>int64(4))))
 	(*v_w).F_out.M_write_byte(tk, Mime_qp_upper_hex(tk, (int64(v_b)&int64(15))))
-	(*v_w).F_col = AddS((*v_w).F_col, int64(3), "std/mime.xo:1398:3")
+	(*v_w).F_col = AddS((*v_w).F_col, int64(3), "std/mime.xo:1423:3")
 	return
 }
 
 func (v_w *Mime_QpWriter) M_check_last(tk *Task) {
 	if (*v_w).F_pend >= int64(0) {
-		var v_b uint8 = ConvS_uint8((*v_w).F_pend, "std/mime.xo:1404:13")
+		var v_b uint8 = ConvS_uint8((*v_w).F_pend, "std/mime.xo:1429:13")
 		_ = v_b
 		(*v_w).F_pend = int64(-1)
-		(*v_w).F_col = SubS((*v_w).F_col, int64(1), "std/mime.xo:1406:5")
+		(*v_w).F_col = SubS((*v_w).F_col, int64(1), "std/mime.xo:1431:5")
 		(*v_w).M_encode(tk, v_b)
 		return
 	}
@@ -2583,13 +2618,13 @@ func (v_w *Mime_QpWriter) M_crlf(tk *Task) {
 }
 
 func Mime_qp_upper_hex(tk *Task, v_d int64) uint8 {
-	var x_v217 int64
+	var x_v219 int64
 	if v_d < int64(10) {
-		x_v217 = (int64(48) + v_d)
+		x_v219 = (int64(48) + v_d)
 	} else {
-		x_v217 = AddS(int64(55), v_d, "std/mime.xo:1425:70")
+		x_v219 = AddS(int64(55), v_d, "std/mime.xo:1450:70")
 	}
-	return ConvS_uint8(x_v217, "std/mime.xo:1425:36")
+	return ConvS_uint8(x_v219, "std/mime.xo:1450:36")
 }
 
 func Mime_qp_hex(tk *Task, v_c uint8) int64 {
@@ -2611,34 +2646,34 @@ func Mime_qp_hex(tk *Task, v_c uint8) int64 {
 func Mime_qp_hex2(tk *Task, v_b uint8) string {
 	var v_h string = "0123456789abcdef"
 	_ = v_h
-	return (StrSlice(v_h, (int64(v_b)>>int64(4)), ((int64(v_b)>>int64(4))+int64(1)), true, true, "std/mime.xo:1441:3") + StrSlice(v_h, (int64(v_b)&int64(15)), ((int64(v_b)&int64(15))+int64(1)), true, true, "std/mime.xo:1441:39"))
+	return (StrSlice(v_h, (int64(v_b)>>int64(4)), ((int64(v_b)>>int64(4))+int64(1)), true, true, "std/mime.xo:1466:3") + StrSlice(v_h, (int64(v_b)&int64(15)), ((int64(v_b)&int64(15))+int64(1)), true, true, "std/mime.xo:1466:39"))
 }
 
 func Mime_qp_quote(tk *Task, v_b Bytes) string {
 	var v_s string = "\""
 	_ = v_s
-	x_it218 := v_b
-	for x_bi220 := 0; x_bi220 < len(x_it218); x_bi220++ {
-		x_el221 := x_it218[x_bi220]
-		_ = x_el221
-		var v_c uint8 = x_el221
+	x_it220 := v_b
+	for x_bi222 := 0; x_bi222 < len(x_it220); x_bi222++ {
+		x_el223 := x_it220[x_bi222]
+		_ = x_el223
+		var v_c uint8 = x_el223
 		_ = v_c
 		{
-			var x_v222 string
+			var x_v224 string
 			if v_c == uint8(13) {
-				x_v222 = "\\r"
+				x_v224 = "\\r"
 			} else {
 				if v_c == uint8(10) {
-					x_v222 = "\\n"
+					x_v224 = "\\n"
 				} else {
 					if v_c == uint8(9) {
-						x_v222 = "\\t"
+						x_v224 = "\\t"
 					} else {
-						x_v222 = " "
+						x_v224 = " "
 					}
 				}
 			}
-			v_s = (v_s + x_v222)
+			v_s = (v_s + x_v224)
 		}
 	}
 	return (v_s + "\"")

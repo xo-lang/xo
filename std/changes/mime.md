@@ -1,5 +1,23 @@
 # std/mime changes
 
+## 2026-11-20: fix: decode_header is linear on wasm too
+
+- Kind: fix
+- Commit: this push
+- Found by: task #559, the lead's tier 918 stdwasm step ("the test did not finish within 1m0s of real time" on host 4)
+- Go reference: mime encodedword.go WordDecoder.DecodeHeader (Go 1.26.11)
+- Change: `decode_header_by` keeps an offset into the header instead of re-slicing its rest after each encoded word
+- Measured: wasm (Node, Mac) mime module 12 tests in 3.55 s; before, the GO-2026-5038 test passed 60 s (n = 20,000 0.76 s, 40,000 2.59 s: quadratic)
+- Test: std/mime_test.xo "decode_header on many invalid encoded words is linear (GO-2026-5038)" under `xo test --backend=wasm` (fails before, passes after)
+- Affected: wasm builds since 2026-11-19 (not released)
+- Shipped in: not yet released
+
+The 2026-11-19 entry's linear claim held only natively: a wasm Str slice
+copies (decision 0330 makes slices views on arm64, x86 and LLVM only), so
+`h = h[end..]` per word copied the rest of the header each time. The loop
+now finds `=?`, `?` and `?=` from an offset (`find_from`) and slices only
+the pieces it writes; native output and speed are unchanged.
+
 ## 2026-11-19: security: not affected by GO-2026-5038 (quadratic decode_header on invalid encoded words)
 
 - Kind: security
