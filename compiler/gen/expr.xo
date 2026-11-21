@@ -929,7 +929,12 @@ fn (var g: Gen) binary(e: Expr) -> Str {
 /// Whether Go code may be a constant expression of float literals
 /// (goFloatConst).
 fn go_float_const(code0: Str) -> Bool {
-  let code = code0.replace("float64(", "(").replace("float32(", "(")
+  var code = code0.replace("float64(", "(").replace("float32(", "(")
+  // an integer literal converted to a float is a Go constant too
+  // (Float(12) is float64(int64(12))); uintN before intN, which it holds
+  for n in ["uint64(", "uint32(", "uint16(", "uint8(", "int64(", "int32(", "int16(", "int8("] {
+    code = code.replace(n, "(")
+  }
   for c in code.bytes() {
     let ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '.' || c == '+' || c == '-' || c == '*' || c == '(' || c == ')' || c == ' ' || c == 'x' || c == 'X' || c == 'p' || c == 'P' || c == '_'
     if !ok {

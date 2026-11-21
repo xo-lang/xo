@@ -1,0 +1,4 @@
+exit 0
+--- stdout
++Inf +Inf -Inf +Inf +Inf +Inf 6.0
+--- stderr

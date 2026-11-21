@@ -1,0 +1,9 @@
+fn main(os: Os) {
+  let a = 1e308 * Float(12)
+  let b = Float(15) * 1e308
+  let c = 1e308 * Float(-18)
+  let d = Float(3) * 1e308 + Float(2)
+  let e = 1e308 * Float(Int32(40))
+  let f = 1e308 + Float(UInt8(200)) * 1e308
+  os.stdio.println("${a} ${b} ${c} ${d} ${e} ${f} ${Float(2) * Float(3)}")
+}
