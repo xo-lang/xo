@@ -227,10 +227,11 @@ if [ "$win" = llvm ]; then
 		exit 1
 	fi
 fi
-# the linux/arm64 race runtime builds in Docker (below)
+# the linux/arm64 race runtime and the linux sqlite objects build in
+# Docker (below)
 race_reuse() { [ "${XO_RELEASE_RACE:-}" = reuse ] && [ -d "lib/xo/race/$1" ] && [ -f lib/xo/race/LICENSE.TXT ]; }
-if ! race_reuse linux-arm64 && ! docker info >/dev/null 2>&1; then
-	echo "release.sh: Docker is not running: the linux/arm64 race runtime (scripts/race-runtime.sh ... linux-arm64) builds in it; start Docker, or set XO_RELEASE_RACE=reuse with lib/xo/race/linux-arm64 built" >&2
+if [ "$dry" != 1 ] && ! docker info >/dev/null 2>&1; then
+	echo "release.sh: Docker is not running: std/sqlite's linux objects (scripts/sqlite-prebuilt.sh) and the linux/arm64 race runtime (scripts/race-runtime.sh ... linux-arm64, unless XO_RELEASE_RACE=reuse) build in it; start Docker" >&2
 	exit 1
 fi
 
@@ -296,9 +297,11 @@ done
 # std/sqlite's prebuilt objects (decision 0534 stage 2) into the
 # checkout's lib/xo/sqlite, which layout copies: darwin's on the Mac, and
 # windows/amd64's (no C runtime, Xo's PE linker) when XO_CLANG and
-# XO_WINSYSROOT are set; linux's are not built yet (a linux build
-# compiles sqlite3.c on first use, as a checkout does)
-sq_plats="darwin-arm64 darwin-amd64"
+# XO_WINSYSROOT are set, and linux/arm64's and linux/amd64's in Docker
+# (Debian's clang in the linux/arm64 image, --target for each; task #622:
+# before 0.56.0 a linux archive compiled sqlite3.c on a std/sqlite
+# program's first build)
+sq_plats="darwin-arm64 darwin-amd64 linux-arm64 linux-amd64"
 if [ -n "${XO_CLANG:-}" ] && [ -n "${XO_WINSYSROOT:-}" ]; then
 	sq_plats="$sq_plats windows-amd64"
 	# windows/arm64's too with its archive (decision 0569 stage 6)

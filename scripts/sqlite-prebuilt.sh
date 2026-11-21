@@ -13,8 +13,12 @@
 # `use c` adapter (std/native/.xo/cbind/c_xo_sqlite_*.c, which XO writes
 # when it binds the header: a build of a std/sqlite program first).
 #   darwin-arm64, darwin-amd64: Apple's clang (-arch), on the Mac;
-#   linux-arm64, linux-amd64: $XO_SQLITE_CC (a cc for that target, run on
-#     its offload host), else cc when the host is that target;
+#   linux-arm64, linux-amd64: on the Mac (release.sh), Debian's clang in
+#     the linux/arm64 Docker image (scripts/docker-linux.sh, native, no
+#     emulation) with --target for each, against Debian's glibc headers
+#     (libc6-dev-amd64-cross for amd64; task #622); elsewhere
+#     $XO_SQLITE_CC (a cc for that target, run on its offload host), else
+#     cc when the host is that target;
 #   windows-amd64: $XO_CLANG with $XO_WINSYSROOT (xwin's sysroot), with
 #     the addendum's flags: the object then needs no C runtime, only
 #     KERNEL32 and the C functions cabi_wincrt.xo and cabi_winmath.xo
@@ -58,10 +62,23 @@ for plat in "$@"; do
 	out="$repo/lib/xo/sqlite/$plat"
 	mkdir -p "$out"
 	ext=o
+	docker=0
 	case $plat in
 	darwin-arm64) cmd=(cc -arch arm64 -g -O2 "-ffile-prefix-map=$repo=.") ;;
 	darwin-amd64) cmd=(cc -arch x86_64 -g -O2 "-ffile-prefix-map=$repo=.") ;;
-	linux-arm64|linux-amd64) cmd=(${XO_SQLITE_CC:-cc} -g -O2 -fPIC "-ffile-prefix-map=$repo=.") ;;
+	linux-arm64|linux-amd64)
+		if [ "$(uname -s)" = Darwin ] && [ -z "${XO_SQLITE_CC:-}" ]; then
+			# docker-linux.sh mounts REPO at /xo and the work directory at /work
+			docker=1
+			tgt=$([ "$arch" = arm64 ] && echo aarch64 || echo x86_64)-linux-gnu
+			cmd=(clang "--target=$tgt" -g -O2 -fPIC "-ffile-prefix-map=/xo=.")
+			# amd64's glibc headers are the cross package's, not the image's
+			# own /usr/include (arm64's)
+			[ "$arch" = amd64 ] && cmd+=(-nostdlibinc -isystem /usr/x86_64-linux-gnu/include)
+		else
+			cmd=(${XO_SQLITE_CC:-cc} -g -O2 -fPIC "-ffile-prefix-map=$repo=.")
+		fi
+		;;
 	# the windows defines are compiler/xo cffi.xo sqlite_win_defines', which
 	# a windows/arm64 build from source uses
 	windows-amd64)
@@ -78,7 +95,16 @@ for plat in "$@"; do
 	echo "+ ${cmd[*]} -I $src -c unit.c -o $obj" >&2
 	# the adapter includes "sqlite/xo_sqlite.h", relative to std/native
 	# (compiler/cli/bind std_key)
-	"${cmd[@]}" "${features[@]}" -I "$src" -I "$repo/std/native" -c "$work/unit.c" -o "$work/sqlite.$ext"
+	if [ "$docker" = 1 ]; then
+		[ "$(cd "$(dirname "$0")/.." && pwd)" = "$(cd "$repo" && pwd)" ] || { echo "sqlite-prebuilt.sh: a linux object from the Mac needs REPO to be this script's checkout (docker-linux.sh mounts it)" >&2; exit 1; }
+		printf '#include "/xo/std/native/sqlite/sqlite3.c"\n#include "/xo/std/native/sqlite/xo_sqlite.c"\n#include "/xo/%s"\n' "${adapter#"$repo"/}" > "$work/dunit.c"
+		dev=libc6-dev; [ "$arch" = amd64 ] && dev=libc6-dev-amd64-cross
+		rm -f "$work/sqlite.o" "$work/cc-version"
+		XO_DOCKER_ROOT=1 nice -n 10 "$(dirname "$0")/docker-linux.sh" arm64 "$work" -- "(apt-get update -qq && apt-get install -y -qq --no-install-recommends $dev) >/dev/null 2>&1 && clang --version | head -1 > /work/cc-version && ${cmd[*]} ${features[*]} -I /xo/std/native/sqlite -I /xo/std/native -c /work/dunit.c -o /work/sqlite.o"
+		[ -s "$work/sqlite.o" ] || { echo "sqlite-prebuilt.sh: the Docker compile wrote no $plat object" >&2; exit 1; }
+	else
+		"${cmd[@]}" "${features[@]}" -I "$src" -I "$repo/std/native" -c "$work/unit.c" -o "$work/sqlite.$ext"
+	fi
 	mv "$work/sqlite.$ext" "$obj"
 	(cd "$out" && shasum -a 256 "sqlite.$ext" > "sqlite.$ext.sha256")
 	python3 -I - "$src" "$adapter" "$goos" "$arch" "${features[*]}" > "$obj.key" <<'EOF'
@@ -133,7 +159,11 @@ if bad:
 		echo "sqlite: $(sed -n '1s/^SQLite \([0-9.]*\).*/\1/p' "$src/VERSION")"
 		echo "sqlite3.c sha256: $(shasum -a 256 "$src/sqlite3.c" | cut -d' ' -f1)"
 		echo "key: $(cat "$obj.key")"
-		echo "compiler: $("${cmd[0]}" --version 2>/dev/null | head -1)"
+		if [ "$docker" = 1 ]; then
+			echo "compiler: $(cat "$work/cc-version") (docker-linux.sh, --target=$tgt)"
+		else
+			echo "compiler: $("${cmd[0]}" --version 2>/dev/null | head -1)"
+		fi
 		if [ "$goos" = windows ]; then
 			echo "windows sdk: $(ls "$XO_WINSYSROOT/Windows Kits/10/Include" 2>/dev/null | sort -V | tail -1)"
 			echo "msvc: $(ls "$XO_WINSYSROOT/VC/Tools/MSVC" 2>/dev/null | sort -V | tail -1)"

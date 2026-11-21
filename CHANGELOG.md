@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Linux release archives (linux/arm64, linux/amd64) now ship std/sqlite's prebuilt object, so a std/sqlite program's first build no longer compiles sqlite3.c with the host's C compiler (task #622).
 - Fix (std/sqlite, windows; task #621): SQLite's math functions (`sqrt`, `pow`, `ln`, `acos` and the rest) link and run on windows/amd64 and windows/arm64, which link no C runtime; Xo's runtime now defines the C math functions they call. The release's prebuilt sqlite objects are recut for every target.
 - Fix (`xo test --since`; task #605): a bare `--since` followed by a directory leaves it a directory; on Windows `xo test --since C:\x` kept the `\` and ran every test instead of the ones the change reaches.
 - Fix (windows/arm64, LLVM backend; task #605): a program built with `--backend=llvm` on windows/arm64 links again; the runtime named the asynchronous preemption stub `xo_async_stub`, which only the arm64 backend defined (lld-link: undefined symbol: xo_async_stub).

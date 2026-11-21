@@ -4110,9 +4110,15 @@ spec core 4.5.
   Since key v2 (xw decision 251: FTS5, percentile, math functions) a
   windows object also calls the C math library, which
   std/native/llrt/cabi_winmath.xo defines (task #621); the script's
-  check reads it beside cabi_wincrt.xo. release.sh builds no linux
-  objects: those are cut on their own arch (`sqlite-prebuilt.sh` with
-  the host's cc, a cross-built xo and the checkout's files). The
+  check reads it beside cabi_wincrt.xo. On the Mac, release.sh builds
+  the linux objects too (task #622, 2026-11-21): sqlite-prebuilt.sh runs
+  Debian's clang 19 in the linux/arm64 Docker image
+  (scripts/docker-linux.sh, native, no amd64 emulation) with
+  `--target=aarch64-linux-gnu` or `--target=x86_64-linux-gnu`, amd64
+  against libc6-dev-amd64-cross's headers (`-nostdlibinc -isystem
+  /usr/x86_64-linux-gnu/include`); release.sh now needs Docker even with
+  XO_RELEASE_RACE=reuse. Elsewhere (`XO_SQLITE_CC`, or a linux host) it
+  uses that cc. The
   native_sql golden is std/sql's in memory driver; the sqlite goldens
   are native_sqlite, native_sqlite_file and native_sqlite_math.
   0.56.0 recut (task #621, 2026-11-21, SQLite 3.54.1, key v2), each
@@ -4126,8 +4132,12 @@ spec core 4.5.
   | darwin-amd64 | Apple clang 21.0.0 | c706aff1279f650901475035407eb4ab04b89293339e855c7e7e287b06406e5e (built only; no Intel Mac run) |
   | windows-amd64 | clang 23.1.3 | ef648efc3591138f7d71c4d91cfd1506f98a867a20f747c1bae56625ae8676d2 |
   | windows-arm64 | clang 23.1.3 | e341c85fc17ae347aa8584e77d6e84ecb07ed178377bc83b164629d0747bb153 |
-  | linux-arm64 | cc (Debian 14.2.0-19) 14.2.0 | 230ddd4f93767c8e369e6700147a477f36537b639d57259c0069a7489775d951 |
-  | linux-amd64 | cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 | db2c101de5aa1fcd2d697eec022385e14e17ee6a013bae281231baeab6cd2b48 |
+  | linux-arm64 | Debian clang 19.1.7 (Docker on the Mac; #621's host cut: cc Debian 14.2.0) | 230ddd4f93767c8e369e6700147a477f36537b639d57259c0069a7489775d951 |
+  | linux-amd64 | Debian clang 19.1.7 (Docker on the Mac; #621's host cut: cc Ubuntu 13.3.0) | db2c101de5aa1fcd2d697eec022385e14e17ee6a013bae281231baeab6cd2b48 |
+
+  The Docker-built linux objects (#622) were checked on host 2 and the
+  linux/amd64 host: native_sqlite and native_sqlite_math PASS, 74 cc
+  calls, none compiling sqlite3.c.
 
   Last verified: 2026-11-21.
 
