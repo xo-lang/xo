@@ -1708,6 +1708,18 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   of gate waits on host 2 in 3 h against 53 on host 3; gatelib.sh
   gate_lane_pick over `heavy.sh --status`, host 2 on a tie,
   OFFGATE_PICK=0 keeps host 2); the 5 minute reroute still moves it.
+- Lease first (decision 0732 step 2, task #600; `OFFGATE_LEASE_FIRST=1`,
+  off by default until a day of gates ran with it): a gate with no host
+  named takes one heavyd lease on every host it may use
+  (`env:offload-arm64b.env|env:offload-arm64c.env` for a plain gate;
+  host 4 and 2 for a memory gate, host 3 too with host3-memory-ok; host 1
+  only with OFFGATE_NO_HOST1=0; reserved hosts out), and heavyd's queue
+  and fit place it. The bundle, race runtime and disk check then run
+  inside the lease on the granted host, so the pick, host 4 first and the
+  reroutes are not used; a host short of disk ends the gate rc 6. The
+  lease minutes are fixed first: the formula with a cold xo, or 1.3 times
+  the p90 of cold runs on those hosts plus the xo build, when more.
+  `OFFGATE_PLAN=spec` prints the spec. Last verified: 2026-11-21.
 - heavyd starts a short Mac gate-class job regardless of the load
   (#263, cost:mac-load-wait, 2026-11-17: 2,207 gate jobs in 24 h with a
   median run of 4 s waited 12.3 h in total, mostly on the load ceiling): a
