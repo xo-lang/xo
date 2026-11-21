@@ -9,6 +9,8 @@
 // memory of by reference arguments; rbp = rsp + size. A leaf makes no
 // frame (its fault stubs make one before their call).
 
+use github.com/xo-lang/xo/compiler/ssa
+
 /// The x86_64 calling convention of Xo functions: the arguments in rdi,
 /// rsi, rdx, rcx, r8, r9 and xmm0 to xmm7, then the stack; a system call's
 /// (vfix -2, retarget) in rdi, rsi, rdx, r10, r8, r9 and its number in rax.
@@ -419,9 +421,12 @@ fn (var g: G) x86_emit_once() {
     }
     var sites: List[Str] = []
     for s in g.f.inl_sites {
-      sites.push("${s.callee}|${s.file}|${s.call_line}|${s.parent}")
+      sites.push("${ssa.source_name(s.callee)}|${s.file}|${s.call_line}|${s.parent}")
     }
-    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t${g.dv_field(dvp, dv_labels)}")
+    // the source name, as emit.xo's: a devirt_once copy (NAME#once) is
+    // NAME to xo debug (501f98f35 did arm64 only; TestDebugTasks failed
+    // on linux/amd64 and windows/amd64, task #597, 2026-11-21)
+    g.dbgs.push("${g.f.file}\t${ssa.source_name(g.f.name)}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t${g.dv_field(dvp, dv_labels)}")
   }
   let sites = g.sites + g.stub_sites
   if g.os == "windows" {
