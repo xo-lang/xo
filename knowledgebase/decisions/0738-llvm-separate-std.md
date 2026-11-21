@@ -308,9 +308,21 @@ the whole program's: atomic add 1.47 without imports, 0.99 with; text
 cut 1.19, 0.95; text cut_prefix 1.24, 0.98; ctx budget 1.32, 1.19;
 rsa sign2048 1.10, 1.08; digest sha256_small 1.18, 1.14; ctx defer
 1.35, 1.20. The program's clang step with the imports took 0.4 to 1.1
-s. Open: the rows still above 1.1 (ctx defer and budget, digest), the
-71 workload timing on host 1, and darwin, which links plain objects
-and imports nothing.
+s.
+
+The 71 workloads on host 1 alone (linux/arm64, 64bb87aec, median of 30
+alternating ratios a workload, every checksum equal;
+~/xo-lead/notes/xo-lang-1/p607/rt-time-64bb87aecf2d06f4d748be37a1c5f151b642120d.out):
+geomean 1.042 of the whole program's time (1.062 before the imports,
+1.486 with plain objects), 9 rows above 1.10 (13 before). atomic add
+1.470 to 1.005, ctx budget 1.326 to 1.160, portable str_hash 1.176 to
+1.057. Still slow: ctx defer 1.317, text cut 1.231 (the shared host's
+0.95 above did not hold on the quiet one), digest sha256_small 1.183,
+fault isolate 1.153. Sizes: .text 5 to 20% larger than the whole
+program's (rsa 3.19 MB to 3.81 MB), the file 3 to 6 MB larger, mostly
+std's debug sections. Open: those rows, the size, and darwin, which
+links plain objects and imports nothing (Apple's clang has no lld to
+write the index).
 
 ## Consequences
 
