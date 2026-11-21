@@ -2,6 +2,8 @@
 
 package repotest
 
+//pushq:owner TestLeadShell
+
 import (
 	"os/exec"
 	"syscall"

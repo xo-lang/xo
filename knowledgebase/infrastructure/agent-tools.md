@@ -1863,7 +1863,12 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   -check, the fast repo checks (internal/repotest and the two listed
   tests; repotest's 8 slow tests, pushq.sh's `pq_fast_slow`, are skipped
   unless the push changes their inputs, task #539, 2026-11-20: 98 s at
-  Mac load 30 to 42 instead of 814 s; the 2 hour main tier runs them),
+  Mac load 30 to 42 instead of 814 s; the 2 hour main tier runs them;
+  a changed internal/repotest file runs only the tests it defines, or
+  the test its `//pushq:owner TestX` line names, and the whole package
+  only for a shared helper file listed in internal/repotest/shared.txt,
+  testdata/ or a deleted file, task #589, 2026-11-21; TestRepotestShared
+  keeps shared.txt exact: a file whose declarations another file uses),
   stdgen -check, the prelude interface check, TestStdChecks,
   TestVetCostStd and the new goldens. A failed check ends the push
   there, before the wait (log lines say `(before the lane)`). The lane
