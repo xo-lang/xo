@@ -1,7 +1,8 @@
 # 0738: Std compiled once for the LLVM backend too
 
-Status: Proposed (Xo Lang 1, 2026-11-21, task #607; the owner chose the
-direction, xw decision #250; main only, not 0.55.x)
+Status: Accepted (owner, 2026-11-21, xw decision #253; proposed by Xo
+Lang 1 the same day, task #607; the direction was the owner's, xw
+decision #250; lands on main for 0.56.0, not 0.55.x, xw decision #255)
 
 ## Context
 
@@ -87,6 +88,37 @@ Stages, each measured before the next:
    LLVM rows against whole program.
 4. On by default for dev builds; the tier's llvm golden step measured
    before and after.
+
+## Stage 0: the oracle (2026-11-21)
+
+No compiler change: a golden's kept whole program IR split with
+`llvm-extract` into its plain std functions and the rest (the program,
+generic instances, clones, the runtime), each compiled with `clang -O2
+-c` and the code sinking option of decision 0731; then xo's own clang
+line (logged by a wrapper, its `-flto` dropped) linking the whole
+program's one object, and the rest's object with the std part's.
+linux/arm64 host 2, clang 23.1.3, one run each
+(~/xo-lead/notes/xo-lang-1/p607/oracle3.out, the host's load 1.7 at the
+end; oracle1.out has a third golden under load).
+
+| Golden | clang, whole | clang, the rest | clang, the std part | link, whole | link, rest + std |
+|---|---:|---:|---:|---:|---:|
+| list_swap_guard | 22.8 s | 1.0 s | 19.6 s | 23 ms | 21 ms |
+| http_tls | 32.6 s | 2.0 s | 28.9 s | 27 ms | 27 ms |
+
+So a warm build compiles 4% to 6% of today's (5% to 7% in the loaded
+run, tls_dial 40.1 s to 2.6 s there), and the link costs the same. The
+split binaries ran with the whole program's exit status and output
+(http_tls's bytes the same; list_swap_guard's stderr differed after its
+first line, not compared further). Under the bar of a quarter by a wide
+margin.
+
+What the oracle leaves open: the std part here is only what these
+programs reach, already pruned by the whole program passes, so the
+store's cold cost and the link against all of std are stage 1's first
+measurements; the rest was compiled with no std body to inline, so
+item 4's bodies add to its time; and today's build runs clang with full
+LTO in one step, which this oracle's plain objects do not.
 
 ## Consequences
 
