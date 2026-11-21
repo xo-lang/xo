@@ -120,6 +120,80 @@ measurements; the rest was compiled with no std body to inline, so
 item 4's bodies add to its time; and today's build runs clang with full
 LTO in one step, which this oracle's plain objects do not.
 
+## Stages 1 and 2 built, opt in (2026-11-21, task #607)
+
+`XO_SEPCOMP_LLVM=1` on `xo build` or `xo run` with `--backend=llvm`,
+for the host's target, not `--release` or `--race`:
+
+- std's LLVM objects (compiler/xo stdcache.xo std_variant_llvm): the
+  directory `KEY.llvm` beside the native variant's `KEY.store` in the
+  backend cache, `std.N.o` and `objs.txt`, built once per concurrency
+  variant by `xo dev stdobj --backend=llvm` (an `XO_STD_OBJ` build with
+  the LLVM backend). The facts are the native variant's `KEY.stdf`:
+  they are made before any backend.
+- std's own build in the emitter and the driver: no process entry, the
+  program entry `xo_entry` declared (the runtime takes its address),
+  every Xo function exported by the IR splitter (split.xo
+  split_ir_store), every plain std function a root of the dead
+  function removal (arm64 reach.xo drop_unreached_store), the modules
+  compiled several at once with `-ffunction-sections -fdata-sections`
+  and, on ELF, `-fseparate-named-sections`.
+- The program's side in the emitter (compiler/llvm): a std function
+  with facts is declared where it is called or its address taken and
+  not lowered, its C export declared; parameters passed by reference
+  are decided from the parameter types (as the native backend does),
+  which a function with no body here has too.
+- The link: std's objects after the program's, with `-Wl,--gc-sections
+  -Wl,-z,start-stop-gc` (`-Wl,-dead_strip` on darwin).
+
+Measured, linux/arm64 host 2, an empty cache, one run each
+(~/xo-lead/notes/xo-lang-1/p607/drv4.out): the first build takes 103 s
+(the native variants 10.7 and 12.6 s, std's LLVM objects 36.7 and 42.3
+s, 52 and 55 MB); every later build about a second or less. clang's
+time (phase cc), whole program against the opt in:
+
+| Golden | Whole | Opt in | Output |
+|---|---:|---:|---|
+| arith | 3,319 ms | 70 ms | same |
+| json_text | 4,157 ms | 371 ms | same |
+| conc_channels | 3,380 ms | 107 ms | same |
+| list_swap_guard | 25,241 ms | 49 ms | 2 traceback lines |
+| http_tls | 37,355 ms | 704 ms | same |
+| native_sql | 27,881 ms | 530 ms | same |
+| tls_dial | 33,552 ms | 244 ms | same |
+| otlp_export | 30,560 ms | 448 ms | same |
+| net_only | 31,364 ms | 364 ms | same |
+| crypto_prims | 25,136 ms | 190 ms | same |
+
+list_swap_guard's fault report names the same fault and location; its
+traceback shows `listswap.probe_list_swap_at` as a frame of its own,
+not `[inlined]`. No golden's want.txt holds a traceback. On darwin/arm64
+TestSepcompLLVM passes (five goldens against want.txt, the first with
+the objects' build in 70 s).
+
+What these builds are not yet:
+
+- Small: a binary carries all of std's DWARF, a constant 4.8 MB
+  (concurrent) or 7.8 MB of `.debug` sections where the whole program
+  has 0.75 to 3.8 MB; code is the same to 0.9 MB more. With
+  `-gsplit-dwarf` on std's objects (measured by hand, not in the
+  driver) the constant is 2.45 MB and fault reports keep their lines.
+- Inlined across the boundary: stage 3's `available_externally` bodies
+  are not built, so no speed claim is made for these binaries.
+- The default, keyed by clang, or for tests: the objects' directory
+  is named by std's key alone (another clang or XO_LLVM_OPT reuses
+  them), and `xo test` builds whole.
+
+Two things the first measurements had wrong. An XO_STD_ROOTS build
+with dead function removal on is not all of std: its roots are main,
+the exports and the entries, so it kept 6,368 functions (662,055 lines
+of IR) and a program linked against it found no `x.prelude.llrt_println`;
+all of std is 4.4 million lines in 7 modules. And std's functions sit
+in the named section `xo_text` (the runtime's code range), which
+function sections alone do not divide and whose `__start_` and
+`__stop_` symbols keep every input section alive: a program that used
+no time zone still needed `xo_tz_table` until the two options above.
+
 ## Consequences
 
 - A warm LLVM build of a program that reaches http or crypto compiles

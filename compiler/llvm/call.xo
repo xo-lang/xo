@@ -640,6 +640,7 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
     }
   }
   let rl = g.res_ll(callee)
+  g.extern_decl(callee)
   var c = "${rl} ${fname(g.f.name_of(x))}(${args.join(", ")})"
   if g.inl.contains(g.f.name_of(x)) && !g.race_keeps_call(callee) {
     c = "${c} #6"

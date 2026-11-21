@@ -624,6 +624,14 @@ fn decl_of(line: Str) -> Str {
 /// other modules it calls (internal to hidden linkage for those). n <= 1,
 /// or fewer than two functions, gives the IR back as one module.
 fn split_ir(ir: Str, n0: Int, stable: Bool, by_file: Bool) -> List[Str] {
+  split_ir_store(ir, n0, stable, by_file, false)
+}
+
+/// split_ir, and with store (std's own LLVM build, decision 0738) every
+/// Xo function (`@"x.NAME"`) hidden instead of internal, whether another
+/// module of this build calls it or not: a separately compiled program
+/// declares and calls them (compiler/llvm extern_decl).
+fn split_ir_store(ir: Str, n0: Int, stable: Bool, by_file: Bool, store: Bool) -> List[Str] {
   if n0 <= 1 {
     return [ir]
   }
@@ -691,13 +699,13 @@ fn split_ir(ir: Str, n0: Int, stable: Bool, by_file: Bool) -> List[Str] {
     home[i] = m
     load[m] += p.defs[i].text.len()
   }
-  split_emit(p, home, n, stable)
+  split_emit(p, home, n, stable, store)
 }
 
 /// The modules of a split: each function in module home[i] (helpers,
 /// home -1, copied where used), with the constants and helpers it uses and
 /// declarations of the functions of other modules it calls.
-fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool) -> List[Str] {
+fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -> List[Str] {
   var members: List[List[Int]] = []
   for _ in 0..n {
     members.push([])
@@ -800,7 +808,7 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool) -> List[Str] {
     b.write("\n")
     for i in members[m] {
       let d = p.defs[i]
-      if exported.contains(i) && d.text.starts_with("define internal ") {
+      if (exported.contains(i) || (store && !d.helper && (d.name.starts_with("@\"x.") || d.name.starts_with("@x.")))) && d.text.starts_with("define internal ") {
         b.write("define hidden ")
         b.write(d.text.trim_prefix("define internal "))
       } else {
@@ -861,7 +869,7 @@ fn ct_split(ir: Str) -> List[Str] {
   if nct == 0 || nrest == 0 {
     return [ir]
   }
-  split_emit(p, home, 2, false)
+  split_emit(p, home, 2, false, false)
 }
 
 /// The key a stable split places d by: the DIFile line of the

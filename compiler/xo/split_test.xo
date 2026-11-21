@@ -109,3 +109,21 @@ test "arm64 -O0 compiles of IR use SelectionDAG, as -O1 and up" {
   expect(module_args("-O2", c, [], []).contains("-fno-global-isel")) == false
   expect(module_args("-O0", SplitConfig{opt: "-O0", lto: "none", arch: "amd64"}, [], []).contains("-fno-global-isel")) == false
 }
+
+test "std's own build exports every Xo function, a helper stays internal" {
+  // decision 0738: a separately compiled program declares and calls
+  // std's functions, so each is hidden in std's modules whether another
+  // module of std calls it or not; the `xo.` helpers are copied into the
+  // modules that use them and stay internal
+  let ir = "target triple = \"arm64-apple-macosx\"\n\ndefine internal i64 @\"x.a.one\"(i64 %a0) #1 {\n  ret i64 1\n}\n\ndefine internal i64 @\"x.b.two\"(i64 %a0) #1 {\n  %r = call i64 @\"xo.help\"(i64 %a0)\n  ret i64 %r\n}\n\ndefine internal i64 @\"xo.help\"(i64 %a0) #1 {\n  ret i64 2\n}\n\nattributes #1 = { nounwind }\n"
+  let store = split_ir_store(ir, 2, false, false, true).join("\n")
+  expect(store.contains("define hidden i64 @\"x.a.one\"(")) == true
+  expect(store.contains("define hidden i64 @\"x.b.two\"(")) == true
+  expect(store.contains("define internal i64 @\"x.a.one\"(")) == false
+  expect(store.contains("define internal i64 @\"xo.help\"(")) == true
+  expect(store.contains("define hidden i64 @\"xo.help\"(")) == false
+  // a program's own split leaves a function no other module calls internal
+  let plain = split_ir(ir, 2, false, false).join("\n")
+  expect(plain.contains("define internal i64 @\"x.a.one\"(")) == true
+  expect(plain.contains("define hidden i64 @\"x.a.one\"(")) == false
+}

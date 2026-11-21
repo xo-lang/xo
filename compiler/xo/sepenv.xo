@@ -77,7 +77,11 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
     // library entries (xo_init's callees), and its link is cc's
     return with_env(os, {"XO_SEPCOMP": "0", "XO_SEPCOMP_FACTS": "", "XO_SEPCOMP_FACTS_CONC": "", "XO_SEPCOMP_STORE": "", "XO_SEPCOMP_STORE_CONC": ""})
   }
-  if os.env.get("XO_SEPCOMP") != None || (os.env.get("XO_SEPCOMP_DEFAULT") ?? "") == "0" {
+  // decision 0738's opt in (below) is asked for by name: it holds with
+  // XO_SEPCOMP unset or empty, whatever XO_SEPCOMP_DEFAULT says (the
+  // tiers turn the default off for every build they start)
+  let llvm_opt = backend == "llvm" && (os.env.get("XO_SEPCOMP_LLVM") ?? "") == "1" && (os.env.get("XO_SEPCOMP") ?? "").is_empty()
+  if !llvm_opt && (os.env.get("XO_SEPCOMP") != None || (os.env.get("XO_SEPCOMP_DEFAULT") ?? "") == "0") {
     // the line size and instruction-count tools' builds show (task #298:
     // they build whole program, what a release ships, decision #115)
     if o.phases && (os.env.get("XO_SEPCOMP") ?? "") != "1" {
@@ -96,6 +100,22 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   // world's roots); --std-module too, with its module and their
   // importers built from source (main.xo, check.sep_source)
   let tmode = o.cmd == "test"
+  // decision 0738: the LLVM backend against std's own LLVM objects,
+  // opt in (XO_SEPCOMP_LLVM=1) while it is new: host builds and runs,
+  // not --release, --race, a changed std or changed passes
+  if llvm_opt && served && (o.cmd is "build" | "run") && !o.release && !o.race && !passes_changed(os) && !std_code_changed(os, o) && (o.targets.is_empty() || o.targets == "${host}/${arch}") {
+    if let Some(l0) = std_variant_llvm(os, ctx, host, arch, false, o.phases) {
+      if let Some(l1) = std_variant_llvm(os, ctx, host, arch, true, o.phases) {
+        return with_env(os, {"XO_SEPCOMP": "1", "XO_SEPCOMP_FACTS": l0.1, "XO_SEPCOMP_FACTS_CONC": l1.1, "XO_SEPCOMP_STORE": l0.0, "XO_SEPCOMP_STORE_CONC": l1.0})
+      }
+    }
+    return os
+  }
+  if llvm_opt {
+    // asked for where it does not apply (a test, another target,
+    // --release, --race): the whole program
+    return os
+  }
   if !(o.cmd is "build" | "run" | "test") || backend != arch || !served || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
     if o.phases && (o.cmd is "build" | "run" | "test") {
       os.stdio.eprintln("std variant: not used (${if o.release { "--release" } else if o.race { "--race" } else if backend != arch || !served { "another target or backend" } else { "a cc link, changed passes or a changed std" }}), the whole program is built")

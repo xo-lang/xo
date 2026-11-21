@@ -197,6 +197,55 @@ fn ir_objects(os: Os, cc: Str, flags: List[Str], lls: List[Str]) -> Result[List[
   Ok(objs)
 }
 
+/// ir_objects with at most jobs clang processes at once (std's own LLVM
+/// objects, decision 0738: seven modules of about 45 MB of IR each took
+/// 98 s one after another on an 18 core host and about 25 s together).
+fn ir_objects_par(os: Os, cc: Str, flags: List[Str], lls: List[Str], jobs: Int) -> Result[List[Str], Str] {
+  var objs: List[Str] = []
+  for ll in lls {
+    objs.push(ll.trim_suffix(".ll") + ".o")
+  }
+  var ti = 0
+  var running: List[(Int, Child)] = []
+  var fails: List[Str] = []
+  while ti < lls.len() || !running.is_empty() {
+    while ti < lls.len() && running.len() < jobs.max(1) {
+      let next = ti
+      ti += 1
+      match os.proc.cmd(cc, flags + ["-c", lls[next], "-o", objs[next]]).merge_stderr().spawn() {
+        Ok(ch) => running.push((next, ch))
+        Err(e) => fails.push("${cc}: ${e}\n")
+      }
+    }
+    if running.is_empty() {
+      break
+    }
+    // the oldest first: its output, then its status
+    let (k, ch) = running[0]
+    running = running[1..running.len()]
+    var outb = BytesBuilder.new()
+    var reading = true
+    while reading {
+      match ch.read(65536) {
+        Ok(Some(data)) => outb.write(data)
+        _ => reading = false
+      }
+    }
+    match ch.wait() {
+      Ok(code) => {
+        if code != 0 {
+          fails.push("${lls[k]}: exit status ${code}\n${outb.freeze().to_str() ?? ""}")
+        }
+      }
+      Err(e) => fails.push("${lls[k]}: ${e}\n")
+    }
+  }
+  if !fails.is_empty() {
+    return Err(fails[0])
+  }
+  Ok(objs)
+}
+
 fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: Str) -> Str {
   // libraries of `use c` go after the objects (splitLibs)
   var flags: List[Str] = []

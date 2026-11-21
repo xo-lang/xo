@@ -1509,6 +1509,7 @@ fn (var g: Gen) instr_body(v: Int) {
           g.store_value(a, p)
         }
       }
+      g.extern_decl(callee)
       let t0 = g.def("insertvalue { ptr, ptr } undef, ptr ${fname(g.m.funcs[callee].name)}, 0")
       g.set(v, "insertvalue { ptr, ptr } ${t0}, ptr ${env}, 1")
     }
@@ -1518,6 +1519,9 @@ fn (var g: Gen) instr_body(v: Int) {
       // rt.sym_addr (decision 0234): `&` and a C level symbol, declared
       // unless the module defines it
       let p = if n.starts_with("@") { n } else if n.starts_with("&") { g.c_sym(n[1..n.len()]) } else { fname(n) }
+      if !(n.starts_with("@") || n.starts_with("&")) {
+        g.extern_decl_named(n)
+      }
       if n == "&xo_async_stub" {
         // Windows' asynchronous preemption stub (pool.xo win_kick):
         // preempt_asm defines it
@@ -1527,12 +1531,16 @@ fn (var g: Gen) instr_body(v: Int) {
     }
     Rebind => {
       let a0 = g.op(args[0])
+      g.extern_decl_named(g.f.name_of(x))
       g.set(v, "insertvalue { ptr, ptr } ${a0}, ptr ${fname(g.f.name_of(x))}, 0")
     }
     // decision 0613 step 5, option B: an interface value's method slot
     // (the function's address as a word) and the call's function value,
     // that address with the show closure's environment
-    CodeOf => g.set(v, "ptrtoint ptr ${fname(g.f.name_of(x))} to i64")
+    CodeOf => {
+      g.extern_decl_named(g.f.name_of(x))
+      g.set(v, "ptrtoint ptr ${fname(g.f.name_of(x))} to i64")
+    }
     // decision 0613 step 5 stage 4: a `var self` slot's environment, its
     // count (1: held once) and a capture moved out and back
     EnvUnique => {

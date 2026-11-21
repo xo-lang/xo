@@ -1671,9 +1671,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // emitted, so a split module or an O0 build does not reference
     // symbols the target lacks (gotchas/windows-llvm-split-link.md)
     if o.cmd != "asm" && (os.env.get("XO_DCE") ?? "") != "off" {
-      let _d = arm64.drop_unreached(lm)
+      let _d = if lm.std_store { arm64.drop_unreached_store(lm) } else { arm64.drop_unreached(lm) }
       t = lap(os, phases, "dce", t)
     }
+    // std's own LLVM build (decision 0738: XO_STD_ROOTS, every std
+    // function a root): its modules export every Xo function
+    // (split.xo split_ir_store)
+    let lstore = lm.std_store
     var g = llvm.new_gen(lm)
     g.goarch = tgoarch
     g.goos = tgoos
@@ -1761,7 +1765,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // cache, which keys it on the whole IR: a warm build does not split
     // a -O0 build's constant time functions in a module of their own,
     // compiled at -O2 (split.xo ct_split, decision 0619)
-    let parts = if split.stable { [code] } else if split.opt == "-O0" && split.modules <= 1 && o.lib != "static" { ct_split(code) } else { split_ir(code, split.modules, false, false) }
+    let parts = if split.stable { [code] } else if split.opt == "-O0" && split.modules <= 1 && o.lib != "static" { ct_split(code) } else { split_ir_store(code, if lstore && split.modules < 2 { 2 } else { split.modules }, false, false, lstore) }
     let multi = parts.len() > 1 || split.stable
     var dir = "${bdir}/llvm"
     if o.race {
@@ -1854,6 +1858,55 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       mode_flags = mode_flags + ["split", split.lto]
     } else {
       mode_flags = mode_flags + ["lto", lto1]
+    }
+    // decision 0738: std's own LLVM objects. XO_STD_OBJ=DIR on a build
+    // with every std function a root (xo dev stdobj --backend=llvm)
+    // compiles each module to DIR/std.N.o, lists them in DIR/objs.txt
+    // and links nothing. A section a function even inside the named
+    // section the runtime's code range uses ("xo_text": function
+    // sections alone leave those in one), so a program's link strips
+    // what it does not reach
+    let lstd_out = std_obj_dir(os)
+    if !lstd_out.is_empty() {
+      let sflags = [split.opt, "-Wno-override-module"] + (if split.opt == "-O0" { [] } else { giant_fn_flags(lctx.tgoos, tgoarch, "none", 1) }) + isel_flags(split.opt, tgoarch) + lk.flags + ["-ffunction-sections", "-fdata-sections"] + (if lctx.tgoos is "darwin" | "windows" { [] } else { ["-fseparate-named-sections"] })
+      match ir_objects_par(os, cc, sflags, lls, split.jobs) {
+        Ok(objs) => {
+          write_or_fail(os, lstd_out, "", b"")
+          var names: List[Str] = []
+          for (i, obj) in objs.indexed() {
+            let n = "std.${i}.o"
+            match os.fs.copy(obj, "${lstd_out}/${n}") {
+              Ok(_) => {}
+              Err(e) => fail(os, "XO_STD_OBJ=${lstd_out}: ${e}")
+            }
+            names.push(n)
+          }
+          write_or_fail(os, lstd_out, "${lstd_out}/objs.txt", "${names.join("\n")}\n".bytes())
+          if !work_keep {
+            os.fs.remove_all(dir).ignore_err("only disk: the prune takes it after 30 minutes")
+          }
+          os.proc.exit(0)
+        }
+        Err(e) => fail(os, e)
+      }
+    }
+    // a separately compiled program (decision 0738): std's objects for
+    // its concurrency (XO_SEPCOMP_STORE names their directory here, as
+    // it names the native link's store), and the link drops the
+    // functions the program does not reach
+    let lstd = sepcomp_store(os, b.conc)
+    if !lstd.is_empty() {
+      match os.fs.read_text("${lstd}/objs.txt") {
+        Ok(t) => {
+          for n in t.split("\n") {
+            if !n.trim().is_empty() {
+              lk.srcs.push("${lstd}/${n.trim()}")
+            }
+          }
+        }
+        Err(e) => fail(os, "XO_SEPCOMP_STORE=${lstd}: ${e}")
+      }
+      lk.link_only = lk.link_only + (if lctx.tgoos == "darwin" { ["-Wl,-dead_strip"] } else { ["-Wl,--gc-sections", "-Wl,-z,start-stop-gc"] })
     }
     let srcs = lls + lk.srcs
     // the DWARF embedded after the link (cc_dsym, decision 0346 stage

@@ -15,6 +15,20 @@ use github.com/xo-lang/xo/compiler/ssa
 /// it dropped (a line of counts, then the dropped names, a line each);
 /// XO_DCE=off in the driver keeps them all, and `xo asm` never drops any.
 pub fn drop_unreached(var m: ssa.Module) -> Str {
+  drop_unreached_roots(m, false)
+}
+
+/// drop_unreached for std's own LLVM build (decision 0738), where every
+/// std function is a root a program may call: a function that is no
+/// generic instance and no clone (no `[` and no `#` in its name) is kept
+/// whether anything here reaches it or not, and the instances and
+/// clones only std's dropped code used go (4.4 million lines of IR
+/// without any removal; a program makes its own instances).
+pub fn drop_unreached_store(var m: ssa.Module) -> Str {
+  drop_unreached_roots(m, true)
+}
+
+fn drop_unreached_roots(var m: ssa.Module, store: Bool) -> Str {
   var by_name: Map[Str, List[Int]] = {}
   for (i, f) in m.funcs.indexed() {
     var ids = by_name.get(f.name) ?? []
@@ -24,7 +38,7 @@ pub fn drop_unreached(var m: ssa.Module) -> Str {
   var reached: Map[Str, Bool] = {}
   var work: List[Str] = []
   for f in m.funcs {
-    if (f.name == "main" || !f.export.is_empty() || f.entry) && !reached.contains(f.name) {
+    if (f.name == "main" || !f.export.is_empty() || f.entry || (store && !f.name.contains("[") && !f.name.contains("#"))) && !reached.contains(f.name) {
       reached[f.name] = true
       work.push(f.name)
     }
