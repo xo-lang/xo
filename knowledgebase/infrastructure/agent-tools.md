@@ -2437,7 +2437,16 @@ version: `admission v2: load 62.10 over 1.5 x 30 cores (45)`. Both are
 null (off) until the owner answers #240. heavyd reads the rows every
 minute through the tools token, keeps the last good copy an hour, and
 otherwise fails open to its built-in rules; `HEAVYD_ADMISSION=0` turns
-the reading off. Last verified: 2026-11-21.
+the reading off. `"fit": true` in the same row (0733's fit rule, off by
+default) holds a new non-urgent Mac gate or slot run while the running
+Mac jobs' admitted memory plus its own need would pass machine mac's gb
+less reserve_gb: a job's need is its name stem's p90 tree peak over its
+last 20 runs (`~/xo-lead/heavyd-peaks.json`, written at each job's
+end), a running job counts at the larger of that and its own peak so
+far, and a stem with fewer than 3 runs is never held by it. The reason
+reads `admission v3 fit: 61.0 GB admitted + 30.0 GB over 88 (mac 96 -
+reserve 8)`. Leases on pass3 and pass4 are not counted yet (no
+per-container probe). Last verified: 2026-11-21.
 
 ### ccguard: the Claude Code hook (#138)
 
