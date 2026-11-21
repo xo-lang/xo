@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,10 @@ func TestGoBackendOptionalTags(t *testing.T) {
 		var out, errOut bytes.Buffer
 		if code := run(t, []string{"build", "--backend=go", "-o", app, dir}, &out, &errOut); code != 0 {
 			t.Fatalf("%s: build: exit %d\n%s%s", name, code, out.String(), errOut.String())
+		}
+		if runtime.GOOS == "windows" {
+			// the build wrote app.exe; go version -m reads the file as named
+			app += ".exe"
 		}
 		info, err := exec.Command("go", "version", "-m", app).CombinedOutput()
 		if err != nil {

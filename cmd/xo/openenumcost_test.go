@@ -121,8 +121,16 @@ func TestOpenEnumCheckCost(t *testing.T) {
 		}
 	}
 	checkCost(t, flat) // warms the std check
-	base := checkCost(t, flat)
-	cost := checkCost(t, deep)
+	// user CPU time is read in clock ticks (15.6 ms on Windows: 0.125 s
+	// against 0.375 s, a ratio of 3, task #597, 2026-11-21): the least
+	// of three runs each outside darwin
+	base, cost := checkCost(t, flat), checkCost(t, deep)
+	if runtime.GOOS != "darwin" {
+		for range 2 {
+			base = min(base, checkCost(t, flat))
+			cost = min(cost, checkCost(t, deep))
+		}
+	}
 	ratio := cost / base
 	ceiling := 2.5
 	if runtime.GOOS == "darwin" {

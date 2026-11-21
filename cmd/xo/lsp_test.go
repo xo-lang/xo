@@ -412,6 +412,7 @@ func TestLSPModuleCache(t *testing.T) {
 // backend on every such file (2026-11-11, the scarlet session).
 func TestLSPUseCNative(t *testing.T) {
 	t.Parallel()
+	needClang(t)
 	h := "#ifndef LCN_H\n#define LCN_H\n#include <stdint.h>\nint64_t lcn_add(int64_t a, int64_t b);\n#endif\n"
 	cs := "#include \"lcn.h\"\nint64_t lcn_add(int64_t a, int64_t b) { return a + b; }\n"
 	main := "use c \"lcn.h\" link \"lcn.c\" uses none\n\nfn main(os: Os) {\n  os.stdio.println(\"${lcn.lcn_add(1, 2)}\")\n}\n"

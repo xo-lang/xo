@@ -434,8 +434,13 @@ func TestWholeBuildOutputDir(t *testing.T) {
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(dir, out)
 		}
+		if runtime.GOOS == "windows" {
+			// the build writes prog.exe for -o prog
+			abs += ".exe"
+		}
 		// a hit prints this build's output path, not the stored build's
-		if !strings.Contains(so.String()+se.String(), abs) {
+		// (on Windows in the slash form xo prints, "C:/.../prog.exe")
+		if printed := so.String() + se.String(); !strings.Contains(printed, abs) && !strings.Contains(printed, filepath.ToSlash(abs)) {
 			t.Fatalf("build -o %s: want its path %s printed, got\n%s%s", out, abs, so.String(), se.String())
 		}
 		got, err := testtmp.Guard(exec.Command(abs)).Output()

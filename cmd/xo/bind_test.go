@@ -667,3 +667,14 @@ func TestUseGoNestedModulePin(t *testing.T) {
 		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
 	}
 }
+
+// needClang skips a test whose program has a `use c` header when clang,
+// which reads it (XO1104), is missing: the Windows host has none, and
+// TestLSPUseCNative and TestDevEdgesOwnStd failed there on "needs clang
+// to read C headers" (task #597, 2026-11-21).
+func needClang(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("clang"); err != nil && os.Getenv("XO_CLANG") == "" {
+		t.Skip("clang not found")
+	}
+}

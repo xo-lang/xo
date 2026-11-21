@@ -161,6 +161,7 @@ func TestDevEdgesMissingBindingKeepsOtherCommands(t *testing.T) {
 // on "use c without the binding" that the check had just written
 // (2026-11-11).
 func TestDevEdgesOwnStd(t *testing.T) {
+	needClang(t)
 	if os.Getenv("XO_CBIND_DIR") == "" {
 		t.Skip("needs XO_CBIND_DIR, which internal/xotool sets for the tests")
 	}

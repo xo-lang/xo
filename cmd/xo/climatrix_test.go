@@ -91,7 +91,7 @@ func TestCLIMatrix(t *testing.T) {
 		if !c.writes {
 			matrixUnchanged(t, "root "+c.name, top, r)
 		}
-		rootRuns[c.name] = result{code: r.code, stdout: strings.ReplaceAll(r.stdout, top, "{top}")}
+		rootRuns[c.name] = result{code: r.code, stdout: matrixTop(r.stdout, top)}
 	}
 	for _, cd := range conds[1:] {
 		cd := cd
@@ -144,7 +144,7 @@ func TestCLIMatrix(t *testing.T) {
 							matrixUnchanged(t, cd.name+" "+c.name, top, r)
 						}
 					case "stalepwd":
-						if stdout := strings.ReplaceAll(r.stdout, top, "{top}"); r.code != rootRuns[c.name].code || stdout != rootRuns[c.name].stdout {
+						if stdout := matrixTop(r.stdout, top); r.code != rootRuns[c.name].code || stdout != rootRuns[c.name].stdout {
 							t.Errorf("%s with PWD=%s: exit %d stdout %q, the root run's exit %d stdout %q", strings.Join(args, " "), top, r.code, r.stdout, rootRuns[c.name].code, rootRuns[c.name].stdout)
 						}
 						if !c.writes {
@@ -274,4 +274,13 @@ func matrixUnchanged(t *testing.T, what, top string, r matrixResult) {
 		sort.Strings(diffs)
 		t.Errorf("%s: the run changed the tree (%s):\n  %s\noutput:\n%s", what, top, strings.Join(diffs, "\n  "), r.output)
 	}
+}
+
+// matrixTop puts {top} for the module's directory in s, in its native
+// form and in the slash form xo prints paths in (Windows: a build's
+// output path "C:/Users/.../out/prog.exe", where top is "C:\Users\...";
+// task #597, 2026-11-21).
+func matrixTop(s, top string) string {
+	s = strings.ReplaceAll(s, top, "{top}")
+	return strings.ReplaceAll(s, filepath.ToSlash(top), "{top}")
 }
