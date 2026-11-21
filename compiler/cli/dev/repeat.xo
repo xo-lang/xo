@@ -1,0 +1,361 @@
+// xo dev repeat (task #630): one golden program built N times from
+// scratch and run M times per build, to tell a flaky run (one binary,
+// different outputs) from a nondeterministic build (fresh builds,
+// different bytes). Each build gets its own empty backend cache
+// (XO_BACKEND_CACHE_DIR) with the binary cache off, so it compiles
+// everything it would compile cold; the report names the sections of
+// the binary and the cached files (objects, IR) whose bytes differ between builds,
+// and every distinct run output once with its count and whether it
+// matches want.txt. Exit 0: every build has the same bytes and every
+// run matches want.txt; 1 otherwise; 2 usage.
+
+use std/crypto
+use std/task
+use github.com/xo-lang/xo/compiler/cli/core
+use github.com/xo-lang/xo/compiler/hostpath
+
+/// One section of an object or executable: its name and the SHA-256
+/// (hex, first 16) of its bytes in the file.
+pub struct Section {
+  pub name: Str
+  pub hash: Str
+}
+
+fn short_hash(b: Bytes) -> Str {
+  crypto.sha256(b).to_hex()[0..16]
+}
+
+fn cstr(b: Bytes, off: Int, max: Int) -> Str {
+  var n = 0
+  while n < max && off + n < b.len() && b[off + n] != 0 {
+    n += 1
+  }
+  b[off..off + n].to_str() ?? b[off..off + n].quote()
+}
+
+/// sections lists the sections of a Mach-O 64 bit or ELF64 file with
+/// file contents (zero fill and NOBITS sections have none), in file
+/// order; empty when b is neither.
+pub fn sections(b: Bytes) -> List[Section] {
+  var out: List[Section] = []
+  if b.len() < 64 {
+    return out
+  }
+  if le(b, 0, 4) == 0xfeedfacf {
+    let ncmds = le(b, 16, 4)
+    var off = 32
+    for _ in 0..ncmds {
+      if off + 8 > b.len() {
+        return out
+      }
+      let cmd = le(b, off, 4)
+      let size = le(b, off + 4, 4)
+      if cmd == 0x19 && off + 72 <= b.len() {
+        let nsects = le(b, off + 64, 4)
+        for k in 0..nsects {
+          let s = off + 72 + 80 * k
+          if s + 80 > b.len() {
+            return out
+          }
+          let ssize = le(b, s + 40, 8)
+          let soff = le(b, s + 48, 4)
+          let kind = le(b, s + 64, 4) % 256
+          // 1 zerofill, 12 gb zerofill, 18 thread local zerofill
+          if kind == 1 || kind == 12 || kind == 18 || soff == 0 || soff + ssize > b.len() {
+            continue
+          }
+          out.push(Section{name: "${cstr(b, s + 16, 16)},${cstr(b, s, 16)}", hash: short_hash(b[soff..soff + ssize])})
+        }
+      }
+      if size <= 0 {
+        return out
+      }
+      off += size
+    }
+    return out
+  }
+  if b[0..4] == b"\x7fELF" && b[4] == 2 {
+    let shoff = le(b, 0x28, 8)
+    let shentsize = le(b, 0x3a, 2)
+    let shnum = le(b, 0x3c, 2)
+    let shstrndx = le(b, 0x3e, 2)
+    if shentsize < 0x40 || shoff + shentsize * shnum > b.len() || shstrndx >= shnum {
+      return out
+    }
+    let strs = le(b, shoff + shentsize * shstrndx + 0x18, 8)
+    for k in 1..shnum {
+      let h = shoff + shentsize * k
+      let typ = le(b, h + 4, 4)
+      let soff = le(b, h + 0x18, 8)
+      let ssize = le(b, h + 0x20, 8)
+      // 8 NOBITS (.bss)
+      if typ == 8 || soff + ssize > b.len() {
+        continue
+      }
+      out.push(Section{name: cstr(b, strs + le(b, h, 4), 256), hash: short_hash(b[soff..soff + ssize])})
+    }
+  }
+  out
+}
+
+/// One fresh build: the binary's hash and sections, and the hash of
+/// every file (objects, IR, modes) its private backend cache holds (path under the cache).
+pub struct Build {
+  pub ok: Bool = true
+  pub why: Str = ""
+  pub bin: Str = ""
+  pub hash: Str = ""
+  pub sects: List[Section] = []
+  pub objs: Map[Str, Str] = {}
+}
+
+/// Tally counts distinct outputs in first seen order.
+pub struct Tally {
+  pub order: List[Str] = []
+  pub count: Map[Str, Int] = {}
+  pub text: Map[Str, Bytes] = {}
+}
+
+pub fn (var t: Tally) add(out: Bytes) {
+  let h = short_hash(out)
+  if !t.count.contains(h) {
+    t.order.push(h)
+    t.text.put(h, out)
+  }
+  t.count.put(h, (t.count.get(h) ?? 0) + 1)
+}
+
+/// build_diffs lists what differs between builds[0] and each later
+/// build: the binary, then each section and cached object by name.
+pub fn build_diffs(builds: List[Build]) -> List[Str] {
+  var out: List[Str] = []
+  if builds.len() < 2 {
+    return out
+  }
+  let a = builds[0]
+  for k in 1..builds.len() {
+    let z = builds[k]
+    if !a.ok || !z.ok {
+      continue
+    }
+    if a.hash == z.hash {
+      continue
+    }
+    out.push("build ${k + 1}: binary ${z.hash} != build 1 ${a.hash}")
+    var am: Map[Str, Str] = {}
+    for s in a.sects {
+      am.put(s.name, s.hash)
+    }
+    var seen: Map[Str, Bool] = {}
+    for s in z.sects {
+      seen.put(s.name, true)
+      match am.get(s.name) {
+        Some(h) => {
+          if h != s.hash {
+            out.push("build ${k + 1}:   section ${s.name} differs")
+          }
+        }
+        None => out.push("build ${k + 1}:   section ${s.name} only in this build")
+      }
+    }
+    for s in a.sects {
+      if !seen.contains(s.name) {
+        out.push("build ${k + 1}:   section ${s.name} only in build 1")
+      }
+    }
+    var names: List[Str] = []
+    for (n, _) in a.objs {
+      names.push(n)
+    }
+    for (n, _) in z.objs {
+      if !a.objs.contains(n) {
+        names.push(n)
+      }
+    }
+    for n in names.sort() {
+      let x = a.objs.get(n) ?? "(none)"
+      let y = z.objs.get(n) ?? "(none)"
+      if x != y {
+        out.push("build ${k + 1}:   cached ${n} ${y} != build 1 ${x}")
+      }
+    }
+  }
+  out
+}
+
+fn repeat_usage() -> Str {
+  "usage: xo dev repeat [--backend=B] [--builds=N] [--runs=N] [--flags='...'] [--env='K=V ...'] [--timeout=S] [--out=DIR] [--show=N] DIR"
+}
+
+fn repeat_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, rand, stdio) {
+  var fl = core.new_flags("dev repeat")
+  fl.str_flag("backend", "arm64", "arm64, llvm, go, or wasm")
+  fl.int_flag("builds", 3, "fresh builds, each with an empty backend cache")
+  fl.int_flag("runs", 20, "runs of each build's binary")
+  fl.str_flag("flags", "", "more build flags, separated by spaces")
+  fl.str_flag("env", "", "more build environment, K=V separated by spaces (XO_SEPCOMP_LLVM=1)")
+  fl.str_flag("xo", "", "the xo that builds the program (default this one)")
+  fl.int_flag("timeout", 120, "seconds a build or a run may take")
+  fl.str_flag("out", "", "where builds and caches go (default under the cache; removed after unless --keep)")
+  fl.bool_flag("keep", "keep the builds and their caches")
+  fl.int_flag("show", 24, "lines of each distinct output to print")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() != 1 || fl.get_int("builds") < 1 || fl.get_int("runs") < 0 {
+    os.stdio.eprintln(repeat_usage())
+    return 2
+  }
+  let dir = fl.args[0].trim_suffix("/")
+  let p = match program(os.fs, dir) {
+    Ok(Some(p)) => p
+    Ok(None) => {
+      os.stdio.eprintln("xo dev repeat: ${dir} has no want.txt")
+      return 2
+    }
+    Err(e) => {
+      os.stdio.eprintln("xo dev repeat: ${e}")
+      return 2
+    }
+  }
+  let backend = fl.get_str("backend")
+  let xo = if fl.get_str("xo").is_empty() { h.xo } else { fl.get_str("xo") }
+  let base = if h.cache.is_empty() { "${hostpath.temp_dir(os.env)}/xo-dev-repeat" } else { "${h.cache}/xo/dev/repeat" }
+  var out = fl.get_str("out")
+  if out.is_empty() {
+    out = "${base}/${p.name}-${os.rand.bytes(6).to_hex()}"
+  }
+  let wd = os.env.get("PWD") ?? "."
+  out = hostpath.abs(wd, out)
+  let lim = Duration.from_secs_int(fl.get_int("timeout"))
+  var flags: List[Str] = []
+  for f in fl.get_str("flags").split(" ") {
+    if !f.is_empty() {
+      flags.push(f)
+    }
+  }
+  var benv: List[(Str, Str)] = []
+  for kv in fl.get_str("env").split(" ") {
+    match kv.find("=") {
+      Some(i) => benv.push((kv[0..i], kv[i + 1..]))
+      None => {}
+    }
+  }
+  let rl = rules(backend)
+  let want = os.fs.read(p.want).ok() ?? "".bytes()
+  let hn = harness(os.fs, p.dir)
+  var builds: List[Build] = []
+  var bad = 0
+  for k in 1..fl.get_int("builds") + 1 {
+    let bd = "${out}/b${k}"
+    os.fs.remove_all(bd).ok()
+    os.fs.create_dir_all("${bd}/cache").ok()
+    let bin = "${bd}/prog"
+    var a = ["build", "--backend=${backend}"]
+    for f in flags {
+      a.push(f)
+    }
+    a.push("--std=${h.std}")
+    a.push("-o")
+    a.push(bin)
+    a.push(p.dir)
+    var c = os.proc.cmd(xo, a).set_env("XO_BACKEND_CACHE_DIR", "${bd}/cache").set_env("XO_BIN_CACHE", "off").set_env("XO_BUILD_DIR", "${bd}/build")
+    for (kk, v) in benv {
+      c = c.set_env(kk, v)
+    }
+    let r = task.with_timeout(os.clock, lim, fn() { c.output() })
+    var b = Build{bin: bin}
+    match r {
+      Ok(o) => {
+        if o.code != 0 {
+          b = Build{ok: false, why: "build failed: ${last_msg(o.stderr.to_str() ?? "")}"}
+        }
+      }
+      Err(task.Timed.TimedOut) => b = Build{ok: false, why: "build timed out after ${lim.seconds()} s"}
+      Err(task.Timed.Failed(e)) => b = Build{ok: false, why: "build: ${e}"}
+    }
+    if b.ok {
+      match os.fs.read(bin) {
+        Ok(data) => {
+          var objs: Map[Str, Str] = {}
+          for f in os.fs.walk("${bd}/cache").ok() ?? [] {
+            if !f.is_dir {
+              objs.put(f.path.trim_prefix("${bd}/cache/"), short_hash(os.fs.read(f.path).ok() ?? "".bytes()))
+            }
+          }
+          b = Build{bin: bin, hash: short_hash(data), sects: sections(data), objs: objs}
+        }
+        Err(e) => b = Build{ok: false, why: "read ${bin}: ${e}"}
+      }
+    }
+    if !b.ok {
+      bad += 1
+      os.stdio.println("build ${k}: ${b.why}")
+    } else {
+      os.stdio.println("build ${k}: binary ${b.hash}, ${b.sects.len()} sections, ${b.objs.len()} cached files")
+    }
+    builds.push(b)
+  }
+  let diffs = build_diffs(builds)
+  for d in diffs {
+    os.stdio.println(d)
+  }
+  var mismatch = 0
+  for k in 0..builds.len() {
+    let b = builds[k]
+    if !b.ok || fl.get_int("runs") == 0 {
+      continue
+    }
+    var t = Tally{}
+    for _ in 0..fl.get_int("runs") {
+      var exe = b.bin
+      var ea = hn.args
+      if backend == "wasm" {
+        exe = "node"
+        ea = ["--no-warnings", repeat_wasm_runner(os, xo), b.bin]
+        for x in hn.args {
+          ea.push(x)
+        }
+      }
+      var c = os.proc.cmd(exe, ea).dir(p.dir).stdin(hn.stdin)
+      for (kk, v) in hn.env {
+        c = c.set_env(kk, v)
+      }
+      let r = task.with_timeout(os.clock, lim, fn() { c.output() })
+      match r {
+        Ok(o) => t.add(layout(o.code, o.stdout, o.stderr, rl))
+        Err(task.Timed.TimedOut) => t.add("timed out after ${lim.seconds()} s\n".bytes())
+        Err(task.Timed.Failed(e)) => t.add("run: ${e}\n".bytes())
+      }
+    }
+    os.stdio.println("build ${k + 1}: ${fl.get_int("runs")} runs, ${t.order.len()} distinct output(s)")
+    for hh in t.order {
+      let text = t.text.get(hh) ?? "".bytes()
+      let ok = same(text, want, rl)
+      if !ok {
+        mismatch += t.count.get(hh) ?? 0
+      }
+      os.stdio.println("--- output ${hh}: ${t.count.get(hh) ?? 0} run(s), ${if ok { "matches want.txt" } else { "differs from want.txt" }}")
+      let lines = (text.to_str() ?? text.quote()).split("\n")
+      for line in lines[0..lines.len().min(fl.get_int("show").max(0))] {
+        os.stdio.println("    ${line}")
+      }
+    }
+  }
+  if !fl.get_bool("keep") {
+    os.fs.remove_all(out).ok()
+  } else {
+    os.stdio.println("kept ${out}")
+  }
+  let verdict = if bad == 0 && diffs.is_empty() && mismatch == 0 { "stable" } else { "UNSTABLE: ${bad} failed build(s), ${if diffs.is_empty() { 0 } else { 1 }} build difference(s), ${mismatch} run(s) differ from want.txt" }
+  os.stdio.println("repeat ${p.name}: ${verdict}")
+  if verdict == "stable" { 0 } else { 1 }
+}
+
+fn repeat_wasm_runner(os: Os, xo: Str) -> Str {
+  let e = os.env.get("XO_WASM_RUNNER") ?? ""
+  if !e.is_empty() {
+    return e
+  }
+  "${parent(parent(xo))}/compiler/wasm/run.mjs"
+}

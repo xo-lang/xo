@@ -1,0 +1,86 @@
+// xo dev repeat (task #630): sections, the tally of run outputs, and
+// what differs between builds.
+
+fn put_le(var b: List[Int], off: Int, v: Int, n: Int) {
+  var x = v
+  for k in 0..n {
+    b[off + k] = x % 256
+    x = x / 256
+  }
+}
+
+// a 280 byte ELF64 with .text ("abcd" or text) and .shstrtab
+fn tiny_elf(text: Str) -> Bytes {
+  var b: List[Int] = []
+  for _ in 0..280 {
+    b.push(0)
+  }
+  b[0] = 0x7f
+  b[1] = 0x45
+  b[2] = 0x4c
+  b[3] = 0x46
+  b[4] = 2
+  put_le(b, 0x28, 88, 8)
+  put_le(b, 0x3a, 64, 2)
+  put_le(b, 0x3c, 3, 2)
+  put_le(b, 0x3e, 2, 2)
+  let tb = text.bytes()
+  for k in 0..4 {
+    b[64 + k] = Int(tb[k])
+  }
+  let names = "\u{0}.text\u{0}.shstrtab\u{0}".bytes()
+  for k in 0..names.len() {
+    b[68 + k] = Int(names[k])
+  }
+  // section 1: .text, PROGBITS at 64, 4 bytes
+  put_le(b, 88 + 64, 1, 4)
+  put_le(b, 88 + 64 + 4, 1, 4)
+  put_le(b, 88 + 64 + 0x18, 64, 8)
+  put_le(b, 88 + 64 + 0x20, 4, 8)
+  // section 2: .shstrtab, STRTAB at 68
+  put_le(b, 88 + 128, 7, 4)
+  put_le(b, 88 + 128 + 4, 3, 4)
+  put_le(b, 88 + 128 + 0x18, 68, 8)
+  put_le(b, 88 + 128 + 0x20, names.len(), 8)
+  var bb = BytesBuilder.new()
+  for v in b {
+    bb.write_byte(UInt8(v))
+  }
+  bb.freeze()
+}
+
+test "the sections of an ELF file, and none of other bytes" {
+  let s = sections(tiny_elf("abcd"))
+  expect(s.len()) == 2
+  expect(s[0].name) == ".text"
+  expect(s[1].name) == ".shstrtab"
+  expect(sections(tiny_elf("abce"))[0].hash != s[0].hash) == true
+  expect(sections(tiny_elf("abce"))[1].hash) == s[1].hash
+  expect(sections("not an object file, but long enough for a header to be read".bytes()).len()) == 0
+}
+
+test "a tally counts distinct outputs in first seen order" {
+  var t = Tally{}
+  t.add("exit 0\n".bytes())
+  t.add("exit 1\n".bytes())
+  t.add("exit 0\n".bytes())
+  expect(t.order.len()) == 2
+  expect(t.count.get(t.order[0]) ?? 0) == 2
+  expect(t.text.get(t.order[1]) ?? "".bytes()) == "exit 1\n".bytes()
+}
+
+test "build differences name the section and the cached object" {
+  let a = tiny_elf("abcd")
+  let z = tiny_elf("abce")
+  let b1 = Build{hash: "h1", sects: sections(a), objs: {"std/x.o": "o1", "std/y.o": "o2"}}
+  let b2 = Build{hash: "h1", sects: sections(a), objs: {"std/x.o": "o1", "std/y.o": "o2"}}
+  let b3 = Build{hash: "h3", sects: sections(z), objs: {"std/x.o": "o1", "std/y.o": "o9"}}
+  expect(build_diffs([b1, b2]).len()) == 0
+  let d = build_diffs([b1, b2, b3])
+  expect(d.len()) == 3
+  expect(d[0]) == "build 3: binary h3 != build 1 h1"
+  expect(d[1]) == "build 3:   section .text differs"
+  expect(d[2]) == "build 3:   cached std/y.o o9 != build 1 o2"
+  // a failed build compares with nothing
+  expect(build_diffs([b1, Build{ok: false, why: "x"}]).len()) == 0
+}

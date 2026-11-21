@@ -28,6 +28,7 @@ prints this table's rows for the task's kind (from the title when no
 | Fails on main, worked before | `scripts/bisect.sh` (Testing); on a host for a failure seen only there: `amd64-run.sh REV NAME script scripts/bisect.sh TEST GOOD BAD` | message the lead with good and bad commits |
 | Fails on one host only | "A failure seen on one host only" below: observe on that host first | |
 | Flaky or rare failure | `stdproven stress` / `race` sharded to the offload hosts (Std maturity evidence) | a failing seed or count kept as the regression test |
+| Flaky golden or nondeterministic build | `xo dev repeat [--backend=B] [--builds=N] [--runs=M] [--env='XO_SEPCOMP_LLVM=1'] DIR`: N fresh builds (each its own empty `XO_BACKEND_CACHE_DIR`, binary cache off), M runs of each; prints each distinct output once with its count against want.txt, and the binary sections and cached files that differ between builds; exit 0 stable, 1 not (task #630, replaces hand flake/determinism loops) | the golden itself, or a codegen test on the differing section |
 | Leftover or stuck processes on the Mac (loops, stopped runs, idle ssh, orphans) | `python3 scripts/lead/rogueproc.py` (reports only; xw runs it every 2 hours and alerts the lead) | check the PID's command again, then `kill PID` only for a process your session started; the rest go to the lead |
 
 Environments come from the scripts, not from memory: `pushq.sh WT
