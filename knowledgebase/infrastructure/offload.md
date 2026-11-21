@@ -966,11 +966,16 @@ Last verified: 2026-11-15
 
 scripts/lead/host-toolchain.txt names what every linux/arm64 offload host
 must have: `go` (go1.26.11), `clang` (23.1.3, /opt/llvm), `node` (v20.19.2)
-and a `seed` under /work/seed (0.51.1-e391d9a4). offload-gate-remote.sh
-checks it after the checkout, before the seed choice and the build, and
-refuses a gate on a host that differs: exit 2 with `HOST-PARITY:` and every
+a `seed` under /work/seed (0.51.1-e391d9a4), and since 2026-11-20 (#560)
+`wasm-tools` and `wasmtime` (looked up in /work/tools/bin first; tier 918
+ran selfhost on host 4, which had neither, and TestWasmCommand* failed as
+tests). scripts/lead/host-parity.sh checks it: offload-gate-remote.sh after
+the checkout, before the seed choice and the build, and offload-tier.sh
+before a tier's steps (it checked nothing before #560). A host that differs
+is refused: exit 2 with `HOST-PARITY:` and every
 difference (`go: go1.26.1 (want go1.26.11)`); `OFFGATE_PARITY=0` gates
-anyway. An upgrade is made on every host and in that file in one change.
+anyway. A key the check does not know is a difference, so a new line
+is never ignored. An upgrade is made on every host and in that file in one change.
 Host 4 got go1.26.11 on 2026-11-15 the way host 3 has it (/usr/local/go,
 the image's tree kept as /usr/local/go.go1.26.1;
 [gotcha](../gotchas/host-setup-copy-misses-upgrades.md)).
