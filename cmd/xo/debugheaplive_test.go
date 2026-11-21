@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -122,6 +123,11 @@ func TestDebugSchedFdsOpen(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs a program")
+	}
+	if runtime.GOOS == "windows" {
+		// std/native debug.xo fds_open: -1 on Windows (no fd listing;
+		// winarm VM, task #605, 2026-11-21)
+		t.Skip("fds_open is not counted on Windows")
 	}
 	dir := writeFiles(t, map[string]string{
 		"app/xo.mod":  "module app\n",

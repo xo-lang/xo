@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (`xo test --since`; task #605): a bare `--since` followed by a directory leaves it a directory; on Windows `xo test --since C:\x` kept the `\` and ran every test instead of the ones the change reaches.
 - Fix (windows/arm64, LLVM backend; task #605): a program built with `--backend=llvm` on windows/arm64 links again; the runtime named the asynchronous preemption stub `xo_async_stub`, which only the arm64 backend defined (lld-link: undefined symbol: xo_async_stub).
 - LLVM backend, opt in (decision 0738, task #607): with `XO_SEPCOMP_LLVM=1`, `xo build --backend=llvm` and `xo run --backend=llvm` compile only the program's own code and link std from objects built once into the cache. A program using HTTP or TLS spends under a second in clang where it spent 25 to 37 s; the first build makes the objects (about 100 s). The binaries are 0.2 to 3 MB larger on Linux (std's line tables; the rest of its debug information stays in the cache) and nothing is inlined from std yet, so it is off by default; `--release` is unchanged.
 - Fix (wasm32; task #616): reading a file named with a trailing separator (`"a.txt/"`) fails with `FsErr.NotDir`, as on native targets; the WASI hosts opened it as the file.

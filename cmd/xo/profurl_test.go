@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,11 @@ fn main(os: Os) ! {
 // a text answer (/debug/sched) is printed; a refusal is an error naming
 // the status.
 func TestProfURL(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// llrt prof.xo live_supported: no live CPU profile on Windows
+		// (the server answers 501; winarm VM, task #605, 2026-11-21)
+		t.Skip("live CPU profiles are not available on Windows")
+	}
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := writeFiles(t, map[string]string{"main.xo": profURLProg})
 	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: nativeBackends(t)[0], Out: filepath.Join(t.TempDir(), "srv")}))

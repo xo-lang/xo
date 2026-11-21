@@ -38,3 +38,13 @@ test "a library build with no targets names the windows host's target" {
   expect(lib_host_targets(Opts{lib: "static"}, "darwin")) == ""
   expect(lib_host_targets(Opts{}, "windows")) == ""
 }
+
+// a bare --since takes no value (decision 0701): the front took the
+// directory after it as the value and did not convert its `\` on Windows
+// (task #605, 2026-11-21)
+test "a bare --since leaves the next argument to the directories" {
+  expect(takes_next_arg(value_flags(), "since")) == false
+  expect(takes_next_arg(value_flags(), "o")) == true
+  expect(takes_next_arg(value_flags(), "backend")) == true
+  expect(takes_next_arg(value_flags(), "race")) == false
+}

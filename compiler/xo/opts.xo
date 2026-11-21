@@ -193,6 +193,15 @@ struct Opts {
 }
 
 /// The flags that take a value (every other known flag is a boolean).
+/// Whether value flag flag, given without `=`, takes the next argument as
+/// its value: a bare --since (decision 0701) does not, as parse_opts
+/// reads it. The front took the directory after it as --since's value,
+/// so on Windows `xo test --since C:\x` kept the `\` and selected every
+/// test (cmd/xo TestXoTestSince on the winarm VM, task #605, 2026-11-21).
+fn takes_next_arg(vals: List[Str], flag: Str) -> Bool {
+  vals.contains(flag) && flag != "since"
+}
+
 fn value_flags() -> List[Str] {
   ["o", "fn", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "lib", "profile", "check", "std-module", "grace", "opt", "since"]
 }
@@ -292,7 +301,7 @@ fn front(os: Os, args: List[Str]) -> Front {
       out.push(path_arg(a))
       // a value flag given without = takes the next argument
       let flag = a.trim_prefix("-").trim_prefix("-")
-      if !a.contains("=") && vals.contains(flag) && j + 1 < args.len() {
+      if !a.contains("=") && takes_next_arg(vals, flag) && j + 1 < args.len() {
         j += 1
         out.push(if path_flags().contains(flag) { os_path(args[j]) } else { args[j] })
       }
