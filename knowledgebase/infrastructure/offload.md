@@ -687,6 +687,16 @@ CPU-bound timings; HTTP throughput needs bare Linux. Last verified: 2026-11-02
   priv repository sets `core.autocrlf false` (Git for Windows' default
   CRLF checkout broke go.mod). Git Bash has no flock: locks are
   directories (`~/xo-ci/offload.lockdir.N`, stale when its shell is gone).
+- clang on Windows (owner, 2026-11-21, xw decision #256, task #633): LLVM
+  23.1.6, the official `clang+llvm-23.1.6-x86_64-pc-windows-msvc.tar.xz`
+  (sha256 16af05919cf36958dfb4ddaa4fc4d9d4ff577f5daeb76bc112ea49cd8ced82b2)
+  unpacked in `C:\Users\xo\tools\llvm-23.1.6` (4.0 GB), its `bin` on PATH
+  in `~/.bash_profile` (Git Bash `-l`, so every offload job) and in the user
+  Path. TestDevEdgesOwnStd and TestLSPUseCNative run and pass with it
+  (1abba25a4e). The host has no MSVC C library and no Windows SDK, so a
+  `use c` or std/sqlite build from source still fails (`'stdlib.h' file
+  not found`: native_sqlite, native_sqlite_file), and offload-amd64.sh
+  still runs goldens with `XO_CLANG=/bin/false`. Last verified: 2026-11-21.
 - Cold Windows builds until the 0.37 seed (2026-11-03, decision 0318's
   2026-11-03 addendum): the 0.34.0 and 0.35.0 seeds cannot build main on
   Windows since the async stub change (their emitter defines no
