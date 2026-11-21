@@ -1678,6 +1678,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // function a root): its modules export every Xo function
     // (split.xo split_ir_store)
     let lstore = lm.std_store
+    let ldebug = lm.debug_info
     var g = llvm.new_gen(lm)
     g.goarch = tgoarch
     g.goos = tgoos
@@ -1869,18 +1870,22 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let lstd_out = std_obj_dir(os)
     if !lstd_out.is_empty() {
       let sflags = [split.opt, "-Wno-override-module"] + (if split.opt == "-O0" { [] } else { giant_fn_flags(lctx.tgoos, tgoarch, "none", 1) }) + isel_flags(split.opt, tgoarch) + lk.flags + ["-ffunction-sections", "-fdata-sections"] + (if lctx.tgoos is "darwin" | "windows" { [] } else { ["-fseparate-named-sections"] })
-      match ir_objects_par(os, cc, sflags, lls, split.jobs) {
-        Ok(objs) => {
-          write_or_fail(os, lstd_out, "", b"")
-          var names: List[Str] = []
-          for (i, obj) in objs.indexed() {
-            let n = "std.${i}.o"
-            match os.fs.copy(obj, "${lstd_out}/${n}") {
-              Ok(_) => {}
-              Err(e) => fail(os, "XO_STD_OBJ=${lstd_out}: ${e}")
-            }
-            names.push(n)
-          }
+      // compiled where they stay, and on ELF with split DWARF: the
+      // objects keep their line tables (a fault report's file and line)
+      // and a skeleton naming std.N.dwo beside them, which holds the
+      // rest, so a program does not carry all of std's debug
+      // information (4.8 to 7.8 MB of .debug sections in every binary
+      // without it, 2.45 MB with it, 2026-11-21)
+      write_or_fail(os, lstd_out, "", b"")
+      var names: List[Str] = []
+      var outs: List[Str] = []
+      for i in 0..lls.len() {
+        names.push("std.${i}.o")
+        outs.push("${lstd_out}/std.${i}.o")
+      }
+      let dwo = if ldebug && (lctx.tgoos is "linux" | "freebsd") { ["-gsplit-dwarf"] } else { [] }
+      match ir_objects_par(os, cc, sflags + dwo, lls, outs, split.jobs) {
+        Ok(_) => {
           write_or_fail(os, lstd_out, "${lstd_out}/objs.txt", "${names.join("\n")}\n".bytes())
           if !work_keep {
             os.fs.remove_all(dir).ignore_err("only disk: the prune takes it after 30 minutes")

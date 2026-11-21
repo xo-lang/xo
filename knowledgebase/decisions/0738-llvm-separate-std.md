@@ -173,11 +173,18 @@ the objects' build in 70 s).
 
 What these builds are not yet:
 
-- Small: a binary carries all of std's DWARF, a constant 4.8 MB
-  (concurrent) or 7.8 MB of `.debug` sections where the whole program
-  has 0.75 to 3.8 MB; code is the same to 0.9 MB more. With
-  `-gsplit-dwarf` on std's objects (measured by hand, not in the
-  driver) the constant is 2.45 MB and fault reports keep their lines.
+- Small on darwin, where the sizes are not measured yet. On ELF std's
+  objects are compiled with split DWARF since 2026-11-21 (in place in
+  the cache, under a lock, so each skeleton's `.dwo` path holds): a
+  binary keeps std's line tables, a constant 1.85 MB (concurrent) or
+  3.05 MB of `.debug` sections, where it carried 4.8 or 7.8 MB before
+  and the whole program has 0.75 to 3.8 MB. Files, whole against opt
+  in (~/xo-lead/notes/xo-lang-1/p607/drv5.out): arith 1.30 and 4.39
+  MB, conc_channels 1.41 and 3.39, list_swap_guard 6.07 and 8.30,
+  native_sql 7.39 and 8.65, http_tls 9.43 and 9.60. The `.dwo` files
+  are 3.3 and 5.4 MB a variant; a debugger reads std's types from
+  them while the cache keeps them, and fault reports need only the
+  line tables.
 - Inlined across the boundary: stage 3's `available_externally` bodies
   are not built, so no speed claim is made for these binaries.
 - The default, or for tests: `xo test` builds whole. (The objects'
