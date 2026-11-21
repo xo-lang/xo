@@ -1,6 +1,7 @@
 # 0735: Workstream as the control plane: intents, the runner, hosts, progress, logs, outages
 
-Status: Proposed (xw-1, task #598, 2026-11-21). Design only. Part of
+Status: Accepted (owner, xw decision #246, 2026-11-21; written by xw-1,
+task #598). Part of
 [0732](0732-one-scheduler.md), and steps 3 and 6 of its migration.
 Scope: xw decisions #243 (Workstream is the control plane) and #244
 (nothing in the control plane runs in Docker).
@@ -19,7 +20,7 @@ tier-keep (#596) patches one step at a time. Hang detection reads log
 silence (hangcheck.sh: 15 minutes for a gate, 20 for a slot), so a
 quiet but healthy job raises an alert, and a busy log hides a stuck job.
 
-## Decision (proposed)
+## Decision
 
 ### Intents in, results out
 

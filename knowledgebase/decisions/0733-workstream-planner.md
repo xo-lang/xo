@@ -1,6 +1,7 @@
 # 0733: Workstream's planning scheduler: machines, needs, admission by fit, and batch plans
 
-Status: Proposed (xw-1, task #598, 2026-11-21). Design only. Part of
+Status: Accepted (owner, xw decision #246, 2026-11-21; written by xw-1,
+task #598). Part of
 [0732](0732-one-scheduler.md), and step 2 and step 4 of its migration.
 Scope: xw decisions #242 (the scheduler plans as well as admits) and
 #244 (stopping Docker is a normal event).
@@ -18,7 +19,7 @@ tier is placed by hand in tier.sh:
 
 Its wall time is whatever its longest fixed list happens to take.
 
-## Decision (proposed)
+## Decision
 
 ### Machines
 

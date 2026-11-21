@@ -1,6 +1,7 @@
 # 0734: Workstream stores its data in SQLite, outside Docker
 
-Status: Proposed (xw-1, task #598, 2026-11-21). Design only. Part of
+Status: Accepted (owner, xw decision #246, 2026-11-21; written by xw-1,
+task #598). Part of
 [0732](0732-one-scheduler.md), and step 1 of its migration. Scope: xw
 decision #244, the owner's ruling of 2026-11-21: "Workstream uses SQLite,
 not Postgres; the owner must be able to stop Docker at any time."
@@ -23,7 +24,7 @@ uses these Postgres features, counted in the repo's .xo files on
 - full text search: `to_tsvector`, `websearch_to_tsquery` and `ts_rank`
   over the docs table.
 
-## Decision (proposed)
+## Decision
 
 ### Storage
 

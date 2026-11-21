@@ -1,6 +1,7 @@
 # 0736: Workstream policy as data: validated, simulated, recorded, reversible
 
-Status: Proposed (xw-1, task #598, 2026-11-21). Design only. Part of
+Status: Accepted (owner, xw decision #246, 2026-11-21; written by xw-1,
+task #598). Part of
 [0732](0732-one-scheduler.md), and step 5 of its migration. Scope: xw
 decision #243 item 2 (strong primitives, policy as data).
 
@@ -20,7 +21,7 @@ history. Who changed what, and why, is spread over commits and notes.
 For example, the CAP 1 rule for host 1 is recorded only in a comment in
 heavyd-lanes.conf.
 
-## Decision (proposed)
+## Decision
 
 ### What is policy
 

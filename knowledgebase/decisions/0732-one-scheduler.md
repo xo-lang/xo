@@ -1,7 +1,8 @@
 # 0732: Workstream's target architecture: one control plane that owns every machine
 
-Status: Proposed (xw-1, task #598, 2026-11-21). Design only: the owner
-decides before any code, and code starts after 0.55.0 (xw decision #243).
+Status: Accepted (owner, xw decision #246, 2026-11-21; written by xw-1,
+task #598), with the keep-or-kill audit below (task #600). Code starts
+now, SQLite (0734) first (#246).
 Scope set by the owner through the lead on 2026-11-21: one scheduler
 that owns every machine (#598), one that plans as well as admits (xw
 decision #242), Workstream as a generic core with Xo as its first plugin,
@@ -75,7 +76,7 @@ took xw down on 2026-11-20 at 23:16.
   - hang 88: some of these are a quiet log on a job that was only slow
     because its host was oversubscribed.
 
-## Decision (proposed)
+## Decision
 
 ### 1. A generic core, with Xo as the first plugin
 
@@ -191,30 +192,117 @@ HOST --for 30m --why TEXT`. It is recorded, time limited and shown in
 - Backups are online, and restore is one command.
 - Nothing in the control plane runs in Docker.
 
+## Keep-or-kill audit (task #600, owner via xw decision #246, 2026-11-21)
+
+Every tool, alert kind, schedule and machine-enforced rule was judged
+on its use, its real finds and the failures it caused. What is deleted
+is not ported; the table below maps only what is kept. Sources, kept in
+~/xo-lead/notes/xw-1/600/: Bash calls naming each tool in 30 days of
+agent transcripts (tool-use.tsv, tools-joined.tsv with each tool's
+callers), the alerts table (alerts-outcome.tsv: a real find is an alert
+linked to a task or commit), `sched.end` events (sched-runs.tsv) and 7
+days of pushq refusals (push-refusals.txt). The alerts table and the
+events start on 2026-11-15, so alerts and schedules are judged on 6
+days, not 30.
+
+**Tools: 106 judged, 86 kept, 20 deleted.** Deleted, each unused for
+over 5 days or replaced:
+
+- legacy-heavy.sh (heavyd replaced it, 0442);
+- board.sh and isdone.sh (replaced by xw, 0658; `xw isdone`);
+- finish-agent.sh, finish-merged.sh, merge-agent.sh (merges before
+  pushq; last used 2026-11-05);
+- ec2q-runner4.sh, warm-run2.sh, warm-windows.sh, stop-idle-loop2.sh
+  (EC2 runs; CI retired by 0423);
+- zc-check.sh (the zero-C push of 2026-10-14, done);
+- deepseek.sh, ds-gate-base.sh, pick.sh (the DeepSeek experiment; no
+  session since 2026-11-16);
+- gate-in.sh (no caller, no use since 2026-11-17);
+- sdk-daily.sh, sdk-daily-remote.sh (not scheduled; sdk-stress.sh runs
+  in every tier);
+- gatesteps-canary.sh, its -remote.sh and -plants.sh (one run in the
+  audit, and it failed on itself: "gate step canaries gave no result:
+  wasmlist").
+
+Kept: the other 86, mapped in the next section. heavy.sh (40315 calls),
+pushq.sh (11618), offload.sh (9022) and offload-gate.sh (3638) carry
+most of the use.
+
+**Alert kinds: 37 judged, 15 kept, 22 deleted.** The 22 deleted kinds
+raised 696 of the 954 alerts and were linked to 2 real finds; the 15
+kept raised 258 and were linked to 44.
+
+- Kept: hang (becomes 0735's stall), rule-gap, main-check, bisect,
+  sched-failed, cost, std-uncovered, std-fall, bug-no-test,
+  schedule-missed, tier, host-disk-low, features-unowned, ask, and
+  unacked (unacked-task folds into it).
+- Deleted, waits: long-wait (227, no find), waiting (125), lease-blocked
+  (32), wait-rising (10), no-alert-wait (6). 0733's single
+  waits-for-fit replaces them.
+- Deleted, scheduling: wrong-class (54, 1 find; no classes under 0733),
+  retry-storm, orphaned (the runner knows what it started, 0735).
+- Deleted, chatter: task-pushed (69), off-charter (66), unacked-idle,
+  idle, idle-empty, unacked-task, loop-stale, tier-new, push-refusals,
+  push-refused-twice, no-token.
+- Deleted, superseded rules: no-tool-line (pushq --done refuses without
+  --tool since #405), evidence-stall (std reached Proven on
+  2026-11-20), done-no-restart (xw decision 55 ended restarts).
+
+**Schedules: 12 judged, 11 kept, 1 deleted** (gatesteps-canary). Kept
+with real finds: mainsmall (main broken at 13f8434c8, test_once),
+mainwasm (58 wasm goldens at 8dd8e32c9), cgcheck (build_http over +3%),
+golden-freecheck (traps in http_gzip_hostile, native_sql,
+time_civil_codecs and yaml_derive). Kept as duties with no failures:
+tier, ctier, mainwatch, diskguard, bottleneck, morning, rogueproc.
+Fixes they need when ported:
+
+- cgcheck raised the same build_http regression 5 times; an alert names
+  a regression once, until its baseline moves;
+- golden-freecheck failed 4 of 7 times before any result (infrastructure,
+  not a find); a run that ends without a result is a job failure, not a
+  sched-failed alert;
+- rogueproc flagged two of the owner's Chrome processes as orphans on
+  2026-11-21; under 0735 it sees only what the runners started;
+- bottleneck and morning each ended once with rc 127 (a missing
+  command).
+
+**Push rules (pushq refusals, 7 days): 9 judged, 6 kept, 3 deleted.**
+
+- Kept: the undo checks (90 refusals: a push that set back main's last
+  change or other commits' changes), a failed gate on this HEAD (9),
+  cited decisions still Proposed (5), stale corpora (3), the std change
+  log Breaking mark (1) and lines deleted that other pushes added (1).
+- Deleted: "name it in PUSHQ_RAN" (101; the plugin adds the checks a
+  change needs to its batch instead of refusing), "--docs but more than
+  documentation" (98; the plugin reads the paths), "pass --gated after
+  your gate passed" (31; the core knows each HEAD's gate results).
+- The scheduler rules that 0733 lists under "What it removes" are
+  deleted with it; ccguard's no-wait rule is kept.
+
 ## What each current script becomes
 
 | Script (~/xo-lead/agents, scripts/lead) | Becomes | Notes |
 |---|---|---|
-| heavyd, heavy.sh, legacy-heavy.sh | core: scheduler and Mac runner | heavy.sh stays as a thin `xw run` client until its callers move, then goes; legacy-heavy.sh is deleted |
+| heavyd, heavy.sh | core: scheduler and Mac runner | heavy.sh stays as a thin `xw run` client until its callers move, then goes |
 | offload.sh, offload-gate.sh, offload-gate-remote.sh, offload-amd64.sh, amd64-run.sh, offload-tier.sh | core: runner (remote) plus Xo job types | ssh, bundles, `--get` and lanes move to the runner; gate steps become job types; host routing is deleted |
 | offload-prune.sh, offload-roots.sh, gocache-trim.sh, diskguard.sh, diskcheck.sh | core: cleanup and disk health | per host caps become machine rows |
 | pushq.sh, pushq-env.sh | Xo plugin: push policy | the merge lane is a core lock; the fast checks are a batch |
 | tier.sh, tier-mac.sh, tier-plan.sh, tier-keep.sh, tiersched.sh, riscv64-tier.sh, sdk-stress.sh | Xo plugin: the "tier" batch and its job types | the split between hosts and the memory rules are deleted (the planner does them); tier-keep becomes the core's failed-step detail |
 | ctier.sh | Xo plugin: the "ctier" batch on a schedule | lease sizing is deleted |
-| mainwatch.sh, mainsmall.sh, mainwasm.sh, golden-freecheck.sh, gatesteps-canary.sh, mainbisect.sh | Xo plugin: batches on schedules, plus the bisect job type | their -remote.sh halves are deleted |
+| mainwatch.sh, mainsmall.sh, mainwasm.sh, golden-freecheck.sh, cgcheck.sh, mainbisect.sh | Xo plugin: batches on schedules, plus the bisect job type | their -remote.sh halves are deleted |
 | hangcheck.sh, rss-guard.sh, macload.sh, straycheck.sh, rogueproc.py | core: health and progress detection | macload's overload check becomes a guard that should never fire; rogueproc becomes the runner's knowledge of what it started |
 | hourly.sh, leadduty.sh, beatrun.sh | core: schedules | |
 | ab-host.sh, cgab.sh, cgcheck.sh, race-rt.sh, stdproven-offload.sh | Xo plugin: job types (exclusive timing on host 1, callgrind) | |
 | host-setup/ | Xo plugin: provisioning recipes run by the core | |
 | docker-up.sh | core: machine health for container hosts | |
 | quiet.sh, privlock.sh | core: exclusive windows and named locks | |
-| board.sh, isdone.sh, pick.sh, adr-claim.sh, code-claim.sh | core: tasks and claims | already mostly in xw |
+| adr-claim.sh, code-claim.sh | core: tasks and claims | already mostly in xw |
 | install.sh, launchd-install.sh | core: self install and upgrade | |
 | xwhook.sh, xw-cc-hook.sh, ccguard | core: the agent-side hook | |
 
 ## Migration (in place, no parallel run: #245)
 
-Code starts after 0.55.0 (#243). Each step cuts over as soon as its tests
+Code starts now (#246), after the audit. Each step cuts over as soon as its tests
 pass, and the old script is removed in the same change. A step needs
 only three things:
 
