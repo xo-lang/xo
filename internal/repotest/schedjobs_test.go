@@ -1,8 +1,10 @@
 package repotest
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,4 +21,21 @@ func TestSchedJobScripts(t *testing.T) {
 			}
 		})
 	}
+	// #553: a setup step that fails names itself and the paths that vanished
+	t.Run("golden_freecheck_test.sh setup report", func(t *testing.T) {
+		cmd := exec.Command("bash", filepath.Join(root, "scripts", "lead", "golden_freecheck_test.sh"))
+		cmd.Env = append(os.Environ(), "FREECHECK_TEST_VANISH=up.git")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("passed with up.git removed:\n%s", out)
+		}
+		for _, want := range []string{"FAIL setup checkout clone", "vanished: ", "/up.git\n", "present: "} {
+			if !strings.Contains(string(out), want) {
+				t.Errorf("the report lacks %q:\n%s", want, out)
+			}
+		}
+		if strings.Contains(string(out), "FAIL missing rev") {
+			t.Errorf("went on after the failed setup:\n%s", out)
+		}
+	})
 }
