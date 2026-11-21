@@ -150,6 +150,7 @@ fe_map_helper where an entry records a function it read as made whole
 (fidx's event 3, fe_entry); FE_CACHE_VERSION v21. Test: internal/arm64
 TestFrontCacheClosureReadDropList (the pair, compared with the cold
 build under one file name: a Mach-O binary holds its output file's
-name, so builds to `warm` and `cold` differ in those 4 bytes). Still a
-read, so the next of this kind: a constant's function (xo.const[M.N]),
-whose body is not name-determined in the same way.
+name, so builds to `warm` and `cold` differ in those 4 bytes). A
+constant's function (xo.const[M.N]) is not of this kind: const_value
+finds it in the builder's constant table (an event 6 the commit
+renumbers), not by a function read.
