@@ -230,7 +230,7 @@ fi
 # the linux/arm64 race runtime and the linux sqlite objects build in
 # Docker (below)
 race_reuse() { [ "${XO_RELEASE_RACE:-}" = reuse ] && [ -d "lib/xo/race/$1" ] && [ -f lib/xo/race/LICENSE.TXT ]; }
-if [ "$dry" != 1 ] && ! docker info >/dev/null 2>&1; then
+if ! docker info >/dev/null 2>&1; then
 	echo "release.sh: Docker is not running: std/sqlite's linux objects (scripts/sqlite-prebuilt.sh) and the linux/arm64 race runtime (scripts/race-runtime.sh ... linux-arm64, unless XO_RELEASE_RACE=reuse) build in it; start Docker" >&2
 	exit 1
 fi

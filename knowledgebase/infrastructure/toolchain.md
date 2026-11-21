@@ -207,11 +207,14 @@ publishes them; releases are on hold (owner).
 Since 2026-10-22 it first builds ThreadSanitizer's runtime for native
 `--race` (decision 0273) into the checkout's git ignored `lib/xo/race`,
 which each archive copies: darwin-arm64 on the host and linux-arm64 in
-Docker (`scripts/race-runtime.sh WORK <checkout> linux-arm64`), so it
-refuses to start when Docker is not running. `XO_RELEASE_RACE_WORK`
-(default `$TMPDIR/xo-release-race`) holds the LLVM sources and build;
-`XO_RELEASE_RACE=reuse` keeps a runtime already in `lib/xo/race` (and
-then needs no Docker for linux-arm64). `XO_RELEASE_DRY_RUN=1` runs the
+Docker (`scripts/race-runtime.sh WORK <checkout> linux-arm64`).
+`XO_RELEASE_RACE_WORK` (default `$TMPDIR/xo-release-race`) holds the
+LLVM sources and build; `XO_RELEASE_RACE=reuse` keeps a runtime already
+in `lib/xo/race`. Since 2026-11-21 (task #622) std/sqlite's linux-arm64
+and linux-amd64 prebuilt objects also build in Docker
+(scripts/sqlite-prebuilt.sh), so release.sh refuses to start when Docker
+is not running, with or without `XO_RELEASE_RACE=reuse`. Last verified:
+2026-11-21. `XO_RELEASE_DRY_RUN=1` runs the
 checks (host, clean tree, Docker, the Windows tools) and prints each
 step's command without building, writing, or deleting anything. Last
 verified: 2026-10-22 (the dry run, the refusal with no Docker, reuse).
