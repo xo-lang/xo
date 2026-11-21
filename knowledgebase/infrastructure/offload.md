@@ -1141,7 +1141,13 @@ OOM-kills clang (tier 920's peaked at 21,752 of 23,993 MB), so with host 2
 as the only host the step is skipped and named in the log. Before, the
 second host was host 4, which gave tier 920 no slot, and host 2 ran every
 step alone for 12,510 s. `TIER_SPLIT_LLVM=0` still turns the split off;
-`TIER_SPLIT_SWAP` is gone.
+`TIER_SPLIT_SWAP` is gone. The tier's extras, sdk-stress and riscv64,
+run with `OFF_STEP=NAME`: offload.sh wraps any job so it prints
+offload-tier.sh's step result line ("NAME: ok in S s, host memory peak P
+of T MB"; none for exit 77, skipped), which xw_steps records as a
+step.end event, so `xw plan tier` learns their times too
+(offstep_test.sh; `offload.sh --step-check NAME FILE` prints the
+wrapped body).
 Last verified: 2026-11-21 (tests only; the first measured tier is pending).
 
 ## Reserving a host (#278, 2026-11-17)
