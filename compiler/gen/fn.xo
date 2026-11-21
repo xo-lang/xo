@@ -473,7 +473,10 @@ fn ends_terminating(text: Str, ind: Int) -> Bool {
       return false
     }
     let l = l0.trim_prefix(pre)
-    if l == "}" {
+    // "}" closes a block; "}(args)" and the like end a statement that
+    // began on an earlier line (return func(...) {...}(tk, v).V, an
+    // immediately called closure in return position, task #570)
+    if l.starts_with("}") {
       return never_falls_through(text)
     }
     for kw in ["return", "break", "continue", "goto"] {
