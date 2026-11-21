@@ -1,0 +1,18 @@
+// std/sqlite's math functions (SQLITE_ENABLE_MATH_FUNCTIONS, xw decision
+// 251) through the C math library each target links: the system's, or on
+// windows, which links no C runtime, Xo's (std/native/llrt/cabi_winmath.xo,
+// task #621). Each result goes through sqlite's printf at 10 places, so a
+// last bit difference between C libraries does not show.
+use std/sql
+use std/sqlite
+
+fn main(os: Os) ! {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  let exprs = ["sqrt(2)", "pow(2, 10)", "power(1.5, 2.5)", "exp(1)", "ln(10)", "log(100)", "log10(1000)", "log2(1024)", "log(2, 64)", "acos(0.5)", "asin(0.5)", "atan(1)", "atan2(1, -1)", "cos(1)", "sin(1)", "tan(1)", "cosh(1)", "sinh(1)", "tanh(1)", "acosh(2)", "asinh(1)", "atanh(0.5)", "ceil(-1.5)", "ceiling(1.2)", "floor(-1.5)", "trunc(-2.7)", "mod(7.5, 2)", "pi()", "degrees(pi())", "radians(180)"]
+  for e in exprs {
+    let v = db.query_one("SELECT printf('%.10f', ${e}) AS v", [])?.str("v")?
+    os.stdio.println("${e} = ${v}")
+  }
+  let n = db.query_one("SELECT sqrt(-1) IS NULL AS n", [])?.int("n")?
+  os.stdio.println("sqrt(-1) is null: ${n}")
+}

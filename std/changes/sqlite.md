@@ -1,5 +1,25 @@
 # std/sqlite changes
 
+## 2026-11-21: fix: the math functions on windows, which links no C runtime
+
+- Kind: fix
+- Commit: this push
+- Found by: task #621, the 0.56.0 recut of the prebuilt objects: scripts/sqlite-prebuilt.sh's
+  windows-amd64 symbol check failed with "object needs symbols nothing defines: acos acosh asin
+  asinh atan atan2 atanh ceil cos cosh exp floor log log10 log2 pow sin sinh sqrt tan tanh trunc"
+- Go reference: Go's math (std/native/llrt/gomath.xo), which mattn/go-sqlite3 does not use (it
+  links the C library's)
+- Test: internal/repotest TestSqliteMathFunctionsDefinedOnWindows (failed before with 19 of the
+  table's functions missing, passes after); golden native_sqlite_math on darwin/arm64,
+  linux/arm64, linux/amd64, windows/amd64 and windows/arm64 with the recut prebuilt objects
+- Shipped in: not yet released
+
+A windows program links no C runtime, so the C math functions SQLITE_ENABLE_MATH_FUNCTIONS calls
+(acos through trunc) had no definition there. Xo's runtime now defines them
+(std/native/llrt/cabi_winmath.xo, exported only in a windows build with a `use c` binding),
+computed by Go's math algorithms; sqlite's `sqrt`, `pow`, `ln`, `acos` and the rest give the
+same results as on the other targets.
+
 ## 2026-11-21: fix: an INTEGER in a BOOLEAN column reads as a Boolean, as mattn does
 
 - Kind: fix

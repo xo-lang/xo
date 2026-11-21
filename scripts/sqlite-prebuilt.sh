@@ -17,7 +17,8 @@
 #     its offload host), else cc when the host is that target;
 #   windows-amd64: $XO_CLANG with $XO_WINSYSROOT (xwin's sysroot), with
 #     the addendum's flags: the object then needs no C runtime, only
-#     KERNEL32 and the C functions cabi_wincrt.xo defines (Xo's PE linker);
+#     KERNEL32 and the C functions cabi_wincrt.xo and cabi_winmath.xo
+#     define (Xo's PE linker);
 #   windows-arm64: the same for aarch64-pc-windows-msvc (decision 0569
 #     stage 6, owner 2026-11-15), with -fno-stack-protector as xo's own
 #     windows/arm64 `use c` compile (compiler/xo main.xo).
@@ -93,7 +94,8 @@ print(hashlib.sha256(b).hexdigest())
 EOF
 	if [ "$goos" = windows ]; then
 		# every symbol the object needs is an import of compiler/macho
-		# peimports.xo (__imp_ too), a C function cabi_wincrt.xo defines,
+		# peimports.xo (__imp_ too), a C function cabi_wincrt.xo or
+		# cabi_winmath.xo defines,
 		# or the runtime's (xo_x_*): a SQLite update that needs another
 		# fails here, not at a user's link (decision 0534 item 5)
 		nm="$(dirname "$XO_CLANG")/llvm-nm"
@@ -101,7 +103,11 @@ EOF
 import re, sys
 repo = sys.argv[1]
 imports = set(re.findall(r"^\s*\"([A-Za-z0-9_]+)\": \"", open(repo + "/compiler/macho/peimports.xo").read(), re.M))
-crt = set(re.findall(r"^fn ([A-Za-z_][A-Za-z0-9_]*)\(", open(repo + "/std/native/llrt/cabi_wincrt.xo").read(), re.M))
+# cabi_winmath.xo: the C math library, which SQLITE_ENABLE_MATH_FUNCTIONS
+# calls (task #621: the 0.56.0 recut failed on acos through trunc)
+crt = set()
+for f in ("cabi_wincrt.xo", "cabi_winmath.xo"):
+    crt |= set(re.findall(r"^fn ([A-Za-z_][A-Za-z0-9_]*)\(", open(repo + "/std/native/llrt/" + f).read(), re.M))
 bad = []
 for s in sys.stdin.read().split():
     n = s[len("__imp_"):] if s.startswith("__imp_") else s

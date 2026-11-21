@@ -13,6 +13,9 @@ std/migrate.xo	/// Turso (libSQL): SQLite's statements and no lock.
 std/migrate.xo	/// is_applied as goose's drivers store it: a boolean, or 0 and 1 (SQLite).
 compiler/arm64/calls.xo	/// GOT, as one in a shared library (libSystem, glibc) has no fixed
 compiler/xo/cffi.xo	/// The defines std/sqlite's amalgamation is compiled with for a Windows
+compiler/ssa/build.xo	// program with no C runtime (std/sqlite's prebuilt object)
+std/native/llrt/cabi_winmath.xo	// the rest of its C library): std/sqlite's prebuilt object
+std/native/llrt/cabi_winmath.xo	// (scripts/sqlite-prebuilt.sh, decision 0534 stage 2), compiled with
 compiler/xo/cffi.xo	/// program linked with no C runtime (decision 0534 stage 2): SQLite's
 compiler/xo/cffi.xo	/// as scripts/sqlite-prebuilt.sh's windows recipes.
 compiler/xo/cffi.xo	/// The SQLite features std/sqlite's amalgamation is compiled with on every

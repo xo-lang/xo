@@ -1,0 +1,56 @@
+// The C math library a `use c` binding's C calls, for a Windows program
+// linked with no C runtime (decision 0254 stage 6b; cabi_wincrt.xo has
+// the rest of its C library): std/sqlite's prebuilt object
+// (scripts/sqlite-prebuilt.sh, decision 0534 stage 2), compiled with
+// SQLITE_ENABLE_MATH_FUNCTIONS since xw decision 251, calls acos through
+// trunc. Every top level function is exported under its bare C name, and
+// only in such a build with a `use c` binding (compiler/ssa
+// declare_exports), so a program without `use c` does not grow. The
+// results are Go's math's (gomath.xo, decision 0287), the same on every
+// architecture.
+use native/llrt/gomath
+use native/llrt/libcmath
+
+fn acos(x: Float) -> Float { gomath.acos(x) }
+
+fn acosh(x: Float) -> Float { gomath.acosh(x) }
+
+fn asin(x: Float) -> Float { gomath.asin(x) }
+
+fn asinh(x: Float) -> Float { gomath.asinh(x) }
+
+fn atan(x: Float) -> Float { gomath.atan(x) }
+
+fn atan2(y: Float, x: Float) -> Float { gomath.atan2(y, x) }
+
+fn atanh(x: Float) -> Float { gomath.atanh(x) }
+
+fn ceil(x: Float) -> Float { libcmath.ceil(x) }
+
+fn cos(x: Float) -> Float { gomath.cos(x) }
+
+fn cosh(x: Float) -> Float { gomath.cosh(x) }
+
+fn exp(x: Float) -> Float { gomath.exp(x) }
+
+fn floor(x: Float) -> Float { libcmath.floor(x) }
+
+fn log(x: Float) -> Float { gomath.log(x) }
+
+fn log10(x: Float) -> Float { gomath.log10(x) }
+
+fn log2(x: Float) -> Float { gomath.log2(x) }
+
+fn pow(x: Float, y: Float) -> Float { gomath.pow(x, y) }
+
+fn sin(x: Float) -> Float { gomath.sin(x) }
+
+fn sinh(x: Float) -> Float { gomath.sinh(x) }
+
+fn sqrt(x: Float) -> Float { x.sqrt() }
+
+fn tan(x: Float) -> Float { gomath.tan(x) }
+
+fn tanh(x: Float) -> Float { gomath.tanh(x) }
+
+fn trunc(x: Float) -> Float { libcmath.trunc(x) }

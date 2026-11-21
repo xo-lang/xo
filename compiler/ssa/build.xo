@@ -794,6 +794,12 @@ fn (var b: Builder) declare_exports() {
       if b.nolibc && b.goos == "windows" {
         b.declare_exports_of(mi, true)
       }
+    } else if p == "native/llrt/cabi_winmath" {
+      // the C math library a `use c` binding's C calls in a windows
+      // program with no C runtime (std/sqlite's prebuilt object)
+      if b.nolibc && b.goos == "windows" && b.c.mods.any(fn(m) { !m.c_prefix.is_empty() }) {
+        b.declare_exports_of(mi, true)
+      }
     } else if p == "native/llrt/cabi_cbind" {
       // the C library a `use c` binding calls past cabi_libc's, in a
       // FreeBSD program with no C library (decision 0573 `use c` stage 2)

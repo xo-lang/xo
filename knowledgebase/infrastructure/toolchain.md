@@ -4085,7 +4085,7 @@ spec core 4.5.
   relatively (c_inputs rewrites it to the absolute path for clang).
 - windows/amd64: a `use c` call goes through a Win64 thunk (calls.xo
   rt_call, `xo_w64_rt...`), as platform calls do.
-- SQLite prebuilt objects (Last verified: 2026-11-07):
+- SQLite prebuilt objects (Last verified: 2026-11-21):
   `scripts/sqlite-prebuilt.sh REPO XO PLAT...` compiles the amalgamation,
   xo_sqlite.c and the std adapter as one unit into
   `<root>/lib/xo/sqlite/<plat>/sqlite.o` (`sqlite.obj` for windows) with a `.key` (sha256 over the sources,
@@ -4107,6 +4107,29 @@ spec core 4.5.
   XO_RELEASE_WINDOWS_ARM64=1) and ships the std binding files.
   Last verified: 2026-11-15 (a windows/arm64 sqlite program built with
   no clang or SDK ran on the winarm VM: WAL and rollback, integrity ok).
+  Since key v2 (xw decision 251: FTS5, percentile, math functions) a
+  windows object also calls the C math library, which
+  std/native/llrt/cabi_winmath.xo defines (task #621); the script's
+  check reads it beside cabi_wincrt.xo. release.sh builds no linux
+  objects: those are cut on their own arch (`sqlite-prebuilt.sh` with
+  the host's cc, a cross-built xo and the checkout's files). The
+  native_sql golden is std/sql's in memory driver; the sqlite goldens
+  are native_sqlite, native_sqlite_file and native_sqlite_math.
+  0.56.0 recut (task #621, 2026-11-21, SQLite 3.54.1, key v2), each
+  object checked with native_sqlite and native_sqlite_math on its arch
+  built with no compile of sqlite3.c (a logging XO_CC, or for windows
+  no clang or sysroot):
+
+  | plat | compiler | key |
+  |---|---|---|
+  | darwin-arm64 | Apple clang 21.0.0 | f684232fdd3e9abd78021df85647fa684651e3851d7bdf57307e3d86fc2c276f |
+  | darwin-amd64 | Apple clang 21.0.0 | c706aff1279f650901475035407eb4ab04b89293339e855c7e7e287b06406e5e (built only; no Intel Mac run) |
+  | windows-amd64 | clang 23.1.3 | ef648efc3591138f7d71c4d91cfd1506f98a867a20f747c1bae56625ae8676d2 |
+  | windows-arm64 | clang 23.1.3 | e341c85fc17ae347aa8584e77d6e84ecb07ed178377bc83b164629d0747bb153 |
+  | linux-arm64 | cc (Debian 14.2.0-19) 14.2.0 | 230ddd4f93767c8e369e6700147a477f36537b639d57259c0069a7489775d951 |
+  | linux-amd64 | cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 | db2c101de5aa1fcd2d697eec022385e14e17ee6a013bae281231baeab6cd2b48 |
+
+  Last verified: 2026-11-21.
 
 ## Real-time mode (`uses realtime`, decision 0133)
 
