@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-21: fix: Fs.read of a file named with a trailing separator fails under WASI
+
+- Kind: fix
+- Commit: this push
+- Found by: task #616, TestSelfhostWasm/fs_sub_trailing_slash on main (sub read a.txt/: found)
+- Go reference: os.ReadFile (the OS reports a file opened as a directory as not a directory)
+- Change: the WASI hosts open "a.txt/" as the file a.txt, so os.fs and a sub Fs read it on wasm32 while the native systems say not a directory; a read whose path ends in a separator and that found a file now fails with FsErr.NotDir on wasm32 (a compile time check: native targets are unchanged)
+- Measured: no speed claim
+- Test: golden fs_sub_trailing_slash under TestSelfhostWasm (fails before: sub read a.txt/: found, os read a.txt/: found)
+
 ## 2026-11-21: fix: a sub Fs keeps a trailing separator
 
 - Kind: fix

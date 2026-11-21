@@ -4668,6 +4668,12 @@ fn fs_read(f: Fs, p: Str) -> Bytes ! FsErr {
   if l.len() == 0 {
     return Err(fs_err(sysio.status(), p))
   }
+  // a trailing separator names a directory: the WASI hosts open
+  // "a.txt/" as the file a.txt, where the native systems say not a
+  // directory (a compile time check; task #616, 2026-11-21)
+  if target.arch == TargetArch.Wasm32 && fs_slash(p).ends_with("/") {
+    return Err(FsErr.NotDir(path: p))
+  }
   l[0]
 }
 

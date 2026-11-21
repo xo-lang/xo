@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (wasm32; task #616): reading a file named with a trailing separator (`"a.txt/"`) fails with `FsErr.NotDir`, as on native targets; the WASI hosts opened it as the file.
 - Fix (macOS, `xo build --race`; task #608): building the same program again into another directory puts the ThreadSanitizer runtime beside that binary too. A cached build copied only the executable, which then ran only while the toolchain stayed where it was.
 - std/sqlite (xw decision 251): SQLite is compiled with FTS5 full text search (`USING fts5`, `bm25()`), the percentile aggregates (`median`, `percentile_cont`, ...) and the math functions (`floor`, `pow`, ...) on every target.
 - Fix (windows/amd64; task #597): a program built against std's store (the default after the first build) writes the Win64 thunks of platform calls made only through std functions the store leaves out, as weak definitions; every program using `os.secrets` Dpapi failed to link with an undefined `xo_w64_CryptProtectData`.
