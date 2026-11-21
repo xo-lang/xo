@@ -110,8 +110,10 @@ here (#335).
 ## Schedules
 
 A periodic job that is not a launchd agent is a line of xw's schedule,
-`~/xo-lead/xw-schedule.conf` (`NAME EVERY COMMAND [ARGS...]`, EVERY like
-8h or 30m, COMMAND relative to `~/xo-lead`; xw sched.xo, 2026-11-18):
+`~/xo-lead/xw-schedule.conf` (`NAME EVERY [VAR=VAL...] COMMAND [ARGS...]`, EVERY like 8h or 30m,
+COMMAND relative to `~/xo-lead` while ARGS are passed as written, and
+VAR=VAL words run it under /usr/bin/env with them since workstream
+fc6b4b9; xw sched.xo, 2026-11-18):
 the alert pass starts it when due, its output is `xw/sched/NAME.out`
 (the row's evidence), and a run that exits nonzero is a sched-failed
 alert carrying its last `SCHED-TRAP: ` line.
