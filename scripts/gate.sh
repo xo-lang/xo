@@ -1875,7 +1875,8 @@ prove_harness() {
 prove_staleref() {
   local f0=$failed hits pkg names
   failed=0
-  hits=$(GATE_DIFF_BASE=$base GATE_STALE_WHY=1 gate_stale_goldens 2>"$logs/staleref-why.txt" | grep '^\./')
+  # plus the goldens using a changed std module when few (#562)
+  hits=$({ GATE_DIFF_BASE=$base GATE_STALE_WHY=1 gate_stale_goldens 2>"$logs/staleref-why.txt"; GATE_DIFF_BASE=$base gate_module_hits; } | grep '^\./' | sort -u)
   for pkg in $(echo "$hits" | cut -d' ' -f1 | sort -u); do
     names=$(echo "$hits" | awk -v p="$pkg" '$1 == p { print $2 }' | paste -sd'|' -)
     if gotests "$pkg" "$names" -timeout 60m >"$logs/staleref-${pkg##*/}.txt" 2>&1; then
@@ -1886,7 +1887,7 @@ prove_staleref() {
       grep -E '^(    )?--- FAIL|^gotests:' "$logs/staleref-${pkg##*/}.txt" | head -10
     fi
   done
-  [ -n "$hits" ] || echo "staleref: no golden expects a removed std string"
+  [ -n "$hits" ] || echo "staleref: no golden expects a removed std string or uses a changed module"
   [ "$failed" = 0 ] && ran="$ran staleref"
   [ "$f0" = 1 ] && failed=1
 }

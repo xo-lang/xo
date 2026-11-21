@@ -348,6 +348,15 @@ yourself.
     or XO0915 note that cmd/xo/testdata/vetcost-std-allow.txt does not
     list fails: TestVetCostStd's rule, gatelib `gate_vetcost_new`), plus
     TestStdChecks and stdgen -check;
+  - a std module change (std/M.xo, std/M/, std/native/M.xo; not
+    _test.xo) that 1 to 24 internal/llvm goldens `use std/M` for:
+    `staleref` runs those goldens too (llvm and arm64; task #562, gatelib
+    `gate_module_hits`, `GATE_MODULE_GOLDENS_MAX`): f2c5573a5's yaml
+    message spelled a type name the code composes, so no removed string
+    matched and two goldens broke on main. More goldens (std/http 138,
+    std/json 62) are left to mainsmall on main (gate_module_goldens,
+    #561). A sweep of 40 std commits on 2026-11-20: 16 added 1 to 24
+    goldens, 6 over the cap, 18 none;
   - any std change (std/**/*.xo, std/rt/*.go) that removes a string
     literal some golden's want.txt still expects: `staleref`, those
     goldens on each backend that runs them (llvm `TestGolden/NAME` and
