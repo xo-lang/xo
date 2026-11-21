@@ -1716,6 +1716,22 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   floor, gate cap, quiet windows and stagger still hold it. The history is
   ~/xo-lead/heavyd-runs.json (heavyd history.go). Takes effect once the
   lead restarts heavyd.
+- A heavyd restart keeps running and waiting work if the daemon is back
+  within about 60 s (lead and xw-1, 2026-11-21; restarted 11:45 at
+  b4d7490a4, all 5 running leases re-adopted with their start times). A
+  client whose connection drops redials every 2 s for up to 60 s
+  (heavyd client.go `reconnect`). A running lease comes back as
+  `lease-adopt` with its lane, slot and start time (lanes.go, the lease
+  client's reconnect, and `handleLease`), and heavy.sh runs as `adopt`.
+  A waiting lease or run comes back with its ticket and keeps its place
+  (TestWaitingLeaseSurvivesRestart). For 15 s after start heavyd grants
+  no lane lease, so the re-adopts take their slots first (`AdoptGrace`,
+  TestAdoptGraceAfterRestart). Past 60 s a running job goes on
+  unmanaged (heavyd no longer counts its slot), and a waiting lease
+  exits with "the daemon went away and did not come back"
+  (LeaseExitNoDaemon) and must be started again. So restart with one
+  launchctl kickstart (or bootout then bootstrap) inside the minute,
+  never a stop left in place. Last verified: 2026-11-21.
 - Main's xo is prebuilt on the pass hosts (#264, cost:xo-cold-build,
   2026-11-17: gates cold-built xo, about 150 s p50): when main moves, xw
   runs scripts/lead/xo-prewarm.sh, which builds main's xo key on each of
