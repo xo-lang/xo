@@ -1,7 +1,6 @@
 package rt
 
 import (
-	"fmt"
 	"iter"
 	"slices"
 	"strings"
@@ -1286,7 +1285,7 @@ func (b *BytesBuilder) M_put_be(_ *Task, at, v, n int64) { b.put(at, v, n, true)
 // M_put is `b.put(at, data)`: data copied over b[at:at+len(data)].
 func (b *BytesBuilder) M_put(_ *Task, at int64, data Bytes) {
 	if at < 0 || at > int64(len(b.b))-int64(len(data)) {
-		FaultHere(fmt.Sprintf("BytesBuilder.put: %d..%d outside the builder's %d bytes", at, at+int64(len(data)), len(b.b)))
+		FaultHere("BytesBuilder.put: %d..%d outside the builder's %d bytes", at, at+int64(len(data)), len(b.b))
 	}
 	copy(b.b[at:], data)
 }
