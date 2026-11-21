@@ -227,6 +227,108 @@ func programFunc(sym string) bool {
 	return !runtimeMods.m[n]
 }
 
+var (
+	sameCodeAddr = regexp.MustCompile(`0x[0-9a-f]+`)
+	sameCodePage = regexp.MustCompile(`(adrp\t\w+), -?\d+`)
+	// a callee's name: identical functions are merged under a hash name in
+	// one build and not the other
+	sameCodeSym = regexp.MustCompile(`_xo_\w+`)
+	// pc-relative addresses of data and functions (adr): layout
+	sameCodeAdr = regexp.MustCompile(`(adr\t\w+), #-?\d+`)
+)
+
+// sameCodeFuncs is TestDebugInfoSameCode's reading of `otool -tV`: each
+// function's instructions by its symbol, without addresses, branch
+// targets, page offsets and callee names. otool gives a function every
+// word up to the next symbol it prints, so the last function of an
+// object file (one of the build's units) also gets what follows it: the
+// unit's end marker (`_xo_utend_*: brk #0x484f`, compiler/arm64) and the
+// zero words the linker puts before the next object's text when that is
+// 8 byte aligned (a unit with a Float constant, `.p2align 3`, since
+// 43a07d467). Neither is the function's code, and which function ends a
+// unit differs between the two builds when one has a function more
+// (task #601: http_max_idle differed by the padding, grpc_balance by the
+// marker and the padding), so both are dropped from a function's end.
+func sameCodeFuncs(otool string) map[string]string {
+	out := map[string]string{}
+	var name string
+	var body []string
+	// tail: how many of body's last lines are zero words, and whether
+	// the line before them is the unit end marker
+	zeros, marker := 0, false
+	flush := func() {
+		if name != "" {
+			n := len(body) - zeros
+			if marker && n > 1 {
+				n--
+			}
+			if n == 0 {
+				n = len(body)
+			}
+			out[name] = strings.Join(body[:n], "\n") + "\n"
+		}
+		body, zeros, marker = body[:0:0], 0, false
+	}
+	for _, l := range strings.Split(otool, "\n") {
+		switch {
+		case strings.HasSuffix(l, ":") && strings.HasPrefix(l, "_"):
+			flush()
+			name = strings.TrimSuffix(l, ":")
+		case name != "" && len(l) > 17 && l[16] == '\t':
+			raw := l[17:]
+			l = sameCodeAddr.ReplaceAllString(raw, "X")
+			l = sameCodePage.ReplaceAllString(l, "$1, N")
+			l = sameCodeSym.ReplaceAllString(l, "S")
+			l = sameCodeAdr.ReplaceAllString(l, "$1, N")
+			// alignment padding (before a literal pool) is not code
+			if l == "nop" {
+				continue
+			}
+			switch {
+			case raw == "udf\t#0x0":
+				zeros++
+			case raw == "brk\t#0x484f":
+				zeros, marker = 0, true
+			default:
+				zeros, marker = 0, false
+			}
+			body = append(body, l)
+		}
+	}
+	flush()
+	return out
+}
+
+// TestSameCodeFuncsUnitEnd is task #601: the last function of a unit
+// reads the same whether otool hands it the unit's end marker and the
+// linker's padding or not, and a function that differs still differs.
+func TestSameCodeFuncsUnitEnd(t *testing.T) {
+	const head = "_xo_f_a:\n0000000100000000\tmov\tx0, xzr\n0000000100000004\tret\n"
+	const pool = "0000000100000008\tudf\t#0x0\n000000010000000c\t.long\t0x3ff00000\n"
+	const next = "_xo_f_b:\n0000000100000020\tret\n"
+	want := sameCodeFuncs(head + pool + next)["_xo_f_a"]
+	if want != "mov\tx0, xzr\nret\nudf\t#X\n.long\tX\n" {
+		t.Fatalf("plain function reads %q", want)
+	}
+	for _, c := range []struct{ name, tail string }{
+		{"marker", "0000000100000010\tbrk\t#0x484f\n"},
+		{"padding", "0000000100000010\tudf\t#0x0\n"},
+		{"marker and padding", "0000000100000010\tbrk\t#0x484f\n0000000100000014\tudf\t#0x0\n"},
+	} {
+		if got := sameCodeFuncs(head + pool + c.tail + next)["_xo_f_a"]; got != want {
+			t.Errorf("%s: %q, want %q", c.name, got, want)
+		}
+	}
+	// a function that is one brk (the hollow pass) stays one brk
+	if got := sameCodeFuncs("_xo_f_h:\n0000000100000000\tbrk\t#0x484f\n" + next)["_xo_f_h"]; got != "brk\t#X\n" {
+		t.Errorf("hollow function reads %q", got)
+	}
+	// real code after the same start is still a difference
+	if got := sameCodeFuncs(head + "0000000100000008\tbrk\t#0x1\n" + next)["_xo_f_a"]; got == sameCodeFuncs(head + next)["_xo_f_a"] {
+		t.Errorf("a trailing brk #0x1 was dropped")
+	}
+}
+
 // TestDebugInfoSameCode is decision 0252's gate: debug information does
 // not change the code you debug. Every golden program built by the arm64
 // backend with debug information (the default) and without it
@@ -249,13 +351,6 @@ func TestDebugInfoSameCode(t *testing.T) {
 	if _, err := exec.LookPath("otool"); err != nil {
 		t.Skip("no otool")
 	}
-	addr := regexp.MustCompile(`0x[0-9a-f]+`)
-	page := regexp.MustCompile(`(adrp\t\w+), -?\d+`)
-	// a callee's name: identical functions are merged under a hash name in
-	// one build and not the other
-	sym := regexp.MustCompile(`_xo_\w+`)
-	// pc-relative addresses of data and functions (adr): layout
-	adr := regexp.MustCompile(`(adr\t\w+), #-?\d+`)
 	// funcs: each function's instructions by its symbol, as otool -tV
 	// prints them, without addresses
 	funcs := func(t *testing.T, bin string) map[string]string {
@@ -264,35 +359,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("otool -tV %s: %v", bin, err)
 		}
-		out := map[string]string{}
-		var name string
-		var body strings.Builder
-		flush := func() {
-			if name != "" {
-				out[name] = body.String()
-			}
-			body.Reset()
-		}
-		for _, l := range strings.Split(string(b), "\n") {
-			switch {
-			case strings.HasSuffix(l, ":") && strings.HasPrefix(l, "_"):
-				flush()
-				name = strings.TrimSuffix(l, ":")
-			case name != "" && len(l) > 17 && l[16] == '\t':
-				l = addr.ReplaceAllString(l[17:], "X")
-				l = page.ReplaceAllString(l, "$1, N")
-				l = sym.ReplaceAllString(l, "S")
-				l = adr.ReplaceAllString(l, "$1, N")
-				// alignment padding (before a literal pool) is not code
-				if l == "nop" {
-					continue
-				}
-				body.WriteString(l)
-				body.WriteByte('\n')
-			}
-		}
-		flush()
-		return out
+		return sameCodeFuncs(string(b))
 	}
 	for _, dir := range goldenDirs(t) {
 		dir := dir
