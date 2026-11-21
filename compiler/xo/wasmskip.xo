@@ -12,8 +12,14 @@ fn wasm_module_skip(m0: Str) -> Str {
   // (opts.xo resolve_std_module), native/... as given
   let m = m0.trim_prefix("std/")
   match m {
-    "amqp" | "amqptest" | "native/http" | "native/llrt/netconn" | "native/llrt/pg" => NO_SOCKETS
-    "native/sqlite" => "wasm: SQLite is C (use c), which a WASI module does not link"
+    // a module whose tests reach a socket anywhere is skipped whole: the
+    // wasm backend rejects the build, not one test (tier 919, 2026-11-21:
+    // grpc, mysql, smtp, sse, ui and websocket were added after the
+    // stdwasm step's last pass and failed it)
+    "amqp" | "amqptest" | "grpc" | "native/http" | "native/llrt/mysql" | "native/llrt/netconn" | "native/llrt/pg" | "smtp" | "sse" | "ui" | "websocket" => NO_SOCKETS
+    "native/sqlite" | "sqlite" => "wasm: SQLite is C (use c), which a WASI module does not link"
+    // std/testing's FakeProc tests run real processes beside the fakes
+    "testing" => "wasm: WASI preview 1 has no processes"
     // the native runtimes' allocator: a WASI module's heap is
     // compiler/wasm rt.xo's ($alloc, $heap_large), which its own tests
     // cover (internal/selfhost wasm goldens)
