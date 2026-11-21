@@ -69,6 +69,28 @@ func (c *dapClient) recv() map[string]any {
 
 // until reads messages until the response to cmd (or, with an event
 // name, that event), failing on an unsuccessful response to cmd.
+// dapStdout gives cmd a pipe of the test's own for its standard output
+// and returns the read end, with a function to call once cmd has
+// started (it closes the test's copy of the write end). cmd.StdoutPipe's
+// read end is closed by cmd.Wait, and these tests wait in a goroutine
+// from the start: when the adapter exited right after its last response,
+// Wait closed the pipe before the test had read it, and the read failed
+// with "reading a header: read |0: file already closed"
+// (TestDebugDAPAttach after disconnect: a host 2 gate on 2026-11-20,
+// tier 76, a gate on 2026-11-10; task #576). This read end stays open
+// until the test ends, so what the adapter wrote before it exited is
+// read.
+func dapStdout(t *testing.T, cmd *exec.Cmd) (*os.File, func()) {
+	t.Helper()
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdout = pw
+	t.Cleanup(func() { pr.Close() })
+	return pr, func() { pw.Close() }
+}
+
 func (c *dapClient) until(kind, name string) map[string]any {
 	c.t.Helper()
 	for {
@@ -121,10 +143,11 @@ func TestDebugDAP(t *testing.T) {
 	prog := res.Binaries[xotool.Host()]
 	cmd := command(t, xoBin(t), "debug", "--dap")
 	in, _ := cmd.StdinPipe()
-	outp, _ := cmd.StdoutPipe()
+	outp, started := dapStdout(t, cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	started()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	defer func() {
@@ -277,10 +300,11 @@ func TestDebugDAPAttach(t *testing.T) {
 	}
 	cmd := command(t, xoBin(t), "debug", "--dap")
 	in, _ := cmd.StdinPipe()
-	outp, _ := cmd.StdoutPipe()
+	outp, started := dapStdout(t, cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	started()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	defer func() {
