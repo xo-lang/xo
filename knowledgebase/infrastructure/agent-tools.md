@@ -2352,6 +2352,23 @@ on. Rows: agent-rules.md. Last verified: 2026-11-16.
   reachable (the feature or caller that first runs it) and use the later
   of the two tags. Last verified: 2026-11-03.
 
+### When xw is down: $LEAD/xw/DOWN (#575)
+
+Every alert, inbox and decision reaches agents through xw, so an outage of
+Docker's engine, xw-postgres or xw's server is silent there (2026-11-20:
+23:16 to 23:25, no alert for 9 minutes). heavyd (launchd, independent of
+Docker) probes them every minute (`docker info`, a TCP dial to
+`XW_PG_PORT`, `GET /health`; scripts/lead/heavyd/xwwatch.go). Two failed
+rounds in a row write `$LEAD/xw/DOWN` (`since=`, `why=`, `by=heavyd`), log
+`XW DOWN:` to heavyd.log and show the owner a macOS notification; the first
+passing round removes it and logs `XW UP after`. xw-cc-hook.sh prints
+`XW DOWN since HH:MM (...)` to each session's prompt or PostToolUse once
+per 10 minutes (`XW_DOWN_SECS`). Seeing it: tell the lead; never restart
+Docker or xw yourself (the owner's call). The watch only reads;
+`HEAVYD_XWWATCH=0` turns it off. While xw is down the tools keep working:
+events spool and replay (xwhook.sh), pushq notes the holds and `--tool`
+checks it could not make (3172597ea). Last verified: 2026-11-20.
+
 ### ccguard: the Claude Code hook (#138)
 
 A PreToolUse hook (`scripts/lead/ccguard/`) stops the commands agents
