@@ -32,16 +32,16 @@ A machine is a policy row (0736). Its fields:
   sanitizer goldens (#474);
 - `parent`, with a `share` of the parent's cores and GB.
 
-The rows as of 2026-11-21:
+The rows as of 2026-11-21 (cores and GB checked by #599):
 
 | Machine | Cores | GB | Kinds | Parent | Flags |
 |---|---|---|---|---|---|
 | mac | 30 | 96 (8 reserved for macOS and the agents) | darwin | | |
 | docker-vm | 20 | 56 | (none, a parent only) | mac | |
-| host3 | 20 | 56 | linux/arm64 | docker-vm | |
+| host3 | 12 (cgroup; `nproc` says 20) | 31 | linux/arm64 | docker-vm | |
 | host4 | 8 | 24 | linux/arm64 | docker-vm | |
-| host2 | (from its probe) | 24 | linux/arm64 | | no:llvm |
-| host1 | (from its probe) | (probe) | linux/arm64 | | timing |
+| host2 | 18 | 22 | linux/arm64 | | no:llvm |
+| host1 | 12 | 39 | linux/arm64 | | timing |
 | amd64 | 28 | (probe) | linux/amd64 | | |
 | win, winarm | (probe) | (probe) | windows | | |
 
@@ -144,59 +144,93 @@ latest complete one.
 - **amd64**: 589 s. **Windows**: 192 s.
 - **Hosts 3 and 4**: none of the tier.
 
-**The plan.** The Linux steps are placed longest first on host 2, host 3
-and host 4. llvm is not allowed on host 2.
+**The inputs, checked against history (task #599, 2026-11-21).**
+
+- **Cores and memory.** Each was read from a light lease on the host on
+  2026-11-21: `nproc`, `free -m`, and the cgroup's `cpu.max` and
+  `memory.max`.
+  - host 2: 18 cores, and a 22 GiB cgroup cap on a 23.4 GiB host.
+  - host 3: `nproc` reports 20, but `cpu.max` caps it at 12 cores and
+    `memory.max` at 31 GiB. `free` shows the whole VM's 56 GB.
+  - host 1: 12 cores and 39 GiB, with no cgroup cap.
+  - host 4: offload.md gives `--cpus 8 --memory 24g`. Its probe found no
+    free slot in 2 minutes, because two ctier llvm leases held its lane.
+- **Speed against host 2.** This is the p50 per gate step over the 1648
+  gate logs of 2026-11-14 to 2026-11-21, with the host taken from the
+  log's CPU count and its lease lane. Gates run up to 3 steps at once,
+  so these are confounded by whatever ran beside them.
+  - host 3: llvm 0.80, stdcov 0.88, wasm 1.19, cmd 1.27 and arm64 1.34.
+    That is about 1.2 overall, not 1.0.
+  - host 4: wasm 1.25, llvm 1.65 and arm64 2.93. That is about 2 overall,
+    not 1.6.
+  - host 1 is faster than host 2 on most steps (llvm 0.75, cmd 0.92,
+    stdcov 0.77), but it is flagged `timing`.
+- **The Mac's big steps peak far above 13 GB each.** heavy.sh's peaks
+  for tier 919's reruns, one at a time, were:
+  - arm64 25985 MB;
+  - cmd 27240 MB;
+  - corpora-all 4422 MB;
+  - corpuscheck 3205 MB;
+  - llvm 33828 MB. That is over HEAVY_MAX_GB=32, which is why it was
+    stopped at 1001 s, not a timeout.
+
+  The 67 GB of five steps together came from the steps not peaking at
+  the same moment.
+- **Host 2's peaks** (tier 920's off-cmd log): gen 16827 MB, llvm 21752,
+  selfhost 15228, cmd 13529 and stdwasm 12283, all of 23993 MB.
+
+**The plan, redone with these inputs.** The Linux steps are placed
+longest first, with host 3 at 1.2 times host 2 (llvm 0.8 and stdcov 0.88
+where measured) and host 4 at 2 times. llvm is not allowed on host 2.
 
 | Step (s on host 2) | Placed on | Ends at (s) |
 |---|---|---|
-| linux llvm 3392 (21.8 GB) | host3 | 3392 |
+| linux llvm 3392 (21.8 GB) | host3 (x0.8: 2714) | 2714 |
 | sdk-stress, riscv64, rest 2927 | host2 | 2927 |
-| selfhost 2240 (15.2 GB) | host4 (x1.6: 3584) | 3584 |
+| selfhost 2240 (15.2 GB) | host4 (x2: 4480) | 4480 |
 | linux cmd 1534 | host2 | 4461 |
-| stdcov 1132 | host3 | 4524 |
-| stdwasm 564 | host4 (902) | 4486 |
+| stdcov 1132 | host3 (x0.88: 996) | 3710 |
+| stdwasm 564 | host3 (677) | 4387 |
 | gen 446 (16.8 GB) | host2 | 4907 |
-| fuzz 131 | host3 | 4655 |
+| fuzz 131 | host3 (157) | 4544 |
 
-The Linux steps finish at about 4907 s, plus one xo build per host
-(144 s): about 5051 s, or 84 minutes. The lower bound, with total work
-divided by capacity (12366 s over 2.625 host 2 equivalents), is 4711 s.
-So the plan is within 5% of the
-best possible for these steps; sharding llvm (ctier already runs it as
-4 leases) could close part of that gap at the cost of one xo build per
-shard host, which the planner decides from the shards' own history.
+The Linux steps still end at about 4907 s, plus one xo build per host:
+about 5051 s, or 84 minutes. Host 2's own list sets that end, so the
+slower hosts 3 and 4 do not change it.
 
-Memory never exceeds the fit rule:
+Memory stays within the caps:
 
-- hosts 3 and 4 peak together at 21.8 + 15.2 = 37 GB of the VM's 56;
+- host 3's llvm uses 21.8 GB of its 31 GiB;
+- host 4's selfhost uses 15.2 GB of its 24;
+- together they use 37 GB of the VM's 56;
 - the Mac keeps 96 - 37 - 8 = 51 GB for its own steps.
 
-The Mac's steps run two at a time by fit. Tier 919's five steps
-together peaked at 67 GB, about 13 GB each, so two fit in 51 GB. Placed
-longest first on two places, they finish at about 4764 s:
+**The Mac is now the critical path.** arm64 (26 GB) and cmd (27 GB) do
+not fit together in 51 GB, and darwin llvm needs about 34 GB alone (42
+GB with the 1.25 watchdog margin). So the three big steps run one after
+another, beside the small ones:
 
-- **Lane A**: arm64 2542, llvm 1001 or more, corpuscheck 491, newgo
-  415, sep 294, dv 12.
-- **Lane B**: cmd 1825, corpora-all 1090, docs 797, mca 481, bmem 318,
-  sepxo 253.
+- **Lane A**: arm64 2542, cmd 1825, then llvm, for 4367 s plus llvm.
+- **Lane B**: corpora-all 1090, docs 797, corpuscheck 491, mca 481,
+  newgo 415, bmem 318, sep 294, sepxo 253 and dv 12, for 4151 s.
 
-amd64 and Windows run beside these, off the critical path.
+During llvm, lane B's steps (at most 4.4 GB) still fit. Once hosts 3
+and 4 end near 4500 s, the Mac gains their 37 GB. No complete darwin
+llvm run is recorded in the last 7 days of `xw jobs`; it ran for more
+than 1001 s before it was stopped.
 
-**Predicted wall time: about 85 minutes**, against 3h28m for tier 920.
-That 3h28m also left its five big Mac steps undone. Tier 919 took 2h54m
-on the Mac and 1h57m on host 2.
+**Predicted wall time: at least 90 minutes** (4367 + 1001 = 5368 s),
+plus whatever darwin llvm takes past 1001 s. That is against 3h28m for
+tier 920, which also left its five big Mac steps undone. Sharding darwin
+llvm as ctier shards linux llvm (4 leases) is what would bring the Mac
+lane below the Linux one, and the planner decides it from the shards'
+own peaks.
 
-This estimate rests on assumptions that the planner replaces with
-history:
+These assumptions remain unverified:
 
-- host 3 runs a step as fast as host 2, and host 4 takes 1.6 times as
-  long (8 cores);
-- the Mac's big steps peak at about 13 GB each when run alone;
-- llvm on the Mac takes at least 1001 s (it was stopped at that point in
-  tier 919);
+- darwin llvm's full time and its per-shard peak;
 - corpuscheck does not depend on corpora-all;
-- the Mac steps are slowed by the Docker VM's 20 cores of load, and the
-  replan absorbs that.
+- the gate step factors carry over to the tier's steps.
 
 The first real check is `xw plan tier` at a tier's REV, set beside the
 tier's run as the batch's first cutover (0732 migration step 4).
@@ -232,7 +266,7 @@ tier's run as the batch's first cutover (0732 migration step 4).
   list. Ruled out by #242.
 - **An exact scheduler** (an ILP or constraint solver over the batch).
   It gives a better plan in theory, but the step times vary by more than
-  the gap between a longest-first plan and the best one; above, that
-  gap is 4% from the lower bound.
+  the gap between a longest-first plan and the best one; in 0733's
+  first plan, that gap was 4% from the lower bound.
 - **Static plans per batch, edited by hand.** These go out of date with
   every host change, which is what tier.sh's split is today.
