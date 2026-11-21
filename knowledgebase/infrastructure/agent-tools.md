@@ -2209,7 +2209,7 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     Step history (decision 0733 "Planning a batch", task #600,
     2026-11-21): offload.sh sends each `NAME: ok|FAIL in S s, host
     memory peak P of T MB` line of a job's output (offload-tier.sh's
-    steps) as a step.end event (subject NAME; host, batch, ok, secs,
+    steps) as a step.end event (subject NAME, without the line's `moved` or `linux` prefix, which goes in kind; host, batch, ok, secs,
     peak_mb, total_mb; xwhook.sh xw_steps), the per host history `xw
     plan` places a batch from.
     retry-storm: one lease name (not a .sh default) started over 5 times
