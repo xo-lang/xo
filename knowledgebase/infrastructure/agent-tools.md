@@ -2457,7 +2457,8 @@ gb (both containers), or the Mac's room; a container counts at the
 larger of its use and its running leases' p90 peaks. Last verified: 2026-11-21.
 
 A lease's time limit on host 3 or 4 scales with the Mac's load at its
-start (owner question #240, 0733), whether fit is on or not: `-max`
+start (owner question #240, 0733; off until the owner answers #240:
+heavyd started with HEAVYD_SCALE_LIMITS=1 turns it on): `-max`
 times load / the cores of the lane's parent machine (docker-vm, 20),
 rounded up, when that is over 1 (Mac load 30: a 12 minute limit becomes
 18). heavyd logs `lease NAME: limit N min, was M`, the lease prints
