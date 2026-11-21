@@ -19,3 +19,18 @@ objects' directory with their base names did not help: the names come from the b
 Fix: split_build compiles each module in its directory by its base name, so its bitcode, and its promoted
 locals' names, are the same in every build. Checked: a cold and a warm XO_LLVM_SPLIT=4 XO_LLVM_LTO=thin build,
 windows/amd64 and darwin/arm64, are byte for byte the same.
+
+Observed again (2026-11-21, Xo Lang 1, task #607, linux/arm64): the
+same rule in a second place. std's own LLVM objects (decision 0738)
+are made by distributed ThinLTO, and its steps named each module by
+its full path in the build's randomly named directory. There the
+effect went past symbol names: the import order follows the module
+paths too, so four builds of the same std gave four different
+disassemblies of std and of the program linked with it, and about one
+build in three a fault report whose traceback named every frame `?`
+(gotchas/llvm-std-objects-roots-and-named-section.md, symptom 4). Fix,
+the same: every step (bitcode, the index, each backend) runs in that
+directory by base name (compiler/xo link.xo ir_objects_par cwd, 0919cb5f3);
+TestSepcompLLVM/std_objects_reproducible builds std twice and compares
+the code and symbol names. Any new place that hands clang a ThinLTO
+module takes the rule: a path that differs between builds is an input.
