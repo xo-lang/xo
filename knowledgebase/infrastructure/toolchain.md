@@ -2397,8 +2397,13 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   nearing heavy.sh's cap shows before it is stopped. tier-mac.sh files
   each Mac tier job as notes/lead/gate-tierN-mac-STEPS-*.log so xw gates
   reads the Mac runs too, and its one-at-a-time rerun after a memory stop
-  sends llvm to host 3 (never host 2: its 24 GB OOMs clang). Last
-  verified: 2026-11-21.
+  sends llvm to host 3 (never host 2: its 24 GB OOMs clang). Under 60%
+  free memory at the start (`TIER_MIN_FREE`), or after the last tier's
+  concurrent job was stopped (notes/lead/tier-mac-conc-stopped, which the
+  next tier removes), it skips the concurrent job and that 60 minute
+  memory wait and runs the steps one at a time at once (task #591: tiers
+  919 to 921 each lost about 1.5 h to the wait, the stop and the rerun).
+  Last verified: 2026-11-21.
 - **TestDebugInfoSameOutputLLVM**: o2Goldens as --release with and without
   --debug-info; the rest -s against a plain -O1 build (TestGolden's,
   from the cache).
