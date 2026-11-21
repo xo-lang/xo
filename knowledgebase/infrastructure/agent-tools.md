@@ -2458,6 +2458,18 @@ on its container) would pass its container's machine gb, docker-vm's
 gb (both containers), or the Mac's room; a container counts at the
 larger of its use and its running leases' p90 peaks. Last verified: 2026-11-21.
 
+`"need_gb": N` in the same row (0733 "jobs with needs", 0732 step 2;
+off when null or absent) gives every Mac job a need: a stem with fewer
+than 3 runs needs N GB, or its HEAVY_MAX_GB cap when that is smaller.
+With it set and fit on, the fit also counts the Mac's measured use (gb
+x (100 - free%), when that is over the admitted MB: memory heavyd does
+not run, such as the Windows VM, is seen), and heavyd's own
+free-percent rules (HEAVY_GATE_MIN_FREE, HEAVY_GATE_SMALL_MIN_FREE,
+HEAVY_MIN_FREE for a second slot) give way to the fit; min_free_pct
+stays the floor. The reason then reads `admission v4 fit: 81.6 GB in
+use (15% free) + 8.0 GB over 88 (mac 96 - reserve 8)`. Way back: `xw
+policy rollback admission default`. Last verified: 2026-11-21.
+
 A lease's time limit on host 3 or 4 scales with the Mac's load at its
 start (owner question #240, 0733; off until the owner answers #240:
 heavyd started with HEAVYD_SCALE_LIMITS=1 turns it on): `-max`
