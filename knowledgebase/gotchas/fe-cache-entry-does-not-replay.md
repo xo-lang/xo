@@ -173,10 +173,23 @@ second build:
   instance a closure's entry reads was another body's; the sealed entry
   of the owner now lists its closures' generic reads and its replay
   misses on one that is not there, before any change, and the owner is
-  built from source. The cost: where the instance is made between the
-  owner's body and its closure's job, the owner's entry never replays
-  (a body built from source each time, no warning). Test: internal/arm64
+  built from source. Test: internal/arm64
   TestFrontCacheClosureReadGeneric. FE_CACHE_VERSION v22.
+- 2026-11-21, task #584 (red main, 19998d4fc's own regression): the
+  list above held every generic instance a closure read, also one made
+  between the owner's body and the closure's job. That one is absent at
+  the owner's replay in every build, so the owner was built from source
+  each time and `XO_CHK_CACHE=auto` skipped its module ("the module
+  check cache skipped 1 module(s) a body of which was built from
+  source"): TestModuleCheckAuto/programs/grpc_calls. The list now holds
+  only the instances there before the owner's body began (function
+  numbers below FeRec.nf, as the types use nt). An instance made later
+  that another program's build lacks can still miss at the closure, with
+  the warning and a second build, as before v22. The test samples every
+  8th golden, so a new golden (54f87386a) moved the sample onto
+  grpc_calls two pushes after the cause; grpc_calls, tls_errors,
+  websocket and grpc_health_watch are fixed cases now. FE_CACHE_VERSION
+  v23.
 The rule both follow: a closure's entry cannot miss, so everything it
 reads that its owner's entry does not make is either made by the entry
 (name-determined) or checked by the owner first.

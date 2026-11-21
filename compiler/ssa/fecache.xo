@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v22"
+const FE_CACHE_VERSION = "xo front cache v23"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -90,7 +90,7 @@ pub struct FeCache {
   pub break_name: Str = ""
   /// the entries of bodies that made closures, waiting for their
   /// closures' entries (fe_finalize): key, entry, the closures in order
-  pub pending: List[(Str, Bytes, List[Int], Int)] = []
+  pub pending: List[(Str, Bytes, List[Int], Int, Int)] = []
   /// a closure's entry when its job recorded one, and the closures it
   /// made in turn; a closure in no_clos recorded none
   pub clos_rec: Map[Int, (Bytes, List[Int])] = {}
@@ -1984,7 +1984,7 @@ fn (b: Builder) fe_made_closures() -> List[Int] {
 /// absent (2026-11-14: websocket_deadline then websocket, closure
 /// http.Server.serve.fn15's entry missed: read type Chan[()], which
 /// websocket_deadline's build had made before http.Server.serve).
-fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int) -> Option[Bytes] {
+fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int, nf: Int) -> Option[Bytes] {
   var w = EntryW{b: BytesBuilder.new()}
   w.b.write(e)
   w.uv(clos.len())
@@ -1997,8 +1997,8 @@ fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int) -> Option[Bytes] {
     match b.fe.clos_rec.get(cf) {
       Some((ce, sub)) => {
         b.fe_closure_reads(cf, nt, ext)
-        b.fe_closure_generics(cf, gext)
-        match b.fe_seal(ce, sub, nt) {
+        b.fe_closure_generics(cf, nf, gext)
+        match b.fe_seal(ce, sub, nt, nf) {
           Some(x) => w.bytes(x)
           None => return None
         }
@@ -2014,10 +2014,15 @@ fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int) -> Option[Bytes] {
   for n in names.sort() {
     w.str(n)
   }
-  // the generic instances its closures (at any depth) found: a body
-  // that makes one records no entry, so each was another body's, and a
-  // program where none made it yet misses here, at the owner, which is
-  // built from source (2026-11-20, task #574: tls_ekm then tls_errors,
+  // the generic instances its closures (at any depth) found that were
+  // there before its owner's body began (function numbers below nf, as
+  // the types above): a body that makes one records no entry, so each
+  // was another body's, and a program where none made it yet misses
+  // here, at the owner, which is built from source. One made between
+  // the owner's body and the closure's job is not listed: it is absent
+  // at the owner's replay in every build, and listing it built the
+  // owner from source each time (2026-11-21, task #584: grpc_calls'
+  // warm build, the module check cache skipped its module) (2026-11-20, task #574: tls_ekm then tls_errors,
   // closure tls.server_vpeer.fn30's entry missed: generic
   // prelude.list_map[List[Bytes], List[x509.Certificate], Never], and
   // the build was made again without the cache)
@@ -2033,15 +2038,20 @@ fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int) -> Option[Bytes] {
 }
 
 /// Into gext, the keys of the generic instances closure cf's entry and
-/// its closures' entries read (fe_seal).
-fn (b: Builder) fe_closure_generics(cf: Int, var gext: Map[Str, Bool]) {
+/// its closures' entries read that were there before the owner's body
+/// began (function numbers below nf; fe_seal).
+fn (b: Builder) fe_closure_generics(cf: Int, nf: Int, var gext: Map[Str, Bool]) {
   match b.fe.clos_rec.get(cf) {
     Some((ce, sub)) => {
       for k in entry_generic_reads(ce) {
-        gext[k] = true
+        if let Some(f) = b.funcs.get(k) {
+          if f < nf {
+            gext[k] = true
+          }
+        }
       }
       for c in sub {
-        b.fe_closure_generics(c, gext)
+        b.fe_closure_generics(c, nf, gext)
       }
     }
     None => {}
@@ -2125,8 +2135,8 @@ fn entry_type_reads(d: Bytes) -> List[Str] {
 /// The entries waiting for their closures', sealed and stored (after the
 /// build: every closure job has run).
 pub fn (var b: Builder) fe_finalize() {
-  for (key, e, clos, nt) in b.fe.pending {
-    if let Some(x) = b.fe_seal(e, clos, nt) {
+  for (key, e, clos, nt, nf) in b.fe.pending {
+    if let Some(x) = b.fe_seal(e, clos, nt, nf) {
       b.fe.stores.push((key, x))
     }
   }

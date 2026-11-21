@@ -1033,10 +1033,23 @@ func TestModuleCheckAuto(t *testing.T) {
 	}
 	defer os.RemoveAll(work)
 	dirs := []string{filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")}
+	// fixed cases, whatever the sample below holds (every 8th golden: a
+	// new golden moves it, and grpc_calls, whose owner body was built
+	// from source in every warm build since b7b3b4abe, entered the sample
+	// only when 59546c594 added one; task #584): a closure that reads a
+	// generic instance made after its owner's body (grpc_calls), one
+	// made before it in another program's build (tls_errors, task #574),
+	// a handle type (websocket, #573) and a list drop function
+	// (grpc_health_watch, #557)
+	fixed := map[string]bool{"grpc_calls": true, "tls_errors": true, "websocket": true, "grpc_health_watch": true}
 	for i, d := range goldenDirs(t) {
-		if _, err := os.Stat(filepath.Join(d, "main.xo")); err == nil && (os.Getenv("XO_SELFHOST_TIER") == "full" || i%8 == 0) {
+		if _, err := os.Stat(filepath.Join(d, "main.xo")); err == nil && (os.Getenv("XO_SELFHOST_TIER") == "full" || i%8 == 0 || fixed[filepath.Base(d)]) {
 			dirs = append(dirs, d)
+			delete(fixed, filepath.Base(d))
 		}
+	}
+	for n := range fixed {
+		t.Errorf("the fixed case %s is not a golden with a main.xo", n)
 	}
 	build := func(t *testing.T, out, dir, cache string, env ...string) ([]byte, string) {
 		t.Helper()
