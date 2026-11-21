@@ -2179,6 +2179,12 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     (#227; #226's os.Chdir leak was called a load flake): a package run
     that fails at the commit is `MAINBISECT-ORDER`, an `error=passes
     alone: order dependence or load` event naming both package results.
+    A failed subtest (TestX/sub) is kept from the log (#587): the host
+    first checks it ran at GOOD; a sampled test (every 8th golden) that
+    did not run it there is pinned with XO_SELFHOST_TIER=full
+    (`MAINBISECT-PINNED`, a `note=not run at GOOD: sample shift...` on
+    the event), so a commit that only moved the sample is not blamed;
+    not run even pinned is an `error=not run at GOOD` event to the lead.
     A one-commit range
     is confirmed on the host too (no host only with MB_CONFIRM=0). Its
     `bisect.done` event becomes a `bisect`
@@ -2186,7 +2192,7 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     else its task), or to the lead with a narrowed range. By hand:
     `mainbisect.sh GOOD BAD ./PKG TestName`; MAINBISECT=0 turns the
     automatic run off; logs in $LEAD/notes/bisect/. Last verified:
-    2026-11-17.
+    2026-11-21.
   - Agent rules registry (#139): [agent-rules.md](agent-rules.md) lists
     every rule's home, enforcement and test (TestAgentRulesRegistry in
     internal/repotest fails when a listed path goes missing) and the
