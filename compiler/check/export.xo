@@ -84,7 +84,7 @@ pub struct StdFileRec {
   pub ranges: List[parser.DeclRange] = []
 }
 
-const EXPORT_VERSION = "xo std export v15 (a field's server flag, decision 0719)"
+const EXPORT_VERSION = "xo std export v16 (a type's own JSON form is set before the record, task #566)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {

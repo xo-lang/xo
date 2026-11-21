@@ -239,6 +239,21 @@ fn (var c: Checker) run() -> () ! Str {
       for m in rec_mods {
         c.resolve_sigs(m)
       }
+      if c.std_export_on {
+        // a type's own JSON form (decision 0478: json_via, json_to,
+        // json_from) is part of the record: check_std_json_via reads the
+        // declarations' trees, which a module made from the record has
+        // only when a body of it is built, so a record written before it
+        // ran lost time.Date's form and an importer derived a plain codec
+        // (golden time_hostile_date after any program wrote the record,
+        // tiers 79 and 918 on linux/amd64, task #566). Before the block's
+        // ends are taken: the types the check makes are the record's
+        // every module of the record, those check_module checks below
+        // too (a merged one, as std/uuid: it reads the same trees)
+        for m in rec_mods {
+          c.check_std_json_via(m)
+        }
+      }
       c.std_block.obj_hi = c.objs.len()
       c.std_block.ty_hi = c.tys.len()
       c.std_block.eset_hi = c.esets.len()
