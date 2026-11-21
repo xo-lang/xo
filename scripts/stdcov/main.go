@@ -1412,11 +1412,7 @@ func main() {
 	w("")
 	w("How a mark is read here: *Features* from the rows of the coverage table that name the module (all done and no open function level gap of their Go packages in the audit, `scripts/stdaudit/map.txt`, is Proven; any partial row or open gap is Solid; a module no Go package maps to is Proven when its feature audit, `std/evidence/MODULE/features.md`, lists every feature with a test and none open, and Solid otherwise, decision 0691). *Testing* from the committed corpus of Go's tests under `internal/stdtest/testdata/corpus`, Go differential tests, and fuzz tests for modules that parse untrusted input. *Performance* from a committed result file with a Go twin; an internal helper module (htmlent, uniclass, protowire) takes the lowest performance mark among the modules that use it. A mark with no committed evidence is Early, so a missing result is the gap to close, not a hidden number. The dates are those of the result files, which can be older than this page; a re-run can only move a mark if the file is replaced. Proven testing evidence (`std/evidence/MODULE`) counts while the module's source hash matches the one it ran at, or for 90 days and one minor release: the hash covers the module's own files (`std/MODULE.xo`, `std/native/MODULE.xo`, `std/native/MODULE_native.xo` and the module specific `std/native/llrt` files they reach), the same files of every std module it uses, and `std/internal.xo`, but not the shared runtime (the allocator, scheduler, I/O and OS layer and the prelude), which its own tests, the fixed point and the full tier cover (decision 0616 section 3).")
 	w("")
-	w("Today: overall %d Proven, %d Solid, %d Early of %d (prelude and %d modules). Per axis, features %d/%d/%d, testing %d/%d/%d, performance %d/%d/%d (Proven/Solid/Early). No module has the committed `--race`, load stress, long fuzz and security review evidence that Proven testing needs yet.",
-		lvc["Proven"], lvc["Solid"], lvc["Early"], len(rows), nmods,
-		ax["features"]["Proven"], ax["features"]["Solid"], ax["features"]["Early"],
-		ax["testing"]["Proven"], ax["testing"]["Solid"], ax["testing"]["Early"],
-		ax["performance"]["Proven"], ax["performance"]["Solid"], ax["performance"]["Early"])
+	w("%s", todaySummary(lvc, ax, len(rows), nmods))
 	w("")
 	w("### Per module")
 	w("")
@@ -1539,4 +1535,22 @@ func main() {
 	}
 	sum, _ := json.Marshal(map[string]any{"counts": cnt, "levels": lvc, "axes": ax, "unmapped": unmapped})
 	fmt.Fprintln(os.Stderr, string(sum))
+}
+
+// todaySummary is the std coverage page's "Today:" line: the overall levels,
+// the counts per axis, and a note on the testing evidence.
+func todaySummary(lvc map[string]int, ax map[string]map[string]int, total, nmods int) string {
+	ev := "the committed `--race`, load stress, long fuzz and security review evidence that Proven testing needs"
+	note := "No module has " + ev + " yet."
+	switch tp := ax["testing"]["Proven"]; {
+	case tp == total:
+		note = fmt.Sprintf("All %d have %s.", tp, ev)
+	case tp > 0:
+		note = fmt.Sprintf("%d of %d have %s.", tp, total, ev)
+	}
+	return fmt.Sprintf("Today: overall %d Proven, %d Solid, %d Early of %d (prelude and %d modules). Per axis, features %d/%d/%d, testing %d/%d/%d, performance %d/%d/%d (Proven/Solid/Early).",
+		lvc["Proven"], lvc["Solid"], lvc["Early"], total, nmods,
+		ax["features"]["Proven"], ax["features"]["Solid"], ax["features"]["Early"],
+		ax["testing"]["Proven"], ax["testing"]["Solid"], ax["testing"]["Early"],
+		ax["performance"]["Proven"], ax["performance"]["Solid"], ax["performance"]["Early"]) + " " + note
 }

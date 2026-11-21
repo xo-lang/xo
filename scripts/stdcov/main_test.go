@@ -327,3 +327,29 @@ func TestEvCounts(t *testing.T) {
 		}
 	}
 }
+
+// TestTodaySummaryTestingNote: the "Today:" line's note on the testing
+// evidence follows the testing count (task #626: at c593847d75 it said no
+// module had the Proven testing evidence beside "testing 96/0/0").
+func TestTodaySummaryTestingNote(t *testing.T) {
+	axes := func(tp, ts int) map[string]map[string]int {
+		return map[string]map[string]int{"features": {"Proven": tp + ts}, "testing": {"Proven": tp, "Solid": ts}, "performance": {"Proven": tp + ts}}
+	}
+	const none = "No module has the committed"
+	cases := []struct {
+		tp, ts int
+		want   string
+		absent string
+	}{
+		{96, 0, "All 96 have the committed", none},
+		{0, 96, none, "have the committed"},
+		{90, 6, "90 of 96 have the committed", none},
+	}
+	for _, c := range cases {
+		lvc := map[string]int{"Proven": c.tp, "Solid": c.ts}
+		got := todaySummary(lvc, axes(c.tp, c.ts), 96, 95)
+		if !strings.Contains(got, c.want) || strings.Contains(got, c.absent) {
+			t.Errorf("testing %d/%d: got %q, want %q and no %q", c.tp, c.ts, got, c.want, c.absent)
+		}
+	}
+}
