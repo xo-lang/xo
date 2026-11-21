@@ -1729,9 +1729,11 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   TestAdoptGraceAfterRestart). Past 60 s a running job goes on
   unmanaged (heavyd no longer counts its slot), and a waiting lease
   exits with "the daemon went away and did not come back"
-  (LeaseExitNoDaemon) and must be started again. So restart with one
-  launchctl kickstart (or bootout then bootstrap) inside the minute,
-  never a stop left in place. Last verified: 2026-11-21.
+  (LeaseExitNoDaemon) and must be started again. So restart inside the
+  minute with `~/xo-lead/agents/heavyd-restart.sh` (the lead; bootout,
+  then bootstrap, retried once after 5 s: on 2026-11-21 the first
+  bootstrap after a bootout ended rc 5, Input/output error, and a retry
+  5 s later worked), never a stop left in place. Last verified: 2026-11-21.
 - Main's xo is prebuilt on the pass hosts (#264, cost:xo-cold-build,
   2026-11-17: gates cold-built xo, about 150 s p50): when main moves, xw
   runs scripts/lead/xo-prewarm.sh, which builds main's xo key on each of
