@@ -1884,16 +1884,62 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         outs.push("${lstd_out}/std.${i}.o")
       }
       let dwo = if ldebug && (lctx.tgoos is "linux" | "freebsd") { ["-gsplit-dwarf"] } else { [] }
-      match ir_objects_par(os, cc, sflags + dwo, lls, outs, split.jobs) {
-        Ok(_) => {
-          write_or_fail(os, lstd_out, "${lstd_out}/objs.txt", "${names.join("\n")}\n".bytes())
-          if !work_keep {
-            os.fs.remove_all(dir).ignore_err("only disk: the prune takes it after 30 minutes")
-          }
-          os.proc.exit(0)
+      // std's modules optimized across each other, once (decision 0738
+      // stage 3, ELF): each module to ThinLTO bitcode, one index step
+      // that decides which module imports which functions (`-r`: every
+      // symbol stays), then each module's own code generation with its
+      // imports, with the section flags above. Without it nothing is
+      // inlined between the seven modules, and a program linked against
+      // them ran 1.5 times the whole program's time over 71 workloads
+      // (rsa sign4096 5.4 times; 1.06 to 1.15 with it, 2026-11-21). A
+      // toolchain that cannot do it (no lld) gets the plain objects
+      var mode = "plain"
+      if split.opt != "-O0" && (lctx.tgoos is "linux" | "freebsd") && lls.len() > 1 {
+        var bcs: List[Str] = []
+        var per: List[List[Str]] = []
+        for i in 0..lls.len() {
+          bcs.push("${dir}/std.${i}.bc")
+          per.push(["-fthinlto-index=${dir}/std.${i}.bc.thinlto.bc"])
         }
-        Err(e) => fail(os, e)
+        if ir_objects_par(os, cc, sflags + ["-flto=thin"], lls, bcs, [], split.jobs).is_ok() {
+          // lld itself, asked of clang: through the clang driver the
+          // same options exit 0 and write no index (2026-11-21), and a
+          // backend given a missing index also exits 0, with an empty
+          // object. So each step's files are looked at, not its status
+          // xo:allow XO0903 no lld: the plain objects below
+          let lld = (os.proc.run(cc, ["-print-prog-name=ld.lld"]).ok().map(fn(r) { r.stdout.to_str() ?? "" }) ?? "").trim()
+          if !lld.is_empty() {
+            os.proc.run(lld, ["-r", "--thinlto-index-only"] + bcs + ["-o", "${dir}/std.index.o"]).ignore_err("the index files below say whether it worked")
+            var have = true
+            for bc in bcs {
+              // xo:allow XO0903 a missing index: the plain objects below
+              have = have && (os.fs.exists("${bc}.thinlto.bc").ok() ?? false)
+            }
+            if have && ir_objects_par(os, cc, sflags + dwo + ["-x", "ir"], bcs, outs, per, split.jobs).is_ok() {
+              var full = true
+              for o1 in outs {
+                // xo:allow XO0903 an object that cannot be read counts as empty
+                full = full && (os.fs.read(o1).ok().map(fn(d) { d.len() }) ?? 0) > 0
+              }
+              if full {
+                mode = "thinlto"
+              }
+            }
+          }
+        }
       }
+      if mode == "plain" {
+        match ir_objects_par(os, cc, sflags + dwo, lls, outs, [], split.jobs) {
+          Ok(_) => {}
+          Err(e) => fail(os, e)
+        }
+      }
+      write_or_fail(os, lstd_out, "${lstd_out}/mode.txt", "${mode}\n".bytes())
+      write_or_fail(os, lstd_out, "${lstd_out}/objs.txt", "${names.join("\n")}\n".bytes())
+      if !work_keep {
+        os.fs.remove_all(dir).ignore_err("only disk: the prune takes it after 30 minutes")
+      }
+      os.proc.exit(0)
     }
     // a separately compiled program (decision 0738): std's objects for
     // its concurrency (XO_SEPCOMP_STORE names their directory here, as

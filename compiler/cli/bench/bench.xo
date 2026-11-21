@@ -783,16 +783,18 @@ fn counters_na(goos: Str) -> Str {
 
 /// Why `xo bench` does not run with XO_SEPCOMP_LLVM set to v, or "": the
 /// LLVM backend's build against std's own objects (decision 0738) is for
-/// build time. Nothing is inlined across or inside std's modules yet,
-/// and its programs ran 1.486 times the whole program's wall time over
-/// 71 workloads (4.4 times on rsa; linux/arm64, 2026-11-21, task #607),
-/// so a build or a measurement made with the variable set is not the
+/// build time. Nothing is inlined from std into the program yet, and
+/// only on ELF are std's modules optimized across each other: its
+/// programs ran 1.062 times the whole program's wall time over 71
+/// workloads with that (up to 1.47 on a workload) and 1.486 times
+/// without it (4.4 on rsa; linux/arm64, 2026-11-21, task #607), so a
+/// build or a measurement made with the variable set is not the
 /// program's speed.
 fn sepcomp_llvm_refusal(v: Str) -> Str {
   if v != "1" {
     return ""
   }
-  "XO_SEPCOMP_LLVM=1 is set: an LLVM build against std's own objects is not optimized across std (decision 0738: about 1.5 times the whole program's time, up to 6 on some workloads), so nothing is timed with it; unset it"
+  "XO_SEPCOMP_LLVM=1 is set: an LLVM build against std's own objects is not optimized across the program and std (decision 0738: 1.06 times the whole program's time on Linux, up to 1.5 on a workload, and more elsewhere), so nothing is timed with it; unset it"
 }
 
 /// run is `xo bench ARGS` and returns the exit status.

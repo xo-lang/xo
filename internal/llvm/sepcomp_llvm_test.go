@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -52,6 +53,27 @@ func TestSepcompLLVM(t *testing.T) {
 		}
 		if string(want) != res.String() {
 			t.Errorf("the O1 build differs from want.txt\n--- want\n%s\n--- got\n%s", want, res)
+		}
+	})
+	// on ELF std's modules are optimized across each other when the
+	// objects are made (distributed ThinLTO, which needs lld): the build
+	// says which objects it linked. Without that step a program ran 1.5
+	// times the whole program's time
+	t.Run("std modules optimized together", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("ELF only: darwin links the plain objects")
+		}
+		cl, err := xotool.Clang()
+		if err != nil {
+			t.Skip("clang not found")
+		}
+		out, err := exec.Command(cl, "-print-prog-name=ld.lld").Output()
+		if _, serr := os.Stat(strings.TrimSpace(string(out))); err != nil || serr != nil {
+			t.Skip("no lld: the plain objects are the fallback")
+		}
+		_, build := buildRunLeak(t, filepath.Join("testdata", "golden", "arith"), xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off"}})
+		if !strings.Contains(build.Output, "(thinlto)") || strings.Contains(build.Output, "(plain)") {
+			t.Fatalf("std's LLVM objects are not the ThinLTO ones (want `(thinlto)` on both `cache std llvm` lines):\n%s", build.Output)
 		}
 	})
 	for _, name := range []string{"arith", "conc_channels", "json_text", "list_swap_guard", "http_tls"} {

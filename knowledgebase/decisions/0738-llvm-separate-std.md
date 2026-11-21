@@ -234,6 +234,45 @@ with `XO_SEPCOMP_LLVM=1` set (compiler/cli/bench sepcomp_llvm_refusal),
 and it does not become the default until stage 3 covers the calls
 inside std as well as those into it.
 
+## Stage 3, the first half: std's modules optimized together (2026-11-21)
+
+The cost above was mostly inside std. An experiment on the worst rows
+(~/xo-lead/notes/xo-lang-1/p607/thin2.out, thin3.out; a shared host,
+ratios to the whole program): rsa sign4096 5.39 with the plain objects
+and 1.06 with std's seven modules optimized across each other once;
+text cut 1.96 and 1.30.
+
+So on ELF std's objects are made by distributed ThinLTO (compiler/xo
+main.xo, the XO_STD_OBJ branch): each module to bitcode (`-flto=thin`),
+one index step (`ld.lld -r --thinlto-index-only`, `-r` so every symbol
+stays), then each module's own code generation with its imports
+(`-x ir -fthinlto-index=`), in parallel, with the same section flags
+and split DWARF. A relocatable ThinLTO link into one object was tried
+first and lost the function sections inside `xo_text`. The clang
+driver given the index options exits 0 and writes no index, and a
+backend given a missing index exits 0 with an empty object, so xo runs
+lld itself and looks at each step's files; without lld, or when a step
+leaves nothing, the objects are the plain ones (`mode.txt`, printed by
+--phase-times as `(thinlto)` or `(plain)`). darwin links the plain
+objects still.
+
+Measured again, linux/arm64 host 1 run alone, xo at 059490a56, the
+same 71 workloads (rt-time-059490a56.out): the opt in over the whole
+program 1.062 as the geometric mean (1.486 before): portable 1.021,
+json 1.051, atomic 1.062, text 1.062, fault 1.064, rsa 1.069 (4.389
+before), digest 1.072, ctx 1.151. The worst rows are calls from the
+program into std, the second half of this stage: atomic add 1.470, ctx
+defer 1.417, ctx budget 1.326, text cut 1.297. clang's time per program
+is as before (0.08 to 0.64 s); std's objects take about 44 s a variant.
+
+The price is size: imported functions bring their line tables, so a
+binary's `.debug` sections are a constant 2.95 MB (concurrent) or 6.06
+MB (1.85 and 3.05 MB with the plain objects), and arith is 7.40 MB
+where the whole program is 1.30 MB (drv7.out). Ten of ten goldens gave
+the whole program's output but for list_swap_guard's `[inlined]` mark;
+one run counted 13 differing lines there, which 16 later executions
+did not repeat (tb1.out, tb2.out): unexplained.
+
 ## Consequences
 
 - A warm LLVM build of a program that reaches http or crypto compiles
