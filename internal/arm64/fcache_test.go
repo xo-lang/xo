@@ -3326,6 +3326,65 @@ func TestFrontCacheClosureReadMapHelper(t *testing.T) {
 	}
 }
 
+// TestFrontCacheClosureReadDropList: a closure's front end entry that
+// read a list's drop function another body made (std/grpc's serve_call
+// closures call xo.droplist[Map[Str, Str]] and xo.droplist[Str], which
+// internal/llvm golden grpc_health_watch makes before them) replays in a
+// program where nothing made it yet (grpchealth_calls). Before
+// (2026-11-20, TestWarmBuildSequence on main at a17d5467c, task #557),
+// the entry listed the function as a read, missed there, and the build
+// was made again without the cache; the entry now records it as made
+// whole, as it does a Map helper. The replayed build equals a build
+// without the cache.
+func TestFrontCacheClosureReadDropList(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fedroplist-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(work) })
+	cache := filepath.Join(work, "cache")
+	// one file name for every build: a Mach-O binary holds its own
+	build := func(prog, dir string, env ...string) []byte {
+		out := filepath.Join(work, dir, progExe)
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
+		cmd.Dir = filepath.Join("..", "llvm", "testdata", "golden", prog)
+		cmd.Env = append(warmSeqEnv(), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: xo build: %v\n%s", prog, err, log)
+		}
+		if strings.Contains(string(log), "did not replay") {
+			t.Errorf("%s: a front end cache entry did not replay:\n%s", prog, log)
+		}
+		bin, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bin
+	}
+	// the environments of TestWarmBuildSequence's pairs: xo's defaults on
+	// a fresh cache, against a build with every cache off
+	on := []string{"XO_BACKEND_CACHE_DIR=" + cache, "XO_FE_KEEP_DIR=" + filepath.Join(work, "kept")}
+	build("grpc_health_watch", "first", on...)
+	warm := build("grpchealth_calls", "warm", on...)
+	cold := build("grpchealth_calls", "cold", "XO_BACKEND_CACHE=off", "XO_FE_CACHE=off", "XO_CHK_CACHE=off", "XO_BIN_CACHE=off",
+		"XO_SEPCOMP=0", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cold-cache"))
+	if !bytes.Equal(warm, cold) {
+		t.Errorf("grpchealth_calls after grpc_health_watch differs from its build without the cache: %s", warmDiff(warm, cold))
+	}
+}
+
 // TestFrontCacheClosureReadMadeType: a closure's front end entry that
 // read types another body made where it was recorded replays in a
 // program where nothing made them yet. tls.vconn_wrap's closures read

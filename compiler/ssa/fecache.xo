@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v20"
+const FE_CACHE_VERSION = "xo front cache v21"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -693,7 +693,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   var helper: Map[Int, Bool] = {}
   var after: Map[Int, List[Int]] = {}
   for (i, _) in b.m.fe_freads {
-    if i < r.nf && !fe_map_helper(b.m.funcs[i].name) {
+    if i < r.nf && !fe_named_fn(b.m.funcs[i].name) {
       fread[i] = true
     }
   }
@@ -719,7 +719,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
           if w < 0 || w >= r.nf || helper.contains(w) {
             continue
           }
-          if fe_map_helper(n) {
+          if fe_named_fn(n) {
             helper[w] = true
             extra.push(w)
             st.push(w)
@@ -2081,6 +2081,18 @@ fn (b: Builder) helper_order(x: Int, var want: Map[Int, Bool], var group: List[I
 /// one another body made records it as made whole (fe_entry).
 fn fe_map_helper(n: Str) -> Bool {
   n.starts_with("xo.map.") || n.starts_with("xo.mlog.") || n.starts_with("xo.maph.")
+}
+
+/// Whether n names a function an entry that read it records as made
+/// whole (fe_entry, fidx): a Map helper, or a list type's drop
+/// (xo.droplist[T], an empty function drop_list takes by its name).
+/// std/grpc's serve_call closures read xo.droplist[Map[Str, Str]] and
+/// xo.droplist[Str], which internal/llvm golden grpc_health_watch makes
+/// before them and grpchealth_calls does not: their entries missed there
+/// and the build was made again without the cache (task #557,
+/// 2026-11-20; internal/arm64 TestFrontCacheClosureReadDropList).
+fn fe_named_fn(n: Str) -> Bool {
+  fe_map_helper(n) || n.starts_with("xo.droplist[")
 }
 
 fn fe_const_fn(n: Str) -> Bool {

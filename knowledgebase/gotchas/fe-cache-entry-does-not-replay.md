@@ -1,6 +1,6 @@
 # A front end cache entry passed its checks and then did not replay
 
-Status: Observed (2026-10-20, 2026-10-26, 2026-11-04 twice, 2026-11-11); each cause found is fixed, the driver still rebuilds without an entry that fails
+Status: Observed (2026-10-20, 2026-10-26, 2026-11-04 twice, 2026-11-11, 2026-11-15, 2026-11-20); each cause found is fixed, the driver still rebuilds without an entry that fails
 
 Symptom: `xo build ./compiler/xo` (and scripts/bootstrap-xo.sh at s1)
 failed with "the front end cache's entry for ssa.Builder.unbox_type does
@@ -134,3 +134,22 @@ body calls; their types join the types read, and the other functions
 they call stay reads. The replay keeps one already there
 (fe_const_fn). Test: internal/arm64 TestFrontCacheClosureReadMapHelper
 (the pair: 3 non-replays with main's xo, 0 here).
+
+Observed 2026-11-20 (TestWarmBuildSequence on main at ea1bd76a5, the
+modules set, task #557; also in the runs of 2026-11-15 16:05 and
+2026-11-17 19:26): "closure grpc.serve_call.fn52 ... its entry missed:
+read xo.droplist[Map[Str, Str]]" (also fn37, fn62 and xo.droplist[Str])
+building grpchealth_calls after grpc_health_watch. The same accident
+once more, for a list type's drop function (drop_list's xo.droplist[T],
+an empty function taken by its name): grpc_health_watch made it in an
+earlier body, so the closures' entries listed it as a function read, and
+grpchealth_calls had none yet. The output was right both times: the
+build was made again without the entry, and equals the build with every
+cache off. Fix: fe_named_fn (a Map helper or xo.droplist[T]) replaces
+fe_map_helper where an entry records a function it read as made whole
+(fidx's event 3, fe_entry); FE_CACHE_VERSION v21. Test: internal/arm64
+TestFrontCacheClosureReadDropList (the pair, compared with the cold
+build under one file name: a Mach-O binary holds its output file's
+name, so builds to `warm` and `cold` differ in those 4 bytes). Still a
+read, so the next of this kind: a constant's function (xo.const[M.N]),
+whose body is not name-determined in the same way.
