@@ -985,17 +985,29 @@ func TestRaceUseCWithRuntime(t *testing.T) {
 		if err != nil {
 			t.Skip("clang not found")
 		}
-		name := "lib/darwin/libclang_rt.tsan_osx_dynamic.dylib"
+		// clang names its runtime by the target's directory
+		// (lib/aarch64-unknown-linux-gnu/libclang_rt.tsan.a) or by a
+		// suffix (lib/linux/libclang_rt.tsan-aarch64.a): the first
+		// name it resolves to a file (the suffix alone found none on
+		// the linux/arm64 host, and the test skipped there, task #566)
+		names := []string{"lib/darwin/libclang_rt.tsan_osx_dynamic.dylib"}
 		if runtime.GOOS != "darwin" {
-			name = "libclang_rt.tsan-" + map[string]string{"arm64": "aarch64", "amd64": "x86_64"}[runtime.GOARCH] + ".a"
+			arch := map[string]string{"arm64": "aarch64", "amd64": "x86_64"}[runtime.GOARCH]
+			names = []string{"libclang_rt.tsan.a", "libclang_rt.tsan-" + arch + ".a", "lib/linux/libclang_rt.tsan-" + arch + ".a"}
 		}
-		out, err := exec.Command(cl, "-print-file-name="+name).Output()
-		rt = strings.TrimSpace(string(out))
-		if err != nil || !filepath.IsAbs(rt) {
-			t.Skipf("no ThreadSanitizer runtime (%s): %v", rt, err)
+		for _, name := range names {
+			out, err := exec.Command(cl, "-print-file-name="+name).Output()
+			p := strings.TrimSpace(string(out))
+			if err != nil || !filepath.IsAbs(p) {
+				continue
+			}
+			if _, err := os.Stat(p); err == nil {
+				rt = p
+				break
+			}
 		}
-		if _, err := os.Stat(rt); err != nil {
-			t.Skipf("no ThreadSanitizer runtime: %v", err)
+		if rt == "" {
+			t.Skipf("no ThreadSanitizer runtime (clang -print-file-name of %v)", names)
 		}
 	}
 	cmd := testtmp.Guard(exec.Command(xo, "test", "--race", "."))
