@@ -1192,7 +1192,7 @@ fi
 steps=""
 for step in "$@"; do
   case $step in
-  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit|stdfast|checkall|clihelp|goldenasm|tsanmaps|testheavy|stdobj|nohttp|wasmlist|vetcost|stdcov|harness)
+  codegen|selfbuild|seedbuild|wasm|cross|fieldgen|xounit|stdfast|stdwasmnew|checkall|clihelp|goldenasm|tsanmaps|testheavy|stdobj|nohttp|wasmlist|vetcost|stdcov|harness)
     # pushq's proving checks: run after the named steps with the ones the
     # change's paths require (gate_plan), each once, and named in the
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
@@ -1591,15 +1591,7 @@ run_step_body() {
       bad=0; nmod=0
       for m in $(find std -name '*_test.xo' | sed 's#^std/##; s#_test\.xo$##' | sort); do
         nmod=$((nmod + 1))
-        # std/NAME when std/native has NAME too (a bare cbor is ambiguous)
-        a=$m; [ -f "std/native/$m.xo" ] && a=$(gate_stdfast_test_mod "$m")
-        out=$(XO_TEST_EXEC="node --no-warnings $PWD/compiler/wasm/run.mjs" timeout 900 bin/xo test --backend=wasm --count=1 --std-module="$a" 2>&1)
-        sum=$(printf '%s\n' "$out" | grep -E '^(ok|FAIL): [0-9]+ passed' | tail -1)
-        echo "$m: ${sum:-no summary}" >>"$logs/stdwasm.txt"
-        case $sum in
-          ok:*) ;;
-          *) bad=$((bad + 1)); printf '%s\n' "$out" | tail -20 | sed "s#^#  [$m] #" >>"$logs/stdwasm.txt" ;;
-        esac
+        stdwasm_one "$m" "$logs/stdwasm.txt" || bad=$((bad + 1))
       done
       [ "$bad" -gt 0 ] && failed=1
       echo "stdwasm: $((nmod - bad)) of $nmod std test modules ok on wasm ($logs/stdwasm.txt)"
@@ -1901,6 +1893,47 @@ prove_staleref() {
 # gate_vetcost_new; seconds), then stdchecks and stdgen -check (the
 # pre-check's when it ran them); minutes, no golden suites, the tier on
 # main runs the rest
+# stdwasm_one M LOG: the std test module M (its path under std/ less
+# _test.xo) under `xo test --backend=wasm`, Node's WASI the runner
+# (decision 0610), its summary line appended to LOG, and its last 20
+# lines when the summary is not ok:, then status 1 (steps stdwasm and
+# stdwasmnew, so the tier's line and the push's are one)
+stdwasm_one() {
+  local m=$1 a out sum
+  # std/NAME when std/native has NAME too (a bare cbor is ambiguous)
+  a=$m; [ -f "std/native/$m.xo" ] && a=$(gate_stdfast_test_mod "$m")
+  out=$(XO_TEST_EXEC="node --no-warnings $PWD/compiler/wasm/run.mjs" timeout 900 bin/xo test --backend=wasm --count=1 --std-module="$a" 2>&1)
+  sum=$(printf '%s\n' "$out" | grep -E '^(ok|FAIL): [0-9]+ passed' | tail -1)
+  echo "$m: ${sum:-no summary}" >>"$2"
+  case $sum in ok:*) return 0 ;; esac
+  printf '%s\n' "$out" | tail -20 | sed "s#^#  [$m] #" >>"$2"
+  return 1
+}
+# stdwasmnew (#579, lead #578): a std test file the merge base lacks
+# (gatelib gate_new_std_tests) runs once under the stdwasm step's line.
+# Seven modules added 2026-11-15 to 11-18 passed their pushes and failed
+# only in tier 919's stdwasm: socket, process or C tests the wasm
+# backend cannot build, not in compiler/xo/wasmskip.xo (a skipped
+# module still prints an ok: summary; gotchas/
+# new-std-test-module-needs-wasm-skip.md).
+prove_stdwasmnew() {
+  local sfb f m bad=0
+  if ! command -v node >/dev/null 2>&1; then
+    failed=1; echo "stdwasmnew: FAIL (node not found: the wasm test modules run under Node's WASI)"
+    return
+  fi
+  sfb=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  : >"$logs/stdwasmnew.txt"
+  for f in $({ git diff --name-only "$sfb" HEAD; git status --porcelain | cut -c4-; } | sort -u | GATE_DIFF_BASE=$sfb gate_new_std_tests); do
+    m=${f#std/}; m=${m%_test.xo}
+    if stdwasm_one "$m" "$logs/stdwasmnew.txt"; then
+      echo "stdwasmnew $(grep "^$m: " "$logs/stdwasmnew.txt" | tail -1)"
+    else
+      bad=1; echo "stdwasmnew $m: FAIL on wasm ($logs/stdwasmnew.txt): list it, or its native-only tests, with the reason in compiler/xo/wasmskip.xo (wasm_module_skip, wasm_test_skip; gotchas/new-std-test-module-needs-wasm-skip.md)"
+    fi
+  done
+  if [ "$bad" = 1 ]; then failed=1; else ran="$ran stdwasmnew"; fi
+}
 prove_stdfast() {
   local sfb mods m bad=0
   sfb=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
@@ -2114,7 +2147,8 @@ ch=$({ git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } |
 req=""
 if [ "${XO_GATE_PUSHQ:-1}" != 0 ]; then
   # from the gate's base (XO_GATE_BASE), as staleref's literals are
-  req=$(echo "$ch" | GATE_DIFF_BASE=$base gate_required_steps)
+  # plus the new std test files (ch has no _test.xo): stdwasmnew (#579)
+  req=$({ echo "$ch"; { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | sort -u | GATE_DIFF_BASE=$base gate_new_std_tests; } | grep . | GATE_DIFF_BASE=$base gate_required_steps)
   [ "${XO_GATE_CROSS:-1}" = 0 ] && req=$(echo " $req " | sed 's/ cross / /')
 fi
 # std's own checks (TestStdChecks: every native and runtime body checked

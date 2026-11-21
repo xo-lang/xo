@@ -349,6 +349,13 @@ yourself.
     or XO0915 note that cmd/xo/testdata/vetcost-std-allow.txt does not
     list fails: TestVetCostStd's rule, gatelib `gate_vetcost_new`), plus
     TestStdChecks and stdgen -check;
+  - a new std test file (std/**/*_test.xo the merge base lacks; any
+    push, light or full set): `stdwasmnew` runs its module once under
+    the tier stdwasm step's line (`xo test --backend=wasm --count=1
+    --std-module=M`, Node's WASI, needs node) and fails unless the
+    summary is `ok:` (task #579, gatelib `gate_new_std_tests`, gate.sh
+    `stdwasm_one`): eight modules added 2026-11-10 to 11-18 failed
+    only in tier 919 (gotchas/new-std-test-module-needs-wasm-skip.md);
   - a std module change (std/M.xo, std/M/, std/native/M.xo; not
     _test.xo) that 1 to 24 internal/llvm goldens `use std/M` for:
     `staleref` runs those goldens too (llvm and arm64; task #562, gatelib
