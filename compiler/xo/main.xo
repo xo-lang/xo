@@ -487,6 +487,19 @@ fn main(os0: Os) ! {
   let whole_os = bos
   bos = sepcomp_default(bos, ctx, o, backend)
   var nb = build_native(bos, ctx, o, backend)
+  if nb.race_llvm {
+    // Xo's linkers take objects, and --race links with them (decision
+    // 0273): a program with C sources builds with the LLVM backend, as
+    // where no ThreadSanitizer runtime ships. In a release (lib/xo/race
+    // is there) `xo test --race` of such a program stopped at
+    // "--ld=macho links no C sources" on linux and "--race on the arm64
+    // backend links with Xo's linker" on darwin (task #558, 2026-11-20)
+    if o.cc.is_empty() && find_clang(os).is_empty() {
+      fail(os, "--race: this program compiles C sources (`use c`), so it builds with the LLVM backend, which needs clang: install it or set XO_CLANG")
+    }
+    backend = "llvm"
+    nb = build_native(whole_os, ctx, o, backend)
+  }
   if nb.whole {
     // a program that uses C links with cc, which cannot read std's store:
     // the default's build is the whole program's instead
@@ -641,6 +654,9 @@ struct Native {
   /// Nothing built: the program uses C, which separate compilation
   /// cannot link (decision 0388), so it is to be built whole.
   whole: Bool = false
+  /// Nothing built: a --race build on the default native backend whose
+  /// program compiles C sources (race_c_sources), to be built with LLVM.
+  race_llvm: Bool = false
 }
 
 /// The native backend that builds target tg ("" for none): arm64 for
@@ -1187,6 +1203,18 @@ fn race_backend(os: Os, ctx: Ctx, o: Opts) -> Str {
   if rt.is_empty() { "llvm" } else { b }
 }
 
+/// Whether the program has a `use c` binding that is not a prebuilt
+/// object for the target (c_inputs: its adapter and link files are C
+/// sources, which cc compiles).
+fn race_c_sources(os: Os, c: check.Checker, std: Str, tgoos: Str, tgoarch: Str) -> Bool {
+  for m in c.mods {
+    if !m.c_prefix.is_empty() && sqlite_prebuilt(os, std, m, tgoos, tgoarch).is_empty() {
+      return true
+    }
+  }
+  false
+}
+
 fn native_backend(o: Opts) -> Str {
   var arch = host_arch()
   if !o.targets.is_empty() && o.targets != "all" {
@@ -1349,6 +1377,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     c.det = o.topts.seed != 0 || o.explore > 0 || tests_seeded(c)
   }
   t = lap(os, phases, "check", t)
+  // --race chose the native backend (race_backend: a ThreadSanitizer
+  // runtime ships), whose link is Xo's linker's, and the program has a
+  // `use c` source to compile: the caller builds it with LLVM, whose
+  // clang compiles the C with ThreadSanitizer too
+  if o.race && o.backend_auto && o.targets.is_empty() && (backend is "arm64" | "amd64") && race_c_sources(os, c, o.std, goos, march) {
+    return Native{race_llvm: true}
+  }
   // a module that uses C links with cc, which cannot read std's store
   // (decision 0388): the caller builds the whole program
   if !sepcomp_facts_path(os).is_empty() && c.mods.any(fn(m) { !m.c_prefix.is_empty() }) {

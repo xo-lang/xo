@@ -512,3 +512,19 @@ its payload instead of retaining its leaves (a81de74f2); the semantics
 were sound (gotchas/race-rc-paths-annotated-by-hand.md). Any new runtime
 path that hands a value between threads through a count or flag adds
 its own pair.
+
+## Addendum (2026-11-20): a program with C sources builds with LLVM (task #558)
+
+`--race` with no `--backend` also takes the LLVM backend when the
+program has a `use c` binding whose adapter and link files are C sources
+(compiler/xo main.xo race_c_sources: every binding but std/sqlite's
+prebuilt object). The native `--race` link is Xo's linker's, which takes
+objects, and clang compiles the C with ThreadSanitizer as spec 9.1 says.
+Before, with a runtime under lib/xo/race (every release; a checkout has
+none, so its `--race` was LLVM's and the tests passed), `xo test --race`
+of such a program stopped at "--ld=macho links no C sources" on linux
+and "--race on the arm64 backend links with Xo's linker" on darwin (tier
+918 on the linux/arm64 host). A missing clang says the program compiles
+C sources. An explicit `--backend=arm64` or `amd64` keeps the old error.
+Test: internal/llvm TestRaceUseCWithRuntime (XO_RACE_RUNTIME names
+clang's runtime).

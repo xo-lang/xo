@@ -957,3 +957,52 @@ func TestRaceUseC(t *testing.T) {
 		}
 	}
 }
+
+// TestRaceUseCWithRuntime: `xo test --race` of a program with a `use c`
+// source where a ThreadSanitizer runtime ships (a release's
+// lib/xo/race; here XO_RACE_RUNTIME names clang's). --race then chooses
+// the native backend, whose link is Xo's linker's, which takes objects:
+// the build stopped at "--ld=macho links no C sources (.../cffi/
+// xo_c_racec_.c): link with cc" on linux and "--race on the arm64
+// backend links with Xo's linker" on darwin (tier 918 on the
+// linux/arm64 host, task #558, 2026-11-20; TestRaceUseC passed only in
+// a checkout with no runtime, where --race builds with LLVM). Such a
+// program builds with the LLVM backend.
+func TestRaceUseCWithRuntime(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		t.Skipf("ThreadSanitizer does not run here: %s", why)
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := os.Getenv("XO_RACE_RUNTIME")
+	if rt == "" {
+		cl, err := xotool.Clang()
+		if err != nil {
+			t.Skip("clang not found")
+		}
+		name := "lib/darwin/libclang_rt.tsan_osx_dynamic.dylib"
+		if runtime.GOOS != "darwin" {
+			name = "libclang_rt.tsan-" + map[string]string{"arm64": "aarch64", "amd64": "x86_64"}[runtime.GOARCH] + ".a"
+		}
+		out, err := exec.Command(cl, "-print-file-name="+name).Output()
+		rt = strings.TrimSpace(string(out))
+		if err != nil || !filepath.IsAbs(rt) {
+			t.Skipf("no ThreadSanitizer runtime (%s): %v", rt, err)
+		}
+		if _, err := os.Stat(rt); err != nil {
+			t.Skipf("no ThreadSanitizer runtime: %v", err)
+		}
+	}
+	cmd := testtmp.Guard(exec.Command(xo, "test", "--race", "."))
+	cmd.Dir = filepath.Join("testdata", "race_usec")
+	cmd.Env = append(os.Environ(), "XO_RACE_RUNTIME="+rt)
+	b, err := cmd.CombinedOutput()
+	if err != nil || strings.Contains(string(b), "ThreadSanitizer") {
+		t.Fatalf("xo test --race with a ThreadSanitizer runtime (%s): %v\n%s", rt, err, b)
+	}
+}

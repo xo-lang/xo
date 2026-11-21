@@ -9,7 +9,18 @@ test "a record is resized and freed by the address rt.heap_large returned" {
   rt.mem_store(b, 32, 7, 8)
   let c = resize(b, 400)
   expect(rt.mem_load(c, 32, 8)) == 7
-  expect(rt.mem_load(c - 8, 0, 8)) == -400
+  // the native heap's prefix: minus the block's size. The wasm heap
+  // keeps a 16 byte header (compiler/wasm rt.xo $heap_large: the usable
+  // size, a power of two less 16, then the free list's link), so the
+  // word before the data is 0 there (the stdwasm step of tier 918, task
+  // #558: this expect read 0 for -400)
+  match target.os {
+    TargetOs.Wasi => {
+      expect(rt.mem_load(c - 8, 0, 8)) == 0
+      expect(rt.mem_load(c - 16, 0, 4)) == 512 - 16
+    }
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Windows | TargetOs.FreeBSD => expect(rt.mem_load(c - 8, 0, 8)) == -400
+  }
   release(c)
 }
 
