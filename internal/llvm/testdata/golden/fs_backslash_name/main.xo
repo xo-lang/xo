@@ -26,6 +26,11 @@ fn main(os: Os) ! {
   for fi in root.read_dir(".")? {
     names.push(fi.name)
   }
-  out.println("entries ${names.len()}")
+  // a.txt, d and back\slash.txt; on Windows the odd file is in d
+  let want = match target.os {
+    TargetOs.Windows => 2
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => 3
+  }
+  out.println("entries ${if names.len() == want { "as written" } else { "${names.len()}" }}")
   base.remove_all(name)?
 }

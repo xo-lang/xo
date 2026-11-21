@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-21: fix: a sub Fs keeps a trailing separator
+
+- Kind: fix
+- Commit: this push
+- Found by: task #597, fs_backslash_name on windows/amd64 (read trailing: found)
+- Go reference: os.DirFS (fs.ValidPath rejects a trailing slash; the OS rejects a file opened as a directory)
+- Change: a sub Fs cleaned the path it was given, so "a.txt/" read the file a.txt on every OS while os.fs said not found; the trailing separator is now kept, so a file named with one is not found and a directory still is
+- Measured: no speed claim
+- Test: golden fs_sub_trailing_slash (fails before: sub read a.txt/: found)
+
 ## 2026-11-20: fix: Str.clone and Bytes.clone copy on the Go backend
 
 - Kind: fix

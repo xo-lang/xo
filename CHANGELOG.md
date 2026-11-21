@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std fs; task #597): a sub Fs (`os.fs.sub(dir)`) keeps a trailing separator, so reading `"a.txt/"` is not found, as for `os.fs`; it read the file a.txt.
 - Fix (Go backend; task #580): a float literal multiplied, added or subtracted with an integer literal converted to Float (`1e308 * Float(12)`) no longer fails `xo build --backend=go` with "constant 1.2e+309 of type float64 overflows float64 ... a code generator bug"; the result is `+Inf`, as on the arm64 and LLVM backends.
 - Fix (build cache; task #584): a warm build no longer builds a function from source every time when one of its closures calls a generic instance made after that function's body (seen as "the module check cache skipped 1 module(s) a body of which was built from source" on grpc programs since the #573/#574 fix).
 - Fix (build cache; tasks #573, #574): two more cases of "the front end cache entry ... did not replay" followed by a second build are gone: a closure of std/http's Server.serve reading `Chan[()]` (a websocket program built after another one), and a closure of std/tls's server reading a generic `list_map` instance (a TLS program built after another one). The output was right in both; only the warning and the second build go away.

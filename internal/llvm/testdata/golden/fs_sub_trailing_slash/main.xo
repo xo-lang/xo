@@ -1,0 +1,21 @@
+// A trailing separator names a directory in a sub Fs, as for os.fs: the
+// sub Fs cleaned it away, so "a.txt/" read the file a.txt (task #597,
+// 2026-11-21, on every OS; os.fs said not found).
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let tmp = os.env.get("TMPDIR") ?? "/tmp"
+  let base = os.fs.sub(tmp)
+  let name = "xo-fs-trailing-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/d")?
+  let root = base.sub(name)
+  root.write("a.txt", b"hello")?
+  root.write("d/b.txt", b"b")?
+  out.println("sub read a.txt: ${root.read("a.txt")?.len()} bytes")
+  out.println("sub read a.txt/: ${if root.read("a.txt/").is_ok() { "found" } else { "not found" }}")
+  out.println("os read a.txt/: ${if os.fs.read("${tmp}/${name}/a.txt/").is_ok() { "found" } else { "not found" }}")
+  out.println("sub read d/b.txt: ${root.read("d/b.txt")?.len()} bytes")
+  out.println("sub read_dir d/: ${root.read_dir("d/")?.len()} entries")
+  out.println("sub read_dir ./: ${root.read_dir("./")?.len()} entries")
+  base.remove_all(name)?
+}

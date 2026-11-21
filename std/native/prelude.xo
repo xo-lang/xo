@@ -3937,7 +3937,13 @@ fn fs_resolve(f: Fs, p: Str) -> Str? {
       }
     }
   }
-  Some(fs_join(rt.fs_root(f), clean))
+  let full = fs_join(rt.fs_root(f), clean)
+  // a trailing separator names a directory, as for os.fs: cleaning it
+  // away read the file a.txt for "a.txt/" (task #597, 2026-11-21)
+  if clean != "/" && fs_slash(p).ends_with("/") {
+    return Some(full + "/")
+  }
+  Some(full)
 }
 
 // win_reserved reports a Windows reserved device name, with or without an

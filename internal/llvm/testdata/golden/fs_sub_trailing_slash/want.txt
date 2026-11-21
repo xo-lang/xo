@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+sub read a.txt: 5 bytes
+sub read a.txt/: not found
+os read a.txt/: not found
+sub read d/b.txt: 1 bytes
+sub read_dir d/: 1 entries
+sub read_dir ./: 2 entries
+--- stderr
