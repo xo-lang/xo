@@ -50,6 +50,13 @@ pub struct Config {
   /// The pass cache, "" for none.
   pub cache: Str = ""
   pub timeout: Duration = 120s
+  /// How many times the timeout a child may take on an overloaded machine
+  /// (--timeout-load; 1: the timeout as given): each child's limit is the
+  /// timeout times the 1 minute load per CPU as it starts (limit).
+  pub timeout_load: Int = 1
+  /// The machine's CPUs, 0 unknown (run_goldens sets it when timeout_load
+  /// is above 1).
+  pub cpus: Int = 0
   /// Only build, do not run (a cross target).
   pub build_only: Bool = false
   /// The host, keyed in.
@@ -161,6 +168,80 @@ struct Harness {
   stdin: Bytes
 }
 
+/// The limit of a child under load: timeout_ms times the load per CPU
+/// (load_milli a load average times 1000), never under timeout_ms nor
+/// over max times it; timeout_ms when max is 1 or the CPUs are unknown.
+/// A build that takes 45 s alone took 220 s beside seven others and
+/// passed 480 s with two more gates on the host (task #583: 23 of ctier
+/// 8cfdb4e0d's 888 LLVM builds timed out, none slower than at 0.54.0).
+fn scaled_ms(timeout_ms: Int, load_milli: Int, cpus: Int, max: Int) -> Int {
+  if max <= 1 || cpus <= 0 || load_milli <= cpus * 1000 {
+    return timeout_ms
+  }
+  let ms = timeout_ms * load_milli / (cpus * 1000)
+  if ms > timeout_ms * max { timeout_ms * max } else { ms }
+}
+
+/// A load average text ("2.50", "17") times 1000, 0 when it is not one.
+fn milli(t: Str) -> Int {
+  let ps = t.split(".")
+  if ps.len() > 2 {
+    return 0
+  }
+  let whole = Int.parse(ps[0]) ?? return 0
+  if whole < 0 {
+    return 0
+  }
+  var frac = 0
+  if ps.len() == 2 {
+    let f = (ps[1] + "000")[0..3]
+    frac = Int.parse(f) ?? return 0
+  }
+  whole * 1000 + frac
+}
+
+/// The 1 minute load average times 1000 (0 when unreadable): Linux's
+/// /proc/loadavg, macOS's `sysctl -n vm.loadavg` ("{ 1.23 4.56 7.89 }").
+fn load_milli(os: Os) -> Int {
+  if target.os == TargetOs.Linux {
+    return milli(fields(os.fs.read_text("/proc/loadavg").ok() ?? "").first() ?? "")
+  }
+  match os.proc.cmd("sysctl", ["-n", "vm.loadavg"]).output() {
+    Ok(r) => {
+      let w = fields(r.stdout.to_str() ?? "")
+      if w.len() > 1 { milli(w[1]) } else { 0 }
+    }
+    Err(_) => 0
+  }
+}
+
+/// The machine's CPUs (0 when unknown): Linux's `processor` lines of
+/// /proc/cpuinfo, macOS's `sysctl -n hw.ncpu`.
+fn cpu_n(os: Os) -> Int {
+  if target.os == TargetOs.Linux {
+    var n = 0
+    for l in (os.fs.read_text("/proc/cpuinfo").ok() ?? "").split("\n") {
+      if l.starts_with("processor") {
+        n += 1
+      }
+    }
+    return n
+  }
+  match os.proc.cmd("sysctl", ["-n", "hw.ncpu"]).output() {
+    Ok(r) => Int.parse((r.stdout.to_str() ?? "").trim()) ?? 0
+    Err(_) => 0
+  }
+}
+
+/// The time a child starting now may take: cfg.timeout, longer on an
+/// overloaded machine with --timeout-load (scaled_ms).
+fn limit(os: Os, cfg: Config) -> Duration {
+  if cfg.timeout_load <= 1 || cfg.cpus <= 0 {
+    return cfg.timeout
+  }
+  1ms * scaled_ms(cfg.timeout.millis(), load_milli(os), cfg.cpus, cfg.timeout_load)
+}
+
 fn fields(s: Str) -> List[Str] {
   var out: List[Str] = []
   for f in s.replace("\t", " ").replace("\r", " ").replace("\n", " ").split(" ") {
@@ -223,7 +304,8 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
   args.push(p.dir)
   let had_regress = os.fs.exists("${p.dir}/regressions_test.xo").ok() ?? false
   let t0 = os.clock.now()
-  let b = task.with_timeout(os.clock, cfg.timeout, fn() { with_path(cfg, os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build")).output() })
+  let lim = limit(os, cfg)
+  let b = task.with_timeout(os.clock, lim, fn() { with_path(cfg, os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build")).output() })
   let build_ms = os.clock.since(t0).millis()
   if !had_regress {
     // `xo test` writes shrunk contract fuzz failures into the module
@@ -238,7 +320,7 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
         return fail("build: ${last_msg(out.stderr.to_str() ?? "")}")
       }
     }
-    Err(task.Timed.TimedOut) => return fail("build: timed out after ${cfg.timeout.seconds()} s")
+    Err(task.Timed.TimedOut) => return fail("build: timed out after ${lim.seconds()} s")
     Err(task.Timed.Failed(e)) => return fail("build: ${e}")
   }
   finish(os, cfg, key, p, build_ms)
@@ -297,11 +379,12 @@ fn finish(os: Os, cfg: Config, key: Str, p: Prog, build_ms: Int) -> Outcome {
     c = c.set_env(k, v)
   }
   let t1 = os.clock.now()
-  let r = task.with_timeout(os.clock, cfg.timeout, fn() { c.output() })
+  let lim = limit(os, cfg)
+  let r = task.with_timeout(os.clock, lim, fn() { c.output() })
   let run_ms = os.clock.since(t1).millis()
   let out = match r {
     Ok(o) => o
-    Err(task.Timed.TimedOut) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: timed out after ${cfg.timeout.seconds()} s", build_ms: build_ms, run_ms: run_ms}
+    Err(task.Timed.TimedOut) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: timed out after ${lim.seconds()} s", build_ms: build_ms, run_ms: run_ms}
     Err(task.Timed.Failed(e)) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: ${e}", build_ms: build_ms, run_ms: run_ms}
   }
   judge(os, cfg, key, p, out, build_ms, run_ms)
@@ -359,11 +442,12 @@ fn run_one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
     c = c.set_env(k, v)
   }
   let t0 = os.clock.now()
-  let r = task.with_timeout(os.clock, cfg.timeout, fn() { c.output() })
+  let lim = limit(os, cfg)
+  let r = task.with_timeout(os.clock, lim, fn() { c.output() })
   let ms = os.clock.since(t0).millis()
   let out = match r {
     Ok(o) => o
-    Err(task.Timed.TimedOut) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: timed out after ${cfg.timeout.seconds()} s", run_ms: ms}
+    Err(task.Timed.TimedOut) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: timed out after ${lim.seconds()} s", run_ms: ms}
     Err(task.Timed.Failed(e)) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: ${e}", run_ms: ms}
   }
   let se = out.stderr.to_str() ?? ""
@@ -381,6 +465,9 @@ pub fn run_goldens(os: Os, cfg0: Config, dirs: List[Str]) -> List[Outcome] uses 
   // another launched it stalled at _dyld_start (macOS assesses each
   // path's first exec; gotchas/amfi-gatekeeper-macho-layout.md)
   var cfg = cfg0
+  if cfg.timeout_load > 1 {
+    cfg.cpus = cpu_n(os)
+  }
   os.fs.create_dir_all(cfg.out).ok()
   remove_stale_runs(os, cfg.out)
   cfg.bins = "${cfg.out}/run-${os.rand.bytes(6).to_hex()}"
@@ -576,7 +663,8 @@ fn worker(os: Os, cfg: Config, keys: Map[Str, Str], queue: Chan[Prog]) -> List[O
     }
     let ch = child ?? fault("a worker was just started")
     let t0 = os.clock.now()
-    let r = task.with_timeout(os.clock, cfg.timeout, fn() -> (Int, Str) ! ProcErr {
+    let lim = limit(os, cfg)
+    let r = task.with_timeout(os.clock, lim, fn() -> (Int, Str) ! ProcErr {
       ch.write("${bin}\t${p.dir}\n".bytes())?
       var last = ""
       while let Some(l) = ch.read_line()? {
@@ -606,7 +694,7 @@ fn worker(os: Os, cfg: Config, keys: Map[Str, Str], queue: Chan[Prog]) -> List[O
         let where = hang_sample(os, cfg, p.name, ch.pid())
         ch.kill()
         child = None
-        outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: timed out after ${cfg.timeout.seconds()} s${where}"})
+        outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: timed out after ${lim.seconds()} s${where}"})
       }
       Err(task.Timed.Failed(e)) => {
         ch.kill()

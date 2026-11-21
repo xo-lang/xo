@@ -48,3 +48,30 @@ test "classify counts a cross build of a use c program and the cross link error 
   expect(classify(os.fs, cross, fail("u/plain", "build: xo: windows/amd64 compiles a `use c` source (the program's, or a std module's such as std/sqlite's) with clang against the MSVC C library and the Windows SDK, which a darwin/arm64 host has only as a sysroot: set XO_WINSYSROOT to one (xwin's), or build on windows/amd64")).status) == "unsupported"
   expect(classify(os.fs, cross, fail("u/plain", "build: clang: fatal error: 'stdlib.h' file not found")).status) == "fail"
 }
+
+test "scaled_ms: the timeout grows with the load per CPU, up to max times" {
+  // off, an unknown machine, and a machine that is not overloaded
+  expect(scaled_ms(480000, 90000, 20, 1) == 480000)
+  expect(scaled_ms(480000, 90000, 0, 4) == 480000)
+  expect(scaled_ms(480000, 0, 20, 4) == 480000)
+  expect(scaled_ms(480000, 20000, 20, 4) == 480000)
+  expect(scaled_ms(480000, 12500, 20, 4) == 480000)
+  // load 30 on 20 CPUs: one and a half times; load 47 on 20: 2.35 times
+  expect(scaled_ms(480000, 30000, 20, 4) == 720000)
+  expect(scaled_ms(480000, 47000, 20, 4) == 1128000)
+  // never over max times
+  expect(scaled_ms(480000, 200000, 20, 4) == 1920000)
+  expect(scaled_ms(480000, 200000, 20, 2) == 960000)
+}
+
+test "milli reads a load average" {
+  expect(milli("2.50") == 2500)
+  expect(milli("17") == 17000)
+  expect(milli("0.07") == 70)
+  expect(milli("47.123456") == 47123)
+  expect(milli("3.5") == 3500)
+  expect(milli("") == 0)
+  expect(milli("{") == 0)
+  expect(milli("1.2.3") == 0)
+  expect(milli("-1.00") == 0)
+}

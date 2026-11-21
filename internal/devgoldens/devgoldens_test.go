@@ -181,8 +181,13 @@ func TestDevGoldensLLVM(t *testing.T) {
 	// the Mac (2026-10-16), and clang's -O pass dominates under load; at
 	// 240 s the hourly at fa8b12204 (2026-10-22) timed out in the -O2 -flto
 	// link of http_stream_body_h2 (clang 2.5 minutes, then ld still
-	// running at 1.5), xo itself fine
-	devGoldens(t, "--backend=llvm", "--timeout=480", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
+	// running at 1.5), xo itself fine. On an overloaded host the limit
+	// grows with the load per CPU, to 4 times at most (--timeout-load,
+	// task #583: 23 builds of ctier 8cfdb4e0d timed out at 480 s on host 4
+	// beside two other gates; alone on host 3 the same run passed with
+	// its slowest builds at 220 to 269 s, 40 to 50 s each built alone, and
+	// pass_const_edges, one 1,600 line function, at 235 s alone)
+	devGoldens(t, "--backend=llvm", "--timeout=480", "--timeout-load=4", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
 }
 
 // TestDevGoldensGo is scripts/selfhost-gogoldens.py.

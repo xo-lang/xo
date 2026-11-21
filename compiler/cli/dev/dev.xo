@@ -86,6 +86,7 @@ fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
   fl.str_flag("only", "", "programs whose directory contains one of these comma separated texts")
   fl.str_flag("out", "", "where binaries go (default under the cache)")
   fl.int_flag("timeout", 120, "seconds a build or a run may take")
+  fl.int_flag("timeout-load", 1, "on an overloaded machine a build or a run may take the timeout times the load per CPU, at most this many times it (1: never longer)")
   fl.bool_flag("build-only", "build, do not run (a cross target)")
   fl.bool_flag("no-cache", "neither read nor write the pass cache")
   fl.bool_flag("no-each", "one `xo build` process per program (no build-each workers)")
@@ -129,6 +130,7 @@ fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
     out: out,
     cache: if fl.get_bool("no-cache") { "" } else { base },
     timeout: 1s * fl.get_int("timeout"),
+    timeout_load: fl.get_int("timeout-load"),
     build_only: fl.get_bool("build-only"),
     host: h.host,
     each: !fl.get_bool("no-each"),
