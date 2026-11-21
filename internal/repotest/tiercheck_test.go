@@ -47,6 +47,17 @@ func TestTierPlan(t *testing.T) {
 	}
 }
 
+// TestTierKeep runs scripts/lead/tier-keep_test.sh (task #596): a failed
+// tier step's detail file, on the Mac or a host, is kept in
+// notes/lead/tierN-fail.
+func TestTierKeep(t *testing.T) {
+	s := filepath.Join("..", "..", "scripts", "lead", "tier-keep_test.sh")
+	out, err := exec.Command("bash", s).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", s, err, out)
+	}
+}
+
 // TestTierHeavyClass: every heavy.sh run in scripts/lead/tier.sh is bulk
 // class with HEAVY_DARWIN=1 (task #556): a tier step runs for minutes on
 // the Mac, and the docs step (docs-check.sh, 12+ min in tier 918) ran as

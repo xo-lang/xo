@@ -1109,6 +1109,18 @@ run directory).
   base64 encoded (the amd64 serial console changed 4-byte UTF-8), so the
   compare with want.txt is exact. 2026-11-10: 642 of 642 on both arches.
 
+## A failed tier step's detail file (task #596, 2026-11-21)
+
+tier.sh copies a failed step's detail file into
+`~/xo-lead/notes/lead/tierN-fail/` before cleanup (scripts/lead/tier-keep.sh):
+the Mac's `lead-tierN.STEP.txt` (selfhost, mca, dv, sep), and each
+`/work/tierN.STEP.txt` or `/tmp/xo-gate-tierN/STEP.txt` a host's log names
+on a FAIL line, fetched with `offload.sh --get` as
+`HOST.DIR.FILE` (offload-arm64c.work.tier920.llvm.txt). Tier 920's 4 lldb
+macho failures (#594) had no detail: the linux sepcomp sample wrote
+`lead-tierN.sep.txt` over the Mac step's and the tier removed it; the
+sample now writes `lead-tierN.sepl.txt`. Last verified: 2026-11-21.
+
 ## The tier's host split (task #592, 2026-11-21)
 
 tier.sh splits a tier's linux offload steps over two arm64 hosts whenever
