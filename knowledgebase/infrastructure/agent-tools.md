@@ -1822,6 +1822,11 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   one line saying so (#370, lead 2026-11-18: every amd64 job asked for
   the whole host and runs waited 3 to 4.5 h). A script that times on the
   amd64 host and is not ab-host.sh sets `OFF_TIMING=1`.
+  Hosts 3 and 4 are containers in the Mac's one Docker VM: a job that
+  must not share that VM sets `OFF_PARENT=1` (heavyd `lease -parent`,
+  #632, 2026-11-21): it waits while the other container host holds a
+  lease, and no new lease starts there while it runs (tier.sh sets it
+  for llvm on host 3 or 4). Host 2 and other lanes ignore it.
   `offload.sh --status` shows the host lanes and their jobs without
   queueing anything (#172; `OFFLOAD_ENV=FILE` for one host).
   An exclusive job on host 1 (lane arm64's host file) over 30 minutes
