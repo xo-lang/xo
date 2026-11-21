@@ -36,8 +36,11 @@ var winIdentityAllowed = map[string]bool{"byref_struct/merged": true, "cli_parse
 // (x86_red_zone, 0136b3ce8: a System V leaf keeps its frame below rsp,
 // which Windows has not), the fault stubs' register saves off for both
 // (x86_stub_saves: below rsp on System V, in frame words on Windows),
-// and inlining off for both (the runtime inlined
-// differs by OS). Normalized: directives (.seh against
+// the unwinding check's inline form off for Linux (x86_unwind_inline,
+// a478b5b00: Windows calls ctx.unwinding), loop splitting off for both
+// (loop_split, b52c8ce28: a loop is split at 6 live registers on System
+// V and at 8 on Windows, loopsplit.xo split_min_live), and inlining off
+// for both (the runtime inlined differs by OS). Normalized: directives (.seh against
 // .cfi), labels, the export calls' targets (Windows calls the function,
 // Linux the export's alias of it), the C runtime's functions Windows
 // with no C runtime calls as Xo's (cabi_wincrt.fmod for fmod), thunk names, a leaf's fault stub
@@ -62,8 +65,8 @@ func TestWindowsAmd64Identity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
-			lin := winAsm(t, dir, "linux/amd64", "-shrink_split,-inline,-x86_red_zone,-x86_stub_saves")
-			win := winAsm(t, dir, "windows/amd64", "-inline,-x86_stub_saves")
+			lin := winAsm(t, dir, "linux/amd64", "-shrink_split,-inline,-loop_split,-x86_red_zone,-x86_stub_saves,-x86_unwind_inline")
+			win := winAsm(t, dir, "windows/amd64", "-inline,-loop_split,-x86_stub_saves")
 			alias := exportAliases(lin)
 			a := ownFuncsNorm(lin, alias)
 			b := ownFuncsNorm(win, alias)

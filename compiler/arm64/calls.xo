@@ -2811,7 +2811,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let base = g.tl_base()
       g.set(v, [g.def1(false, "ldr $d0, [$u0]\ncbz $d0, 1f\nldr $wd0, [$d0, #${CTX_UNWINDING}]\n1:", [base])])
     }
-    "rt.unwinding" if g.x86 && (g.os is "linux" | "freebsd") => {
+    "rt.unwinding" if g.x86 && (g.os is "linux" | "freebsd") && pass_on(g.m, "x86_unwind_inline") => {
       // the same on x86-64 (2026-11-18): x86_tpl has no cbz, so the arm64
       // template above would not translate; the call through
       // xo_x_ctx_unwinding was the check after every runtime call of a
