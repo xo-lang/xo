@@ -20,6 +20,7 @@
 // raw output (decision 0245), then sections: each worker chunk's events,
 // the shared chunk's, and the spawn sites' texts.
 use native/llrt/ctx
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/process
 use native/llrt/prof
@@ -27,8 +28,10 @@ use native/llrt/raw
 use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/tracerec
+use native/llrt/windows
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 fn ld(p: Int, o: Int) -> Int { rt.mem_load(p, o, 8) }
 
@@ -39,7 +42,11 @@ fn map(n: Int) -> Int {
   let m = match target.os {
     TargetOs.Darwin => sys_darwin.mmap(0, n, 3, 2 | 4096, -1, 0)
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => 0
+    // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE (prof.xo map)
+    TargetOs.Windows => sys_windows.VirtualAlloc(0, n, 12288, 4)
+    // MAP_PRIVATE | MAP_ANON (0x1000)
+    TargetOs.FreeBSD => freebsd.mmap(0, n, 3, 2 | 4096, -1, 0)
+    TargetOs.Wasi => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -77,8 +84,8 @@ pub fn start() {
     process.env_drop("XO_TRACE")
   }
   match target.os {
-    TargetOs.Darwin | TargetOs.Linux => {}
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Windows | TargetOs.FreeBSD => {}
+    TargetOs.Wasi => {
       stdio.eprint("xo trace: XO_TRACE is not supported on this target yet", true)
       return
     }
@@ -136,7 +143,15 @@ fn create(path: Str) -> Int {
       // O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC
       Int(sys_darwin.open(z.freeze(), 1 | 512 | 2048 | 256 | 16777216, 384))
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => -1
+    TargetOs.FreeBSD => {
+      // O_WRONLY | O_CREAT 0x200 | O_EXCL 0x800 | O_NOFOLLOW 0x100 |
+      // O_CLOEXEC 0x100000, mode 0600 (prof.xo write_file)
+      freebsd.open(path, 1 | 512 | 2048 | 256 | 1048576, 384)
+    }
+    // kind 4: CREATE_NEW (an existing file or link is not written
+    // through), as prof.xo write_file
+    TargetOs.Windows => windows.open_kind(path, 4, 384)
+    TargetOs.Wasi => -1
   }
 }
 
@@ -145,9 +160,12 @@ fn put(fd: Int, a: Int, n: Int) -> Bool {
   var off = 0
   while off < n {
     let w = match target.os {
-      TargetOs.Linux => linux.write_at(fd, a + off, n - off)
+      // FreeBSD's write(2) through the same call (linux.xo write_at)
+      TargetOs.Linux | TargetOs.FreeBSD => linux.write_at(fd, a + off, n - off)
       TargetOs.Darwin => sys_darwin.write(fd, a + off, raw.io_len(n - off))
-      TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => -1
+      // WriteFile until all n are written: 0, or the errno
+      TargetOs.Windows => if windows.write_at(fd, a + off, n - off) == 0 { n - off } else { -1 }
+      TargetOs.Wasi => -1
     }
     if w == -4 {
       continue
@@ -164,13 +182,16 @@ fn put_bytes(fd: Int, b: Bytes) -> Bool { put(fd, raw.bytes_addr(b), b.len()) }
 
 fn close(fd: Int) {
   match target.os {
-    TargetOs.Linux => {
+    TargetOs.Linux | TargetOs.FreeBSD => {
       let _c = linux.close(fd)
     }
     TargetOs.Darwin => {
       let _c = sys_darwin.close(fd)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+    TargetOs.Windows => {
+      let _c = windows.close(fd)
+    }
+    TargetOs.Wasi => {}
   }
 }
 
@@ -228,7 +249,9 @@ pub fn finish() {
     TargetOs.Linux => 1
     TargetOs.Darwin => 2
     TargetOs.Windows => 3
-    TargetOs.Wasi | TargetOs.FreeBSD => 4
+    TargetOs.Wasi => 4
+    // FreeBSD's own, as the profiler's (prof.xo build_raw)
+    TargetOs.FreeBSD => 5
   }
   let arch_id = match target.arch {
     TargetArch.Arm64 => 1

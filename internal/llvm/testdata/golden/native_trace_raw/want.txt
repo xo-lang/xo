@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+sum 19900
+late 1
+count 200
+child exit 0
+magic XORAW1
+kind 1
+lost 0
+os matches true
+events true
+again exit 0, refused true
+unchanged true
+--- stderr

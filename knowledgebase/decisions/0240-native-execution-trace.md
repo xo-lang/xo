@@ -92,7 +92,9 @@ profiler.
    out with the rest.)
 8. **Platforms**: darwin and linux, arm64 and LLVM backends; Windows
    when its profiler is (0238's Windows item); the Go backend keeps
-   runtime/trace.
+   runtime/trace. (Amended 2026-11-21, task #635 under xw decision
+   #257: Windows and FreeBSD, amd64 and arm64, record too, ahead of
+   Windows' profiler; only wasi does not.)
 
 ## Consequences
 
@@ -163,4 +165,12 @@ What changed from the proposal above, and where:
   needs no binary. Function names and DWARF lines are not used yet.
 - `xo test --trace=FILE` writes FILE.<pid> (or FILE with %p) per test
   process; `xo run --trace=FILE` runs `xo trace` after the program.
-- Test: internal/llvm TestTrace (arm64 and LLVM).
+- Test: internal/llvm TestTrace (arm64 and LLVM), and the golden
+  native_trace_raw (the program traces a run of itself and checks the
+  raw header), which the Windows, windows/arm64 and FreeBSD golden runs
+  carry (task #635).
+- Windows and FreeBSD (task #635, 2026-11-21): the chunks are mapped
+  with VirtualAlloc and mmap, the file is created new (CreateFileW
+  CREATE_NEW; FreeBSD O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, mode 0600),
+  the clock is sysio.mono_ns; the header's os id is 3 and 5, as the
+  profiler's.

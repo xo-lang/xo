@@ -1442,7 +1442,9 @@ and for diffing two builds function by function, not for a first look.
   chunks (`XO_TRACE_MB`, default 64; events past them are counted lost).
   FILE is written at exit, created new (an existing file or a symbolic
   link is refused), mode 0600; `%p` is the process id. Timestamps are
-  ns (CLOCK_UPTIME_RAW on macOS). darwin and linux; not Windows yet.
+  ns (CLOCK_UPTIME_RAW on macOS). darwin, linux, windows and freebsd
+  (task #635, 2026-11-21; on Windows the file is created new with
+  CREATE_NEW, and mode 0600 has no Windows meaning); not wasi.
 - `xo trace FILE [--json OUT] [--text]` reads it: Chrome trace event
   JSON (default FILE.json; open it in ui.perfetto.dev or
   chrome://tracing: a track per worker with each task's runs named by

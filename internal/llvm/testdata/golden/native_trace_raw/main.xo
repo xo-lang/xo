@@ -1,0 +1,82 @@
+// XO_TRACE (decision 0240) on every native target (task #635: Windows
+// and FreeBSD too): the program runs itself again with XO_TRACE set; the
+// child's channel ping-pong, mutex, sleep and select run traced, and the
+// raw file it leaves has the header `xo trace` reads (magic, kind 1, no
+// lost events, this target's os id, events after the header). A second
+// child on the same path is refused: the trace never overwrites a file.
+
+fn work(os: Os) {
+  let ch = Chan[Int].new(0)
+  let m = Mutex[Int].new(0)
+  let done = Chan[Int].new(0)
+  scope s {
+    let _a = s.spawn(fn() {
+      for i in 0..200 {
+        ch.send(i)
+      }
+      ch.close()
+    })
+    let _b = s.spawn(fn() {
+      var sum = 0
+      for v in ch {
+        sum += v
+        m.with(fn(var x) { x += 1 })
+      }
+      done.send(sum)
+    })
+    os.stdio.println("sum ${done.recv() ?? -1}")
+    let late = Chan[Int].new(0)
+    let _d = s.spawn(fn() {
+      os.clock.sleep(20ms)
+      late.send(1)
+    })
+    select {
+      v = late.recv() => os.stdio.println("late ${v ?? -1}")
+      after 10s => os.stdio.println("timeout")
+    }
+  }
+  os.stdio.println("count ${m.with_read(fn(x) { x })}")
+}
+
+fn u64(b: Bytes, o: Int) -> Int {
+  var v = 0
+  for i in 0..8 {
+    v = v | Int(b[o + i]).wrapping_shl(8 * i)
+  }
+  v
+}
+
+fn main(os: Os) ! {
+  if os.env.get("XO_TRACE_GOLDEN_CHILD") != None {
+    work(os)
+    return
+  }
+  let p = os.env.program()
+  let prog = if p.contains("/") || p.contains("\\") { p } else { "${os.env.get("PWD") ?? "."}/${p}" }
+  let cwd = os.fs.cwd()
+  let top = create_temp_dir(cwd, ".", "trace-")?
+  let path = "${top}/t.raw"
+  let run = fn() -> ProcOutput ! ProcErr {
+    os.proc.cmd(prog).set_env("XO_TRACE", path).set_env("XO_THREADS", "4").set_env("XO_TRACE_GOLDEN_CHILD", "1").output()
+  }
+  let out = run()?
+  os.stdio.print(out.stdout.to_str() ?? "")
+  os.stdio.println("child exit ${out.code}")
+  let b = cwd.read(path)?
+  os.stdio.println("magic ${b[0..6].to_str() ?? ""}")
+  os.stdio.println("kind ${u64(b, 8) & 4294967295}")
+  os.stdio.println("lost ${u64(b, 32)}")
+  let want = match target.os {
+    TargetOs.Linux => 1
+    TargetOs.Darwin => 2
+    TargetOs.Windows => 3
+    TargetOs.Wasi => 4
+    TargetOs.FreeBSD => 5
+  }
+  os.stdio.println("os matches ${(u64(b, 48) & 255) == want}")
+  os.stdio.println("events ${b.len() > 64 + 1000}")
+  let again = run()?
+  os.stdio.println("again exit ${again.code}, refused ${(again.stderr.to_str() ?? "").contains("cannot create")}")
+  os.stdio.println("unchanged ${cwd.read(path)?.len() == b.len()}")
+  cwd.remove_all(top)?
+}
