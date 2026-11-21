@@ -2102,7 +2102,8 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   - `wrong-class` (#82): a heavy.sh job in the Mac gate class running
     past 10 minutes (the class is for runs under about 2 minutes) is an
     alert naming the job and pid; the agent sees it once a session in
-    its hook inbox. Rerun such work as bulk on an offload host
+    its hook inbox. pushq.sh's own checks (`pushq-*` jobs) run in the
+    gate class by design and are never one (#614). Rerun such work as bulk on an offload host
     (offload.sh, offload-gate.sh for a gate), `HEAVY_CLASS=bulk
     HEAVY_DARWIN=1` on the Mac only for darwin-only work. Last
     verified: 2026-11-16.
