@@ -791,7 +791,19 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -
     b.write("\n")
     for g in p.globals {
       if used[m].contains(g.name) {
-        b.write(g.text)
+        // std's own build (decision 0738): a private constant becomes a
+        // hidden linkonce one under its own name. A program's module that
+        // imports a std function through ThinLTO names the constants it
+        // reads; a local one would be promoted to NAME.llvm.HASH in the
+        // importer's view only, and std's objects, built before, define
+        // no such symbol (`undefined hidden symbol: .rs.6211.llvm...`)
+        let lead = "${g.name} = private "
+        if store && g.text.starts_with(lead) && g.text.contains(" constant ") {
+          b.write("${g.name} = linkonce_odr hidden ")
+          b.write(g.text[lead.len()..g.text.len()])
+        } else {
+          b.write(g.text)
+        }
       }
     }
     b.write("\n")

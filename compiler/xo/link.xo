@@ -197,6 +197,52 @@ fn ir_objects(os: Os, cc: Str, flags: List[Str], lls: List[Str]) -> Result[List[
   Ok(objs)
 }
 
+/// The program's module compiled with std's small functions imported
+/// (decision 0738 stage 3, the program to std half): std's objects are
+/// built before any program, so a call from the program into std was a
+/// call whatever its size (atomic add ran 1.47 times the whole program's
+/// time, text cut 1.19; 1.00 and 1.07 with the imports, linux/arm64,
+/// 2026-11-21). std's bitcode, kept beside its objects, is indexed
+/// together with the program's module, and the module's code generation
+/// takes the imports the index names; std's objects are linked as they
+/// are. Every step runs in wdir by base name (a ThinLTO module is
+/// identified by the path it was given). Returns the object's path, or
+/// "" when a step did not work (no lld, a clang that writes no index):
+/// the caller compiles the module by itself.
+fn std_imports(os: Os, cc: Str, flags: List[Str], ll: Str, lstd: Str, bcs: List[Str], wdir: Str) -> Str {
+  os.fs.remove_all(wdir).ignore_err("a first use: nothing there")
+  if os.fs.create_dir_all(wdir).is_err() || os.fs.symlink(ll, "${wdir}/prog.ll").is_err() {
+    return ""
+  }
+  for bc in bcs {
+    if os.fs.symlink("${lstd}/${bc}", "${wdir}/${bc}").is_err() {
+      return ""
+    }
+  }
+  if ir_objects_par(os, cc, flags + ["-flto=thin"], ["prog.ll"], ["prog.bc"], [], 1, wdir).is_err() {
+    return ""
+  }
+  // xo:allow XO0903 no lld: the module by itself
+  let lld = (os.proc.run(cc, ["-print-prog-name=ld.lld"]).ok().map(fn(r) { r.stdout.to_str() ?? "" }) ?? "").trim()
+  if lld.is_empty() {
+    return ""
+  }
+  os.proc.cmd(lld, ["-r", "--thinlto-index-only", "prog.bc"] + bcs + ["-o", "prog.index.o"]).dir(wdir).output().ignore_err("the index file below says whether it worked")
+  // xo:allow XO0903 a missing index: the module by itself
+  if !(os.fs.exists("${wdir}/prog.bc.thinlto.bc").ok() ?? false) {
+    return ""
+  }
+  if ir_objects_par(os, cc, flags + ["-x", "ir"], ["prog.bc"], ["prog.o"], [["-fthinlto-index=prog.bc.thinlto.bc"]], 1, wdir).is_err() {
+    return ""
+  }
+  // a backend given a bad index exits 0 with an empty object
+  // xo:allow XO0903 an object that cannot be read counts as empty
+  if (os.fs.read("${wdir}/prog.o").ok().map(fn(d) { d.len() }) ?? 0) == 0 {
+    return ""
+  }
+  "${wdir}/prog.o"
+}
+
 /// ir_objects with at most jobs clang processes at once (std's own LLVM
 /// objects, decision 0738: seven modules of about 45 MB of IR each took
 /// 98 s one after another on an 18 core host and about 25 s together).

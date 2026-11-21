@@ -53,3 +53,20 @@ that reason.
 Avoid: when a build made for one purpose (the native store's) is
 reused for another, list what its options were for before dropping or
 keeping one; and print a failing tool's first error line, not its tail.
+
+Symptom 5 (2026-11-21, the program's module importing std's functions
+through ThinLTO): the text benchmark failed to link with `ld.lld:
+error: undefined hidden symbol: .rs.6211.llvm.5564800122615545271`.
+
+Cause: std's string literals and constant tables were `private`. A
+function imported into the program's module refers to the constants it
+reads; ThinLTO promotes a local to `NAME.llvm.HASH` so that another
+module can name it, but only in the modules compiled with that index.
+std's objects were compiled earlier with std's own index, where nothing
+outside std read the constant, so they define no such symbol.
+
+Fix: in std's own build (split.xo split_emit, a store build) a private
+constant is written `linkonce_odr hidden` under its own name, which
+needs no promotion. A new kind of module-level data in the LLVM emitter
+that std's functions read takes the same rule, or an importing program
+fails to link. TestSepcompLLVM's goldens run with the imports on.

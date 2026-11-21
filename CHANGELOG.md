@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- LLVM backend, opt in (`XO_SEPCOMP_LLVM=1`, decision 0738, task #607): on Linux the program's own code now inlines std's small functions, taken from bitcode kept beside std's cached objects. A call into std was always a call before: atomic add ran 1.47 times the whole program's time and now runs the same.
 - Fix (LLVM backend, `XO_SEPCOMP_LLVM=1`; task #607): std's cached objects are the same from one build to the next. They depended on the build directory's random name, and about one build in three gave fault reports whose traceback named every frame `?`.
 - Linux release archives (linux/arm64, linux/amd64) now ship std/sqlite's prebuilt object, so a std/sqlite program's first build no longer compiles sqlite3.c with the host's C compiler (task #622).
 - Fix (std/sqlite, windows; task #621): SQLite's math functions (`sqrt`, `pow`, `ln`, `acos` and the rest) link and run on windows/amd64 and windows/arm64, which link no C runtime; Xo's runtime now defines the C math functions they call. The release's prebuilt sqlite objects are recut for every target.

@@ -1933,6 +1933,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
               }
               if full {
                 mode = "thinlto"
+                // the bitcode stays beside the objects: a program's
+                // module imports std's small functions from it
+                // (std_imports), which the objects alone cannot give
+                for bc in bcs {
+                  match os.fs.read("${dir}/${bc}") {
+                    Ok(d) => write_or_fail(os, lstd_out, "${lstd_out}/${bc}", d)
+                    Err(e) => fail(os, "${dir}/${bc}: ${e}")
+                  }
+                }
               }
             }
           }
@@ -1956,13 +1965,24 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // it names the native link's store), and the link drops the
     // functions the program does not reach
     let lstd = sepcomp_store(os, b.conc)
+    // std's bitcode, when its objects were made by ThinLTO and kept it
+    var lstd_bcs: List[Str] = []
     if !lstd.is_empty() {
       match os.fs.read_text("${lstd}/objs.txt") {
         Ok(t) => {
+          // xo:allow XO0903 no mode file: plain objects, no bitcode
+          var have = (os.fs.read_text("${lstd}/mode.txt").ok() ?? "").trim() == "thinlto"
           for n in t.split("\n") {
             if !n.trim().is_empty() {
               lk.srcs.push("${lstd}/${n.trim()}")
+              let bc = n.trim().trim_suffix(".o") + ".bc"
+              // xo:allow XO0903 no bitcode (an older store): no imports
+              have = have && (os.fs.exists("${lstd}/${bc}").ok() ?? false)
+              lstd_bcs.push(bc)
             }
+          }
+          if !have {
+            lstd_bcs = []
           }
         }
         Err(e) => fail(os, "XO_SEPCOMP_STORE=${lstd}: ${e}")
@@ -2030,7 +2050,21 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // a giant function's module (split_build does the same per module)
         let gf = if split.opt != "-O0" { giant_fn_flags(lctx.tgoos, tgoarch, lto1, ir_fn_size(code)) } else { [] }
         let cflags = [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + gf + (if lto1 == "none" { isel_flags(split.opt, tgoarch) } else { [] })
-        if dsym && lto1 == "none" {
+        // a program against std's own objects (decision 0738): its
+        // module takes std's small functions from std's bitcode first
+        let imp = if !lstd_bcs.is_empty() && split.opt != "-O0" && lls.len() == 1 && !dsym {
+          std_imports(os, cc, [split.opt, "-Wno-override-module"] + gf + isel_flags(split.opt, tgoarch) + lk.flags, lls[0], lstd, lstd_bcs, "${dir}-imports")
+        } else {
+          ""
+        }
+        if phases && !lstd_bcs.is_empty() {
+          os.stdio.eprintln("cache std llvm imports ${if imp.is_empty() { "off" } else { "on" }}")
+        }
+        if !imp.is_empty() {
+          let m = cc_build(os, lctx, cc, cflags + lflags, [imp] + lk.srcs, st.bin)
+          os.fs.remove_all("${dir}-imports").ignore_err("only disk: the prune takes it after 30 minutes")
+          m
+        } else if dsym && lto1 == "none" {
           // the IR compiled to objects in dir first: given a .ll, clang's
           // one step link compiled it to a temporary object it deleted,
           // the only file the debug map named, so dsymutil found no

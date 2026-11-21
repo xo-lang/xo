@@ -278,6 +278,40 @@ randomly named directory), and one build in three gave a traceback of
 builds agree (det2.out;
 gotchas/llvm-std-objects-roots-and-named-section.md, symptom 4).
 
+## Stage 3, the second half: the program imports from std (2026-11-21)
+
+std's objects exist before any program, so a call from the program
+into std stayed a call whatever its size. On ELF the program's own
+module now goes through the same distributed ThinLTO steps with std's
+bitcode as the import source:
+
+- std's build keeps `std.N.bc` beside `std.N.o` in the cache entry
+  (only when the objects were made by ThinLTO; `mode.txt` says so).
+- The program's module is compiled to bitcode, `ld.lld -r
+  --thinlto-index-only` indexes it together with std's bitcode, and
+  its code generation runs with that index (compiler/xo link.xo
+  `std_imports`), in a directory of its own by base names. std's
+  objects are linked as they were built: nothing of std is compiled
+  again.
+- std's private constants (string literals, constant tables) are
+  written `linkonce_odr hidden` under their own names in std's build
+  (split.xo `split_emit`). An imported function names the constants it
+  reads, and a private one is promoted to `NAME.llvm.HASH` in the
+  importer's view only, a symbol std's objects never defined.
+- A toolchain that cannot do a step (no lld, no index written) compiles
+  the module by itself as before. `--phase-times` prints `cache std
+  llvm imports on` or `off`.
+
+Measured on linux/arm64 host 2 (shared, so ratios; minimum of 5 runs;
+~/xo-lead/notes/xo-lang-1/p607/p2s4.out and imp1.out), run time over
+the whole program's: atomic add 1.47 without imports, 0.99 with; text
+cut 1.19, 0.95; text cut_prefix 1.24, 0.98; ctx budget 1.32, 1.19;
+rsa sign2048 1.10, 1.08; digest sha256_small 1.18, 1.14; ctx defer
+1.35, 1.20. The program's clang step with the imports took 0.4 to 1.1
+s. Open: the rows still above 1.1 (ctx defer and budget, digest), the
+71 workload timing on host 1, and darwin, which links plain objects
+and imports nothing.
+
 ## Consequences
 
 - A warm LLVM build of a program that reaches http or crypto compiles

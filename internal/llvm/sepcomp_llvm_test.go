@@ -79,6 +79,16 @@ func TestSepcompLLVM(t *testing.T) {
 		if !strings.Contains(build.Output, "(thinlto)") || strings.Contains(build.Output, "(plain)") {
 			t.Fatalf("std's LLVM objects are not the ThinLTO ones (want `(thinlto)` on both `cache std llvm` lines):\n%s", build.Output)
 		}
+		// and the program's own module took std's small functions from
+		// std's bitcode, kept beside those objects (the program to std
+		// half: a call into std was a call whatever its size, atomic add
+		// 1.47 times the whole program's time). The goldens below then
+		// run with the imports: one read a std string constant that
+		// std's objects did not define under the name the import gave
+		// it (`undefined hidden symbol: .rs.6211.llvm...`)
+		if !strings.Contains(build.Output, "cache std llvm imports on") {
+			t.Fatalf("the program's module was compiled without std's imports (want `cache std llvm imports on`):\n%s", build.Output)
+		}
 	})
 	// two builds of std's objects, each in a cache of its own, hold the
 	// same code and the same symbols. They did not (task #607): a ThinLTO
