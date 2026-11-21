@@ -577,9 +577,12 @@ fn (c: SqliteConn) bind(st: c3.Sqlite3Stmt, args: List[sql.SqlValue]) -> () ! sq
   }
 }
 
-fn column(st: c3.Sqlite3Stmt, i: Int32) -> sql.SqlValue {
+/// Column i of the current row. An INTEGER in a column declared BOOLEAN
+/// is a Flag (non zero is true), as mattn/go-sqlite3's rows.Next returns
+/// val > 0 for decltype "boolean".
+fn column(st: c3.Sqlite3Stmt, i: Int32, flag: Bool) -> sql.SqlValue {
   match c3.sqlite3_column_type(st, i) {
-    T_INTEGER => sql.SqlValue.Integer(n: c3.sqlite3_column_int64(st, i))
+    T_INTEGER => if flag { sql.SqlValue.Flag(b: c3.sqlite3_column_int64(st, i) > 0) } else { sql.SqlValue.Integer(n: c3.sqlite3_column_int64(st, i)) }
     T_FLOAT => sql.SqlValue.Real(f: c3.sqlite3_column_double(st, i))
     T_TEXT => sql.SqlValue.Text(s: c3.xo_sq_column_text(st, i).to_str_lossy())
     T_BLOB => sql.SqlValue.Blob(b: c3.xo_sq_column_blob(st, i))
@@ -623,13 +626,16 @@ fn (c: SqliteConn) prepare_left(q: Str, at: Int) -> Bool {
 fn (c: SqliteConn) step_all(st: c3.Sqlite3Stmt, args: List[sql.SqlValue], var cols: List[Str], var types: List[sql.ColumnType], var rows: List[List[sql.SqlValue]]) -> () ! sql.SqlErr uses fs {
   c.bind(st, args)?
   let n = c3.sqlite3_column_count(st)
+  var flags = List[Bool].with_capacity(Int(n))
   for i in 0..Int(n) {
     let name = c3.sqlite3_column_name(st, Int32(i))
     cols.push(name)
     // decision 0609: the declared type upper cased, as mattn/go-sqlite3's
     // ColumnTypeDatabaseTypeName ("" for an expression); a column's
     // values may be of any storage class, so kind is unknown
-    types.push(sql.ColumnType{name: name, database_type: c3.sqlite3_column_decltype(st, Int32(i)).to_upper()})
+    let decl = c3.sqlite3_column_decltype(st, Int32(i)).to_upper()
+    types.push(sql.ColumnType{name: name, database_type: decl})
+    flags.push(decl == "BOOLEAN")
   }
   while {
     let rc = c.step(st)
@@ -641,7 +647,7 @@ fn (c: SqliteConn) step_all(st: c3.Sqlite3Stmt, args: List[sql.SqlValue], var co
     }
     var row = List[sql.SqlValue].with_capacity(Int(n))
     for i in 0..Int(n) {
-      row.push(column(st, Int32(i)))
+      row.push(column(st, Int32(i), flags[i]))
     }
     rows.push(row)
   }

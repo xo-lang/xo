@@ -26,6 +26,8 @@
 // - Placeholders `$1`, `?1` and `?` bind by position; named ones are Param.
 // - Values: INTEGER Integer, REAL Real, TEXT Text, BLOB Blob, NULL Null; a
 //   Flag binds as 0 or 1, an At as RFC 3339 text, JsonText as text.
+// - An INTEGER in a column declared BOOLEAN reads as Flag (above 0 is
+//   true), as mattn's rows.Next does, so Row.bool reads it.
 // - Errors: a constraint is Constraint with its SQLSTATE (23505 unique and
 //   primary key, 23503 foreign key, 23502 not null, 23514 check), a missing
 //   table NoTable, a parse error Syntax, anything else Server with the

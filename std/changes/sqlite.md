@@ -1,5 +1,20 @@
 # std/sqlite changes
 
+## 2026-11-21: fix: an INTEGER in a BOOLEAN column reads as a Boolean, as mattn does
+
+- Kind: fix
+- Commit: this push
+- Found by: xw-1's SQLite port of xw (decision 0734): `Row.bool` on a `BOOLEAN NOT NULL` column
+  failed with "expected a boolean, found an integer"
+- Go reference: github.com/mattn/go-sqlite3 sqlite3.go rows.Next, `case "boolean": dest[i] = val > 0`
+- Test: std/native/sqlite_test.xo "an INTEGER in a BOOLEAN column reads as a Boolean, as mattn's
+  rows.Next returns val > 0 for decltype boolean" (failed before, passes after)
+- Shipped in: not yet released
+
+SQLite stores a Boolean as an INTEGER. A column whose declared type is BOOLEAN (any case) now reads
+as a Boolean, true when the value is above 0, so `Row.bool` and `Row.bool_opt` read it. Other
+INTEGER columns and expressions stay integers, as in mattn.
+
 ## 2026-11-18: fix: a transaction's first write beside busy writers gets its turn
 
 - Kind: fix

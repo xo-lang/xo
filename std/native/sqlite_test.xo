@@ -54,6 +54,25 @@ test "Row.time reads SQLite's date and time text and a DATETIME column's Unix in
   expect(now[0].time("n").is_ok()) == true
 }
 
+test "an INTEGER in a BOOLEAN column reads as a Boolean, as mattn's rows.Next returns val > 0 for decltype boolean" {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE t (b BOOLEAN NOT NULL DEFAULT false, c boolean, n INTEGER)", [])?
+  db.exec("INSERT INTO t VALUES ($1, 0, 1)", [sql.bool(true)])?
+  db.exec("INSERT INTO t VALUES (0, 7, 0)", [])?
+  db.exec("INSERT INTO t (n) VALUES (2)", [])?
+  let rows = db.query("SELECT b, c, n, b AS e, b + 0 AS x FROM t ORDER BY rowid", [])?
+  expect(rows[0].bool("b")?) == true
+  expect(rows[0].bool("c")?) == false
+  expect(rows[0].bool("e")?) == true
+  expect(rows[1].bool("b")?) == false
+  expect(rows[1].bool("c")?) == true
+  expect(rows[2].bool("b")?) == false
+  expect(rows[2].bool_opt("c")?) == None
+  // an INTEGER column and an expression stay integers, as in mattn
+  expect(rows[0].int("n")?) == 1
+  expect(rows[0].int("x")?) == 1
+}
+
 test "config refuses an unknown driver key" {
   match sqlite.config("file:a.db?_bogus=1") {
     Err(Param(msg)) => expect(msg) == "sqlite: unknown key \"_bogus\""
