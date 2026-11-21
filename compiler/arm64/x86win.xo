@@ -70,8 +70,11 @@ fn w64_libc() -> Map[Str, Str] {
 /// The System V to Win64 thunks of the module (w64_sym's), one global
 /// symbol each in the last file of a split assembly. In: System V's
 /// integer registers in order and the doubles in xmm0 to xmm7, the rest
-/// on the stack past the return address. Out: Win64's positions.
-fn (g: G) w64_thunks(var out: List[Str]) {
+/// on the stack past the return address. Out: Win64's positions. weak:
+/// each a weak definition (a program compiled against std's store, whose
+/// object has the thunks of std's own calls: the link keeps the store's
+/// where both define one; sepcomp_trampolines).
+fn (g: G) w64_thunks(var out: List[Str], weak: Bool) {
   // the C functions the module itself defines need none (cabi_wincrt.xo)
   var own: Map[Str, Bool] = {}
   for f in g.m.funcs {
@@ -93,14 +96,14 @@ fn (g: G) w64_thunks(var out: List[Str]) {
       continue
     }
     let sig = g.w64.get(sym) ?? (w64_libc().get(sym) ?? "")
-    out.push(w64_thunk(sym, sig))
+    out.push(w64_thunk(sym, sig, weak))
   }
 }
 
 /// One thunk (w64_thunks): every argument is first stored in a scratch
 /// area from its System V place, then loaded into its Win64 place, so no
 /// move overwrites a source still to be read.
-fn w64_thunk(sym: Str, sig0: Str) -> Str {
+fn w64_thunk(sym: Str, sig0: Str, weak: Bool) -> Str {
   // xo_callc<n> (rt.call_c2, rt.call_c4): the last word is the address
   // to call, the others its arguments
   let indirect = sym.starts_with("xo_callc")
@@ -115,7 +118,11 @@ fn w64_thunk(sym: Str, sig0: Str) -> Str {
   let frame = (scratch + 8 * (n + 1) + 15) / 16 * 16
   var b: List[Str] = []
   let name = "xo_w64_${sym}"
-  b.push("\t.globl ${name}\n\t.p2align 4\n${name}:\n\t.seh_proc ${name}\n")
+  b.push("\t.globl ${name}\n")
+  if weak {
+    b.push("\t.weak_definition ${name}\n")
+  }
+  b.push("\t.p2align 4\n${name}:\n\t.seh_proc ${name}\n")
   b.push("\tpushq %rbp\n\t.seh_pushreg %rbp\n\tmovq %rsp, %rbp\n")
   if frame > 0 {
     b.push("\tsubq $${frame}, %rsp\n\t.seh_stackalloc ${frame}\n")
@@ -464,6 +471,11 @@ fn w64_sched_fn(name: Str, body: List[Str]) -> Str {
 /// backend's form, gotchas/windows-llvm-split-link.md).
 fn (g: G) w64_weak(var out: List[Str]) {
   out.push("\t.data\n\t.globl xo_absent\n\t.p2align 3\nxo_absent:\n\t.quad 0\n")
+  g.w64_alternates(out)
+}
+
+/// The `/alternatename` of each weak C symbol to xo_absent (w64_weak).
+fn (g: G) w64_alternates(var out: List[Str]) {
   if g.wsyms.is_empty() {
     return
   }
@@ -476,4 +488,23 @@ fn (g: G) w64_weak(var out: List[Str]) {
     out.push("\t.ascii \" /alternatename:${k}=xo_absent\"\n")
   }
   out.push("\t.text\n")
+}
+
+/// windows' trampolines in a program compiled against std's store
+/// (generate_parallel, sepcomp_program), whose object defines xo_absent
+/// and the thunks of std's own calls, but not those of the calls only
+/// the program makes: a std function the store leaves out is compiled
+/// with the program, so its platform calls' thunks are the program's,
+/// as weak definitions (std/native/llrt dpapi.xo's CryptProtectData: an
+/// undefined xo_w64_CryptProtectData in every program using os.secrets
+/// on windows/amd64, task #597), and so are its weak C symbols'
+/// alternate names.
+fn (g: G) sepcomp_trampolines(var out: List[Str]) {
+  if g.os != "windows" {
+    return
+  }
+  if g.x86 {
+    g.w64_thunks(out, true)
+  }
+  g.w64_alternates(out)
 }

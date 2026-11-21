@@ -159,7 +159,7 @@ fn (g: G) file_header(var out: List[Str]) {
 /// rt.sys_clone), in the text section.
 fn (g: G) trampolines(var out: List[Str]) {
   if g.x86 && g.os == "windows" {
-    g.w64_thunks(out)
+    g.w64_thunks(out, false)
     g.w64_weak(out)
     return
   }

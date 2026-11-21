@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (windows/amd64; task #597): a program built against std's store (the default after the first build) writes the Win64 thunks of platform calls made only through std functions the store leaves out, as weak definitions; every program using `os.secrets` Dpapi failed to link with an undefined `xo_w64_CryptProtectData`.
 - Fix (std fs; task #597): a sub Fs (`os.fs.sub(dir)`) keeps a trailing separator, so reading `"a.txt/"` is not found, as for `os.fs`; it read the file a.txt.
 - Fix (windows/amd64; task #597): a program whose runtime helper (an aggregate drop or equality helper) has a frame over 4 KiB no longer segfaults: helper frames probe the stack page by page, as function frames did.
 - Fix (xo debug, amd64; task #597): frames, breakpoints and `tasks` name a function the devirtualization pass copied by its source name (`main.worker`), not `main.worker#once`, as on arm64.

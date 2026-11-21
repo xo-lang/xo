@@ -587,6 +587,8 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
   let own_rt = !m.sepcomp_program
   if own_rt {
     g.trampolines(out)
+  } else {
+    g.sepcomp_trampolines(out)
   }
   out.push(g.lsdas.join(""))
   out.push(g.debug_sections(g.static_ref && own_rt))
