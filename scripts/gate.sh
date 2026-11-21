@@ -1211,7 +1211,7 @@ for step in "$@"; do
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
-  selftest-fail|selftest-sleep|selftest-ok|selftest-tmp|selftest-json|selftest-mem)
+  selftest-fail|selftest-sleep|selftest-busy|selftest-ok|selftest-tmp|selftest-json|selftest-mem)
     if [ "${XO_GATE_SELFTEST:-0}" = 1 ]; then steps="$steps $step"; else echo "gate.sh: $step is a test step (XO_GATE_SELFTEST=1)"; failed=1; fi ;;
   # an unknown name is the gate's failure by name (#533, 2026-11-20: stdmods
   # was reported as "hostcheck failed", the last pre-check before the loop)
@@ -1386,6 +1386,8 @@ step_peak() {
   local f=$1 me root mb peak=0
   sh -c 'echo $PPID' >"$f.me" && read -r me <"$f.me"
   rm -f "$f.me"
+  # pool_beat's job_sig leaves this sampler (and its ps) out of the idle test
+  echo "$me" >"$f.pid"
   root=$(ps -o ppid= -p "$me" 2>/dev/null | tr -d ' ')
   [ -n "$root" ] || return 0
   while kill -0 "$root" 2>/dev/null; do
@@ -1440,6 +1442,11 @@ run_step_body() {
     selftest-sleep)
       echo '--- PASS: TestSelf/first (0.01s)' >"$logs/$1.txt"
       sleep 60; echo "selftest-sleep: ok" ;;
+    selftest-busy)
+      # CPU for 14 s with no new log line: its beats are not idle
+      echo '--- PASS: TestSelf/first (0.01s)' >"$logs/$1.txt"
+      e=$((SECONDS + 14)); while [ "$SECONDS" -lt "$e" ]; do :; done
+      echo "selftest-busy: ok" ;;
     selftest-json)
       # a go test -json step: STEP.json grows while STEP.txt is written
       # only at its end (pkg_test)
@@ -2109,8 +2116,25 @@ ff_check() {
 # "no new lines" (lead, 2026-11-15: the tier's llvm step printed nothing
 # for 77 minutes, and heavyd marked the lease STALLED after 45, though
 # no test was slower than 387 s)
+# job_sig PID [SKIP]: the CPU seconds of PID's process tree (by parent, so
+# a child leading its own group counts) and the tree's PIDs, leaving out
+# SKIP's subtree (the step's step_peak sampler, whose ps runs every 5 s),
+# for pool_beat's idle mark (decision 0735 "Progress and hang detection",
+# task #600)
+job_sig() {
+  ps -e -o pid=,ppid=,time= 2>/dev/null | awk -v root="$1" -v skip="${2:--1}" '
+    { n++; pid[n] = $1; pp[$1] = $2; t = $3; d = 0
+      if (index(t, "-")) { split(t, a, "-"); d = a[1]; t = a[2] }
+      m = split(t, b, ":"); c = 0; for (i = 1; i <= m; i++) c = c * 60 + b[i]
+      cpu[$1] = c + d * 86400 }
+    END { tot = 0; ids = ""
+      for (i = 1; i <= n; i++) { p = pid[i]; q = p; k = 0
+        while (q != root && q != skip && (q in pp) && q + 0 > 1 && k++ < 64) q = pp[q]
+        if (q == root) { tot += cpu[p]; ids = ids " " p } }
+      printf "%d%s\n", tot, ids }'
+}
 pool_beat() {
-  local kp k f n prev last
+  local kp k f n prev last sig psig idle
   for kp in $jobpids; do
     k=${kp%%:*}
     kill -0 "${kp#*:}" 2>/dev/null || continue
@@ -2130,7 +2154,14 @@ pool_beat() {
     fi
     prev=$(cat "$logs/.job-$k.beat" 2>/dev/null)
     echo "$n" >"$logs/.job-$k.beat"
-    echo "gate.sh: $k running ($(($(date +%s) - tsteps)) s since the steps began); ${f##*/} $n lines$([ "$prev" = "$n" ] && echo ', no new lines since the last beat')${last:+; last: $last}"
+    # idle: no new log line, no CPU and the same processes since the last
+    # beat (0735's stall test). offload-gate-remote.sh does not forward an
+    # idle beat, so heavyd's lease watch (HEAVYD_PROGRESS) sees a gate whose
+    # jobs all sit idle as quiet, and one still computing as alive
+    sig=$(job_sig "${kp#*:}" "$(cat "$logs/peak-$k.mb.pid" 2>/dev/null)") psig=$(cat "$logs/.job-$k.sig" 2>/dev/null) idle=""
+    echo "$sig" >"$logs/.job-$k.sig"
+    [ "$prev" = "$n" ] && [ -n "$sig" ] && [ "$sig" = "$psig" ] && idle="; idle: no CPU and no new process since the last beat"
+    echo "gate.sh: $k running ($(($(date +%s) - tsteps)) s since the steps began); ${f##*/} $n lines$([ "$prev" = "$n" ] && echo ', no new lines since the last beat')${last:+; last: $last}$idle"
   done
 }
 pool_wait() {

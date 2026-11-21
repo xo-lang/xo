@@ -452,7 +452,14 @@ yourself.
   beats reach the Mac's gate log as `offload-gate: beat: ...` lines as
   they come (offload-gate-remote.sh og_progress, 2026-11-19); before,
   only step ends streamed, so a healthy llvm step past 90 minutes would
-  have been stopped. Last verified: 2026-11-19.
+  have been stopped. A beat whose step wrote no line, used no CPU (its
+  process tree, by parent) and started or ended no process since the
+  last beat ends `; idle: no CPU and no new process since the last
+  beat`, and og_progress does not forward it: the Mac's gate log then
+  goes quiet only for a gate whose jobs all sit idle (decision 0735's
+  stall test, task #600, 2026-11-21; before, the 10 minute beats kept
+  a hung concurrent gate "alive" until its budget). Last verified:
+  2026-11-21.
 - A gate step that hangs or runs far past its usual time (lead,
   2026-11-07): before blaming your change or the gate, run the same
   step at main as a control with a go test `-timeout` a few times its
