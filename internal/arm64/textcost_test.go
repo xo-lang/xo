@@ -67,8 +67,11 @@ fn main(os: Os) {
 // path for fewer than 19 digits (bench/perf/strconv atoi 1.46 of Go
 // before); the trim program ran 801M with trim_chars an end trim then a
 // start trim, two calls and two views, and 774M with both ends in one
-// frame and one view (bench/perf/trimchars 1.62 of Go before). Each
-// ceiling sits between the two. On darwin the ceiling is /usr/bin/time's
+// frame and one view (bench/perf/trimchars 1.62 of Go before). Since
+// 76247dc1f (2026-11-18, scan.in_set with no branch on the byte: faster,
+// host 1 --ab 0.938, with more instructions) the one pass form runs 801M
+// and the two call form 901M (the Mac, 2026-11-21, task #581), so the
+// trim ceiling is 850M. Each ceiling sits between the two. On darwin the ceiling is /usr/bin/time's
 // instruction count, elsewhere user CPU time.
 func TestTextCost(t *testing.T) {
 	if testing.Short() {
@@ -82,7 +85,7 @@ func TestTextCost(t *testing.T) {
 	}{
 		{"atoi", atoiCostProg, "-948823852", 450_000_000, 120 * time.Millisecond, "Int.parse lost strconv.Atoi's fast path"},
 		{"match", matchCostProg, "400000", 1_600_000_000, 400 * time.Millisecond, "path.is_match decodes an ASCII byte of a class or `?` with a call (Go inlines utf8.DecodeRuneInString's ASCII test)"},
-		{"trim", trimCostProg, "58800000", 788_000_000, 250 * time.Millisecond, "Str.trim_chars no longer trims both ends of an ASCII cutset in one pass"},
+		{"trim", trimCostProg, "58800000", 850_000_000, 250 * time.Millisecond, "Str.trim_chars no longer trims both ends of an ASCII cutset in one pass"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

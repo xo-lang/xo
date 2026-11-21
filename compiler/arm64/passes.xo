@@ -156,6 +156,10 @@ pub fn passes() -> List[Str] {
     // variables (x86emit.xo stub_saves, decision 0268's addendum): below
     // rsp on System V, in frame words on Windows (stub_at)
     "x86_stub_saves",
+    // rt.unwinding inline on linux and freebsd (calls.xo, a478b5b00):
+    // windows/amd64 calls ctx.unwinding, so TestWindowsAmd64Identity
+    // turns it off for the comparison (task #581)
+    "x86_unwind_inline",
     // ranges.xo acc_bounds (decision 0577): induction bounds of loop
     // accumulators, so their checked adds lose the overflow test; off
     // unless XO_PASSES=+acc_range
