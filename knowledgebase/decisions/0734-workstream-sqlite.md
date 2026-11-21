@@ -102,6 +102,37 @@ the hooks, `xw event`, `xw alerts` and `xw task` with no Docker daemon
    xw-postgres container are deleted in the same change (#245). The dump
    is kept for 30 days.
 
+### As built (xw-1, 2026-11-21)
+
+Where the port differs from the plan above:
+
+- `xw migrate-to-sqlite [--out FILE]` writes FILE.tmp (the schema by
+  migrations/, then the copy) and renames it to FILE only when every
+  table checked out; FILE must not exist. All tables are copied in one
+  SQLite transaction with `defer_foreign_keys`, since a row may
+  reference a table copied after it (the first dry run, one transaction
+  per table, failed at decision_agents). The checksum is per row
+  (every value as typed text, FNV-1a 64, summed so the order of rows
+  does not matter), computed from the values written and again from the
+  rows SQLite reads back; Postgres booleans become 0 or 1, times xw's
+  UTC text, arrays and JSON JSON text. A Postgres table or column the
+  SQLite schema lacks fails the copy before any row moves.
+  The dry run on the live store (2026-11-21, xw-1's
+  xwsq-unitdry.87373 log) copied 40 tables, 672895 rows, counts and
+  checksums equal, into a 190 MB file.
+- `xw restore FILE` does not stop `xw serve`: it refuses while the
+  server answers, so the operator boots out org.xolang.xw first (xw
+  never stops a process it did not start). It checks FILE with
+  `PRAGMA integrity_check` before moving xw.db (and its -wal and -shm)
+  aside to xw.db.before-restore, then checks the copy.
+- `xw backup` writes to XW_BACKUP_DIR (default ~/xo-lead/xw/backup), one
+  file a minute at most; the hourly run is the schedule line
+  `xwbackup 1h xw/bin/xw backup` in xw-schedule.conf.
+- The Docker stopped case is the whole of db_test.sh and work_test.sh:
+  both export a DOCKER_HOST pointing at a dead socket and run serve with
+  PATH=/usr/bin:/bin (no docker), and db_test fails when serve logs
+  anything about Docker.
+
 ## Consequences
 
 - Docker can be stopped at any time without taking xw down.
