@@ -173,7 +173,7 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
       Ok(_) => {}
       Err(e) => return ([], "${e}\n")
     }
-    let cf = c_src_flags(s, cflags)
+    let cf = c_src_flags(s, cflags) + (if s.ends_with("/native/sqlite/sqlite3.c") { sqlite_feature_defines() } else { [] })
     var args = cf + ["-g", "-O2", "-c", s]
     // the key names the source by its file name under trim: the
     // generated sources (xo_buildinfo.c, the adapters) are written in
@@ -265,6 +265,16 @@ fn sqlite_win_defines() -> List[Str] {
   ["-DSQLITE_THREADSAFE=2", "-DSQLITE_OMIT_LOAD_EXTENSION", "-DSQLITE_WIN32_MALLOC=1", "-DSQLITE_MAX_WORKER_THREADS=0", "-DSQLITE_OMIT_SEH"]
 }
 
+/// The SQLite features std/sqlite's amalgamation is compiled with on every
+/// target (xw decision 251, for Workstream's store, decision 0734): FTS5
+/// full text search, percentile_cont, median and the other percentile
+/// aggregates, and the math functions (floor, ceil, ln, pow, ...).
+/// scripts/sqlite-prebuilt.sh compiles its objects with the same list,
+/// and sqlite_key keys on it.
+fn sqlite_feature_defines() -> List[Str] {
+  ["-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_PERCENTILE", "-DSQLITE_ENABLE_MATH_FUNCTIONS"]
+}
+
 /// std/sqlite's prebuilt object for tgoos/tgoarch (decision 0534 stage
 /// 2), or "" when there is none to use: m is std/sqlite's binding (its
 /// links end in native/sqlite/xo_sqlite.c and sqlite3.c), and
@@ -306,14 +316,14 @@ fn sqlite_prebuilt(os: Os, std: Str, m: check.Module, tgoos: Str, tgoarch: Str) 
 }
 
 /// The key of std/sqlite's prebuilt object (sqlite_prebuilt): the
-/// SHA-256 of the target, then sqlite3.c, xo_sqlite.c, xo_sqlite.h and the
+/// SHA-256 of the target and sqlite_feature_defines, then sqlite3.c, xo_sqlite.c, xo_sqlite.h and the
 /// binding's adapter at adapter, each after its length; "" when one
 /// cannot be read. The adapter includes the header by its absolute path,
 /// which is the machine's, so the key takes it as `dir/` removed: the
 /// release's and a user's adapters then key alike
 /// (scripts/sqlite-prebuilt.sh writes the .key the same way).
 fn sqlite_key(os: Os, dir: Str, adapter: Str, tgoos: Str, tgoarch: Str) -> Str {
-  var b = "xo sqlite prebuilt v1 ${tgoos}/${tgoarch}\n".bytes()
+  var b = "xo sqlite prebuilt v2 ${tgoos}/${tgoarch} ${sqlite_feature_defines().join(" ")}\n".bytes()
   for f in ["${dir}/sqlite3.c", "${dir}/xo_sqlite.c", "${dir}/xo_sqlite.h", adapter] {
     match os.fs.read(f) {
       Ok(d0) => {

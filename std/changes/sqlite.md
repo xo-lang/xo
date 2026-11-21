@@ -15,6 +15,21 @@ SQLite stores a Boolean as an INTEGER. A column whose declared type is BOOLEAN (
 as a Boolean, true when the value is above 0, so `Row.bool` and `Row.bool_opt` read it. Other
 INTEGER columns and expressions stay integers, as in mattn.
 
+## 2026-11-21: feature: FTS5, the percentile aggregates and the math functions
+
+- Kind: feature
+- Commit: this commit
+- Found by: xw decision 251 (Xo Lead, 2026-11-21), for Workstream's SQLite store (decision 0734)
+- Go reference: none; mattn/go-sqlite3 enables these with its sqlite_fts5 and sqlite_math_functions build tags
+- Test: std/sqlite_test.xo "the amalgamation has FTS5, the percentile aggregates and the math functions"
+- Timing: none (compile options only)
+
+The amalgamation is compiled with SQLITE_ENABLE_FTS5, SQLITE_ENABLE_PERCENTILE and
+SQLITE_ENABLE_MATH_FUNCTIONS on every target (compiler/xo cffi.xo sqlite_feature_defines, and
+scripts/sqlite-prebuilt.sh's objects, whose key is now v2 and names the defines): `CREATE VIRTUAL TABLE
+... USING fts5`, `bm25()`, `median`, `percentile`, `percentile_cont`, `percentile_disc`, `floor`, `ceil`,
+`pow`, `ln` and the rest of SQLite's math functions work.
+
 ## 2026-11-18: fix: a transaction's first write beside busy writers gets its turn
 
 - Kind: fix

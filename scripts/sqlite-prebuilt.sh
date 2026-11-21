@@ -21,7 +21,7 @@
 #   windows-arm64: the same for aarch64-pc-windows-msvc (decision 0569
 #     stage 6, owner 2026-11-15), with -fno-stack-protector as xo's own
 #     windows/arm64 `use c` compile (compiler/xo main.xo).
-# darwin and linux keep a checkout's flags (-g -O2, SQLite's defaults), so
+# darwin and linux keep a checkout's flags (-g -O2 and the features), so
 # a prebuilt and a compiled program behave alike.
 # Their debug information names the checkout as . (-ffile-prefix-map): the
 # 0.44.0 build's objects held the release checkout's path under $HOME
@@ -31,6 +31,10 @@ repo=${1:?usage: sqlite-prebuilt.sh REPO XO PLAT...}
 xo=${2:?usage: sqlite-prebuilt.sh REPO XO PLAT...}
 shift 2
 src="$repo/std/native/sqlite"
+# the SQLite features every object is compiled with: compiler/xo cffi.xo
+# sqlite_feature_defines, which xo's own compile of sqlite3.c and the
+# object's key use (xw decision 251)
+features=(-DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_PERCENTILE -DSQLITE_ENABLE_MATH_FUNCTIONS)
 work=$(mktemp -d)
 trap 'rm -rf "${work:?}"' EXIT
 
@@ -73,13 +77,13 @@ for plat in "$@"; do
 	echo "+ ${cmd[*]} -I $src -c unit.c -o $obj" >&2
 	# the adapter includes "sqlite/xo_sqlite.h", relative to std/native
 	# (compiler/cli/bind std_key)
-	"${cmd[@]}" -I "$src" -I "$repo/std/native" -c "$work/unit.c" -o "$work/sqlite.$ext"
+	"${cmd[@]}" "${features[@]}" -I "$src" -I "$repo/std/native" -c "$work/unit.c" -o "$work/sqlite.$ext"
 	mv "$work/sqlite.$ext" "$obj"
 	(cd "$out" && shasum -a 256 "sqlite.$ext" > "sqlite.$ext.sha256")
-	python3 -I - "$src" "$adapter" "$goos" "$arch" > "$obj.key" <<'EOF'
+	python3 -I - "$src" "$adapter" "$goos" "$arch" "${features[*]}" > "$obj.key" <<'EOF'
 import hashlib, sys
-d, adapter, goos, arch = sys.argv[1:5]
-b = f'xo sqlite prebuilt v1 {goos}/{arch}\n'.encode()
+d, adapter, goos, arch, features = sys.argv[1:6]
+b = f'xo sqlite prebuilt v2 {goos}/{arch} {features}\n'.encode()
 for f in [f'{d}/sqlite3.c', f'{d}/xo_sqlite.c', f'{d}/xo_sqlite.h', adapter]:
     data = open(f, 'rb').read()
     if f == adapter:

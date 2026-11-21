@@ -102,6 +102,23 @@ test "the storage classes, placeholders and the errors in memory" {
   db.close().or_fault("close")
 }
 
+test "the amalgamation has FTS5, the percentile aggregates and the math functions" {
+  // xw decision 251: compiler/xo cffi.xo sqlite_feature_defines; without
+  // them each statement here fails with "no such module" or "no such function"
+  let db = sql.open_driver(os.net, driver(os.fs), ":memory:", max_open: 1).or_fault("open")
+  db.exec("CREATE VIRTUAL TABLE docs USING fts5(title, body)").or_fault("fts5")
+  db.exec("INSERT INTO docs (title, body) VALUES ('a', 'the quick brown fox'), ('b', 'a slow green turtle'), ('c', 'quick quick fox')").or_fault("insert docs")
+  let hits = db.query("SELECT title FROM docs WHERE docs MATCH 'quick AND fox' ORDER BY bm25(docs), title").or_fault("match")
+  expect(hits.map(fn(r) { r.str("title").or_fault("title") })) == ["c", "a"]
+  db.exec("CREATE TABLE n (x REAL)").or_fault("create n")
+  db.exec("INSERT INTO n (x) VALUES (1), (2), (3), (4)").or_fault("insert n")
+  let p = db.query_one("SELECT percentile_cont(x, 0.5) AS m, median(x) AS md, percentile(x, 90) AS p90 FROM n").or_fault("percentile")
+  expect((p.float("m").or_fault("m"), p.float("md").or_fault("md"), p.float("p90").or_fault("p90"))) == (2.5, 2.5, 3.7)
+  let f = db.query_one("SELECT floor(2.7) AS f, ceil(2.2) AS c, pow(2, 10) AS p").or_fault("math")
+  expect((f.float("f").or_fault("f"), f.float("c").or_fault("c"), f.float("p").or_fault("p"))) == (2.0, 3.0, 1024.0)
+  db.close().or_fault("close")
+}
+
 test "foreign keys with _fk, and a rolled back transaction leaves nothing" {
   let db = sql.open_driver(os.net, driver(os.fs), ":memory:?_fk=1", max_open: 1).or_fault("open")
   db.exec("CREATE TABLE p (id INTEGER PRIMARY KEY)").or_fault("p")

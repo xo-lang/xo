@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 
 - Fix (macOS, `xo build --race`; task #608): building the same program again into another directory puts the ThreadSanitizer runtime beside that binary too. A cached build copied only the executable, which then ran only while the toolchain stayed where it was.
+- std/sqlite (xw decision 251): SQLite is compiled with FTS5 full text search (`USING fts5`, `bm25()`), the percentile aggregates (`median`, `percentile_cont`, ...) and the math functions (`floor`, `pow`, ...) on every target.
 - Fix (windows/amd64; task #597): a program built against std's store (the default after the first build) writes the Win64 thunks of platform calls made only through std functions the store leaves out, as weak definitions; every program using `os.secrets` Dpapi failed to link with an undefined `xo_w64_CryptProtectData`.
 - `xo debug` (bug fix, task #603): variables of a loop the compiler split for register allocation show their values again; on linux/amd64 a loop counter showed `<optimized out>` and a running sum its value from before the loop.
 - Fix (std/sqlite): an INTEGER in a column declared `BOOLEAN` reads as a Boolean (above 0 is true), as mattn/go-sqlite3 does, so `Row.bool` reads it; it failed with "expected a boolean, found an integer".
