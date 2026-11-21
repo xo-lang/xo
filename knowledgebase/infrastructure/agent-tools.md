@@ -2445,8 +2445,11 @@ last 20 runs (`~/xo-lead/heavyd-peaks.json`, written at each job's
 end), a running job counts at the larger of that and its own peak so
 far, and a stem with fewer than 3 runs is never held by it. The reason
 reads `admission v3 fit: 61.0 GB admitted + 30.0 GB over 88 (mac 96 -
-reserve 8)`. Leases on pass3 and pass4 are not counted yet (no
-per-container probe). Last verified: 2026-11-21.
+reserve 8)`. The containers of the machines under the Mac
+(xo-host3, xo-host4: "xo-" plus the machine row's name) count at their
+`docker stats` use, read once a minute with the policy; a failed read
+or one older than 3 minutes counts as 0 (fail open), and with fit off
+docker is never asked. Last verified: 2026-11-21.
 
 ### ccguard: the Claude Code hook (#138)
 
