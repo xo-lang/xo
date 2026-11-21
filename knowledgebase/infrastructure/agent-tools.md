@@ -1973,7 +1973,10 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     `--shipped` and `--found` on `xw task add`; the task's owner or the
     lead), and `xw releases [--json]` counts each release's bugs by finder,
     newest first (task #564; xw history starts 2026-11-15, so releases
-    before v0.52.0 have few rows).
+    before v0.52.0 have few rows). The version is the first published
+    release (`gh release list --repo xo-lang/xo`) holding the commit that
+    introduced the bug, not the first tag: seeds such as v0.38.0 and
+    v0.54.0 were never published, and xw refuses them (lead, 2026-11-20).
   - `PUSHQ_TASK=ID` on pushq.sh records a pushed push on task ID itself
     (`xw task push ID SHA --auto`: partial when the title names two or
     more std modules; `PUSHQ_PARTIAL=1` makes it `--partial`). Detached,
