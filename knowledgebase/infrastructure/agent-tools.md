@@ -2404,6 +2404,25 @@ Docker or xw yourself (the owner's call). The watch only reads;
 events spool and replay (xwhook.sh), pushq notes the holds and `--tool`
 checks it could not make (3172597ea). Last verified: 2026-11-20.
 
+#### heavyd admission by policy (0733, owner question #240)
+
+The thresholds for refusing new Mac work at high load are xw policy
+rows, not code (scripts/lead/heavyd/admission.go). `xw policy get
+admission default`, `xw policy list machine`, `xw policy log` read them;
+the lead changes one with `xw policy set admission default FILE --why
+TEXT` (validated, each set a new version) and undoes it with `xw policy
+rollback admission default`. `refuse_load_per_core` holds new non-urgent
+gates and slot runs on the Mac, and new leases on lanes whose machine
+row has the Mac as an ancestor (pass3, pass4, docker), while the Mac's
+1-minute load is over that times machine mac's cores; `min_free_pct`
+does the same under that free memory percent. A lease that also takes
+another lane (pass2|pass3) goes there. The waiter's reason names the
+version: `admission v2: load 62.10 over 1.5 x 30 cores (45)`. Both are
+null (off) until the owner answers #240. heavyd reads the rows every
+minute through the tools token, keeps the last good copy an hour, and
+otherwise fails open to its built-in rules; `HEAVYD_ADMISSION=0` turns
+the reading off. Last verified: 2026-11-21.
+
 ### ccguard: the Claude Code hook (#138)
 
 A PreToolUse hook (`scripts/lead/ccguard/`) stops the commands agents

@@ -61,7 +61,9 @@ uses these Postgres features, counted in the repo's .xo files on
 
 - `xw backup` runs `VACUUM INTO` to
   `~/xo-lead/xw/backup/xw-YYYYMMDD-HHMM.db`. It runs online, hourly from
-  the xw schedule, keeps 48, and keeps one a day for 30 days.
+  the xw schedule, keeps the newest 24, and keeps one a day for 7 days
+  (at most 31 files, about 5.4 GB at 173 MB each; lead 2026-11-21,
+  workstream 9ea5b98; it was 48 and 30 days, up to 78 files).
 - `xw restore FILE` stops `xw serve`, moves the current file aside to
   `xw.db.before-restore`, copies FILE in, runs `PRAGMA
   integrity_check`, and starts `xw serve`.
