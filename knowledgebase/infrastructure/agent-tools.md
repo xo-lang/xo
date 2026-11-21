@@ -1959,7 +1959,12 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     a near title. A bug fix is `--bug` (or `xw task kind ID bug`): `xw
     check` flags one pushed or done whose commit changed no test file
     (`_test` files, test scripts, goldens, corpora, test/, testdata/;
-    owner, 2026-11-15).
+    owner, 2026-11-15). A bug that reached a release names it and its
+    finder: `xw task shipped ID vX.Y.Z --found user|tier|agent` (or
+    `--shipped` and `--found` on `xw task add`; the task's owner or the
+    lead), and `xw releases [--json]` counts each release's bugs by finder,
+    newest first (task #564; xw history starts 2026-11-15, so releases
+    before v0.52.0 have few rows).
   - `PUSHQ_TASK=ID` on pushq.sh records a pushed push on task ID itself
     (`xw task push ID SHA --auto`: partial when the title names two or
     more std modules; `PUSHQ_PARTIAL=1` makes it `--partial`). Detached,
