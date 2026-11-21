@@ -201,6 +201,39 @@ function sections alone do not divide and whose `__start_` and
 `__stop_` symbols keep every input section alive: a program that used
 no time zone still needed `xo_tz_table` until the two options above.
 
+## What the opt in costs at run time (2026-11-21)
+
+Measured before anything is inlined across the boundary, linux/arm64
+host 1 run alone, xo at 57e3364ad, each bench of the native against
+LLVM set built with `--backend=llvm` whole program and with
+`XO_SEPCOMP_LLVM=1`; 30 interleaved rounds a workload, the median of the
+per round ratios (~/xo-lead/notes/xo-lang-1/p607/rt-time-57e3364ad.out):
+
+| Bench | Opt in / whole program (geometric mean) | Workloads |
+|---|---:|---:|
+| portable | 1.034 | 10 |
+| atomic | 1.048 | 8 |
+| digest | 1.247 | 5 |
+| fault | 1.472 | 3 |
+| text | 1.523 | 25 |
+| json | 1.582 | 11 |
+| ctx | 2.075 | 5 |
+| rsa | 4.389 | 4 |
+| all | 1.486 | 71 |
+
+The worst rows: rsa sign4096 158.3 ms to 1,001 ms (6.3), rsa verify4096
+4.8, ctx budget 2.5, text cut 2.2. clang's time on the same programs
+went from 4.1 to 30.8 s to 0.08 to 0.64 s.
+
+This is more than the calls from the program into std: std's own
+objects are seven modules with nothing inlined between them, compiled
+without LTO and with hidden instead of internal linkage, and none of
+the whole program's passes ran across them. So the opt in is for build
+time (goldens, edit loops) and is not timed: `xo bench` refuses to run
+with `XO_SEPCOMP_LLVM=1` set (compiler/cli/bench sepcomp_llvm_refusal),
+and it does not become the default until stage 3 covers the calls
+inside std as well as those into it.
+
 ## Consequences
 
 - A warm LLVM build of a program that reaches http or crypto compiles

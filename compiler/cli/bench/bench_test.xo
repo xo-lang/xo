@@ -346,3 +346,13 @@ test "the default is 4 rounds, with no odd count note (task #378)" {
   let o = parse_opts(["--ab", "p", "q"]).or_fault("opts")
   expect(o.rounds == 4 && o.asked == 0)
 }
+
+test "xo bench refuses to time with XO_SEPCOMP_LLVM=1" {
+  // decision 0738: the build against std's own LLVM objects is slower
+  // code, so a timing with the variable set is refused; unset or another
+  // value is no refusal
+  expect(sepcomp_llvm_refusal("")) == ""
+  expect(sepcomp_llvm_refusal("0")) == ""
+  expect(sepcomp_llvm_refusal("1").contains("XO_SEPCOMP_LLVM=1 is set")) == true
+  expect(sepcomp_llvm_refusal("1").contains("unset it")) == true
+}
