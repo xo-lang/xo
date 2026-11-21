@@ -25,6 +25,25 @@ fn (var g: Gen) frame_attrs() {
 /// defines it.
 fn (var g: Gen) preempt_stub() { g.emitted["@xo_preempt_stub"] = true }
 
+/// Windows' asynchronous preemption stub as module asm, in the module of
+/// pool.xo win_kick, which names it: ssa.async_stub_amd64 on
+/// windows/amd64; on windows/arm64 a trap, as the arm64 emitter's
+/// (compiler/arm64 sched.xo): it has no asynchronous preemption yet, so the
+/// stub never runs, but win_kick's rt.sym_addr needs the symbol (an LLVM
+/// build on windows/arm64 failed to link, undefined xo_async_stub, task
+/// #605, 2026-11-21).
+fn async_stub_asm(goos: Str, arch: Str) -> Str {
+  if goos != "windows" || (arch != "amd64" && arch != "arm64") {
+    return ""
+  }
+  let body = if arch == "amd64" { [".p2align 4", "xo_async_stub:"] + ssa.async_stub_amd64() } else { [".p2align 2", "xo_async_stub:", "brk #1"] }
+  var out = ""
+  for l in [".text", ".globl xo_async_stub"] + body {
+    out = out + "module asm \"${l}\"\n"
+  }
+  out + "\n"
+}
+
 /// xo_preempt_stub's definition as module asm, a weak hidden symbol: only
 /// inline asm calls it, which thin LTO cannot see, so a definition in IR
 /// was internalized or dropped in a split build's parts while another
@@ -32,15 +51,7 @@ fn (var g: Gen) preempt_stub() { g.emitted["@xo_preempt_stub"] = true }
 /// module asm is kept as written (and a split build puts it in its first
 /// module, split.xo parse_ir).
 fn (g: Gen) preempt_asm() -> Str {
-  var out = ""
-  if g.emitted.contains("@xo_async_stub") && g.goos == "windows" && g.arch() == "amd64" {
-    // Windows' asynchronous preemption stub (ssa.async_stub_amd64), in
-    // the module of pool.xo win_kick, which names it
-    for l in [".text", ".globl xo_async_stub", ".p2align 4", "xo_async_stub:"] + ssa.async_stub_amd64() {
-      out = out + "module asm \"${l}\"\n"
-    }
-    out = out + "\n"
-  }
+  var out = if g.emitted.contains("@xo_async_stub") { async_stub_asm(g.goos, g.arch()) } else { "" }
   if !g.emitted.contains("@xo_preempt_stub") {
     return out
   }

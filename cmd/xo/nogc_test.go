@@ -384,18 +384,28 @@ func TestNoGCNotesServer(t *testing.T) {
 			}
 		}
 		got := notesSmoke(t, "http://"+addr)
-		// the process this test started (its own PID)
-		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-			t.Fatal(err)
-		}
-		for l := range lines {
-			logs = append(logs, l)
-		}
-		if err := cmd.Wait(); err != nil {
-			t.Errorf("%s: exit: %v (log %v)", be, err, logs)
-		}
-		if last := logs[len(logs)-1]; !strings.HasSuffix(last, "INFO stopped") {
-			t.Errorf("%s: last log line %q", be, last)
+		// the process this test started (its own PID). Windows has no
+		// SIGTERM to send (Go: "not supported by windows"; the winarm VM,
+		// task #605, 2026-11-21): the server is killed there and its clean
+		// stop is not checked
+		if runtime.GOOS == "windows" {
+			cmd.Process.Kill()
+			for range lines {
+			}
+			cmd.Wait()
+		} else {
+			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatal(err)
+			}
+			for l := range lines {
+				logs = append(logs, l)
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Errorf("%s: exit: %v (log %v)", be, err, logs)
+			}
+			if last := logs[len(logs)-1]; !strings.HasSuffix(last, "INFO stopped") {
+				t.Errorf("%s: last log line %q", be, last)
+			}
 		}
 		if be == xotool.BackendGo {
 			want = got

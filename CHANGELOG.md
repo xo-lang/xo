@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (windows/arm64, LLVM backend; task #605): a program built with `--backend=llvm` on windows/arm64 links again; the runtime named the asynchronous preemption stub `xo_async_stub`, which only the arm64 backend defined (lld-link: undefined symbol: xo_async_stub).
 - LLVM backend, opt in (decision 0738, task #607): with `XO_SEPCOMP_LLVM=1`, `xo build --backend=llvm` and `xo run --backend=llvm` compile only the program's own code and link std from objects built once into the cache. A program using HTTP or TLS spends under a second in clang where it spent 25 to 37 s; the first build makes the objects (about 100 s). The binaries are larger (all of std's debug information) and nothing is inlined from std yet, so it is off by default; `--release` is unchanged.
 - Fix (wasm32; task #616): reading a file named with a trailing separator (`"a.txt/"`) fails with `FsErr.NotDir`, as on native targets; the WASI hosts opened it as the file.
 - Fix (macOS, `xo build --race`; task #608): building the same program again into another directory puts the ThreadSanitizer runtime beside that binary too. A cached build copied only the executable, which then ran only while the toolchain stayed where it was.

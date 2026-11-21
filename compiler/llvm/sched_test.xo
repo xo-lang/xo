@@ -16,3 +16,14 @@ test "the fiber entry's return address is undefined on ELF targets" {
   let (_, wa) = switch_asm("windows", "amd64")
   expect(wa.contains(".cfi_escape 0x07, 16")) == false
 }
+
+// pool.xo win_kick names xo_async_stub on every Windows target; an LLVM
+// build on windows/arm64 defined it nowhere and failed to link (undefined
+// xo_async_stub, 33 cmd/xo tests on the winarm VM, task #605, 2026-11-21).
+test "the asynchronous preemption stub is defined on both Windows arches" {
+  expect(async_stub_asm("windows", "amd64").contains("xo_async_stub:")) == true
+  let a = async_stub_asm("windows", "arm64")
+  expect(a.contains("xo_async_stub:")) == true
+  expect(a.contains("brk #1")) == true
+  expect(async_stub_asm("linux", "arm64")) == ""
+}
