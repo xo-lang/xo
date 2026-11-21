@@ -1109,6 +1109,22 @@ run directory).
   base64 encoded (the amd64 serial console changed 4-byte UTF-8), so the
   compare with want.txt is exact. 2026-11-10: 642 of 642 on both arches.
 
+## The tier's host split (task #592, 2026-11-21)
+
+tier.sh splits a tier's linux offload steps over two arm64 hosts whenever
+both answer its probes, odd tiers too: host 2 (offload-arm64b.env) runs gen,
+fuzz, selfhost, stdwasm, linux cmd and riscv64; the second host
+(`TIER_HOST2`, default host 3, offload-arm64c.env) runs linux llvm (the
+whole host), stdcov and sdk-stress (`TIER_HOST2_STEPS`, default `llvm
+stdcov`). `scripts/lead/tier-plan.sh` holds the layout and
+tier-plan_test.sh tests it. linux llvm never runs on host 2: its 24 GB
+OOM-kills clang (tier 920's peaked at 21,752 of 23,993 MB), so with host 2
+as the only host the step is skipped and named in the log. Before, the
+second host was host 4, which gave tier 920 no slot, and host 2 ran every
+step alone for 12,510 s. `TIER_SPLIT_LLVM=0` still turns the split off;
+`TIER_SPLIT_SWAP` is gone.
+Last verified: 2026-11-21 (tests only; the first measured tier is pending).
+
 ## Reserving a host (#278, 2026-11-17)
 
 A file `~/xo-lead/reserve/ENV` (for example `reserve/offload.env`) whose

@@ -36,6 +36,17 @@ func TestTierMac(t *testing.T) {
 	}
 }
 
+// TestTierPlan runs scripts/lead/tier-plan_test.sh: tier.sh's host split
+// (task #592): linux llvm and stdcov on host 3, the rest on host 2, and
+// linux llvm never on host 2 (24 GB OOM-kills clang).
+func TestTierPlan(t *testing.T) {
+	s := filepath.Join("..", "..", "scripts", "lead", "tier-plan_test.sh")
+	out, err := exec.Command("bash", s).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", s, err, out)
+	}
+}
+
 // TestTierHeavyClass: every heavy.sh run in scripts/lead/tier.sh is bulk
 // class with HEAVY_DARWIN=1 (task #556): a tier step runs for minutes on
 // the Mac, and the docs step (docs-check.sh, 12+ min in tier 918) ran as
