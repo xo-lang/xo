@@ -24,3 +24,13 @@ about 38 of 613) beside the LLVM selection. The lead's full tier still
 runs every golden on the Go backend. In hand-written gate scripts, grep
 `-v` output for indented `    --- PASS` lines, or count them; a parent
 `--- PASS` alone proves nothing.
+
+Again (2026-11-20, task #552): #540's std/rt/list.go fault text change
+gated with 0 of 859 goldens selected, and the every-16th sample did not
+include any of the four `bytesbuilder_put*` goldens whose want.txt held
+the new text. Main failed GoParity on them until the fix. Fix: for a Go
+backend change, gate.sh's `rt_string_goldens` also runs
+TestGoldenGoParity on every golden whose want.txt or want_go.txt holds a
+string literal piece (8 or more characters, split at format verbs) that
+the std/rt/*.go diff adds or removes (scripts/golden-rt-strings.py, at
+most 64 goldens; the last 15 std/rt commits select 0 to 29).

@@ -92,3 +92,22 @@ func TestCgcheck(t *testing.T) {
 		t.Fatalf("cgcheck_test.sh: %v\n%s", err, out)
 	}
 }
+
+// TestGateRtStringGoldens: a std/rt/*.go change runs on the Go backend the
+// internal/llvm goldens whose want file holds a string it adds or removes
+// (scripts/gate.sh's rt_string_goldens, scripts/golden-rt-strings.py):
+// std/rt is no xo build input, so the LLVM selection named none of #540's
+// four BytesBuilder.put goldens and the every-16th sample missed them
+// (task #552). scripts/golden-rt-strings_test.sh holds the cases.
+func TestGateRtStringGoldens(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3")
+	}
+	out, err := exec.Command("bash", filepath.Join(root, "scripts", "golden-rt-strings_test.sh")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("golden-rt-strings_test.sh: %v\n%s", err, out)
+	}
+}

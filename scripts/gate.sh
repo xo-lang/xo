@@ -16,7 +16,9 @@
 #            2026-10-18; see native_only below); XO_GATE_LLVM=1 runs it;
 #            with TestGoldenGoParity (XO_TEST_GO_PARITY=1) when the
 #            branch changes compiler/gen, std/rt, or a std module std/rt
-#            also implements (go_backend), and else for the goldens the
+#            also implements (go_backend; plus the goldens whose want
+#            file holds a string the std/rt diff adds or removes,
+#            rt_string_goldens, #552), and else for the goldens the
 #            branch adds or edits (llvmgo; 2026-11-12). Its
 #            golden programs are only those the change touches (owner,
 #            2026-10-22; llvm_goldens below): XO_GATE_LLVM=all runs
@@ -965,6 +967,13 @@ golden_dirs_changed() {
   { git diff --name-only --diff-filter=AMR "$base" HEAD; git status --porcelain | cut -c4-; } |
     sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -
 }
+# rt_string_goldens: internal/llvm's goldens whose want.txt or want_go.txt
+# holds a string literal the branch's std/rt/*.go change adds or removes
+# (scripts/golden-rt-strings.py; comma separated, empty when none; #552)
+rt_string_goldens() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  git diff -U0 "$base" -- 'std/rt/*.go' | python3 scripts/golden-rt-strings.py internal/llvm/testdata/golden
+}
 # XO_GATE_LLVM_SHARD=K/N (scripts/lead/ctier.sh; lead, 2026-11-15: one
 # full llvm step held host 4's single slot 78 minutes while a 30 second
 # lease waited 51): with XO_GATE_LLVM=all, shard 0 runs the package's
@@ -1050,6 +1059,15 @@ llvm_step() {
         # gotchas/go-parity-selected-by-llvm-ir.md); it now fails when it
         # runs none
         XO_TEST_GO_PARITY=1 XO_GO_PARITY_SAMPLE=${XO_GO_PARITY_SAMPLE:-16} full llvm ./internal/llvm "$@"
+        # and the goldens whose want file holds a string the std/rt change
+        # adds or removes, which neither the selection (std/rt is no xo
+        # build input) nor the sample need name: #540's BytesBuilder.put
+        # fault text reached main with its 4 goldens unrun (task #552)
+        rdirs=$(rt_string_goldens)
+        if [ -n "$rdirs" ]; then
+          echo "llvmgo goldens (Go parity, std/rt strings): $rdirs"
+          XO_TEST_GO_PARITY=1 XO_LLVM_GOLDENS=$rdirs full llvmgo ./internal/llvm -run '^TestGoldenGoParity$'
+        fi
       else
         full llvm ./internal/llvm "$@"
         # a golden the change adds or edits runs on the Go backend too,
