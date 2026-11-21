@@ -1717,8 +1717,10 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   and fit place it. The bundle, race runtime and disk check then run
   inside the lease on the granted host, so the pick, host 4 first and the
   reroutes are not used; a host short of disk ends the gate rc 6. The
-  lease minutes are fixed first: the formula with a cold xo, or 1.3 times
-  the p90 of cold runs on those hosts plus the xo build, when more.
+  lease minutes are fixed first: the formula, or 1.3 times the p90 of
+  runs on those hosts when more, warm when every host already holds the
+  tree's xo (`offload.sh --has-xo`, one ssh each), else plus the xo build
+  (OFFGATE_XOBUILD_MIN, 20).
   `OFFGATE_PLAN=spec` prints the spec. Last verified: 2026-11-21.
 - heavyd starts a short Mac gate-class job regardless of the load
   (#263, cost:mac-load-wait, 2026-11-17: 2,207 gate jobs in 24 h with a
