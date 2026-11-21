@@ -19,3 +19,17 @@ func TestHeavydRestartRetry(t *testing.T) {
 		t.Fatalf("heavyd_restart_test.sh: %v\n%s", err, out)
 	}
 }
+
+// TestTierMemWait: scripts/lead/tier-memwait.sh, tier.sh's free-memory
+// wait before a Mac step, is skipped while xw's admission row has fit on
+// and need_gb set (decision 0732 step 2, #600); cases in
+// scripts/lead/tier_memwait_test.sh.
+func TestTierMemWait(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash")
+	}
+	out, err := exec.Command("bash", filepath.Join(root, "scripts", "lead", "tier_memwait_test.sh")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("tier_memwait_test.sh: %v\n%s", err, out)
+	}
+}
