@@ -1131,9 +1131,10 @@ whole host), stdcov and sdk-stress (`TIER_HOST2_STEPS`, default `llvm
 stdcov`). `scripts/lead/tier-plan.sh` holds the layout and
 tier-plan_test.sh tests it. `TIER_XW_PLAN=1` (off by default; task
 #600, decision 0733 "Planning a batch") takes the two hosts' steps from
-`xw plan tier --hosts FIRST,SECOND --steps ... --list` instead (each
-step's p50 seconds and peak per host from step.end events, within the
-machine rows' slots and gb); a step it leaves unplaced, or every step when
+`xw plan tier --hosts FIRST,SECOND --steps ... --serial --list` instead
+(each step's p50 seconds and peak per host from step.end events, one
+step at a time per host as the tier runs them, within the machine rows'
+gb); a step it leaves unplaced, or every step when
 xw does not answer in 20 s, keeps the `TIER_HOST2_STEPS` rule, and the
 tier log says "split from xw plan tier". linux llvm never runs on host 2: its 24 GB
 OOM-kills clang (tier 920's peaked at 21,752 of 23,993 MB), so with host 2
