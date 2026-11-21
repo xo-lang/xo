@@ -693,10 +693,17 @@ CPU-bound timings; HTTP throughput needs bare Linux. Last verified: 2026-11-02
   unpacked in `C:\Users\xo\tools\llvm-23.1.6` (4.0 GB), its `bin` on PATH
   in `~/.bash_profile` (Git Bash `-l`, so every offload job) and in the user
   Path. TestDevEdgesOwnStd and TestLSPUseCNative run and pass with it
-  (1abba25a4e). The host has no MSVC C library and no Windows SDK, so a
-  `use c` or std/sqlite build from source still fails (`'stdlib.h' file
-  not found`: native_sqlite, native_sqlite_file), and offload-amd64.sh
-  still runs goldens with `XO_CLANG=/bin/false`. Last verified: 2026-11-21.
+  (1abba25a4e). clang finds MSVC's C library and the Windows SDK itself
+  (owner, 2026-11-21, xw decision #258): Visual Studio Build Tools 2026
+  18.12.1 (18.12.12412.261) in `C:\Program Files (x86)\Microsoft Visual
+  Studio\18\BuildTools`, MSVC 14.52.37025, Windows SDK 10.0.26100.0 in
+  `C:\Program Files (x86)\Windows Kits\10`, installed quietly from
+  Microsoft's bootstrapper (`https://aka.ms/vs/18/stable/vs_buildtools.exe`,
+  Authenticode Microsoft Corporation, `--quiet --wait --norestart --add
+  Microsoft.VisualStudio.Workload.VCTools --includeRecommended`). With it
+  native_sqlite and native_sqlite_file build and pass (1abba25a4e), and
+  offload-amd64.sh's goldens on Windows use this clang (goldclang,
+  baf0cd69e2; `all` then keeps the use_c_* goldens). Last verified: 2026-11-21.
 - Cold Windows builds until the 0.37 seed (2026-11-03, decision 0318's
   2026-11-03 addendum): the 0.34.0 and 0.35.0 seeds cannot build main on
   Windows since the async stub change (their emitter defines no
