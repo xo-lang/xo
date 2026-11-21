@@ -1895,13 +1895,23 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // toolchain that cannot do it (no lld) gets the plain objects
       var mode = "plain"
       if split.opt != "-O0" && (lctx.tgoos is "linux" | "freebsd") && lls.len() > 1 {
+        // in the build's directory, by base name: a ThinLTO module is
+        // identified by the path clang was given, which the names of its
+        // promoted locals and the import order hash, and the directory
+        // has a random name. With full paths std's objects differed from
+        // build to build, and one build in three gave a fault report
+        // whose traceback named every frame `?` and `[inlined]` (task
+        // #607, 2026-11-21; gotchas/windows-thinlto-module-path.md is
+        // the same cause in the split build)
         var bcs: List[Str] = []
+        var rls: List[Str] = []
         var per: List[List[Str]] = []
         for i in 0..lls.len() {
-          bcs.push("${dir}/std.${i}.bc")
-          per.push(["-fthinlto-index=${dir}/std.${i}.bc.thinlto.bc"])
+          bcs.push("std.${i}.bc")
+          rls.push(base_name(lls[i]))
+          per.push(["-fthinlto-index=std.${i}.bc.thinlto.bc"])
         }
-        if ir_objects_par(os, cc, sflags + ["-flto=thin"], lls, bcs, [], split.jobs).is_ok() {
+        if ir_objects_par(os, cc, sflags + ["-flto=thin"], rls, bcs, [], split.jobs, dir).is_ok() {
           // lld itself, asked of clang: through the clang driver the
           // same options exit 0 and write no index (2026-11-21), and a
           // backend given a missing index also exits 0, with an empty
@@ -1909,13 +1919,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           // xo:allow XO0903 no lld: the plain objects below
           let lld = (os.proc.run(cc, ["-print-prog-name=ld.lld"]).ok().map(fn(r) { r.stdout.to_str() ?? "" }) ?? "").trim()
           if !lld.is_empty() {
-            os.proc.run(lld, ["-r", "--thinlto-index-only"] + bcs + ["-o", "${dir}/std.index.o"]).ignore_err("the index files below say whether it worked")
+            os.proc.cmd(lld, ["-r", "--thinlto-index-only"] + bcs + ["-o", "std.index.o"]).dir(dir).output().ignore_err("the index files below say whether it worked")
             var have = true
             for bc in bcs {
               // xo:allow XO0903 a missing index: the plain objects below
-              have = have && (os.fs.exists("${bc}.thinlto.bc").ok() ?? false)
+              have = have && (os.fs.exists("${dir}/${bc}.thinlto.bc").ok() ?? false)
             }
-            if have && ir_objects_par(os, cc, sflags + dwo + ["-x", "ir"], bcs, outs, per, split.jobs).is_ok() {
+            if have && ir_objects_par(os, cc, sflags + dwo + ["-x", "ir"], bcs, outs, per, split.jobs, dir).is_ok() {
               var full = true
               for o1 in outs {
                 // xo:allow XO0903 an object that cannot be read counts as empty
@@ -1929,7 +1939,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
       }
       if mode == "plain" {
-        match ir_objects_par(os, cc, sflags + dwo, lls, outs, [], split.jobs) {
+        match ir_objects_par(os, cc, sflags + dwo, lls, outs, [], split.jobs, "") {
           Ok(_) => {}
           Err(e) => fail(os, e)
         }

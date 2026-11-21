@@ -31,6 +31,25 @@ entry out without declaring it, and the runtime takes its address. The
 last two lines of clang's output held only the caret. Fix: declared in
 std's build; read the first `error:` line of a failed compile.
 
+Symptom 4 (2026-11-21, after std's modules were built by distributed
+ThinLTO, 775ad7201): one golden run showed list_swap_guard's fault
+report with 13 lines changed, every traceback frame as `? (file:line)
+[inlined]` with the function's name on a line of its own; the next 16
+executions were fine. Each binary was stable over 100 runs; three fresh
+builds gave three different sets of std objects and one of them the bad
+report. Cause: a ThinLTO module is identified by the path clang was
+given, and the names of promoted locals and the import order follow
+it; the modules were named by full paths inside the build's randomly
+named directory (the split build's same trap:
+windows-thinlto-module-path.md). Four builds at 775ad7201 had four
+different disassemblies of std and of the program. Fix: the three
+steps run in that directory by base name; four builds then agree
+(TestSepcompLLVM/std_objects_reproducible compares the executable
+sections and symbol names of two builds: the bytes differ by design,
+each object names its .dwo file in its own cache). A first check
+compared object hashes across cache directories and proved nothing for
+that reason.
+
 Avoid: when a build made for one purpose (the native store's) is
 reused for another, list what its options were for before dropping or
 keeping one; and print a failing tool's first error line, not its tail.

@@ -1,6 +1,10 @@
 package llvm
 
 import (
+	"crypto/sha256"
+	"debug/elf"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,6 +80,53 @@ func TestSepcompLLVM(t *testing.T) {
 			t.Fatalf("std's LLVM objects are not the ThinLTO ones (want `(thinlto)` on both `cache std llvm` lines):\n%s", build.Output)
 		}
 	})
+	// two builds of std's objects, each in a cache of its own, hold the
+	// same code and the same symbols. They did not (task #607): a ThinLTO
+	// module is identified by the path clang was given, the modules sat
+	// in a randomly named directory, and the names of promoted locals
+	// and the import order follow that path; one build in three then
+	// gave a fault report whose traceback named every frame `?`. The
+	// objects' bytes differ by design (each names its .dwo file in its
+	// cache), so the executable sections and the symbol names are
+	// compared
+	t.Run("std objects reproducible", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("ELF only: the ThinLTO objects")
+		}
+		dir := filepath.Join("testdata", "golden", "arith")
+		// the cache on by name: a gate exports XO_BACKEND_CACHE=off, and
+		// std's variants are kept only in a cache that is on
+		// and clang itself, not the test binary's clang cache
+		// (xotool.EnableTestClangCache): that answers a module's compile
+		// by its content, so the second build would get the first's
+		// bitcode, path and all, and the two would agree whatever xo did
+		env := []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off", "XO_BACKEND_CACHE=on"}
+		if real := os.Getenv("XO_CLANG_CACHED"); real != "" {
+			env = append(env, "XO_CLANG="+real)
+		}
+		var sums [2]map[string]string
+		for i := range sums {
+			cache := t.TempDir()
+			_, build := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: append(append([]string{}, env...), "XO_BACKEND_CACHE_DIR="+cache)})
+			objs, _ := filepath.Glob(filepath.Join(cache, "std", "*.llvm-*", "std.*.o"))
+			if len(objs) == 0 {
+				t.Fatalf("no std objects under %s:\n%s", cache, build.Output)
+			}
+			sums[i] = map[string]string{}
+			for _, o := range objs {
+				rel, _ := filepath.Rel(filepath.Join(cache, "std"), o)
+				sums[i][rel] = elfCodeSum(t, o)
+			}
+		}
+		if len(sums[0]) != len(sums[1]) {
+			t.Fatalf("%d objects in the first build, %d in the second", len(sums[0]), len(sums[1]))
+		}
+		for rel, a := range sums[0] {
+			if b := sums[1][rel]; a != b {
+				t.Errorf("%s: code and symbols differ between two builds (%s, %s)", rel, a, b)
+			}
+		}
+	})
 	for _, name := range []string{"arith", "conc_channels", "json_text", "list_swap_guard", "http_tls"} {
 		dir := filepath.Join("testdata", "golden", name)
 		t.Run(name, func(t *testing.T) {
@@ -111,4 +162,37 @@ func stdLLVMIDs(out string) []string {
 		}
 	}
 	return ids
+}
+
+// elfCodeSum hashes an ELF object's executable sections (name and
+// bytes) and its symbol names, in the file's order: what two builds of
+// the same sources must agree on, whatever paths their debug sections
+// hold.
+func elfCodeSum(t *testing.T, path string) string {
+	t.Helper()
+	f, err := elf.Open(path)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	for _, s := range f.Sections {
+		if s.Flags&elf.SHF_EXECINSTR == 0 {
+			continue
+		}
+		data, err := s.Data()
+		if err != nil {
+			t.Fatalf("%s: section %s: %v", path, s.Name, err)
+		}
+		fmt.Fprintf(h, "section %s %d\n", s.Name, len(data))
+		h.Write(data)
+	}
+	syms, err := f.Symbols()
+	if err != nil && !errors.Is(err, elf.ErrNoSymbols) {
+		t.Fatalf("%s: symbols: %v", path, err)
+	}
+	for _, s := range syms {
+		fmt.Fprintf(h, "symbol %s\n", s.Name)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))[:16]
 }

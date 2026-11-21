@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (LLVM backend, `XO_SEPCOMP_LLVM=1`; task #607): std's cached objects are the same from one build to the next. They depended on the build directory's random name, and about one build in three gave fault reports whose traceback named every frame `?`.
 - Linux release archives (linux/arm64, linux/amd64) now ship std/sqlite's prebuilt object, so a std/sqlite program's first build no longer compiles sqlite3.c with the host's C compiler (task #622).
 - Fix (std/sqlite, windows; task #621): SQLite's math functions (`sqrt`, `pow`, `ln`, `acos` and the rest) link and run on windows/amd64 and windows/arm64, which link no C runtime; Xo's runtime now defines the C math functions they call. The release's prebuilt sqlite objects are recut for every target.
 - Fix (`xo test --since`; task #605): a bare `--since` followed by a directory leaves it a directory; on Windows `xo test --since C:\x` kept the `\` and ran every test instead of the ones the change reaches.

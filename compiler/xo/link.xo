@@ -204,7 +204,11 @@ fn ir_objects(os: Os, cc: Str, flags: List[Str], lls: List[Str]) -> Result[List[
 /// path clang is given is the one a split DWARF object's skeleton records
 /// for its .dwo file, so std's objects are compiled where they stay.
 /// per gives each module flags of its own (empty: none), after flags.
-fn ir_objects_par(os: Os, cc: Str, flags: List[Str], lls: List[Str], outs: List[Str], per: List[List[Str]], jobs: Int) -> Result[List[Str], Str] {
+/// cwd, when not empty, is the directory clang runs in (lls and outs
+/// then name files from there): a ThinLTO module is identified by the
+/// path it was given, which its promoted locals' names and the import
+/// order hash.
+fn ir_objects_par(os: Os, cc: Str, flags: List[Str], lls: List[Str], outs: List[Str], per: List[List[Str]], jobs: Int, cwd: Str) -> Result[List[Str], Str] {
   var objs: List[Str] = []
   for (i, ll) in lls.indexed() {
     objs.push(if i < outs.len() { outs[i] } else { ll.trim_suffix(".ll") + ".o" })
@@ -217,7 +221,8 @@ fn ir_objects_par(os: Os, cc: Str, flags: List[Str], lls: List[Str], outs: List[
       let next = ti
       ti += 1
       let own: List[Str] = if next < per.len() { per[next] } else { [] }
-      match os.proc.cmd(cc, flags + own + ["-c", lls[next], "-o", objs[next]]).merge_stderr().spawn() {
+      let c0 = os.proc.cmd(cc, flags + own + ["-c", lls[next], "-o", objs[next]])
+      match (if cwd.is_empty() { c0 } else { c0.dir(cwd) }).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${cc}: ${e}\n")
       }

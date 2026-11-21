@@ -271,7 +271,12 @@ MB (1.85 and 3.05 MB with the plain objects), and arith is 7.40 MB
 where the whole program is 1.30 MB (drv7.out). Ten of ten goldens gave
 the whole program's output but for list_swap_guard's `[inlined]` mark;
 one run counted 13 differing lines there, which 16 later executions
-did not repeat (tb1.out, tb2.out): unexplained.
+did not repeat (tb1.out, tb2.out). Explained the same day: std's
+objects differed from build to build (ThinLTO module paths in a
+randomly named directory), and one build in three gave a traceback of
+`?` frames; the steps now run in that directory by base name, and four
+builds agree (det2.out;
+gotchas/llvm-std-objects-roots-and-named-section.md, symptom 4).
 
 ## Consequences
 
