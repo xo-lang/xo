@@ -532,7 +532,11 @@ func TestRaceStacksArm64(t *testing.T) {
 		t.Fatalf("stdout %q, want faults 200:\n%s", stdout.String(), text)
 	}
 	rep, _, _ := strings.Cut(text, "Location is")
-	for _, want := range []string{"xo_f_touch main.xo:", "xo_f_main_2efn", "xo_f_main main.xo:"} {
+	// touch is a frame of its own or, inlined into main and the closure
+	// (decision 0716's inliner takes it since 1b5c3256a), an inline frame
+	// the report names from the debug information: "touch main.xo:17"
+	// either way (task #608: the test wanted the symbol xo_f_touch)
+	for _, want := range []string{"touch main.xo:", "xo_f_main_2efn", "xo_f_main main.xo:"} {
 		if !strings.Contains(rep, want) {
 			t.Errorf("report lacks %q:\n%s", want, text)
 		}
@@ -761,7 +765,7 @@ func TestRaceDefaultNative(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	run.Stdout, run.Stderr = &stdout, &stderr
 	_ = run.Run()
-	if !strings.Contains(stderr.String(), "WARNING: ThreadSanitizer: data race") || !strings.Contains(stderr.String(), "xo_f_touch main.xo:") {
+	if !strings.Contains(stderr.String(), "WARNING: ThreadSanitizer: data race") || !strings.Contains(stderr.String(), "touch main.xo:") {
 		t.Errorf("no race reported (stdout %q):\n%s", stdout.String(), stderr.String())
 	}
 	// no runtime for the target: LLVM, and no clang. xo looks for the
