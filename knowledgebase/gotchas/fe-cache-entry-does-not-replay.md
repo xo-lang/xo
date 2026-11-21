@@ -154,3 +154,30 @@ name, so builds to `warm` and `cold` differ in those 4 bytes). A
 constant's function (xo.const[M.N]) is not of this kind: const_value
 finds it in the builder's constant table (an event 6 the commit
 renumbers), not by a function read.
+
+Observed 2026-11-20 twice more (tasks #573, #574; TestWarmBuildSequence
+over all 407 goldens, XO_WARMSEQ=all XO_WARMSEQ_SEED=569001, on the
+0.55.0 candidate 2bd6ca2fa; the gate and modules sets do not hold these
+pairs). Both are closures again, and both builds were right after the
+second build:
+- "closure http.Server.serve.fn16 ... read type Chan[()]" building
+  websocket after websocket_stop. fe_seal's owner check (2026-11-14)
+  lists the types a closure read from before its owner's body began; this
+  one was made after it began, by another body. A handle type (Chan[T],
+  Task[T, E]) is its name and type arguments, so name_made now takes
+  Kind.Handle and the entry records it as made, as a list or function
+  type. Test: internal/arm64 TestFrontCacheClosureReadHandle.
+- "closure tls.server_vpeer.fn30 ... generic NNNN:prelude.list_map[
+  List[Bytes], List[x509.Certificate], Never]" building tls_errors after
+  tls_ekm. A body that makes a generic instance records no entry, so an
+  instance a closure's entry reads was another body's; the sealed entry
+  of the owner now lists its closures' generic reads and its replay
+  misses on one that is not there, before any change, and the owner is
+  built from source. The cost: where the instance is made between the
+  owner's body and its closure's job, the owner's entry never replays
+  (a body built from source each time, no warning). Test: internal/arm64
+  TestFrontCacheClosureReadGeneric. FE_CACHE_VERSION v22.
+The rule both follow: a closure's entry cannot miss, so everything it
+reads that its owner's entry does not make is either made by the entry
+(name-determined) or checked by the owner first.
+

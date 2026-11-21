@@ -3385,6 +3385,129 @@ func TestFrontCacheClosureReadDropList(t *testing.T) {
 	}
 }
 
+// TestFrontCacheClosureReadHandle: a closure's front end entry that read
+// a handle type another body made after its owner's body began
+// (std/http's Server.serve closures read Chan[()], which internal/llvm
+// golden websocket_stop makes before their jobs) replays in a program
+// where nothing made it yet (websocket). Before (2026-11-20, task #573,
+// found by TestWarmBuildSequence over every golden with seed 569001),
+// the entry listed the type as a read and missed there ("its entry
+// missed: read type Chan[()]"), and the build was made again without the
+// cache; fe_seal's owner check covers only types from before the owner's
+// body. A handle type is its name and type arguments, so the entry now
+// records it as made (name_made), as a list or function type. The
+// replayed build equals a build without the cache.
+func TestFrontCacheClosureReadHandle(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fehandle-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(work) })
+	cache := filepath.Join(work, "cache")
+	// one file name for every build: a Mach-O binary holds its own
+	build := func(prog, dir string, env ...string) []byte {
+		out := filepath.Join(work, dir, progExe)
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
+		cmd.Dir = filepath.Join("..", "llvm", "testdata", "golden", prog)
+		cmd.Env = append(warmSeqEnv(), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: xo build: %v\n%s", prog, err, log)
+		}
+		if strings.Contains(string(log), "did not replay") {
+			t.Errorf("%s: a front end cache entry did not replay:\n%s", prog, log)
+		}
+		bin, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bin
+	}
+	// the environments of TestWarmBuildSequence's pairs: xo's defaults on
+	// a fresh cache, against a build with every cache off
+	on := []string{"XO_BACKEND_CACHE_DIR=" + cache, "XO_FE_KEEP_DIR=" + filepath.Join(work, "kept")}
+	build("websocket_stop", "first", on...)
+	warm := build("websocket", "warm", on...)
+	cold := build("websocket", "cold", "XO_BACKEND_CACHE=off", "XO_FE_CACHE=off", "XO_CHK_CACHE=off", "XO_BIN_CACHE=off",
+		"XO_SEPCOMP=0", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cold-cache"))
+	if !bytes.Equal(warm, cold) {
+		t.Errorf("websocket after websocket_stop differs from its build without the cache: %s", warmDiff(warm, cold))
+	}
+}
+
+// TestFrontCacheClosureReadGeneric: a closure's front end entry that
+// found a generic instance another body made (std/tls's server_vpeer
+// closures call prelude.list_map[List[Bytes], List[x509.Certificate],
+// Never], which internal/llvm golden tls_ekm instantiates before their
+// jobs) does not break the build of a program where nothing made it yet
+// (tls_errors). Before (2026-11-20, task #574, found by
+// TestWarmBuildSequence over every golden with seed 569001), the
+// closure's entry missed ("its entry missed: generic NNNN:
+// prelude.list_map[...]"), and a closure cannot be built from its
+// source, so the build was made again without the cache. The owner's
+// entry now lists its closures' generic instances (fe_seal) and misses
+// first, quietly: its body is built from source. The build equals a
+// build without the cache.
+func TestFrontCacheClosureReadGeneric(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fegeneric-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(work) })
+	cache := filepath.Join(work, "cache")
+	// one file name for every build: a Mach-O binary holds its own
+	build := func(prog, dir string, env ...string) []byte {
+		out := filepath.Join(work, dir, progExe)
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
+		cmd.Dir = filepath.Join("..", "llvm", "testdata", "golden", prog)
+		cmd.Env = append(warmSeqEnv(), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: xo build: %v\n%s", prog, err, log)
+		}
+		if strings.Contains(string(log), "did not replay") {
+			t.Errorf("%s: a front end cache entry did not replay:\n%s", prog, log)
+		}
+		bin, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bin
+	}
+	// the environments of TestWarmBuildSequence's pairs: xo's defaults on
+	// a fresh cache, against a build with every cache off
+	on := []string{"XO_BACKEND_CACHE_DIR=" + cache, "XO_FE_KEEP_DIR=" + filepath.Join(work, "kept")}
+	build("tls_ekm", "first", on...)
+	warm := build("tls_errors", "warm", on...)
+	cold := build("tls_errors", "cold", "XO_BACKEND_CACHE=off", "XO_FE_CACHE=off", "XO_CHK_CACHE=off", "XO_BIN_CACHE=off",
+		"XO_SEPCOMP=0", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cold-cache"))
+	if !bytes.Equal(warm, cold) {
+		t.Errorf("tls_errors after tls_ekm differs from its build without the cache: %s", warmDiff(warm, cold))
+	}
+}
+
 // TestFrontCacheClosureReadMadeType: a closure's front end entry that
 // read types another body made where it was recorded replays in a
 // program where nothing made them yet. tls.vconn_wrap's closures read

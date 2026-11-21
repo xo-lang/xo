@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v21"
+const FE_CACHE_VERSION = "xo front cache v22"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -353,10 +353,15 @@ fn (var b: Builder) fe_tname(t: Int) -> Str {
 /// body: no index and no state of the builder (decision 0271).
 /// Whether type x is made from its name alone, wherever it is first
 /// used: a declared struct or enum (from its declaration), a generic
-/// instance, or a list, box, tuple or function type.
+/// instance, or a list, box, tuple, function or handle type (a handle
+/// type, Chan[T] or Task[T, E], is its name and type arguments, ir.xo
+/// handle: std/http's Server.serve closures read Chan[()], which another
+/// body had made after serve's body began where the entry was recorded,
+/// so fe_seal's owner check did not list it, and the closure's entry
+/// missed in a program where nothing made it yet; task #573, 2026-11-20).
 fn name_made(x: SType) -> Bool {
   match x.kind {
-    Kind.List | Kind.Box | Kind.Tuple | Kind.Func | Kind.Struct | Kind.Enum => true
+    Kind.List | Kind.Box | Kind.Tuple | Kind.Func | Kind.Struct | Kind.Enum | Kind.Handle => true
     _ => false
   }
 }
@@ -1630,6 +1635,18 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       return b.fe_miss("read")
     }
   }
+  // and the generic instances they found (fe_seal)
+  let ngx = r.uv()
+  if !r.ok || ngx > d.len() {
+    return b.fe_miss("malformed")
+  }
+  for _ in 0..ngx {
+    let k = r.str()
+    if r.ok && !b.funcs.contains(k) {
+      b.fe.last_miss = "a closure's generic ${k}"
+      return b.fe_miss("generic")
+    }
+  }
   if !r.ok {
     return b.fe_miss("malformed")
   }
@@ -1972,6 +1989,7 @@ fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int) -> Option[Bytes] {
   w.b.write(e)
   w.uv(clos.len())
   var ext: Map[Str, Bool] = {}
+  var gext: Map[Str, Bool] = {}
   for cf in clos {
     if b.fe.no_clos.contains(cf) {
       return None
@@ -1979,6 +1997,7 @@ fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int) -> Option[Bytes] {
     match b.fe.clos_rec.get(cf) {
       Some((ce, sub)) => {
         b.fe_closure_reads(cf, nt, ext)
+        b.fe_closure_generics(cf, gext)
         match b.fe_seal(ce, sub, nt) {
           Some(x) => w.bytes(x)
           None => return None
@@ -1995,7 +2014,70 @@ fn (b: Builder) fe_seal(e: Bytes, clos: List[Int], nt: Int) -> Option[Bytes] {
   for n in names.sort() {
     w.str(n)
   }
+  // the generic instances its closures (at any depth) found: a body
+  // that makes one records no entry, so each was another body's, and a
+  // program where none made it yet misses here, at the owner, which is
+  // built from source (2026-11-20, task #574: tls_ekm then tls_errors,
+  // closure tls.server_vpeer.fn30's entry missed: generic
+  // prelude.list_map[List[Bytes], List[x509.Certificate], Never], and
+  // the build was made again without the cache)
+  var gkeys: List[Str] = []
+  for (k, _) in gext {
+    gkeys.push(k)
+  }
+  w.uv(gkeys.len())
+  for k in gkeys.sort() {
+    w.str(k)
+  }
   Some(w.b.freeze())
+}
+
+/// Into gext, the keys of the generic instances closure cf's entry and
+/// its closures' entries read (fe_seal).
+fn (b: Builder) fe_closure_generics(cf: Int, var gext: Map[Str, Bool]) {
+  match b.fe.clos_rec.get(cf) {
+    Some((ce, sub)) => {
+      for k in entry_generic_reads(ce) {
+        gext[k] = true
+      }
+      for c in sub {
+        b.fe_closure_generics(c, gext)
+      }
+    }
+    None => {}
+  }
+}
+
+/// The keys of the generic instances entry d reads, as fe_replay reads
+/// them (after its type and function reads).
+fn entry_generic_reads(d: Bytes) -> List[Str] {
+  var r = EntryR{d: d}
+  let _v = r.str()
+  let _flags = r.str()
+  let _recorder = r.str()
+  let _line = r.uv()
+  let _pinned = r.bool()
+  let _tail = r.bytes()
+  let nr = r.uv()
+  var out: List[Str] = []
+  if !r.ok || nr > d.len() {
+    return out
+  }
+  for _ in 0..nr {
+    let _k = r.str()
+  }
+  let ng = r.uv()
+  if !r.ok || ng > d.len() {
+    return out
+  }
+  for _ in 0..ng {
+    let k = r.str()
+    let _n = r.str()
+    if r.ok {
+      out.push(k)
+    }
+  }
+  out
 }
 
 /// Into ext, the types closure cf's entry and its closures' entries read
