@@ -138,7 +138,14 @@ func (f *realFs) resolve(p string) (string, bool) {
 		// no file under the root (GO-2022-1143, as the native resolve)
 		return "", false
 	}
-	return filepath.Join(f.root, filepath.FromSlash(clean)), true
+	full := filepath.Join(f.root, filepath.FromSlash(clean))
+	// a trailing separator names a directory, as for os.fs and the native
+	// prelude's fs_resolve: cleaning it away read the file a.txt for
+	// "a.txt/" (task #629, the Go backend's half of #597's fix)
+	if clean != "/" && strings.HasSuffix(q, "/") {
+		full += string(filepath.Separator)
+	}
+	return full, true
 }
 
 // relPath is the path of an OS path relative to the capability root.

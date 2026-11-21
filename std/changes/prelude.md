@@ -10,6 +10,16 @@
 - Measured: no speed claim
 - Test: golden fs_sub_trailing_slash under TestSelfhostWasm (fails before: sub read a.txt/: found, os read a.txt/: found)
 
+## 2026-11-21: fix: a sub Fs keeps a trailing separator on the Go backend
+
+- Kind: fix
+- Commit: this push
+- Found by: task #629, ctier 272ffc3d09 TestGoldenGoParity/fs_sub_trailing_slash (the native half landed in f15e953544)
+- Go reference: os.DirFS (fs.ValidPath rejects a trailing slash; the OS rejects a file opened as a directory)
+- Change: std/rt's realFs.resolve (the Go backend's Fs) cleaned the trailing separator away as the native fs_resolve did before f15e953544, so "a.txt/" read the file a.txt; it now keeps it
+- Measured: no speed claim
+- Test: golden fs_sub_trailing_slash under TestGoldenGoParity (fails before: sub read a.txt/: found)
+
 ## 2026-11-21: fix: a sub Fs keeps a trailing separator
 
 - Kind: fix
