@@ -430,8 +430,9 @@ yourself.
   `XO_GATE_FAILFAST=0` runs every step when you want the whole list (a
   tier, a sweep). A change to gate.sh's step runner runs
   `scripts/lead/gate_failfast_test.sh WORKTREE` through heavy.sh (about
-  20 s; not in repotest, since its nested gate.sh rebuilds the
-  checkout's bin/xo); a change to its logs or scratch runs
+  20 s idle, 153 s at Mac load; repotest's TestLeadShell runs it with the
+  checkout since task #588, its nested gate.sh's xobuild a cache hit once
+  the checkout's xo is built); a change to its logs or scratch runs
   `scripts/lead/gate_output_test.sh WORKTREE` the same way (about 25 s:
   logs or a TMPDIR inside the worktree exit 2; the steps' scratch,
   `$TMPDIR/xo-gate-run.*`, is deleted when the gate ends, stopped by
@@ -1802,6 +1803,21 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   worktree's bin/xo (about 2 s; owner, 2026-10-30, after an XO0804 in
   std/native/http.xo reached main), so build bin/xo before pushing a std
   change; without it pushq notes the check did not run.
+  Every `scripts/lead/*_test.sh` has a caller (task #588, 2026-11-21: 56
+  had none, and pushq_prelane_test.sh had failed since #579 unnoticed):
+  a Go test in internal/repotest, or a line in
+  `scripts/lead/shelltests.txt` (NAME, then its inputs), which
+  TestLeadShell runs 4 at a time as subtest TestLeadShell/NAME. A new
+  test with neither fails TestLeadShellListed, which prints the line to
+  add; a changed input list fails it the same way. pushq's fast checks
+  skip a subtest when the push changes none of its inputs.
+  TestLeadShell runs on the Mac only (the scripts use BSD date and sed,
+  plutil, expect: 10 of 55 failed on linux/arm64 host 3, 2026-11-21), so
+  pushq's fast checks run it and the linux tiers skip it. A test that
+  needs a real host is a `NAME manual REASON` line (offload_test.sh):
+  skipped, run it by hand through heavy.sh after its script changes.
+  Each subtest runs in its own process group, stopped whole after 10
+  minutes.
   Since 2026-11-06 scripts/gate.sh runs internal/repotest first (pushq's
   fast repo checks, about 20 s) and a passing gate records the
   codegen/wasm/selfbuild checks it ran, so pushq takes PUSHQ_RAN from it
