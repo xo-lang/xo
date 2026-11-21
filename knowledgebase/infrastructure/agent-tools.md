@@ -2489,6 +2489,12 @@ HEAVY_MIN_FREE for a second slot) give way to the fit; min_free_pct
 stays the floor. The reason then reads `admission v4 fit: 81.6 GB in
 use (15% free) + 8.0 GB over 88 (mac 96 - reserve 8)`. Way back: `xw
 policy rollback admission default`. Last verified: 2026-11-21.
+A job's history (runs and peaks) is keyed by its name's stem, the name
+less its trailing counters; HEAVY_STEM names the stem when the counter
+sits inside the name (task #600: tier.sh's tier_heavy and tier-mac.sh
+set lead-tier-STEP for lead-tierN-STEP, so a tier step has history
+across tiers and is not counted at need_gb). heavyd's "admission policy
+vN" line names need_gb. Last verified: 2026-11-21.
 
 A lease's time limit on host 3 or 4 scales with the Mac's load at its
 start (owner question #240, 0733; off until the owner answers #240:
