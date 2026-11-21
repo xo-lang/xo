@@ -2389,6 +2389,16 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   written to `~/xo-lead/notes/lead/test-time.log` and bottleneck.log.
   Measurements: bench/results/gate-time-2026-11-14.md. Last verified:
   2026-11-14.
+  Each step also gets a `STEP (peak) MB mem` row (task #582): the
+  largest resident total (ps rss) of the step's process tree, sampled
+  every `XO_GATE_PEAK_S` (5) seconds, also printed as "gate.sh: STEP peak
+  N MB resident"; `XO_GATE_PEAK=0` turns it off. `xw gates` lists them as
+  "step peaks, resident MB (runs, p50, max, log of the max)", so a step
+  nearing heavy.sh's cap shows before it is stopped. tier-mac.sh files
+  each Mac tier job as notes/lead/gate-tierN-mac-STEPS-*.log so xw gates
+  reads the Mac runs too, and its one-at-a-time rerun after a memory stop
+  sends llvm to host 3 (never host 2: its 24 GB OOMs clang). Last
+  verified: 2026-11-21.
 - **TestDebugInfoSameOutputLLVM**: o2Goldens as --release with and without
   --debug-info; the rest -s against a plain -O1 build (TestGolden's,
   from the cache).

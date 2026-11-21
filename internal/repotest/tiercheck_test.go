@@ -23,6 +23,19 @@ func TestTierCheck(t *testing.T) {
 	}
 }
 
+// TestTierMac runs scripts/lead/tier-mac_test.sh: tier.sh's Mac steps
+// with a stub heavy.sh and offload-gate.sh (tasks #560, #582): a memory
+// stop reruns the steps one at a time with llvm on host 3, and each Mac run
+// is filed as a gate log with its steps' peaks for xw gates. Nothing ran
+// that script before #582.
+func TestTierMac(t *testing.T) {
+	s := filepath.Join("..", "..", "scripts", "lead", "tier-mac_test.sh")
+	out, err := exec.Command("bash", s).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", s, err, out)
+	}
+}
+
 // TestTierHeavyClass: every heavy.sh run in scripts/lead/tier.sh is bulk
 // class with HEAVY_DARWIN=1 (task #556): a tier step runs for minutes on
 // the Mac, and the docs step (docs-check.sh, 12+ min in tier 918) ran as

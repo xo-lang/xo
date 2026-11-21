@@ -1211,7 +1211,7 @@ for step in "$@"; do
     [ "$step" = chkcache ] && chkcache_ran=1
     [ "$step" = warmseq ] && warmseq_ran=1
     steps="$steps $step" ;;
-  selftest-fail|selftest-sleep|selftest-ok|selftest-tmp|selftest-json)
+  selftest-fail|selftest-sleep|selftest-ok|selftest-tmp|selftest-json|selftest-mem)
     if [ "${XO_GATE_SELFTEST:-0}" = 1 ]; then steps="$steps $step"; else echo "gate.sh: $step is a test step (XO_GATE_SELFTEST=1)"; failed=1; fi ;;
   # an unknown name is the gate's failure by name (#533, 2026-11-20: stdmods
   # was reported as "hostcheck failed", the last pre-check before the loop)
@@ -1372,15 +1372,62 @@ ir_first_wait() {
   printf '%s	(ir-first wait)	%s	wait
 ' "$1" "$(($(date +%s) - t0))" >>"$logs/times.tsv"
 }
+# step_peak FILE (task #582, tier 919: the Mac llvm rerun was stopped
+# twice at 33.8 GB and no gate record said how close the steps had come):
+# every XO_GATE_PEAK_S (5) seconds the resident MB (ps rss) of ROOT's
+# process tree (ROOT: the shell that started it), its own subshell left out, the largest so far kept in FILE.
+# ROOT is a concurrent job's subshell, so the peak is that step's alone; in
+# the serial order it is gate.sh itself, so the peak also counts what gate.sh
+# started in the background beside the step (the arm64 binary selection).
+# The sampler finds its own PID through a child sh's $PPID (macOS's bash
+# 3.2 has no BASHPID; $$ is gate.sh's in every subshell), and ROOT as its
+# parent: the shell that started it, run_step's.
+step_peak() {
+  local f=$1 me root mb peak=0
+  sh -c 'echo $PPID' >"$f.me" && read -r me <"$f.me"
+  rm -f "$f.me"
+  root=$(ps -o ppid= -p "$me" 2>/dev/null | tr -d ' ')
+  [ -n "$root" ] || return 0
+  while kill -0 "$root" 2>/dev/null; do
+    mb=$(ps -Ao pid=,ppid=,rss= 2>/dev/null | awk -v root="$root" -v me="$me" '
+      { kids[$2] = kids[$2] " " $1; rss[$1] = $3 }
+      END {
+        n = 1; q[1] = root; seen[root] = 1
+        for (i = 1; i <= n; i++) { c = split(kids[q[i]], a, " "); for (j = 1; j <= c; j++) if (!(a[j] in seen) && a[j] != me) { seen[a[j]] = 1; q[++n] = a[j] } }
+        for (p in seen) s += rss[p]
+        print int(s / 1024)
+      }')
+    [ "${mb:-0}" -gt "$peak" ] && { peak=$mb; echo "$peak" >"$f"; }
+    sleep "${XO_GATE_PEAK_S:-5}"
+  done
+}
 # run_step: one named step, its wall time recorded in times.tsv as
-# "STEP<TAB>=<TAB>SECONDS<TAB>step"
+# "STEP<TAB>=<TAB>SECONDS<TAB>step", and its process tree's resident peak
+# (step_peak) as "STEP<TAB>(peak)<TAB>MB<TAB>mem", which xw gates reports
+# per step (runs, p50, max); the peak so far stays in $logs/peak-STEP.mb
+# while the step runs, so a step stopped for memory still leaves it
+# (tier-mac.sh files it). XO_GATE_PEAK=0 samples nothing.
 run_step() {
-  local t1 rc
+  local t1 rc pk="" mb
   ir_first_wait "$1"
   t1=$(date +%s)
+  if [ "${XO_GATE_PEAK:-1}" != 0 ]; then
+    rm -f "$logs/peak-$1.mb"
+    step_peak "$logs/peak-$1.mb" &
+    pk=$!
+  fi
   run_step_body "$1"
   rc=$?
   printf '%s\t=\t%s\tstep\n' "$1" "$(($(date +%s) - t1))" >>"$logs/times.tsv"
+  if [ -n "$pk" ]; then
+    kill "$pk" 2>/dev/null
+    wait "$pk" 2>/dev/null
+    mb=$(cat "$logs/peak-$1.mb" 2>/dev/null)
+    if [ -n "$mb" ]; then
+      printf '%s\t(peak)\t%s\tmem\n' "$1" "$mb" >>"$logs/times.tsv"
+      echo "gate.sh: $1 peak $mb MB resident (its process tree, ${XO_GATE_PEAK_S:-5} s samples)"
+    fi
+  fi
   return $rc
 }
 run_step_body() {
@@ -1399,6 +1446,11 @@ run_step_body() {
       echo '{"Time":"2026-11-19T00:00:00Z","Action":"pass","Package":"x","Test":"TestJ/first","Elapsed":0.1}' >"$logs/$1.json"
       sleep 7; echo '{"Time":"2026-11-19T00:00:07Z","Action":"pass","Package":"x","Test":"TestJ/second","Elapsed":0.1}' >>"$logs/$1.json"
       sleep 8; echo "selftest-json: ok" ;;
+    selftest-mem)
+      # about 300 MB resident for 6 s (step_peak's case in
+      # gate_failfast_test.sh)
+      python3 -c 'import time; b = b"x" * (300 << 20); time.sleep(6)'
+      echo "selftest-mem: ok" ;;
     selftest-tmp)
       # a step's scratch left behind: the gate's end deletes it
       d=$(mktemp -d "$gt/xo-gate-selftest.XXXXXX") && echo x >"$d/out"
