@@ -1,6 +1,7 @@
 package arm64
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,5 +35,32 @@ func TestX86FrameProbeLoop(t *testing.T) {
 	}
 	if !strings.Contains(body, "\t.seh_stackalloc ") {
 		t.Fatalf("huge records no stack allocation:\n%.600s", body)
+	}
+}
+
+// TestX86HelperFrameProbe requires every frame of more than a page in
+// frame_large_value's windows/amd64 assembly, the runtime helpers'
+// (x86rt.xo) as well as the functions', to be allocated after the probe
+// loop: its value's drop helper took 29,616 bytes with one subq and
+// faulted on its first store past the guard page (exit 139 on
+// windows/amd64, task #597, 2026-11-21).
+func TestX86HelperFrameProbe(t *testing.T) {
+	t.Parallel()
+	asm := winAsm(t, filepath.Join("..", "llvm", "testdata", "golden", "frame_large_value"), "windows/amd64", "")
+	lines := strings.Split(asm, "\n")
+	big := 0
+	for i, l := range lines {
+		var n int
+		if _, err := fmt.Sscanf(l, "\tsubq $%d, %%rsp", &n); err != nil || n <= 4096 {
+			continue
+		}
+		big++
+		if i < 2 || !strings.HasSuffix(lines[i-1], ":") || !strings.HasPrefix(lines[i-2], "\tjmp ") {
+			lo := max(i-6, 0)
+			t.Errorf("line %d: a frame of %d bytes with no probe loop before it:\n%s", i+1, n, strings.Join(lines[lo:i+1], "\n"))
+		}
+	}
+	if big == 0 {
+		t.Fatal("no frame of more than a page in frame_large_value")
 	}
 }

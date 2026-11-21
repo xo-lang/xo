@@ -137,7 +137,8 @@ fn (var g: G) x86_agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int)
   }
   let base = out
   let frame = align16(base + 8 * n)
-  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tsubq $${frame}, %rsp\n")
+  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n")
+  g.x86_sub_rsp(b, frame, true)
   for k in 0..n {
     if k < 6 {
       b.push("\tmovq ${x86_arg(k)}, ${base + 8 * k}(%rsp)\n")
@@ -270,7 +271,8 @@ fn (var g: G) x86_elem_body(var b: List[Str], kind: Str, sym: Str, t: Int) {
   let n = g.leaf_words(t)
   if n > 6 {
     let out = align16(8 * (n - 6))
-    b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tsubq $${out}, %rsp\n")
+    b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n")
+    g.x86_sub_rsp(b, out, true)
     x86_load_call(b, inner, "%rdi", 0, n)
     b.push("\tleave\n\tretq\n\n")
     return
@@ -295,7 +297,9 @@ fn (var g: G) x86_leaves_and_then(var b: List[Str], kind: Str, ls: List[Leaf], h
   for l in ls {
     out = imax(out, align16(8 * (g.leaf_words(l.t) - 6)))
   }
-  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tpushq %rbx\n\tsubq $${out + 8}, %rsp\n\tmovq %rdi, %rbx\n")
+  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tpushq %rbx\n")
+  g.x86_sub_rsp(b, out + 8, true)
+  b.push("\tmovq %rdi, %rbx\n")
   for l in ls {
     let h = g.rc_helper(kind, l.t)
     x86_load_call(b, h, "%rbx", hdr + 8 * l.off, g.leaf_words(l.t))
@@ -352,7 +356,7 @@ fn (var g: G) x86_eq_body(var b: List[Str], sym: Str, t: Int, yes: Str, no: Str,
     Struct | Tuple | Enum => {
       let n = g.nwords(t)
       frame = align16(16 * n) + 8
-      b.push("\tsubq $${frame}, %rsp\n")
+      g.x86_sub_rsp(b, frame, true)
       for w in 0..2 * n {
         if w < 6 {
           b.push("\tmovq ${x86_arg(w)}, ${8 * w}(%rsp)\n")

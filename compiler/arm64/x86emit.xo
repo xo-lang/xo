@@ -480,10 +480,7 @@ fn (var g: G) x86_prologue(var b: List[Str]) {
       // page; neither holds an argument), then one subq, so the prologue
       // stays short (a Win64 prologue is at most 255 bytes: the unrolled
       // probes passed it at about 68 KiB, 2026-10-22)
-      let top = g.local("${g.lbl_prefix()}_pk${g.dl_n}")
-      let out = g.local("${g.lbl_prefix()}_pk${g.dl_n + 1}")
-      g.dl_n += 2
-      b.push("\tleaq -${rest}(%rsp), %r10\n\tmovq %rsp, %r11\n${top}:\n\tsubq $4096, %r11\n\tcmpq %r10, %r11\n\tjbe ${out}\n\ttestq %r11, (%r11)\n\tjmp ${top}\n${out}:\n\tsubq $${rest}, %rsp\n")
+      g.x86_sub_rsp(b, rest, false)
     } else if rest >= 4096 {
       // touch each page on the way down (the guard page)
       var off = 4096
@@ -502,6 +499,35 @@ fn (var g: G) x86_prologue(var b: List[Str]) {
   if win {
     b.push("\t.seh_endprologue\n")
   }
+}
+
+/// x86_sub_rsp lowers rsp by n bytes. Past a page it reads each page
+/// below rsp in a loop first (r10 the frame's end, r11 the page; neither
+/// holds an argument), so a frame larger than the guard page grows the
+/// stack instead of faulting past it: Windows commits its stack one guard
+/// page at a time, and a task's stack ends at a guard page on every OS.
+/// The runtime helpers (x86rt.xo) allocate their frames with it too: an
+/// aggregate's drop helper of 29 KiB faulted on windows/amd64
+/// (frame_large_value, task #597, 2026-11-21).
+/// In a function (helper false) the loop's labels are the function's
+/// own; in a helper they are helper labels (helper_label), since a
+/// helper is no function's part.
+fn (var g: G) x86_sub_rsp(var b: List[Str], n: Int, helper: Bool) {
+  if n < PROBE_PAGE {
+    b.push("\tsubq $${n}, %rsp\n")
+    return
+  }
+  var top = ""
+  var out = ""
+  if helper {
+    top = g.helper_label("pk")
+    out = g.helper_label("pk")
+  } else {
+    top = g.local("${g.lbl_prefix()}_pk${g.dl_n}")
+    out = g.local("${g.lbl_prefix()}_pk${g.dl_n + 1}")
+    g.dl_n += 2
+  }
+  b.push("\tleaq -${n}(%rsp), %r10\n\tmovq %rsp, %r11\n${top}:\n\tsubq $4096, %r11\n\tcmpq %r10, %r11\n\tjbe ${out}\n\ttestq %r11, (%r11)\n\tjmp ${top}\n${out}:\n\tsubq $${n}, %rsp\n")
 }
 
 /// The unwind rules of the frame x86_prologue makes: the CFA at rbp + 16,

@@ -17,3 +17,13 @@ a loop: r10 the frame's end, r11 walking down a page at a time with
 `testq %r11, (%r11)`, then one `subq` (about 30 bytes whatever the
 size). r10 and r11 hold no argument in either calling convention.
 internal/arm64 TestX86FrameProbeLoop checks huge_frame's prologue.
+
+Second case (Observed 2026-11-21, task #597): the runtime helpers in
+x86rt.xo (an aggregate's drop helper, the element bodies, the leaves
+helper, the struct equality body) allocated their frames with a plain
+`subq`, outside x86_prologue, so a 29,616-byte drop helper of
+frame_large_value skipped the guard page and segfaulted on
+windows/amd64. Fix: every frame allocation goes through x86emit.xo
+x86_sub_rsp, which probes past a page. internal/arm64
+TestX86HelperFrameProbe checks that each `subq` past 4 KiB in
+frame_large_value's windows/amd64 assembly follows a probe loop.
