@@ -2449,7 +2449,12 @@ reserve 8)`. The containers of the machines under the Mac
 (xo-host3, xo-host4: "xo-" plus the machine row's name) count at their
 `docker stats` use, read once a minute with the policy; a failed read
 or one older than 3 minutes counts as 0 (fail open), and with fit off
-docker is never asked. Last verified: 2026-11-21.
+docker is never asked. A new lease on pass3 or pass4 (not `-p`) waits too
+while its p90 peak (`lease NAME` in heavyd-peaks.json: the container's
+rise over its use at the lease's start, recorded only for a lease alone
+on its container) would pass its container's machine gb, docker-vm's
+gb (both containers), or the Mac's room; a container counts at the
+larger of its use and its running leases' p90 peaks. Last verified: 2026-11-21.
 
 ### ccguard: the Claude Code hook (#138)
 
