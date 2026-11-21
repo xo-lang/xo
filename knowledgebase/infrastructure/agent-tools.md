@@ -2206,6 +2206,12 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
     host-disk-low: an offload host's /work under
     15 GB free after a job's prune (offload.sh reports it in each job's
     output as OFFLOAD-FREE-MB, xwhook.sh's xw_host_disk sends it).
+    Step history (decision 0733 "Planning a batch", task #600,
+    2026-11-21): offload.sh sends each `NAME: ok|FAIL in S s, host
+    memory peak P of T MB` line of a job's output (offload-tier.sh's
+    steps) as a step.end event (subject NAME; host, batch, ok, secs,
+    peak_mb, total_mb; xwhook.sh xw_steps), the per host history `xw
+    plan` places a batch from.
     retry-storm: one lease name (not a .sh default) started over 5 times
     in 30 min. Last verified: 2026-11-16.
   - Main check reruns (#193, 2026-11-17): when hourly.sh's `go test
