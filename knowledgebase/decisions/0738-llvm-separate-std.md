@@ -126,7 +126,7 @@ LTO in one step, which this oracle's plain objects do not.
 for the host's target, not `--release` or `--race`:
 
 - std's LLVM objects (compiler/xo stdcache.xo std_variant_llvm): the
-  directory `KEY.llvm` beside the native variant's `KEY.store` in the
+  directory `KEY.llvm-ID` beside the native variant's `KEY.store` in the
   backend cache, `std.N.o` and `objs.txt`, built once per concurrency
   variant by `xo dev stdobj --backend=llvm` (an `XO_STD_OBJ` build with
   the LLVM backend). The facts are the native variant's `KEY.stdf`:
@@ -180,9 +180,9 @@ What these builds are not yet:
   driver) the constant is 2.45 MB and fault reports keep their lines.
 - Inlined across the boundary: stage 3's `available_externally` bodies
   are not built, so no speed claim is made for these binaries.
-- The default, keyed by clang, or for tests: the objects' directory
-  is named by std's key alone (another clang or XO_LLVM_OPT reuses
-  them), and `xo test` builds whole.
+- The default, or for tests: `xo test` builds whole. (The objects'
+  directory is named by clang's version and XO_LLVM_OPT too since
+  the commit after: `KEY.llvm-ID`.)
 
 Two things the first measurements had wrong. An XO_STD_ROOTS build
 with dead function removal on is not all of std: its roots are main,

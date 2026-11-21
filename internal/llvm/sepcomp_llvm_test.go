@@ -33,11 +33,32 @@ func TestSepcompLLVM(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("std's variants are built for darwin, linux and windows hosts; the LLVM objects are tested on darwin and linux")
 	}
+	// the objects are kept by clang and by the optimization level
+	// (XO_LLVM_OPT) too, which std's variant key does not hold: a build
+	// at another level must not link the default's objects
+	t.Run("opt level", func(t *testing.T) {
+		dir := filepath.Join("testdata", "golden", "arith")
+		opts := xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off"}}
+		_, o2 := buildRunLeak(t, dir, opts)
+		opts.Env = append(opts.Env, "XO_LLVM_OPT=O1")
+		res, o1 := buildRunLeak(t, dir, opts)
+		a, b := stdLLVMIDs(o2.Output), stdLLVMIDs(o1.Output)
+		if len(a) != 1 || len(b) != 1 || a[0] == b[0] {
+			t.Fatalf("std's LLVM objects at the default level %v and at XO_LLVM_OPT=O1 %v: want one directory each, not the same\n%s", a, b, o1.Output)
+		}
+		want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(want) != res.String() {
+			t.Errorf("the O1 build differs from want.txt\n--- want\n%s\n--- got\n%s", want, res)
+		}
+	})
 	for _, name := range []string{"arith", "conc_channels", "json_text", "list_swap_guard", "http_tls"} {
 		dir := filepath.Join("testdata", "golden", name)
 		t.Run(name, func(t *testing.T) {
 			res, build := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off"}})
-			if !strings.Contains(build.Output, "cache std llvm conc=false") || !strings.Contains(build.Output, "cache std llvm conc=true") {
+			if len(stdLLVMIDs(build.Output)) != 1 || !strings.Contains(build.Output, " conc=false") || !strings.Contains(build.Output, " conc=true") {
 				t.Fatalf("the build did not take std's LLVM objects (no `cache std llvm` lines):\n%s", build.Output)
 			}
 			if strings.Contains(build.Output, "not built") {
@@ -52,4 +73,20 @@ func TestSepcompLLVM(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stdLLVMIDs is the distinct ids of the `cache std llvm ID conc=...`
+// lines of a build's --phase-times output (stdcache.xo std_variant_llvm:
+// the id names clang and the optimization level).
+func stdLLVMIDs(out string) []string {
+	var ids []string
+	seen := map[string]bool{}
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 5 && f[0] == "cache" && f[1] == "std" && f[2] == "llvm" && strings.HasPrefix(f[4], "conc=") && !seen[f[3]] {
+			seen[f[3]] = true
+			ids = append(ids, f[3])
+		}
+	}
+	return ids
 }
