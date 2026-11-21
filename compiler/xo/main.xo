@@ -1914,7 +1914,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         split_build(os, lctx, cc, lls, lk.srcs, st.bin, split, lflags)
       } else {
         // a giant function's module (split_build does the same per module)
-        let gf = if tgoarch == "arm64" && split.opt != "-O0" && ir_has_giant_fn(code) { giant_fn_flags(lctx.tgoos, tgoarch, lto1) } else { [] }
+        let gf = if split.opt != "-O0" { giant_fn_flags(lctx.tgoos, tgoarch, lto1, ir_fn_size(code)) } else { [] }
         let cflags = [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + gf + (if lto1 == "none" { isel_flags(split.opt, tgoarch) } else { [] })
         if dsym && lto1 == "none" {
           // the IR compiled to objects in dir first: given a .ll, clang's

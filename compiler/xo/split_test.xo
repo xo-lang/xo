@@ -36,7 +36,8 @@ test "a module with a giant function compiles without the AArch64 machine combin
   big.write("b${GIANT_FN_BLOCKS + 1}:\n")
   big.write("  ret void\n}\n")
   let small = "define hidden i64 @f() {\n  ret i64 0\n}\n"
-  expect(ir_has_giant_fn(small + big.freeze())) == true
+  let big_ir = big.freeze()
+  expect(ir_has_giant_fn(small + big_ir)) == true
   // blocks in several smaller functions do not add up, and a long
   // function of few blocks is no giant
   var long = StrBuilder.new()
@@ -46,10 +47,20 @@ test "a module with a giant function compiles without the AArch64 machine combin
   }
   long.write("  ret void\n}\n")
   expect(ir_has_giant_fn(small + small + long.freeze())) == false
-  expect(giant_fn_flags("darwin", "arm64", "none")) == ["-mllvm", "-aarch64-enable-mcr=false"]
-  expect(giant_fn_flags("darwin", "arm64", "thin")) == ["-mllvm", "-aarch64-enable-mcr=false", "-Wl,-mllvm,-aarch64-enable-mcr=false"]
-  expect(giant_fn_flags("linux", "arm64", "full")) == ["-mllvm", "-aarch64-enable-mcr=false", "-Wl,-plugin-opt=-aarch64-enable-mcr=false"]
-  expect(giant_fn_flags("linux", "amd64", "none")) == []
+  let mcr = "-aarch64-enable-mcr=false"
+  let sink = "-instcombine-code-sinking=false"
+  expect(giant_fn_flags("darwin", "arm64", "none", 2)) == ["-mllvm", mcr, "-mllvm", sink]
+  expect(giant_fn_flags("darwin", "arm64", "thin", 2)) == ["-mllvm", mcr, "-mllvm", sink, "-Wl,-mllvm,${mcr}", "-Wl,-mllvm,${sink}"]
+  expect(giant_fn_flags("linux", "arm64", "full", 2)) == ["-mllvm", mcr, "-mllvm", sink, "-Wl,-plugin-opt=${mcr}", "-Wl,-plugin-opt=${sink}"]
+  // code sinking off on every architecture and for every optimized
+  // module (tasks #586, #590), the machine combiner's option for a giant
+  // function on arm64; 0 is an -O0 build
+  expect(giant_fn_flags("linux", "amd64", "none", 2)) == ["-mllvm", sink]
+  expect(giant_fn_flags("linux", "amd64", "full", 2)) == ["-mllvm", sink, "-Wl,-plugin-opt=${sink}"]
+  expect(giant_fn_flags("darwin", "arm64", "thin", 1)) == ["-mllvm", sink, "-Wl,-mllvm,${sink}"]
+  expect(giant_fn_flags("darwin", "arm64", "thin", 0)) == []
+  expect(ir_fn_size(small)) == 1
+  expect(ir_fn_size(small + big_ir)) == 2
 }
 
 test "a -O0 build's constant time functions go to a module of their own (decision 0619)" {

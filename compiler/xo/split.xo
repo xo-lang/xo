@@ -318,9 +318,10 @@ fn unroll_flags(opt: Str, goos: Str, lto: Str, cap: Bool) -> List[Str] {
 /// in minutes, with the combiner on.
 const GIANT_FN_BLOCKS = 8000
 
-/// Whether ir holds a function of more than GIANT_FN_BLOCKS labelled
-/// blocks (a line of a body that is not indented and not its `}`).
-fn ir_has_giant_fn(ir: Str) -> Bool {
+/// The size class of ir's largest function by labelled blocks (a line of
+/// a body that is not indented and not its `}`): 2 with more than
+/// GIANT_FN_BLOCKS, else 1.
+fn ir_fn_size(ir: Str) -> Int {
   // -1 outside a function, else the blocks of the current one so far
   var n = -1
   for line in ir.split("\n") {
@@ -333,28 +334,55 @@ fn ir_has_giant_fn(ir: Str) -> Bool {
     } else if !line.is_empty() && !line.starts_with(" ") && !line.starts_with(";") {
       n += 1
       if n > GIANT_FN_BLOCKS {
-        return true
+        return 2
       }
     }
   }
-  false
+  1
 }
 
-/// clang's options for a module holding a giant function
-/// (ir_has_giant_fn) on arch: the AArch64 machine combiner off, whose
-/// time grows faster than linearly in a function's size (a module of
-/// pass_const_edges: over 10 minutes with it, 85 s without). For a
-/// compile, and with lto not "none" for the link too, which generates the
-/// code then (darwin's ld64 takes `-mllvm`, a Linux linker the plugin's
-/// option, as unroll_flags). Other architectures: none.
-fn giant_fn_flags(goos: Str, arch: Str, lto: Str) -> List[Str] {
-  if arch != "arm64" {
+/// Whether ir holds a function of more than GIANT_FN_BLOCKS blocks.
+fn ir_has_giant_fn(ir: Str) -> Bool {
+  ir_fn_size(ir) == 2
+}
+
+/// clang's options for a module whose largest function has size class
+/// size (ir_fn_size; none for 0, which a caller passes for -O0), for a compile, and with lto not "none" for the link
+/// too, which generates the code then (darwin's ld64 takes `-mllvm`, a
+/// Linux linker the plugin's option, as unroll_flags):
+///
+///   - for a giant function (2) on arm64 the AArch64 machine combiner off, whose time grows faster
+///     than linearly in a function's size (a module of pass_const_edges:
+///     over 10 minutes with it, 85 s without);
+///   - for every optimized module (1, 2) on every architecture InstCombine's code sinking off (task #586,
+///     2026-11-21; no block threshold, owner 2026-11-21: sinking on
+///     measured 0.2% of run time over 71 workloads and nothing on xo's
+///     own build, bench/results/llvm-code-sinking-2026-11-21.md, task
+///     #590, and plain C shows the same growth in clang). Sinking an instruction into its user's block moves
+///     the debug value records that name it back onto its operands, and
+///     along a chain of statements each of which uses the last one's
+///     value (`h = h * 31 % m + f(k)`, 1,521 times in pass_const_edges'
+///     main) a record is moved again at every step: 42 s in InstCombine,
+///     then 29 s in EarlyCSE and 14 s in the inliner over the records it
+///     left (Apple clang 21; 235 s in all with clang 23 on linux/arm64).
+///     With sinking off the module compiles in 8 s and keeps every
+///     record; without the records (no flag) it took 11 s.
+fn giant_fn_flags(goos: Str, arch: Str, lto: Str, size: Int) -> List[Str] {
+  if size <= 0 {
     return []
   }
-  let opt = "-aarch64-enable-mcr=false"
-  var out = ["-mllvm", opt]
+  var opts = ["-instcombine-code-sinking=false"]
+  if size >= 2 && arch == "arm64" {
+    opts = ["-aarch64-enable-mcr=false"] + opts
+  }
+  var out: List[Str] = []
+  for opt in opts {
+    out = out + ["-mllvm", opt]
+  }
   if lto != "none" {
-    out.push(if goos == "darwin" { "-Wl,-mllvm,${opt}" } else { "-Wl,-plugin-opt=${opt}" })
+    for opt in opts {
+      out.push(if goos == "darwin" { "-Wl,-mllvm,${opt}" } else { "-Wl,-plugin-opt=${opt}" })
+    }
   }
   out
 }
@@ -998,24 +1026,24 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
   // each module's giant function options (giant_fn_flags), and whether
   // any module has them (the LTO link's code generation then needs them)
   var giants: List[List[Str]] = []
-  var any_giant = false
-  let gflags = if c.opt == "-O0" { [] } else { giant_fn_flags(c.goos, c.arch, "none") }
+  var any_giant = 0
   // each module's optimization level: -O2 for a -O0 build's module with
   // a constant time module's function (ct_mods, decision 0619)
   var opts: List[Str] = []
   for (i, ll) in lls.indexed() {
     var gf: List[Str] = []
     var opt = c.opt
-    if !gflags.is_empty() || c.opt == "-O0" {
-      // xo:allow XO0903 an unreadable module fails its compile below
-      let t = os.fs.read_text(ll).ok() ?? ""
-      if !gflags.is_empty() && ir_has_giant_fn(t) {
-        gf = gflags
-        any_giant = true
+    // xo:allow XO0903 an unreadable module fails its compile below
+    let t = os.fs.read_text(ll).ok() ?? ""
+    let size = if c.opt == "-O0" { 0 } else { ir_fn_size(t) }
+    if size > 0 {
+      gf = giant_fn_flags(c.goos, c.arch, "none", size)
+      if size > any_giant {
+        any_giant = size
       }
-      if c.opt == "-O0" && has_ct_def(t) {
-        opt = "-O2"
-      }
+    }
+    if c.opt == "-O0" && has_ct_def(t) {
+      opt = "-O2"
     }
     giants.push(gf)
     opts.push(opt)
@@ -1092,7 +1120,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
     return fails[0]
   }
   let lf = ["-O2"] + lto_flags(c.lto) + ["-Wno-override-module"]
-  let lg = if any_giant && c.lto != "none" { giant_fn_flags(c.goos, c.arch, c.lto) } else { [] }
+  let lg = if any_giant > 0 && c.lto != "none" { giant_fn_flags(c.goos, c.arch, c.lto, any_giant) } else { [] }
   cc_build(os, ctx, clang, lf + flags + lg, objs + others, bin)
 }
 
