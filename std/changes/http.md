@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-21: fix: on wasm (wasip2) a request during an idle PING reuses its connection
+
+- Kind: fix
+- Commit: this push
+- Found by: tier 919 at 0.55.0 candidate 6 (task #577): TestWasmCommandGoldens/http_idle_pings printed connections 2 for "a request during an idle PING"
+- Go reference: golang.org/x/net/http2 Transport healthCheck (the pinged connection stays usable)
+- Change: pool_take's wait for a connection out for its idle PING (task #474) returned at once on wasm32, written when the pinger did not run there (task #492 started it), so wasip2 dialed a second connection; the wait now runs on every target, sleeping with rt.clock_sleep_or_cancel on wasm32 (poll.sleep_until needs function addresses wasm lacks)
+- Measured: not applicable
+- Test: internal/selfhost TestWasmCommandGoldens http_idle_pings (connections 2 before on wasip2, 1 after)
+- Shipped in: not yet released
+
 ## 2026-11-20: fix: Client.with_idle_pings pings on wasm (wasip2)
 
 - Kind: fix

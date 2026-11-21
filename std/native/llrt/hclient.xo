@@ -1024,7 +1024,7 @@ fn conn_is(pc: Int, h1: Int, roots: Int, kp: Int, kn: Int) -> Bool { ld4(pc, P_H
 /// the PING was out).
 pub fn pool_take(roots: Int, kp: Int, kn: Int) -> Int {
   let pc = pool_take_kind(0, roots, kp, kn)
-  if pc != 0 || target.arch == TargetArch.Wasm32 {
+  if pc != 0 {
     return pc
   }
   let pt = pinging(roots, kp, kn)
@@ -1037,8 +1037,15 @@ pub fn pool_take(roots: Int, kp: Int, kn: Int) -> Int {
     if now >= dl {
       return 0
     }
-    // a canceled task stops waiting and dials, which sees the cancel
-    if poll.sleep_until(if now + 100000 < dl { now + 100000 } else { dl }) != poll.TIMEOUT {
+    // a canceled task stops waiting and dials, which sees the cancel;
+    // wasm has no poller timers (poll.sleep_until parks through
+    // rt.fn_addr), so it sleeps on its clock (task #577)
+    let step = if now + 100000 < dl { 100000 } else { dl - now }
+    if target.arch == TargetArch.Wasm32 {
+      if rt.clock_sleep_or_cancel(step) != 0 {
+        return 0
+      }
+    } else if poll.sleep_until(now + step) != poll.TIMEOUT {
       return 0
     }
     let q = pool_take_kind(0, roots, kp, kn)
