@@ -96,3 +96,24 @@ Fix: dsymutil runs in the prefix's directory with no prepend path
 adds (unit_head_more: skeleton and split units 8 bytes, type units
 12). TestSepcompLLVM/std_frames_in_a_traceback compares the frames and
 their lines with the whole program's build.
+
+Symptom 7 (2026-11-22, task #607): symptom 5's link failure for
+functions. Built with XO_SEPCOMP_LLVM=1, the time_named_layouts and
+time_civil_codecs goldens failed to link, every build, with `undefined
+hidden symbol: xo.dropp.native.time.Item.llvm.7368885301026993857`
+(`xo.dropslow.List[native.time.Item]`, `xo.dupp.yaml.YamlErr`,
+`xo.dropp.yaml.YamlErr`); json_text, http_tls and six others linked.
+
+Cause: std's helpers (drop and dup glue of std's types, of which every
+std module that uses one held an internal copy) and its other internal
+functions were local to their modules. A std function imported into
+the program's module calls them, the import names a promoted
+`NAME.llvm.HASH`, and std's objects, compiled before with std's own
+index, define no such symbol. Only a program whose imports reach such a
+helper fails, so a few programs linking proves nothing: I wrote this
+fix once, built two programs by hand, saw both link, dropped it as
+having no failing case, and main carried the failure for a day.
+
+Fix: in std's own build no function stays internal (split.xo
+store_linkage): a helper is `linkonce_odr hidden`, any other function
+`hidden` in its one home. Both goldens are in TestSepcompLLVM.

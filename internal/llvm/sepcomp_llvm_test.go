@@ -194,7 +194,13 @@ func TestSepcompLLVM(t *testing.T) {
 			t.Errorf("the traceback's frames differ\n--- whole program\n%s\n--- std's own objects\n%s", strings.Join(whole, "\n"), strings.Join(sep, "\n"))
 		}
 	})
-	for _, name := range []string{"arith", "conc_channels", "json_text", "list_swap_guard", "http_tls"} {
+	// time_named_layouts and time_civil_codecs: their code imports std
+	// functions that call std's own helpers (drop glue of std's types),
+	// which were internal to each of std's modules; the import named them
+	// by a promoted name std's objects never defined, and both failed to
+	// link (`undefined hidden symbol: xo.dropp.native.time.Item.llvm...`,
+	// task #607)
+	for _, name := range []string{"arith", "conc_channels", "json_text", "list_swap_guard", "http_tls", "time_named_layouts", "time_civil_codecs"} {
 		dir := filepath.Join("testdata", "golden", name)
 		t.Run(name, func(t *testing.T) {
 			res, build := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: sepEnv})

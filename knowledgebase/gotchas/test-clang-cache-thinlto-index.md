@@ -28,5 +28,6 @@ on needs a case in clangKey; an option it does not know is keyed by
 its text. A link error that names a symbol no present object could
 have produced, in a test only, points at the cache: build by hand with
 the real clang (`XO_CLANG=$XO_CLANG_CACHED`) before reading the
-compiler. I first blamed std's linkage and wrote a change for it that
-had no failing case.
+compiler. (Both causes were real here: std's linkage also had a bug,
+found a day later in other programs: symptom 7 of
+llvm-std-objects-roots-and-named-section.md.)

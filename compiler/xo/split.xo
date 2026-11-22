@@ -812,7 +812,7 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -
         continue
       }
       if d.helper {
-        b.write(d.text)
+        b.write(store_linkage(store, true, d.text))
       } else {
         b.write(d.decl)
       }
@@ -820,7 +820,9 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -
     b.write("\n")
     for i in members[m] {
       let d = p.defs[i]
-      if (exported.contains(i) || (store && !d.helper && (d.name.starts_with("@\"x.") || d.name.starts_with("@x.")))) && d.text.starts_with("define internal ") {
+      if store {
+        b.write(store_linkage(true, d.helper, d.text))
+      } else if exported.contains(i) && d.text.starts_with("define internal ") {
         b.write("define hidden ")
         b.write(d.text.trim_prefix("define internal "))
       } else {
@@ -830,6 +832,23 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -
     out.push(if stable { meta_renumber(b.freeze(), renum) } else { b.freeze() })
   }
   out
+}
+
+/// A function's text for std's own build (decision 0738; store): no
+/// function stays internal. A program's module imports std's functions
+/// through ThinLTO, and an imported function names the functions it
+/// calls; a local one is promoted to `NAME.llvm.HASH` in the importer's
+/// view only, a symbol std's objects, built before, never defined (the
+/// time_named_layouts and time_civil_codecs goldens failed to link with
+/// `undefined hidden symbol: xo.dropp.native.time.Item.llvm...`, task
+/// #607, as the private constants did). A helper (drop glue and the
+/// like), which every module that uses it holds a copy of, is a hidden
+/// linkonce function; any other has one home and is hidden there.
+fn store_linkage(store: Bool, helper: Bool, text: Str) -> Str {
+  if !store || !text.starts_with("define internal ") {
+    return text
+  }
+  (if helper { "define linkonce_odr hidden " } else { "define hidden " }) + text.trim_prefix("define internal ")
 }
 
 /// std's constant time modules (decision 0619): their functions compile at
