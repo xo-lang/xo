@@ -63,10 +63,29 @@ func TestTierKeep(t *testing.T) {
 // pass host (tier 928 dropped linux llvm and sdk-stress on host 2).
 func TestTierMove(t *testing.T) {
 	s := filepath.Join("..", "..", "scripts", "lead", "tier-move_test.sh")
-	out, err := leadScript(s).CombinedOutput()
+	cmd := leadScript(s)
+	cmd.Env = noGitIdentity(t, cmd.Env)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", s, err, out)
 	}
+}
+
+// noGitIdentity: env with no git user identity, as on host 3 (task #711:
+// TestTierMove failed there with "unable to auto-detect email address"):
+// an empty HOME, no system config, no identity variables, and
+// user.useConfigOnly so git does not guess one from the host name.
+func noGitIdentity(t *testing.T, env []string) []string {
+	var out []string
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		switch {
+		case k == "HOME" || k == "XDG_CONFIG_HOME" || k == "EMAIL" || strings.HasPrefix(k, "GIT_"):
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "HOME="+t.TempDir(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=user.useConfigOnly", "GIT_CONFIG_VALUE_0=true")
 }
 
 // TestTierHeavyClass: every heavy.sh run in scripts/lead/tier.sh is bulk
