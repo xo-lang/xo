@@ -12,7 +12,8 @@ import (
 // (task #645): host 1 refuses an exclusive job over 30 minutes, so the
 // section asks for one lease per round, each OFF_MAX_MIN=30 and one round,
 // instead of one lease of every round under offload.sh's 180-minute default.
-// A fake offload.sh under a temporary HOME records each job's lease.
+// A fake offload.sh under a temporary HOME records each job's lease, and
+// whether its bundle was there (the host script removes it once fetched).
 func TestReleaseVsGoHTTPLeases(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
@@ -24,7 +25,13 @@ func TestReleaseVsGoHTTPLeases(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := filepath.Join(tmp, "jobs.txt")
-	off := "#!/bin/sh\n[ \"$1\" = --put ] && exit 0\necho \"max=${OFF_MAX_MIN:-none} excl=${OFF_EXCLUSIVE:-} rounds=$8 pads=$9\" >>" + rec + "\necho 'host load 0.1 0.1 0.1 1/1 1'\n"
+	// the host's bundle is a marker file: --put writes it, and a job takes it
+	// and removes it, as release-vs-go-http.sh does once fetched, so a lease
+	// with no bundle put before it records "nobundle"
+	host := filepath.Join(tmp, "hostbundle")
+	off := "#!/bin/sh\nif [ \"$1\" = --put ]; then [ -f \"$2\" ] && touch " + host + "; exit 0; fi\n" +
+		"b=ok; [ -f " + host + " ] || b=nobundle; rm -f " + host + "\n" +
+		"echo \"max=${OFF_MAX_MIN:-none} excl=${OFF_EXCLUSIVE:-} rounds=$8 pads=$9 bundle=$b\" >>" + rec + "\necho 'host load 0.1 0.1 0.1 1/1 1'\n"
 	if err := os.WriteFile(filepath.Join(agents, "offload.sh"), []byte(off), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +56,8 @@ func TestReleaseVsGoHTTPLeases(t *testing.T) {
 		t.Fatalf("%d leases for 3 rounds, want 3:\n%s", len(jobs), b)
 	}
 	for _, j := range jobs {
-		if j != "max=30 excl=1 rounds=1 pads=0 1" {
-			t.Errorf("lease %q, want max=30 excl=1 rounds=1 pads=0 1", j)
+		if j != "max=30 excl=1 rounds=1 pads=0 1 bundle=ok" {
+			t.Errorf("lease %q, want max=30 excl=1 rounds=1 pads=0 1 bundle=ok", j)
 		}
 	}
 }
