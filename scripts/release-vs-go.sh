@@ -175,16 +175,30 @@ settle() {
 # MODE nocache (xo only): the run cache off (XO_BIN_CACHE=off), so second
 # and warm are compiles through the back-end caches: the compiler's own
 # path, a diagnostic (the headline table before 2026-11-13).
+# rmw removes a directory a background std build may still write in: xo
+# starts a detached `xo dev stdcache` after a build that missed std's
+# variant, and it keeps writing in the row's cache for some seconds after
+# the timed build exits, so one rm -rf can fail "Directory not empty" (host
+# 1, 2026-11-21: the compile section's part 3 ended 1 on its last rm). It
+# tries again for up to 2 minutes, by then the child has stopped.
+rmw() {
+	local i
+	for i in $(seq 60); do
+		rm -rf "$1" 2>/dev/null && return 0
+		sleep 2
+	done
+	rm -rf "$1"
+}
 compile() {
 	local side=$1 name=$2 src=$3 mainf=$4 mode=${5:-default}
 	local sfx=
 	[ "$mode" = nocache ] && sfx=.nc
 	local d=$work/src-$side-$name$sfx
-	rm -rf "${d:?}"
+	rmw "${d:?}"
 	cp -R "$src" "$d"
 	local bin=$work/$name.$side$sfx
 	local cache=$work/cache-$side-$name$sfx
-	rm -rf "${cache:?}"
+	rmw "${cache:?}"
 	mkdir -p "$cache"
 	local build
 	if [ "$side" = xo ] && [ "$mode" = nocache ]; then
@@ -581,5 +595,5 @@ if section amd64; then
 		fi
 	fi
 fi
-rm -rf "${work:?}"
+rmw "${work:?}"
 echo "release-vs-go: $report"
