@@ -198,8 +198,8 @@ const TIME: Str = "{hour}:{minute}:{second}"
 const DATE_TIME: Str = "{year}-{month}-{day} {hour}:{minute}:{second}"
 
 /// A layout parsed once. Hot code should use it: `format` and `parse` with a string
-/// layout parse the text on every call (5.4x and 4.7x of Go's wall), while a const Layout
-/// runs at 2.03x and 1.90x (bench/results/std-twin-rows2-2026-11-03.md).
+/// layout parse the text on every call, while a const Layout parses it once (timings
+/// against Go in std/evidence/time/perf.md).
 /// A layout parsed once: `const ISO: Layout = layout("{year}-{month}-{day}")`
 /// parses it on first use (decision 0332), and `format` and `parse` then
 /// skip the layout walk. Displays as the layout text; equal when the texts

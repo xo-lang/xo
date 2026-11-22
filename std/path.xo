@@ -387,8 +387,8 @@ pub fn is_match(pattern: Str, name: Str) -> Bool ! PathErr {
 
 /// p[a..b] where both ends are at a `/` or `.` byte or an end of p (every
 /// cut path makes): a view with no UTF-8 boundary check, which a Str slice
-/// makes at each end (2026-11-07: llrt_str_slice_chk 7.5% of the parts
-/// row, as a call).
+/// makes at each end (a call on the hot path of parts; profile and timings
+/// in std/evidence/path/perf.md, row parts).
 fn cut(p: Str, a: Int, b: Int) -> Str { rt.cast[Bytes, Str](p.bytes()[a..b]) }
 
 /// Whether path has no empty, `.` or `..` element and no trailing `/`
