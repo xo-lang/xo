@@ -5,7 +5,8 @@
 #
 #   - build: cold (empty caches), second (again, unchanged), warm (the third
 #     unchanged build) and edit (one new function appended to the main file),
-#     wall time and peak RSS of the build (/usr/bin/time -l), one build each:
+#     wall time and peak RSS of the build (/usr/bin/time -l on darwin, GNU
+#     /usr/bin/time -f on linux), one build each:
 #       xo      xo build (XO_BACKEND_CACHE_DIR empty for cold)
 #       go      go build -trimpath (GOCACHE empty for cold)
 #       rust    cargo build --release --locked --offline (CARGO_TARGET_DIR
@@ -23,7 +24,7 @@
 #     like; for Node the esbuild
 #     bundle, Node's own binary, and a single executable application (the
 #     bundle injected into a copy of the official Node binary with postject,
-#     signed ad hoc); for Python the virtual environment's site-packages and
+#     signed ad hoc on darwin); for Python the virtual environment's site-packages and
 #     the interpreter's installation
 #   - startup: `xo bench --ab` of the hello program, A = the other language,
 #     B = Xo, wall and max RSS (Node runs dist/hello/hello.js, Python
@@ -34,7 +35,8 @@
 # directory for copies, caches and logs), RESULT, ROUNDS (startup rounds,
 # default 20), MAXLOAD (default 5), NODE_SEA (an official Node binary of the
 # same version as `node`; default: downloaded from nodejs.org into OUT and
-# checked against its SHASUMS256.txt). Needs bench/perf/node's npm ci and
+# checked against its SHASUMS256.txt), HOSTLABEL (a line naming the host in
+# the results, e.g. the timing host). Runs on darwin and linux. Needs bench/perf/node's npm ci and
 # bench/perf/python's .venv (see python/run.sh).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -57,17 +59,36 @@ py="$perf/python/.venv/bin/python"
 . "$here/lib.sh"
 work=$out/work
 mkdir -p "$work"
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+# nx TOOL ARGS: the project's pinned node tool, through npx when the host has
+# npm, else straight from ./node_modules/.bin (a host with node but no npm)
+if command -v npx >/dev/null; then nx=(npx --no-install); else
+	printf '#!/bin/sh\nt=$1\nshift\nexec ./node_modules/.bin/"$t" "$@"\n' >"$work/nx"
+	chmod +x "$work/nx"
+	nx=("$work/nx")
+fi
+case $(uname -m) in aarch64 | arm64) arch=arm64 ;; x86_64) arch=x64 ;; *) arch=$(uname -m) ;; esac
 
-# timed LOG CMD...: runs CMD under /usr/bin/time -l; prints "ms peak_mb"
+# timed LOG CMD...: runs CMD under /usr/bin/time; prints "ms peak_mb"
+# (darwin's -l reports the peak in bytes, GNU time's %M in kilobytes)
 timed() {
 	local log=$1
 	shift
-	/usr/bin/time -l "$@" >"$log" 2>&1 || { echo "twins/build.sh: failed: $* (log $log)" >&2; tail -20 "$log" >&2; exit 1; }
 	local ms rss
-	ms=$(awk '$2 == "real" {printf "%d", $1 * 1000}' "$log" | tail -1)
-	rss=$(awk '/maximum resident set size/ {print $1}' "$log" | tail -1)
-	echo "${ms:-0} $((${rss:-0} / 1048576))"
+	if [ "$os" = darwin ]; then
+		/usr/bin/time -l "$@" >"$log" 2>&1 || { echo "twins/build.sh: failed: $* (log $log)" >&2; tail -20 "$log" >&2; exit 1; }
+		ms=$(awk '$2 == "real" {printf "%d", $1 * 1000}' "$log" | tail -1)
+		rss=$(awk '/maximum resident set size/ {print $1}' "$log" | tail -1)
+		echo "${ms:-0} $((${rss:-0} / 1048576))"
+		return
+	fi
+	/usr/bin/time -f 'twins-time %e %M' "$@" >"$log" 2>&1 || { echo "twins/build.sh: failed: $* (log $log)" >&2; tail -20 "$log" >&2; exit 1; }
+	ms=$(awk '$1 == "twins-time" {printf "%d", $2 * 1000}' "$log" | tail -1)
+	rss=$(awk '$1 == "twins-time" {print $3}' "$log" | tail -1)
+	echo "${ms:-0} $((${rss:-0} / 1024))"
 }
+# fsize FILE: its size in bytes (stat's flags differ between darwin and linux)
+fsize() { wc -c <"$1" | tr -d ' '; }
 # mb BYTES: megabytes with two decimals, or kilobytes under 0.1 MB
 mb() { python3 -c "b=$1; print(f'{b/1048576:.2f}' if b >= 104858 else f'{b/1024:.1f} KB')"; }
 dusize() { du -sk "$1" | awk '{print $1 * 1024}'; }
@@ -100,7 +121,7 @@ measure() {
 	mv "$d/$mainf.orig" "$d/$mainf"
 	(cd "$d" && "$@" >/dev/null 2>&1)
 	local size=n/a
-	[ "$bin" = - ] || size=$(mb "$(stat -f %z "$d/$bin")")
+	[ "$bin" = - ] || size=$(mb "$(fsize "$d/$bin")")
 	row "$name" "$side" "$cold" "$second" "$warm" "$ed" "$size"
 }
 
@@ -110,9 +131,6 @@ rust_edit='\n#[allow(dead_code)]\nfn twins_build_edit() -> i64 {\n    7\n}\n'
 ts_edit='\nexport function twinsBuildEdit(): number {\n  return 7;\n}\n'
 py_edit='\n\ndef twins_build_edit():\n    return 7\n'
 
-xobuild() { local c=$work/cache-xo-$1; rm -rf "${c:?}"; mkdir -p "$c"; echo env XO_BACKEND_CACHE_DIR="$c/backend" "$xo" build -o prog .; }
-gobuild() { local c=$work/cache-go-$1; rm -rf "${c:?}"; mkdir -p "$c"; echo env GOCACHE="$c/go" GOFLAGS=-trimpath go build -o prog .; }
-rustbuild() { local c=$work/cache-rust-$1; rm -rf "${c:?}"; echo env CARGO_TARGET_DIR="$c" "$cargo" build --release --locked --offline -q; }
 
 body=$out/body.md
 : >"$body"
@@ -145,12 +163,12 @@ nd=$work/src-node
 rm -rf "${nd:?}"
 cp -R "$perf/node" "$nd"
 rm -rf "${nd:?}/dist"
-tsc_row=$(measure project node "$nd" src/http/server.ts "$ts_edit" dist/http/server.js npx --no-install tsc -p .)
+tsc_row=$(measure project node "$nd" src/http/server.ts "$ts_edit" dist/http/server.js "${nx[@]}" tsc -p .)
 tsc_size=$(mb "$(dusize "$work/src-node-project/dist")")
 echo "$tsc_row" | sed "s/| [^|]* |\$/| $tsc_size (dist) |/" >>"$body"
-(cd "$nd" && npx --no-install tsc -p .)
+(cd "$nd" && "${nx[@]}" tsc -p .)
 measure bundle node "$nd" dist/http/server.js '\nexport function twinsBuildEdit() { return 7; }\n' server.bundle.js \
-	npx --no-install esbuild dist/http/server.js --bundle --platform=node --minify --outfile=server.bundle.js --log-level=warning >>"$body"
+	"${nx[@]}" esbuild dist/http/server.js --bundle --platform=node --minify --outfile=server.bundle.js --log-level=warning >>"$body"
 bundle=$work/src-node-bundle/server.bundle.js
 
 # Python: the first import compiles the module to bytecode
@@ -164,12 +182,12 @@ nodever=$(node --version)
 if [ -z "${NODE_SEA:-}" ]; then
 	dl=$out/node-dist
 	mkdir -p "$dl"
-	tgz=node-$nodever-darwin-arm64.tar.gz
+	tgz=node-$nodever-$os-$arch.tar.gz
 	curl -fsSL -o "$dl/$tgz" "https://nodejs.org/dist/$nodever/$tgz"
 	curl -fsSL -o "$dl/SHASUMS256.txt" "https://nodejs.org/dist/$nodever/SHASUMS256.txt"
-	(cd "$dl" && grep " $tgz\$" SHASUMS256.txt | shasum -a 256 -c - >/dev/null)
+	(cd "$dl" && grep " $tgz\$" SHASUMS256.txt | sha256sum -c - >/dev/null 2>&1 || grep " $tgz\$" SHASUMS256.txt | shasum -a 256 -c - >/dev/null)
 	tar -xzf "$dl/$tgz" -C "$dl"
-	NODE_SEA=$dl/node-$nodever-darwin-arm64/bin/node
+	NODE_SEA=$dl/node-$nodever-$os-$arch/bin/node
 fi
 sea=$work/sea
 rm -rf "${sea:?}"
@@ -180,28 +198,42 @@ sea_build() {
 	"$NODE_SEA" --experimental-sea-config sea-config.json >/dev/null
 	cp "$NODE_SEA" crud-sea
 	chmod u+w crud-sea
-	codesign --remove-signature crud-sea
-	"$perf/node/node_modules/.bin/postject" crud-sea NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 --macho-segment-name NODE_SEA >/dev/null
-	codesign --sign - crud-sea
+	if [ "$os" = darwin ]; then
+		codesign --remove-signature crud-sea
+		"$perf/node/node_modules/.bin/postject" crud-sea NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 --macho-segment-name NODE_SEA >/dev/null
+		codesign --sign - crud-sea
+	else
+		"$perf/node/node_modules/.bin/postject" crud-sea NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 >/dev/null
+	fi
 }
 wait_load
-sea_t=$(cd "$sea" && timed "$out/build-node-sea.log" bash -c "$(declare -f sea_build); NODE_SEA='$NODE_SEA'; perf='$perf'; sea_build")
+sea_t=$(cd "$sea" && timed "$out/build-node-sea.log" bash -c "$(declare -f sea_build); NODE_SEA='$NODE_SEA'; perf='$perf'; os='$os'; sea_build")
 set -- $sea_t
 {
 	echo
-	echo "Node single executable application (the bundle injected into a copy of the official node $nodever binary with postject, signed ad hoc): $1 ms, peak $2 MB, $(mb "$(stat -f %z "$sea/crud-sea")") MB."
+	echo "Node single executable application (the bundle injected into a copy of the official node $nodever binary with postject$([ "$os" = darwin ] && echo ", signed ad hoc")): $1 ms, peak $2 MB, $(mb "$(fsize "$sea/crud-sea")") MB."
 } >>"$body"
 
 # the shipping flags: Xo --release and Go -s -w drop the debug info the
 # plain builds keep (Rust's release profile has none); built here into the
 # copies the build rows used, with their warm caches (the time is not measured)
 for n in crud hello; do
-	(cd "$work/src-xo-$n" && env XO_BACKEND_CACHE_DIR="$work/cache-xo-$n/backend" "$xo" build --release -o prog-release . >/dev/null)
+	(cd "$work/src-xo-$n" && env XO_BACKEND_CACHE_DIR="$work/cache-xo-$n/backend" XO_BIN_CACHE="$work/cache-xo-$n/bin" "$xo" build --release -o prog-release . >/dev/null)
 	(cd "$work/src-go-$n" && env GOCACHE="$work/cache-go-$n/go" go build -trimpath -ldflags="-s -w" -o prog-stripped . >/dev/null)
 done
 
 # sizes of what ships
 pyprefix=$("$py" -c 'import sys; print(sys.base_prefix)')
+# a distro python's prefix is /usr, shared with the whole system: count the
+# interpreter binary and its standard library instead
+pywhat="the interpreter's installation ($pyprefix)"
+pybytes=$(dusize "$pyprefix")
+if [ "$pyprefix" = /usr ]; then
+	pystd=$("$py" -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')
+	pyexe=$("$py" -c 'import os, sys; print(os.path.realpath(sys.executable))')
+	pywhat="the interpreter binary and its standard library ($pyexe, $pystd)"
+	pybytes=$(($(fsize "$pyexe") + $(dusize "$pystd")))
+fi
 site=$("$py" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
 {
 	echo
@@ -209,22 +241,22 @@ site=$("$py" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
 	echo
 	echo "| side | what | MB |"
 	echo "|---|---|---|"
-	echo "| xo | the CRUD server binary, \`xo build\` (with DWARF) | $(mb "$(stat -f %z "$work/src-xo-crud/prog")") |"
-	echo "| xo | the CRUD server binary, \`xo build --release\` | $(mb "$(stat -f %z "$work/src-xo-crud/prog-release")") |"
-	echo "| go | the CRUD server binary, \`go build -trimpath\` (with DWARF) | $(mb "$(stat -f %z "$work/src-go-crud/prog")") |"
-	echo "| go | the CRUD server binary, \`go build -trimpath -ldflags=\"-s -w\"\` | $(mb "$(stat -f %z "$work/src-go-crud/prog-stripped")") |"
-	echo "| rust | the CRUD server binary, \`cargo build --release\` (no debug info) | $(mb "$(stat -f %z "$work/cache-rust-crud/release/crudperf")") |"
-	echo "| xo | the hello binary, \`xo build\` (with DWARF) | $(mb "$(stat -f %z "$work/src-xo-hello/prog")") |"
-	echo "| xo | the hello binary, \`xo build --release\` | $(mb "$(stat -f %z "$work/src-xo-hello/prog-release")") |"
-	echo "| go | the hello binary, \`go build -trimpath\` (with DWARF) | $(mb "$(stat -f %z "$work/src-go-hello/prog")") |"
-	echo "| go | the hello binary, \`go build -trimpath -ldflags=\"-s -w\"\` | $(mb "$(stat -f %z "$work/src-go-hello/prog-stripped")") |"
-	echo "| rust | the hello binary, \`cargo build --release\` (no debug info) | $(mb "$(stat -f %z "$work/cache-rust-hello/release/hello")") |"
-	echo "| node | the esbuild bundle of the server (needs a node runtime) | $(mb "$(stat -f %z "$bundle")") |"
-	echo "| node | the official node $nodever binary (the runtime) | $(mb "$(stat -f %z "$NODE_SEA")") |"
-	echo "| node | the single executable application | $(mb "$(stat -f %z "$sea/crud-sea")") |"
+	echo "| xo | the CRUD server binary, \`xo build\` (with DWARF) | $(mb "$(fsize "$work/src-xo-crud/prog")") |"
+	echo "| xo | the CRUD server binary, \`xo build --release\` | $(mb "$(fsize "$work/src-xo-crud/prog-release")") |"
+	echo "| go | the CRUD server binary, \`go build -trimpath\` (with DWARF) | $(mb "$(fsize "$work/src-go-crud/prog")") |"
+	echo "| go | the CRUD server binary, \`go build -trimpath -ldflags=\"-s -w\"\` | $(mb "$(fsize "$work/src-go-crud/prog-stripped")") |"
+	echo "| rust | the CRUD server binary, \`cargo build --release\` (no debug info) | $(mb "$(fsize "$work/cache-rust-crud/release/crudperf")") |"
+	echo "| xo | the hello binary, \`xo build\` (with DWARF) | $(mb "$(fsize "$work/src-xo-hello/prog")") |"
+	echo "| xo | the hello binary, \`xo build --release\` | $(mb "$(fsize "$work/src-xo-hello/prog-release")") |"
+	echo "| go | the hello binary, \`go build -trimpath\` (with DWARF) | $(mb "$(fsize "$work/src-go-hello/prog")") |"
+	echo "| go | the hello binary, \`go build -trimpath -ldflags=\"-s -w\"\` | $(mb "$(fsize "$work/src-go-hello/prog-stripped")") |"
+	echo "| rust | the hello binary, \`cargo build --release\` (no debug info) | $(mb "$(fsize "$work/cache-rust-hello/release/hello")") |"
+	echo "| node | the esbuild bundle of the server (needs a node runtime) | $(mb "$(fsize "$bundle")") |"
+	echo "| node | the official node $nodever binary (the runtime) | $(mb "$(fsize "$NODE_SEA")") |"
+	echo "| node | the single executable application | $(mb "$(fsize "$sea/crud-sea")") |"
 	echo "| python | the server sources (http/*.py) | $(mb "$(cat "$pd"/*.py | wc -c)") |"
 	echo "| python | the virtual environment's site-packages (uvicorn, Starlette, uvloop, httptools and their dependencies) | $(mb "$(dusize "$site")") |"
-	echo "| python | the interpreter's installation ($pyprefix) | $(mb "$(dusize "$pyprefix")") |"
+	echo "| python | $pywhat | $(mb "$pybytes") |"
 } >>"$body"
 
 # startup
@@ -254,11 +286,16 @@ done
 	echo
 	echo "## Machine and versions"
 	echo
-	echo "- $(uname -srm), $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, $(sysctl -n hw.memsize | awk '{printf "%d GB", $1/1073741824}'), load average at start $(load)"
+	[ -z "${HOSTLABEL:-}" ] || echo "- $HOSTLABEL"
+	if [ "$os" = darwin ]; then
+		echo "- $(uname -srm), $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, $(sysctl -n hw.memsize | awk '{printf "%d GB", $1/1073741824}'), load average at start $(load)"
+	else
+		echo "- $(uname -srm), $(ncpu) CPUs, $(awk '/^MemTotal/ {printf "%d GB", $2/1048576}' /proc/meminfo), load average at start $(load)"
+	fi
 	echo "- $XO_STAMP"
 	echo "- $(go version)"
 	echo "- $("$cargo" --version), $(rustc --version 2>/dev/null || "$HOME/.cargo/bin/rustc" --version)"
-	echo "- node $nodever (Homebrew, for tsc, esbuild and the startup row), typescript $(cd "$perf/node" && npx --no-install tsc --version | sed 's/Version //'), esbuild $(cd "$perf/node" && npx --no-install esbuild --version), pinned in package-lock.json"
+	echo "- node $nodever ($(command -v node), for tsc, esbuild and the startup row), typescript $(cd "$perf/node" && "${nx[@]}" tsc --version | sed 's/Version //'), esbuild $(cd "$perf/node" && "${nx[@]}" esbuild --version), pinned in package-lock.json"
 	echo "- $("$py" --version) (the virtual environment of bench/perf/python)"
 	echo
 	cat "$body"

@@ -26,4 +26,7 @@ got=$(NCPU=12 LOADAVG_FILE="$t/loadavg" sh -c 'maxload=3; rounds=1; xo=$2; . "$1
 case $got in *"max load 15"*"--max-load=15"*) echo "ok ab: pmap runs with --max-load=15 on 12 CPUs" ;; *) echo "FAIL ab max-load: '$got'"; fail=1 ;; esac
 got=$(NCPU=12 LOADAVG_FILE="$t/loadavg" sh -c 'maxload=3; rounds=1; xo=$2; . "$1"; ab demo /bin/true /bin/true fib 1' sh "$here/lib.sh" "$t/xo" 2>&1)
 case $got in *max-load*) echo "FAIL ab: fib got a --max-load: '$got'"; fail=1 ;; *) echo "ok ab: fib keeps the default load limit" ;; esac
+# xobuild points every xo cache, the run cache too, under its own directory
+got=$(sh -c 'work=$2; xo=xo; . "$1"; xobuild crud' sh "$here/lib.sh" "$t" 2>&1)
+case $got in *"XO_BACKEND_CACHE_DIR=$t/cache-xo-crud/backend"*"XO_BIN_CACHE=$t/cache-xo-crud/bin"*) echo "ok xobuild: the run cache is the row's own" ;; *) echo "FAIL xobuild: '$got'"; fail=1 ;; esac
 exit $fail

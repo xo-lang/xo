@@ -93,3 +93,12 @@ header() {
 	for v in "$@"; do echo "- $v"; done
 	echo
 }
+
+# xobuild, gobuild, rustbuild NAME: the build command of twins/build.sh's
+# NAME row, every cache in its own empty directory under $work/cache-SIDE-NAME
+# so the cold build is cold. xo keeps a run cache of whole binaries (decision
+# 0360) apart from the back-end cache; without XO_BIN_CACHE the user's own one
+# answered the "cold" build in 100 ms on host 1 (task #687, 2026-11-22)
+xobuild() { c=$work/cache-xo-$1; rm -rf "${c:?}"; mkdir -p "$c"; echo env XO_BACKEND_CACHE_DIR="$c/backend" XO_BIN_CACHE="$c/bin" "$xo" build -o prog .; }
+gobuild() { c=$work/cache-go-$1; rm -rf "${c:?}"; mkdir -p "$c"; echo env GOCACHE="$c/go" GOFLAGS=-trimpath go build -o prog .; }
+rustbuild() { c=$work/cache-rust-$1; rm -rf "${c:?}"; echo env CARGO_TARGET_DIR="$c" "$cargo" build --release --locked --offline -q; }
