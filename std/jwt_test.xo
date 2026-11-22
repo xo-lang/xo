@@ -227,3 +227,23 @@ test "require_nbf is golang-jwt's WithNotBeforeRequired (Test_Validator_verifyNo
     _ => fault("expected NotYetValid")
   }
 }
+
+test "a payload that is not JSON is Malformed before the key and signature checks, as golang-jwt (task #696)" {
+  let key = Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  let head = base64.encode(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}", base64.Base64.RawUrl)
+  let other = base64.encode(b"{\"alg\":\"HS384\",\"typ\":\"JWT\"}", base64.Base64.RawUrl)
+  for body in [b"{\"exp\":+99999999999999999999,\"sub\":\"me\"}", b"{\"nbf\":1999,\"exp\":00000001}"] {
+    let pay = base64.encode(body, base64.Base64.RawUrl)
+    // a signature segment that is not base64url (golang-jwt fuzz seeds 2000001 to 2000003)
+    match verify_with[Claims]("${head}.${pay}.a!b", key, opts(1000)) {
+      Err(JwtErr.Malformed(_)) => ()
+      _ => fault("expected Malformed with a broken signature segment")
+    }
+    // an alg the options do not allow is still Alg first (std/jwt's rule,
+    // which jwtoracle's category keeps: golang-jwt calls it a signature error)
+    match verify_with[Claims]("${other}.${pay}.abc", key, opts(1000)) {
+      Err(JwtErr.Alg(_)) => ()
+      _ => fault("expected Alg with a disallowed alg")
+    }
+  }
+}

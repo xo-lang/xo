@@ -203,6 +203,11 @@ pub fn verify[T: Json](token: Str, keys: fn(Header) -> Key ! JwtErr, opts: Optio
   if !opts.algs.contains(header.alg) {
     return Err(JwtErr.Alg(msg: "${alg_name(header.alg)} is not allowed"))
   }
+  // the payload is parsed next, before the key and the signature are looked
+  // at, in golang-jwt's order (ParseUnverified decodes the claims before the
+  // signature segment, and the keyfunc runs after both; task #696), but no
+  // claim is read until the signature holds
+  let claims = segment_object(parts[1], "payload")?
   let key = keys(header)?
   let bad = key_misfit(header.alg, key)
   if bad != "" {
@@ -216,9 +221,6 @@ pub fn verify[T: Json](token: Str, keys: fn(Header) -> Key ! JwtErr, opts: Optio
     Err(_) => return Err(JwtErr.Signature)
   }
   let msg = "${parts[0]}.${parts[1]}".bytes()
-  // the payload is parsed before the signature is checked (as golang-jwt
-  // does) but no claim is looked at until the signature holds
-  let claims = segment_object(parts[1], "payload")?
   if !signature_ok(header.alg, key, msg, sig) {
     return Err(JwtErr.Signature)
   }

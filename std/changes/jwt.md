@@ -1,5 +1,16 @@
 # std/jwt changes
 
+## 2026-11-22: fix: a payload that is not JSON is Malformed before the key and signature checks, as golang-jwt's
+
+- Kind: fix
+- Commit: this push
+- Found by: the upstream sweep (task #413): TestJwtFuzz seeds 2000001 to 2000003 on linux/arm64, cases such as `"exp":+99999999999999999999` or `"exp":00000001` with a signature segment that is not base64url
+- Go reference: github.com/golang-jwt/jwt/v5 v5.3.1 parser.go ParseUnverified (header, claims, then signature, before the method and key checks) (MIT license)
+- Test: std/jwt_test.xo "a payload that is not JSON is Malformed before the key and signature checks, as golang-jwt" (failed before)
+- Shipped in: v0.47.0 to v0.55.0 (the order since d2e208d1a2)
+
+`verify` parsed the payload after the key and the signature segment's base64, so a token whose payload is not JSON and whose signature segment is not base64url was a Signature error, where golang-jwt reports the payload as malformed. The payload is now parsed right after the alg check (a disallowed alg stays an Alg error first); no claim is read until the signature holds, as before.
+
 ## 2026-11-18: fix: a NumericDate up to 9.2e18 seconds is a time, as golang-jwt's
 
 - Kind: fix
