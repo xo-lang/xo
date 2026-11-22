@@ -172,6 +172,12 @@ quiet log alone is never a hang.
   one word (never a path, never ending `.part`), a chunk out of order is
   refused, and a refusal ends the drive with no start. This replaces
   offload.sh's bundle copy once the host runner is live.
+- Installing the runner (task #600, workstream b5fddce, 2026-11-22):
+  `xw host install NAME [--src DIR]` sends `git archive HEAD` of the
+  workstream checkout over the machine's ssh; the host builds
+  `ssh.dir/xw.new` with `ssh.xo` (`XO_STD` from `ssh.std`) and moves it
+  to `ssh.dir/xw` only when the build passes. Point `ssh.agent` at that
+  path to run it.
 
 ## Alternatives
 
