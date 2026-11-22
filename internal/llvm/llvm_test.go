@@ -371,6 +371,8 @@ func TestGolden(t *testing.T) {
 // tier's llvm suite (ctier 77354814f, 2026-11-15). Fewer rounds would stop
 // the golden catching the starvation it was written for.
 var goParitySkip = map[string]string{
+	"native_prof_rate":   "it tests the native CPU sampler (XO_PROF=cpu, decision 0238); the Go backend has no XO_PROF (its profile is XO_CPUPROFILE, Go's pprof), so the child prints no sample count and the rate reads 0 on every run (task #674)",
+	"native_trace_raw":   "it tests the native recorder's raw XO_TRACE file (decision 0240); the Go backend's XO_TRACE writes Go's runtime/trace, not the XORAW header the golden checks (task #674)",
 	"fair_pairs":         "the Go backend runs its 96M channel round trips in 40 s or more, past the program limit under a loaded suite; it tests xo's native scheduler (decision 0394)",
 	"fault_isolate_leak": "it tests the native runtime's fault records (a leaked block a fault, task #199) by peak RSS under 2 MiB over 100,000 faults; on the Go backend the peak follows Go's GC pacing (a 4 MB minimum heap goal) and passed 2 MiB in the tier (2212 KiB, ctier c36c812d6, task #276)",
 }
