@@ -324,6 +324,13 @@ std's debug sections. Open: those rows, the size, and darwin, which
 links plain objects and imports nothing (Apple's clang has no lld to
 write the index).
 
+Debug info of std's frames (2026-11-21): a fault under std's frames
+names them with their files and lines as the whole program's build
+does (gotchas/llvm-std-objects-roots-and-named-section.md, symptom 6:
+dsymutil's prepend path on darwin, skeleton unit headers in the
+runtime's reader on ELF). The darwin binary's debug map names std's
+objects by their paths in the user's backend cache.
+
 ## Consequences
 
 - A warm LLVM build of a program that reaches http or crypto compiles

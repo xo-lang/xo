@@ -1,10 +1,12 @@
 package llvm
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"debug/elf"
 	"errors"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -141,6 +143,55 @@ func TestSepcompLLVM(t *testing.T) {
 			if b := sums[1][rel]; a != b {
 				t.Errorf("%s: code and symbols differ between two builds (%s, %s)", rel, a, b)
 			}
+		}
+	})
+	// a fault raised under std's frames names each of them with its file
+	// and line, as the whole program's build does: the frames' functions
+	// and lines are the same in both (which of them are inlined is not:
+	// darwin links std's plain objects, where a call stays a call). The
+	// opt in lost them twice (task #607): on darwin dsymutil was given
+	// the build's directory as a prefix for every object, std's cached
+	// ones too, found none of them, and std's frames had no file and
+	// line; on ELF std's units are split DWARF skeletons, whose header
+	// the runtime read as a compile unit's, and std's inlined calls were
+	// lost (a caller shown at its inlined callee's line)
+	t.Run("std frames in a traceback", func(t *testing.T) {
+		dir := t.TempDir()
+		prog := "fn main(os: Os) {\n  let s = \"abcdef\"\n  let n = os.env.args().len() + 10\n  os.stdio.println(s[2..n])\n}\n"
+		if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(prog), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		frames := func(env []string) []string {
+			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM, Env: env})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v\n%s", err, res.Output)
+			}
+			cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
+			cmd.Env = append(os.Environ(), "XO_TRACEBACK=1")
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			cmd.Run()
+			_, tb, ok := strings.Cut(stderr.String(), "traceback:\n")
+			if !ok {
+				t.Fatalf("no traceback in\n%s", stderr.String())
+			}
+			var out []string
+			for _, l := range strings.Split(tb, "\n") {
+				if strings.HasPrefix(l, "  ") {
+					out = append(out, strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(l), "[inlined]")))
+				}
+			}
+			return out
+		}
+		whole := frames(append(append([]string{}, sepEnv[1:]...), "XO_SEPCOMP=0"))
+		sep := frames(sepEnv)
+		for _, f := range sep {
+			if !strings.Contains(f, ".xo:") {
+				t.Errorf("a frame with no file and line: %q", f)
+			}
+		}
+		if len(whole) < 3 || strings.Join(whole, "\n") != strings.Join(sep, "\n") {
+			t.Errorf("the traceback's frames differ\n--- whole program\n%s\n--- std's own objects\n%s", strings.Join(whole, "\n"), strings.Join(sep, "\n"))
 		}
 	})
 	for _, name := range []string{"arith", "conc_channels", "json_text", "list_swap_guard", "http_tls"} {

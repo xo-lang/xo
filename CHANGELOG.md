@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (LLVM backend, `XO_SEPCOMP_LLVM=1`; task #607): a fault under std's frames prints them as a whole program's build does. On macOS they had no file and line, and on Linux std's inlined calls were missing. The Linux half is the runtime's DWARF reader, which now reads split DWARF skeleton units (any program linked with objects compiled `-gsplit-dwarf`).
 - Fix (heap profile; task #658): `XO_PROF=heap XO_PROF_HEAP_RATE=1 xo build` of a large program no longer dies with SIGSEGV after writing its profile (about one run in four since 0.52.0). A sampled block freed on another thread was put on the front end's heap region with the profile's mark still in its header.
 - Fix (native, LLVM backend on macOS on Intel; task #649): `xo dump` shows the program line a task waits at on darwin/amd64 (a task blocked in `Mutex.with` showed none). The stack walk checked arm64's frame pointer register instead of rbp, so it stopped at the first frame with a compact unwind entry; with that fixed, a parked fiber's walk read one word past the fiber's stack (SIGBUS), because the fiber's outermost frame did not mark its return address undefined on macOS as it does on Linux and FreeBSD.
 - Fix (LLVM backend, macOS on Intel; task #650): a fault in a default (debug) build printed its report and exited 70 everywhere but on darwin/amd64, where the program died with SIGSEGV at the end of its stack. The runtime's stack walk read one word past a task's stack.

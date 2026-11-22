@@ -70,3 +70,29 @@ constant is written `linkonce_odr hidden` under its own name, which
 needs no promotion. A new kind of module-level data in the LLVM emitter
 that std's functions read takes the same rule, or an importing program
 fails to link. TestSepcompLLVM's goldens run with the imports on.
+
+Symptom 6 (2026-11-21, task #607): a fault raised under std's frames
+in a program built against std's own objects printed those frames
+wrongly. On darwin they had no file and line (`prelude.slice_fail`
+where the whole program's build prints `prelude.slice_fail
+(prelude.xo:6843)`); on linux std's inlined calls were missing (a
+frame gone, its caller shown at the callee's line), and a CPU profile
+named std's functions `?`.
+
+Cause, darwin: the link is given `-oso_prefix BUILD_DIR/`, so the
+program's objects are named relative to it in the debug map, and
+dsymutil was run with `--oso-prepend-path=BUILD_DIR/`, which goes
+before every object's path. std's objects are linked from the backend
+cache by their full paths, dsymutil looked for them under the build's
+directory, and the program got none of std's DWARF. Cause, ELF: std's
+objects are compiled with split DWARF, so their units in the program
+are skeletons (DW_UT_skeleton), whose header holds an 8 byte DWO id
+after the abbreviation offset. std/native/llrt/dwline.xo read every
+DWARF 5 header as a compile unit's and parsed those units' entries 8
+bytes early.
+
+Fix: dsymutil runs in the prefix's directory with no prepend path
+(link.xo cc_dsym_run), and dwline.xo skips what the unit type's header
+adds (unit_head_more: skeleton and split units 8 bytes, type units
+12). TestSepcompLLVM/std_frames_in_a_traceback compares the frames and
+their lines with the whole program's build.

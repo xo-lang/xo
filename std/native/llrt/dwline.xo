@@ -1334,6 +1334,25 @@ struct InlRec {
   line: Int
 }
 
+/// The bytes a DWARF 5 unit's header holds after its abbreviation
+/// offset, by its unit type: the 8 byte DWO id of a skeleton or split
+/// unit (DW_UT_skeleton 4, DW_UT_split_compile 5), the signature and
+/// type offset of a type unit (DW_UT_type 2, DW_UT_split_type 6), none
+/// otherwise. std's own LLVM objects (decision 0738) are compiled with
+/// split DWARF, so their units in the program are skeletons: read as
+/// compile units, their entries were parsed 8 bytes early, and a fault
+/// under std's frames lost std's inlined calls (a caller shown at its
+/// inlined callee's line; task #607, 2026-11-21).
+fn unit_head_more(ut: Int) -> Int {
+  if ut == 4 || ut == 5 {
+    8
+  } else if ut == 2 || ut == 6 {
+    12
+  } else {
+    0
+  }
+}
+
 /// Every unit's inlined calls into out (addresses moved by bias), with
 /// their callees' names (abstract_origin, one level of specification or
 /// origin followed).
@@ -1361,10 +1380,10 @@ fn parse_info(s: Sects, bias: Int, var out: Lines) {
     var r = Rd{p: p + 6, end: next}
     var aoff = 0
     if u.ver >= 5 {
-      let _ut = r.byte()
+      let ut = r.byte()
       u.asize = r.byte()
       aoff = u32(r.p)
-      r.p += 4
+      r.p += 4 + unit_head_more(ut)
     } else {
       aoff = u32(r.p)
       r.p += 4
@@ -1741,10 +1760,10 @@ fn parse_vars(var v: Vars) {
     var r = Rd{p: p + 6, end: next}
     var aoff = 0
     if u.ver >= 5 {
-      let _ut = r.byte()
+      let ut = r.byte()
       u.asize = r.byte()
       aoff = u32(r.p)
-      r.p += 4
+      r.p += 4 + unit_head_more(ut)
     } else {
       aoff = u32(r.p)
       r.p += 4

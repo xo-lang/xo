@@ -119,8 +119,17 @@ fn cc_dsym_run(os: Os, bin: Str, keep: Bool, split: Bool, oso_prefix: Str, ents:
   os.fs.remove_all(d).ignore_err("none from an earlier link")
   // the object paths in bin are relative to oso_prefix when the link was given
   // -oso_prefix (a build's private directory, build_native)
-  let dargs = if oso_prefix.is_empty() { [bin, "-o", d] } else { [bin, "-o", d, "--oso-prepend-path=${oso_prefix}"] }
-  match os.proc.run("dsymutil", dargs) {
+  // With a prefix dsymutil runs in that directory, where the relative
+  // paths resolve, when bin's path is absolute. --oso-prepend-path puts
+  // the prefix before every object's path, an absolute one too: std's
+  // own LLVM objects (decision 0738) are linked from the backend cache
+  // by their full paths, dsymutil then found none of them, and a fault
+  // under std's frames printed them with no file and line (task #607,
+  // 2026-11-21)
+  let here = !oso_prefix.is_empty() && bin.starts_with("/")
+  let dargs = if oso_prefix.is_empty() || here { [bin, "-o", d] } else { [bin, "-o", d, "--oso-prepend-path=${oso_prefix}"] }
+  let dcmd = os.proc.cmd("dsymutil", dargs)
+  match (if here { dcmd.dir(oso_prefix) } else { dcmd }).output() {
     Ok(r) => if r.code != 0 {
       os.fs.remove_all(d).ignore_err("a failed dsymutil")
       return
