@@ -576,12 +576,28 @@ func xoStd() string {
 		return s
 	}
 	if cli, err := xoCommand(); err == nil && len(cli) > 0 {
-		s := filepath.Join(filepath.Dir(cli[0]), "..", "lib", "xo", "std")
-		if st, err := os.Stat(s); err == nil && st.IsDir() {
-			return filepath.Clean(s)
+		if s := stdBeside(cli[0]); s != "" {
+			return s
 		}
 	}
 	return filepath.Join(repoRoot, "std")
+}
+
+// stdBeside is the std xo at exe finds beside itself, as
+// compiler/check/locate.xo std_dir looks: the first of ../lib/xo/std (a
+// release), std and ../std (the Intel Mac's kit, scripts/intel-mac-test.sh)
+// holding prelude.xo; "" for none. Only ../lib/xo/std was looked at, so on
+// the kit the tests named the checkout's std, which that xo does not take
+// for std (task #649: TestVetStd's 13755 check errors, an exit 1 in
+// TestXoTestStdModuleNames).
+func stdBeside(exe string) string {
+	d := filepath.Dir(exe)
+	for _, c := range []string{filepath.Join(d, "..", "lib", "xo", "std"), filepath.Join(d, "std"), filepath.Join(d, "..", "std")} {
+		if _, err := os.Stat(filepath.Join(c, "prelude.xo")); err == nil {
+			return filepath.Clean(c)
+		}
+	}
+	return ""
 }
 
 func agentJSON(t *testing.T, code int, args ...string) map[string]any {
@@ -3359,6 +3375,34 @@ fn main() {
 		e := agentJSON(t, 1, cmd, d, "g.label")["error"].(string)
 		if !strings.Contains(e, "named by its type (G.label)") {
 			t.Errorf("%s g.label: %s", cmd, e)
+		}
+	}
+}
+
+// TestStdBeside checks stdBeside against the three layouts std_dir knows
+// (task #649): the test helpers name the std the xo under test reads.
+func TestStdBeside(t *testing.T) {
+	for _, c := range []struct{ std, want string }{
+		{"lib/xo/std", "lib/xo/std"},
+		{"bin/std", "bin/std"},
+		{"std", "std"},
+		{"", ""},
+	} {
+		root := t.TempDir()
+		if c.std != "" {
+			if err := os.MkdirAll(filepath.Join(root, c.std), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, c.std, "prelude.xo"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		want := ""
+		if c.want != "" {
+			want = filepath.Join(root, c.want)
+		}
+		if got := stdBeside(filepath.Join(root, "bin", "xo")); got != want {
+			t.Errorf("std at %q: stdBeside = %q, want %q", c.std, got, want)
 		}
 	}
 }
