@@ -123,6 +123,14 @@ func buildRunLeak(t *testing.T, dir string, opts xotool.Options) (runResult, *xo
 
 func buildRunEnv(t *testing.T, dir string, opts xotool.Options, leak bool) (runResult, *xotool.Result) {
 	t.Helper()
+	return buildRunPass(t, dir, opts, leak, false)
+}
+
+// buildRunPass is buildRunEnv; with pass, the run is skipped when the
+// binary is identical to the one that passed last time
+// (xotool.OpenGoldenPass, decision 0737 step 2).
+func buildRunPass(t *testing.T, dir string, opts xotool.Options, leak, pass bool) (runResult, *xotool.Result) {
+	t.Helper()
 	if why := xotool.Arm64Skip(opts.Backend); why != "" {
 		// every arm64 subtest of the diff tests (TestCABIDiff,
 		// TestTZDiff, ...) comes through here
@@ -141,6 +149,9 @@ func buildRunEnv(t *testing.T, dir string, opts xotool.Options, leak bool) (runR
 			t.Skipf("xo gap (decision 0215): the %s backend does not build it yet (XO1201):\n%s", opts.Backend, res.Output)
 		}
 		t.Fatalf("build (%s) failed:\n%s", opts.Backend, res.Output)
+	}
+	if pass && xotool.OpenGoldenPass().Check(t, res.Binaries[xotool.Host()], dir, fmt.Sprintf("leak=%v", leak)) {
+		t.Skip("golden pass: the binary is identical to the one that passed last time (XO_GOLDEN_PASS_SKIP=1)")
 	}
 	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...))
 	cmd.Dir = dir
@@ -325,7 +336,7 @@ func TestGolden(t *testing.T) {
 			}
 			skipUnselected(t, dir)
 			t.Parallel()
-			llRes, _ := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: goldenEnv(dir)})
+			llRes, _ := buildRunPass(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: goldenEnv(dir)}, true, !*updateGolden)
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden {
 				if _, err := os.Stat(filepath.Join(dir, "want_go.txt")); err == nil {

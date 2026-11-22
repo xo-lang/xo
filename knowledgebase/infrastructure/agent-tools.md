@@ -396,6 +396,16 @@ yourself.
   leases run between them (2026-11-15: one full llvm step held host 4's
   single slot 78 minutes while a 30 second lease waited 51).
   `CTIER_LLVM_SHARDS=0` runs it as one lease. Last verified: 2026-11-15.
+  Golden pass keys (decision 0737 step 2, task #610): ctier passes
+  `XO_GATE_GOLDEN_PASS_DIR=/work/golden-pass XO_GATE_GOLDEN_PASS_SKIP=1`
+  (`CTIER_GOLDEN_PASS_DIR=` turns it off), so an llvm `TestGolden` or
+  arm64 `TestGoldenRun` subtest whose binary (build-info id masked),
+  golden files other than .xo, and run settings are identical to its last
+  passing run on that host is skipped; a failed run drops the key. The
+  8-hourly tier (offload-tier.sh) records keys and never skips. gate.sh
+  merges the step's records (`go run ./scripts/goldenpass DIR`, the step's
+  `NAME.pass.txt`: passed, skipped, run seconds saved, failed). The skip
+  saves the run, never the build. Last verified: 2026-11-22.
 - The loops under launchd (#80, owner 2026-11-15: a loop started from a
   session died with it): `launchd-install.sh ctier|mainwatch` (installed
   by install.sh) runs `~/xo-lead/agents/NAME.sh` as `org.xolang.NAME`

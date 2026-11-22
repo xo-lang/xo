@@ -357,10 +357,20 @@ func TestGoldenRun(t *testing.T) {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			skipUnselectedArm64(t, dir)
 			t.Parallel()
-			got, err := buildRun(t, dir)
+			res, err := sharedBuild(dir, xotool.Options{Backend: xotool.BackendArm64})
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}
+			if res.Failed {
+				t.Fatalf("build failed:\n%s", res.Output)
+			}
+			bin := res.Binaries[xotool.Host()]
+			// decision 0737 step 2: skip a binary identical to the one
+			// that passed last time
+			if xotool.OpenGoldenPass().Check(t, bin, dir, "free="+os.Getenv("XO_GOLDEN_FREE_CHECK")) {
+				t.Skip("golden pass: the binary is identical to the one that passed last time (XO_GOLDEN_PASS_SKIP=1)")
+			}
+			got := runBinary(t, dir, bin)
 			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
 			if err != nil {
 				t.Fatal(err)

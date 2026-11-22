@@ -35,6 +35,19 @@ change and left the part that did not.
   checks a day of them once a day, including this floor (an llvm step over
   900 s with at most 5 goldens selected).
 
+## What is left (2026-11-22, xw-1, task #610)
+
+17 gates with an llvm step, 2026-11-20 to 11-22 (notes/gate-times):
+a change whose `xo build --list-inputs` scope is small selects in 26 s
+(t540: 0 goldens, step 743 s, the package's other tests 721 s beside it).
+A change to the compiler has scope "all", so the gate builds HEAD's IR of
+every golden before it can select: 1,132 s for 1 golden (l454), 1,703 s
+for 0 (l450). That build is the question the selection asks (could this
+golden's code change?), so binary keys cannot remove it; execution traces
+(decision 0737 step 3) are the step that answers it without compiling
+every golden. The tier never selects (XO_GATE_LLVM=all), so it has no
+floor; its cost is builds and runs, which step 2's pass keys cut.
+
 ## A second hidden cost: parents of parallel subtests
 
 After the fix the arm64 step still took about 29 minutes while its

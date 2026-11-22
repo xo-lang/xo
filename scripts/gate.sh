@@ -263,6 +263,13 @@ go run ./scripts/xoclicheck "$wt/bin/xo" || { echo "XOBUILD-STALE: $wt/bin/xo is
 # XO_INLINE_STRICT=1: an inlined module that does not verify fails the
 # step instead of building slower with a warning (decision 0342)
 export XO_CLI=$wt/bin/xo XO_BACKEND_CACHE=off XO_INLINE_STRICT=1
+# XO_GATE_GOLDEN_PASS_DIR and XO_GATE_GOLDEN_PASS_SKIP (offload-gate.sh
+# passes only XO_GATE_ knobs): the goldens' pass keys (decision 0737 step 2,
+# internal/xotool/goldenpass.go)
+if [ -n "${XO_GATE_GOLDEN_PASS_DIR:-}" ]; then
+  export XO_GOLDEN_PASS_DIR=$XO_GATE_GOLDEN_PASS_DIR
+  [ "${XO_GATE_GOLDEN_PASS_SKIP:-}" = 1 ] && export XO_GOLDEN_PASS_SKIP=1
+fi
 failed=0
 # slowest JSON: the tests of a go test -json log by time, slowest first
 # (lead, 2026-10-26: the full tier's 83 minutes needed per-subtest times)
@@ -349,6 +356,16 @@ for l in open(sys.argv[1], errors="replace"):
   cat "$logs/$n.err" >>"$logs/$n.txt"
   slowest "$logs/$n.json" >"$logs/$n.slow.txt"
   gate_times "$n" "$logs/$n.json"
+  # XO_GOLDEN_PASS_DIR (decision 0737 step 2, the continuous tier): the
+  # goldens' keys of this run go into the directory's pass.json, a failed
+  # golden's key out; with XO_GOLDEN_PASS_SKIP=1 a golden whose binary is
+  # identical to its last passing run's was skipped (internal/xotool
+  # goldenpass.go). A merge that fails leaves pass.json as it was (the
+  # next run skips less, never more), so it warns and fails nothing.
+  if [ -n "${XO_GOLDEN_PASS_DIR:-}" ]; then
+    go run ./scripts/goldenpass "$XO_GOLDEN_PASS_DIR" >"$logs/$n.pass.txt" 2>&1 || echo "$n: golden pass merge failed (warning): $(tail -1 "$logs/$n.pass.txt")"
+    echo "$n: $(tail -1 "$logs/$n.pass.txt")"
+  fi
   if [ "$rc" = 0 ]; then
     echo "$n: $(tail -1 "$logs/$n.txt")"
   else
