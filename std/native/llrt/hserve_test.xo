@@ -2,6 +2,8 @@
 // internal/stdtest. The table functions on a table of the test's own
 // (values stand in for the functions' objects; nothing is counted).
 
+use native/llrt/hconn
+use native/llrt/heapblk
 use native/llrt/raw
 use native/rt
 
@@ -88,3 +90,22 @@ test "the generation wraps and the number stays positive" {
   expect(a) == 1
   free_tab(t)
 }
+
+test "no connection parks once the resumer has drained, or the server stops (task #671)" {
+  // a server record with nothing parked. Its resumer ends when its scope
+  // is canceled (drain); a connection that parked after that had no task
+  // and no resumer, and serve waited 30 s for it (an HTTP/2 connection
+  // parks the moment its response is sent)
+  let a = rt.heap_large(hconn.SR_SIZE)
+  rt.mem_set(a, 0, hconn.SR_SIZE)
+  expect(parks_open(a)) == true
+  drain(a)
+  expect(parks_open(a)) == false
+  // the server serves again: its new resumer takes parks
+  resumer_begins(a)
+  expect(parks_open(a)) == true
+  hconn.set_stopping(a)
+  expect(parks_open(a)) == false
+  heapblk.release(a)
+}
+

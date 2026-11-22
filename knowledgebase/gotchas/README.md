@@ -1588,3 +1588,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [unwind-reads-past-fiber-stack-end.md](unwind-reads-past-fiber-stack-end.md): the fault walks read the word past a fiber's stack; darwin/amd64 debug LLVM builds died with SIGSEGV on every fault (task #650).
 - [sampled-block-on-region-inbox.md](sampled-block-on-region-inbox.md): a heap profile's sampled block went onto the heap region's inbox with minus its class in its header; a profiled xo build died in the region's release (task #658).
 - [test-clang-cache-thinlto-index.md](test-clang-cache-thinlto-index.md): the tests' clang cache keyed a ThinLTO index file by its name, so a module compiled against one std came back for another and failed to link (task #656).
+- [http-park-after-resumer-drain.md](http-park-after-resumer-drain.md): an idle HTTP/2 connection parked after the canceled server's resumer had drained, and serve waited 30 s; it looked like a lost wakeup (task #671).

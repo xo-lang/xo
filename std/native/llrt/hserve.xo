@@ -207,7 +207,17 @@ pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int, h2: Bool = fal
   // 2026-11-05). Checked under the lock the resumer's own check holds:
   // either the resumer sees this park and waits for it, or this sees the
   // stop and the connection reads on, finds stopping, and closes.
-  if hconn.stopping_at(srv) {
+  //
+  // The same for a cancel of the server's scope (task #671): the resumer
+  // ends in drain, which closes what is parked then. A connection that
+  // read "not canceled" in park_ready just before the cancel parked after
+  // the drain, with no task and no resumer: nothing closed it, and serve
+  // waited out srv_wait's 30 s (an HTTP/2 connection parks the moment its
+  // response is sent, so a scope that ended right after a request hit
+  // it: 2 runs of 92 on a quiet linux/arm64 host). drain marks the
+  // server under this lock, so a park after it reads on, finds the
+  // cancel, and ends.
+  if !parks_open(srv) {
     hconn.runlock(srv)
     let _s = stream_get(id, true)
     obj.free_obj(pc)
@@ -217,6 +227,21 @@ pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int, h2: Bool = fal
   parked_add(srv, pc)
   hconn.runlock(srv)
   if poll.pd_park(pd, pc) {
+    // the drain may have run between the listing above and the park: it
+    // found this record not parked yet and left it. Then it is taken
+    // back here (unless the poller fired it meanwhile, which resumes it)
+    hconn.rlock(srv)
+    let gone = !parks_open(srv)
+    hconn.runlock(srv)
+    if gone && poll.pd_unpark(pd, pc) {
+      hconn.rlock(srv)
+      parked_del(srv, pc)
+      hconn.runlock(srv)
+      let _f = stream_get(id, true)
+      obj.free_obj(pc)
+      hconn.set_idle(hc, false)
+      return false
+    }
     if idle_ns > 0 {
       kick_resumer(srv)
     }
@@ -230,6 +255,19 @@ pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int, h2: Bool = fal
   obj.free_obj(pc)
   hconn.set_idle(hc, false)
   false
+}
+
+/// Whether a connection of server record srv may park now (SR_RLOCK
+/// held): the server is not stopping, and its resumer has not ended in
+/// drain. A park after either would be resumed and closed by no one.
+fn parks_open(srv: Int) -> Bool { !hconn.stopping_at(srv) && ld(srv, hconn.SR_NORESUME) == 0 }
+
+/// A resumer of server record a runs (resume_next): connections may park
+/// again (a server served again after its scope's cancel).
+fn resumer_begins(a: Int) {
+  hconn.rlock(a)
+  st(a, hconn.SR_NORESUME, 0)
+  hconn.runlock(a)
 }
 
 /// Links pc into the server's parked list and counts it (RLOCK held).
@@ -334,6 +372,7 @@ pub fn resume_next(s: rthttp.Srv) -> (fn() -> ())? {
   let a = srec(s)
   let c = ctx.cur()
   let park = c + ctx.C_PARK
+  resumer_begins(a)
   while true {
     let next = sweep_idle(a)
     hconn.rlock(a)
@@ -385,6 +424,8 @@ pub fn resume_next(s: rthttp.Srv) -> (fn() -> ())? {
 fn drain(a: Int) {
   var parked: List[Int] = []
   hconn.rlock(a)
+  // no park from here on (hc_park reads this under the same lock)
+  st(a, hconn.SR_NORESUME, 1)
   var pc = ld(a, hconn.SR_PARKLIST)
   while pc != 0 {
     parked.push(pc)

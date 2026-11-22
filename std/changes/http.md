@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-22: fix: a server whose scope is canceled right after a request no longer waits 30 s
+
+- Kind: fix
+- Commit: this push
+- Found by: xo-4c's twincheck of bench/perf/grpcreflect on linux/arm64 host 1 (task #666, then #671): the program was still running 5 s after its last request, in 1 run of 450 to 2 of 92 of a minimal h2c server (one GET, then the scope ends); it ended by itself after 30 s
+- Go reference: none (net/http has no parked connections; Server.Shutdown's wait is what srv_wait follows)
+- Change: when serve's scope is canceled, the task that resumes parked idle connections ends by closing the ones parked then (hserve.xo drain). A connection that had read "not canceled" just before parked after that drain and before the server was marked stopping, with no task of its own and no resumer left, so nothing closed it and serve waited out its 30 s for the connection to end. An HTTP/2 connection parks the moment its response is sent, which is when a client's scope ends. drain now marks the server (SR_NORESUME, under the lock a park takes), and a park refuses after it or takes itself back when the drain ran between its listing and its park; the connection then reads on, finds the cancel, and ends
+- Measured: with the two steps held apart by hand (a scratch build: the park held 60 ms, the stop 400 ms) the program took 31 s in 3 of 3 runs before and 1 s in 3 of 3 after (darwin/arm64)
+- Test: std/native/llrt hserve_test.xo "no connection parks once the resumer has drained, or the server stops" (fails without drain's mark)
+- Shipped in: not yet released
+
 ## 2026-11-21: fix: on wasm (wasip2) a request during an idle PING reuses its connection
 
 - Kind: fix

@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/http server; task #671): a program whose scope ended right after a request to its own HTTP/2 server sometimes ran 30 s longer (about 1 run in 450 on a quiet linux/arm64 host). The server's connection parked as idle just as the server was canceled, and nothing closed it until the server's shutdown wait ran out.
 - Fix (`xo bench --ab` on Linux; task #645): a side that is an xo keeps the `XO_STD` bench was started with. On Linux bench runs both sides from a tmpfs copy and set that side's `XO_STD` to the std beside the original binary, replacing yours, so an xo given another std (an edited copy) measured the installed one.
 - Fix (LLVM backend, `XO_SEPCOMP_LLVM=1`; task #607): a fault under std's frames prints them as a whole program's build does. On macOS they had no file and line, and on Linux std's inlined calls were missing. The Linux half is the runtime's DWARF reader, which now reads split DWARF skeleton units (any program linked with objects compiled `-gsplit-dwarf`).
 - Fix (heap profile; task #658): `XO_PROF=heap XO_PROF_HEAP_RATE=1 xo build` of a large program no longer dies with SIGSEGV after writing its profile (about one run in four since 0.52.0). A sampled block freed on another thread was put on the front end's heap region with the profile's mark still in its header.
