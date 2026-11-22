@@ -37,7 +37,7 @@ py="$here/.venv/bin/python"
 [ -x "$py" ] || { echo "python/run.sh: no $py (see this file's header)" >&2; exit 1; }
 . "$root/bench/perf/xocheck.sh" "$xo" "$root"
 . "$here/../twins/lib.sh"
-header "Python" "$("$py" --version) (Homebrew python3.13, virtual environment of bench/perf/python)" "packages (requirements.txt, hashes): $(grep -E '^(uvicorn|starlette|httptools|uvloop)==' "$here/requirements.txt" | sed 's/ .*//' | tr '\n' ' ')" > "$out/header.md"
+header "Python" "$("$py" --version) (virtual environment of bench/perf/python from $(readlink -f "$here/.venv/bin/python" 2>/dev/null || echo python3.13))" "packages (requirements.txt, hashes): $(grep -E '^(uvicorn|starlette|httptools|uvloop)==' "$here/requirements.txt" | sed 's/ .*//' | tr '\n' ' ')" > "$out/header.md"
 : > "$out/body.md"
 for r in $rows; do
 	case $r in

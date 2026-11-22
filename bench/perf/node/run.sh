@@ -28,8 +28,17 @@ date=$(date +%F)
 result=${RESULT:-$root/bench/results/node-vs-xo-$date.md}
 . "$root/bench/perf/xocheck.sh" "$xo" "$root"
 . "$here/../twins/lib.sh"
-(cd "$here" && npm ci --no-audit --no-fund --silent && npx tsc -p .)
-header "Node (TypeScript)" "node $(node --version), typescript $(cd "$here" && npx tsc --version | sed 's/Version //'), @types/node and typescript pinned in package-lock.json" > "$out/header.md"
+# A host with node but no npm (the linux/arm64 timing host, task #687)
+# runs a dist/ compiled elsewhere by the pinned typescript (tsc output is
+# plain JavaScript): copy bench/perf/node/dist next to this script.
+if command -v npm >/dev/null 2>&1; then
+	(cd "$here" && npm ci --no-audit --no-fund --silent && npx tsc -p .)
+	tsv=$(cd "$here" && npx tsc --version | sed 's/Version //')
+else
+	[ -f "$here/dist/compute/fib.js" ] || { echo "run.sh: no npm here and no prebuilt dist/" >&2; exit 1; }
+	tsv="$(awk '/"node_modules\/typescript"/{f=1} f && /"version"/{gsub(/[",]/,""); print $2; exit}' "$here/package-lock.json") (dist/ compiled on another host; no npm here)"
+fi
+header "Node (TypeScript)" "node $(node --version), typescript $tsv, @types/node and typescript pinned in package-lock.json" > "$out/header.md"
 : > "$out/body.md"
 for r in $rows; do
 	case $r in

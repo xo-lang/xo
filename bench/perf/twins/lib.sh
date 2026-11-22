@@ -16,6 +16,8 @@ load() {
 	f=${LOADAVG_FILE:-/proc/loadavg}
 	if [ -r "$f" ]; then awk '{print $1}' "$f"; else sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'; fi
 }
+# ncpu: the number of CPUs (NCPU for tests)
+ncpu() { echo "${NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || nproc)}"; }
 wait_load() { while [ "$(load | awk '{print int($1)}')" -ge "$maxload" ]; do sleep 20; done; }
 
 # reps ROW: the REPEAT count every program of ROW takes as its second
@@ -44,8 +46,19 @@ ab() {
 	name=$1; a=$2; b=$3; row=$4
 	n=${5:-$(reps "$row")}
 	wait_load
-	echo "| $name, repeat $n | load $(load) |"
-	"$xo" bench --ab --rounds="$rounds" "$a" "$b" -- "$row" "$n" 2>&1 | grep -E '^(wall_ms|cpu_ms|instructions|max_rss_kb)' | sed 's/^/    /'
+	# rwmutex and pmap keep every core busy, so their own rounds lift the
+	# 1 minute load past xo bench's default limit (the baseline plus 3) and
+	# every round is left out ("no round was usable"; host 1, 12 cores,
+	# task #687): those rows take --max-load at the core count plus maxload
+	ml=
+	case $row in rwmutex | pmap) ml=$(( $(ncpu) + ${maxload%.*} )) ;; esac
+	echo "| $name, repeat $n | load $(load)${ml:+, max load $ml} |"
+	r=$("$xo" bench --ab --rounds="$rounds" ${ml:+--max-load=$ml} "$a" "$b" -- "$row" "$n" 2>&1)
+	t=$(printf '%s\n' "$r" | grep -E '^(wall_ms|cpu_ms|instructions|max_rss_kb)')
+	# no table: print what xo bench said, so the row is not silently empty
+	# (rust rwmutex on host 1, task #687)
+	[ -n "$t" ] || t=$(printf 'no table; xo bench --ab said:\n%s' "$(printf '%s\n' "$r" | tail -5)")
+	printf '%s\n' "$t" | sed 's/^/    /'
 }
 
 # agree NAME A B [ARG]: both programs print the same first line
@@ -74,7 +87,7 @@ header() {
 	echo
 	echo "## Machine and versions"
 	echo
-	echo "- $(uname -srm), $(sysctl -n machdep.cpu.brand_string 2>/dev/null || grep -m1 'model name' /proc/cpuinfo | cut -d: -f2), $(sysctl -n hw.ncpu 2>/dev/null || nproc) CPUs, load average at start $(load)"
+	echo "- $(uname -srm), $(sysctl -n machdep.cpu.brand_string 2>/dev/null || grep -m1 'model name' /proc/cpuinfo | cut -d: -f2), $(ncpu) CPUs, load average at start $(load)"
 	echo "- $XO_STAMP"
 	echo "- $(go version)"
 	for v in "$@"; do echo "- $v"; done

@@ -16,4 +16,14 @@ got=$(PATH="$t:$PATH" LOADAVG_FILE="$t/loadavg" sh -c '. "$1"; load' sh "$here/l
 [ "$got" = "2.50" ] && echo "ok load: $got from the loadavg file" || { echo "FAIL load: got '$got', want 2.50"; fail=1; }
 got=$(PATH="$t:$PATH" LOADAVG_FILE="$t/loadavg" sh -c 'maxload=5; . "$1"; wait_load && echo done' sh "$here/lib.sh" 2>&1)
 [ "$got" = "done" ] && echo "ok wait_load: under maxload, no error" || { echo "FAIL wait_load: '$got'"; fail=1; }
+# ab with an xo bench that fails prints its error, not an empty table
+printf '#!/bin/sh\necho "bench: program b exited 2: boom" >&2\nexit 1\n' > "$t/xo"; chmod +x "$t/xo"
+got=$(LOADAVG_FILE="$t/loadavg" sh -c 'maxload=5; rounds=1; xo=$2; . "$1"; ab demo /bin/true /bin/true demo 1' sh "$here/lib.sh" "$t/xo" 2>&1)
+case $got in *"no table"*boom*) echo "ok ab: a failed xo bench --ab shows its error" ;; *) echo "FAIL ab: '$got'"; fail=1 ;; esac
+# rwmutex and pmap pass --max-load at the CPU count plus maxload
+printf '#!/bin/sh\necho "args: $*" >&2\nexit 1\n' > "$t/xo"; chmod +x "$t/xo"
+got=$(NCPU=12 LOADAVG_FILE="$t/loadavg" sh -c 'maxload=3; rounds=1; xo=$2; . "$1"; ab demo /bin/true /bin/true pmap 1' sh "$here/lib.sh" "$t/xo" 2>&1)
+case $got in *"max load 15"*"--max-load=15"*) echo "ok ab: pmap runs with --max-load=15 on 12 CPUs" ;; *) echo "FAIL ab max-load: '$got'"; fail=1 ;; esac
+got=$(NCPU=12 LOADAVG_FILE="$t/loadavg" sh -c 'maxload=3; rounds=1; xo=$2; . "$1"; ab demo /bin/true /bin/true fib 1' sh "$here/lib.sh" "$t/xo" 2>&1)
+case $got in *max-load*) echo "FAIL ab: fib got a --max-load: '$got'"; fail=1 ;; *) echo "ok ab: fib keeps the default load limit" ;; esac
 exit $fail
