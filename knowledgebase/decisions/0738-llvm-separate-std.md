@@ -331,6 +331,50 @@ dsymutil's prepend path on darwin, skeleton unit headers in the
 runtime's reader on ELF). The darwin binary's debug map names std's
 objects by their paths in the user's backend cache.
 
+## The rows still slow: what was measured (2026-11-22, task #607)
+
+After the program's imports the opt in runs 1.042 of the whole
+program's time over 71 workloads, with a few rows at 1.15 to 1.35 (ctx
+defer and budget, digest sha256_small, text cut, fault isolate). Four
+explanations were measured on linux/arm64 (host 3, a shared container:
+ratios to the whole program, minimum of 7 runs; files under
+~/xo-lead/notes/xo-lang-1/p607/), and none closes them:
+
+- ThinLTO's import limit (lim1b.out): std's index and the program's at
+  `-import-instr-limit` 400 and 2000 against the default. No row moved
+  (ctx defer 1.34, 1.32, 1.32), and std took 10 to 40% longer to build.
+- All of std visible to one link (orc4.out): std's bitcode linked with
+  the program's module in one ThinLTO link by lld, 100 to 124 s a link.
+  ctx defer 1.28 (opt in 1.31), ctx budget 1.40 (1.17), digest
+  sha256_small 1.19 (1.31), text cut 1.30 (1.23), fault isolate 1.12
+  (1.27): mixed, no better on average. It is not a clean bound for
+  internalizing std: those binaries held 15 to 19 MB of code, so lld
+  dropped nothing.
+- Xo's own whole program passes (ps1.out): the whole build with
+  specialize_args, devirt_once, devirtualize or inline off, one at a
+  time and three together, ran ctx defer in 26.6 to 27.0 ms, as the
+  plain whole build does (the opt in: 35.6 ms). None of them is what
+  the opt in lacks.
+- The number of std's modules (one1.out, one3.out): two ThinLTO modules
+  ran as seven do; one module compiled plainly (a scratch build: std
+  then takes 113 to 131 s, and the program imports nothing) gave ctx
+  defer 1.34, digest sha256_small 1.15, fault isolate 1.20, text cut
+  1.39.
+
+So a design that tells LLVM which of std's functions no program can
+reach (internalizing the rest) has no measurement behind it, and is not
+proposed. What is known of the rows themselves: ctx defer calls
+xo_tlocal_get three times where the whole program calls it once (its
+shield functions stay calls: profile pf1-full.out), and digest and text
+spend their extra time inside std's allocator and scan functions. The
+next step is per row, not a general mechanism: why the program's
+module does not import `xo_x_ctx_shield_begin` (an exported entry with
+no hidden linkage), and a disassembly of scan.find_bytes in both
+builds.
+
+Also found on the way and fixed: std's helper functions were local to
+its modules, and two programs of eight failed to link (ada388a03).
+
 ## Consequences
 
 - A warm LLVM build of a program that reaches http or crypto compiles
