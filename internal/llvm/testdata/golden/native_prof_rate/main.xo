@@ -1,0 +1,62 @@
+// XO_PROF=cpu (decision 0238) takes about XO_PROF_HZ samples per second
+// of CPU on every native target: the program runs itself again with
+// XO_PROF=cpu at 100 Hz, the child spends its CPU in fib on one thread,
+// and the child's sample count is compared with its CPU time (its
+// ProcOutput.usage). Task #646: on a Windows host with thousands of
+// threads the sampler's Toolhelp snapshot listed every thread of the
+// system, a tick took about 100 ms, and a run of 350 ms had 2 to 6
+// samples (a ratio near 0.06); the sampler now lists the process's own.
+// A target without the CPU profile says so, and passes unmeasured.
+
+fn fib(n: Int) -> Int {
+  if n < 2 {
+    return n
+  }
+  fib(n - 1) + fib(n - 2)
+}
+
+fn main(os: Os) ! {
+  if os.env.get("XO_PROF_GOLDEN_CHILD") != None {
+    os.stdio.println("fib ${fib(38)}")
+    return
+  }
+  let p = os.env.program()
+  let prog = if p.contains("/") || p.contains("\\") { p } else { "${os.env.get("PWD") ?? "."}/${p}" }
+  let cwd = os.fs.cwd()
+  let top = create_temp_dir(cwd, ".", "prof-")?
+  var n = 0
+  var cpu = 0
+  // the fastest hosts finish fib(38) in about 150 ms: up to four runs,
+  // until the children's CPU adds up to 300 ms
+  for i in 0..4 {
+    let out = os.proc.cmd(prog).set_env("XO_PROF", "cpu").set_env("XO_PROF_HZ", "100").set_env("XO_PROF_OUT", "${top}/p${i}.xoraw").set_env("XO_PROF_GOLDEN_CHILD", "1").output()?
+    if out.code != 0 {
+      os.stdio.println("child exit ${out.code}")
+      return
+    }
+    let err = out.stderr.to_str() ?? ""
+    if err.contains(" is not supported on ") {
+      // a target the CPU profile has not reached (FreeBSD, decision
+      // 0238's list): the child ran unprofiled, as it says
+      os.stdio.println("children ran fib")
+      os.stdio.println("rate ok")
+      return
+    }
+    let at = err.find(" samples in ") ?? -1
+    let head = if at < 0 { "" } else { err[0..at] }
+    let words = head.split(" ")
+    n += words.last().map(fn(w) { Int.parse(w) ?? 0 }) ?? 0
+    cpu += (out.usage.user + out.usage.system).millis()
+    if cpu >= 300 {
+      break
+    }
+  }
+  os.stdio.println("children ran fib")
+  // 100 Hz: one sample per 10 ms of CPU; a coarse 15.6 ms timer gives 0.64
+  let r = Float(n) * 10.0 / Float(if cpu < 1 { 1 } else { cpu })
+  if r >= 0.5 && r <= 1.5 {
+    os.stdio.println("rate ok")
+  } else {
+    os.stdio.println("rate ${r}: ${n} samples for ${cpu} ms of CPU")
+  }
+}

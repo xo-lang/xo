@@ -316,6 +316,12 @@ fn CreateToolhelp32Snapshot(flags: Int, pid: Int) -> Int
 /// its dwSize set): nonzero while there is one.
 fn Thread32First(snap: Int, e: Int) -> Int32
 fn Thread32Next(snap: Int, e: Int) -> Int32
+/// NtGetNextThread (ntdll.dll): a handle with access to the thread of
+/// process after thread (0: its first) at the address next; an NTSTATUS
+/// (0, or STATUS_NO_MORE_ENTRIES past the last).
+fn NtGetNextThread(process: Int, thread: Int, access: Int, attrs: Int, flags: Int, next: Int) -> Int32
+/// GetThreadId: the id of the thread of handle h, or 0.
+fn GetThreadId(h: Int) -> UInt32
 /// OpenThread: a handle of the thread tid with the access asked, or 0.
 fn OpenThread(access: Int, inherit: Int, tid: Int) -> Int
 /// SuspendThread and ResumeThread: the previous suspend count, or

@@ -2152,8 +2152,47 @@ pub fn win_sampler(r: Int) -> Int {
   0
 }
 
-/// One tick: every other thread of the process, from a snapshot.
+/// One tick: every other thread of the process, listed with
+/// NtGetNextThread, which visits this process's threads only. A Toolhelp
+/// snapshot (win_snap_tick, the fallback where ntdll lacks it) lists
+/// every thread of the system: on a 32 core host with thousands of
+/// threads one tick took about 100 ms, so a 100 Hz profile took one
+/// sample in 30 ticks (task #646).
 fn win_tick(r: Int, w: Int) {
+  let me = ld(w, WB_ME)
+  let nx = w + WB_TE
+  var h = 0
+  var n = 0
+  while true {
+    st(nx, 0, 0)
+    let s = Int(sys_windows.NtGetNextThread(sys_windows.GetCurrentProcess(), h, THREAD_QUERY_LIMITED, 0, 0, nx))
+    if h != 0 {
+      let _c = sys_windows.CloseHandle(h)
+    }
+    if s != 0 {
+      // STATUS_NO_MORE_ENTRIES ends the list; any other status on the
+      // first call (not implemented) falls back to the snapshot
+      if n == 0 && s != STATUS_NO_MORE_ENTRIES {
+        win_snap_tick(r, w)
+      }
+      return
+    }
+    h = ld(nx, 0)
+    n += 1
+    let tid = Int(sys_windows.GetThreadId(h))
+    if tid != 0 && tid != me {
+      win_sample(r, w, tid)
+    }
+  }
+}
+
+/// THREAD_QUERY_LIMITED_INFORMATION, enough for GetThreadId.
+const THREAD_QUERY_LIMITED = 2048
+/// NtGetNextThread's status past the last thread (0x8000001A, as an Int32).
+const STATUS_NO_MORE_ENTRIES = -2147483622
+
+/// One tick from a Toolhelp snapshot of the system's threads.
+fn win_snap_tick(r: Int, w: Int) {
   let snap = sys_windows.CreateToolhelp32Snapshot(4, 0)
   if snap == -1 {
     return

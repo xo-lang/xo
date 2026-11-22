@@ -164,8 +164,12 @@ the owner made room for the cross toolchain on the Mac):
   1/XO_PROF_HZ s on a waitable timer (CreateWaitableTimerExW with
   CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, a relative due time each tick;
   an ordinary timer where that flag is refused). Each tick it lists the
-  process's threads (CreateToolhelp32Snapshot TH32CS_SNAPTHREAD,
-  Thread32First/Next), opens each once (SUSPEND_RESUME | GET_CONTEXT |
+  process's threads (ntdll NtGetNextThread, which visits this process's
+  threads only; since 2026-11-21, task #646: a Toolhelp snapshot,
+  CreateToolhelp32Snapshot TH32CS_SNAPTHREAD with Thread32First/Next,
+  lists every thread of the system and took about 100 ms per tick on a
+  32 core host, so a 100 Hz profile got one sample in 30 ticks; the
+  snapshot stays as the fallback where NtGetNextThread fails), opens each once (SUSPEND_RESUME | GET_CONTEXT |
   QUERY_INFORMATION, a table of 256 with the last CPU reading), and
   samples a thread whose CPU moved since the last tick
   (QueryThreadCycleTime; where that fails, as under Wine, GetThreadTimes'
