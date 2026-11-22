@@ -72,7 +72,10 @@ func cannedConn(c net.Conn, cases []cannedCase) {
 	}
 	fr := http2.NewFramer(c, c)
 	fr.SetMaxReadFrameSize(1 << 24)
-	fr.WriteSettings(http2.Setting{ID: http2.SettingMaxFrameSize, Val: 1 << 24})
+	// 1<<24 - 1 is the largest MAX_FRAME_SIZE RFC 9113 6.5.2 allows; 1<<24 is a
+	// PROTOCOL_ERROR, which std/http's client reports since fbb028897 (Go's
+	// Setting.Valid) while grpc-go accepts it (task #695)
+	fr.WriteSettings(http2.Setting{ID: http2.SettingMaxFrameSize, Val: 1<<24 - 1})
 	dec := hpack.NewDecoder(4096, nil)
 	for {
 		f, err := fr.ReadFrame()
