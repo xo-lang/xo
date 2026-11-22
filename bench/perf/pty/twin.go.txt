@@ -1,0 +1,100 @@
+// The Go twin of bench/perf/pty/main.xo: github.com/creack/pty v1.1.24
+// (Open, Setsize, GetsizeFull, StartWithSize) and golang.org/x/term
+// v0.48.0's MakeRaw. Same workloads, same output.
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+
+	"github.com/creack/pty"
+	"golang.org/x/term"
+)
+
+func must(err error) {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "open":
+		for i := 0; i < 5000; i++ {
+			m, t, err := pty.Open()
+			must(err)
+			must(pty.Setsize(m, &pty.Winsize{Rows: 24, Cols: uint16(80 + i%40)}))
+			sum += len(t.Name())%2 + 1
+			t.Close()
+			m.Close()
+		}
+	case "size":
+		m, t, err := pty.Open()
+		must(err)
+		for i := 0; i < 200000; i++ {
+			must(pty.Setsize(m, &pty.Winsize{Rows: uint16(10 + i%50), Cols: uint16(20 + i%100)}))
+			ws, err := pty.GetsizeFull(m)
+			must(err)
+			sum += int(ws.Cols)
+		}
+		t.Close()
+		m.Close()
+	case "echo":
+		cmd := exec.Command("/bin/cat")
+		m, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+		must(err)
+		_, err = term.MakeRaw(int(m.Fd()))
+		must(err)
+		data := make([]byte, 256)
+		for i := range data {
+			data[i] = byte(32 + i%90)
+		}
+		buf := make([]byte, 256)
+		for r := 0; r < 20000; r++ {
+			_, err := m.Write(data)
+			must(err)
+			got := 0
+			for got < 256 {
+				n, err := m.Read(buf[:256-got])
+				if err == io.EOF {
+					must(fmt.Errorf("cat ended"))
+				}
+				must(err)
+				got += n
+				sum += int(buf[0])
+			}
+		}
+		m.Close()
+		cmd.Process.Kill()
+		cmd.Wait()
+	case "spawn":
+		for i := 0; i < 300; i++ {
+			cmd := exec.Command("true")
+			m, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+			must(err)
+			if cmd.Wait() == nil {
+				sum++
+			} else {
+				sum += 2
+			}
+			m.Close()
+		}
+	default:
+		m, t, err := pty.Open()
+		must(err)
+		ws, err := pty.GetsizeFull(m)
+		must(err)
+		sum = int(ws.Cols)
+		t.Close()
+		m.Close()
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

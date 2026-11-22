@@ -1,0 +1,63 @@
+// pty: std/pty against github.com/creack/pty v1.1.24 and golang.org/x/term
+// v0.48.0's MakeRaw (twin.go.txt), the packages a Go program reaches for.
+// `open` opens a pty, sets its size and closes it 5,000 times; `size` sets
+// and reads back the size of one pty 200,000 times; `echo` writes 20,000
+// chunks of 256 bytes to /bin/cat on a raw pty and reads each back; `spawn`
+// starts true on a new pty and waits for it 300 times; `none` is the
+// setup alone. Usage: `<program> none|open|size|echo|spawn`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/pty
+
+fn main(os: Os) ! uses (stdio, env, proc) {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w == "open" {
+    for i in 0..5000 {
+      let (p, path) = pty.open(os.proc)?
+      p.set_size(pty.Size{rows: 24, cols: 80 + i % 40})?
+      sum += path.len() % 2 + 1
+      p.close()
+    }
+  } else if w == "size" {
+    let (p, _path) = pty.open(os.proc)?
+    for i in 0..200000 {
+      p.set_size(pty.Size{rows: 10 + i % 50, cols: 20 + i % 100})?
+      sum += p.size()?.cols
+    }
+    p.close()
+  } else if w == "echo" {
+    let (p, c) = pty.start(os.proc, os.proc.cmd("/bin/cat"), pty.Attach.All, Some(pty.Size{rows: 24, cols: 80}))?
+    p.set_raw(true)?
+    var chunk = BytesBuilder.new()
+    for i in 0..256 { chunk.write_byte(UInt8(32 + i % 90)) }
+    let data = chunk.freeze()
+    for _r in 0..20000 {
+      p.write(data)?
+      var got = 0
+      while got < 256 {
+        match p.read(256 - got)? {
+          Some(b) => {
+            got += b.len()
+            sum += Int(b[0])
+          }
+          None => return Err("cat ended")
+        }
+      }
+    }
+    p.close()
+    c.kill()
+    let _w = c.wait().ignore_err("killed: its status is not the point")
+  } else if w == "spawn" {
+    for _i in 0..300 {
+      let (p, c) = pty.start(os.proc, os.proc.cmd("true"), pty.Attach.All, Some(pty.Size{rows: 24, cols: 80}))?
+      let st = c.wait()?
+      sum += if st == 0 { 1 } else { 2 }
+      p.close()
+    }
+  } else {
+    let (p, _path) = pty.open(os.proc)?
+    sum = p.size()?.cols
+    p.close()
+  }
+  os.stdio.println("${w} ${sum}")
+}
