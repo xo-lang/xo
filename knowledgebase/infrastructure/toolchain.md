@@ -384,6 +384,13 @@ and runs `gh release create`. The order:
    xo writes a directory's parts pack on the second build and reads it
    from the third, 2026-10-23) and after a one function edit, peak build
    memory, binary size, and each workload's run under `xo bench --ab`.
+   Each run pair repeats the same work on both sides (the programs' second
+   argument, REPEAT; the counts are in the script) so the faster side takes
+   about 1 s and every row gets a wall verdict (task #686, owner
+   2026-11-22; 0.55.0's linux/arm64 run had 12 of 20 rows "too short"),
+   and the run section refuses to start under a gate or slot (0.55.0's
+   Mac run section ran under heavy.2 and every row read "(failed)";
+   gotchas/release-vs-go-run-under-slot.md; last verified: 2026-11-22).
    After the cold row it builds std's variants (`xo dev stdcache`, conc
    0 and 1; 2026-10-29: a fresh xo has none and its first builds are
    whole-program while they build in the background, so the 0.33.0 and

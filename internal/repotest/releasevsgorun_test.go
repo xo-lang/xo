@@ -42,7 +42,7 @@ esac
 	}
 	out := filepath.Join(tmp, "out")
 	cmd := exec.Command("bash", filepath.Join(root, "scripts", "release-vs-go.sh"), filepath.Join(bin, "xo"), out)
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SECTIONS=run", "WORKLOADS=fib putget spawn", "MAX_LOAD=1000", "ROUNDS=1")
+	cmd.Env = append(envNoSlot(), "PATH="+bin+":"+os.Getenv("PATH"), "SECTIONS=run", "WORKLOADS=fib putget spawn", "MAX_LOAD=1000", "ROUNDS=1")
 	if o, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("release-vs-go.sh: %v\n%s", err, o)
 	}

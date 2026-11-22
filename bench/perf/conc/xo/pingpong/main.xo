@@ -1,6 +1,6 @@
 // Channel ping pong: two tasks pass an Int back and forth over two
 // unbuffered channels 100,000 times (park and wake latency).
-fn main(os: Os) {
+fn work() -> Str {
   let ping = Chan[Int].new()
   let pong = Chan[Int].new()
   let n = 100000
@@ -19,5 +19,20 @@ fn main(os: Os) {
     ping.close()
     v
   }
-  os.stdio.println("pingpong ${last}")
+  "pingpong ${last}"
+}
+
+fn main(os: Os) {
+  // REPEAT, the second argument (default 1; task #686), runs the same work
+  // that many times so a timed run is long enough for a wall verdict; every
+  // run must print the first run's line.
+  let reps = Int.parse(os.env.args().get(1) ?? "1") ?? 1
+  let first = work()
+  for _ in 1..reps {
+    if work() != first {
+      os.stdio.println("repeat: a run printed something else")
+      os.proc.exit(1)
+    }
+  }
+  os.stdio.println(first)
 }

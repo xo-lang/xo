@@ -65,6 +65,17 @@
 # hold every row once (TestReleaseVsGoParts). The warm-memory notes go with
 # coll's run-cache-off row, whose copy they build in. RVG_LIST=1 prints the
 # rows a part selects ("rvg-row SIDE NAME MODE" on stderr) without building.
+# REPEAT (task #686, owner 2026-11-22: "run them longer so we can compare
+# them"): each run pair gets the workload and a repeat count, and both
+# programs run the same work that many times (bench/perf llvm, coll and
+# conc take REPEAT as their second argument). The counts below make the
+# faster side about 1 s on host 1 (0.55.0's medians), so every row is long
+# enough for a wall verdict (xo bench --ab says "too short" under 100 ms);
+# coll branch stops at 90 (Go about 31 s, Xo about 0.3 s). RVG_REPEAT=N
+# gives every row N instead (1: the single runs of 0.55.0 and before).
+# The run section refuses to start under a heavy.sh gate or slot
+# (XO_HEAVY_SLOT other than measure; task #686): xo bench --ab refuses
+# there, and 0.55.0's Mac report had 20 "(failed)" rows from such a run.
 # MAX_LOAD (default 6): each build and run waits, up to WAIT_MIN minutes
 # (default 30), for a 1-minute load average under MAX_LOAD, and the report
 # gives the load each run started at (lead, 2026-10-23: the 0.26.0 report
@@ -79,6 +90,14 @@ RVG_PART=${RVG_PART:-1/1}
 part_n=${RVG_PART%/*} part_m=${RVG_PART#*/}
 if ! [[ "$part_n" =~ ^[1-9][0-9]*$ && "$part_m" =~ ^[1-9][0-9]*$ ]] || [ "$part_n" -gt "$part_m" ]; then
 	echo "release-vs-go: RVG_PART=$RVG_PART: want N/M with 1 <= N <= M" >&2
+	exit 2
+fi
+if section run && [ -n "${XO_HEAVY_SLOT:-}" ] && [ "$XO_HEAVY_SLOT" != measure ]; then
+	echo "release-vs-go: the run section needs its own HEAVY_CLASS=measure job (xo bench --ab refuses under heavy.sh's $XO_HEAVY_SLOT); run SECTIONS without run here and the run section as a measure job" >&2
+	exit 2
+fi
+if [ -n "${RVG_REPEAT:-}" ] && ! [[ "$RVG_REPEAT" =~ ^[1-9][0-9]*$ ]]; then
+	echo "release-vs-go: RVG_REPEAT=$RVG_REPEAT: want a count of 1 or more" >&2
 	exit 2
 fi
 MAX_LOAD=${MAX_LOAD:-6}
@@ -410,18 +429,34 @@ if section run; then
 	echo
 	echo "## Run (xo bench --ab, A = Go, B = Xo, $ROUNDS rounds)"
 	echo
+	echo "Each pair runs the same work REPEAT times on both sides (the count is in each heading; scripts/release-vs-go.sh REPEAT), so the faster side takes about a second."
+	echo
 } >>"$report"
 fi
 
 want() { section run && { [ -z "${WORKLOADS:-}" ] || [[ " $WORKLOADS " == *" $1 "* ]]; }; }
+# reps W: the repeat count for workload W (REPEAT above)
+reps() {
+	if [ -n "${RVG_REPEAT:-}" ]; then
+		echo "$RVG_REPEAT"
+		return
+	fi
+	case $1 in
+	fib) echo 5 ;; sieve | nbody) echo 6 ;; sort) echo 4 ;; interp) echo 24 ;; collatz) echo 3 ;; strings) echo 18 ;;
+	putget) echo 23 ;; get | push) echo 52 ;; update) echo 57 ;; iter) echo 211 ;; copymut) echo 134 ;; branch) echo 90 ;;
+	spawn) echo 58 ;; fanout) echo 70 ;; pingpong) echo 65 ;; mutex) echo 278 ;; rwmutex) echo 202 ;; pmap) echo 19 ;;
+	*) echo 1 ;;
+	esac
+}
 ab() { # NAME GOBIN XOBIN ARG
 	want "$4" || return 0
-	local l
+	local l n
+	n=$(reps "$4")
 	l=$(settle)
-	echo "### $1 $4 (load $l at start)" >>"$report"
+	echo "### $1 $4, repeat $n (load $l at start)" >>"$report"
 	echo >>"$report"
 	echo '```' >>"$report"
-	"$XO" bench --ab --rounds="$ROUNDS" --metrics=wall_ms,cpu_ms,max_rss_kb "$2" "$3" -- "$4" 2>&1 | grep -v '^round ' | sed "s#$work/##g" >>"$report" || echo "(failed)" >>"$report"
+	"$XO" bench --ab --rounds="$ROUNDS" --metrics=wall_ms,cpu_ms,max_rss_kb "$2" "$3" -- "$4" "$n" 2>&1 | grep -v '^round ' | sed "s#$work/##g" >>"$report" || echo "(failed)" >>"$report"
 	echo '```' >>"$report"
 	echo >>"$report"
 }

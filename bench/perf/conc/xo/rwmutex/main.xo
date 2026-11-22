@@ -12,7 +12,7 @@ fn steps(x: Int) -> Int {
   c
 }
 
-fn main(os: Os) {
+fn work() -> Str {
   let m = Mutex[Int].new(0)
   let odd = Atomic[Int].new(0)
   scope s {
@@ -30,5 +30,20 @@ fn main(os: Os) {
     }
   }
   let n = m.with_read(fn(c) { c })
-  os.stdio.println("rwmutex ${n} ${odd.get()}")
+  "rwmutex ${n} ${odd.get()}"
+}
+
+fn main(os: Os) {
+  // REPEAT, the second argument (default 1; task #686), runs the same work
+  // that many times so a timed run is long enough for a wall verdict; every
+  // run must print the first run's line.
+  let reps = Int.parse(os.env.args().get(1) ?? "1") ?? 1
+  let first = work()
+  for _ in 1..reps {
+    if work() != first {
+      os.stdio.println("repeat: a run printed something else")
+      os.proc.exit(1)
+    }
+  }
+  os.stdio.println(first)
 }

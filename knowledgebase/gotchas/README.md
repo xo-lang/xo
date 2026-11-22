@@ -222,6 +222,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [build-dir-shared-across-xo-versions.md](build-dir-shared-across-xo-versions.md): older xo binaries failed on build directories a newer xo wrote; the build hash carries a layout tag.
 - [packed-list-raw-copy-wasm.md](packed-list-raw-copy-wasm.md): a raw copy of a List[UInt8] by address assumes native packing; wasm keeps a word an element, so it needs a wasm branch.
 - [bench-ab-inside-gate-deadlock.md](bench-ab-inside-gate-deadlock.md): `xo bench --ab` in a gate or slot run waits for the quiet window that waits for it; it is refused now, run it as its own measure job.
+- [release-vs-go-run-under-slot.md](release-vs-go-run-under-slot.md): release-vs-go.sh started under a heavy.sh slot wrote every run row as "(failed)" (0.55.0 Mac); the run section now refuses a gate or slot.
 - [bench-host-timing-drift.md](bench-host-timing-drift.md): host clock drift moves benchmark times by up to 10 percent; interleave before and after runs.
 - [sync-pool-drops-on-gc.md](sync-pool-drops-on-gc.md): a `sync.Pool` empties at every GC, so request arenas pooled in one were barely reused; use a bounded channel.
 - [closed-loop-latency-confound.md](closed-loop-latency-confound.md): with a closed loop load generator a slower server shows lower latency; compare latency only at equal throughput.

@@ -87,7 +87,7 @@ fn advance(var bs: List[Body], dt: Float) {
   }
 }
 
-fn main(os: Os) {
+fn work() -> Str {
   var bs = bodies()
   offset(bs)
   let before = energy(bs)
@@ -95,5 +95,20 @@ fn main(os: Os) {
     advance(bs, 0.01)
   }
   let after = energy(bs)
-  os.stdio.println("nbody ${Int(before * 1000000000.0)} ${Int(after * 1000000000.0)}")
+  "nbody ${Int(before * 1000000000.0)} ${Int(after * 1000000000.0)}"
+}
+
+fn main(os: Os) {
+  // REPEAT, the second argument (default 1; task #686), runs the same work
+  // that many times so a timed run is long enough for a wall verdict; every
+  // run must print the first run's line.
+  let reps = Int.parse(os.env.args().get(1) ?? "1") ?? 1
+  let first = work()
+  for _ in 1..reps {
+    if work() != first {
+      os.stdio.println("repeat: a run printed something else")
+      os.proc.exit(1)
+    }
+  }
+  os.stdio.println(first)
 }

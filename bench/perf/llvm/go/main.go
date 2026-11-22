@@ -339,20 +339,17 @@ func stringsWorkload() int {
 	return total
 }
 
-func main() {
-	w := "fib"
-	if len(os.Args) > 1 {
-		w = os.Args[1]
-	}
+// work runs workload w once and returns the line it prints.
+func work(w string) string {
 	switch w {
 	case "fib":
-		fmt.Println("fib " + strconv.Itoa(fib(40)))
+		return "fib " + strconv.Itoa(fib(40))
 	case "sieve":
 		total := 0
 		for i := 0; i < 5; i++ {
 			total += sieve(10000000)
 		}
-		fmt.Println("sieve " + strconv.Itoa(total))
+		return "sieve " + strconv.Itoa(total)
 	case "nbody":
 		bs := bodies()
 		offset(bs)
@@ -361,13 +358,13 @@ func main() {
 			advance(bs, 0.01)
 		}
 		after := energy(bs)
-		fmt.Printf("nbody %d %d\n", int64(before*1e9), int64(after*1e9))
+		return fmt.Sprintf("nbody %d %d", int64(before*1e9), int64(after*1e9))
 	case "sort":
-		fmt.Println("sort " + strconv.Itoa(sortWorkload()))
+		return "sort " + strconv.Itoa(sortWorkload())
 	case "interp":
-		fmt.Println("interp " + strconv.Itoa(run(interpProg(), 3000000)))
+		return "interp " + strconv.Itoa(run(interpProg(), 3000000))
 	case "interp_tuned":
-		fmt.Println("interp " + strconv.Itoa(runTuned(interpProg(), 3000000)))
+		return "interp " + strconv.Itoa(runTuned(interpProg(), 3000000))
 	case "collatz":
 		total, best := 0, 0
 		for i := 1; i < 3000000; i++ {
@@ -375,11 +372,36 @@ func main() {
 			total += s
 			best = max(best, s)
 		}
-		fmt.Printf("collatz %d %d\n", total, best)
+		return fmt.Sprintf("collatz %d %d", total, best)
 	case "strings":
-		fmt.Println("strings " + strconv.Itoa(stringsWorkload()))
+		return "strings " + strconv.Itoa(stringsWorkload())
 	default:
 		fmt.Fprintln(os.Stderr, "unknown workload", w)
 		os.Exit(2)
 	}
+	return ""
+}
+
+func main() {
+	w := "fib"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	// REPEAT, the second argument (default 1; task #686), runs the same
+	// work that many times so a timed run is long enough for a wall
+	// verdict; every run must print the first run's line.
+	reps := 1
+	if len(os.Args) > 2 {
+		if n, err := strconv.Atoi(os.Args[2]); err == nil {
+			reps = n
+		}
+	}
+	first := work(w)
+	for r := 1; r < reps; r++ {
+		if work(w) != first {
+			fmt.Println("repeat: a run printed something else")
+			os.Exit(1)
+		}
+	}
+	fmt.Println(first)
 }

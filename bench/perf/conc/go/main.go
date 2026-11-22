@@ -5,11 +5,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
 
-func spawn() {
+func spawn() string {
 	var count atomic.Int64
 	for r := 0; r < 200; r++ {
 		var wg sync.WaitGroup
@@ -22,10 +23,10 @@ func spawn() {
 		}
 		wg.Wait()
 	}
-	fmt.Printf("spawn %d\n", count.Load())
+	return fmt.Sprintf("spawn %d", count.Load())
 }
 
-func fanout() {
+func fanout() string {
 	total := 0
 	for r := 0; r < 100; r++ {
 		res := make([]chan int, 1000)
@@ -40,10 +41,10 @@ func fanout() {
 		}
 		total += acc
 	}
-	fmt.Printf("fanout %d\n", total)
+	return fmt.Sprintf("fanout %d", total)
 }
 
-func pingpong() {
+func pingpong() string {
 	ping, pong := make(chan int), make(chan int)
 	go func() {
 		for v := range ping {
@@ -57,10 +58,10 @@ func pingpong() {
 		v = <-pong
 	}
 	close(ping)
-	fmt.Printf("pingpong %d\n", v)
+	return fmt.Sprintf("pingpong %d", v)
 }
 
-func mutex() {
+func mutex() string {
 	var mu sync.Mutex
 	c := 0
 	var wg sync.WaitGroup
@@ -76,12 +77,12 @@ func mutex() {
 		}()
 	}
 	wg.Wait()
-	fmt.Printf("mutex %d\n", c)
+	return fmt.Sprintf("mutex %d", c)
 }
 
 // rwmutex: 64 goroutines, 4,000 accesses each, one in four a write that
 // holds the lock for a Collatz step count, the others reads.
-func rwmutex() {
+func rwmutex() string {
 	var mu sync.RWMutex
 	c, odd := 0, 0
 	var oddMu sync.Mutex
@@ -109,7 +110,7 @@ func rwmutex() {
 		}()
 	}
 	wg.Wait()
-	fmt.Printf("rwmutex %d %d\n", c, odd)
+	return fmt.Sprintf("rwmutex %d %d", c, odd)
 }
 
 func steps(x int) int {
@@ -125,7 +126,7 @@ func steps(x int) int {
 	return c
 }
 
-func pmap() {
+func pmap() string {
 	const size, chunks = 200000, 64
 	total := 0
 	for r := 0; r < 20; r++ {
@@ -147,14 +148,31 @@ func pmap() {
 			total += v
 		}
 	}
-	fmt.Printf("pmap %d\n", total)
+	return fmt.Sprintf("pmap %d", total)
 }
 
 func main() {
-	runs := map[string]func(){"spawn": spawn, "fanout": fanout, "pingpong": pingpong, "mutex": mutex, "rwmutex": rwmutex, "pmap": pmap}
-	if len(os.Args) != 2 || runs[os.Args[1]] == nil {
-		fmt.Fprintln(os.Stderr, "usage: concperf spawn|fanout|pingpong|mutex|rwmutex|pmap")
+	runs := map[string]func() string{"spawn": spawn, "fanout": fanout, "pingpong": pingpong, "mutex": mutex, "rwmutex": rwmutex, "pmap": pmap}
+	if len(os.Args) < 2 || len(os.Args) > 3 || runs[os.Args[1]] == nil {
+		fmt.Fprintln(os.Stderr, "usage: concperf spawn|fanout|pingpong|mutex|rwmutex|pmap [REPEAT]")
 		os.Exit(2)
 	}
-	runs[os.Args[1]]()
+	// REPEAT, the second argument (default 1; task #686), runs the same
+	// work that many times so a timed run is long enough for a wall
+	// verdict; every run must print the first run's line.
+	reps := 1
+	if len(os.Args) == 3 {
+		if n, err := strconv.Atoi(os.Args[2]); err == nil {
+			reps = n
+		}
+	}
+	work := runs[os.Args[1]]
+	first := work()
+	for r := 1; r < reps; r++ {
+		if work() != first {
+			fmt.Println("repeat: a run printed something else")
+			os.Exit(1)
+		}
+	}
+	fmt.Println(first)
 }

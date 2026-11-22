@@ -361,6 +361,30 @@ fn iface_loop(rects: List[Rect]) -> Int {
   sum
 }
 
+fn run_once(w: Str, base: Map[Int, Int], ints: List[Int], items: List[Item], rects: List[Rect]) -> Int {
+  match w {
+    "putget" => put_get()
+    "get" => get_only(base)
+    "push" => push_sum()
+    "update" => update_loop()
+    "iter" => iterate(base)
+    "copymut" => copy_mutate(base)
+    "branch" => branch(base)
+    "sortint" => sorted_int()
+    "sortpt" => sorted_point()
+    "hof" => hof_chain(ints)
+    "maxby" => max_by_loop(items)
+    "iface" => iface_loop(rects)
+    "setat" => set_at()
+    "stack" => stack()
+    "fields" => fields()
+    "grid" => grid()
+    "insrem" => ins_rem()
+    "copyset" => copy_set()
+    _ => -1
+  }
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "putget"
@@ -389,26 +413,16 @@ fn main(os: Os) {
     _ => {}
   }
   let t = os.clock.now()
-  let sum = match w {
-    "putget" => put_get()
-    "get" => get_only(base)
-    "push" => push_sum()
-    "update" => update_loop()
-    "iter" => iterate(base)
-    "copymut" => copy_mutate(base)
-    "branch" => branch(base)
-    "sortint" => sorted_int()
-    "sortpt" => sorted_point()
-    "hof" => hof_chain(ints)
-    "maxby" => max_by_loop(items)
-    "iface" => iface_loop(rects)
-    "setat" => set_at()
-    "stack" => stack()
-    "fields" => fields()
-    "grid" => grid()
-    "insrem" => ins_rem()
-    "copyset" => copy_set()
-    _ => -1
+  // REPEAT, the second argument (default 1; task #686), times the same
+  // work that many times so a run is long enough for a wall verdict;
+  // every run must give the first run's sum.
+  let reps = Int.parse(args.get(1) ?? "1") ?? 1
+  let sum = run_once(w, base, ints, items, rects)
+  for _ in 1..reps {
+    if run_once(w, base, ints, items, rects) != sum {
+      os.stdio.println("repeat: a run gave another sum")
+      os.proc.exit(1)
+    }
   }
   let us = os.clock.since(t).nanos() / 1000
   os.stdio.println("${w} ${sum} ${us}")

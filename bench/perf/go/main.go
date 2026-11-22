@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"time"
 )
 
@@ -419,6 +420,50 @@ func ifaceLoop(rects []rect) int64 {
 	return sum
 }
 
+// runOnce times workload w once and returns its checksum.
+func runOnce(w string, base map[int64]int64, order []int64, ints []int64, items []item, rects []rect) int64 {
+	switch w {
+	case "putget":
+		return putGet()
+	case "get":
+		return getOnly(base)
+	case "push":
+		return pushSum()
+	case "update":
+		return updateLoop()
+	case "iter":
+		return iterate(base, order)
+	case "copymut":
+		return copyMutate(base)
+	case "branch":
+		return branch(base)
+	case "sortint":
+		return sortedInt()
+	case "sortpt":
+		return sortedPoint()
+	case "hof":
+		return hofChain(ints)
+	case "maxby":
+		return maxByLoop(items)
+	case "iface":
+		return ifaceLoop(rects)
+	case "setat":
+		return setAt()
+	case "stack":
+		return stack()
+	case "fields":
+		return fields()
+	case "grid":
+		return grid()
+	case "insrem":
+		return insRem()
+	case "copyset":
+		return copySet()
+	default:
+		return -1
+	}
+}
+
 func main() {
 	w := "putget"
 	if len(os.Args) > 1 {
@@ -449,46 +494,21 @@ func main() {
 		}
 	}
 	t := time.Now()
-	var sum int64
-	switch w {
-	case "putget":
-		sum = putGet()
-	case "get":
-		sum = getOnly(base)
-	case "push":
-		sum = pushSum()
-	case "update":
-		sum = updateLoop()
-	case "iter":
-		sum = iterate(base, order)
-	case "copymut":
-		sum = copyMutate(base)
-	case "branch":
-		sum = branch(base)
-	case "sortint":
-		sum = sortedInt()
-	case "sortpt":
-		sum = sortedPoint()
-	case "hof":
-		sum = hofChain(ints)
-	case "maxby":
-		sum = maxByLoop(items)
-	case "iface":
-		sum = ifaceLoop(rects)
-	case "setat":
-		sum = setAt()
-	case "stack":
-		sum = stack()
-	case "fields":
-		sum = fields()
-	case "grid":
-		sum = grid()
-	case "insrem":
-		sum = insRem()
-	case "copyset":
-		sum = copySet()
-	default:
-		sum = -1
+	// REPEAT, the second argument (default 1; task #686), times the same
+	// work that many times so a run is long enough for a wall verdict;
+	// every run must give the first run's sum.
+	reps := 1
+	if len(os.Args) > 2 {
+		if n, err := strconv.Atoi(os.Args[2]); err == nil {
+			reps = n
+		}
+	}
+	sum := runOnce(w, base, order, ints, items, rects)
+	for r := 1; r < reps; r++ {
+		if runOnce(w, base, order, ints, items, rects) != sum {
+			fmt.Println("repeat: a run gave another sum")
+			os.Exit(1)
+		}
 	}
 	fmt.Printf("%s %d %d\n", w, sum, time.Since(t).Microseconds())
 }
