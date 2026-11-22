@@ -102,7 +102,7 @@ fn main(os: Os) ! {
   // LONG): the test samples from the mark's round, one every 10 s of rounds
   let clock = os.clock
   let start = clock.now()
-  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 } // decision 0717: minute 15 of a 30 minute run
+  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run
   let mark = start + Duration.from_secs(Float(mark_s))
   if r.is_ok() && minutes > 0 {
     long = Int(Float(1020) * Float(minutes * 60000) / Float(if ms > 0 { ms } else { 1 }))
