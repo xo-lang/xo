@@ -112,7 +112,7 @@ phase insert_rc.plan 1.94 ms heap_mb=44 peak_mb=62
 The heap in use at the front end's peak (XO_PROF=heap at fe.build, every byte sampled), the top 12:
 
 ```
-(no heap profile: xo 0.55.0 dies of SIGSEGV in heapos.region_rel_cover in this build, task #658)
+(xo 0.55.0 dies of SIGSEGV in heapos.region_rel_cover here, task #658; see "Heap at fe.build" at the end of this file)
 ```
 
 ## Run (xo bench --ab, A = Go, B = Xo, 3 rounds)
@@ -500,3 +500,28 @@ max_rss_kb            157504      283466      1.296% 1.38%      1.8     1.796 to
 load: median 5.61 (A) / 5.61 (B); loaded: 0 of 4 rounds (at or above 8.61; baseline 5.61 + 3.0, at least 6.0)
 ```
 
+## Heap at fe.build (rerun, xo at main 548ab13906)
+
+Rerun on host 1 on 2026-11-22 (task #645) with an xo built at main
+548ab13906, which has #658's fix (cf31a1379) that 0.55.0 lacks, and its own
+std: coll, a cold build, a warm build, then 3 builds with `XO_PROF=heap
+XO_PROF_HEAP_RATE=1 XO_PROF_HEAP_AT=fe.build` and `xo prof`. All three
+report 114.44MB in use (allocated 317.59MB to 320.19MB); the first, top 12:
+
+```
+xo heap profile: 256288 samples at one per 1B allocated (estimated totals)
+in use: 114.44MB in 202003 objects; allocated: 320.19MB in 759327 objects
+      flat  flat%   sum%        cum   cum%  line (the largest)  function
+   17.72MB 15.48% 15.48%    17.72MB 15.48%  raw.xo:32           raw.bytes_buf
+   11.33MB  9.90% 25.38%    46.83MB 40.92%  astcodec.xo:2024    parser.decode_parse
+   10.81MB  9.44% 34.83%    16.67MB 14.56%  rccache.xo:993      ssa.decode_func_at
+   10.67MB  9.33% 44.15%    14.43MB 12.61%  astcodec.xo:1231    parser.Dec.params
+    7.96MB  6.95% 51.10%     9.83MB  8.59%  astcodec.xo:1466    parser.Dec.block
+    6.62MB  5.78% 56.89%     6.95MB  6.08%  stmt.xo:343         check.Checker.force_body
+    5.54MB  4.84% 61.73%     5.54MB  4.84%  base.xo:334         check.Checker.new_obj
+    5.52MB  4.82% 66.55%     5.52MB  4.82%  astcodec.xo:1083    parser.Dec.idents
+    4.78MB  4.17% 70.72%    10.75MB  9.40%  decl.xo:146         check.Checker.declare
+    4.53MB  3.96% 74.68%     6.39MB  5.58%  astcodec.xo:1483    parser.Dec.exprs
+    3.72MB  3.25% 77.93%     4.95MB  4.32%  base.xo:284         check.Checker.record_rec
+    3.68MB  3.22% 81.15%     8.96MB  7.83%  astcodec.xo:1806    parser.Dec.expr
+```
