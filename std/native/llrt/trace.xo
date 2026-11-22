@@ -217,10 +217,12 @@ const S_SITES = 2
 /// are dropped.
 pub fn finish() {
   let r = tracerec.rec()
-  if r == 0 || ld(r, tracerec.R_DONE) != 0 {
+  // R_DONE is read by every recording thread (tracerec.ev): an atomic
+  // store, the one race ThreadSanitizer found in native_trace_raw
+  if r == 0 || rt.slot_load[Int](r + tracerec.R_DONE, 0, tracerec.ACQUIRE) != 0 {
     return
   }
-  st(r, tracerec.R_DONE, 1)
+  rt.slot_store[Int](r + tracerec.R_DONE, 0, 1, tracerec.RELEASE)
   let pa = ld(r, tracerec.R_PATH)
   // %p: the process id (xo test --trace, a file per process)
   let path = prof.expand_pid(raw.str_at(pa, raw.cstr_len(pa)))

@@ -124,7 +124,7 @@ fn claim(r: Int, w: Int) -> Int {
 /// The callers test on() first.
 pub fn ev(kind: Int, aux: Int, a: Int, b: Int) {
   let r = rt.slot_load[Int](rt.static_word(W_TRACEREC), 0, ACQUIRE)
-  if r == 0 || ld(r, R_DONE) != 0 {
+  if r == 0 || rt.slot_load[Int](r + R_DONE, 0, ACQUIRE) != 0 {
     return
   }
   let now = now().wrapping_sub(ld(r, R_T0))
