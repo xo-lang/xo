@@ -1,0 +1,168 @@
+// std/pty on the native backends (decision 0740): the master is
+// std/native/llrt/ptyos.xo's record; spawn starts the command through
+// the prelude's Cmd spec with flag 32 (the slave, from bit 8 on, as the
+// child's controlling terminal in a new session) and flag 64 (the slave
+// on its three standard streams too), which std/native/llrt/proc.xo's
+// spawn reads.
+use std/pty
+use native/rt
+use native/llrt/cabi_pty
+use native/llrt/proc
+use native/llrt/ptyos
+use native/llrt/raw
+
+struct Pty {
+  h: rt.PtyFile
+  path: Str
+}
+
+struct RawState {
+  io: Stdio
+  changed: Bool
+}
+
+const MAX_READ = 1048576
+
+fn unsupported() -> ProcErr { ProcErr.Io("pseudo-terminals are not supported on this system") }
+
+fn io_err(what: Str, e: Int) -> ProcErr { ProcErr.Io("${what}: ${ptyos.err_msg(e)}") }
+
+pub fn open(p: Proc) -> (Pty, Str) ! ProcErr uses proc {
+  if !ptyos.supported() {
+    return Err(unsupported())
+  }
+  let (h, path, e) = ptyos.open()
+  if e != 0 {
+    return Err(io_err("open pty", e))
+  }
+  (Pty{h: h, path: path}, path)
+}
+
+pub fn spawn(p: Pty, cmd: Cmd, attach: pty.Attach = pty.Attach.All, size: pty.Size? = None) -> Child ! ProcErr uses proc {
+  if !ptyos.supported() {
+    return Err(unsupported())
+  }
+  match size {
+    Some(s) => p.set_size(s)?
+    None => {}
+  }
+  let fd = ptyos.take_slave(p.h, p.path)
+  if fd < 0 {
+    return Err(io_err("open ${p.path}", -fd))
+  }
+  // the prelude's spawn, with the slave for proc.xo's spawn (flag 32, and
+  // 64 for Attach.All): the Cmd's checks and the Child are the prelude's
+  proc.pty_next(fd, attach == pty.Attach.All)
+  let r = cmd.spawn()
+  proc.pty_clear()
+  // the child holds the slave now: the master reads the end once it exits
+  ptyos.close_slave(fd)
+  r
+}
+
+pub fn start(proc: Proc, cmd: Cmd, attach: pty.Attach = pty.Attach.All, size: pty.Size? = None) -> (Pty, Child) ! ProcErr uses proc {
+  let (p, _s) = open(proc)?
+  match spawn(p, cmd, attach, size) {
+    Ok(c) => (p, c)
+    Err(e) => {
+      p.close()
+      Err(e)
+    }
+  }
+}
+
+pub fn (p: Pty) read(max: Int) -> Bytes? ! ProcErr uses proc {
+  if max < 0 || max > MAX_READ {
+    return Err(ProcErr.Io("read: max ${max} is not 0 to 1048576"))
+  }
+  if max == 0 {
+    return Some(b"")
+  }
+  let buf = raw.bytes_buf(max)
+  let n = ptyos.read(p.h, raw.bytes_addr(buf), max)
+  raw.alive(buf)
+  if n >= 0 {
+    return Some(buf[0..n])
+  }
+  if n == ptyos.END {
+    return None
+  }
+  if n == ptyos.TIMEOUT {
+    return Err(ProcErr.Timeout)
+  }
+  if n == ptyos.CANCELED {
+    return Err(ProcErr.Canceled)
+  }
+  Err(io_err("read ${p.path}", -100 - n))
+}
+
+pub fn (p: Pty) write(data: Bytes) -> () ! ProcErr uses proc {
+  let e = ptyos.write(p.h, raw.bytes_addr(data), data.len())
+  raw.alive(data)
+  if e == ptyos.CANCELED {
+    return Err(ProcErr.Canceled)
+  }
+  if e != 0 {
+    return Err(io_err("write ${p.path}", e))
+  }
+  Ok(())
+}
+
+pub fn (p: Pty) set_read_deadline(clock: Clock, t: Time?) uses clock {
+  match t {
+    Some(at) => ptyos.set_read_deadline(p.h, true, (at - clock.now()).nanos())
+    None => ptyos.set_read_deadline(p.h, false, 0)
+  }
+}
+
+pub fn (p: Pty) size() -> pty.Size ! ProcErr uses proc {
+  let (r, c, x, y, e) = ptyos.size(p.h)
+  if e != 0 {
+    return Err(io_err("size", e))
+  }
+  pty.Size{rows: r, cols: c, x_pixels: x, y_pixels: y}
+}
+
+pub fn (p: Pty) set_size(s: pty.Size) -> () ! ProcErr uses proc {
+  let e = ptyos.set_size(p.h, s.rows, s.cols, s.x_pixels, s.y_pixels)
+  if e != 0 {
+    return Err(io_err("set_size", e))
+  }
+  Ok(())
+}
+
+pub fn (p: Pty) set_raw(on: Bool) -> () ! ProcErr uses proc {
+  let e = ptyos.set_raw(p.h, on)
+  if e != 0 {
+    return Err(io_err("set_raw", e))
+  }
+  Ok(())
+}
+
+pub fn (p: Pty) close() { ptyos.close(p.h) }
+
+pub fn inherit_size(from: Stdio, to: Pty) -> () ! ProcErr uses (stdio, proc) {
+  // this program's terminal: standard input, output, or error, the first
+  // that is one
+  for fd in [0, 1, 2] {
+    let (r, c, x, y, e) = ptyos.fd_size(fd)
+    if e == 0 {
+      return to.set_size(pty.Size{rows: r, cols: c, x_pixels: x, y_pixels: y})
+    }
+  }
+  Err(ProcErr.Io("inherit_size: this program has no terminal"))
+}
+
+pub fn make_raw(io: Stdio) -> RawState ! ProcErr uses stdio {
+  if !io.stdin_is_tty() {
+    return Err(ProcErr.Io("make_raw: standard input is not a terminal"))
+  }
+  RawState{io: io, changed: io.raw_input(true)}
+}
+
+pub fn (s: RawState) restore() -> () ! ProcErr uses stdio {
+  if s.changed {
+    let _r = s.io.raw_input(false)
+  }
+  Ok(())
+}

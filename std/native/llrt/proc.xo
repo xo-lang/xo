@@ -5,6 +5,7 @@
 // on macOS and Linux (stage 4) and Windows (stage 5: CreateProcessW and
 // PIPE_NOWAIT pipes through windows.xo, polled in steps; UNTESTED on
 // windows).
+use native/llrt/ctx
 use native/llrt/darwin
 use native/llrt/heapblk
 use native/llrt/linux
@@ -210,7 +211,7 @@ fn look_path(l: Int, cmd: Str) -> Str {
 /// group the child leads a process group of its own (decision 0739). A
 /// port of xo_proc.c's pr_start for macOS (posix_spawn) and Linux (fork
 /// and execve).
-pub fn start(name: Int, dir: Int, argv: Int, envp0: Int, inf: Int, outf: Int, errf: Int, res: Int, group: Bool) -> Int {
+pub fn start(name: Int, dir: Int, argv: Int, envp0: Int, inf: Int, outf: Int, errf: Int, res: Int, group: Bool, ctty: Int) -> Int {
   let l = sysio.layer()
   let nm = cstr(name)
   rt.mem_store(res, 0, 0, 8)
@@ -243,7 +244,7 @@ pub fn start(name: Int, dir: Int, argv: Int, envp0: Int, inf: Int, outf: Int, er
   }
   let envp = if envp0 == 0 { process.environ_addr() } else { envp0 }
   let zfile = file + "\u{0}"
-  let (pid, e) = if l == 2 { spawn_darwin(raw.data(zfile), dir, argv, envp, inf, outf, errf, group) } else { spawn_linux(raw.data(zfile), dir, argv, envp, inf, outf, errf, group) }
+  let (pid, e) = if l == 2 && ctty >= 0 { spawn_darwin_pty(raw.data(zfile), dir, argv, envp, inf, outf, errf, ctty) } else if l == 2 { spawn_darwin(raw.data(zfile), dir, argv, envp, inf, outf, errf, group) } else { spawn_linux(raw.data(zfile), dir, argv, envp, inf, outf, errf, group, ctty) }
   let _k = zfile.len()
   if e == 2 {
     rt.mem_store(res, 8, c_owned(nm), 8)
@@ -308,11 +309,131 @@ fn spawn_darwin(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, 
   if e != 0 { (0, e) } else { (pid, 0) }
 }
 
+/// The pty slave a spec gives its child as the controlling terminal
+/// (flag 32, the descriptor from bit 8 on; std/native/pty.xo), or -1.
+fn ctty_of(c: Spec) -> Int { if (c.flags & 32) != 0 { c.flags >> 8 } else { -1 } }
+
+/// spawn_linux on macOS for a child on a pty (std/pty, decision 0740):
+/// posix_spawn cannot give a child a controlling terminal, so fork(2)
+/// and execve(2) through the C library, as Go's forkAndExecInChild on
+/// darwin; the child makes only async signal safe calls over addresses
+/// prepared here. The pid and 0, or 0 and the errno.
+fn spawn_darwin_pty(file: Int, dir: Int, argv: Int, envp: Int, inf0: Int, outf0: Int, errf0: Int, ctty: Int) -> (Int, Int) {
+  // the error pipe (two 4 byte words), the zeroed struct sigaction (16
+  // bytes at 8) and sigset (at 40), the errno word (at 48)
+  let buf = raw.bytes_buf(64)
+  let b = raw.bytes_addr(buf)
+  rt.mem_set(b, 0, 64)
+  // /dev/null opened here for a stream that wants it
+  var null = -1
+  if inf0 == FD_NULL || outf0 == FD_NULL || errf0 == FD_NULL {
+    null = darwin.open("/dev/null", darwin.O_RDWR | darwin.O_CLOEXEC, 0)
+    if null < 0 {
+      return (0, -null)
+    }
+  }
+  let inf = if inf0 == FD_NULL { null } else { inf0 }
+  let outf = if outf0 == FD_NULL { null } else { outf0 }
+  let errf = if errf0 == FD_NULL { null } else { errf0 }
+  if darwin.pipe_at(b) < 0 {
+    if null >= 0 {
+      let _n = darwin.close(null)
+    }
+    return (0, 24)
+  }
+  let rd = rt.mem_load(b, 0, 4)
+  let wr = rt.mem_load(b, 4, 4)
+  // F_SETFD FD_CLOEXEC
+  let _a = sock.fcntl(rd, 2, 1)
+  let _b = sock.fcntl(wr, 2, 1)
+  let pid = Int(sys_darwin.fork())
+  if pid == 0 {
+    child_darwin(file, dir, argv, envp, inf, outf, errf, ctty, b, wr)
+  }
+  let e0 = if pid < 0 { darwin.errno() } else { 0 }
+  let _c = darwin.close(wr)
+  if null >= 0 {
+    let _n = darwin.close(null)
+  }
+  if pid < 0 {
+    let _r = darwin.close(rd)
+    return (0, e0)
+  }
+  var got = darwin.read_at(rd, b + 48, 4)
+  while got == -4 {
+    got = darwin.read_at(rd, b + 48, 4)
+  }
+  let _r = darwin.close(rd)
+  let e = rt.mem_load(b, 48, 4)
+  raw.alive(buf)
+  if got == 4 {
+    let _w = darwin.waitpid_at(pid, b + 56, 0)
+    return (0, e)
+  }
+  (pid, 0)
+}
+
+/// The child of spawn_darwin_pty: default handlers for SIGPIPE, SIGINT
+/// and SIGTERM, an empty mask, a new session with ctty its controlling
+/// terminal (TIOCSCTTY 0x20007461), the three streams, the directory,
+/// then execve; on failure the errno to wr and _exit(127). Never returns.
+fn child_darwin(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, ctty: Int, b: Int, wr: Int) {
+  let _p = sys_darwin.sigaction(13, b + 8, 0)
+  let _i = sys_darwin.sigaction(2, b + 8, 0)
+  let _t = sys_darwin.sigaction(15, b + 8, 0)
+  let _m = sys_darwin.pthread_sigmask(3, b + 40, 0)
+  var e = 0
+  if Int(sys_darwin.setsid()) < 0 || Int(sys_darwin.ioctl(ctty, 536900705, 0)) < 0 {
+    e = darwin.errno()
+  }
+  if e == 0 {
+    e = child_fd_darwin(inf, 0)
+  }
+  if e == 0 {
+    e = child_fd_darwin(outf, 1)
+  }
+  if e == 0 {
+    e = child_fd_darwin(errf, 2)
+  }
+  // macOS drops a session's controlling terminal at the last close of
+  // the descriptor TIOCSCTTY took: with the streams elsewhere
+  // (Attach.ControllingOnly) the slave stays open across the exec, as
+  // Go's Setctty wants Ctty among the child's descriptors
+  // (gotchas/pty-darwin-master-and-ctty.md)
+  if e == 0 && inf != ctty && Int(sys_darwin.fcntl(ctty, 2, 0)) < 0 {
+    e = darwin.errno()
+  }
+  if e == 0 && dir != 0 && Int(sys_darwin.chdir(dir)) < 0 {
+    e = darwin.errno()
+  }
+  if e == 0 {
+    let _x = sys_darwin.execve(file, argv, envp)
+    e = darwin.errno()
+  }
+  rt.mem_store(b, 48, e, 4)
+  let _w = sys_darwin.write(wr, b + 48, 4)
+  sys_darwin._exit(127)
+}
+
+/// Standard stream k of child_darwin from fd (FD_INHERIT or FD_DUP_OUT,
+/// FD_NULL already a descriptor): 0, or the errno.
+fn child_fd_darwin(fd: Int, k: Int) -> Int {
+  if fd == FD_INHERIT {
+    return 0
+  }
+  let src = if fd == FD_DUP_OUT { 1 } else { fd }
+  if src == k {
+    // keep it across the exec: F_SETFD 0
+    return if Int(sys_darwin.fcntl(k, 2, 0)) < 0 { darwin.errno() } else { 0 }
+  }
+  if Int(sys_darwin.dup2(src, k)) < 0 { darwin.errno() } else { 0 }
+}
+
 /// fork and execve of the zero terminated path at file, as Go's
 /// forkAndExecInChild: the child makes only system calls over addresses
 /// prepared here, and reports a failed exec's errno through a close on
 /// exec pipe. The pid and 0, or 0 and the errno.
-fn spawn_linux(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, group: Bool) -> (Int, Int) {
+fn spawn_linux(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, group: Bool, ctty: Int) -> (Int, Int) {
   // the error pipe (two 4 byte words), the zeroed sigaction and sigset
   // (32 bytes at 8), the errno word (at 48), "/dev/null" (at 56)
   let buf = raw.bytes_buf(80)
@@ -327,7 +448,7 @@ fn spawn_linux(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, e
   let wr = rt.mem_load(b, 4, 4)
   let pid = linux.fork()
   if pid == 0 {
-    child(file, dir, argv, envp, inf, outf, errf, b, wr, group)
+    child(file, dir, argv, envp, inf, outf, errf, b, wr, group, ctty)
   }
   let _c = linux.close(wr)
   if pid < 0 {
@@ -354,8 +475,11 @@ fn spawn_linux(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, e
 /// The child of spawn_linux: system calls only, then execve; on failure
 /// writes the errno to wr and exits 127. Never returns. With group it
 /// first leads a process group of its own (setpgid(0, 0), as Go's
-/// SysProcAttr.Setpgid), so the group exists before spawn returns.
-fn child(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, b: Int, wr: Int, group: Bool) {
+/// SysProcAttr.Setpgid), so the group exists before spawn returns. With
+/// a pty slave ctty (not -1) it leads a new session instead, with ctty as
+/// its controlling terminal (Setsid, Setctty; TIOCSCTTY 0x540e, FreeBSD's
+/// 0x20007461).
+fn child(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, b: Int, wr: Int, group: Bool, ctty: Int) {
   // default signal handlers for SIGPIPE, SIGINT, SIGTERM; an empty mask
   if target.os == TargetOs.FreeBSD {
     // sigaction(2) 416 (a zeroed struct sigaction is SIG_DFL there too)
@@ -372,7 +496,15 @@ fn child(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: I
     let _m = linux.rt_sigprocmask(2, b + 40, 0)
   }
   var e = 0
-  if group {
+  if ctty >= 0 {
+    var r = linux.setsid()
+    if r >= 0 {
+      r = linux.ioctl(ctty, if target.os == TargetOs.FreeBSD { 536900705 } else { 21518 }, 0)
+    }
+    if r < 0 {
+      e = -r
+    }
+  } else if group {
     let r = linux.setpgid(0, 0)
     if r < 0 {
       e = -r
@@ -386,6 +518,17 @@ fn child(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: I
   }
   if e == 0 {
     e = child_fd(errf, 2, b)
+  }
+  // Linux reads the master's end (EIO) while no descriptor holds the
+  // slave, and the controlling terminal alone is none: with the streams
+  // elsewhere (Attach.ControllingOnly) the slave stays open across the
+  // exec, as Go's Setctty keeps Ctty among the child's descriptors
+  // (gotchas/pty-darwin-master-and-ctty.md)
+  if e == 0 && ctty >= 0 && inf != ctty {
+    let r = linux.set_fd_flags(ctty, 0)
+    if r < 0 {
+      e = -r
+    }
   }
   if e == 0 && dir != 0 {
     let r = linux.chdir_at(dir)
@@ -540,7 +683,7 @@ fn launch(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
   let envp = if (c.flags & 1) != 0 { c_strs(c.env) } else { 0 }
   let res = rt.heap_large(16)
   let dir = if c.dir.is_empty() { 0 } else { rt.mem_load(nd, 8, 8) }
-  let st = start(rt.mem_load(nd, 0, 8), dir, argv, envp, inf, outf, errf, res, (c.flags & 16) != 0)
+  let st = start(rt.mem_load(nd, 0, 8), dir, argv, envp, inf, outf, errf, res, (c.flags & 16) != 0, ctty_of(c))
   let pid = rt.mem_load(res, 0, 8)
   let m = rt.mem_load(res, 8, 8)
   var msg = ""
@@ -1169,7 +1312,27 @@ fn set_fail(ch: Int, s: Int, m: Str) {
 /// input the data when has_input, else the program's with inherit, else
 /// a pipe; its output and error stream pipes, or the program's with
 /// inherit. proc_child_start tells how the start went.
+// std/pty's slave for the context's next spawn (decision 0740): the
+// context's C_PTY word holds 1 + 2 * (fd << 1 | all), set by pty_next
+// just before the prelude's cmd_spawn and taken by spawn first, so the
+// Cmd's checks and the Child stay the prelude's. A word of the context,
+// not of the thread: the thread local table has no free word (sched.xo;
+// word 9, taken first, is logstate.xo's).
+
+/// The next spawn of this context gets fd (a pty's slave) as its
+/// controlling terminal in a new session, and with all on its three
+/// standard streams too.
+pub fn pty_next(fd: Int, all: Bool) { st(ctx.cur(), ctx.C_PTY, 1 + 2 * ((fd << 1) | (if all { 1 } else { 0 }))) }
+
+/// Drops a pty_next no spawn took (cmd_check refused the Cmd).
+pub fn pty_clear() { st(ctx.cur(), ctx.C_PTY, 0) }
+
 pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
+  let cur = ctx.cur()
+  let pt = ld(cur, ctx.C_PTY)
+  if pt != 0 {
+    st(cur, ctx.C_PTY, 0)
+  }
   // the child's record: a handle whose free function is cabi_proc.xo's
   // proc_child_drop (was xo_proc.c xo_proc_child_new)
   let (h, ch) = tasks.make_handle[rt.ProcChild](CH_SIZE, rt.fn_addr("proc_child_drop"))
@@ -1189,7 +1352,15 @@ pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
     set_fail(ch, 50, "no command")
     return h
   }
-  let c = cs[0]
+  var c = cs[0]
+  if pt != 0 {
+    let all = ((pt >> 1) & 1) != 0
+    if all && (has_input || (c.flags & 4) != 0) {
+      set_fail(ch, 50, "a pty child's standard streams are the terminal")
+      return h
+    }
+    c.flags = (c.flags & ~2) | 32 | ((pt >> 2) << 8) | (if all { 64 } else { 0 })
+  }
   let inherit = (c.flags & 2) != 0
   let merge = (c.flags & 4) != 0
   if testworld.fake(testworld.REAL_PROC) {
@@ -1232,7 +1403,14 @@ pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
   var ifd = FD_NULL
   var ofd = FD_INHERIT
   var efd = if merge { FD_DUP_OUT } else { FD_INHERIT }
-  if has_input {
+  // flag 64: the pty slave on all three streams (std/native/pty.xo
+  // refuses input data and merging then)
+  let ctty = ctty_of(c)
+  if ctty >= 0 && (c.flags & 64) != 0 {
+    ifd = ctty
+    ofd = ctty
+    efd = ctty
+  } else if has_input {
     let (r, w, e) = pipe(l, 1)
     if e == 0 {
       fi0 = r
@@ -1249,7 +1427,7 @@ pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
       ifd = r
     }
   }
-  if !inherit {
+  if !inherit && ofd != ctty {
     let (r, w, e) = pipe(l, 0)
     if e == 0 {
       o0 = r
@@ -1280,7 +1458,8 @@ pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
     return h
   }
   st(ch, CH_PID, pid)
-  st(ch, CH_GROUP, if (c.flags & 16) != 0 && l != 3 { 1 } else { 0 })
+  // a pty child leads a session, so a process group too
+  st(ch, CH_GROUP, if ((c.flags & 16) != 0 || ctty >= 0) && l != 3 { 1 } else { 0 })
   if fi1 >= 0 {
     st(ch, CH_FEED, fi1)
     st(ch, CH_FEED_P, block(raw.bytes_addr(input), input.len()))

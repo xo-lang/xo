@@ -60,6 +60,17 @@ fn pthread_atfork(prepare: Int, parent: Int, child: Int) -> Int32
 fn fork() -> Int32
 /// exit(3): ends the process with status code (atexit handlers run).
 fn exit(code: Int)
+/// _exit(2): ends the process at once (a fork child's failed exec).
+fn _exit(code: Int)
+/// setsid(2): a new session led by the caller; its id, or -1.
+fn setsid() -> Int32
+/// dup2(2): descriptor from as to; to, or -1.
+fn dup2(from: Int, to: Int) -> Int32
+/// chdir(2) of the zero terminated path at path: 0, or -1.
+fn chdir(path: Int) -> Int32
+/// execve(2) of the zero terminated path at file with the NULL ended
+/// arrays argv and envp: returns only on failure (-1).
+fn execve(file: Int, argv: Int, envp: Int) -> Int32
 /// The address of the calling thread's errno (a C int).
 fn __error() -> Int
 /// sysctlbyname(3): the value of the zero terminated name into the

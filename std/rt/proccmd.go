@@ -41,7 +41,9 @@ type procCmd struct {
 	hasStdin bool
 	inherit  bool
 	merge    bool
-	group    bool // new_group: the child leads a process group (decision 0739)
+	group    bool     // new_group: the child leads a process group (decision 0739)
+	tty      *os.File // std/pty's slave: the controlling terminal of a new session (decision 0740)
+	ttyAll   bool     // the slave on the three streams too (pty.Attach.All)
 }
 
 // Cmd is `Cmd`, a command that has not run: a value (each builder
@@ -355,7 +357,7 @@ func (c Child) M_debug(*Task) string     { return Debug(c) }
 func (realProc) spawn(tk *Task, c *procCmd) Result[Child, ProcErr] {
 	ctx, cancel := context.WithCancel(context.Background())
 	x := c.exec(ctx)
-	ch := &child{x: x, cancel: cancel, group: c.group && groupsSupported}
+	ch := &child{x: x, cancel: cancel, group: (c.group && groupsSupported) || c.tty != nil}
 	var closeAfter []*os.File
 	pipe := func() (*os.File, *os.File, error) {
 		r, w, err := os.Pipe()
@@ -372,6 +374,7 @@ func (realProc) spawn(tk *Task, c *procCmd) Result[Child, ProcErr] {
 		return Err[Child](startErr(tk, c.name, err))
 	}
 	switch {
+	case c.ttyAll:
 	case c.hasStdin:
 		x.Stdin = bytes.NewReader(c.stdin)
 	case c.inherit:
@@ -383,7 +386,8 @@ func (realProc) spawn(tk *Task, c *procCmd) Result[Child, ProcErr] {
 		}
 		ch.stdin = w
 	}
-	if c.inherit {
+	if c.ttyAll {
+	} else if c.inherit {
 		x.Stdout, x.Stderr = os.Stdout, os.Stderr
 		if c.merge {
 			x.Stderr = os.Stdout
@@ -403,6 +407,9 @@ func (realProc) spawn(tk *Task, c *procCmd) Result[Child, ProcErr] {
 			}
 			ch.stderr, x.Stderr = r2, w2
 		}
+	}
+	if c.tty != nil {
+		ptyAttach(x, c.tty, c.ttyAll)
 	}
 	if err := x.Start(); err != nil {
 		if ch.stdout != nil {

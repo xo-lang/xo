@@ -39,6 +39,8 @@ pub const O_EXCL: Int = 128
 pub const O_TRUNC: Int = 512
 pub const O_APPEND: Int = 1024
 pub const O_CLOEXEC: Int = 524288
+/// O_NOCTTY: opening a terminal does not make it the controlling one.
+pub const O_NOCTTY: Int = 256
 
 pub const CLOCK_REALTIME: Int = 0
 pub const CLOCK_MONOTONIC: Int = 1
@@ -122,6 +124,7 @@ fn fb_flags(f: Int) -> Int {
   if f & O_TRUNC != 0 { o = o | 1024 }
   if f & O_APPEND != 0 { o = o | 8 }
   if f & O_CLOEXEC != 0 { o = o | 1048576 }
+  if f & O_NOCTTY != 0 { o = o | 32768 }
   if f & 2048 != 0 { o = o | 4 }
   if f & o_directory() != 0 { o = o | 131072 }
   o
@@ -896,6 +899,13 @@ pub fn set_fd_flags(fd: Int, flags: Int) -> Int { rt.sys6(nrf(25, 72, 92), fd, 2
 /// setpgid(2): process pid (0 itself) joins or leads group pgid (0 its
 /// own pid; decision 0739): 0, or the negative errno.
 pub fn setpgid(pid: Int, pgid: Int) -> Int { rt.sys6(nrf(154, 109, 82), pid, pgid, 0, 0, 0, 0) }
+
+/// setsid(2): the new session's id, or the negative errno.
+pub fn setsid() -> Int { rt.sys6(nrf(157, 112, 147), 0, 0, 0, 0, 0, 0) }
+
+/// ioctl(2) of fd with request req and argument a: the result, or the
+/// negative errno.
+pub fn ioctl(fd: Int, req: Int, a: Int) -> Int { rt.sys6(nrf(29, 16, 54), fd, req, a, 0, 0, 0) }
 
 /// chdir(2) of the zero terminated path at a: 0, or the negative errno.
 pub fn chdir_at(a: Int) -> Int { rt.sys6(nrf(49, 80, 12), a, 0, 0, 0, 0, 0) }

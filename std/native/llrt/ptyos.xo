@@ -1,0 +1,457 @@
+// Pseudo-terminals on macOS, Linux and FreeBSD (std/pty, decision 0740):
+// the master's record (a handle whose free function is cabi_pty.xo's
+// pty_drop), opening a pair as creack/pty v1.1.24 does (Darwin's
+// /dev/ptmx with TIOCPTYGRANT, TIOCPTYUNLK and TIOCPTYGNAME; Linux's
+// /dev/ptmx with TIOCSPTLCK and TIOCGPTN; FreeBSD's posix_openpt(2) and
+// TIOCGPTN), the window size (TIOCGWINSZ, TIOCSWINSZ), raw mode (the
+// flags of cfmakeraw), and reads and writes on the poller. proc.xo's
+// spawn makes the slave the controlling terminal of a child (flag 32).
+use native/llrt/darwin
+use native/llrt/heapblk
+use native/llrt/linux
+use native/llrt/poll
+use native/llrt/raw
+use native/llrt/sock
+use native/llrt/sysio
+use native/llrt/tasks
+use native/rt
+use native/sys_darwin
+
+// the record: the master's descriptor (-1 once closed), its poller
+// record (0 none), the read deadline (poll.deadline's clock, 0 none,
+// RDL_PAST passed), whether TIO holds the settings before set_raw(true),
+// and those settings (a struct termios: 72 bytes on macOS, 60 on Linux,
+// 44 on FreeBSD)
+// (the fields start after the handle's header, tasks.HANDLE_FIELDS)
+const PT_FD = 16
+const PT_PD = 24
+const PT_RDL = 32
+const PT_SAVED = 40
+const PT_TIO = 48
+const PT_SLAVE = 120
+const PT_SIZE = 128
+
+const RDL_PAST = -1
+
+/// read's results other than a count.
+pub const END = -1
+pub const TIMEOUT = -2
+pub const CANCELED = -3
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// Whether this target has pseudo-terminals here (macOS, Linux, FreeBSD).
+pub fn supported() -> Bool {
+  let l = sysio.layer()
+  // FreeBSD is layer 4, on linux.xo's calls with the BSD numbers
+  l == 1 || l == 2 || l == 4
+}
+
+/// ioctl(2): the result, or the negative errno.
+fn ioctl(fd: Int, req: Int, a: Int) -> Int {
+  if sysio.layer() == 2 {
+    let r = Int(sys_darwin.ioctl(fd, req, a))
+    return if r == -1 { -darwin.errno() } else { r }
+  }
+  linux.ioctl(fd, req, a)
+}
+
+fn close_raw(fd: Int) {
+  let _c = if sysio.layer() == 2 { darwin.close(fd) } else { linux.close(fd) }
+}
+
+/// Opens a pair: the master's handle and the slave's path, or an empty
+/// path and the errno (the handle then holds no descriptor).
+pub fn open() -> (rt.PtyFile, Str, Int) {
+  let (h, p) = tasks.make_handle[rt.PtyFile](PT_SIZE, rt.fn_addr("pty_drop"))
+  rt.mem_set(p + tasks.HANDLE_FIELDS, 0, PT_SIZE - tasks.HANDLE_FIELDS)
+  st(p, PT_FD, -1)
+  st(p, PT_SLAVE, -1)
+  let b = rt.heap_large(128)
+  rt.mem_set(b, 0, 128)
+  let (fd, e) = open_master(b)
+  if e != 0 {
+    heapblk.release(b)
+    return (h, "", e)
+  }
+  let path = raw.str_at(b, raw.cstr_len(b))
+  heapblk.release(b)
+  // nonblocking, on the poller (a pty master registers with kqueue and
+  // epoll)
+  let fl = sock.fcntl(fd, 3, 0)
+  let _n = sock.fcntl(fd, 4, fl | (if sysio.layer() == 2 { 4 } else { if target.os == TargetOs.FreeBSD { 4 } else { 2048 } }))
+  st(p, PT_FD, fd)
+  st(p, PT_PD, poll.pd_new(fd, true))
+  // the slave stays open until a spawn takes it (creack's Open returns
+  // it open too): macOS answers the master's TIOCGWINSZ, TIOCSWINSZ and
+  // termios with ENOTTY until the slave was opened, and resets the size
+  // and settings at the slave's next first open
+  let sl = open_slave(path)
+  if sl < 0 {
+    free(p)
+    return (h, "", -sl)
+  }
+  st(p, PT_SLAVE, sl)
+  (h, path, 0)
+}
+
+/// The master's descriptor and the slave's zero terminated path in b
+/// (128 bytes), or -1 and the errno.
+fn open_master(b: Int) -> (Int, Int) {
+  match target.os {
+    TargetOs.Darwin => {
+      let fd = darwin.open("/dev/ptmx", darwin.O_RDWR | 131072 | darwin.O_CLOEXEC, 0)
+      if fd < 0 {
+        return (-1, -fd)
+      }
+      // TIOCPTYGRANT, TIOCPTYUNLK, TIOCPTYGNAME (a 128 byte name)
+      for req in [536900692, 536900690] {
+        let r = ioctl(fd, req, 0)
+        if r < 0 {
+          close_raw(fd)
+          return (-1, -r)
+        }
+      }
+      let r = ioctl(fd, 1082160211, b)
+      if r < 0 {
+        close_raw(fd)
+        return (-1, -r)
+      }
+      (fd, 0)
+    }
+    TargetOs.Linux => {
+      let fd = linux.open("/dev/ptmx", linux.O_RDWR | linux.O_NOCTTY | linux.O_CLOEXEC, 0)
+      if fd < 0 {
+        return (-1, -fd)
+      }
+      // TIOCSPTLCK with 0 (unlock), then TIOCGPTN: /dev/pts/N
+      rt.mem_store(b, 0, 0, 4)
+      var r = linux.ioctl(fd, 1074025521, b)
+      if r >= 0 {
+        r = linux.ioctl(fd, 2147767344, b)
+      }
+      if r < 0 {
+        close_raw(fd)
+        return (-1, -r)
+      }
+      put_cstr(b, "/dev/pts/${rt.mem_load(b, 0, 4)}")
+      (fd, 0)
+    }
+    TargetOs.FreeBSD => {
+      // posix_openpt(2) 504 with O_RDWR | O_NOCTTY | O_CLOEXEC; TIOCGPTN
+      let fd = rt.sys6(504, 2 | 32768 | 1048576, 0, 0, 0, 0, 0)
+      if fd < 0 {
+        return (-1, -fd)
+      }
+      let r = linux.ioctl(fd, 1074033679, b)
+      if r < 0 {
+        close_raw(fd)
+        return (-1, -r)
+      }
+      put_cstr(b, "/dev/pts/${rt.mem_load(b, 0, 4)}")
+      (fd, 0)
+    }
+    TargetOs.Windows | TargetOs.Wasi => (-1, 78)
+  }
+}
+
+/// Writes s and a zero byte at b.
+fn put_cstr(b: Int, s: Str) {
+  rt.mem_copy(b, raw.data(s), s.len())
+  rt.mem_store(b, s.len(), 0, 1)
+}
+
+/// Opens the slave at path for a child (not this program's controlling
+/// terminal, closed on exec): the descriptor, or the negative errno.
+pub fn open_slave(path: Str) -> Int {
+  if sysio.layer() == 2 {
+    return darwin.open(path, darwin.O_RDWR | 131072 | darwin.O_CLOEXEC, 0)
+  }
+  linux.open(path, linux.O_RDWR | linux.O_NOCTTY | linux.O_CLOEXEC, 0)
+}
+
+/// The slave for a child: the one open kept (once), else the path's
+/// opened again; the descriptor, or the negative errno. The caller
+/// closes it once the child holds it.
+pub fn take_slave(h: rt.PtyFile, path: Str) -> Int {
+  let p = rt.obj_addr(h)
+  if ld(p, PT_FD) < 0 {
+    return -9
+  }
+  let sl = ld(p, PT_SLAVE)
+  if sl >= 0 {
+    st(p, PT_SLAVE, -1)
+    return sl
+  }
+  open_slave(path)
+}
+
+/// Closes a descriptor open_slave gave.
+pub fn close_slave(fd: Int) {
+  if fd >= 0 {
+    close_raw(fd)
+  }
+}
+
+/// The master's descriptor, -1 once closed.
+fn fd_of(h: rt.PtyFile) -> Int { ld(rt.obj_addr(h), PT_FD) }
+
+/// The message of errno e.
+pub fn err_msg(e: Int) -> Str { sysio.err_msg(sysio.layer(), e) }
+
+/// Reads at most n bytes into the address a: the count, END, TIMEOUT,
+/// CANCELED, or minus 100 minus the errno. A Linux master reads EIO once
+/// every holder of the slave closed it: the end, as a 0 read elsewhere.
+pub fn read(h: rt.PtyFile, a: Int, n: Int) -> Int {
+  let p = rt.obj_addr(h)
+  let fd = ld(p, PT_FD)
+  if fd < 0 {
+    return -100 - 9
+  }
+  let l = sysio.layer()
+  let eagain = if l == 2 { 35 } else { if target.os == TargetOs.FreeBSD { 35 } else { 11 } }
+  let eio = 5
+  while true {
+    if rdl_passed(p) {
+      return TIMEOUT
+    }
+    let r = if l == 2 { darwin.read_at(fd, a, n) } else { linux.read_at(fd, a, n) }
+    if r > 0 {
+      return r
+    }
+    if r == 0 || r == -eio {
+      return END
+    }
+    if r == -4 {
+      continue
+    }
+    if r != -eagain {
+      return -100 + r
+    }
+    let pd = ld(p, PT_PD)
+    if pd == 0 {
+      return -100 + r
+    }
+    let dl = ld(p, PT_RDL)
+    if dl == RDL_PAST {
+      return TIMEOUT
+    }
+    let w = poll.pd_wait(pd, false, dl)
+    if w == poll.CANCELED {
+      return CANCELED
+    }
+    if w == poll.CLOSED {
+      return END
+    }
+  }
+  END
+}
+
+fn rdl_passed(p: Int) -> Bool {
+  let dl = ld(p, PT_RDL)
+  dl == RDL_PAST || (dl != 0 && poll.now() >= dl)
+}
+
+/// Writes the n bytes at a, waiting on the poller while the terminal's
+/// input queue is full: 0, CANCELED, or the errno.
+pub fn write(h: rt.PtyFile, a: Int, n: Int) -> Int {
+  let p = rt.obj_addr(h)
+  let fd = ld(p, PT_FD)
+  if fd < 0 {
+    return 9
+  }
+  let l = sysio.layer()
+  let eagain = if l == 2 { 35 } else { if target.os == TargetOs.FreeBSD { 35 } else { 11 } }
+  var off = 0
+  while off < n {
+    let r = if l == 2 { darwin.write_at(fd, a + off, n - off) } else { linux.write_at(fd, a + off, n - off) }
+    if r > 0 {
+      off += r
+      continue
+    }
+    if r == -4 {
+      continue
+    }
+    if r != -eagain || ld(p, PT_PD) == 0 {
+      return -r
+    }
+    let w = poll.pd_wait(ld(p, PT_PD), true, 0)
+    if w == poll.CANCELED {
+      return CANCELED
+    }
+    if w == poll.CLOSED {
+      return 9
+    }
+  }
+  0
+}
+
+/// The read deadline: d ns from now when set, none otherwise; a read
+/// waiting now looks again.
+pub fn set_read_deadline(h: rt.PtyFile, set: Bool, d: Int) {
+  let p = rt.obj_addr(h)
+  st(p, PT_RDL, if !set { 0 } else if d <= 0 { RDL_PAST } else { poll.deadline(d) })
+  let pd = ld(p, PT_PD)
+  if pd != 0 {
+    poll.pd_kick(pd, 1)
+  }
+}
+
+/// TIOCGWINSZ and TIOCSWINSZ (the same numbers on macOS and FreeBSD).
+fn winsz_req(set: Bool) -> Int {
+  if target.os == TargetOs.Linux {
+    return if set { 21524 } else { 21523 }
+  }
+  if set { 2148037735 } else { 1074295912 }
+}
+
+/// The window size of descriptor fd (rows, columns, x and y pixels), and
+/// 0, or the errno.
+pub fn fd_size(fd: Int) -> (Int, Int, Int, Int, Int) {
+  let b = rt.heap_large(8)
+  rt.mem_set(b, 0, 8)
+  let r = ioctl(fd, winsz_req(false), b)
+  let out = (rt.mem_load(b, 0, 2), rt.mem_load(b, 2, 2), rt.mem_load(b, 4, 2), rt.mem_load(b, 6, 2), if r < 0 { -r } else { 0 })
+  heapblk.release(b)
+  out
+}
+
+/// The master's window size, as fd_size.
+pub fn size(h: rt.PtyFile) -> (Int, Int, Int, Int, Int) {
+  let fd = fd_of(h)
+  if fd < 0 {
+    return (0, 0, 0, 0, 9)
+  }
+  fd_size(fd)
+}
+
+/// Sets the master's window size: 0, or the errno.
+pub fn set_size(h: rt.PtyFile, rows: Int, cols: Int, xp: Int, yp: Int) -> Int {
+  let fd = fd_of(h)
+  if fd < 0 {
+    return 9
+  }
+  let b = rt.heap_large(8)
+  rt.mem_store(b, 0, rows, 2)
+  rt.mem_store(b, 2, cols, 2)
+  rt.mem_store(b, 4, xp, 2)
+  rt.mem_store(b, 6, yp, 2)
+  let r = ioctl(fd, winsz_req(true), b)
+  heapblk.release(b)
+  if r < 0 { -r } else { 0 }
+}
+
+/// TIOCGETA / TCGETS (set false) and TIOCSETA / TCSETS (TCSANOW).
+fn tio_req(set: Bool) -> Int {
+  match target.os {
+    TargetOs.Darwin => if set { 2152231956 } else { 1078490131 }
+    TargetOs.Linux => if set { 21506 } else { 21505 }
+    TargetOs.FreeBSD => if set { 2150396948 } else { 1076655123 }
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+}
+
+/// Raw mode on the master's line discipline (on), as cfmakeraw, keeping
+/// the settings before it; or those settings back (off; nothing when raw
+/// mode was never set): 0, or the errno.
+pub fn set_raw(h: rt.PtyFile, on: Bool) -> Int {
+  let p = rt.obj_addr(h)
+  let fd = ld(p, PT_FD)
+  if fd < 0 {
+    return 9
+  }
+  if !on {
+    if ld(p, PT_SAVED) == 0 {
+      return 0
+    }
+    let r = ioctl(fd, tio_req(true), p + PT_TIO)
+    if r < 0 {
+      return -r
+    }
+    st(p, PT_SAVED, 0)
+    return 0
+  }
+  let t = rt.heap_large(80)
+  rt.mem_set(t, 0, 80)
+  let g = ioctl(fd, tio_req(false), t)
+  if g < 0 {
+    heapblk.release(t)
+    return -g
+  }
+  if ld(p, PT_SAVED) == 0 {
+    rt.mem_copy(p + PT_TIO, t, 72)
+    st(p, PT_SAVED, 1)
+  }
+  make_raw(t)
+  let r = ioctl(fd, tio_req(true), t)
+  heapblk.release(t)
+  if r < 0 { -r } else { 0 }
+}
+
+/// cfmakeraw over the struct termios at t: input flags IGNBRK, BRKINT,
+/// PARMRK, ISTRIP, INLCR, IGNCR, ICRNL, IXON and IMAXBEL off, OPOST off,
+/// ECHO, ECHONL, ICANON, ISIG and IEXTEN off, CSIZE and PARENB off and
+/// CS8 on, VMIN 1, VTIME 0.
+fn make_raw(t: Int) {
+  if target.os == TargetOs.Linux {
+    // 32 bit flags at 0, 4, 8, 12; c_cc at 17 (VTIME 5, VMIN 6)
+    clear(t, 0, 4, 1 + 2 + 8 + 32 + 64 + 128 + 256 + 1024 + 8192)
+    clear(t, 4, 4, 1)
+    clear(t, 12, 4, 8 + 64 + 2 + 1 + 32768)
+    clear(t, 8, 4, 48 + 256)
+    rt.mem_store(t, 8, rt.mem_load(t, 8, 4) | 48, 4)
+    rt.mem_store(t, 17 + 6, 1, 1)
+    rt.mem_store(t, 17 + 5, 0, 1)
+    return
+  }
+  // the BSD flags: 64 bit on macOS (at 0, 8, 16, 24; c_cc at 32), 32 bit
+  // on FreeBSD (at 0, 4, 8, 12; c_cc at 16); VMIN 16, VTIME 17
+  let w = if target.os == TargetOs.Darwin { 8 } else { 4 }
+  clear(t, 0, w, 1 + 2 + 8 + 32 + 64 + 128 + 256 + 512 + 8192)
+  clear(t, w, w, 1)
+  clear(t, 3 * w, w, 8 + 16 + 256 + 128 + 1024)
+  clear(t, 2 * w, w, 768 + 4096)
+  stw(t, 2 * w, w, ldw(t, 2 * w, w) | 768)
+  rt.mem_store(t, 4 * w + 16, 1, 1)
+  rt.mem_store(t, 4 * w + 17, 0, 1)
+}
+
+/// Clears the bits m of the w byte field at t + off.
+fn clear(t: Int, off: Int, w: Int, m: Int) { stw(t, off, w, ldw(t, off, w) & -(m + 1)) }
+
+/// The w byte (4 or 8) field at t + off (the native backends take only
+/// a constant width).
+fn ldw(t: Int, off: Int, w: Int) -> Int { if w == 8 { rt.mem_load(t, off, 8) } else { rt.mem_load(t, off, 4) } }
+
+fn stw(t: Int, off: Int, w: Int, v: Int) {
+  if w == 8 {
+    rt.mem_store(t, off, v, 8)
+  } else {
+    rt.mem_store(t, off, v, 4)
+  }
+}
+
+/// Closes the master (a second close does nothing); a read waiting ends.
+pub fn close(h: rt.PtyFile) { free(rt.obj_addr(h)) }
+
+/// The record's descriptor and poller record (close and pty_drop).
+pub fn free(p: Int) {
+  let sl = ld(p, PT_SLAVE)
+  if sl >= 0 {
+    st(p, PT_SLAVE, -1)
+    close_raw(sl)
+  }
+  let fd = ld(p, PT_FD)
+  if fd < 0 {
+    return
+  }
+  st(p, PT_FD, -1)
+  let pd = ld(p, PT_PD)
+  st(p, PT_PD, 0)
+  if pd != 0 {
+    poll.pd_free(pd)
+  }
+  close_raw(fd)
+}

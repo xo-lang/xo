@@ -100,3 +100,4 @@ entries yet.
 - [brotli.md](brotli.md): std/brotli (spec/std.md 87)
 - [grpchealth.md](grpchealth.md): std/grpchealth (spec/std.md 89)
 - [grpcreflect.md](grpcreflect.md): std/grpcreflect (spec/std.md 90)
+- [pty.md](pty.md): std/pty (spec/std.md 91)

@@ -1,7 +1,10 @@
 # 0740: std/pty: pseudo-terminals and a child with a controlling terminal
 
-Status: Proposed (task #691, owner 2026-11-22, from #263; xo-4c). The API
-below waits on the lead's or owner's OK before implementation.
+Status: Accepted (owner 2026-11-22, xw decision #274; task #691, from
+#263; xo-4c). Stage 1 (2026-11-22): macOS, Linux and FreeBSD on the native
+and Go backends. Stage 2: Windows ConPTY, verified on the windows/arm64 VM;
+until then Windows returns ProcErr.Io "pseudo-terminals are not supported
+on this system", as wasm does.
 
 ## Context
 

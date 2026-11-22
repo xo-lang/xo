@@ -1,0 +1,13 @@
+// The C ABI export of pseudo-terminals (std/pty, decision 0740): like
+// cabi_proc.xo, every top level function here is called by the C runtime
+// as xo_x_<name>. Only std/native/pty.xo imports it, so programs without
+// a pty do not grow.
+use native/llrt/ptyos
+use native/llrt/tasks
+
+/// A pty record's free function (ptyos.xo open's rt.fn_addr): its
+/// descriptor and poller record, then the block.
+fn pty_drop(p: Int) {
+  ptyos.free(p)
+  tasks.free_handle(p)
+}

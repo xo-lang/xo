@@ -12887,3 +12887,51 @@ fn file_containing_symbol(c: grpc.Client, symbol: Str) -> List[protodesc.FileDes
   found"; extension numbers are sorted. Services are listed sorted.
 - A request with no question ends the stream `InvalidArgument` "invalid MessageRequest: <nil>". The host a request
   names comes back as the response's valid host, and the request itself as its original request.
+
+## 91. std/pty
+
+Pseudo-terminals (decision 0740, task #691): open a master and slave pair, start a child with the slave as its
+controlling terminal, resize it, and switch its line discipline between raw and cooked. Xo's own API in the shape of
+github.com/creack/pty v1.1.24 (Open, Start, StartWithSize, Getsize, Setsize, InheritSize) and golang.org/x/term
+(MakeRaw, Restore); creack's tests are ported in std/pty_test.xo. `uses proc`, as spawning a child.
+
+```xo
+struct Pty {}                       // the master side; a handle, copies share it
+struct Size { rows: Int, cols: Int, x_pixels: Int = 0, y_pixels: Int = 0 }
+enum Attach { All, ControllingOnly }
+struct RawState {}
+fn open(p: Proc) -> (Pty, Str) ! ProcErr uses proc   // the master and the slave's path
+fn spawn(p: Pty, cmd: Cmd, attach: Attach = Attach.All, size: Size? = None) -> Child ! ProcErr uses proc
+fn start(proc: Proc, cmd: Cmd, attach: Attach = Attach.All, size: Size? = None) -> (Pty, Child) ! ProcErr uses proc
+fn (p: Pty) read(max: Int) -> Bytes? ! ProcErr uses proc    // none at the end
+fn (p: Pty) write(data: Bytes) -> () ! ProcErr uses proc
+fn (p: Pty) set_read_deadline(clock: Clock, t: Time?) uses clock
+fn (p: Pty) size() -> Size ! ProcErr uses proc
+fn (p: Pty) set_size(s: Size) -> () ! ProcErr uses proc
+fn (p: Pty) set_raw(on: Bool) -> () ! ProcErr uses proc
+fn (p: Pty) close()
+fn inherit_size(from: Stdio, to: Pty) -> () ! ProcErr uses (stdio, proc)
+fn make_raw(io: Stdio) -> RawState ! ProcErr uses stdio
+fn (s: RawState) restore() -> () ! ProcErr uses stdio
+```
+
+- `open` is posix_openpt(O_RDWR | O_NOCTTY), grantpt, unlockpt and ptsname; the master is close-on-exec. The slave
+  stays open in the Pty until the first `spawn` takes it (on macOS the master's window size and termios calls fail
+  with ENOTTY until the slave has been opened once).
+- `spawn` gives the child a new session (so `Child.kill_group` reaches it) and the slave as its controlling terminal.
+  `Attach.All` puts the slave on its standard input, output and error too; then `Cmd.stdin(data)` and `merge_stderr`
+  are `ProcErr.Io` "a pty child's standard streams are the terminal". `Attach.ControllingOnly` leaves the standard
+  streams as the Cmd sets them (pipes by default): a child reads a password from /dev/tty while its output is read
+  with `Child.read`. With a size, the terminal gets it before the child starts.
+- `read` returns at most `max` bytes (`max` at most 1 MiB) and none at the end, once every holder of the slave has
+  closed it. The terminal discards output nobody read once the child is reaped, so read to the end before
+  `Child.wait`. A deadline set with `set_read_deadline` makes a read past it a `Timeout` error; a canceled task's read
+  is `Canceled`.
+- `size` and `set_size` are TIOCGWINSZ and TIOCSWINSZ (the child gets SIGWINCH); `set_raw(true)` sets cfmakeraw's
+  flags with tcsetattr and `set_raw(false)` restores the modes it found. `inherit_size` copies this program's
+  terminal size from the first of standard input, output and error that is a terminal, an `Io` error when none is.
+  `make_raw` puts this program's standard input in raw mode and `restore` puts it back.
+  `make_raw` is an `Io` error when standard input is not a terminal; it works wherever `Stdio.raw_input` does,
+  Windows consoles included.
+- Linux, macOS and FreeBSD, on the native backends and the Go backend. On Windows (a ConPTY, decision 0740's second
+  stage) and wasm, `open` and `start` return `ProcErr.Io` "pseudo-terminals are not supported on this system".

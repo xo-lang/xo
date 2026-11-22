@@ -1,0 +1,144 @@
+// std/pty's tests. The open, size and start cases follow
+// github.com/creack/pty v1.1.24's (MIT, Copyright (c) 2011 Keith Rarick):
+// run_test.go, start_test.go, io_test.go (TestReadDeadline) and its
+// winsize cases; the attach, raw and error cases are Xo's own. They
+// start real processes (/bin/sh, /bin/sleep, /bin/stty). A test reads
+// the terminal to its end before wait: macOS drops what the child wrote
+// and not yet read once the child is reaped
+// (knowledgebase/gotchas/pty-darwin-master-and-ctty.md).
+
+/// Everything the terminal's side wrote until the end (every holder of
+/// the slave closed it), as text.
+fn drain(p: Pty) -> Str ! ProcErr uses proc {
+  var out = ""
+  while let Some(b) = p.read(4096)? {
+    out = out + b.to_str_lossy()
+  }
+  out
+}
+
+test "open gives a master and a slave path" uses proc {
+  let (p, path) = open(os.proc)?
+  expect(path.starts_with("/dev/"))
+  p.close()
+  // closing twice does nothing
+  p.close()
+}
+
+test "start runs the command on the terminal" uses proc {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/sh", ["-c", "echo hello pty"]))?
+  expect(drain(p)?.contains("hello pty"))
+  expect(c.wait()) == Ok(0)
+  p.close()
+}
+
+test "the child's standard streams and controlling terminal are the slave" uses proc {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/sh", ["-c", "test -t 0 && test -t 1 && test -t 2 && echo tty > /dev/tty && echo ok"]))?
+  let out = drain(p)?
+  expect(c.wait()) == Ok(0)
+  expect(out.contains("tty"))
+  expect(out.contains("ok"))
+  p.close()
+}
+
+test "set_size then size round trip" uses proc {
+  let (p, _path) = open(os.proc)?
+  p.set_size(Size{rows: 40, cols: 132, x_pixels: 640, y_pixels: 480})?
+  expect(p.size()) == Ok(Size{rows: 40, cols: 132, x_pixels: 640, y_pixels: 480})
+  p.close()
+}
+
+test "start with a size gives the child that size" uses proc {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/stty", ["size"]), Attach.All, Some(Size{rows: 33, cols: 101}))?
+  expect(drain(p)?.contains("33 101"))
+  expect(c.wait()) == Ok(0)
+  p.close()
+}
+
+test "writes reach the child as typed input" uses proc {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/sh", ["-c", "read line; echo got-$line"]))?
+  p.write(b"abc\n")?
+  expect(drain(p)?.contains("got-abc"))
+  expect(c.wait()) == Ok(0)
+  p.close()
+}
+
+test "a read past its deadline is Timeout" uses (proc, clock) {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/sleep", ["10"]))?
+  p.set_read_deadline(os.clock, Some(os.clock.now() + 100ms))
+  expect(p.read(16)) == Err(ProcErr.Timeout)
+  // none clears it: the end comes once the child is gone
+  p.set_read_deadline(os.clock, None)
+  c.kill()
+  expect(drain(p)) == Ok("")
+  let _w = c.wait().ignore_err("killed: its status is not the point")
+  p.close()
+}
+
+test "raw mode turns off echo and line editing" uses proc {
+  let (p, _path) = open(os.proc)?
+  p.set_raw(true)?
+  let c = spawn(p, os.proc.cmd("/bin/stty", ["-a"]))?
+  let out = drain(p)?
+  expect(c.wait()) == Ok(0)
+  expect(out.contains("-icanon"))
+  expect(out.contains("-echo "))
+  p.close()
+}
+
+test "set_raw false restores cooked mode" uses proc {
+  let (p, _path) = open(os.proc)?
+  p.set_raw(true)?
+  p.set_raw(false)?
+  let c = spawn(p, os.proc.cmd("/bin/stty", ["-a"]))?
+  let out = drain(p)?
+  expect(c.wait()) == Ok(0)
+  expect(out.contains(" icanon"))
+  p.close()
+}
+
+test "ControllingOnly keeps the child's output on its pipe" uses (proc, clock) {
+  let (p, _path) = open(os.proc)?
+  let c = spawn(p, os.proc.cmd("/bin/sh", ["-c", "test ! -t 1 && echo out; echo prompt > /dev/tty"]), Attach.ControllingOnly)?
+  p.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+  let got = p.read(64)? ?? b""
+  var out = ""
+  while let Some(b) = c.read(4096)? {
+    out = out + b.to_str_lossy()
+  }
+  expect(c.wait()) == Ok(0)
+  expect(got.to_str_lossy().contains("prompt"))
+  expect(out.trim()) == "out"
+  p.close()
+}
+
+test "Attach.All refuses stdin data and merge_stderr" uses proc {
+  let (p, _path) = open(os.proc)?
+  let msg = "a pty child's standard streams are the terminal"
+  expect(spawn(p, os.proc.cmd("/bin/cat").stdin(b"x")).err()) == Some(ProcErr.Io(msg))
+  expect(spawn(p, os.proc.cmd("/bin/cat").merge_stderr()).err()) == Some(ProcErr.Io(msg))
+  p.close()
+}
+
+test "a missing command is NotFound and leaves the pty open" uses proc {
+  let (p, _path) = open(os.proc)?
+  expect(spawn(p, os.proc.cmd("/no/such/command-xo-pty")).is_err())
+  expect(p.size().is_ok())
+  p.close()
+}
+
+// FreeBSD revokes a session's terminal when its leader exits and drops
+// what the master had not read while another descriptor held the slave:
+// the Go backend's parent still held its copy when a short child exited,
+// and every read after a pause found nothing (40 of 40 runs on a FreeBSD
+// VM; gotchas/pty-darwin-master-and-ctty.md).
+test "a child that writes and exits before the first read keeps its output" uses (proc, clock) {
+  for _i in 0..5 {
+    let (p, path) = open(os.proc)?
+    let c = spawn(p, os.proc.cmd("/bin/sh", ["-c", "echo early ${path}"]))?
+    os.clock.sleep(100ms)
+    expect(drain(p)?.contains("early ${path}"))
+    expect(c.wait()) == Ok(0)
+    p.close()
+  }
+}

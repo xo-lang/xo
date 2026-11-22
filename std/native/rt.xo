@@ -855,6 +855,10 @@ fn flush()
 /// words CH_*) behind the C runtime's object header.
 struct ProcChild {}
 
+/// The master of a pseudo-terminal (std/pty, decision 0740): a record of
+/// std/native/llrt/ptyos.xo's (its words PT_*) behind the object header.
+struct PtyFile {}
+
 // ---------------------------------------------------------------------------
 // The environment (decision 0172)
 

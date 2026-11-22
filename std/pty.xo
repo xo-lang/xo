@@ -1,0 +1,81 @@
+// std/pty (spec/std.md, decision 0740). Declaration file; encoding rules
+// are listed at the top of std/prelude.xo. Pseudo-terminals in the shape
+// of Go's github.com/creack/pty (Open, Start, Getsize, Setsize,
+// InheritSize) and golang.org/x/term (MakeRaw, Restore): open a master
+// and slave pair, start a child with the slave as its controlling
+// terminal, resize it, and switch its line discipline between raw and
+// cooked. `uses proc`, as spawning a child; wasm targets return
+// ProcErr.Io "pseudo-terminals are not supported on this system".
+
+/// The master side of a pseudo-terminal; a handle, copies share it.
+/// Reads return what the child writes to the terminal (its echo too);
+/// writes reach the child as typed input.
+struct Pty {}
+
+/// A terminal's window size (struct winsize): rows and columns, and the
+/// size in pixels most programs ignore.
+struct Size {
+  rows: Int
+  cols: Int
+  x_pixels: Int = 0
+  y_pixels: Int = 0
+}
+
+/// What a child started on a pty gets: `All` the slave on its standard
+/// input, output and error and as its controlling terminal (creack's
+/// Start); `ControllingOnly` the controlling terminal only, its standard
+/// streams as the Cmd sets them (pipes by default), so a program can read
+/// the child's output apart from what it prompts for on /dev/tty.
+enum Attach {
+  All
+  ControllingOnly
+}
+
+/// This program's own terminal as make_raw found it.
+struct RawState {}
+
+/// Opens a pseudo-terminal pair (posix_openpt, grantpt, unlockpt): the
+/// master and the slave's path ("/dev/ttys004"; "" on Windows, where it is
+/// a ConPTY).
+fn open(p: Proc) -> (Pty, Str) ! ProcErr uses proc
+
+/// Starts cmd in a new session with the slave of p as its controlling
+/// terminal, and with `Attach.All` on its three standard streams too
+/// (then `Cmd.stdin(data)` and `merge_stderr` are an `Io` error). With a
+/// size, the terminal gets it first. The Child works as any other: wait,
+/// kill, and kill_group (the session is a process group).
+fn spawn(p: Pty, cmd: Cmd, attach: Attach = Attach.All, size: Size? = None) -> Child ! ProcErr uses proc
+
+/// open, then spawn: creack's Start and StartWithSize.
+fn start(proc: Proc, cmd: Cmd, attach: Attach = Attach.All, size: Size? = None) -> (Pty, Child) ! ProcErr uses proc
+
+/// Reads at most max bytes the terminal's side wrote (max at most 1 MiB):
+/// none at the end, once every holder of the slave closed it (the child
+/// exited).
+fn (p: Pty) read(max: Int) -> Bytes? ! ProcErr uses proc
+/// Writes data as typed input; the line discipline echoes it in cooked
+/// mode.
+fn (p: Pty) write(data: Bytes) -> () ! ProcErr uses proc
+/// read gives up at t with a `Timeout` error (none clears it), as
+/// Child.set_read_deadline.
+fn (p: Pty) set_read_deadline(clock: Clock, t: Time?) uses clock
+/// The terminal's window size (TIOCGWINSZ; on Windows the size last set).
+fn (p: Pty) size() -> Size ! ProcErr uses proc
+/// Sets the window size (TIOCSWINSZ, ResizePseudoConsole); the child gets
+/// SIGWINCH.
+fn (p: Pty) set_size(s: Size) -> () ! ProcErr uses proc
+/// Raw (on) or cooked (off) mode on the terminal's line discipline, the
+/// flags of cfmakeraw; on Windows nothing (a ConPTY has none to set).
+fn (p: Pty) set_raw(on: Bool) -> () ! ProcErr uses proc
+/// Closes the master; the child's side reads the end. Closing twice does
+/// nothing.
+fn (p: Pty) close()
+
+/// Gives to the size of this program's terminal on from (creack's
+/// InheritSize): an `Io` error when from is not a terminal.
+fn inherit_size(from: Stdio, to: Pty) -> () ! ProcErr uses (stdio, proc)
+/// Puts this program's own terminal (standard input) in raw mode, as
+/// x/term's MakeRaw, and returns how it was.
+fn make_raw(io: Stdio) -> RawState ! ProcErr uses stdio
+/// Restores the terminal make_raw changed.
+fn (s: RawState) restore() -> () ! ProcErr uses stdio
