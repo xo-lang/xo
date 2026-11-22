@@ -1711,6 +1711,13 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   its 5 minute load over 48 (HEAVY_LOAD5_HOLD), and the admission policy's load rule counts each
   running pass3/pass4 lease at its machine's cores (hosts 3 and 4 run in
   the Mac's Docker VM; task #661, 2026-11-21).
+- Continuations (task #679, 2026-11-22): an offload.sh job run with
+  `OFF_CONT=1` (heavyd -cont) is the next step of a run already under way
+  (tier.sh sets it on every offload-tier.sh step after prepare). The
+  lane's oldest waiting cont lease goes ahead of the plain queue, behind
+  OFF_PRIORITY leases; at most one per lane, so the gates still move. The
+  8-hour tier waited 9.3 h in 2 days, 0.4 h of it at prepare and the rest
+  between steps (~/xo-lead/notes/xw-1/offmovable-callers.md).
 - Moving off a held lane (task #672, 2026-11-22): an offload.sh job run
   with `OFF_MOVABLE=1` (its script brings its own inputs: no `--put` to
   one host beforehand) may start on pass3 or pass4 once it has waited
