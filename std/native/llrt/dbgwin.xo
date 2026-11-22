@@ -105,7 +105,10 @@ const TRAP_FLAG = 0x100
 /// from 8, Fp at 240, Lr at 248, Sp at 256, Pc at 264 (the offsets
 /// unwind.xo's win_raise uses for Pc, Sp and X0). A single step is
 /// Cpsr's SS bit (21). The trap is `brk #0xF000`, the system's
-/// breakpoint (arch.xo trap), which leaves the pc on itself.
+/// breakpoint (arch.xo trap); the system reports it with the pc past it
+/// (4 bytes on, as past x86_64's int3: seen on the windows/arm64 VM,
+/// 2026-11-22, where a stop read as an unknown exception at +4 and each
+/// continue skipped the instruction under the trap).
 const A_CTX_FLAGS = 0x400003
 const A_CTX_CPSR = 4
 const A_CTX_X0 = 8
@@ -130,8 +133,8 @@ fn ctx_ask(c: Int) {
   }
 }
 
-/// The trap's length: the pc after an int3 is one byte on; arm64's brk
-/// leaves the pc on itself, and running on means stepping over 4 bytes.
+/// The trap's length, which the system leaves the pc past: one byte of
+/// int3, four of arm64's brk.
 fn trap_len() -> Int { if arm() { 4 } else { 1 } }
 
 /// Starts path with args stopped before its first instruction (out not
@@ -463,7 +466,7 @@ pub fn wait(h: Int, ms: Int) -> List[Int] {
       }
       // the pc back on the trap, as arm64's brk leaves it
       let rs = regs(h, tid)
-      if !arm() && rs.len() > 32 && rs[32] == at + 1 {
+      if rs.len() > 32 && rs[32] == at + trap_len() {
         let _p = set_pc(h, tid, at)
       }
       clear_step(h, tid)

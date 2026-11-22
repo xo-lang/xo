@@ -261,7 +261,7 @@ func fileExists(p string) bool {
 // disconnect detaches, leaving the program running.
 func TestDebugDAPAttach(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug attaches on macOS arm64, Linux and Windows amd64 (decision 0253 stages 4 and 6)")
+		t.Skip("xo debug attaches on macOS, Linux and Windows (decision 0253 stages 4 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")

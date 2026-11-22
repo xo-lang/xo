@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- `xo debug` on Windows arm64 (decision 0253, task #634): launching, attaching, breakpoints, stepping, locals, backtraces and tasks work natively, as on Windows amd64. Before, the debugger there read the amd64 register layout and could not walk the stack.
 - Fix (LLVM backend, `XO_SEPCOMP_LLVM=1`; task #607): programs that failed to link with `undefined hidden symbol: xo.dropp...llvm...` link. Their code inlined std functions that call helpers std's cached objects did not export (two of eight programs tried, among them one that formats times with named layouts).
 - Fix (std/http server; task #671): a program whose scope ended right after a request to its own HTTP/2 server sometimes ran 30 s longer (about 1 run in 450 on a quiet linux/arm64 host). The server's connection parked as idle just as the server was canceled, and nothing closed it until the server's shutdown wait ran out.
 - Fix (`xo bench --ab` on Linux; task #645): a side that is an xo keeps the `XO_STD` bench was started with. On Linux bench runs both sides from a tmpfs copy and set that side's `XO_STD` to the std beside the original binary, replacing yours, so an xo given another std (an edited copy) measured the installed one.

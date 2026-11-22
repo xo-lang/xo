@@ -560,10 +560,17 @@ asked for as the stages found them):
   now includes darwin/amd64) and a hand session (break, run, bt through
   the fiber frames, step, next, continue) that matches arm64's line for
   line.
-- 2026-11-21 (Xo Lang 1, task #634) stage 6, Windows arm64, the parts
-  that need no Windows machine. NOT YET RUN on windows/arm64: the VM run
-  of cmd/xo TestDebug* is pending, and debugLaunches still leaves
-  windows/arm64 out until it passes there.
+- 2026-11-21 and 22 (Xo Lang 1, task #634) stage 6, Windows arm64.
+  Run on the windows/arm64 VM on 2026-11-22 with an xo cross-built on
+  the Mac: cmd/xo TestDebug*, 13 pass and TestDebugSchedFdsOpen skips
+  (fds_open is not counted on Windows): DAP, DAPAttach, Batch, Timeout,
+  Step, Tasks, Attach, AssignedVarNotStale, VarsDump and the Sched
+  tests; debugLaunches includes windows/arm64. The first run failed
+  four of them on one assumption: Windows reports `brk #0xF000` with
+  the pc past it (4 bytes on, as past int3), not on it, so a stop read
+  as an unknown exception and each continue skipped the instruction
+  under the trap; the stop now moves the pc back on both
+  architectures.
   - Unwinding: an arm64 PE's unwind data is not x86_64's UNWIND_INFO but
     one code for each instruction of the prolog and of every epilog
     (decision 0569 stage 2; a64unwind.xo already decoded and checked
@@ -587,10 +594,8 @@ asked for as the stages found them):
     ones unwind.xo's win_raise runs with); a single step is Cpsr's SS
     bit (21); the trap is `brk #0xF000` (arch.xo trap for a Windows
     program that is not x86_64: the immediate the system reports as a
-    breakpoint), which leaves the pc on itself, so the loader's
-    breakpoint is passed by 4 bytes and a stop needs no pc moved back.
-    The single step bit and the brk immediate are from the platform's
-    documentation as remembered, not from a run: the VM run decides.
+    breakpoint), reported with the pc past it. The single step bit
+    and the brk immediate held in the VM run.
   - A parked task's frame (tasks.xo task_frames): windows/arm64 took
     windows/amd64's switch frame; it is arm64's (x19 to x30 from the
     saved sp) with the caller's stack 192 bytes up, not 160

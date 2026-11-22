@@ -105,7 +105,7 @@ func debugLaunches() bool {
 		return runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64"
 	}
 	if runtime.GOOS == "windows" {
-		return runtime.GOARCH == "amd64"
+		return runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
 	}
 	return runtime.GOOS == "darwin" && (runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64")
 }
@@ -121,7 +121,7 @@ func debugBackend() string {
 
 func TestDebugBatch(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -153,7 +153,7 @@ func TestDebugBatch(t *testing.T) {
 // gotchas/ptrace-leader-reaped-last.md).
 func TestDebugTimeout(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -196,7 +196,7 @@ func TestDebugTimeout(t *testing.T) {
 // apart.
 func TestDebugStep(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs native programs")
@@ -250,7 +250,7 @@ const debugTasks = `fn main(os: Os) {
 // stack), and locals and print read it there.
 func TestDebugTasks(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -274,7 +274,7 @@ func TestDebugTasks(t *testing.T) {
 // the session the program runs on (detached, not killed).
 func TestDebugAttach(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug attaches on macOS arm64, Linux and Windows amd64 (decision 0253 stages 4 and 6)")
+		t.Skip("xo debug attaches on macOS, Linux and Windows (decision 0253 stages 4 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -367,7 +367,7 @@ func TestDebugWindowsUnwindData(t *testing.T) {
 // value.
 func TestDebugAssignedVarNotStale(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
