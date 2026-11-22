@@ -427,6 +427,15 @@ Cold empties every cache before each round (Go with -count=1); edit appends one
 function to the module under test before each round (Go -count=1). Copies of GOROOT
 and the release's std.
 
+The two edit rows are a rerun on host 1 on 2026-11-22 (same tree, xo and lease rules)
+with scripts/release-vs-go.sh from 2124dc062d, which gives B `--env-b=XO_STD=` the
+edited copy. The first run's edit rows (base64 0.052, json 0.018 of Go's wall, B's
+max RSS equal to A's) tested the unedited std: on Linux this xo's bench set a staged
+xo's XO_STD to the std beside it (task #645, fixed in 2124dc062d;
+gotchas/bench-staged-xo-std.md). The cold rows are the first run's: cold builds the
+same std either way, and the rerun's base64 cold agreed (0.81 against 0.814); the
+rerun's json cold ran loaded (2 of 4 rounds) and is not used.
+
 ### base64 (encoding/base64) cold (load 5 at start)
 
 ```
@@ -449,14 +458,14 @@ load: median 4.89 (A) / 5.06 (B); loaded: 0 of 4 rounds (at or above 8.6; baseli
 xo bench: warning: both sides build through one back-end cache, which slows the second build of each round (gotchas/bench-run-position-effect.md); give each side its own: --env-a=XO_BACKEND_CACHE_DIR=DIR/a --env-b=XO_BACKEND_CACHE_DIR=DIR/b
 xo bench: --rounds=3 runs 4 rounds: an even count runs each side first equally often
 A: goroot/bin/go test -count=1 encoding/base64 
-B: /work/x4-rvg0550/xo/xo-0.55.0-linux-arm64/bin/xo test --std-module=base64 XO_STD=/work/x4-rvg0550/xo/xo-0.55.0-linux-arm64/bin/../lib/xo/std
-4 of 4 rounds used (0 loaded), loads A/B per round: 5.88/5.88 5.88/5.88 5.88/5.88 5.88/5.88
+B: /work/x4-rvg0550/xo/xo-0.55.0-linux-arm64/bin/xo test --std-module=base64 XO_STD=xostd
+4 of 4 rounds used (0 loaded), loads A/B per round: 4.76/4.76 4.76/4.76 4.76/4.76 4.76/4.76
 
 metric                A median    B median    spread A/B        B / A   95% interval      same slot B/A   verdict
-wall_ms               247.9       12.86       1.689% 4.787%     0.052   0.049 to 0.053    0.052 0.052     better (n=4)
-cpu_ms                724.1       40.38       3.558% 1.904%     0.056   0.055 to 0.056    0.055 0.056     better (n=4)
-max_rss_kb            116700      116698      0.015% 0.009%     1.0     1.0 to 1.0        1.0 1.0         within noise (n=4)
-load: median 5.88 (A) / 5.88 (B); loaded: 0 of 4 rounds (at or above 8.88; baseline 5.88 + 3.0, at least 6.0)
+wall_ms               250.2       151.4       0.993% 3.449%     0.605   0.601 to 0.679    0.603 0.64      better (n=4)
+cpu_ms                734.3       163.4       0.874% 8.596%     0.223   0.214 to 0.27     0.222 0.242     better (n=4)
+max_rss_kb            116650      171702      0.011% 4.142%     1.472   1.444 to 1.602    1.451 1.544     worse (n=4)
+load: median 4.76 (A) / 4.76 (B); loaded: 0 of 4 rounds (at or above 8.0; baseline 5.0 + 3.0, at least 6.0)
 ```
 
 ### json (encoding/json) cold (load 5 at start)
@@ -481,13 +490,13 @@ load: median 4.855 (A) / 5.03 (B); loaded: 0 of 4 rounds (at or above 8.88; base
 xo bench: warning: both sides build through one back-end cache, which slows the second build of each round (gotchas/bench-run-position-effect.md); give each side its own: --env-a=XO_BACKEND_CACHE_DIR=DIR/a --env-b=XO_BACKEND_CACHE_DIR=DIR/b
 xo bench: --rounds=3 runs 4 rounds: an even count runs each side first equally often
 A: goroot/bin/go test -count=1 encoding/json 
-B: /work/x4-rvg0550/xo/xo-0.55.0-linux-arm64/bin/xo test --std-module=native/json XO_STD=/work/x4-rvg0550/xo/xo-0.55.0-linux-arm64/bin/../lib/xo/std
-4 of 4 rounds used (0 loaded), loads A/B per round: 5.07/4.83 4.83/4.83 4.83/4.83 4.83/4.83
+B: /work/x4-rvg0550/xo/xo-0.55.0-linux-arm64/bin/xo test --std-module=native/json XO_STD=xostd
+4 of 4 rounds used (0 loaded), loads A/B per round: 5.61/5.61 5.61/5.61 5.61/5.61 5.61/5.61
 
 metric                A median    B median    spread A/B        B / A   95% interval      same slot B/A   verdict
-wall_ms               744.3       13.36       1.199% 5.827%     0.018   0.017 to 0.02     0.018 0.018     better (n=4)
-cpu_ms                1935        41.57       1.055% 5.091%     0.021   0.02 to 0.023     0.022 0.021     better (n=4)
-max_rss_kb            157932      116686      1.806% 0.01%      0.739   0.723 to 0.744    0.734 0.739     better (n=4)
-load: median 4.83 (A) / 4.83 (B); loaded: 0 of 4 rounds (at or above 8.07; baseline 5.07 + 3.0, at least 6.0)
+wall_ms               740.7       252.7       2.799% 3.962%     0.341   0.334 to 0.377    0.338 0.355     better (n=4)
+cpu_ms                1938        446.4       0.76% 4.734%      0.23    0.228 to 0.261    0.227 0.246     better (n=4)
+max_rss_kb            157504      283466      1.296% 1.38%      1.8     1.796 to 1.875    1.787 1.876     worse (n=4)
+load: median 5.61 (A) / 5.61 (B); loaded: 0 of 4 rounds (at or above 8.61; baseline 5.61 + 3.0, at least 6.0)
 ```
 
