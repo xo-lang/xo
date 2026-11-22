@@ -12,7 +12,11 @@ Read by machines, so keep the shape:
   is missing. Paths are repo-relative, `~/...` (checked when it exists on
   this machine's lead directory), or `workstream:PATH` (the private xw
   repository, checked when `~/godev/claude-space/xolang/workstream`
-  exists). A `(name)` after a path names the function or check inside it.
+  exists). The `~/` and `workstream:` paths are read from the live machine,
+  so they fail the test only when this tree's registry is current (the
+  tree holds origin/main, or its agent-rules.md is main's); on a release
+  branch cut before a rename they are logged (task #659, 2026-11-21).
+  A `(name)` after a path names the function or check inside it.
 - xw reads the Incident kinds column: an alert kind (main failures are the
   `main-check`, `tier`, `tier-new`, `bisect` and `sched-failed` kinds) raised 3 times in 7 days that no
   row with an enforcement lists raises a `rule-gap` alert to the lead.
