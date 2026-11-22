@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (native backends, `use c`; task #697): a C call made right after another is no longer interrupted by the scheduler's preemption signal. A C `nanosleep` in a loop beside busy tasks returned early with EINTR now and then (1 of 80 sleeps of 100 ms in one test run; with 1 ms sleeps, most runs). The scheduler signals only a thread that made no C call since its last check.
 - Fix (std/jwt; task #696): a token whose payload is not JSON is a Malformed error before the key and signature checks, as golang-jwt's; it was a Signature error when the signature segment was not base64url.
 - `xo debug` on Windows arm64 (decision 0253, task #634): launching, attaching, breakpoints, stepping, locals, backtraces and tasks work natively, as on Windows amd64. Before, the debugger there read the amd64 register layout and could not walk the stack.
 - LLVM backend, opt in (`XO_SEPCOMP_LLVM=1`, decision 0738, task #607): on Linux two runtime paths every program runs are the whole program's code again. The read of a thread's table was 11 instructions for 5 (std's objects were compiled as position independent code), and the budget check at each loop head went through one more call (the compiler's own inline choice was lost between two of std's modules). Measured on a shared linux/arm64 host against the whole program: bench/perf ctx defer 1.32 to about 1.05, ctx budget 1.16 to 1.00, text cut 1.34 to 1.28, fault isolate 1.26 to 1.19.

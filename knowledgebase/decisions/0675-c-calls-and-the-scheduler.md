@@ -121,3 +121,28 @@ call starts with either ordering. Memory safety never depends on it.
 llrt pool.xo's c_enter and c_leave (the Windows path) keep their release
 stores. internal/repotest TestCMarkLayout keeps the adapter's copies of
 TLS_W and W_CSEQ_I in step with llrt.
+
+## Addendum 2026-11-22 (#697): no signal to a worker that made a C call since the last tick
+
+The window the addendum above names was hit: a tier's TestRuntimeCCalls
+on linux/arm64 printed `sleep: early 1 of 80`. A task that comes back
+from one C call and goes into the next has held its worker for a slice
+and more (W_RUN_AT_I is from before its first call) and is outside C
+for a moment; a monitor tick in that moment asked it to yield and sent
+SIGURG, and the signal landed in the next call. With 16,000 sleeps of
+1 ms in place of 80 of 100 ms (the test program's `naps`), 9 runs of 12
+on each native backend had an early sleep (35 and 81 in all, host 2).
+
+mon_scan now signals a worker only when its W_CSEQ_I is the value the
+previous tick recorded (W_CSEEN): no C call since then. The ask
+(W_PREEMPT_I) still goes out, and a poll at a loop head serves it; that
+interrupts nothing. With the change: 0 early sleeps in 12 runs of
+`naps` and 6 of `sleep` on both backends.
+
+What remains is a task that ran Xo code for a whole tick without a C
+call and makes one in the instant between the monitor's read and the
+signal's arrival. A task that calls C in a loop never matches it;
+closing it for good needs the worker to read the ask after its mark
+with an ordering that makes the two visible to each other (a store
+buffer barrier per C call, which the first addendum measured at a
+percent or more of SQLite's point lookups).

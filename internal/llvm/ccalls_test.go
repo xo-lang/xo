@@ -57,6 +57,15 @@ func TestRuntimeCCalls(t *testing.T) {
 			if s := run("sleep", "4"); !strings.Contains(s, "sleep: early 0 of 80") {
 				t.Errorf("C sleeps cut short by preemption (XO_THREADS=4):\n%s", s)
 			}
+			// the same with 16,000 sleeps of 1 ms (task #697): each return
+			// from one C call into the next is a moment outside C for a
+			// task that has held its worker for seconds, and a monitor
+			// tick in that moment sent SIGURG into the next call (35 and
+			// 81 early sleeps over 12 runs on the two backends, 9 runs
+			// of 12 with one; the 80 long sleeps above lost 1 in a tier)
+			if s := run("naps", "4"); !strings.Contains(s, "naps: early 0 of 16000") {
+				t.Errorf("C sleeps cut short by preemption between two C calls (XO_THREADS=4):\n%s", s)
+			}
 			for _, n := range []string{"1", "2"} {
 				if s := run("wait", n); !strings.Contains(s, "wait: 6 of 6 saw the flag") {
 					t.Errorf("tasks blocked in C starved the setter (XO_THREADS=%s):\n%s", n, s)

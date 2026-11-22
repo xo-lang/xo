@@ -1,5 +1,21 @@
 # std/task changes
 
+## 2026-11-22: fix: a C call made right after another is not interrupted by the preemption signal
+
+- Kind: fix
+- Commit: this push
+- Found by: the lead's tier at 92c4e88a77 (internal/llvm TestRuntimeCCalls/arm64: "sleep: early 1 of 80", task #697)
+- Go reference: none (Go's sysmon preempts by a P's status, which a syscall changes; decision 0675's marks are Xo's)
+- Test: internal/llvm TestRuntimeCCalls, mode naps (16,000 C sleeps of 1 ms beside 8 spinning tasks, XO_THREADS=4): 9 runs of 12 with an early sleep before on arm64 and on llvm (35 and 81 early sleeps), 0 of 12 after
+
+The scheduler's monitor signaled a worker whose task had held it for a
+slice and was not in a C call at that instant. A task that returns from
+one C call and enters the next matches that for a moment, and the
+signal arrived in the next call: a C nanosleep returned EINTR. The
+monitor now signals only a worker that made no C call since its
+previous tick; the request to yield still goes out and is served at a
+loop head.
+
 ## 2026-11-19: fix: a cancelled Once runner hands f to the first waiter
 
 - Kind: fix

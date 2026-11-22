@@ -3862,10 +3862,21 @@ fn mon_scan(p: Int) -> Int {
     // and blocked when in the same call as at the last tick
     let cs = rt.slot_load(w, W_CSEQ_I, ACQUIRE)
     let in_c = cs & 1 == 1
-    if in_c && rt.mem_load(w, W_CSEEN, 8) == cs {
+    let seen = rt.mem_load(w, W_CSEEN, 8)
+    if in_c && seen == cs {
       blocked = blocked.wrapping_add(1)
     }
     rt.mem_store(w, W_CSEEN, cs, 8)
+    // SIGURG only to a worker that made no C call since the last tick
+    // (task #697). A task that comes back from one C call and goes into
+    // the next has held its worker a slice and more (W_RUN_AT_I is from
+    // before the first call) and is outside C for a moment: a tick in
+    // that moment asked it to yield and signaled it, and the signal
+    // landed in the next call (nanosleep returned EINTR: 1 early sleep
+    // of 80 in a tier's TestRuntimeCCalls, and with 1 ms sleeps 35 and
+    // 81 of 16,000 on the two backends). The ask itself still goes out:
+    // a poll at a loop head serves it, which interrupts nothing
+    let steady = seen == cs
     // a fiber SIGURG preempted waits for its own worker (decision 0318),
     // which no other worker can help: work waits for it alone (a plain
     // read of the worker's word, a hint)
@@ -3884,7 +3895,7 @@ fn mon_scan(p: Int) -> Int {
       // polls call the stub
       if (in_c || !waiting || now.wrapping_sub(ask) >= SLICE_NS) && rt.slot_cas(w, W_PREEMPT_I, ask, 0, RELAXED) {
         let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
-      } else if async {
+      } else if async && steady {
         // the handler declined (runtime code, a lock held): again
         async_kick(w)
       }
@@ -3893,7 +3904,7 @@ fn mon_scan(p: Int) -> Int {
       if cpu.ticks_ns(cpu.ticks().wrapping_sub(ra)) >= SLICE_NS && rt.slot_cas(w, W_PREEMPT_I, 0, now, RELAXED) {
         acted = true
         let _i = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, 1, RELEASE)
-        if async {
+        if async && steady {
           async_kick(w)
         }
       }
