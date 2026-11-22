@@ -182,7 +182,11 @@ fn switch_asm(goos: Str, goarch: Str) -> (List[Str], List[Str]) {
       return (amd64_win_switch(), ["subq $32, %rsp", "movq %rbx, %rcx", "callq *%r12", "ud2"])
     }
     let start = ["movq %rbx, %rdi", "callq *%r12", "ud2"]
-    if goos == "linux" || goos == "freebsd" {
+    // darwin too: ld64 keeps the function's DWARF entry (compact
+    // encoding mode 4, the FDE's offset), which unwind.xo steps; with the
+    // frame check reading rbp, xo dump's walk of a parked fiber reached
+    // this frame and read past the stack: SIGBUS (darwin/amd64, task #649)
+    if goos == "linux" || goos == "freebsd" || goos == "darwin" {
       // a fiber's outermost frame: its return address undefined (DW_CFA_undefined
       // of rip, DWARF register 16), as on linux/arm64 below. Without it the
       // FDE clang gives the naked function has the return address at CFA-8,

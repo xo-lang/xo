@@ -2235,12 +2235,14 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
     }
     let enc = rt.mem_load(s, H_ENC, 8)
     if darwin && enc != 0 {
-      // a compact frame record at x29 must lie on this stack
-      let fp = rt.mem_load(cur, 8 * 29, 8)
-      if !x64() && (enc & 251658240) != 33554432 && (fp < sp || fp - sp > PROF_SPAN || fp > top - 16) {
-        break
-      }
-      if x64() && (fp < sp || fp - sp > PROF_SPAN || fp > top - 16) {
+      // a compact frame record at the frame pointer (x29, rbp) must lie on
+      // this stack; a frameless encoding has none. x86_64 read arm64's x29
+      // slot, which its walk never fills, so every compact-encoded frame
+      // ended the walk on darwin/amd64 (task #649: xo dump's Mutex.with
+      // wait lost its line)
+      let fp = rt.mem_load(cur, fp_off(), 8)
+      let framed = if x64() { (enc & 251658240) == 16777216 } else { (enc & 251658240) != 33554432 }
+      if framed && (fp < sp || fp - sp > PROF_SPAN || fp > top - 16) {
         break
       }
       if !cstep(s, cur, enc) {

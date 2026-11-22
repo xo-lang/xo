@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (native, LLVM backend on macOS on Intel; task #649): `xo dump` shows the program line a task waits at on darwin/amd64 (a task blocked in `Mutex.with` showed none). The stack walk checked arm64's frame pointer register instead of rbp, so it stopped at the first frame with a compact unwind entry; with that fixed, a parked fiber's walk read one word past the fiber's stack (SIGBUS), because the fiber's outermost frame did not mark its return address undefined on macOS as it does on Linux and FreeBSD.
 - Fix (LLVM backend, macOS on Intel; task #650): a fault in a default (debug) build printed its report and exited 70 everywhere but on darwin/amd64, where the program died with SIGSEGV at the end of its stack. The runtime's stack walk read one word past a task's stack.
 - Fix (run cache, LLVM backend on macOS; task #649): an unchanged `xo build`, `xo run` or `xo test` is a run cache hit again. Every such build missed, because the staged dSYM that dsymutil writes and the build reads to embed was recorded as one of the build's inputs. On darwin/amd64, where LLVM is the only native backend, no build was ever a hit.
 - Fix (`XO_PROF=cpu` on Windows; task #646): the CPU profile takes its samples at the requested rate. It listed threads with a Toolhelp snapshot of the whole system, about 100 ms per tick on a busy 32 core host, so a 10 ms profile took 2 to 6 samples where it should take about 35; it now lists only the process's threads (NtGetNextThread).
