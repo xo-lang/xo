@@ -1711,6 +1711,16 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   its 5 minute load over 48 (HEAVY_LOAD5_HOLD), and the admission policy's load rule counts each
   running pass3/pass4 lease at its machine's cores (hosts 3 and 4 run in
   the Mac's Docker VM; task #661, 2026-11-21).
+- Moving off a held lane (task #672, 2026-11-22): an offload.sh job run
+  with `OFF_MOVABLE=1` (its script brings its own inputs: no `--put` to
+  one host beforehand) may start on pass3 or pass4 once it has waited
+  15 minutes (HEAVYD_MOVE_BEHIND_MIN; HEAVYD_MOVE_BEHIND_TO) on lanes
+  that a running exclusive or memory lease holds whole, when the Mac's
+  admission admits it; offload.sh then runs it on that lane's host
+  (HEAVY_LANE_ENV) and heavyd's log says "moved from SPEC to LANE".
+  Without OFF_MOVABLE a job waits on its own lane as before. A gate that
+  takes the whole lane (llvm, arm64, corpora-all, cmd, devllvm, or
+  OFFGATE_MEM=1) prints which steps made it so.
 - Quick runs (2026-11-15): `HEAVY_CLASS=quick ~/xo-lead/agents/heavy.sh
   NAME CMD...` for a run of seconds (one package's `xo test`, a vet, a
   short repro): it starts at once, past the slot queue, the gate cap,
