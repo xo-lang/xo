@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (heap profile; task #658): `XO_PROF=heap XO_PROF_HEAP_RATE=1 xo build` of a large program no longer dies with SIGSEGV after writing its profile (about one run in four since 0.52.0). A sampled block freed on another thread was put on the front end's heap region with the profile's mark still in its header.
 - Fix (native, LLVM backend on macOS on Intel; task #649): `xo dump` shows the program line a task waits at on darwin/amd64 (a task blocked in `Mutex.with` showed none). The stack walk checked arm64's frame pointer register instead of rbp, so it stopped at the first frame with a compact unwind entry; with that fixed, a parked fiber's walk read one word past the fiber's stack (SIGBUS), because the fiber's outermost frame did not mark its return address undefined on macOS as it does on Linux and FreeBSD.
 - Fix (LLVM backend, macOS on Intel; task #650): a fault in a default (debug) build printed its report and exited 70 everywhere but on darwin/amd64, where the program died with SIGSEGV at the end of its stack. The runtime's stack walk read one word past a task's stack.
 - Fix (run cache, LLVM backend on macOS; task #649): an unchanged `xo build`, `xo run` or `xo test` is a run cache hit again. Every such build missed, because the staged dSYM that dsymutil writes and the build reads to embed was recorded as one of the build's inputs. On darwin/amd64, where LLVM is the only native backend, no build was ever a hit.

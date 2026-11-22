@@ -879,7 +879,20 @@ pub fn free_mt(h: Int, p: Int) {
     // a block of the heap region (decision 0633): onto this record's
     // inbox (a stack other threads never push to, but the region's
     // release takes it whole), so it never serves this record's
-    // allocations; the release puts it on the region's lists
+    // allocations; the release puts it on the region's lists.
+    // A block the heap profile sampled (minus its class in its header)
+    // goes through heap_big_release first, as below: the profile
+    // forgets it and its class comes back, then it is freed again and
+    // lands here. Pushed as it was, the release read the negative header
+    // as its class and linked the block below the record's lists, adding
+    // 1 to a word there: an xo build under XO_PROF=heap
+    // XO_PROF_HEAP_RATE=1 died in the walk on a free list link of 1, one
+    // run in three (task #658, 2026-11-21)
+    let c0 = rt.mem_load(p.wrapping_sub(8), 0, 8)
+    if c0 < 0 {
+      rt.heap_big_release(p.wrapping_sub(8))
+      return
+    }
     return inbox_push(h, p)
   }
   var c = 0
