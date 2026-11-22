@@ -2184,7 +2184,15 @@ scripts/lead/heavyd/cancel_test.go. Last verified: 2026-11-22
     with a message) and `no-token` (an agent that cannot ack: `xw
     token set NAME`). Last verified: 2026-11-15.
   - `xw priority` (the owner's ranked goals), `xw charter NAME`, `xw
-    status [NAME]`, `xw jobs --since 2h` (wait vs run per job), `xw
+    status [NAME]`, `xw jobs --since 2h` (wait vs run per job; #720,
+    2026-11-22: `--tests` adds each gate's step times and its 10 slowest
+    tests and subtest groups under its heavy.sh job or heavyd lease, and
+    `--test PAT` every test whose name holds PAT with their sums and
+    share of the step, e.g. `xw jobs --since 7d --test TestGoldenASan`;
+    from notes/gate-times, where gate.sh's header is followed by
+    `# job job NAME` under heavy.sh and offload-gate.sh files `# job
+    lease NAME`; tested by gate_failfast_test.sh and
+    offload_gate_test.sh), `xw
     gates [NAME] --since 24h` (ended offload gates: by rc, step time
     total, p50 and max, slowest tests, failing tests with the newest
     log), `xw pushes [NAME] --since 24h` (#522, 2026-11-20: ended

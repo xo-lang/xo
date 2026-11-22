@@ -2335,6 +2335,10 @@ fi
 # lines (an offload host; offload-gate.sh files them on the Mac)
 if [ -s "$logs/times.tsv" ]; then
   gt_head="# $(date -u +%FT%TZ) $(uname -sm) $(git rev-parse --short HEAD) $(basename "$wt") failed=$failed"
+  # the xw jobs row the times belong to (task #720): heavy.sh's job; an
+  # offload host's lines get the lease's name from offload-gate.sh instead
+  [ -n "${HEAVY_JOB_NAME:-}" ] && gt_head="$gt_head
+# job job $HEAVY_JOB_NAME"
   gtd=${XO_LEAD_DIR:-$HOME/xo-lead}
   if [ -d "$gtd" ] && [ -z "${XO_GATE_TIMES_PRINT:-}" ]; then
     mkdir -p "$gtd/notes/gate-times"
