@@ -5325,6 +5325,10 @@ a checkout of the repository, in two steps:
     #     Gates pick the newest ancestor seed on a host, so a host left
     #     out keeps building with the old seed and seedbuild fails
     #     (2026-11-15: 0.52.0 uploaded, the hosts still on 0.51.1)
+    # 3c. the new seed's PE imports: regenerate scripts/win-imports-seed.txt
+    #     from the new tag (its first comment lines give the command) and
+    #     push it; TestPEImportsInSeed asks for it once the tag is local
+    #     (task #689: an import added after the seed breaks its Windows link)
     # 4. delete WORKDIR (about 4 GB: the boot stages, the cross and race
     #    builds, the packed tarballs, now in the bucket) and its tree
     #    worktree, by literal path

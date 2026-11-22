@@ -64,6 +64,23 @@ sys_windows.xo function is usable only once the seed's peimports.xo has
 it; check with the seed: `xo build --std=NEW_STD --backend=amd64
 --target=windows/amd64 hello`.
 
+Observed again 2026-11-22 (task #689): 96d8f134c4 (#646) declared
+GetThreadId and NtGetNextThread in sys_windows.xo for prof.xo's
+win_tick, so the 0.55.0 windows seed failed to build xo on the Windows
+box ("prog-windows.157.obj: undefined symbol GetThreadId"; the 8-hour
+tier's windows sample said "xo did not build"). Both are now found at run
+time with `process.win_proc` (crash.xo's resolver, moved to
+std/native/llrt/process.xo so prof.xo can use it), and NtGetNextThread's
+six arguments go through a 50 byte machine code trampoline (prof.xo
+call6_make) called with rt.call_c2, since rt.call_c4 passes four.
+`TestPEImportsInSeed` (internal/repotest) now fails when peimports.xo
+names a function the seed release's table lacks. That table is a file,
+scripts/win-imports-seed.txt (regenerated at each seed cut, toolchain.md
+"Cutting a seed"), not the newest tag's: an offload gate's clone holds
+only the tags of its first fetch (gate bundles carry branches), so on
+host 2 the newest tag was v0.37.0 and the first version of the test
+failed with 60 names v0.37.0 lacked.
+
 Observed again, for an intrinsic only the native backends lower
 (2026-10-25, decision 0373): `rt.case_fold16`, declared in
 std/native/rt.xo and called from std/native/llrt/obj.xo's

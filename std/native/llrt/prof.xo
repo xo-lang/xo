@@ -2074,8 +2074,11 @@ fn mac_sample(r: Int, d: Int, t: Int, gen: Int) {
 /// timer, the unwind record it walks with (unwind.xo prof_init, its
 /// CONTEXT there), the sampler's own thread and process ids, the tick in
 /// 100 ns, a due time, the four FILETIMEs of GetThreadTimes, a cycle
-/// count, a THREADENTRY32 (28 bytes), and the table of threads seen: WT_N
-/// entries of (thread id, handle, last cycles).
+/// count, a THREADENTRY32 (28 bytes), the table of threads seen: WT_N
+/// entries of (thread id, handle, last cycles), then GetThreadId's and
+/// NtGetNextThread's addresses, the call6 trampoline's, its argument
+/// block (the function, six arguments) and the DLL name buffer of
+/// process.win_proc.
 const WB_TIMER = 0
 const WB_UNW = 8
 const WB_ME = 32
@@ -2087,7 +2090,12 @@ const WB_CYC = 96
 const WB_TE = 104
 const WB_TAB = 1408
 const WT_N = 256
-const WB_SIZE = 7552
+const WB_GTI = 7552
+const WB_NGT = 7560
+const WB_CALL6 = 7568
+const WB_ARGS = 7576
+const WB_NAME = 7632
+const WB_SIZE = 7888
 /// OpenThread's access: THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
 /// THREAD_QUERY_INFORMATION.
 const THREAD_SAMPLE = 74
@@ -2118,6 +2126,7 @@ fn win_start(r: Int, u: Int, hz: Int) {
   st(w, WB_TIMER, t)
   st(w, WB_PID, Int(sys_windows.GetCurrentProcessId()))
   st(w, WB_TICK, 10000000 / hz)
+  win_procs(w)
   st(r, R_WIN, w)
   rt.slot_store[Int](rt.static_word(W_PROF), 0, r, 2)
   let th = sys_windows.CreateThread(0, 65536, rt.fn_addr("prof_sampler"), r, 65536, 0)
@@ -2161,11 +2170,15 @@ pub fn win_sampler(r: Int) -> Int {
 fn win_tick(r: Int, w: Int) {
   let me = ld(w, WB_ME)
   let nx = w + WB_TE
+  if ld(w, WB_CALL6) == 0 {
+    win_snap_tick(r, w)
+    return
+  }
   var h = 0
   var n = 0
   while true {
     st(nx, 0, 0)
-    let s = Int(sys_windows.NtGetNextThread(sys_windows.GetCurrentProcess(), h, THREAD_QUERY_LIMITED, 0, 0, nx))
+    let s = win_next_thread(w, h, nx)
     if h != 0 {
       let _c = sys_windows.CloseHandle(h)
     }
@@ -2179,11 +2192,72 @@ fn win_tick(r: Int, w: Int) {
     }
     h = ld(nx, 0)
     n += 1
-    let tid = Int(sys_windows.GetThreadId(h))
+    let tid = rt.call_c2(ld(w, WB_GTI), h, 0) & 4294967295
     if tid != 0 && tid != me {
       win_sample(r, w, tid)
     }
   }
+}
+
+/// GetThreadId and NtGetNextThread, found in kernel32's and ntdll's
+/// exports at run time, and the call6 trampoline NtGetNextThread's six
+/// arguments go through (rt.call_c2 and call_c4 pass two and four), or 0
+/// (win_tick then takes the snapshot). They are not imported: Xo's PE
+/// linker resolves imports by a table compiled into xo (compiler/macho
+/// peimports.xo), and the windows seed's, 0.55.0's, has neither, so the
+/// seed could not link xo itself on Windows (task #689).
+fn win_procs(w: Int) {
+  let g = process.win_proc(w + WB_NAME, "kernel32.dll", "GetThreadId")
+  let n = process.win_proc(w + WB_NAME, "ntdll.dll", "NtGetNextThread")
+  let c = call6_make()
+  if g == 0 || n == 0 || c == 0 {
+    return
+  }
+  st(w, WB_GTI, g)
+  st(w, WB_NGT, n)
+  st(w, WB_CALL6, c)
+}
+
+/// The Win64 call of a function with six word arguments, as machine code
+/// on a page of its own (PAGE_EXECUTE_READWRITE), or 0. Called as
+/// rt.call_c2(c, a, 0) with a block a of the function then its arguments:
+///   push rbx; sub rsp, 0x30; mov rbx, rcx
+///   mov rax, [rbx+48]; mov [rsp+40], rax; mov rax, [rbx+40]; mov [rsp+32], rax
+///   mov rcx, [rbx+8]; mov rdx, [rbx+16]; mov r8, [rbx+24]; mov r9, [rbx+32]
+///   call [rbx]; add rsp, 0x30; pop rbx; ret
+/// (clang -target x86_64-pc-windows-msvc). Entry rsp is 8 mod 16: the
+/// push and the 48 bytes (shadow space and the two stack arguments) align
+/// the call.
+fn call6_make() -> Int {
+  match target.arch {
+    TargetArch.Amd64 => {}
+    TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => return 0
+  }
+  // MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
+  let c = sys_windows.VirtualAlloc(0, 4096, 12288, 64)
+  if c == 0 {
+    return 0
+  }
+  let code = [83, 72, 131, 236, 48, 72, 137, 203, 72, 139, 67, 48, 72, 137, 68, 36, 40, 72, 139, 67, 40, 72, 137, 68, 36, 32, 72, 139, 75, 8, 72, 139, 83, 16, 76, 139, 67, 24, 76, 139, 75, 32, 255, 19, 72, 131, 196, 48, 91, 195]
+  for (i, x) in code.indexed() {
+    rt.mem_store(c, i, x, 1)
+  }
+  let _f = sys_windows.FlushInstructionCache(sys_windows.GetCurrentProcess(), c, code.len())
+  c
+}
+
+/// NtGetNextThread through call6: its NTSTATUS, sign extended.
+fn win_next_thread(w: Int, h: Int, next: Int) -> Int {
+  let a = w + WB_ARGS
+  st(a, 0, ld(w, WB_NGT))
+  st(a, 8, sys_windows.GetCurrentProcess())
+  st(a, 16, h)
+  st(a, 24, THREAD_QUERY_LIMITED)
+  st(a, 32, 0)
+  st(a, 40, 0)
+  st(a, 48, next)
+  let s = rt.call_c2(ld(w, WB_CALL6), a, 0) & 4294967295
+  if s >= 2147483648 { s - 4294967296 } else { s }
 }
 
 /// THREAD_QUERY_LIMITED_INFORMATION, enough for GetThreadId.

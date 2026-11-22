@@ -21,7 +21,8 @@ Suspending, capturing and unwinding the threads took under 1 ms.
 ## Fix
 
 List the process's own threads with ntdll's `NtGetNextThread` (prof.xo
-win_tick), keeping the snapshot only as a fallback. Golden
+win_tick; found in ntdll's exports at run time since task #689, see
+seed-older-than-intrinsics.md), keeping the snapshot only as a fallback. Golden
 `internal/llvm/testdata/golden/native_prof_rate` reruns a fib child under
 `XO_PROF=cpu` and requires samples times 10 ms within half to one and a
 half of its CPU time (`ProcOutput.usage`); it fails before the fix (a ratio
