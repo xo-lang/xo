@@ -423,6 +423,19 @@ The opt in's text shrank with the copies (bench/perf ctx 893,007 to
 868,587 bytes). TestSepcompLLVM "runtime calls as the whole program's"
 reads the two functions' sizes from std's objects.
 
+On host 1 alone at e43aa14699 (`xo bench --ab` per workload, 4 rounds,
+checksums compared on all 71 rows; p607/rt-time-e43aa14699....out
+against rt-time-64bb87aec....out) the opt in runs 1.029 of the whole
+program's time over the 71 workloads, from 1.042: ctx defer 1.325 to
+1.030, ctx budget 1.153 to 0.997, text cut 1.258 to 1.167, text
+zone_fmt 1.140 to 1.091, fault isolate 1.170 to 1.145, digest
+sha256_small 1.193 to 1.180. By group: atomic 1.003, ctx 0.983, digest
+1.055, json 1.038, portable 1.009, rsa 1.073, text 1.024, fault 1.147.
+Nine rows remain at 1.10 or more: digest sha256_small 1.180, fault
+defer 1.177, text cut 1.167, portable str_hash 1.145, fault isolate
+1.145, rsa sign2048 1.135, text replace 1.132, fault owned 1.131, json
+maps 1.102.
+
 Tried and dropped (tl3.out, branch l607-exports-tried): copying the
 runtime's C ABI exports too (`xo_x_obj_str_eq` and the like, whose
 calls carry the mark) and marking each export's one call, so the body
@@ -430,8 +443,7 @@ behind it inlines as it does in a whole program. The calls of
 `cabi.obj_str_eq` in bench/perf text went from 118 to 0, the text grew
 9% (1,414,316 to 1,540,192 bytes), and no row moved beyond the noise.
 
-Still open: digest sha256_small, fault isolate and text cut at 1.15 to
-1.3. The counts of calls by callee (sz4.out) name nothing more that is
+Still open: the nine rows above. The counts of calls by callee (sz4.out) name nothing more that is
 a call in the opt in and inlined in the whole program: the other names
 that differ (cabi.fault_continue, obj_rs_push_byte, the drop helpers)
 cost the same number of calls in both.
