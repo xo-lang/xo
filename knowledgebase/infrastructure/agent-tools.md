@@ -1718,7 +1718,14 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   that a running exclusive or memory lease holds whole, when the Mac's
   admission admits it; offload.sh then runs it on that lane's host
   (HEAVY_LANE_ENV) and heavyd's log says "moved from SPEC to LANE".
-  Without OFF_MOVABLE a job waits on its own lane as before. A gate that
+  Without OFF_MOVABLE a job waits on its own lane as before.
+  `OFF_CARRY=LOCAL:REMOTE[,LOCAL:REMOTE...]` makes a job movable and puts
+  each file to the host the lease lands on, inside the lease (a bundle
+  built thin against a base every pass host holds; exit 4 when a put
+  fails). mainsmall.sh's small check uses it when every pass host answers
+  `--has-commit` for its rev or one base; else it stays on its host
+  (MAINSMALL_MOVE=0 keeps it there). offload-tier.sh does not move: its
+  steps share /work/tierN state on one host. A gate that
   takes the whole lane (llvm, arm64, corpora-all, cmd, devllvm, or
   OFFGATE_MEM=1) prints which steps made it so.
 - Quick runs (2026-11-15): `HEAVY_CLASS=quick ~/xo-lead/agents/heavy.sh
