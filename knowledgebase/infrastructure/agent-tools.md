@@ -2562,6 +2562,16 @@ rounded up, when that is over 1 (Mac load 30: a 12 minute limit becomes
 which offload.sh uses as its OFF_MAX_MIN. Host 2 and a quiet Mac keep
 the limit asked for. Last verified: 2026-11-21.
 
+A lane whose host does not answer grants no new lease (task #693,
+2026-11-22: with Docker stopped heavyd placed two gates on pass3, and
+both failed copying their bundle): heavyd connects over TCP to the
+lane's host file OFF_HOST and OFF_PORT (default 22), caches the result
+for HEAVYD_REACH_SEC (60; 0 turns the check off) and refreshes it in the
+background. A lease that takes another lane too (`pass3|pass2`) goes
+there; one for the down lane alone waits, its status saying `host
+ENV unreachable (REASON, probed N ago; #693)`. Running leases are left
+alone. Last verified: 2026-11-22.
+
 ### ccguard: the Claude Code hook (#138)
 
 A PreToolUse hook (`scripts/lead/ccguard/`) stops the commands agents
