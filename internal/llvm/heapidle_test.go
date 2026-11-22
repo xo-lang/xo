@@ -132,7 +132,15 @@ func TestRuntimeHeapIdleLists(t *testing.T) {
 			}
 			before, peak, after := get("before"), get("peak"), get("after")
 			t.Logf("VmRSS before %d KiB, peak %d KiB, after %d KiB", before, peak, after)
-			if peak-before < 32*1024 {
+			// the burst must have spread: at least four tasks' blocks live
+			// at once (a task's are 3.8 MiB; sixteen at once is the usual
+			// 80 MiB). The floor was 32 MiB, and a host at load 84 ran the
+			// tasks on few workers, one reusing the last one's blocks: the
+			// burst added 32564 KiB and the test failed 204 KiB short (tier
+			// 926, task #670). Sixteen MiB still spans several records, and
+			// the lists a sweep missed (task #310) would keep more than the
+			// 8 MiB allowed below
+			if peak-before < 16*1024 {
 				t.Fatalf("the burst added only %d KiB: it no longer measures the records' lists", peak-before)
 			}
 			if !regexp.MustCompile(`(?m)^reuse ok$`).MatchString(string(out)) {

@@ -21,7 +21,7 @@ fn main(os: Os) {
   }
   os.stdio.println("hits ${hits.get()}")
   let ticks = Atomic[Int].new(0)
-  let start = os.clock.now()
+  var start = os.clock.now()
   scope s {
     s.spawn_background(fn() {
       while ticks.get() < 1000000 {
@@ -29,7 +29,13 @@ fn main(os: Os) {
         ticks.add(1)
       }
     })
-    os.clock.sleep(60ms)
+    // until the background task has run three times, however long that
+    // takes: a fixed 60 ms gave it 2 ticks on a host at load 84 (tier
+    // 926, task #670). The scope's end is timed from here
+    while ticks.get() < 3 {
+      os.clock.sleep(1ms)
+    }
+    start = os.clock.now()
   }
   let elapsed = os.clock.since(start)
   os.stdio.println("background ran: ${ticks.get() > 2} stopped quickly: ${elapsed < 2s}")
