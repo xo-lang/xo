@@ -161,8 +161,9 @@ func (p *Pty_Pty) M_read(tk *Task, max int64) Result[Option[Bytes], ProcErr] {
 	if n > 0 {
 		return Ok[Option[Bytes], ProcErr](Some(Bytes(buf[:n])))
 	}
-	// linux reads EIO once no process holds the slave
-	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, syscall.EIO) {
+	// linux reads EIO once no process holds the slave; a close from
+	// another task ends the read as the native backends do
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, syscall.EIO) || errors.Is(err, os.ErrClosed) {
 		return Ok[Option[Bytes], ProcErr](Option[Bytes]{})
 	}
 	if errors.Is(err, os.ErrDeadlineExceeded) {

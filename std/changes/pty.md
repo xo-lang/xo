@@ -22,6 +22,17 @@ The Go backend's std/pty works on Windows as the native one does: a pseudo conso
 
 `pty.open`, `pty.spawn` and `pty.start` work on Windows on the native backend: the Pty is a pseudo console (CreatePseudoConsole over two pipes), a child gets it with PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, and reads end after the child exits and its last output is out. The slave path is empty, `size` returns what was last set, and `set_raw` changes nothing. The Go backend on Windows still returns the `Io` error.
 
+## 2026-11-22: fix: a close from another task ends a pending read on the Go backend
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #705, porting creack/pty v1.1.24's io_test.go TestReadClose
+- Go reference: creack/pty TestReadClose (a close interrupts an outstanding read)
+- Test: std/rt TestPtyCloseEndsRead (failed on darwin with "read: bad file descriptor", passes now); std/pty_test.xo "close ends a read waiting in another task"
+- Shipped in: not yet released
+
+On the Go backend, `read` waiting while another task closed the Pty returned an `Io` error (Linux: use of a closed file; macOS and FreeBSD: bad file descriptor, and the wait loop could poll a descriptor number reused by another file). It now returns none, the end, as the native backends do. std/pty_test.xo also ports creack's TestOpenByName, TestReadWriteText and TestReadWriteControls.
+
 ## 2026-11-22: feature: std/pty, pseudo-terminals and a child with a controlling terminal
 
 - Kind: feature

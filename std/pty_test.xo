@@ -1,7 +1,8 @@
 // std/pty's tests. The open, size and start cases follow
 // github.com/creack/pty v1.1.24's (MIT, Copyright (c) 2011 Keith Rarick):
-// run_test.go, start_test.go, io_test.go (TestReadDeadline) and its
-// winsize cases; the attach, raw and error cases are Xo's own. They
+// run_test.go, start_test.go, doc_test.go (TestOpenByName,
+// TestReadWriteText, TestReadWriteControls), io_test.go (TestReadDeadline,
+// TestReadClose) and its winsize cases; the attach, raw and error cases are Xo's own. They
 // start real processes (/bin/sh, /bin/sleep, /bin/stty). A test reads
 // the terminal to its end before wait: macOS drops what the child wrote
 // and not yet read once the child is reaped
@@ -125,6 +126,67 @@ test "a missing command is NotFound and leaves the pty open" uses proc {
   expect(spawn(p, os.proc.cmd("/no/such/command-xo-pty")).is_err())
   expect(p.size().is_ok())
   p.close()
+}
+
+// creack/pty's doc_test.go TestOpenByName: the slave opened by its path
+// (here by a child that holds no other copy) reaches the master.
+test "the slave opened by its path reaches the master" uses (proc, clock) {
+  let (p, path) = open(os.proc)?
+  let c = spawn(p, os.proc.cmd("/bin/sh", ["-c", "printf ping > ${path}"]), Attach.ControllingOnly)?
+  p.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+  var got = ""
+  while !got.contains("ping") {
+    match p.read(64)? {
+      Some(b) => got = got + b.to_str_lossy()
+      None => break
+    }
+  }
+  expect(got) == "ping"
+  expect(c.wait()) == Ok(0)
+  p.close()
+}
+
+// creack/pty's TestReadWriteText: text written to the master is the
+// child's line, and its echo comes back with the newline as CR LF.
+test "a line written to the master echoes with CR LF" uses proc {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/sh", ["-c", "IFS= read -r l; printf '[%s]' \"$l\""]))?
+  p.write(b"pong\n")?
+  let out = drain(p)?
+  expect(c.wait()) == Ok(0)
+  expect(out.contains("pong\r\n"))
+  expect(out.contains("[pong]"))
+  p.close()
+}
+
+// creack/pty's TestReadWriteControls: a control byte in a cooked line
+// reaches the child as itself and echoes as caret notation.
+test "a control byte in a line echoes as ^H" uses proc {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/sh", ["-c", "IFS= read -r l; printf '[%s]' \"$l\""]))?
+  p.write(b"pind\x08g\n")?
+  let out = drain(p)?
+  expect(c.wait()) == Ok(0)
+  expect(out.contains("pind^Hg\r\n"))
+  expect(out.contains("[pind\x08g]"))
+  p.close()
+}
+
+// creack/pty's io_test.go TestReadClose: closing the pty from another task
+// ends a read that waits on it, as the end of the terminal.
+test "close ends a read waiting in another task" uses (proc, clock) {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/sleep", ["10"]))?
+  let t0 = os.clock.now()
+  let got = scope s {
+    let _closer = s.spawn(fn() -> () ! ProcErr {
+      os.clock.sleep(100ms)
+      p.close()
+      Ok(())
+    })
+    p.read(16)
+  }
+  expect(got) == Ok(None)
+  expect(os.clock.now() - t0 < 5s)
+  c.kill()
+  let _w = c.wait().ignore_err("killed: its status is not the point")
 }
 
 // FreeBSD revokes a session's terminal when its leader exits and drops
