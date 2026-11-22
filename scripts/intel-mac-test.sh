@@ -104,13 +104,16 @@ trap release EXIT
 
 ssh_ "test -x ~/xo-ci/go/bin/go || { mkdir -p ~/xo-ci && curl -fsSL https://go.dev/dl/go$GOVER.darwin-amd64.tar.gz | tar -C ~/xo-ci -xz; }"
 
-bundle=$(mktemp -t xo-intel).bundle
+# GNU mktemp needs the X's in the template (BSD -t appends its own): one
+# template both read; the empty file it makes goes with the bundle
+tmpf=$(mktemp "${TMPDIR:-/tmp}/xo-intel.XXXXXX") || exit 1
+bundle=$tmpf.bundle
 # a bundle needs a ref, not a bare commit: a temporary one, removed after
 git update-ref "refs/xo-intel/$commit" "$full"
 git bundle create "$bundle" "refs/xo-intel/$commit" >/dev/null 2>&1
 git update-ref -d "refs/xo-intel/$commit"
 scp -o BatchMode=yes -q "$bundle" "$HOST:xo-ci/xo-$run.bundle"
-rm -f "$bundle"
+rm -f "$bundle" "$tmpf"
 
 remote_log="xo-ci/logs/$commit-$run.log"
 cleanup() {
