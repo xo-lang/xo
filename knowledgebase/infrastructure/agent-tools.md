@@ -1703,6 +1703,11 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   (HEAVY_GATE_MAX_LOAD); heavy runs take one of 3 slots (HEAVY_SLOTS; owner, 2026-11-11, was 4) and are
   stopped past 32 GB (HEAVY_MAX_GB). Owner, 2026-11-09, for the 96 GB, 30-core
   Mac Studio. Last verified: 2026-11-09.
+  A new slot run also waits (it is never stopped for it) while the Mac's
+  swap is over 70% (HEAVY_SWAP_HOLD) or its 5 minute load over 48
+  (HEAVY_LOAD5_HOLD), and the admission policy's load rule counts each
+  running pass3/pass4 lease at its machine's cores (hosts 3 and 4 run in
+  the Mac's Docker VM; task #661, 2026-11-21).
 - Quick runs (2026-11-15): `HEAVY_CLASS=quick ~/xo-lead/agents/heavy.sh
   NAME CMD...` for a run of seconds (one package's `xo test`, a vet, a
   short repro): it starts at once, past the slot queue, the gate cap,
