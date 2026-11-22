@@ -41,11 +41,17 @@ func TestSepcompLLVM(t *testing.T) {
 	// the objects are kept by clang and by the optimization level
 	// (XO_LLVM_OPT) too, which std's variant key does not hold: a build
 	// at another level must not link the default's objects
+	// the backend cache on by name, in a directory of this test's own: a
+	// tier and a gate export XO_BACKEND_CACHE=off, under which no std
+	// objects are kept and the whole program is built (tier 924 failed
+	// here: `cache std off`, task #656); and the test's std objects stay
+	// out of the host's cache
+	sepEnv := []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off", "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=" + t.TempDir()}
 	t.Run("opt level", func(t *testing.T) {
 		dir := filepath.Join("testdata", "golden", "arith")
-		opts := xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off"}}
+		opts := xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: sepEnv}
 		_, o2 := buildRunLeak(t, dir, opts)
-		opts.Env = append(opts.Env, "XO_LLVM_OPT=O1")
+		opts.Env = append(append([]string{}, sepEnv...), "XO_LLVM_OPT=O1")
 		res, o1 := buildRunLeak(t, dir, opts)
 		a, b := stdLLVMIDs(o2.Output), stdLLVMIDs(o1.Output)
 		if len(a) != 1 || len(b) != 1 || a[0] == b[0] {
@@ -75,7 +81,7 @@ func TestSepcompLLVM(t *testing.T) {
 		if _, serr := os.Stat(strings.TrimSpace(string(out))); err != nil || serr != nil {
 			t.Skip("no lld: the plain objects are the fallback")
 		}
-		_, build := buildRunLeak(t, filepath.Join("testdata", "golden", "arith"), xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off"}})
+		_, build := buildRunLeak(t, filepath.Join("testdata", "golden", "arith"), xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: sepEnv})
 		if !strings.Contains(build.Output, "(thinlto)") || strings.Contains(build.Output, "(plain)") {
 			t.Fatalf("std's LLVM objects are not the ThinLTO ones (want `(thinlto)` on both `cache std llvm` lines):\n%s", build.Output)
 		}
@@ -140,7 +146,7 @@ func TestSepcompLLVM(t *testing.T) {
 	for _, name := range []string{"arith", "conc_channels", "json_text", "list_swap_guard", "http_tls"} {
 		dir := filepath.Join("testdata", "golden", name)
 		t.Run(name, func(t *testing.T) {
-			res, build := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off"}})
+			res, build := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: sepEnv})
 			if len(stdLLVMIDs(build.Output)) != 1 || !strings.Contains(build.Output, " conc=false") || !strings.Contains(build.Output, " conc=true") {
 				t.Fatalf("the build did not take std's LLVM objects (no `cache std llvm` lines):\n%s", build.Output)
 			}

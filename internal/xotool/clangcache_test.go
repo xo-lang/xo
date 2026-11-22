@@ -46,6 +46,19 @@ func TestClangKey(t *testing.T) {
 	if k4 := key("-O2", "-Wl,-object_path_lto,"+dir+"/b/lto.o", "-o", dir+"/b/out", b); k4 == k2 {
 		t.Errorf("other flags: same key")
 	}
+	// a ThinLTO backend's object follows its index file's contents, not
+	// its name (task #656: a module compiled against one std's index
+	// came back for another's and failed to link)
+	bc := write("b/prog.bc", "bitcode")
+	ix := write("b/prog.bc.thinlto.bc", "index one")
+	k5 := key("-O2", "-x", "ir", bc, "-fthinlto-index="+ix, "-c", "-o", dir+"/b/prog.o")
+	write("b/prog.bc.thinlto.bc", "index two")
+	if k6 := key("-O2", "-x", "ir", bc, "-fthinlto-index="+ix, "-c", "-o", dir+"/b/prog.o"); k5 == "" || k6 == "" || k5 == k6 {
+		t.Errorf("another ThinLTO index, the same name: keys %q and %q, want two keys", k5, k6)
+	}
+	if k7 := key("-O2", "-x", "ir", bc, "-fthinlto-index="+dir+"/b/none.thinlto.bc", "-c", "-o", dir+"/b/prog.o"); k7 != "" {
+		t.Errorf("a ThinLTO index that cannot be read: key %q, want the call left alone", k7)
+	}
 	// a C source with a local include reads a file the key does not see
 	src := write("b/x.c", "#include \"x.h\"\nint main(void){return 0;}")
 	if key("-o", dir+"/b/x", src) != "" {

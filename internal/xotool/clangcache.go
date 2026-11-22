@@ -218,6 +218,9 @@ func selfContainedC(src []byte) bool {
 	return true
 }
 
+// thinIndexFlag is the option naming a ThinLTO backend's index file.
+const thinIndexFlag = "-fthinlto-index="
+
 // clangKey is the cache key of a clang call, its output, and its
 // -object_path_lto argument; ok is false for a call the cache leaves
 // alone (no output, a C or assembly source, the preprocessor).
@@ -245,6 +248,22 @@ func clangKey(real string, args []string) (key, out, lto string, ok bool) {
 			// and it differs per build (2026-10-26: every LLVM test build
 			// missed the cache, about 29 s of clang for big_struct)
 			fmt.Fprintf(h, "oso_prefix\n")
+			continue
+		case strings.HasPrefix(a, thinIndexFlag):
+			// a ThinLTO backend's index (decision 0738: the program's
+			// module against std's bitcode) names what the module
+			// imports and which of its locals are promoted, so the
+			// object follows its contents. Keyed as an argument, by its
+			// name alone, a module compiled against one std came back
+			// for another, and json_text and http_tls failed to link in
+			// TestSepcompLLVM with `undefined hidden symbol:
+			// xo.dropslow.Str.llvm...` (task #656, 2026-11-21)
+			data, err := os.ReadFile(strings.TrimPrefix(a, thinIndexFlag))
+			if err != nil {
+				return "", "", "", false
+			}
+			fmt.Fprintf(h, "thinlto-index %d\n", len(data))
+			h.Write(data)
 			continue
 		case a == "-###" || a == "-E" || a == "-S" || strings.HasPrefix(a, "-M") || a == "-":
 			return "", "", "", false
