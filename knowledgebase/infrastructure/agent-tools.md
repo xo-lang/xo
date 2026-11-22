@@ -2318,10 +2318,18 @@ scripts/lead/heavyd/cancel_test.go. Last verified: 2026-11-22
     is confirmed on the host too (no host only with MB_CONFIRM=0). Its
     `bisect.done` event becomes a `bisect`
     alert to the first bad commit's owner (by the push that carried it,
-    else its task), or to the lead with a narrowed range. By hand:
+    else its task), or to the lead with a narrowed range. A first bad
+    commit is checked against main first (#709: alert #136361 fired
+    after #703's fix had landed): when origin/main has moved past BAD, a
+    second lease runs the test there (MB_CONFIRM times); passing, it
+    bisects BAD..main for the first commit it passes at and the event
+    carries `fixed=SHA`, which xw keeps with no alert (the bisect's last
+    line says "passes on main again from SHA"); still failing (`MAINBISECT-STILL-FAILS`,
+    log NAME.log.fix) the alert goes out as before. MB_FIXCHECK=0 skips
+    the check. By hand:
     `mainbisect.sh GOOD BAD ./PKG TestName`; MAINBISECT=0 turns the
     automatic run off; logs in $LEAD/notes/bisect/. Last verified:
-    2026-11-21.
+    2026-11-22.
   - Agent rules registry (#139): [agent-rules.md](agent-rules.md) lists
     every rule's home, enforcement and test (TestAgentRulesRegistry in
     internal/repotest fails when a listed path goes missing) and the
