@@ -387,9 +387,17 @@ warm_mem() {
 	echo "The heap in use at the front end's peak (XO_PROF=heap at fe.build, every byte sampled), the top 12:"
 	echo
 	echo '```'
-	(cd "$d" && env XO_PROF=heap XO_PROF_HEAP_RATE=1 XO_PROF_HEAP_AT=fe.build XO_PROF_HEAP_OUT="$OUT/warm-mem-fe.xoraw" "${b[@]}" >/dev/null 2>&1)
-	"$XO" prof "$OUT/warm-mem-fe.xoraw" >/dev/null 2>&1
-	sed -n '1,2p;5,17p' "$OUT/warm-mem-fe.heap.txt" 2>/dev/null || echo "(no heap profile)"
+	# a profiled build that dies (0.55.0's SIGSEGV, task #658) is reported
+	# here; under set -e it ended the whole run before the run section
+	local hrc=0
+	(cd "$d" && env XO_PROF=heap XO_PROF_HEAP_RATE=1 XO_PROF_HEAP_AT=fe.build XO_PROF_HEAP_OUT="$OUT/warm-mem-fe.xoraw" "${b[@]}" >/dev/null 2>&1) || hrc=$?
+	if [ "$hrc" -ne 0 ]; then
+		echo "(no heap profile: the profiled build exited $hrc)"
+	elif "$XO" prof "$OUT/warm-mem-fe.xoraw" >/dev/null 2>&1 && [ -s "$OUT/warm-mem-fe.heap.txt" ]; then
+		sed -n '1,2p;5,17p' "$OUT/warm-mem-fe.heap.txt"
+	else
+		echo "(no heap profile)"
+	fi
 	echo '```'
 }
 if [ -n "$coll_nc" ]; then
