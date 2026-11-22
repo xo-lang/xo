@@ -1716,8 +1716,8 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   of gate waits on host 2 in 3 h against 53 on host 3; gatelib.sh
   gate_lane_pick over `heavy.sh --status`, host 2 on a tie,
   OFFGATE_PICK=0 keeps host 2); the 5 minute reroute still moves it.
-- Lease first (decision 0732 step 2, task #600; `OFFGATE_LEASE_FIRST=1`,
-  off by default until a day of gates ran with it): a gate with no host
+- Lease first (decision 0732 step 2, task #600; on by default since
+  2026-11-21, `OFFGATE_LEASE_FIRST=0` for the old pick): a gate with no host
   named takes one heavyd lease on every host it may use
   (`env:offload-arm64b.env|env:offload-arm64c.env` for a plain gate;
   host 4 and 2 for a memory gate, host 3 too with host3-memory-ok; host 1
