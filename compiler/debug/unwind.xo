@@ -627,7 +627,11 @@ pub fn backtrace[T: Target](tab: Tables, regs: Map[Int, Int], t: T, max: Int) ->
 /// None at an outermost frame or when nothing says where the caller is.
 fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool) -> (Map[Int, Int], Str)? {
   if tab.win && !tab.pdata.is_empty() {
-    return win_step(tab, pc, regs, t, first)
+    // x86_64's UNWIND_INFO, or arm64's unwind codes (a64winstep.xo)
+    if tab.x86 {
+      return win_step(tab, pc, regs, t, first)
+    }
+    return a64_win_step(tab, pc, regs, t, first)
   }
   if !tab.eh.is_empty() || !tab.ui.is_empty() {
     let (enc, start) = compact_entry(tab, pc)

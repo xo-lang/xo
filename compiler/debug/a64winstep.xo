@@ -1,0 +1,183 @@
+// A Windows arm64 frame unwound by its .pdata entry (decision 0253 stage
+// 6 for windows/arm64, task #634): a PE has no .eh_frame, and arm64's
+// unwind data is not x86_64's UNWIND_INFO (winunwind.xo) but the codes
+// a64unwind.xo decodes, one for each instruction of the prolog and of
+// every epilog. Undoing a code is the same in both: the stack pointer
+// moved back, a saved register read from where it was stored.
+
+/// The .pdata entry holding pc: the function's address and length, its
+/// prolog's ops (newest first, without the end codes) and its epilogs
+/// (where each starts, its ops in instruction order with their end).
+/// None when no entry covers pc (a leaf) or the entry cannot be read.
+fn a64_entry_at(tab: Tables, pc: Int) -> (Int, Int, List[A64Op], List[(Int, List[A64Op])])? {
+  let n = tab.pdata.len() / 8
+  let rva = pc - tab.base
+  if n == 0 || rva < 0 {
+    return None
+  }
+  // the last entry that begins at or before pc
+  var lo = 0
+  var hi = n
+  while hi - lo > 1 {
+    let mid = lo + (hi - lo) / 2
+    if rd32(tab.pdata, 8 * mid) <= rva {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  let begin = rd32(tab.pdata, 8 * lo)
+  if begin > rva {
+    return None
+  }
+  let word = rd32(tab.pdata, 8 * lo + 4)
+  let flag = word & 3
+  let fa = tab.base + begin
+  var ops: List[A64Op] = []
+  var len = 0
+  var epilogs: List[(Int, List[A64Op])] = []
+  if flag == 3 {
+    return None
+  } else if flag != 0 {
+    // packed: a canonical prolog, and one epilog at the end that runs
+    // the prolog's codes forward without the frame pointer's set up
+    len = 4 * ((word >> 2) & 0x7FF)
+    let (p, e) = a64_packed(word)
+    if e != "" {
+      return None
+    }
+    ops = p
+    var epi: List[A64Op] = []
+    for o in p {
+      if o.kind != A_SETFP {
+        epi.push(o)
+      }
+    }
+    epilogs.push((fa + len - 4 * epi.len(), epi))
+  } else {
+    let xa = tab.base + word
+    let h8 = pe_bytes(tab, xa, 8)?
+    let head = rd32(h8, 0)
+    len = 4 * (head & 0x3FFFF)
+    let e1 = (head >> 21) & 1 == 1
+    var epc = (head >> 22) & 31
+    var cw = (head >> 27) & 31
+    var hl = 4
+    if epc == 0 && cw == 0 {
+      let ext = rd32(h8, 4)
+      epc = ext & 0xFFFF
+      cw = (ext >> 16) & 0xFF
+      hl = 8
+    }
+    let nscopes = if e1 { 0 } else { epc }
+    let rec = pe_bytes(tab, xa, hl + 4 * nscopes + 4 * cw)?
+    let codes = rec[hl + 4 * nscopes..rec.len()]
+    let (p, e) = a64_codes(codes, 0)
+    if e != "" {
+      return None
+    }
+    ops = p
+    if e1 {
+      let (q, qe) = a64_codes(codes, epc)
+      if qe == "" {
+        epilogs.push((fa + len - 4 * q.len(), q))
+      }
+    }
+    for s in 0..nscopes {
+      let sw = rd32(rec, hl + 4 * s)
+      let (q, qe) = a64_codes(codes, (sw >> 22) & 0x3FF)
+      if qe == "" {
+        epilogs.push((fa + 4 * (sw & 0x3FFFF), q))
+      }
+    }
+  }
+  if rva >= begin + len {
+    return None
+  }
+  var pro: List[A64Op] = []
+  for o in ops {
+    if o.kind != A_END && o.kind != A_ENDC {
+      pro.push(o)
+    }
+  }
+  Some((fa, len, pro, epilogs))
+}
+
+/// One unwind code undone on regs (DWARF numbering: sp 31, x29 the frame
+/// pointer): the stack pointer back where it was before the code's
+/// instruction, a saved x register read from its slot (d registers are
+/// not followed). None when a slot cannot be read.
+fn a64_undo[T: Target](o: A64Op, regs: Map[Int, Int], t: T) -> Map[Int, Int]? {
+  var next = regs
+  let sp = regs.get(31) ?? 0
+  if o.kind == A_ALLOC {
+    next[31] = sp + o.off
+  } else if o.kind == A_PAIR || o.kind == A_ONE {
+    // a write back store ([sp, #-off]!) left the registers at the new sp
+    let at = if o.wb { sp } else { sp + o.off }
+    if !o.fp {
+      next[o.r] = load64(t, at)?
+      if o.kind == A_PAIR {
+        next[o.r2] = load64(t, at + 8)?
+      }
+    }
+    if o.wb {
+      next[31] = sp + o.off
+    }
+  } else if o.kind == A_SETFP {
+    next[31] = regs.get(29) ?? 0
+  } else if o.kind == A_ADDFP {
+    next[31] = (regs.get(29) ?? 0) - o.off
+  }
+  Some(next)
+}
+
+/// win_step for arm64: the caller's registers of the frame at pc (its
+/// return address under 30, its sp under 31), and how they were found.
+/// In the first frame the pc may be inside the prolog, where only the
+/// instructions already run are undone (the codes are newest first, so
+/// the first ones are skipped), or inside an epilog, whose remaining
+/// instructions are run instead. Any other frame is past its prolog (it
+/// made a call): every code is undone. A pc no entry covers is a leaf:
+/// nothing saved, the return address in x30.
+fn a64_win_step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool) -> (Map[Int, Int], Str)? {
+  let (fa, _len, pro, epilogs) = match a64_entry_at(tab, pc) {
+    Some(e) => e
+    None => return Some((regs, "leaf"))
+  }
+  var todo = pro
+  var how = "pdata"
+  if first {
+    let done = (pc - fa) / 4
+    if done < pro.len() {
+      todo = pro[pro.len() - done..pro.len()]
+      how = "prolog"
+    } else {
+      for (ea, eops) in epilogs {
+        // the ops before the end code are the epilog's instructions
+        var k = 0
+        for o in eops {
+          if o.kind == A_END || o.kind == A_ENDC {
+            break
+          }
+          k += 1
+        }
+        if pc >= ea && pc < ea + 4 * k {
+          todo = eops[(pc - ea) / 4..k]
+          how = "epilog"
+          break
+        } else if pc == ea + 4 * k && k > 0 {
+          // at the epilog's ret: the frame is gone
+          todo = []
+          how = "epilog"
+          break
+        }
+      }
+    }
+  }
+  var next = regs
+  for o in todo {
+    next = a64_undo(o, next, t)?
+  }
+  Some((next, how))
+}

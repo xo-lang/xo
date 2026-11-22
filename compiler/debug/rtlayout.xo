@@ -84,3 +84,7 @@ const FIBER_SP_X86 = 64
 /// r13, r12, rsi, rdi, rbx, rbp, the return address, the caller's stack at
 /// saved + 264.
 const FIBER_SP_WIN = 264
+/// windows/arm64's (compiler/arm64 sched.xo stack_switch_body_windows):
+/// x19 to x30 at saved + 0 to 88 as elsewhere, then d8 to d15 and the
+/// TEB's stack fields; the caller's stack at saved + 192.
+const FIBER_SP_WINARM = 192

@@ -853,7 +853,7 @@ pub fn uuid_half(s: Bytes, off: Int, dashed: Bool, half: Int) -> Int? {
 
 // `xo debug`'s process control (decision 0253 stages 2 and 6): dbgmac.xo
 // on macOS arm64 and amd64, dbglinux.xo on Linux arm64 and amd64, dbgwin.xo on
-// Windows amd64; elsewhere no
+// Windows amd64 and arm64; elsewhere no
 // debuggee is ever made, so the others are never reached with a handle.
 
 /// Whether this target has dbgmac.xo's (false: dbglinux.xo's).

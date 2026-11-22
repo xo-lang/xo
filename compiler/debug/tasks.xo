@@ -243,7 +243,7 @@ fn op_name(why: Int) -> Str {
 pub fn (s: Session) task_frames(t: TaskRec) -> List[VFrame] {
   if t.saved != 0 {
     var regs: Map[Int, Int] = {}
-    if s.tab.win {
+    if s.tab.win && s.tab.x86 {
       // windows/amd64's xo_stack_switch: r15, r14, r13, r12, rsi, rdi,
       // rbx, rbp above its 192 bytes, then its return address
       for (k, r) in [(0, 15), (1, 14), (2, 13), (3, 12), (4, 4), (5, 5), (6, 3), (7, 6)] {
@@ -263,7 +263,9 @@ pub fn (s: Session) task_frames(t: TaskRec) -> List[VFrame] {
       for k in 0..12 {
         regs[19 + k] = s.word_at(t.saved + 8 * k)
       }
-      regs[31] = t.saved + FIBER_SP
+      // windows/arm64's frame is larger (its d registers and the TEB's
+      // stack fields follow x30)
+      regs[31] = t.saved + (if s.tab.win { FIBER_SP_WINARM } else { FIBER_SP })
       // the switch's return address (pointer authentication bits off)
       regs[-1] = s.word_at(t.saved + 88) & 0xffffffffffff
     }

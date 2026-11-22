@@ -30,9 +30,12 @@ pub fn (t: Tables) kept_reg(r: Int) -> Bool {
 /// arm64 instruction, one byte of x86_64's.
 pub fn (t: Tables) ret_back() -> Int { if t.x86 { 1 } else { 4 } }
 
-/// The trap planted at a breakpoint: arm64's `brk #0`, x86_64's int3.
+/// The trap planted at a breakpoint: arm64's `brk #0`, x86_64's int3;
+/// in a Windows arm64 program `brk #0xF000`, the immediate the system
+/// reports as a breakpoint (__debugbreak's; another immediate is another
+/// exception).
 pub fn (t: Tables) trap() -> Bytes {
-  Bytes.from_hex(if t.x86 { "cc" } else { "000020d4" }) ?? b""
+  Bytes.from_hex(if t.x86 { "cc" } else if t.win { "00003ed4" } else { "000020d4" }) ?? b""
 }
 
 /// Whether the instruction at the start of code (its first bytes, at

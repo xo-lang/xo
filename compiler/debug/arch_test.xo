@@ -20,6 +20,9 @@ test "arm64 calls, traps and system calls" {
   // ret is not a call
   expect(call_text(t, 0x1000, "c0035fd6")) == "none"
   expect(t.trap()) == hexb("000020d4")
+  // a Windows arm64 program's: the immediate the system reports as a
+  // breakpoint
+  expect(Tables{win: true}.trap()) == hexb("00003ed4")
   expect(t.is_syscall(hexb("010000d4"))) == true
   expect(t.is_syscall(hexb("011000d4"))) == true
   expect(t.is_syscall(hexb("1f2003d5"))) == false
@@ -137,6 +140,91 @@ test "a Windows frame unwinds by its .pdata's prolog operations" {
       expect(how) == "leaf"
       expect(n.get(16) ?? 0) == 0x140001234
       expect(n.get(7) ?? 0) == 0x1040
+    }
+    None => expect("unwound") == "none"
+  }
+}
+
+test "a Windows arm64 frame unwinds by its .pdata's unwind codes" {
+  // a function at rva 0x1000, 16 instructions: stp x29, x30, [sp, #-32]!;
+  // stp x19, x20, [sp, #16]; mov x29, sp; ...; ldp x19, x20, [sp, #16];
+  // ldp x29, x30, [sp], #32; ret. Its .xdata at rva 0x2000: one epilog
+  // named in the header (E), which shares the prolog's codes from byte 1
+  // (the prolog's are newest first: set_fp, save_regp x19 at 16,
+  // save_fplr_x 32, end)
+  let base = 0x140000000
+  let pd = hexb(le32(0x1000) + le32(0x2000))
+  let head = 16 | (1 << 21) | (1 << 22) | (2 << 27)
+  let info = hexb(le32(head) + "e1c80283" + "e4000000")
+  let tab = Tables{win: true, base: base, pdata: pd, pe_data: [(base + 0x2000, info)]}
+  let fa = base + 0x1000
+  // the frame from 0x1000: x29, x30, x19, x20
+  let mem = Fake{regs: {}, base: 0x1000, data: words([55, 0x140001234, 77, 78])}
+  // in the body: the whole prolog undone
+  match a64_win_step(tab, fa + 0x10, {31: 0x1000, 29: 0x1000, 19: 1, 20: 2, 30: 9}, mem, true) {
+    Some((n, how)) => {
+      expect(how) == "pdata"
+      expect(n.get(30) ?? 0) == 0x140001234
+      expect(n.get(31) ?? 0) == 0x1020
+      expect(n.get(29) ?? 0) == 55
+      expect(n.get(19) ?? 0) == 77
+      expect(n.get(20) ?? 0) == 78
+    }
+    None => expect("unwound") == "none"
+  }
+  // past the first stp only: x19 and x20 are still the caller's
+  match a64_win_step(tab, fa + 4, {31: 0x1000, 29: 3, 19: 1, 20: 2, 30: 9}, mem, true) {
+    Some((n, how)) => {
+      expect(how) == "prolog"
+      expect(n.get(30) ?? 0) == 0x140001234
+      expect(n.get(31) ?? 0) == 0x1020
+      expect(n.get(29) ?? 0) == 55
+      expect(n.get(19) ?? 0) == 1
+    }
+    None => expect("unwound") == "none"
+  }
+  // at the first instruction: nothing to undo, the return address in x30
+  match a64_win_step(tab, fa, {31: 0x1020, 30: 9}, mem, true) {
+    Some((n, how)) => {
+      expect(how) == "prolog"
+      expect(n.get(30) ?? 0) == 9
+      expect(n.get(31) ?? 0) == 0x1020
+    }
+    None => expect("unwound") == "none"
+  }
+  // a caller's frame at the same pc as the prolog's second instruction
+  // made a call: it is past its prolog
+  match a64_win_step(tab, fa + 4, {31: 0x1000, 29: 0x1000, 19: 1, 20: 2, 30: 9}, mem, false) {
+    Some((n, how)) => {
+      expect(how) == "pdata"
+      expect(n.get(19) ?? 0) == 77
+    }
+    None => expect("unwound") == "none"
+  }
+  // in the epilog, past ldp x19, x20: only x29 and x30 are still saved
+  match a64_win_step(tab, fa + 0x40 - 8, {31: 0x1000, 29: 0x1000, 19: 77, 20: 78, 30: 9}, mem, true) {
+    Some((n, how)) => {
+      expect(how) == "epilog"
+      expect(n.get(30) ?? 0) == 0x140001234
+      expect(n.get(31) ?? 0) == 0x1020
+      expect(n.get(29) ?? 0) == 55
+    }
+    None => expect("unwound") == "none"
+  }
+  // at the epilog's ret: the frame is gone
+  match a64_win_step(tab, fa + 0x40 - 4, {31: 0x1020, 29: 55, 30: 0x140001234}, mem, true) {
+    Some((n, how)) => {
+      expect(how) == "epilog"
+      expect(n.get(30) ?? 0) == 0x140001234
+      expect(n.get(31) ?? 0) == 0x1020
+    }
+    None => expect("unwound") == "none"
+  }
+  // no entry covers the pc: a leaf
+  match a64_win_step(tab, base + 0x3000, {31: 0x1020, 30: 7}, mem, true) {
+    Some((n, how)) => {
+      expect(how) == "leaf"
+      expect(n.get(30) ?? 0) == 7
     }
     None => expect("unwound") == "none"
   }

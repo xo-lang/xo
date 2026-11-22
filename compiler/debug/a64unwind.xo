@@ -623,6 +623,22 @@ pub fn a64_pdata_check(tab: Tables) -> (Int, List[Str]) {
     for m in fe {
       errs.push("${at}: ${m}")
     }
+    // a caller's frame of the function (past its prolog) unwinds to a
+    // stack pointer above its own by the frame's size (a64winstep.xo,
+    // which xo debug's backtrace runs): every stack word reads as an
+    // address in the function, x29 is where the prolog left it
+    if !fragment && fe.is_empty() && len > 4 * pro.len() {
+      let sp = 0x10000
+      let x29 = if fp_at >= 0 { sp + size - fp_at + fp_off } else { sp + 0x100 }
+      match a64_win_step(tab, fa + 4 * pro.len(), {31: sp, 29: x29, 30: fa}, WordMem{w: fa}, false) {
+        Some((r, _)) => {
+          if (r.get(31) ?? 0) - sp != size {
+            errs.push("${at}: unwinds sp by ${(r.get(31) ?? 0) - sp}, its frame is ${size} bytes")
+          }
+        }
+        None => errs.push("${at}: does not unwind from the end of its prolog")
+      }
+    }
     for (ea, eops) in epilogs {
       if ea < fa || ea >= fa + len {
         errs.push("${at}: its epilog at 0x${hex(ea)} is outside the function")

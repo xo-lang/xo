@@ -1,4 +1,4 @@
-// `xo debug`'s process control on Windows amd64 (decision 0253 stage 6,
+// `xo debug`'s process control on Windows, amd64 and arm64 (decision 0253 stage 6,
 // with only the calls its "New OS capabilities" list approves), the
 // interface of dbgmac.xo and dbglinux.xo: a program started with
 // CreateProcessW's DEBUG_ONLY_THIS_PROCESS (std's own windows.spawn, its
@@ -100,6 +100,39 @@ const CTX_FLAGS = 0x100003
 const CTX_EFLAGS = 68
 const CTX_RIP = 248
 const TRAP_FLAG = 0x100
+/// arm64's CONTEXT (912 bytes, the buffer above holds it): ContextFlags
+/// at 0 (CONTEXT_ARM64 with CONTROL and INTEGER), Cpsr at 4, x0 to x28
+/// from 8, Fp at 240, Lr at 248, Sp at 256, Pc at 264 (the offsets
+/// unwind.xo's win_raise uses for Pc, Sp and X0). A single step is
+/// Cpsr's SS bit (21). The trap is `brk #0xF000`, the system's
+/// breakpoint (arch.xo trap), which leaves the pc on itself.
+const A_CTX_FLAGS = 0x400003
+const A_CTX_CPSR = 4
+const A_CTX_X0 = 8
+const A_CTX_SP = 256
+const A_CTX_PC = 264
+const A_STEP_FLAG = 0x200000
+
+/// Whether the debugger (and so its debuggee) is arm64.
+fn arm() -> Bool {
+  match target.arch {
+    TargetArch.Arm64 => true
+    TargetArch.Amd64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
+  }
+}
+
+/// The CONTEXT at c asked for its control and integer registers.
+fn ctx_ask(c: Int) {
+  if arm() {
+    rt.mem_store(c, 0, A_CTX_FLAGS, 4)
+  } else {
+    rt.mem_store(c, 48, CTX_FLAGS, 4)
+  }
+}
+
+/// The trap's length: the pc after an int3 is one byte on; arm64's brk
+/// leaves the pc on itself, and running on means stepping over 4 bytes.
+fn trap_len() -> Int { if arm() { 4 } else { 1 } }
 
 /// Starts path with args stopped before its first instruction (out not
 /// "": its standard output and error written to the file out, created or
@@ -284,7 +317,7 @@ fn get_ctx(h: Int, th: Int) -> Int {
     return 0
   }
   let c = rt.mem_load(h, CTX, 8)
-  rt.mem_store(c, 48, CTX_FLAGS, 4)
+  ctx_ask(c)
   if Int(sys_windows.GetThreadContext(rt.mem_load(e, E_HANDLE, 8), c)) == 0 {
     return 0
   }
@@ -298,6 +331,14 @@ pub fn regs(h: Int, th: Int) -> List[Int] {
   let c = get_ctx(h, th)
   var out: List[Int] = []
   if c == 0 {
+    return out
+  }
+  if arm() {
+    // x0 to x28, fp, lr and sp are 32 words in a row, then the pc
+    for k in 0..33 {
+      out.push(rt.mem_load(c, A_CTX_X0 + 8 * k, 8))
+    }
+    out.push(rt.mem_load(c, A_CTX_CPSR, 4))
     return out
   }
   for k in 0..32 {
@@ -314,7 +355,7 @@ pub fn set_pc(h: Int, th: Int, pc: Int) -> Bool {
   if c == 0 {
     return false
   }
-  rt.mem_store(c, CTX_RIP, pc, 8)
+  rt.mem_store(c, if arm() { A_CTX_PC } else { CTX_RIP }, pc, 8)
   Int(sys_windows.SetThreadContext(rt.mem_load(entry(h, th), E_HANDLE, 8), c)) != 0
 }
 
@@ -333,12 +374,14 @@ pub fn set_step(h: Int, th: Int, on: Bool) -> Bool {
 /// Thread handle th's trap flag set or cleared.
 fn trap_flag(h: Int, th: Int, on: Bool) -> Bool {
   let c = rt.mem_load(h, CTX, 8)
-  rt.mem_store(c, 48, CTX_FLAGS, 4)
+  ctx_ask(c)
   if Int(sys_windows.GetThreadContext(th, c)) == 0 {
     return false
   }
-  let f = rt.mem_load(c, CTX_EFLAGS, 4)
-  rt.mem_store(c, CTX_EFLAGS, if on { f | TRAP_FLAG } else { f - (f & TRAP_FLAG) }, 4)
+  let at = if arm() { A_CTX_CPSR } else { CTX_EFLAGS }
+  let bit = if arm() { A_STEP_FLAG } else { TRAP_FLAG }
+  let f = rt.mem_load(c, at, 4)
+  rt.mem_store(c, at, if on { f | bit } else { f - (f & bit) }, 4)
   Int(sys_windows.SetThreadContext(th, c)) != 0
 }
 
@@ -420,7 +463,7 @@ pub fn wait(h: Int, ms: Int) -> List[Int] {
       }
       // the pc back on the trap, as arm64's brk leaves it
       let rs = regs(h, tid)
-      if rs.len() > 32 && rs[32] == at + 1 {
+      if !arm() && rs.len() > 32 && rs[32] == at + 1 {
         let _p = set_pc(h, tid, at)
       }
       clear_step(h, tid)
@@ -478,7 +521,7 @@ fn is_break(x: Int) -> Bool { x == EXCEPTION_BREAKPOINT || x == STATUS_WX86_BREA
 fn past_trap(h: Int, tid: Int, at: Int) {
   let rs = regs(h, tid)
   if rs.len() > 32 && rs[32] == at {
-    let _p = set_pc(h, tid, at + 1)
+    let _p = set_pc(h, tid, at + trap_len())
   }
 }
 

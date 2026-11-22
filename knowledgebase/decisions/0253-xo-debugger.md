@@ -560,3 +560,39 @@ asked for as the stages found them):
   now includes darwin/amd64) and a hand session (break, run, bt through
   the fiber frames, step, next, continue) that matches arm64's line for
   line.
+- 2026-11-21 (Xo Lang 1, task #634) stage 6, Windows arm64, the parts
+  that need no Windows machine. NOT YET RUN on windows/arm64: the VM run
+  of cmd/xo TestDebug* is pending, and debugLaunches still leaves
+  windows/arm64 out until it passes there.
+  - Unwinding: an arm64 PE's unwind data is not x86_64's UNWIND_INFO but
+    one code for each instruction of the prolog and of every epilog
+    (decision 0569 stage 2; a64unwind.xo already decoded and checked
+    them). compiler/debug a64winstep.xo unwinds a frame by them
+    (a64_win_step, which unwind.xo's step calls for a PE that is not
+    x86_64): the entry holding the pc found by binary search (8 byte
+    entries: packed, or an .xdata record with its epilog scopes); every
+    prolog code undone in a caller's frame; in the first frame only the
+    codes of the instructions already run (the codes are newest first),
+    or inside an epilog its remaining instructions; a pc no entry covers
+    is a leaf, its return address in x30. `xo dev debug --unwind-check`
+    now also unwinds every function of an arm64 PE from the end of its
+    prolog and wants the stack pointer above by the frame's size (cmd/xo
+    TestWindowsArm64Assembly runs it on a real program); arch_test.xo
+    has the cases (body, prolog, epilog, its ret, a leaf).
+  - Process control: std/native/llrt dbgwin.xo was amd64's alone, though
+    internal.xo already used it on any Windows target, so on arm64 it
+    read the amd64 CONTEXT layout. It now has arm64's: ContextFlags at 0
+    (CONTEXT_ARM64 with CONTROL and INTEGER), Cpsr at 4, x0 to x28, Fp,
+    Lr, Sp and Pc in a row from 8 (the Pc, Sp and X0 offsets are the
+    ones unwind.xo's win_raise runs with); a single step is Cpsr's SS
+    bit (21); the trap is `brk #0xF000` (arch.xo trap for a Windows
+    program that is not x86_64: the immediate the system reports as a
+    breakpoint), which leaves the pc on itself, so the loader's
+    breakpoint is passed by 4 bytes and a stop needs no pc moved back.
+    The single step bit and the brk immediate are from the platform's
+    documentation as remembered, not from a run: the VM run decides.
+  - A parked task's frame (tasks.xo task_frames): windows/arm64 took
+    windows/amd64's switch frame; it is arm64's (x19 to x30 from the
+    saved sp) with the caller's stack 192 bytes up, not 160
+    (rtlayout.xo FIBER_SP_WINARM; compiler/arm64 sched.xo
+    stack_switch_body_windows).
