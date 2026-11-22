@@ -58,6 +58,17 @@ func TestTierKeep(t *testing.T) {
 	}
 }
 
+// TestTierMove runs scripts/lead/tier-move_test.sh (task #706): a linux
+// tier step with no slot, or that no host took, runs on another arm64
+// pass host (tier 928 dropped linux llvm and sdk-stress on host 2).
+func TestTierMove(t *testing.T) {
+	s := filepath.Join("..", "..", "scripts", "lead", "tier-move_test.sh")
+	out, err := leadScript(s).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", s, err, out)
+	}
+}
+
 // TestTierHeavyClass: every heavy.sh run in scripts/lead/tier.sh is bulk
 // class with HEAVY_DARWIN=1 (task #556): a tier step runs for minutes on
 // the Mac, and the docs step (docs-check.sh, 12+ min in tier 918) ran as
