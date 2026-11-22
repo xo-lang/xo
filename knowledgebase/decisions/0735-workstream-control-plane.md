@@ -164,7 +164,7 @@ quiet log alone is never a hang.
   record (at most 64 files, 4 MB a file, 16 MB in all; a file past a
   limit is named as skipped); a passing job sends none. They land in
   `RUNS/RUN/STEP.detail/`, each path's segments joined with `_`.
-  Retention and `xw result` are not built yet.
+  `xw result` and retention: see the next bullets.
 - Files for a job (task #600, workstream 59560fb, 2026-11-22): `xw
   run-job --put LOCAL[=NAME],...` sends each file to the runner's
   `DIR/in/NAME` before the start, in 48 KB chunks written to `NAME.part`
@@ -178,6 +178,13 @@ quiet log alone is never a hang.
   `ssh.dir/xw.new` with `ssh.xo` (`XO_STD` from `ssh.std`) and moves it
   to `ssh.dir/xw` only when the build passes. Point `ssh.agent` at that
   path to run it.
+- Results and retention (task #600, workstream 1bf2e60, 2026-11-22):
+  `xw run-job` writes `RUNS/RUN/STEP.result` when a step ends. `xw
+  result RUN [--detail] [--log STEP] [--json]` prints the verdict (exit
+  0 pass, 1 a step failed, 2 no results), and `xw runs prune [--dry]`
+  deletes runs 14 days after a pass and 60 after a failure, measured by
+  the newest file's age. Logs are not compressed yet, and nothing runs
+  prune on a schedule yet (an xw schedule line, the lead's).
 
 ## Alternatives
 
