@@ -280,6 +280,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
   rt.unwind_save(cur)
   // this function's frame first: its pc is the save's return address
   rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8), 8)
+  let top = stack_end(rt.mem_load(cur, sp_off(), 8))
   var first = true
   while true {
     let pc = rt.mem_load(cur, PC, 8)
@@ -308,11 +309,34 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
     }
     first = false
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, Int.max) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, top) }) {
       return 0
     }
   }
   0
+}
+
+/// The end of the stack sp is on, for the walks of the calling thread
+/// (raise, trace_frames): the running fiber's mapping's end when sp lies
+/// in it, else no bound (a thread's own stack, whose outermost frames
+/// the tables end). A fiber's outermost frame was entered with nothing
+/// above it, so a DWARF rule that reads its return address at the CFA
+/// reads the word past the mapping: on darwin/amd64 every fault of a
+/// debug LLVM build died there with SIGSEGV at the stack's end (task
+/// #650, 2026-11-21; elsewhere the next mapping happened to be
+/// readable, or the frame had a compact encoding). step refuses a
+/// saved register at or past the end, and the walk stops as it does at
+/// a pc of 0.
+fn stack_end(sp: Int) -> Int {
+  let fib = rt.tlocal_get(TLS_FIB)
+  if fib != 0 {
+    let mem = rt.mem_load(fib, F_MEM, 8)
+    let end = mem.wrapping_add(rt.mem_load(fib, F_SIZE, 8))
+    if sp >= mem && sp < end {
+      return end
+    }
+  }
+  Int.max
 }
 
 /// The return addresses of the calling thread's frames, from its caller
@@ -378,6 +402,7 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
   zero_regs(cur)
   rt.unwind_save(cur)
   rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8), 8)
+  let top = stack_end(rt.mem_load(cur, sp_off(), 8))
   var n = 0
   while n < max {
     let pc = rt.mem_load(cur, PC, 8)
@@ -392,7 +417,7 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
     }
     n += 1
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, Int.max) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, top) }) {
       break
     }
   }
@@ -429,6 +454,7 @@ pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
   rt.mem_set(cur, 0, PC + 8)
   rt.unwind_save(cur)
   rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8), 8)
+  let top = stack_end(rt.mem_load(cur, sp_off(), 8))
   var n = 0
   while n < max {
     let pc = rt.mem_load(cur, PC, 8)
@@ -439,7 +465,7 @@ pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
     rt.mem_store(out, 8 * n, pc, 8)
     n += 1
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, Int.max) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, top) }) {
       break
     }
   }

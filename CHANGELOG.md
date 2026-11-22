@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (LLVM backend, macOS on Intel; task #650): a fault in a default (debug) build printed its report and exited 70 everywhere but on darwin/amd64, where the program died with SIGSEGV at the end of its stack. The runtime's stack walk read one word past a task's stack.
 - Fix (`XO_PROF=cpu` on Windows; task #646): the CPU profile takes its samples at the requested rate. It listed threads with a Toolhelp snapshot of the whole system, about 100 ms per tick on a busy 32 core host, so a 10 ms profile took 2 to 6 samples where it should take about 35; it now lists only the process's threads (NtGetNextThread).
 - LLVM backend, opt in (`XO_SEPCOMP_LLVM=1`, decision 0738, task #607): on Linux the program's own code now inlines std's small functions, taken from bitcode kept beside std's cached objects. A call into std was always a call before: atomic add ran 1.47 times the whole program's time and now runs the same.
 - `XO_TRACE` (decision 0240; task #635): the execution trace now records on windows/amd64, windows/arm64, freebsd/amd64 and freebsd/arm64. Before, those targets printed `XO_TRACE is not supported on this target yet` and wrote nothing.
