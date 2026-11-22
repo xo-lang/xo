@@ -464,7 +464,9 @@ std's objects had failed to compile and the whole program was linked
 without a word (gotchas/sepcomp-llvm-silent-whole-build.md); the build
 warns now.
 
-Still open: the nine rows above. The counts of calls by callee (sz4.out) name nothing more that is
+The nine rows above are deferred (owner, 2026-11-22, xw decision
+#276): what would close them is decision 0742, proposed and not built
+now. They are the opt in's known cost at run time. The counts of calls by callee (sz4.out) name nothing more that is
 a call in the opt in and inlined in the whole program: the other names
 that differ (cabi.fault_continue, obj_rs_push_byte, the drop helpers)
 cost the same number of calls in both.

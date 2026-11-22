@@ -1,7 +1,7 @@
 # 0742: The program's link sees std's bitcode with what the program reaches
 
-Status: Proposed (2026-11-22, task #607). Not built. The recommendation
-below is to not build it now.
+Status: Proposed (deferred by the owner 2026-11-22, xw decision #276).
+Not built: the recommendation below, to not build it now, was taken.
 
 ## Context
 
