@@ -1696,6 +1696,23 @@ heavyd.log and the lead's bottleneck.log. A run meant to outlive its
 caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
 2026-11-16
 
+Cancelling a job, lease or tier (#694): `~/xo-lead/agents/heavyd cancel
+[-why TEXT] NAME|PID|group:NAME` stops a running heavy.sh run or lane
+lease (TERM to its process group and tree, KILL after 10 s; a remote
+job stops when its ssh goes) and drops a queued one; the caller sees
+exit 130 (LeaseExitCancelled). Only the target's own agent, the lead
+(the PID `heavyd lead-agent` writes to `$LEAD/locks/lead-agent`) or a
+caller with no agent (the owner's terminal) may cancel; another agent
+gets exit 3, no match exit 1, and every cancel is logged in heavyd.log
+with who and why. `heavyd group NAME -- CMD...` runs CMD with
+HEAVY_GROUP=NAME, which every heavy.sh run and lease under it sends;
+`heavyd cancel group:NAME` stops CMD's tree and every running member and
+refuses every member (and the group name) for 12 h after. tier.sh runs
+itself as `heavyd group lead-tierN` (TIER_NAME names it, TIER_NO_GROUP=1
+skips it). The cancel file a queued lease prints
+(`$LEAD/locks/cancel/NAME` or `/PID`) still works for one job. Tested by
+scripts/lead/heavyd/cancel_test.go. Last verified: 2026-11-22
+
 ## Coordinating (scripts/lead/README.md)
 
 - Gates: `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`: no slot,
