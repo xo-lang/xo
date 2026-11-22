@@ -84,8 +84,13 @@ for c in $configs; do
 	xo-base-llvm) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build --backend=llvm -o "$out/srv-xo-base-llvm" "$here/xo" >/dev/null ;;
 	rust) # bench/perf/rust/http: axum on tokio with serde_json (Cargo.lock pins every crate)
 		(cd "$here/../rust/http" && CARGO_TARGET_DIR="$out/rust-target" "${CARGO:-$(command -v cargo || echo "$HOME/.cargo/bin/cargo")}" build --release --locked -q) && cp "$out/rust-target/release/crudperf" "$out/srv-rust" ;;
-	node) # bench/perf/node: node:http, one process (the store is in memory); needs npm ci first
-		(cd "$here/../node" && npm ci --no-audit --no-fund --silent && npx tsc -p .) && printf '#!/bin/sh\nexec node %s/../node/dist/http/server.js\n' "$here" > "$out/srv-node" && chmod +x "$out/srv-node" ;;
+	node) # bench/perf/node: node:http, one process (the store is in memory); npm ci and tsc first, or
+		# on a host with node but no npm (the linux/arm64 timing host) the dist/ compiled before the run
+		if command -v npm >/dev/null 2>&1; then
+			(cd "$here/../node" && npm ci --no-audit --no-fund --silent && npx tsc -p .)
+		else
+			[ -f "$here/../node/dist/http/server.js" ] || { echo "run.sh: no npm here and no prebuilt bench/perf/node/dist/" >&2; exit 1; }
+		fi && printf '#!/bin/sh\nexec node %s/../node/dist/http/server.js\n' "$here" > "$out/srv-node" && chmod +x "$out/srv-node" ;;
 	python-asyncio) # bench/perf/python: asyncio.Protocol on the standard library, one process
 		printf '#!/bin/sh\nexec %s/../python/.venv/bin/python %s/../python/http/server_asyncio.py\n' "$here" "$here" > "$out/srv-python-asyncio" && chmod +x "$out/srv-python-asyncio" ;;
 	python-starlette) # Starlette on uvicorn (httptools, uvloop), one worker

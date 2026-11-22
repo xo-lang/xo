@@ -78,6 +78,16 @@ wrapper() {
 	chmod +x "$f"
 }
 
+# cpu: the CPU's name: darwin's brand string, linux's cpuinfo model name, or
+# on linux/arm64, whose cpuinfo has none, HOSTLABEL or the implementer and part
+cpu() {
+	c=$(sysctl -n machdep.cpu.brand_string 2>/dev/null) || c=""
+	[ -n "$c" ] || c=$(grep -m1 'model name' "${CPUINFO_FILE:-/proc/cpuinfo}" 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+	[ -n "$c" ] || c=${HOSTLABEL:-}
+	[ -n "$c" ] || c=$(awk -F': *' '/^CPU implementer/{i=$2} /^CPU part/{p=$2} END{if(i!="")printf "CPU implementer %s part %s", i, p; else printf "unknown CPU"}' "${CPUINFO_FILE:-/proc/cpuinfo}" 2>/dev/null)
+	echo "$c"
+}
+
 # header LANGUAGE VERSIONS...: the machine and versions block
 header() {
 	lang=$1; shift
@@ -87,7 +97,7 @@ header() {
 	echo
 	echo "## Machine and versions"
 	echo
-	echo "- $(uname -srm), $(sysctl -n machdep.cpu.brand_string 2>/dev/null || grep -m1 'model name' /proc/cpuinfo | cut -d: -f2), $(ncpu) CPUs, load average at start $(load)"
+	echo "- $(uname -srm), $(cpu), $(ncpu) CPUs, load average at start $(load)"
 	echo "- $XO_STAMP"
 	echo "- $(go version)"
 	for v in "$@"; do echo "- $v"; done
