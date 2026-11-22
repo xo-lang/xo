@@ -183,8 +183,10 @@ quiet log alone is never a hang.
   result RUN [--detail] [--log STEP] [--json]` prints the verdict (exit
   0 pass, 1 a step failed, 2 no results), and `xw runs prune [--dry]`
   deletes runs 14 days after a pass and 60 after a failure, measured by
-  the newest file's age. Logs are not compressed yet, and nothing runs
-  prune on a schedule yet (an xw schedule line, the lead's).
+  the newest file's age. A step's log is gzipped to `STEP.log.gz`
+  when it ends (workstream 53c7c0e; a log past 256 MB stays plain), and
+  `xw result --log` reads either. Nothing runs prune on a schedule yet:
+  a recurring delete waits on the owner's OK (lead, 2026-11-22).
 
 ## Alternatives
 
