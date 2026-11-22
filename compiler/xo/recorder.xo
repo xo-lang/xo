@@ -27,6 +27,11 @@ struct Rec {
   list_sums: Map[Str, Str] = {}
   /// paths the build wrote: never inputs
   written: Map[Str, Bool] = {}
+  /// trees the build removed (remove_all), each ending in "/": what is
+  /// under one afterwards the build or its children made (cc_dsym's
+  /// dsymutil writes the staged dSYM the build then reads to embed it,
+  /// task #649), so it is never an input
+  cleared: List[Str] = []
   /// environment variables read: "=VALUE", or "!" when unset
   env: Map[Str, Str] = {}
 }
@@ -49,7 +54,7 @@ fn (f: RecFs) skipped(p: Str) -> Bool {
       return true
     }
   }
-  false
+  f.rec.with(fn(r) { r.cleared.any(fn(c) { p.starts_with(c) }) })
 }
 
 /// Notes a read of path with the SHA-256 of what it returned ("" before
@@ -195,6 +200,10 @@ fn (f: RecFs) remove(path: Str) -> () ! FsErr uses fs.write {
 
 fn (f: RecFs) remove_all(path: Str) -> () ! FsErr uses fs.write {
   f.note_write(path)
+  let p = f.abs(path)
+  if !f.skipped(p) {
+    f.rec.with(fn(var r) { r.cleared.push("${p}/") })
+  }
   f.inner.remove_all(path)
 }
 

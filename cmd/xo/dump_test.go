@@ -108,6 +108,14 @@ func TestDump(t *testing.T) {
 	native := "--backend=" + xotool.NativeBackend()
 	t.Run("native", func(t *testing.T) { testDump(t, native, nil, wantDumpNative) })
 	t.Run("native1", func(t *testing.T) { testDump(t, native, []string{"XO_THREADS=1"}, wantDumpNative) })
+	// the LLVM backend where it is not the native one (darwin/arm64,
+	// linux/arm64): darwin/amd64 has only it, and its Mutex.with frame
+	// lost its line (task #649)
+	if native != "--backend="+xotool.BackendLLVM {
+		if _, err := xotool.Clang(); err == nil {
+			t.Run("llvm", func(t *testing.T) { testDump(t, "--backend=llvm", nil, wantDumpNative) })
+		}
+	}
 }
 
 // testDump builds dumpProg with backend, runs it with env, asks it for
