@@ -182,12 +182,21 @@ settle() {
 # 1, 2026-11-21: the compile section's part 3 ended 1 on its last rm). It
 # tries again for up to 2 minutes, by then the child has stopped.
 rmw() {
+	# the path must be gone and still gone 2 s later: a writer between two
+	# bursts can make it again after an rm -rf that succeeded (task #662:
+	# TestReleaseVsGoRmw's writer did, under load in pushq's fast checks).
+	# About 2 minutes at most.
 	local i
-	for i in $(seq 60); do
-		rm -rf "$1" 2>/dev/null && return 0
-		sleep 2
+	[ -e "$1" ] || return 0
+	for i in $(seq 40); do
+		if rm -rf "$1" 2>/dev/null; then
+			sleep 2
+			[ -e "$1" ] || return 0
+		else
+			sleep 1
+		fi
 	done
-	rm -rf "$1"
+	rm -rf "$1" && sleep 2 && [ ! -e "$1" ]
 }
 compile() {
 	local side=$1 name=$2 src=$3 mainf=$4 mode=${5:-default}
