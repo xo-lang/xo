@@ -1,0 +1,33 @@
+// Child.wait parks on the child's exit event (decision 0744: a pidfd on
+// Linux, kqueue EVFILT_PROC on darwin and FreeBSD), a time-budget guard:
+// this program runs itself as a child that sleeps 70 ms, five times, and
+// the median from spawn to the end of wait stays under 100 ms. The
+// wait4 backoff it replaced (1 ms doubling to 50 ms) reaped such a child
+// at about 113 ms (76 ms with the event, 132 ms before, darwin/arm64,
+// 2026-11-22). Windows waits on the process handle in steps still: the
+// verdict is not judged there.
+
+fn main(os: Os) ! uses (stdio, env, proc, clock) {
+  let args = os.env.args()
+  if args.len() > 0 && args[0] == "child" {
+    os.clock.sleep(70ms)
+    return
+  }
+  var ms: List[Int] = []
+  for _ in 0..5 {
+    let t0 = os.clock.now()
+    let c = os.proc.cmd(os.env.program(), ["child"]).spawn()?
+    let code = c.wait()?
+    if code != 0 {
+      return Err("child exit ${code}")
+    }
+    ms.push((os.clock.now() - t0).millis())
+  }
+  let med = ms.sort()[2]
+  let windows = os.env.program().ends_with(".exe")
+  if windows || med < 100 {
+    os.stdio.println("5 waits on a 70 ms child: median under 100 ms")
+  } else {
+    os.stdio.println("5 waits on a 70 ms child: median ${med} ms, over 100 (${ms})")
+  }
+}

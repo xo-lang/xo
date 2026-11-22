@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+5 waits on a 70 ms child: median under 100 ms
+--- stderr

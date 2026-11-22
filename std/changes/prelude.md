@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-22: perf: a child's wait parks on its exit event
+
+- Kind: perf
+- Commit: this push
+- Found by: task #705, bench/perf/pty's spawn row at 7.308 of Go on linux/arm64 host 2 (527.2 against 72.5 ms)
+- Go reference: os.Process.Wait (a pidfd on Linux since Go 1.23)
+- Change: wait_exit (Child.wait, Child.wait_usage, Proc.run, Cmd.output) parks once on a pidfd (Linux) or a one-shot kqueue EVFILT_PROC NOTE_EXIT filter (darwin, FreeBSD) through the poller, then reaps with wait4; the 1 ms doubling to 50 ms backoff stays for a system that refuses (ENOSYS, EPERM, a child gone); Windows unchanged; decision 0744
+- Measured: darwin/arm64, a 70 ms child 76 ms from spawn to wait (132 before); bench/perf/pty spawn about 410 ms (about 540 before)
+- Test: golden proc_wait_exit_event (median 132 ms, over 100, before; under 100 after)
+
 ## 2026-11-21: feature: Cmd.new_group and Child.kill_group
 
 - Kind: feature

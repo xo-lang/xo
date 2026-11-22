@@ -934,6 +934,11 @@ pub fn wait4_at(pid: Int, st: Int, options: Int) -> Int { rt.sys6(nrf(260, 61, 7
 /// wait4_at with the child's struct rusage written at ru.
 pub fn wait4_ru(pid: Int, st: Int, options: Int, ru: Int) -> Int { rt.sys6(nrf(260, 61, 7), pid, st, options, ru, 0, 0) }
 
+/// pidfd_open(2) of pid (Linux 5.3, 434 on every architecture): a
+/// descriptor readable once the child exits (decision 0744), or minus the
+/// errno (ENOSYS on an older kernel, EPERM under a seccomp filter).
+pub fn pidfd_open(pid: Int) -> Int { rt.sys6(434, pid, 0, 0, 0, 0, 0) }
+
 /// execve(2): returns only on failure, the negative errno.
 pub fn execve(file: Int, argv: Int, envp: Int) -> Int { rt.sys6(nrf(221, 59, 59), file, argv, envp, 0, 0, 0) }
 

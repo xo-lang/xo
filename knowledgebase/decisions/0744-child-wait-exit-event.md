@@ -1,6 +1,6 @@
 # 0744: a child's wait parks on its exit event, not a polling backoff
 
-Status: Proposed (task #705, xo-4c, 2026-11-22; owner ask xw #277, the lead recommends yes). Would supersede the "kqueue EVFILT_PROC or pidfd for waiting" alternative rejected in 0172.
+Status: Accepted, implemented (owner 2026-11-22, xw ask #277, lead decision #278; task #705, xo-4c). Supersedes the "kqueue EVFILT_PROC or pidfd for waiting" alternative rejected in 0172.
 
 ## Context
 
@@ -18,7 +18,7 @@ darwin/arm64 1.241. A CPU profile of the Xo side spends 300 ms of 1405 ms
 wall on CPU: the rest is the sleep. Go since 1.23 waits on a pidfd on
 Linux.
 
-## Decision (proposed)
+## Decision
 
 - Linux: `pidfd_open(pid, 0)` (syscall 434, Linux 5.3); the pidfd is
   registered with the poller for readable, the task parks until it is,
@@ -35,10 +35,15 @@ Linux.
 
 - A short child is reaped when it exits: std/pty `spawn` and std/proc's
   run of short commands lose the 1 ms floor.
-- Two more poller registrations kinds (a pidfd fd, a proc filter); the
+- Two more poller registration kinds (a pidfd fd, a proc filter); the
   backoff stays as the fallback, so it keeps its test.
-- A time-budget guard: 300 waits on `true` within 2 times Go's twin time
-  on host 2, so the floor does not come back.
+- A time-budget guard: golden proc_wait_exit_event (a 70 ms child's
+  spawn to wait, median of 5, under 100 ms; the backoff took 132 ms on
+  darwin/arm64), and bench/perf/pty's `spawn` row against Go on host 2
+  (decision 0726's 1.05).
+- Measured (darwin/arm64, 2026-11-22): a 70 ms child 76 ms from spawn to
+  wait (132 before); bench/perf/pty `spawn` (300 children of `true` on a
+  pty) about 410 ms (about 540 before).
 
 ## Alternatives
 

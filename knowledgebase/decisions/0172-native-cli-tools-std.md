@@ -1,5 +1,7 @@
 # 0172: The command line tool std on the native backends
 
+Amended by 0744 (2026-11-22): a child's wait now parks on its exit event (pidfd, kqueue EVFILT_PROC), the alternative rejected below; the wait4 backoff stays as the fallback.
+
 Status: Accepted, implemented (2026-10-11): (1) commands, children,
 pipelines, and attenuation, (2) file handles, links, globs, and locks,
 (3) `std/regexp`, and (4) `std/archive` build natively with the Go

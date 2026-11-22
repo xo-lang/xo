@@ -958,6 +958,11 @@ fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool, List[Int]) {
   rt.mem_set(ru, 0, 144)
   var step = 1000000
   var code = 0
+  // decision 0744: one park on the child's exit event (a pidfd, a kqueue
+  // EVFILT_PROC filter) in place of the backoff; the record is freed
+  // before the wait4 that reaps the child, and a system that refuses it
+  // (ENOSYS, a seccomp filter) keeps the backoff
+  var evtried = false
   while true {
     // once canceled (the command killed), a blocking wait
     let opt = if canceled { 0 } else { 1 }
@@ -978,6 +983,19 @@ fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool, List[Int]) {
       continue
     }
     stdio.flush()
+    if !evtried {
+      evtried = true
+      let pd = poll.pd_proc(pid)
+      if pd != 0 {
+        let w = poll.pd_wait(pd, false, 0)
+        poll.pd_proc_free(pd, pid)
+        if w == poll.CANCELED {
+          canceled = true
+          kill9(l, pid)
+        }
+        continue
+      }
+    }
     if poll.sleep_until(sysio.mono_ns() + step) == poll.CANCELED {
       canceled = true
       kill9(l, pid)
