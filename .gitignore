@@ -29,6 +29,14 @@ dist/
 # Agent worktrees
 .claude/worktrees/
 
+# Claude Code local settings and their backups (permissions, sandbox
+# hosts: private to one machine)
+.claude/settings.local.json*
+.claude/scheduled_tasks.lock
+
+# xwin's download cache (toolchain.md, Windows SDK splat; 1.2 GB)
+/.xwin-cache/
+
 # Python bytecode (bench/harness)
 __pycache__/
 
