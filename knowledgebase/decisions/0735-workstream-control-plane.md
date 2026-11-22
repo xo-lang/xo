@@ -146,6 +146,17 @@ quiet log alone is never a hang.
 - The runner is a new binary on every host. Its upgrade path (`xw host
   upgrade`) must work when the old runner is broken, so the core can
   also reinstall a runner over plain ssh.
+- The host channel (task #600, workstream 6013c99, 2026-11-22; owner
+  answer to ask #263, xw decision #268): a machine row's `ssh` field
+  (host, port, user, key, keychain, agent, dir) gives `xw run-job --host
+  NAME` its channel, `ssh -T USER@HOST -- xw run-agent --dir DIR`. With a
+  key it logs in with that key only (BatchMode); without one, by password
+  only, with `SSH_ASKPASS_REQUIRE=force` and xw itself as the askpass
+  helper, which reads the login keychain item (default `xw-host-NAME`)
+  and answers only a password or passphrase prompt. No expect and no pty
+  sit in the data path. The runner is not yet installed by the core:
+  xw links C (SQLite), so it builds on each host, not cross built from
+  the Mac.
 
 ## Alternatives
 
