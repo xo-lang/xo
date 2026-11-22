@@ -922,10 +922,12 @@ fn dir_of(p: Str) -> Str {
 
 /// with_std: a side's --env with XO_STD naming the std directory beside
 /// prog (one of the places check.std_dir looks), so an xo run from its
-/// tmpfs copy finds the same std; env as given when it sets XO_STD or
-/// prog has none beside it.
-fn with_std(env: List[Str], std: Str) -> List[Str] {
-  if std.is_empty() || env.any(fn(e: Str) { e.starts_with("XO_STD=") }) {
+/// tmpfs copy finds the same std; env as given when it sets XO_STD, when
+/// bench's own environment does (inherited, the std the caller chose:
+/// release-vs-go's edit rows point it at an edited copy, and the std beside
+/// the original hid the edit, task #645), or prog has none beside it.
+fn with_std(env: List[Str], std: Str, inherited: Str) -> List[Str] {
+  if std.is_empty() || !inherited.is_empty() || env.any(fn(e: Str) { e.starts_with("XO_STD=") }) {
     return env
   }
   var out = env
@@ -978,7 +980,7 @@ fn copy_exe(fs: Fs, prog: Str, dir: Str, sub: Str) -> Str ! FsErr uses (fs.read,
 /// stage copies A and B into one new directory under root (stage_root),
 /// one copy when they are the same file; a program that is not a file at
 /// the path given (a name found on $PATH) is measured in place.
-fn stage(fs: Fs, root: Str, o: Opts, pa: Str, pb: Str) -> Staged uses fs {
+fn stage(fs: Fs, root: Str, o: Opts, pa: Str, pb: Str, env_std: Str) -> Staged uses fs {
   let none = Staged{a: pa, b: pb, dir: "", env_a: o.env_a, env_b: o.env_b, note: ""}
   if root.is_empty() {
     return none
@@ -1010,7 +1012,7 @@ fn stage(fs: Fs, root: Str, o: Opts, pa: Str, pb: Str) -> Staged uses fs {
       }
     }
   }
-  Staged{a: ca, b: cb, dir: dir, env_a: with_std(o.env_a, std_beside(fs, aa)), env_b: with_std(o.env_b, std_beside(fs, ab)), note: ""}
+  Staged{a: ca, b: cb, dir: dir, env_a: with_std(o.env_a, std_beside(fs, aa), env_std), env_b: with_std(o.env_b, std_beside(fs, ab), env_std), note: ""}
 }
 
 pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs, proc, stdio) {
@@ -1051,7 +1053,7 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs, proc, 
     os.stdio.eprintln("xo bench: ${pick.why}")
     return 2
   }
-  let st = stage(os.fs, pick.root, o0, pa, pb)
+  let st = stage(os.fs, pick.root, o0, pa, pb, os.env.get("XO_STD") ?? "")
   if !st.note.is_empty() && !o0.json {
     os.stdio.eprintln("xo bench: ${st.note}")
   }

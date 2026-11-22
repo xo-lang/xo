@@ -495,7 +495,10 @@ if section test; then
 				echo "### $m ($gp) $row (load $l at start)"
 				echo
 				echo '```'
-				"${tenv[@]}" "$XO" bench --ab --no-guard --keep-loaded --rounds="$ROUNDS" --warmup=1 --metrics=wall_ms,cpu_ms,max_rss_kb --args-a="test -count=1 $gp" --args-b="test --std-module=$xm" --guard="$guard" "$tgo" "$XO" 2>&1 | grep -v '^round ' | sed "s#$work/##g" || echo "(failed)"
+				# --env-b names the edited std copy: xo bench before task #645's
+				# fix set a staged xo's XO_STD to the std beside it, so on linux
+				# the edit rows tested the unedited std (a run cache hit, 12.86 ms)
+				"${tenv[@]}" "$XO" bench --ab --no-guard --keep-loaded --rounds="$ROUNDS" --warmup=1 --metrics=wall_ms,cpu_ms,max_rss_kb --args-a="test -count=1 $gp" --args-b="test --std-module=$xm" --env-b="XO_STD=$work/xostd" --guard="$guard" "$tgo" "$XO" 2>&1 | grep -v '^round ' | sed "s#$work/##g" || echo "(failed)"
 				echo '```'
 				echo
 			} >>"$report"

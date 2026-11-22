@@ -315,9 +315,12 @@ test "--ab stages only on a tmpfs that allows exec (task #382)" {
 }
 
 test "a staged xo finds the std beside its original (task #378)" {
-  expect(with_std(["K=V"], "/x/std") == ["K=V", "XO_STD=/x/std"])
-  expect(with_std(["XO_STD=/mine"], "/x/std") == ["XO_STD=/mine"])
-  expect(with_std(["K=V"], "") == ["K=V"])
+  expect(with_std(["K=V"], "/x/std", "") == ["K=V", "XO_STD=/x/std"])
+  expect(with_std(["XO_STD=/mine"], "/x/std", "") == ["XO_STD=/mine"])
+  expect(with_std(["K=V"], "", "") == ["K=V"])
+  // bench's own XO_STD reaches the side unchanged (task #645: an edited
+  // std copy was replaced by the release std beside the staged xo)
+  expect(with_std(["K=V"], "/x/std", "/edited/std") == ["K=V"])
   expect(base_of("/a/b/xo") == "xo" && base_of("xo") == "xo")
   expect(dir_of("/a/b/xo") == "/a/b" && dir_of("xo") == "." && dir_of("/xo") == "/")
 }
@@ -331,14 +334,14 @@ test "stage writes both sides into one new directory and keeps the bytes (task #
   os.fs.write("${src}/pa", b"#!/bin/sh\necho a\n").or_fault("pa")
   os.fs.write("${src}/pb", b"#!/bin/sh\necho b\n").or_fault("pb")
   let o = parse_opts(["--ab", "${src}/pa", "${src}/pb"]).or_fault("opts")
-  let st = stage(os.fs, root, o, "${src}/pa", "${src}/pb")
+  let st = stage(os.fs, root, o, "${src}/pa", "${src}/pb", "")
   expect(st.note == "")
   expect(st.dir.starts_with(root) && st.a.starts_with(st.dir) && st.b.starts_with(st.dir) && st.a != st.b)
   expect(os.fs.read(st.a).or_fault("a") == b"#!/bin/sh\necho a\n" && os.fs.read(st.b).or_fault("b") == b"#!/bin/sh\necho b\n")
   expect((os.fs.mode(st.a).or_fault("mode") & 0o111) == 0o111)
-  let one = stage(os.fs, root, o, "${src}/pa", "${src}/pa")
+  let one = stage(os.fs, root, o, "${src}/pa", "${src}/pa", "")
   expect(one.a == one.b && one.a.starts_with(one.dir))
-  let bare = stage(os.fs, root, o, "sh", "sh")
+  let bare = stage(os.fs, root, o, "sh", "sh", "")
   expect(bare.dir == "" && bare.a == "sh" && bare.note.contains("not a file path"))
 }
 
