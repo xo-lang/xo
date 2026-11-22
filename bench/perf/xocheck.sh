@@ -8,8 +8,11 @@
 # fallback fails the build instead of skewing the numbers, and XO_STAMP
 # to a line for the results ("xo 0.21.0 commit c07c2834 key 0bbef18b"
 # with ", dirty HASH" or ", NOT THIS CHECKOUT").
-_xc_xo=${1:?usage: . bench/perf/xocheck.sh XO}
-_xc_here=${2:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}
+# dash (the /bin/sh of the linux hosts) passes no arguments to a sourced
+# file, so the caller's $xo and $root stand in for XO and ROOT (task #687).
+_xc_xo=${1:-${xo:-}}
+_xc_xo=${_xc_xo:?usage: . bench/perf/xocheck.sh XO}
+_xc_here=${2:-${root:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}
 export XO_INLINE_STRICT=${XO_INLINE_STRICT:-1}
 _xc_json=$("$_xc_xo" version --json 2>/dev/null || true)
 _xc_field() { printf '%s' "$_xc_json" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
