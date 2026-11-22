@@ -1734,7 +1734,10 @@ scripts/lead/heavyd/cancel_test.go. Last verified: 2026-11-22
   `OFF_CONT=1` (heavyd -cont) is the next step of a run already under way
   (tier.sh sets it on every offload-tier.sh step after prepare). The
   lane's oldest waiting cont lease goes ahead of the plain queue, behind
-  OFF_PRIORITY leases; at most one per lane, so the gates still move. The
+  OFF_PRIORITY leases; at most one per lane, so the gates still move. A
+  whole-lane (memory or exclusive) lease that arrived before the cont keeps
+  its place (#699, 2026-11-22: tier 928's chained steps held pass2 back to
+  back and ctier-a023437d81-llvm-0 waited over 70 min for every slot). The
   8-hour tier waited 9.3 h in 2 days, 0.4 h of it at prepare and the rest
   between steps (~/xo-lead/notes/xw-1/offmovable-callers.md).
 - Moving off a held lane (task #672, 2026-11-22): an offload.sh job run
