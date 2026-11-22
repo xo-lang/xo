@@ -59,6 +59,12 @@
 # workloads (names as below). Run it through heavy.sh as HEAVY_CLASS=measure:
 # xo bench --ab refuses to run under a bulk or gate job (lead, 2026-10-30:
 # a bulk run for 0.35.0 reported every run row as failed).
+# RVG_PART (default 1/1; lead 2026-11-21, task #645): N/M runs every Mth row
+# of the compile section starting at the Nth (both tables), so the section
+# runs as M leases of 30 minutes or less on host 1; the M reports together
+# hold every row once (TestReleaseVsGoParts). The warm-memory notes go with
+# coll's run-cache-off row, whose copy they build in. RVG_LIST=1 prints the
+# rows a part selects ("rvg-row SIDE NAME MODE" on stderr) without building.
 # MAX_LOAD (default 6): each build and run waits, up to WAIT_MIN minutes
 # (default 30), for a 1-minute load average under MAX_LOAD, and the report
 # gives the load each run started at (lead, 2026-10-23: the 0.26.0 report
@@ -69,6 +75,12 @@ OUT=${2:?usage: release-vs-go.sh XO OUT}
 ROUNDS=${ROUNDS:-3}
 SECTIONS=${SECTIONS:-compile run test http amd64}
 section() { [[ " $SECTIONS " == *" $1 "* ]]; }
+RVG_PART=${RVG_PART:-1/1}
+part_n=${RVG_PART%/*} part_m=${RVG_PART#*/}
+if ! [[ "$part_n" =~ ^[1-9][0-9]*$ && "$part_m" =~ ^[1-9][0-9]*$ ]] || [ "$part_n" -gt "$part_m" ]; then
+	echo "release-vs-go: RVG_PART=$RVG_PART: want N/M with 1 <= N <= M" >&2
+	exit 2
+fi
 MAX_LOAD=${MAX_LOAD:-6}
 WAIT_MIN=${WAIT_MIN:-30}
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -275,6 +287,18 @@ compile() {
 } >"$report"
 
 # the pairs: NAME XO_SRC GO_SRC
+# row ARGS...: compile ARGS when the row is in this part (RVG_PART)
+row_i=0 coll_nc=
+row() {
+	row_i=$((row_i + 1))
+	[ $(((row_i - 1) % part_m)) -eq $((part_n - 1)) ] || return 0
+	[ "$1 $2 ${5:-default}" = "xo coll nocache" ] && coll_nc=1
+	if [ -n "${RVG_LIST:-}" ]; then
+		echo "rvg-row $1 $2 ${5:-default}" >&2
+		return 0
+	fi
+	compile "$@"
+}
 if section compile; then
 {
 	echo
@@ -283,15 +307,15 @@ if section compile; then
 	echo "| program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB | edit's path |"
 	echo "|---|---|---|---|---|---|---|---|---|"
 } >>"$report"
-compile go llvm "$perf/llvm/go" main.go >>"$report"
-compile go coll "$perf/go" main.go >>"$report"
-compile go conc "$perf/conc/go" main.go >>"$report"
+row go llvm "$perf/llvm/go" main.go >>"$report"
+row go coll "$perf/go" main.go >>"$report"
+row go conc "$perf/conc/go" main.go >>"$report"
 for w in fib sieve nbody sort interp collatz strings; do
-	compile xo "llvm-$w" "$perf/llvm/xo/$w" main.xo >>"$report"
+	row xo "llvm-$w" "$perf/llvm/xo/$w" main.xo >>"$report"
 done
-compile xo coll "$perf/xo" main.xo >>"$report"
+row xo coll "$perf/xo" main.xo >>"$report"
 for w in spawn fanout pingpong mutex rwmutex pmap; do
-	compile xo "conc-$w" "$perf/conc/xo/$w" main.xo >>"$report"
+	row xo "conc-$w" "$perf/conc/xo/$w" main.xo >>"$report"
 done
 {
 	echo
@@ -310,11 +334,11 @@ done
 	echo "|---|---|---|---|---|---|---|---|---|"
 } >>"$report"
 for w in fib sieve nbody sort interp collatz strings; do
-	compile xo "llvm-$w" "$perf/llvm/xo/$w" main.xo nocache >>"$report"
+	row xo "llvm-$w" "$perf/llvm/xo/$w" main.xo nocache >>"$report"
 done
-compile xo coll "$perf/xo" main.xo nocache >>"$report"
+row xo coll "$perf/xo" main.xo nocache >>"$report"
 for w in spawn fanout pingpong mutex rwmutex pmap; do
-	compile xo "conc-$w" "$perf/conc/xo/$w" main.xo nocache >>"$report"
+	row xo "conc-$w" "$perf/conc/xo/$w" main.xo nocache >>"$report"
 done
 # where xo's warm memory goes (owner, 2026-11-13: why Go wins warm memory):
 # coll's warm build, run cache off, in its nocache copy: the bare process,
@@ -345,7 +369,9 @@ warm_mem() {
 	sed -n '1,2p;5,17p' "$OUT/warm-mem-fe.heap.txt" 2>/dev/null || echo "(no heap profile)"
 	echo '```'
 }
-warm_mem >>"$report"
+if [ -n "$coll_nc" ]; then
+	if [ -n "${RVG_LIST:-}" ]; then echo "rvg-row warm_mem" >&2; else warm_mem >>"$report"; fi
+fi
 fi
 
 if section run; then

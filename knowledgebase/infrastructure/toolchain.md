@@ -437,7 +437,13 @@ and runs `gh release create`. The order:
    FLAGGED in the report; a flagged row is settled before the report is
    committed (a direct A/B of the two releases on that host, or a fix
    owner named in the report). SECTIONS="compile run test http amd64"
-   (the default) picks sections. Last verified: 2026-10-30 (test section
+   (the default) picks sections. RVG_PART=N/M (lead, 2026-11-21, task
+   #645) runs every Mth compile row from the Nth, so on host 1, whose
+   exclusive leases are 30 minutes or less, the compile section runs as
+   M=3 leases back to back (RVG_PART=1/3, 2/3, 3/3, each its own OUT),
+   their tables merged into one report; RVG_LIST=1 prints a part's rows
+   without building (TestReleaseVsGoParts checks the parts cover every
+   row once). Last verified: 2026-10-30 (test section
    smoke run, SECTIONS=test ROUNDS=2); 2026-11-04 (amd64 section,
    v0.36.0 against v0.38.1: json10kx20 flagged at 1.557, the other five
    within noise or better).
