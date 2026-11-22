@@ -715,12 +715,18 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -
       members[home[i]].push(i)
     }
   }
+  // std's own build: the functions of other modules a module's calls
+  // inline by the emitter's own choice (inline_copies)
+  var copies: List[Map[Int, Bool]] = []
+  for m in 0..n {
+    copies.push(if store { inline_copies(p, home, members[m], m) } else { {} })
+  }
   var used: List[Map[Str, Bool]] = []
   var exported: Map[Int, Bool] = {}
   for m in 0..n {
     var u: Map[Str, Bool] = {}
     var work: List[Str] = []
-    for i in members[m] {
+    for i in members[m] + copies[m].keys().sort() {
       for r in p.defs[i].refs {
         if !u.contains(r) {
           u[r] = true
@@ -771,7 +777,7 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -
       }
     }
     for (i, d) in p.defs.indexed() {
-      if home[i] == m || (d.helper && used[m].contains(d.name)) {
+      if home[i] == m || (d.helper && used[m].contains(d.name)) || copies[m].contains(i) {
         roots.push(d.text)
       }
     }
@@ -813,6 +819,8 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -
       }
       if d.helper {
         b.write(store_linkage(store, true, d.text))
+      } else if copies[m].contains(i) {
+        b.write(inline_copy(d.text))
       } else {
         b.write(d.decl)
       }
@@ -832,6 +840,88 @@ fn split_emit(p: ParsedIR, home: List[Int], n: Int, stable: Bool, store: Bool) -
     out.push(if stable { meta_renumber(b.freeze(), renum) } else { b.freeze() })
   }
   out
+}
+
+/// The attribute group of a call the emitter inlines itself (compiler/llvm
+/// gen.xo `attributes #6 = { alwaysinline }`, call.xo), as a call's line
+/// carries it.
+const INLINE_SITE = ") #6"
+
+/// The functions of other modules that the calls of module m's members
+/// inline by the emitter's own choice, and those their calls inline in
+/// turn (decision 0738, std's own build). A whole program's one module
+/// holds caller and callee, and the mark on the call decides; split, the
+/// callee was a declaration, and ThinLTO's import neither reads a call's
+/// own attributes nor brings a `noinline` function over, which the
+/// runtime's are when they can raise (decision 0318 stage 4): every
+/// budget tick of generated code went through cabi.budget_tick, 4
+/// instructions, to budget.tick, where the whole program has one
+/// function of both (task #607, 2026-11-22). The module gets a copy
+/// (inline_copy) for the inliner.
+fn inline_copies(p: ParsedIR, home: List[Int], members: List[Int], m: Int) -> Map[Int, Bool] {
+  var out: Map[Int, Bool] = {}
+  var work: List[Int] = []
+  for i in members {
+    work.push(i)
+  }
+  while !work.is_empty() {
+    let i = work.pop() ?? 0
+    for name in inline_sites(p.defs[i].text) {
+      if let Some(k) = p.def_at.get(name) {
+        let d = p.defs[k]
+        if home[k] != m && home[k] >= 0 && !d.helper && !out.contains(k) && inline_copy(d.text) != d.text {
+          out[k] = true
+          work.push(k)
+        }
+      }
+    }
+  }
+  out
+}
+
+/// The functions a function's text calls with the emitter's inline mark.
+fn inline_sites(text: Str) -> List[Str] {
+  var out: List[Str] = []
+  if !text.contains(INLINE_SITE) {
+    return out
+  }
+  var seen: Map[Str, Bool] = {}
+  for line in text.split("\n") {
+    if !(line.ends_with(INLINE_SITE) || line.contains("${INLINE_SITE},")) {
+      continue
+    }
+    let at = line.find("call ") ?? -1
+    if at < 0 {
+      continue
+    }
+    let b = line.bytes()
+    var j = at
+    while j < b.len() && b[j] != '@' {
+      j += 1
+    }
+    if j < b.len() {
+      let name = symbol_at(b, j)
+      if !seen.contains(name) {
+        seen[name] = true
+        out.push(name)
+      }
+    }
+  }
+  out
+}
+
+/// A function's text as the copy another module of std's own build
+/// inlines from: available_externally, so the module emits no code for
+/// it and the one definition stays in its home (hidden there,
+/// store_linkage). A function under another linkage is returned as it is
+/// (no copy).
+fn inline_copy(text: Str) -> Str {
+  for lead in ["define internal ", "define hidden "] {
+    if text.starts_with(lead) {
+      return "define available_externally hidden " + text.trim_prefix(lead)
+    }
+  }
+  text
 }
 
 /// A function's text for std's own build (decision 0738; store): no

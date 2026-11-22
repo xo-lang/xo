@@ -152,7 +152,17 @@ fn (var g: Gen) sched_tlocal() {
   // a linux C library's too (decision 0574, as the native backends'
   // m.tls_ie): the general dynamic model calls __tls_get_addr on every
   // access from a shared library
-  let model = if g.arch() == "riscv64" || g.m.tls_ie { "thread_local(initialexec)" } else { "thread_local" }
+  // std's own objects (decision 0738) on ELF: local exec. A whole
+  // program's one module is compiled and linked as a static executable
+  // in one clang call, which picks local exec itself (`mrs; add; ldr`);
+  // std's modules are compiled alone, as position independent code, and
+  // got the descriptor form, which the static link relaxes but leaves
+  // its frame and two nops: xo_tlocal_get was 11 instructions for 5,
+  // in the function that is 44% of bench/perf ctx budget's samples
+  // (task #607, 2026-11-22). The objects are linked into static
+  // executables only (a library builds whole, with tls_ie)
+  let store_le = g.m.std_store && (g.os() is "linux" | "freebsd")
+  let model = if g.arch() == "riscv64" || g.m.tls_ie { "thread_local(initialexec)" } else if store_le { "thread_local(localexec)" } else { "thread_local" }
   g.helpers.push("@xo_tlocal = hidden ${model} global [16 x i64] zeroinitializer, align 8\n\n" +
     "declare nonnull ptr @llvm.threadlocal.address.p0(ptr nonnull)\n\n" +
     "define internal ptr @xo_tlocal_at(i64 %k) nounwind {\n  %b = call ptr @llvm.threadlocal.address.p0(ptr @xo_tlocal)\n  %p = getelementptr [16 x i64], ptr %b, i64 0, i64 %k\n  ret ptr %p\n}\n\n" +

@@ -48,7 +48,8 @@ func TestSepcompLLVM(t *testing.T) {
 	// objects are kept and the whole program is built (tier 924 failed
 	// here: `cache std off`, task #656); and the test's std objects stay
 	// out of the host's cache
-	sepEnv := []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off", "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=" + t.TempDir()}
+	sepCache := t.TempDir()
+	sepEnv := []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off", "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=" + sepCache}
 	t.Run("opt level", func(t *testing.T) {
 		dir := filepath.Join("testdata", "golden", "arith")
 		opts := xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: sepEnv}
@@ -96,6 +97,50 @@ func TestSepcompLLVM(t *testing.T) {
 		// it (`undefined hidden symbol: .rs.6211.llvm...`)
 		if !strings.Contains(build.Output, "cache std llvm imports on") {
 			t.Fatalf("the program's module was compiled without std's imports (want `cache std llvm imports on`):\n%s", build.Output)
+		}
+	})
+	// two runtime functions every program runs are the code the whole
+	// program's build has (task #607, sizes read from std's objects).
+	// xo_tlocal_get read the thread's table through the descriptor form
+	// of a position independent object, 11 instructions for 5 (std's
+	// table is local exec now: its objects go into static executables
+	// only), bench/perf ctx defer 1.32 times the whole program's time.
+	// And cabi.budget_tick, which generated code calls at every loop
+	// head, was 4 instructions that called budget.tick in another of
+	// std's modules: the emitter marks that call to inline, and the mark
+	// did nothing across modules (the module holds a copy of the callee
+	// now, compiler/xo split.xo inline_copies), ctx budget 1.17 times
+	t.Run("runtime calls as the whole program's", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("ELF only: the sizes of std's ThinLTO objects")
+		}
+		_, build := buildRunLeak(t, filepath.Join("testdata", "golden", "arith"), xotool.Options{Backend: xotool.BackendLLVM, Flags: []string{"--phase-times"}, Env: sepEnv})
+		if !strings.Contains(build.Output, "(thinlto)") {
+			t.Skip("no ThinLTO objects (no lld): the plain objects inline nothing across modules")
+		}
+		objs, _ := filepath.Glob(filepath.Join(sepCache, "std", "*.llvm-*", "std.*.o"))
+		if len(objs) == 0 {
+			t.Fatalf("no std objects under %s:\n%s", sepCache, build.Output)
+		}
+		sizes := map[string]uint64{}
+		for _, o := range objs {
+			f, err := elf.Open(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			syms, _ := f.Symbols()
+			f.Close()
+			for _, sy := range syms {
+				if sy.Section != elf.SHN_UNDEF && (sy.Name == "xo_tlocal_get" || sy.Name == "x.cabi.budget_tick") && sy.Size > sizes[sy.Name] {
+					sizes[sy.Name] = sy.Size
+				}
+			}
+		}
+		if n := sizes["x.cabi.budget_tick"]; n < 64 {
+			t.Errorf("x.cabi.budget_tick is %d bytes in std's objects: want budget.tick inlined into it (64 bytes or more), not a call of it", n)
+		}
+		if n := sizes["xo_tlocal_get"]; runtime.GOARCH == "arm64" && (n == 0 || n > 24) {
+			t.Errorf("xo_tlocal_get is %d bytes in std's objects: want the local exec read (20 bytes: mrs, add, add, ldr, ret), not the descriptor's", n)
 		}
 	})
 	// two builds of std's objects, each in a cache of its own, hold the

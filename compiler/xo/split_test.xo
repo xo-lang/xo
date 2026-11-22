@@ -131,3 +131,44 @@ test "std's own build leaves no function internal: Xo functions hidden, helpers 
   expect(plain.contains("define internal i64 @\"xo.help\"(")) == true
   expect(plain.contains("define hidden i64 @\"x.a.one\"(")) == false
 }
+
+test "std's own build copies the functions a call inlines by the emitter's mark into the caller's module (task #607)" {
+  // decision 0738: budget.tick is noinline and cabi.budget_tick's call of
+  // it carries the emitter's alwaysinline mark; in two modules the call
+  // stayed a call. The caller's module holds an available_externally copy
+  // of the callee, and of what the callee's marked calls reach; a plain
+  // call's callee stays a declaration
+  let pad = "  %p = add i64 %a0, 1\n".repeat(40)
+  let ir = "target triple = \"aarch64-unknown-linux-gnu\"\n\n@.k = private unnamed_addr constant [2 x i8] c\"k\\00\"\n\n" +
+    "define internal i64 @\"x.cabi.budget_tick\"(i64 %a0) #11 {\n${pad}  %r = call i64 @\"x.budget.tick\"(i64 %a0) #6, !dbg !7\n  %q = call i64 @\"x.other.plain\"(i64 %r)\n  ret i64 %q\n}\n\n" +
+    "define internal i64 @\"x.budget.tick\"(i64 %a0) #11 {\n  %r = call i64 @\"x.ctx.cur\"(i64 %a0) #6\n  %k = ptrtoint ptr @.k to i64\n  ret i64 %r\n}\n\n" +
+    "define internal i64 @\"x.ctx.cur\"(i64 %a0) #1 {\n  ret i64 3\n}\n\n" +
+    "define internal i64 @\"x.other.plain\"(i64 %a0) #1 {\n  ret i64 4\n}\n\n" +
+    "attributes #1 = { uwtable }\nattributes #6 = { alwaysinline }\nattributes #11 = { uwtable noinline }\n"
+  expect(inline_sites("  %r = call i64 @\"x.a\"(i64 1) #6\n  call void @x_b() #6, !dbg !3\n  %q = call i64 @\"x.c\"(i64 2)\n")) == ["@\"x.a\"", "@x_b"]
+  let mods = split_ir_store(ir, 4, false, false, true)
+  expect(mods.len()) == 4
+  var seen = 0
+  for m in mods {
+    if m.contains("define hidden i64 @\"x.cabi.budget_tick\"(") {
+      seen += 1
+      expect(m.contains("define available_externally hidden i64 @\"x.budget.tick\"(")) == true
+      expect(m.contains("define available_externally hidden i64 @\"x.ctx.cur\"(")) == true
+      expect(m.contains("@.k = linkonce_odr hidden ")) == true
+      expect(m.contains("available_externally hidden i64 @\"x.other.plain\"(")) == false
+      expect(m.contains("declare hidden i64 @\"x.other.plain\"(")) == true
+    }
+    if m.contains("define hidden i64 @\"x.budget.tick\"(") {
+      seen += 1
+      expect(m.contains("define available_externally hidden i64 @\"x.ctx.cur\"(")) == true
+      expect(m.contains("x.cabi.budget_tick")) == false
+    }
+  }
+  expect(seen) == 2
+  // one definition of each stays: its home's
+  let all = mods.join("\n")
+  expect(all.split("define hidden i64 @\"x.budget.tick\"(").len()) == 2
+  expect(all.split("define hidden i64 @\"x.ctx.cur\"(").len()) == 2
+  // a program's own split copies nothing
+  expect(split_ir(ir, 4, false, false).join("\n").contains("available_externally")) == false
+}

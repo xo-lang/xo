@@ -375,6 +375,67 @@ builds.
 Also found on the way and fixed: std's helper functions were local to
 its modules, and two programs of eight failed to link (ada388a03).
 
+## Two causes found by disassembly (2026-11-22, task #607)
+
+The same runtime functions were disassembled from both binaries
+(bench/perf ctx, linux/arm64, host 2: p607/dz1.out, dz2.out, ir1.out),
+and two were not the same code:
+
+- `xo_tlocal_get`, the read of the thread's table that every context
+  and fiber lookup goes through, was 11 instructions for the whole
+  program's 5. The whole program's one module is compiled and linked as
+  a static executable by one clang call, which picks the local exec
+  model itself; std's modules are compiled alone, as position
+  independent code, and got the descriptor form, which the static link
+  relaxes but leaves its frame and two nops. std's own build declares
+  the table `thread_local(localexec)` on linux and freebsd
+  (compiler/llvm sched.xo): its objects go into static executables only
+  (a library builds whole, with the initial exec model).
+- The emitter's own inlines were lost across std's modules. The emitter
+  marks the calls it wants inlined at the call (`#6`, alwaysinline:
+  compiler/llvm ranges.xo inlinable_set, call.xo), and in one module
+  the mark wins even over a `noinline` callee, which the runtime's
+  functions are when they can raise (decision 0318 stage 4). Split into
+  std's modules the callee was a declaration, and ThinLTO's import
+  neither reads a call's own attributes nor brings a `noinline`
+  function over: `cabi.budget_tick`, which generated code calls at
+  every loop head, was 4 instructions that called `budget.tick` in
+  another module, where the whole program has one function of both. A
+  module of std's own build now holds an `available_externally` copy of
+  each function its marked calls reach in another module, and of what
+  those reach in turn (compiler/xo split.xo inline_copies); the module
+  emits no code for a copy.
+
+Measured on host 2 (ratios to the whole program, minimum of 7 runs,
+the host shared and loaded, so the direction and not the digits;
+p607/tl1.out, tl2.out, tl3.out):
+
+| Row | Before | Local exec | And the copies |
+|---|---|---|---|
+| ctx defer | 1.32 | 1.08 to 1.14 | 1.02 to 1.07 |
+| ctx budget | 1.16 | 1.16 | 1.00 |
+| fault isolate | 1.26 | 1.27 | 1.19 |
+| text cut | 1.34 | 1.36 | 1.28 |
+| text zone_fmt | 1.21 | 1.18 | 1.09 |
+| digest sha256_small | 1.18 | 1.17 | 1.15 to 1.17 |
+
+The opt in's text shrank with the copies (bench/perf ctx 893,007 to
+868,587 bytes). TestSepcompLLVM "runtime calls as the whole program's"
+reads the two functions' sizes from std's objects.
+
+Tried and dropped (tl3.out, branch l607-exports-tried): copying the
+runtime's C ABI exports too (`xo_x_obj_str_eq` and the like, whose
+calls carry the mark) and marking each export's one call, so the body
+behind it inlines as it does in a whole program. The calls of
+`cabi.obj_str_eq` in bench/perf text went from 118 to 0, the text grew
+9% (1,414,316 to 1,540,192 bytes), and no row moved beyond the noise.
+
+Still open: digest sha256_small, fault isolate and text cut at 1.15 to
+1.3. The counts of calls by callee (sz4.out) name nothing more that is
+a call in the opt in and inlined in the whole program: the other names
+that differ (cabi.fault_continue, obj_rs_push_byte, the drop helpers)
+cost the same number of calls in both.
+
 ## Consequences
 
 - A warm LLVM build of a program that reaches http or crypto compiles
