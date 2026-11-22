@@ -67,6 +67,15 @@ func asm(t *testing.T, dir, goos string) string {
 
 var benchDir = filepath.Join("..", "..", "bench", "perf", "llvm", "xo")
 
+// asmDir holds the two programs TestGoldenAsm compiles: the test's own
+// copies of the fib and sieve benchmarks as they were at v0.55.0. They
+// were read from bench/perf/llvm/xo, and a change to the benchmarks
+// (1ed49a3e3f gave each a repeat count and a work function, task #686)
+// left the four goldens stale: the test failed at the 0.55.1 candidate
+// with no change to the compiler (task #698). TestGoldenAsmOwnsInputs
+// (internal/repotest) keeps the test off the benchmarks.
+var asmDir = filepath.Join("testdata", "asm")
+
 // TestGoldenAsm compares the assembly of fib's and sieve's own functions
 // (ownFuncs: not the std runtime linked with them), for Darwin and Linux,
 // with testdata/*.s (-update rewrites them). On a host with clang the
@@ -79,7 +88,7 @@ func TestGoldenAsm(t *testing.T) {
 			// runs in every arm64 and x86 isel or emitter gate)
 			t.Run(name+"/"+goos, func(t *testing.T) {
 				t.Parallel()
-				full := asm(t, filepath.Join(benchDir, name), goos)
+				full := asm(t, filepath.Join(asmDir, name), goos)
 				got := ownFuncs(full)
 				path := filepath.Join("testdata", name+"."+goos+".s")
 				if *update {

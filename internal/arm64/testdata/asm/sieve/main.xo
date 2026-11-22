@@ -1,0 +1,27 @@
+// Sieve of Eratosthenes over a List[Bool]: element writes in place.
+fn sieve(n: Int) -> Int {
+  var flags: List[Bool] = []
+  for _ in 0..n + 1 {
+    flags.push(true)
+  }
+  var count = 0
+  for i in 2..n + 1 {
+    if flags[i] {
+      count += 1
+      var j = i * i
+      while j <= n {
+        flags[j] = false
+        j += i
+      }
+    }
+  }
+  count
+}
+
+fn main(os: Os) {
+  var total = 0
+  for _ in 0..5 {
+    total += sieve(10000000)
+  }
+  os.stdio.println("sieve ${total}")
+}
