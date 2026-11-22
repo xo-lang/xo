@@ -399,7 +399,7 @@ yourself.
   `CTIER_LLVM_SHARDS=0` runs it as one lease. A run takes only one of
   those leases (#716, owner 2026-11-22): shard = the run's number (the
   rows of runs.tsv before it) mod `CTIER_LLVM_SHARDS` + 1, so 12 runs a
-  day run every golden at least twice; the 8-hour tier runs them all.
+  day run every golden at least twice; the 12-hour tier runs them all.
   `CTIER_LLVM_SAMPLE=0` runs every shard each run. A ctier "good" commit
   (the bisect's start) has passed only its run's llvm shard. Last
   verified: 2026-11-22.
@@ -409,7 +409,7 @@ yourself.
   arm64 `TestGoldenRun` subtest whose binary (build-info id masked),
   golden files other than .xo, and run settings are identical to its last
   passing run on that host is skipped; a failed run drops the key. The
-  8-hourly tier (offload-tier.sh) records keys and never skips. gate.sh
+  12-hourly tier (offload-tier.sh) records keys and never skips. gate.sh
   merges the step's records (`go run ./scripts/goldenpass DIR`, the step's
   `NAME.pass.txt`: passed, skipped, run seconds saved, failed). The skip
   saves the run, never the build. Last verified: 2026-11-22.
@@ -994,7 +994,7 @@ yourself.
   2026-10-26, and every tier runs it; `corpora-all`
   runs every corpus on every backend (TestStdCorpora with no /go/ suffix),
   10 min 32 s measured 2026-10-26 mostly in the LLVM corpora's clang
-  links, and the 8-hourly full tier runs it every time. Both are where
+  links, and the 12-hourly full tier runs it every time. Both are where
   0.33.0's exit criterion 6 is met.
   A divergence is reported to the lead before std changes, never fixed in
   the probe.

@@ -238,7 +238,7 @@ reasons are in test-policy.md):
   callgrind's instruction count and confirms with one `--ab`.
   Scheduler, lock, spin, I/O, and concurrency changes use `--ab` only.
 - The lead runs `go test -short` plus the full fixed point on main every
-  2 hours and the full tier every 8 hours, and bisects a failure to the
+  2 hours and the full tier every 12 hours (owner, 2026-11-22; was 8), and bisects a failure to the
   commit's owner, who fixes forward with a regression test. A failure on
   main that is not yours: message the lead with the error and the good
   and bad commits; the lead names one bisect owner.
