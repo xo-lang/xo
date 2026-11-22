@@ -727,7 +727,14 @@ CPU-bound timings; HTTP throughput needs bare Linux. Last verified: 2026-11-02
 - The lead's full tier (tier.sh) runs the windows/amd64 sample here on
   every tier since 2026-10-30 (owner: no routine run covered native
   Windows), logging to `~/xo-lead/agents/lead-tierN-win-cmd.log`; a
-  failure fails the tier.
+  failure fails the tier. After the sample it runs cmd/xo `TestDebug*`
+  there (task #683, 2026-11-22: 0.55.0's windows debugger regression,
+  #681, was first seen at release verify): `scripts/lead/win-debug-run.sh`
+  cross-builds xo.exe on the Mac (the box's own seed is not used; on
+  2026-11-22 its 0.54.0 seed could not build main) and runs
+  `scripts/lead/win-debug.sh` from the commit's tree there, logging to
+  `lead-tierN-windbg-cmd.log`; tier-check.py's step `windows/amd64
+  TestDebug` fails when a test fails or none passed.
 - Slots: `OFF_SLOTS=2` in both of this machine's host files, so two jobs
   run at once per side (WSL and Windows), four in all; the arm64
   container stays at one (owner, 2026-10-29). The one repository's fetch
