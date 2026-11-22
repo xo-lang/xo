@@ -22,7 +22,8 @@
 # os.UserCacheDir and every xo cache stay there); no sudo, no installs
 # elsewhere. GOMAXPROCS is 6 (of 12 threads) so the laptop stays usable.
 # The script refuses to start on battery below $XO_INTEL_MIN_BATT
-# percent (default 50). The command runs in the foreground of the ssh
+# percent (default 50), and while another run holds the laptop (exit 3;
+# XO_INTEL_LOCK_WAIT=SECONDS waits for it). The command runs in the foreground of the ssh
 # session: when this script or the connection dies, it dies too, so
 # nothing is left running.
 set -euo pipefail
@@ -30,6 +31,8 @@ set -euo pipefail
 HOST=${XO_INTEL_HOST:-user@intel-mac.local}
 GOVER=${XO_INTEL_GO:-1.26.1}
 MINBATT=${XO_INTEL_MIN_BATT:-50}
+LOCK_WAIT=${XO_INTEL_LOCK_WAIT:-0}
+LOCK_POLL=${XO_INTEL_LOCK_POLL:-30}
 CLEAN=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -61,6 +64,44 @@ if echo "$batt" | grep -q "Battery Power" && [ "${pct:-0}" -lt "$MINBATT" ]; the
 fi
 log "battery: ${pct}%, $(echo "$batt" | grep -o "'.*'")"
 
+# One run at a time (task #652): two runs shared the checkout, the bundle
+# and logs/COMMIT.log, so a second run's lines landed in the first's log.
+# The lock is the directory ~/xo-ci/lock (mkdir is atomic), its holder
+# file naming the run; a run that finds it held refuses, naming the
+# holder, or with XO_INTEL_LOCK_WAIT=SECONDS waits that long for it. A
+# holder whose process on this machine is gone (killed before its trap)
+# is taken over. Each run's log and bundle carry the run's id.
+run=$(date -u +%Y%m%dT%H%M%SZ)-$$
+me=$(hostname -s)
+holder="${XW_AS:-$(id -un)} pid $$ on $me, $commit, run $run"
+took=""
+release() {
+  [ -n "$took" ] && ssh_ "grep -qF 'run $run' ~/xo-ci/lock/holder 2>/dev/null && rm -rf ~/xo-ci/lock" || true
+}
+deadline=$(( $(date +%s) + LOCK_WAIT ))
+while :; do
+  set +e
+  held=$(ssh_ "mkdir -p ~/xo-ci; if mkdir ~/xo-ci/lock 2>/dev/null; then echo '$holder' since \$(date -u +%FT%TZ) > ~/xo-ci/lock/holder; else cat ~/xo-ci/lock/holder 2>/dev/null || echo unknown; exit 3; fi")
+  st=$?
+  set -e
+  [ $st = 0 ] && { took=1; break; }
+  [ $st = 3 ] || { log "could not reach $HOST for the lock (ssh exit $st)"; exit 2; }
+  # a holder on this machine whose process is gone is stale
+  hpid=$(echo "$held" | sed -n "s/.* pid \([0-9][0-9]*\) on $me, .*/\1/p")
+  if [ -n "$hpid" ] && ! kill -0 "$hpid" 2>/dev/null; then
+    log "taking over a stale lock (its process $hpid is gone): $held"
+    ssh_ "rm -rf ~/xo-ci/lock" || true
+    continue
+  fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    log "the laptop is in use: $held; wait for it, or set XO_INTEL_LOCK_WAIT=SECONDS to wait"
+    exit 3
+  fi
+  log "waiting for the laptop: $held"
+  sleep "$LOCK_POLL"
+done
+trap release EXIT
+
 ssh_ "test -x ~/xo-ci/go/bin/go || { mkdir -p ~/xo-ci && curl -fsSL https://go.dev/dl/go$GOVER.darwin-amd64.tar.gz | tar -C ~/xo-ci -xz; }"
 
 bundle=$(mktemp -t xo-intel).bundle
@@ -68,18 +109,19 @@ bundle=$(mktemp -t xo-intel).bundle
 git update-ref "refs/xo-intel/$commit" "$full"
 git bundle create "$bundle" "refs/xo-intel/$commit" >/dev/null 2>&1
 git update-ref -d "refs/xo-intel/$commit"
-scp -o BatchMode=yes -q "$bundle" "$HOST:xo-ci/xo.bundle"
+scp -o BatchMode=yes -q "$bundle" "$HOST:xo-ci/xo-$run.bundle"
 rm -f "$bundle"
 
-remote_log="xo-ci/logs/$commit.log"
+remote_log="xo-ci/logs/$commit-$run.log"
 cleanup() {
   case "$CLEAN" in
-    clean) ssh_ "chmod -R u+w ~/xo-ci/state 2>/dev/null; rm -rf ~/xo-ci/xo ~/xo-ci/state ~/xo-ci/logs ~/xo-ci/xo.bundle" || true;;
+    clean) ssh_ "chmod -R u+w ~/xo-ci/state 2>/dev/null; rm -rf ~/xo-ci/xo ~/xo-ci/state ~/xo-ci/logs ~/xo-ci/xo-$run.bundle" || true;;
     purge) ssh_ "chmod -R u+w ~/xo-ci 2>/dev/null; rm -rf ~/xo-ci" || true;;
-    *) ssh_ "rm -f ~/xo-ci/xo.bundle" || true;;
+    *) ssh_ "rm -f ~/xo-ci/xo-$run.bundle" || true;;
   esac
   [ -n "$CLEAN" ] && log "cleaned ($CLEAN)"
   ssh_ "du -sh ~/xo-ci 2>/dev/null; df -h ~ | tail -1" >&2 || true
+  release
 }
 trap cleanup EXIT
 
@@ -92,17 +134,17 @@ set -e
 X=\$HOME/xo-ci
 mkdir -p \$X/logs \$X/state/home \$X/state/tmp \$X/state/gocache \$X/state/gopath
 [ -d \$X/xo/.git ] || git init -q \$X/xo
-git -C \$X/xo fetch -q \$X/xo.bundle '+refs/xo-intel/*:refs/xo-intel/*'
+git -C \$X/xo fetch -q \$X/xo-$run.bundle '+refs/xo-intel/*:refs/xo-intel/*'
 git -C \$X/xo checkout -q -f $full
 cd \$X/xo
 export HOME=\$X/state/home TMPDIR=\$X/state/tmp/ GOCACHE=\$X/state/gocache GOPATH=\$X/state/gopath
 export PATH=\$X/go/bin:\$PATH GOMAXPROCS=6 GOTOOLCHAIN=local GOFLAGS=
 cmd=\$(echo $cmd64 | base64 -D)
-{ echo "# intel-mac-test $commit \$(date -u +%FT%TZ) \$(sw_vers -productVersion) \$(uname -m) \$(clang --version | head -1)"; echo "# \$cmd"; } > \$X/logs/$commit.log
+{ echo "# intel-mac-test $commit \$(date -u +%FT%TZ) \$(sw_vers -productVersion) \$(uname -m) \$(clang --version | head -1)"; echo "# \$cmd"; } > \$X/logs/$commit-$run.log
 set +e
-caffeinate -i bash -c "\$cmd" >> \$X/logs/$commit.log 2>&1
+caffeinate -i bash -c "\$cmd" >> \$X/logs/$commit-$run.log 2>&1
 rc=\$?
-echo "# exit \$rc \$(date -u +%FT%TZ)" >> \$X/logs/$commit.log
+echo "# exit \$rc \$(date -u +%FT%TZ)" >> \$X/logs/$commit-$run.log
 exit \$rc
 EOF
 rc=$?

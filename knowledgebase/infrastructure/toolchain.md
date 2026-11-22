@@ -4683,7 +4683,17 @@ The whole internal/llvm package passes there in 532 s
 start (gotchas/darwin-amd64-sanitizers-sigill.md). The development Mac
 cannot run x86_64 binaries (no Rosetta) and the LLVM backend builds for
 the host only, so darwin/amd64 is built and tested on that Mac.
-Last verified: 2026-10-12.
+One run at a time (task #652, 2026-11-21): a run takes the laptop's lock,
+the directory `~/xo-ci/lock` with a `holder` file naming the agent
+(`$XW_AS`), its pid and machine, the commit, and the run id. A run that
+finds it held exits 3 naming the holder; `XO_INTEL_LOCK_WAIT=SECONDS`
+waits that long instead (polling every `XO_INTEL_LOCK_POLL`, default 30
+s). A holder from this machine whose pid is gone is taken over. Each run
+has its own bundle and laptop log, `~/xo-ci/logs/<commit>-<run>.log`
+(before, two runs at once shared `<commit>.log` and the bundle).
+TestIntelMacTestLock (internal/repotest) runs the script against a fake
+laptop.
+Last verified: 2026-11-21.
 
 ## Windows runs (windows/amd64, decisions 0196 and 0197)
 
