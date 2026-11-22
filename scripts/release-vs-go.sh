@@ -499,7 +499,12 @@ if section http; then
 			put=/work/in/rvg-http-$$.bundle
 			"$agents/offload.sh" --put "$bundle" "$put" || { rm -f "$bundle"; exit 4; }
 			rm -f "$bundle"
-			OFF_EXCLUSIVE=1 "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$" "${HTTP_SEED:-$OFF_SEED}" /work/priv /work "$put" "$hrounds" "$hpads" "$HTTP_BASE_XO"
+			# one lease per round: host 1 refuses an exclusive job over 30 minutes
+			# (OFF_MAX_MIN), and a round of the four pads is about 14 minutes (task
+			# #645, 2026-11-21: the three rounds in one lease were refused)
+			for r in $(seq 1 "$hrounds"); do
+				OFF_EXCLUSIVE=1 OFF_MAX_MIN=${HTTP_LEASE_MIN:-30} "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$r$r" "${HTTP_SEED:-$OFF_SEED}" /work/priv /work "$put" 1 "$hpads" "$HTTP_BASE_XO" || echo "release-vs-go: http round $r: lease exit $?"
+			done
 		) >"$OUT/http.txt" 2>&1 || true
 		python3 - "$OUT/http.txt" >>"$report" <<'PY'
 import re, json, statistics as st, sys
