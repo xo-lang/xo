@@ -157,6 +157,14 @@ quiet log alone is never a hang.
   sit in the data path. The runner is not yet installed by the core:
   xw links C (SQLite), so it builds on each host, not cross built from
   the Mac.
+- The failed step's detail (task #600, workstream ce6f40e, 2026-11-22):
+  `xw run-job --detail GLOBS` (comma separated, absolute or under
+  `--dir`, no `..` segment) sends the globs with the start. A job that
+  exits with rc not 0 has the matching files sent back before its exit
+  record (at most 64 files, 4 MB a file, 16 MB in all; a file past a
+  limit is named as skipped); a passing job sends none. They land in
+  `RUNS/RUN/STEP.detail/`, each path's segments joined with `_`.
+  Retention and `xw result` are not built yet.
 
 ## Alternatives
 
