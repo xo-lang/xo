@@ -1709,7 +1709,9 @@ HEAVY_GROUP=NAME, which every heavy.sh run and lease under it sends;
 `heavyd cancel group:NAME` stops CMD's tree and every running member and
 refuses every member (and the group name) for 12 h after. tier.sh runs
 itself as `heavyd group lead-tierN` (TIER_NAME names it, TIER_NO_GROUP=1
-skips it). The cancel file a queued lease prints
+skips it). `xw job cancel TARGET [WHY]` (workstream 0039b73) runs it
+for the caller, takes an `xw jobs` row id too, and the cancel shows on
+that row in `xw jobs` ("cancelled by agent N: WHY"). The cancel file a queued lease prints
 (`$LEAD/locks/cancel/NAME` or `/PID`) still works for one job. Tested by
 scripts/lead/heavyd/cancel_test.go. Last verified: 2026-11-22
 
