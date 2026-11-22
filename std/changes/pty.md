@@ -1,5 +1,16 @@
 # std/pty changes
 
+## 2026-11-22: feature: std/pty on Windows on the Go backend
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #704, decision 0740 stage 2
+- Go reference: none (creack/pty has no Windows pty); os/exec's command line and environment block rules
+- Test: std/rt TestPtyWindowsOutputThenEnd, ExitCode, Write, Size, ControllingOnly, ReadDeadline: 6 pass on Windows amd64
+- Shipped in: not yet released
+
+The Go backend's std/pty works on Windows as the native one does: a pseudo console, a child started with it by CreateProcessW (os/exec cannot attach one), reads with deadlines through a reader goroutine, and the pipe's end after the child's exit and 100 ms of quiet output.
+
 ## 2026-11-22: feature: std/pty on Windows over a ConPTY (native backend)
 
 - Kind: feature

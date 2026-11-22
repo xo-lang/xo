@@ -1,4 +1,4 @@
-//go:build !(darwin || freebsd || (linux && (amd64 || arm64 || riscv64)))
+//go:build !(darwin || freebsd || (linux && (amd64 || arm64 || riscv64))) && !windows
 
 package rt
 

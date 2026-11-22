@@ -12933,7 +12933,7 @@ fn (s: RawState) restore() -> () ! ProcErr uses stdio
   `make_raw` puts this program's standard input in raw mode and `restore` puts it back.
   `make_raw` is an `Io` error when standard input is not a terminal; it works wherever `Stdio.raw_input` does,
   Windows consoles included.
-- Linux, macOS and FreeBSD, on the native backends and the Go backend; Windows on the native backend, over a ConPTY
-  (decision 0740's second stage): the slave path is empty, `size` returns what was last set (80 by 24 at `open`),
-  and `set_raw` succeeds and changes nothing. On the Go backend on Windows and on wasm, `open` and `start` return
-  `ProcErr.Io` "pseudo-terminals are not supported on this system".
+- Linux, macOS, FreeBSD and Windows, on the native backends and the Go backend. Windows uses a ConPTY (decision
+  0740's second stage): the slave path is empty, `size` returns what was last set (80 by 24 at `open`), and
+  `set_raw` succeeds and changes nothing. On wasm, and on Windows before 10 1809 (no ConPTY), `open` and `start`
+  return `ProcErr.Io` "pseudo-terminals are not supported on this system".

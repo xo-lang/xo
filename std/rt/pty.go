@@ -27,6 +27,7 @@ type ptyFile struct {
 	rdl    time.Time
 	saved  []byte // the termios before set_raw(true), nil none
 	closed bool
+	con    *ptyCon // Windows: the pseudo console, m its output (pty_windows.go)
 }
 
 // Pty_Pty is `pty.Pty`, a handle.
@@ -41,6 +42,17 @@ type Pty_RawState struct {
 func ptyIo(what string, err error) ProcErr { return procIo(what + ": " + err.Error()) }
 
 func Pty_open(tk *Task, _ Proc) Result[Tuple2[Pty_Pty, string], ProcErr] {
+	if ptyConOS {
+		c, m, err := ptyConOpen()
+		if c == nil && err == nil {
+			// no ConPTY on this Windows (before 10 1809)
+			return Err[Tuple2[Pty_Pty, string]](procIo(ptyUnsupported))
+		}
+		if err != nil {
+			return Err[Tuple2[Pty_Pty, string]](ptyIo("open", err))
+		}
+		return Ok[Tuple2[Pty_Pty, string], ProcErr](Tuple2[Pty_Pty, string]{Pty_Pty{&ptyFile{m: m, con: c}}, ""})
+	}
 	if !ptySupported {
 		return Err[Tuple2[Pty_Pty, string]](procIo(ptyUnsupported))
 	}
@@ -78,6 +90,9 @@ func Pty_spawn(tk *Task, p Pty_Pty, cmd Cmd, attach Pty_Attach, size Option[Pty_
 		if r := p.M_set_size(tk, size.V); !r.Ok {
 			return Err[Child](r.E)
 		}
+	}
+	if p.p.con != nil {
+		return ptyConSpawn(tk, p.p, cmd.c, all)
 	}
 	s, err := p.p.takeSlave()
 	if err != nil {
@@ -132,7 +147,14 @@ func (p *Pty_Pty) M_read(tk *Task, max int64) Result[Option[Bytes], ProcErr] {
 		return Ok[Option[Bytes], ProcErr](Some(Bytes("")))
 	}
 	buf := make([]byte, max)
-	n, canceled, err := ptyRead(tk, m, buf, dl)
+	var n int
+	var canceled bool
+	var err error
+	if c := p.p.con; c != nil {
+		n, canceled, err = c.read(tk, buf, dl)
+	} else {
+		n, canceled, err = ptyRead(tk, m, buf, dl)
+	}
 	if canceled {
 		return Err[Option[Bytes]](ProcErr{Tag: 3})
 	}
@@ -153,6 +175,12 @@ func (p *Pty_Pty) M_write(tk *Task, data Bytes) Result[Unit, ProcErr] {
 	m, _ := p.master()
 	if m == nil {
 		return Err[Unit](procIo("write: the pty is closed"))
+	}
+	if c := p.p.con; c != nil {
+		if err := c.write([]byte(data)); err != nil {
+			return Err[Unit](ptyIo("write", err))
+		}
+		return Ok[Unit, ProcErr](Unit{})
 	}
 	if _, err := m.WriteString(string(data)); err != nil {
 		return Err[Unit](ptyIo("write", err))
@@ -180,6 +208,9 @@ func (p *Pty_Pty) M_size(tk *Task) Result[Pty_Size, ProcErr] {
 	if m == nil {
 		return Err[Pty_Size](procIo("size: the pty is closed"))
 	}
+	if c := p.p.con; c != nil {
+		return Ok[Pty_Size, ProcErr](c.size())
+	}
 	s, err := ptyGetSize(m)
 	if err != nil {
 		return Err[Pty_Size](ptyIo("size", err))
@@ -192,6 +223,12 @@ func (p *Pty_Pty) M_set_size(tk *Task, s Pty_Size) Result[Unit, ProcErr] {
 	if m == nil {
 		return Err[Unit](procIo("set_size: the pty is closed"))
 	}
+	if c := p.p.con; c != nil {
+		if err := c.resize(s); err != nil {
+			return Err[Unit](ptyIo("set_size", err))
+		}
+		return Ok[Unit, ProcErr](Unit{})
+	}
 	if err := ptySetSize(m, s); err != nil {
 		return Err[Unit](ptyIo("set_size", err))
 	}
@@ -203,6 +240,10 @@ func (p *Pty_Pty) M_set_raw(tk *Task, on bool) Result[Unit, ProcErr] {
 	defer p.p.mu.Unlock()
 	if p.p.closed {
 		return Err[Unit](procIo("set_raw: the pty is closed"))
+	}
+	if p.p.con != nil {
+		// a pseudo console has no line discipline the parent sets
+		return Ok[Unit, ProcErr](Unit{})
 	}
 	saved, err := ptySetRaw(p.p.m, on, p.p.saved)
 	if err != nil {
@@ -222,6 +263,9 @@ func (p *Pty_Pty) M_close(*Task) {
 	if p.p.slave != nil {
 		p.p.slave.Close()
 		p.p.slave = nil
+	}
+	if p.p.con != nil {
+		p.p.con.close()
 	}
 	p.p.m.Close()
 }
