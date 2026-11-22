@@ -1,5 +1,6 @@
 # internal/repotest files whose declarations other files use (TestRepotestShared keeps this
 # exact): pushq.sh runs the whole package when a push changes one (task #589).
+leadenv_test.go
 passes_test.go
 repo_test.go
 tlocal_test.go

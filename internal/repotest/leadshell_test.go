@@ -122,6 +122,7 @@ func TestLeadShell(t *testing.T) {
 			}
 			cmd := exec.CommandContext(ctx, "bash", args...)
 			cmd.Dir = abs
+			cmd.Env = leadScriptEnv() // not the caller's gate or tier settings (#655)
 			cmd.Stdin = nil
 			// its own process group, stopped whole on the timeout: a killed
 			// bash left alone orphans what it started (2026-11-21:

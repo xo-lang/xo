@@ -17,7 +17,7 @@ func TestTierCheck(t *testing.T) {
 		t.Skip("no python3")
 	}
 	s := filepath.Join("..", "..", "scripts", "lead", "tier-check_test.sh")
-	out, err := exec.Command("bash", s).CombinedOutput()
+	out, err := leadScript(s).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", s, err, out)
 	}
@@ -30,7 +30,7 @@ func TestTierCheck(t *testing.T) {
 // that script before #582.
 func TestTierMac(t *testing.T) {
 	s := filepath.Join("..", "..", "scripts", "lead", "tier-mac_test.sh")
-	out, err := exec.Command("bash", s).CombinedOutput()
+	out, err := leadScript(s).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", s, err, out)
 	}
@@ -41,7 +41,7 @@ func TestTierMac(t *testing.T) {
 // linux llvm never on host 2 (24 GB OOM-kills clang).
 func TestTierPlan(t *testing.T) {
 	s := filepath.Join("..", "..", "scripts", "lead", "tier-plan_test.sh")
-	out, err := exec.Command("bash", s).CombinedOutput()
+	out, err := leadScript(s).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", s, err, out)
 	}
@@ -52,7 +52,7 @@ func TestTierPlan(t *testing.T) {
 // notes/lead/tierN-fail.
 func TestTierKeep(t *testing.T) {
 	s := filepath.Join("..", "..", "scripts", "lead", "tier-keep_test.sh")
-	out, err := exec.Command("bash", s).CombinedOutput()
+	out, err := leadScript(s).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", s, err, out)
 	}
