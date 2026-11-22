@@ -688,9 +688,11 @@ fn (var g: G) load_elem(a: ElemAt, et: Int, as_int: Bool) -> List[Int] {
   if nw > 0 {
     let sg = g.narrow_signed(et)
     let ins = if nw == 1 {
-      if sg { "ldrb $wd0, ${at_operand(a, 0, 0)}\nlsl $d0, $d0, #56\nasr $d0, $d0, #56" } else { "ldrb $wd0, ${at_operand(a, 0, 0)}" }
+      // a signed element is one sign extending load (ldrsb, ldrsh), as
+      // an Int32 is one ldrsw: it was a load and two shifts (task #509)
+      if sg { "ldrsb $d0, ${at_operand(a, 0, 0)}" } else { "ldrb $wd0, ${at_operand(a, 0, 0)}" }
     } else if nw == 2 {
-      if sg { "ldrh $wd0, ${at_operand(a, 0, 0)}\nlsl $d0, $d0, #48\nasr $d0, $d0, #48" } else { "ldrh $wd0, ${at_operand(a, 0, 0)}" }
+      if sg { "ldrsh $d0, ${at_operand(a, 0, 0)}" } else { "ldrh $wd0, ${at_operand(a, 0, 0)}" }
     } else {
       if sg { "ldrsw $d0, ${at_operand(a, 0, 0)}" } else { "ldr $wd0, ${at_operand(a, 0, 0)}" }
     }

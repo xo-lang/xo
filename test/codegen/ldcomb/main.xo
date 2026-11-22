@@ -45,9 +45,10 @@ fn lld64(b: List[UInt8], i: Int) -> Int {
   Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 2]) << 16 | Int(b[i + 3]) << 24 | Int(b[i + 4]) << 32 | Int(b[i + 5]) << 40 | Int(b[i + 6]) << 48 | Int(b[i + 7]).wrapping_shl(56)
 }
 
-// A signed byte list stays byte loads (sign extension per byte).
+// A signed byte list stays byte loads (sign extension per byte: one
+// ldrsb each since task #509, a ldrb and two shifts before).
 fn sld16(b: List[Int8], i: Int) -> Int {
-  // arm64: "ldrb"
+  // arm64: "ldrsb" -"ldrh"
   Int(b[i]) | Int(b[i + 1]) << 8
 }
 

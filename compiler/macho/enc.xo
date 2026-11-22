@@ -475,6 +475,22 @@ fn ldst_word(m: Str, t: Int, kt: Int, mo: Mem) -> Int {
       size = 2
       opc = 2
     }
+    // a signed byte or half word into an X register (opc 2; a W
+    // destination, opc 3, is not written by the backend)
+    "ldrsb" => {
+      if kt != RX {
+        return -1
+      }
+      size = 0
+      opc = 2
+    }
+    "ldrsh" => {
+      if kt != RX {
+        return -1
+      }
+      size = 1
+      opc = 2
+    }
     _ => return -1
   }
   // a q register: a register offset, an unsigned offset in 16 byte

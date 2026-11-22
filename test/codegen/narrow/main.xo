@@ -1,0 +1,87 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): sized integers
+// (task #509, ADR 0727 list 2).
+
+// A signed element is one sign extending load, as an Int32's ldrsw: it
+// was a zero extending load and two shifts.
+fn s16(xs: List[Int16], i: Int) -> Int {
+  // arm64: "ldrsh x[0-9]+, " -"asr" -"ldrh"
+  // amd64: "movswq"
+  Int(xs[i])
+}
+
+fn s8(xs: List[Int8], i: Int) -> Int {
+  // arm64: "ldrsb x[0-9]+, " -"asr" -"ldrb"
+  // amd64: "movsbq"
+  Int(xs[i])
+}
+
+// An unsigned element stays a zero extending load.
+fn u16(xs: List[UInt16], i: Int) -> Int {
+  // arm64: "ldrh w[0-9]+, " -"ldrsh"
+  Int(xs[i])
+}
+
+// A multiply of a sized integer by 2^k + 1 is an add of a shifted
+// register, as an Int's (test/codegen/arith times3): the constant of a
+// sized type was not seen as one, and it was a mov and a mul.
+fn times3(x: Int32) -> Int32 {
+  // arm64: "add x[0-9]+, x[0-9]+, x[0-9]+, lsl #1" -"\tmul "
+  x * 3
+}
+
+// And by a power of two a shift.
+fn times8(x: Int32) -> Int32 {
+  // arm64: "lsl x[0-9]+, x[0-9]+, #3" -"\tmul "
+  x * 8
+}
+
+// A sized result whose operands' ranges keep it in the type has no range
+// test: a remainder by a constant times 3, and a 16 bit value taken from
+// it, fit an Int32 (bench/perf/portable arith32 made both tests every
+// step: the constant of a sized type had no bounds, and the bounds were
+// read three operations deep, short of the remainder).
+fn mod3(h: Int32, y: Int16) -> Int32 {
+  // arm64: -"sxtw" -"fault"
+  (h % 46000) * 3 - Int32(y)
+}
+
+// The test stays where the result can leave the type (ADR 0727, point
+// 4): a sum of two Int32s, and a product of two.
+fn add32(a: Int32, b: Int32) -> Int32 {
+  // arm64: "cmp x[0-9]+, w[0-9]+, sxtw"
+  a + b
+}
+
+fn mul32(a: Int32, b: Int32) -> Int32 {
+  // arm64: "cmp x[0-9]+, w[0-9]+, sxtw"
+  a * b
+}
+
+// A remainder alone does not bound a product by a variable.
+fn modmul(h: Int32, k: Int32) -> Int32 {
+  // arm64: "cmp x[0-9]+, w[0-9]+, sxtw"
+  (h % 46000) * k
+}
+
+// A divisor that is an or with a constant other than 0 is never 0: no
+// zero test. The test of the minimum by -1 stays (y | 1 can be -1).
+fn divor(x: Int32, y: Int16) -> Int32 {
+  // arm64: "sdiv" -"cbz" -"divzero" "sxtw"
+  x / (Int32(y) | 1)
+}
+
+// A divisor that can be 0 keeps its test.
+fn divany(x: Int32, y: Int32) -> Int32 {
+  // arm64: "sdiv" "divzero|cbz|cmp x[0-9]+, #0"
+  x / y
+}
+
+fn main(os: Os) {
+  let a: List[Int16] = [-3, 4]
+  let b: List[Int8] = [-5, 6]
+  let c: List[UInt16] = [7, 8]
+  let x: Int32 = 9
+  let y: Int16 = -7
+  os.stdio.println("${s16(a, 0)} ${s8(b, 0)} ${u16(c, 1)} ${times3(x)} ${times8(x)}")
+  os.stdio.println("${mod3(x, y)} ${add32(x, x)} ${mul32(x, x)} ${modmul(x, x)} ${divor(x, y)} ${divany(x, x)}")
+}

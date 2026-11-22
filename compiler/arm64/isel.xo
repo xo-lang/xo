@@ -2641,8 +2641,15 @@ fn (var g: G) known_bool(v: Int, d: Int) -> Bool? {
   }
 }
 
-/// Whether v is an Or with a constant operand other than 0 (never 0).
-fn (var g: G) nonzero_or(v: Int) -> Bool {
+/// Whether v is an Or with a constant operand other than 0 (never 0),
+/// seen through the widening of a sized integer to its Int word, and
+/// with a sized constant as the operand (`y | 1` on an Int32: the
+/// divisor of bench/perf/portable arith32, task #509).
+fn (var g: G) nonzero_or(v0: Int) -> Bool {
+  var v = v0
+  while g.f.values[v].op == ssa.Op.IntConv && g.f.values[v].args.len() == 1 && g.widens(v) {
+    v = g.f.arg(g.f.values[v].args, 0)
+  }
   let x = g.f.values[v]
   if x.op != ssa.Op.Or || x.args.len() != 2 {
     return false
@@ -2650,12 +2657,31 @@ fn (var g: G) nonzero_or(v: Int) -> Bool {
   let (sp4, ep4) = g.f.args_span(x.args)
   for ak4 in sp4..ep4 {
     let a = g.f.argpool[ak4]
-    let (k, ok) = g.const_int(a)
+    let (k, ok) = g.const_word(a)
     if ok && k != 0 {
       return true
     }
   }
   false
+}
+
+/// Whether the IntConv v keeps its operand's value: a conversion to Int,
+/// or between sized integers to one at least as wide and of the same
+/// signedness.
+fn (g: G) widens(v: Int) -> Bool {
+  let x = g.f.values[v]
+  let tt = ssa.ty_of(x.tb)
+  let st = ssa.ty_of(g.f.values[g.f.arg(x.args, 0)].tb)
+  if tt < 0 || st < 0 || g.m.types[tt].kind != ssa.Kind.Int || g.m.types[st].kind != ssa.Kind.Int {
+    return false
+  }
+  let tb = g.m.types[tt].bits
+  let sb = g.m.types[st].bits
+  if tb <= 0 || tb >= 64 {
+    // to Int (or a 64 bit sized integer of the same sign)
+    return !g.m.types[tt].unsigned || g.m.types[st].unsigned
+  }
+  sb > 0 && sb <= tb && g.m.types[st].unsigned == g.m.types[tt].unsigned
 }
 
 fn (var g: G) branch_op(v: Int) {
@@ -3983,7 +4009,10 @@ fn (var g: G) mul(v: Int) {
   }
   var p = g.f.arg(x.args, 0)
   var q = g.f.arg(x.args, 1)
-  let (_, pc) = g.const_int(p)
+  // const_word: a sized integer's constant is an IntConv of one (ssa
+  // show.xo word), which const_int does not see, so `h * 3` on an Int32
+  // was a mov and a mul where an Int's is one add (task #509)
+  let (_, pc) = g.const_word(p)
   if pc {
     let t = p
     p = q
@@ -3993,9 +4022,9 @@ fn (var g: G) mul(v: Int) {
   let b = g.word(g.f.arg(x.args, 1))
   // the low word by shifts: x*2^k, x*(2^k + 1)
   var low = ""
-  let (c, qc) = g.const_int(q)
+  let (c, qc) = g.const_word(q)
   if qc {
-    let (k, ok) = g.pow2(q)
+    let (k, ok) = pow2c(c)
     if ok {
       low = "lsl $d0, $u0, #${k}"
     } else if c != MIN_INT {
@@ -4470,7 +4499,7 @@ fn (var g: G) div_rem(v: Int) {
   let (blo, bhi) = g.bounds(g.f.arg(x.args, 1))
   let (alo, _) = g.bounds(g.f.arg(x.args, 0))
   let _mi = g.m_()
-  let nonzero = blo > 0 || bhi < 0 || g.cm.nonzero.contains(b)
+  let nonzero = blo > 0 || bhi < 0 || g.cm.nonzero.contains(b) || g.nonzero_or(g.f.arg(x.args, 1))
   let no_overflow = blo > -1 || bhi < -1 || alo > MIN_INT
   let zchk = ssa.has_pos(x.lp) && !(is_const && kc != 0) && !nonzero
   let ochk = is_div && ssa.has_pos(x.lp) && !(is_const && kc != -1) && !no_overflow
@@ -5257,11 +5286,32 @@ fn fault_only(f: ssa.Func) -> List[Bool] {
     }
     succ.push(out)
   }
+  // and a block only such blocks enter: the block after a raise's call,
+  // which nothing reaches (a `brk`). It was laid out where the source had
+  // it, between the check and the code that goes on, so every overflow or
+  // bounds check that passed took a `b` around it: `b.ne fault; b next;
+  // brk; next:`, five times an iteration in bench/perf/portable arith32
+  // (task #509)
+  var preds: List[List[Int]] = []
+  for _ in 0..n {
+    preds.push([])
+  }
+  for (bi, out) in succ.indexed() {
+    for t in out {
+      preds[t].push(bi)
+    }
+  }
   var changed = true
   while changed {
     changed = false
     for b in 1..n {
-      if !fl[b] && !succ[b].is_empty() && succ[b].all(fn(t: Int) -> Bool { fl[t] }) {
+      if fl[b] {
+        continue
+      }
+      if !succ[b].is_empty() && succ[b].all(fn(t: Int) -> Bool { fl[t] }) {
+        fl[b] = true
+        changed = true
+      } else if !preds[b].is_empty() && preds[b].all(fn(t: Int) -> Bool { fl[t] }) {
         fl[b] = true
         changed = true
       }

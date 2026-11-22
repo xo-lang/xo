@@ -140,6 +140,8 @@ const ENCODINGS: List[(Str, Int)] = [
   ("ldrb w9, [x9, #24]", 0x39406129),
   ("ldrb w9, [x9, x11]", 0x386b6929),
   ("ldrsw x17, [x16, x2, lsl #2]", 0xb8a27a11),
+  ("ldrsh x2, [x14, x11, lsl #1]", 0x78ab79c2),
+  ("ldrsb x3, [x4, x5]", 0x38a56883),
   ("lsl x11, x10, #1", 0xd37ff94b),
   ("lsl x12, x11, x10", 0x9aca216c),
   ("madd x9, x20, x9, x19", 0x9b094e89),

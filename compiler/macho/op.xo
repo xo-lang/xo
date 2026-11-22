@@ -204,7 +204,7 @@ pub fn encode_op(o: Op) -> Int {
   if o.m is "faddp" | "ins" | "zip1" | "trn1" | "trn2" | "tbl" {
     return simd_word(o.m, o.ops)
   }
-  if o.m is "ldr" | "str" | "ldrb" | "strb" | "ldrsw" | "ldrh" | "strh" | "ldur" | "stur" && n == 2 {
+  if o.m is "ldr" | "str" | "ldrb" | "strb" | "ldrsw" | "ldrsb" | "ldrsh" | "ldrh" | "strh" | "ldur" | "stur" && n == 2 {
     if let Operand.Reg(n: t, kind: kt) = o.ops[0] {
       if let Operand.MemOp(m: mo) = o.ops[1] {
         return ldst_word(o.m, t, kt, mo)

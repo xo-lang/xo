@@ -1,0 +1,30 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): where the code
+// after a fault's raise goes (task #509).
+
+// A check that passes falls through to the code that goes on. The block
+// after the raise's call, which nothing reaches, was laid out between
+// the two, so every check that passed jumped around it: a conditional
+// branch to the fault and then an unconditional one, five times an
+// iteration in bench/perf/portable arith32.
+fn sum32(xs: List[Int32]) -> Int32 {
+  // arm64: "b\.[a-z]+ [.A-Za-z0-9_]+\n" -"b\.[a-z]+ [.A-Za-z0-9_]+\n\tb [.A-Za-z0-9_]+\n"
+  // amd64: -"\tj[a-z]+ [.A-Za-z0-9_]+\n\tjmp [.A-Za-z0-9_]+\n"
+  var h: Int32 = 0
+  for x in xs {
+    h = h + x
+  }
+  h
+}
+
+// The same for a bounds check and a division.
+fn pick(xs: List[Int], i: Int, d: Int) -> Int {
+  // arm64: -"b\.[a-z]+ [.A-Za-z0-9_]+\n\tb [.A-Za-z0-9_]+\n"
+  // amd64: -"\tj[a-z]+ [.A-Za-z0-9_]+\n\tjmp [.A-Za-z0-9_]+\n"
+  xs[i] / d
+}
+
+fn main(os: Os) {
+  let xs: List[Int32] = [1, 2, 3]
+  let ys = [4, 5, 6]
+  os.stdio.println("${sum32(xs)} ${pick(ys, 1, 5)}")
+}
