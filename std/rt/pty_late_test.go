@@ -80,3 +80,31 @@ func TestPtyCloseEndsRead(t *testing.T) {
 		t.Errorf("read took %v", d)
 	}
 }
+
+// TestPtyReadMaxMessage: a read's max outside 0 to 1 MiB is the Io error
+// the native backends give, word for word (std/pty_test.xo's "a read's
+// max is 0 to 1 MiB"); the Go backend said "read: max is 0 to 1 MiB".
+func TestPtyReadMaxMessage(t *testing.T) {
+	tk := NewRootTask()
+	o := Pty_open(tk, realProc{})
+	if !o.Ok {
+		t.Fatalf("open: %v", o.E)
+	}
+	p := o.V.F0
+	defer p.M_close(tk)
+	for _, c := range []struct {
+		max  int64
+		want string
+	}{
+		{1048577, "read: max 1048577 is not 0 to 1048576"},
+		{-1, "read: max -1 is not 0 to 1048576"},
+	} {
+		r := p.M_read(tk, c.max)
+		if r.Ok || r.E.Tag != 2 {
+			t.Fatalf("read(%d) %+v, want an Io error", c.max, r)
+		}
+		if got := r.E.P.(ProcErr_Io).F_msg; got != c.want {
+			t.Errorf("read(%d) %q, want %q", c.max, got, c.want)
+		}
+	}
+}

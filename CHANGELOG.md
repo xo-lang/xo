@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- Fix (std/pty, native backends; task #705): tasks opening and closing pseudo-terminals at once no longer close each other's descriptors (`Pty.close` closed the master twice; a task's next pty call failed with a bad descriptor, or its spawn waited forever). On macOS an open of /dev/ptmx the kernel fails with errno -6 under churn is tried again.
 - LLVM backend, opt in (`XO_SEPCOMP_LLVM=1`; task #607): a build that cannot make std's objects says so (`xo: warning: std's LLVM objects were not built (...); the whole program is built`). It built the whole program in their place and said it only under `--phase-times`.
 - Fix (native backends, `use c`; task #697): a C call made right after another is no longer interrupted by the scheduler's preemption signal. A C `nanosleep` in a loop beside busy tasks returned early with EINTR now and then (1 of 80 sleeps of 100 ms in one test run; with 1 ms sleeps, most runs). The scheduler signals only a thread that made no C call since its last check.
 - Feature (std/pty; task #691, decision 0740): pseudo-terminals. `pty.start(proc, cmd)` runs a child with a terminal as its controlling terminal and standard streams (`Attach.ControllingOnly` keeps its streams as pipes), and the Pty reads, writes, resizes (`size`, `set_size`, `inherit_size`) and switches raw mode; `make_raw` and `restore` for the program's own terminal. Linux, macOS and FreeBSD on the native and Go backends; Windows and wasm return an `Io` error.

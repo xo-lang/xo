@@ -1,5 +1,26 @@
 # std/pty changes
 
+## 2026-11-22: fix: tasks opening and closing ptys at once no longer close each other's descriptors (native backend)
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #705, the stress program (std/evidence/pty/stress)
+- Go reference: none (creack/pty closes an os.File once)
+- Test: golden pty_tasks_descriptors (8 tasks, 1000 opens each: failed with "open pty: bad file descriptor" in 2 of 3 runs, passes 3 of 3 now)
+- Shipped in: not yet released
+
+`Pty.close` closed the master's descriptor twice: the poller's record closed it, then close closed the number again, and a pty, pipe or file another task had opened under that number in between was closed under it. Its next call failed (`bad file descriptor`, `device not configured`, `fork/exec: operation not permitted`) or a spawn waited forever. Also on macOS an open of /dev/ptmx that the kernel fails with errno -6 under churn (about 1 in 3000, a Go program sees it too) is tried again (gotchas/pty-darwin-ptmx-negative-errno.md).
+
+## 2026-11-22: fix: a read's max error says the same on the Go backend
+
+- Kind: fix
+- Commit: this commit
+- Found by: task #705, the feature audit (std/evidence/pty/features.md)
+- Go reference: none (Xo's own bound)
+- Test: std/rt TestPtyReadMaxMessage (failed with "read: max is 0 to 1 MiB", passes now); std/pty_test.xo "a read's max is 0 to 1 MiB"
+- Shipped in: not yet released
+
+A `read` with a max outside 0 to 1048576 is an `Io` error reading `read: max N is not 0 to 1048576` on every backend; the Go backend said `read: max is 0 to 1 MiB`. New tests cover a canceled task's read (Canceled), kill_group reaching the child's session, and inherit_size, make_raw and restore on a program's own terminal (golden pty_own_terminal).
 ## 2026-11-22: feature: std/pty on Windows on the Go backend
 
 - Kind: feature

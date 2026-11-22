@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+on a terminal: inherit_size 33x101
+on a terminal: make_raw ok
+on a terminal: restore ok
+on a terminal: exit 0
+alone: inherit_size: inherit_size: this program has no terminal
+alone: make_raw: make_raw: standard input is not a terminal
+alone: exit 0
+--- stderr

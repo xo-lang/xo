@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+8000 opens by 8 tasks, each its own descriptor
+--- stderr

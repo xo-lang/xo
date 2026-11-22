@@ -189,6 +189,52 @@ test "close ends a read waiting in another task" uses (proc, clock) {
   let _w = c.wait().ignore_err("killed: its status is not the point")
 }
 
+test "a read's max is 0 to 1 MiB" uses proc {
+  let (p, _path) = open(os.proc)?
+  expect(p.read(1048577)) == Err(ProcErr.Io("read: max 1048577 is not 0 to 1048576"))
+  expect(p.read(-1)) == Err(ProcErr.Io("read: max -1 is not 0 to 1048576"))
+  p.close()
+}
+
+test "a read in a canceled task is Canceled" uses (proc, clock) {
+  let (p, c) = start(os.proc, os.proc.cmd("/bin/sleep", ["10"]))?
+  let got = Mutex.new("none")
+  let t0 = os.clock.now()
+  scope s {
+    s.spawn_background(fn() {
+      let r = match p.read(16) {
+        Err(ProcErr.Canceled) => "canceled"
+        Err(e) => e.display()
+        Ok(_) => "ok"
+      }
+      got.with(fn(var x) { x = r })
+    })
+    os.clock.sleep(100ms)
+    s.cancel()
+  }
+  expect(got.with(fn(var x) { x })) == "canceled"
+  expect(os.clock.now() - t0 < 5s)
+  c.kill()
+  let _w = c.wait().ignore_err("killed: its status is not the point")
+  p.close()
+}
+
+// spawn makes the child a session leader (setsid), so its process group
+// holds what it starts: kill_group stops the shell and its background
+// sleep, and the terminal's end comes once both are gone (a plain kill
+// would leave the sleep holding the slave for 30 s).
+test "kill_group stops the child's whole session" uses (proc, clock) {
+  let (p, _path) = open(os.proc)?
+  let g = spawn(p, os.proc.cmd("/bin/sh", ["-c", "/bin/sleep 30 & /bin/sleep 30"]))?
+  let t0 = os.clock.now()
+  os.clock.sleep(100ms)
+  g.kill_group()?
+  while let Some(_b) = p.read(4096)? {}
+  let _w = g.wait().ignore_err("killed: its status is not the point")
+  expect(os.clock.now() - t0 < 10s)
+  p.close()
+}
+
 // FreeBSD revokes a session's terminal when its leader exits and drops
 // what the master had not read while another descriptor held the slave:
 // the Go backend's parent still held its copy when a short child exited,

@@ -1,0 +1,74 @@
+// std/pty on this program's own terminal (decision 0740, task #705): the
+// program runs itself twice. Once on a pseudo-terminal of 33 rows and 101
+// columns, where its standard streams are the terminal: inherit_size
+// copies that size onto a new pty, and make_raw and restore change the
+// terminal's mode and put it back. Once with piped streams and no
+// terminal, where both are Io errors. The parent prints what the children
+// found. Windows (a ConPTY has no termios) and WASI (no pty) print one
+// line, in want_windows.txt and want_wasm.txt.
+
+use std/pty
+
+fn on_terminal(os: Os) -> () ! ProcErr uses (proc, stdio) {
+  let (q, _path) = pty.open(os.proc)?
+  pty.inherit_size(os.stdio, q)?
+  let s = q.size()?
+  q.close()
+  os.stdio.println("inherit_size ${s.rows}x${s.cols}")
+  let st = pty.make_raw(os.stdio)?
+  os.stdio.println("make_raw ok")
+  st.restore()?
+  os.stdio.println("restore ok")
+}
+
+fn alone(os: Os) -> () ! ProcErr uses (proc, stdio) {
+  let (q, _path) = pty.open(os.proc)?
+  match pty.inherit_size(os.stdio, q) {
+    Ok(_) => os.stdio.println("inherit_size: ok without a terminal")
+    Err(e) => os.stdio.println("inherit_size: ${e.display()}")
+  }
+  q.close()
+  match pty.make_raw(os.stdio) {
+    Ok(_) => os.stdio.println("make_raw: ok without a terminal")
+    Err(e) => os.stdio.println("make_raw: ${e.display()}")
+  }
+}
+
+fn parent(os: Os) -> () ! ProcErr uses (proc, stdio, env) {
+  let (p, c) = pty.start(os.proc, os.proc.cmd(os.env.program(), ["on_terminal"]), pty.Attach.All, Some(pty.Size{rows: 33, cols: 101}))?
+  var out = ""
+  while let Some(b) = p.read(4096)? {
+    out = out + b.to_str_lossy()
+  }
+  let code = c.wait()?
+  p.close()
+  for l in out.split("\n") {
+    let t = l.trim()
+    // only the child's own lines: a test run's XO_LEAKCHECK report
+    // reaches the terminal too
+    if t.starts_with("inherit_size") || t.starts_with("make_raw") || t.starts_with("restore") {
+      os.stdio.println("on a terminal: ${t}")
+    }
+  }
+  os.stdio.println("on a terminal: exit ${code}")
+  let a = os.proc.cmd(os.env.program(), ["alone"]).output()?
+  for l in a.stdout.to_str_lossy().split("\n") {
+    if l.starts_with("inherit_size") || l.starts_with("make_raw") {
+      os.stdio.println("alone: ${l}")
+    }
+  }
+  os.stdio.println("alone: exit ${a.code}")
+}
+
+fn main(os: Os) ! {
+  match target.os {
+    Windows | Wasi => os.stdio.println("no termios terminal on this target")
+    _ => {
+      match os.env.args() {
+        ["on_terminal"] => on_terminal(os)?
+        ["alone"] => alone(os)?
+        _ => parent(os)?
+      }
+    }
+  }
+}

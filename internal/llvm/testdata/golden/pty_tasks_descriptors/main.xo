@@ -1,0 +1,45 @@
+// std/pty from many tasks at once (task #705): eight tasks each open a
+// pty, set and read back its size, and close it, 1000 times. Close used
+// to close the master's descriptor twice (the poller's pd_close, then
+// ptyos.free again), so a descriptor another task opened in between
+// under the same number was closed under it and its next call failed
+// with a bad descriptor. xo test runs a module's tasks on one thread,
+// where the window never opens: this program runs them on the worker
+// pool. Windows (a ConPTY each open, no descriptor pair) and WASI (no
+// pty) print one line, in want_windows.txt and want_wasm.txt.
+
+use std/pty
+
+fn churn(os: Os, t: Int) -> Int ! ProcErr uses proc {
+  for i in 0..1000 {
+    let (p, _path) = pty.open(os.proc)?
+    let z = pty.Size{rows: 10 + t, cols: 20 + i % 100}
+    p.set_size(z)?
+    let b = p.size()?
+    if b.rows != z.rows || b.cols != z.cols {
+      return Err(ProcErr.Io("size ${z.rows}x${z.cols} read back ${b.rows}x${b.cols}"))
+    }
+    p.close()
+  }
+  Ok(1000)
+}
+
+fn main(os: Os) ! {
+  match target.os {
+    Windows | Wasi => os.stdio.println("no pty descriptors on this target")
+    _ => {
+      let n = scope s {
+        var hs: List[Task[Int, ProcErr]] = []
+        for t in 0..8 {
+          hs.push(s.spawn(fn() -> Int ! ProcErr { churn(os, t)? }))
+        }
+        var total = 0
+        for h in hs {
+          total += h.await?
+        }
+        total
+      }
+      os.stdio.println("${n} opens by 8 tasks, each its own descriptor")
+    }
+  }
+}

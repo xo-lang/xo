@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+no termios terminal on this target
+--- stderr

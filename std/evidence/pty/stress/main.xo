@@ -1,0 +1,165 @@
+// pty stress program (decision 0616 section 2, task #705): each task
+// holds a pseudo-terminal with /bin/cat on it in raw mode, writes chunks
+// of random bytes (every value, controls included: raw mode has no line
+// discipline, no signals, no output mapping) and reads each chunk back
+// from cat byte for byte; it resizes the terminal and checks the size
+// read back; and every ROUNDS chunks it closes the pty, stops and waits
+// for cat, and opens a new one, so the open, spawn, close and reap paths
+// run as often as the copy path. A chunk that comes back different, a
+// size that reads back different, or a read past its 10 s deadline fails
+// the run. The resident set and the number of open descriptors are
+// sampled every 10 s: either growing after the mark fails it (a leaked
+// pty is a leaked descriptor). Usage: `<program> [MINUTES (30)] [TASKS
+// (64)]`; the last line ends in ", pass".
+use std/pty
+
+/// Chunks per terminal before it is closed and a new one opened.
+const ROUNDS: Int = 50
+
+/// One terminal's life: open, cat, ROUNDS echoed chunks with a resize
+/// every 8, close, kill, wait. The operations done.
+fn life(os: Os, seed: Int) -> Int ! Str uses (proc, clock, rand) {
+  let (p, c) = pty.start(os.proc, os.proc.cmd("/bin/cat"), pty.Attach.All, Some(pty.Size{rows: 24, cols: 80})).map_err(fn(e) { "start: ${e.display()}" })?
+  p.set_raw(true).map_err(fn(e) { "set_raw: ${e.display()}" })?
+  var ops = 2
+  for r in 0..ROUNDS {
+    let n = os.rand.int(1, 513)
+    let data = os.rand.bytes(n)
+    p.write(data).map_err(fn(e) { "write ${n}: ${e.display()}" })?
+    p.set_read_deadline(os.clock, Some(os.clock.now() + 10s))
+    var got = BytesBuilder.new()
+    while got.len() < n {
+      match p.read(n - got.len()) {
+        Ok(Some(b)) => got.write(b)
+        Ok(None) => return Err("round ${r}: the end after ${got.len()} of ${n} bytes")
+        Err(e) => return Err("round ${r}: read after ${got.len()} of ${n} bytes: ${e.display()}")
+      }
+    }
+    let back = got.freeze()
+    if back != data {
+      return Err("round ${r}: ${n} bytes came back different (seed ${seed})")
+    }
+    ops += 2
+    if r % 8 == 7 {
+      let s = pty.Size{rows: 10 + (seed + r) % 90, cols: 20 + (seed * 7 + r) % 200}
+      p.set_size(s).map_err(fn(e) { "set_size: ${e.display()}" })?
+      let b = p.size().map_err(fn(e) { "size: ${e.display()}" })?
+      if b.rows != s.rows || b.cols != s.cols {
+        return Err("size ${s.rows}x${s.cols} read back ${b.rows}x${b.cols}")
+      }
+      ops += 2
+    }
+  }
+  p.set_read_deadline(os.clock, None)
+  p.close()
+  c.kill()
+  let _w = c.wait().ignore_err("killed: its status is not the point")
+  Ok(ops + 3)
+}
+
+/// The resident set in KiB (VmRSS), or 0 where /proc is not there.
+fn rss_kib(os: Os) -> Int {
+  // stdproven sets XO_STRESS_CHECK=1 for the --check=all run, whose leak
+  // report judges memory there: the resident set is not sampled
+  if (os.env.get("XO_STRESS_CHECK") ?? "") == "1" { return 0 }
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.lines() {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line.trim_prefix("VmRSS:").trim().trim_suffix(" kB").trim()) ?? 0
+    }
+  }
+  0
+}
+
+/// Open descriptors (/proc/self/fd, /dev/fd on macOS and FreeBSD), or 0.
+fn fds(os: Os) -> Int {
+  match os.fs.read_dir("/proc/self/fd") {
+    Ok(l) => l.len()
+    Err(_) => (os.fs.read_dir("/dev/fd").ok() ?? []).len()
+  }
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let minutes = if args.len() > 0 { Int.parse(args[0]) ?? 30 } else { 30 }
+  let tasks = if args.len() > 1 { Int.parse(args[1]) ?? 64 } else { 64 }
+  let clock = os.clock
+  let start = clock.now()
+  let end = start + Duration.from_secs(Float(minutes * 60))
+  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 }   // decision 0717: minute 15 of a 30 minute run
+  let mark = start + Duration.from_secs(Float(mark_s))
+  let none_yet: List[Int] = []
+  // (every rss after the mark, peak, the most descriptors open at the mark's sample, the most after it)
+  let samples = Mutex.new((none_yet, 0, 0, 0))
+  let ops = scope s {
+    s.spawn_background(fn() {
+      var marked = false
+      while true {
+        clock.sleep(10s)
+        let r = rss_kib(os)
+        let f = fds(os)
+        let now_marked = !marked && clock.now() >= mark
+        let after_mark = marked || now_marked
+        samples.with(fn(var t) {
+          var (m, p, fm, fl) = t
+          if after_mark && r > 0 { m.push(r) }
+          if now_marked { fm = f }
+          if marked && f > fl { fl = f }
+          t = (m, if r > p { r } else { p }, fm, fl)
+        })
+        if clock.now() >= mark {
+          marked = true
+        }
+      }
+    })
+    var hs: List[Task[Int, Str]] = []
+    for t in 0..tasks {
+      hs.push(s.spawn(fn() -> Int ! Str {
+        var n = 0
+        var i = t
+        while clock.now() < end {
+          n += life(os, i)?
+          i += tasks
+        }
+        n
+      }))
+    }
+    var total = 0
+    for h in hs {
+      total += h.await.map_err(fn(e) { "a task: ${e}" })?
+    }
+    total
+  }
+  let (rss_after, peak, fd_mark, fd_last) = samples.with_read(fn(t) { t })
+  let (at_mark, last) = rss_medians(rss_after)
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes ${mark_s / 60} to ${mark_s / 60 + 2}), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  // each task holds at most one pty (master, plus a pipe or two while a
+  // child starts): more than 4 per task over the mark's count is a leak
+  let fd_ok = fd_mark == 0 || fd_last <= fd_mark + 4 * tasks
+  let ok = (at_mark == 0 || growth < 10.0 || last - at_mark < 4096) && fd_ok
+  os.stdio.println("pty stress: ${ops} operations by ${tasks} tasks in ${minutes} min, 0 mismatches, ${mem}, descriptors ${fd_mark} at the mark, at most ${fd_last} after, ${if ok { "pass" } else if !fd_ok { "FAIL (descriptors grew)" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory or descriptors grew")
+  }
+}
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 15 to 17 of a 30 minute run, decision 0717) and the
+/// median of the last 3 minutes' samples, 10 s apart, so one dip or spike
+/// does not decide; a short run takes a third of its samples each. (0, 0)
+/// when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}

@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+no pty descriptors on this target
+--- stderr

@@ -2,6 +2,7 @@ package rt
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -134,7 +135,7 @@ func (p *Pty_Pty) master() (*os.File, time.Time) {
 
 func (p *Pty_Pty) M_read(tk *Task, max int64) Result[Option[Bytes], ProcErr] {
 	if max < 0 || max > 1<<20 {
-		return Err[Option[Bytes]](procIo("read: max is 0 to 1 MiB"))
+		return Err[Option[Bytes]](procIo(fmt.Sprintf("read: max %d is not 0 to 1048576", max)))
 	}
 	if tk.Canceled() {
 		return Err[Option[Bytes]](ProcErr{Tag: 3})
