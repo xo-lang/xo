@@ -793,7 +793,7 @@ ISO 9660 image the Mac makes. Last verified: 2026-11-08
 (prepare, gen, fuzz, selfhost, llvm, cmd, finish), so each step is its own
 lease and a waiting `--ab` runs between steps instead of waiting for the
 whole tier (tier 34 held the lane 1h18m; `--ab` runs waited up to 1h16m).
-A Mac tier step the memory cap stops (exit 143) runs once more at `-p=2`.
+A Mac tier step the memory cap stops (exit 143) runs once more at `GOFLAGS="-p=6 -parallel=8"` (`TIER_RERUN_GOFLAGS`); llvm reruns as 5 heavy.sh jobs one after another (`XO_GATE_LLVM_SHARD=K/4`, 16 GB each, named `lead-tierN-mac-llvm-sK`; `TIER_LLVM_SHARDS`, `TIER_SHARD_GB`; task #707). Last verified: 2026-11-22.
 Last verified: 2026-11-01
 
 - The offload host also runs the tier's `stdwasm` (every std test module
