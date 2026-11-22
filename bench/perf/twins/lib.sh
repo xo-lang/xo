@@ -9,7 +9,13 @@
 # about 15 ms). Every measurement waits for the 1 minute load average to
 # drop under MAXLOAD.
 
-load() { sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}' || awk '{print $1}' /proc/loadavg; }
+# load: the 1 minute load average, from /proc/loadavg on linux (LOADAVG_FILE
+# for tests), else macOS's vm.loadavg sysctl. A pipeline's status is its
+# last command's, so sysctl ... | awk || fallback never fell back (#687).
+load() {
+	f=${LOADAVG_FILE:-/proc/loadavg}
+	if [ -r "$f" ]; then awk '{print $1}' "$f"; else sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'; fi
+}
 wait_load() { while [ "$(load | awk '{print int($1)}')" -ge "$maxload" ]; do sleep 20; done; }
 
 # reps ROW: the REPEAT count every program of ROW takes as its second
@@ -32,11 +38,11 @@ reps() {
 	esac
 }
 
-# ab NAME A B ROW: one `xo bench --ab` table, both programs run as
-# `PROGRAM ROW REPEAT` (reps above)
+# ab NAME A B ROW [REPEAT]: one `xo bench --ab` table, both programs run as
+# `PROGRAM ROW REPEAT` (reps above unless REPEAT is given)
 ab() {
 	name=$1; a=$2; b=$3; row=$4
-	n=$(reps "$row")
+	n=${5:-$(reps "$row")}
 	wait_load
 	echo "| $name, repeat $n | load $(load) |"
 	"$xo" bench --ab --rounds="$rounds" "$a" "$b" -- "$row" "$n" 2>&1 | grep -E '^(wall_ms|cpu_ms|instructions|max_rss_kb)' | sed 's/^/    /'

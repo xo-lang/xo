@@ -66,7 +66,11 @@ for r in $rows; do
 		echo >> "$out/body.md"
 		for w in spawn fanout pingpong mutex rwmutex pmap; do
 			(cd "$here/../conc/xo/$w" && "$xo" build -o "$out/conc-xo-$w" . >/dev/null)
-			ab "$w" "$out/concperf-rust" "$out/conc-xo-$w" "$w" >> "$out/body.md"
+			# tokio's multi thread runtime takes about 3 s a pingpong REPEAT
+			# on the linux/arm64 timing host (Xo 16 ms), so REPEAT 65 ran
+			# 200 s a round; 10 keeps the row to minutes (task #687)
+			n=; [ "$w" = pingpong ] && n=10
+			ab "$w" "$out/concperf-rust" "$out/conc-xo-$w" "$w" $n >> "$out/body.md"
 		done
 		# tokio's current thread runtime is the idiom for many small tasks and a
 		# channel ping pong that never needs a second thread (a multi thread

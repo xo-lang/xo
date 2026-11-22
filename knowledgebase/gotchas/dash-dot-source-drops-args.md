@@ -25,3 +25,12 @@ A sourced helper reads its inputs from variables the caller sets, or
 falls back to them: xocheck.sh takes `${1:-$xo}` and `${2:-$root}`, the
 names all nine of its callers use. bench/perf/xocheck_test.sh runs it
 under dash with the caller's parameters cleared.
+
+## Second linux trap in the same scripts: `cmd | awk || fallback`
+
+bench/perf/twins/lib.sh's `load()` was `sysctl -n vm.loadavg | awk ... ||
+awk ... /proc/loadavg`. A pipeline's status is its last command's, and awk
+succeeds on empty input, so on linux (no vm.loadavg) the fallback never
+ran: load printed nothing and every wait_load test said "Illegal number".
+Pick the source with a test (`[ -r /proc/loadavg ]`) instead of chaining on
+a pipeline's status. bench/perf/twins/lib_test.sh covers it.
