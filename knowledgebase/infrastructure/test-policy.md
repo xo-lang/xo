@@ -84,7 +84,12 @@ offload.md. Last verified: 2026-11-10.
     catches a bad combination); go test -short and the full fixed point
     run every 2 hours on main (~/xo-lead/agents/hourly.sh; owner,
     2026-10-22, was hourly), and the lead
-    bisects a failure to the commit's owner, who fixes forward. An
+    bisects a failure to the commit's owner, who fixes forward. The
+    2-hourly continuous tier (ctier.sh) runs one rotating fifth of the
+    LLVM goldens a run (owner, 2026-11-22, task #716: llvm was 42.2 of
+    ctier's 75.0 host hours from 2026-11-15 to 11-22; shard = run
+    number mod 5, so every golden runs at least twice a day); the
+    8-hour tier keeps the full set, and per push is unchanged. An
     agent still runs any repo test its change obviously affects (e.g.
     TestCodegenInputsClassified for a new XO_* variable) in its gate.
   - a push that changes a default (an XO_* default, a flag default, a

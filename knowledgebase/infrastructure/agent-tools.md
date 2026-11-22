@@ -325,7 +325,8 @@ yourself.
   TestGolden runs LLVM alone (2026-11-17, #275: a std/rt/http.go edit beside
   std/http.xo made the scope "all" and took 1,354 s to select; 119 goldens
   without it). `XO_GATE_IR_INPUTS=0` turns it off; the continuous
-  tier (ctier.sh, below) runs every golden.
+  tier (ctier.sh, below) runs every golden (LLVM: a fifth a run, all five
+  in 5 runs).
   A gate that builds its base's whole manifest (a compiler change, or no
   manifest for the base) shares it into the host's `/work/in` under
   irman's name with a `.gate` mark (gate.sh `ir_share`, decision #87 of
@@ -395,7 +396,13 @@ yourself.
   `XO_GATE_LLVM=all`), `CTIER_SHARD_MIN` (120) minutes each, so waiting
   leases run between them (2026-11-15: one full llvm step held host 4's
   single slot 78 minutes while a 30 second lease waited 51).
-  `CTIER_LLVM_SHARDS=0` runs it as one lease. Last verified: 2026-11-15.
+  `CTIER_LLVM_SHARDS=0` runs it as one lease. A run takes only one of
+  those leases (#716, owner 2026-11-22): shard = the run's number (the
+  rows of runs.tsv before it) mod `CTIER_LLVM_SHARDS` + 1, so 12 runs a
+  day run every golden at least twice; the 8-hour tier runs them all.
+  `CTIER_LLVM_SAMPLE=0` runs every shard each run. A ctier "good" commit
+  (the bisect's start) has passed only its run's llvm shard. Last
+  verified: 2026-11-22.
   Golden pass keys (decision 0737 step 2, task #610): ctier passes
   `XO_GATE_GOLDEN_PASS_DIR=/work/golden-pass XO_GATE_GOLDEN_PASS_SKIP=1`
   (`CTIER_GOLDEN_PASS_DIR=` turns it off), so an llvm `TestGolden` or
