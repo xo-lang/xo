@@ -26,18 +26,20 @@ def text(u):
 
 def main():
     w = sys.argv[1] if len(sys.argv) > 1 else "decode"
+    # REPEAT, the second argument (default 1; task #687), multiplies the rounds: the hash then covers ROUNDS * REPEAT rounds, the same in every twin
+    rounds = ROUNDS * (int(sys.argv[2]) if len(sys.argv) > 2 else 1)
     us = users()
     h = 0
     if w == "decode":
         ds = [text(u) for u in us]
         loads = json.loads
-        for _ in range(ROUNDS):
+        for _ in range(rounds):
             for d in ds:
                 u = loads(d)
                 h = (h * 31 + u["id"] + len(u["name"]) + len(u["email"]) + len(u["tags"]) + int(u["score"]) % 100 + (1 if u["active"] else 0)) % 1000000007
     elif w == "encode":
         enc = json.JSONEncoder(separators=(",", ":")).encode
-        for _ in range(ROUNDS):
+        for _ in range(rounds):
             for u in us:
                 h = (h * 31 + len(enc(u).encode())) % 1000000007
     else:

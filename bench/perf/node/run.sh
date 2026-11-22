@@ -37,8 +37,8 @@ for r in $rows; do
 		(cd "$here/../llvm/xo/fib" && "$xo" build -o "$out/fib-xo" . >/dev/null)
 		wrapper "$out/fib-node" node "$here/dist/compute/fib.js"
 		echo "## Compute (recursive fib 40)" >> "$out/body.md"; echo >> "$out/body.md"
-		agree fib "$out/fib-node" "$out/fib-xo"
-		ab fib "$out/fib-node" "$out/fib-xo" >> "$out/body.md" ;;
+		agree fib "$out/fib-node" "$out/fib-xo" fib
+		ab fib "$out/fib-node" "$out/fib-xo" fib >> "$out/body.md" ;;
 	conc)
 		wrapper "$out/conc-node" node "$here/dist/conc/conc.js"
 		echo >> "$out/body.md"; echo "## Concurrency (async tasks, worker_threads; no rwmutex row: Node has no read write lock)" >> "$out/body.md"; echo >> "$out/body.md"

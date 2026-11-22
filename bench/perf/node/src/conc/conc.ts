@@ -17,7 +17,7 @@ function steps(x: number): number {
   return c;
 }
 
-async function spawn(): Promise<void> {
+async function spawn(): Promise<string> {
   let count = 0;
   for (let r = 0; r < 200; r++) {
     const ts: Promise<void>[] = [];
@@ -26,10 +26,10 @@ async function spawn(): Promise<void> {
     }
     await Promise.all(ts);
   }
-  console.log(`spawn ${count}`);
+  return `spawn ${count}`;
 }
 
-async function fanout(): Promise<void> {
+async function fanout(): Promise<string> {
   let total = 0;
   for (let r = 0; r < 100; r++) {
     const res: Promise<number>[] = [];
@@ -38,7 +38,7 @@ async function fanout(): Promise<void> {
     for (const p of res) acc += await p;
     total += acc;
   }
-  console.log(`fanout ${total}`);
+  return `fanout ${total}`;
 }
 
 // An unbuffered channel between two async loops: a send waits for a
@@ -64,7 +64,7 @@ class Chan<T> {
   }
 }
 
-async function pingpong(): Promise<void> {
+async function pingpong(): Promise<string> {
   const ping = new Chan<number>();
   const pong = new Chan<number>();
   const echo = (async () => {
@@ -82,7 +82,7 @@ async function pingpong(): Promise<void> {
   }
   ping.close();
   await echo;
-  console.log(`pingpong ${v}`);
+  return `pingpong ${v}`;
 }
 
 // mutex: 8 workers, 25000 lock, increment, unlock each, on shared memory.
@@ -115,15 +115,15 @@ function runWorkers(task: string, n: number, shared: SharedArrayBuffer, extra: u
   );
 }
 
-async function mutex(): Promise<void> {
+async function mutex(): Promise<string> {
   const shared = new SharedArrayBuffer(8);
   await runWorkers("mutex", MUTEX_WORKERS, shared, []);
-  console.log(`mutex ${new Int32Array(shared)[1]}`);
+  return `mutex ${new Int32Array(shared)[1]}`;
 }
 
 // pmap: 20 rounds of 64 chunks of 200000 Collatz step counts, spread over
 // one worker per CPU; the chunks go out as one message per worker per round.
-async function pmap(): Promise<void> {
+async function pmap(): Promise<string> {
   const size = 200000;
   const chunks = 64;
   const nw = availableParallelism();
@@ -139,18 +139,30 @@ async function pmap(): Promise<void> {
     for (const p of parts) total += p;
   }
   for (const w of workers) await w.terminate();
-  console.log(`pmap ${total}`);
+  return `pmap ${total}`;
 }
 
 if (isMainThread) {
   const row = process.argv[2] ?? "";
-  const rows: Record<string, () => Promise<void>> = { spawn, fanout, pingpong, mutex, pmap };
+  const rows: Record<string, () => Promise<string>> = { spawn, fanout, pingpong, mutex, pmap };
   const f = rows[row];
   if (!f) {
-    console.error("usage: conc spawn|fanout|pingpong|mutex|pmap");
+    console.error("usage: conc spawn|fanout|pingpong|mutex|pmap [REPEAT]");
     process.exit(2);
   }
-  f();
+  // REPEAT, the second argument (default 1; task #687, as the Xo and Go twins since #686):
+  // the row runs that many times and every run must give the first run's line.
+  const reps = Number.parseInt(process.argv[3] ?? "1", 10) || 1;
+  (async () => {
+    const first = await f();
+    for (let i = 1; i < reps; i++) {
+      if ((await f()) !== first) {
+        console.log("repeat: a run printed something else");
+        process.exit(1);
+      }
+    }
+    console.log(first);
+  })();
 } else if (workerData.task === "mutex") {
   const m = new Int32Array(workerData.shared);
   const c = new Int32Array(workerData.shared, 4);

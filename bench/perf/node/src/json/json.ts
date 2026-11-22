@@ -32,18 +32,20 @@ function text(u: User): string {
 }
 
 const w = process.argv[2] ?? "decode";
+// REPEAT, the second argument (default 1; task #687), multiplies the rounds: the hash then covers ROUNDS * REPEAT rounds, the same in every twin
+const rounds = ROUNDS * (Number.parseInt(process.argv[3] ?? "1", 10) || 1);
 const us = users();
 let h = 0;
 if (w === "decode") {
   const ds = us.map(text);
-  for (let r = 0; r < ROUNDS; r++) {
+  for (let r = 0; r < rounds; r++) {
     for (const d of ds) {
       const u = JSON.parse(d) as User;
       h = (h * 31 + u.id + u.name.length + u.email.length + u.tags.length + (Math.trunc(u.score) % 100) + (u.active ? 1 : 0)) % 1000000007;
     }
   }
 } else if (w === "encode") {
-  for (let r = 0; r < ROUNDS; r++) {
+  for (let r = 0; r < rounds; r++) {
     for (const u of us) h = (h * 31 + Buffer.byteLength(JSON.stringify(u))) % 1000000007;
   }
 } else {

@@ -49,12 +49,14 @@ fn text(u: &User) -> String {
 
 fn main() {
     let w = std::env::args().nth(1).unwrap_or_else(|| "decode".into());
+    // REPEAT, the second argument (default 1; task #687), multiplies the rounds: the hash then covers ROUNDS * REPEAT rounds, the same in every twin
+    let rounds = ROUNDS * std::env::args().nth(2).and_then(|a| a.parse::<usize>().ok()).unwrap_or(1);
     let us = users();
     let mut h: i64 = 0;
     match w.as_str() {
         "decode" => {
             let ds: Vec<String> = us.iter().map(text).collect();
-            for _ in 0..ROUNDS {
+            for _ in 0..rounds {
                 for d in &ds {
                     let u: User = serde_json::from_str(d).unwrap();
                     h = (h * 31
@@ -69,7 +71,7 @@ fn main() {
             }
         }
         "encode" => {
-            for _ in 0..ROUNDS {
+            for _ in 0..rounds {
                 for u in &us {
                     let b = serde_json::to_vec(u).unwrap();
                     h = (h * 31 + b.len() as i64) % 1000000007;

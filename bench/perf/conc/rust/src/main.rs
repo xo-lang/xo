@@ -22,7 +22,7 @@ fn rt() -> tokio::runtime::Runtime {
     }
 }
 
-fn spawn() {
+fn spawn() -> String {
     let count = Arc::new(AtomicI64::new(0));
     rt().block_on(async {
         for _ in 0..200 {
@@ -38,10 +38,10 @@ fn spawn() {
             }
         }
     });
-    println!("spawn {}", count.load(Ordering::Relaxed));
+    format!("spawn {}", count.load(Ordering::Relaxed))
 }
 
-fn fanout() {
+fn fanout() -> String {
     let total = rt().block_on(async {
         let mut total = 0i64;
         for r in 0..100i64 {
@@ -61,10 +61,10 @@ fn fanout() {
         }
         total
     });
-    println!("fanout {}", total);
+    format!("fanout {}", total)
 }
 
-fn pingpong() {
+fn pingpong() -> String {
     let v = rt().block_on(async {
         let (ping_tx, mut ping_rx) = tokio::sync::mpsc::channel::<i64>(1);
         let (pong_tx, mut pong_rx) = tokio::sync::mpsc::channel::<i64>(1);
@@ -82,10 +82,10 @@ fn pingpong() {
         }
         v
     });
-    println!("pingpong {}", v);
+    format!("pingpong {}", v)
 }
 
-fn mutex() {
+fn mutex() -> String {
     let c = Mutex::new(0i64);
     thread::scope(|s| {
         for _ in 0..8 {
@@ -96,12 +96,12 @@ fn mutex() {
             });
         }
     });
-    println!("mutex {}", c.into_inner().unwrap());
+    format!("mutex {}", c.into_inner().unwrap())
 }
 
 // rwmutex: 64 threads, 4,000 accesses each, one in four a write that
 // holds the lock for a Collatz step count, the others reads.
-fn rwmutex() {
+fn rwmutex() -> String {
     let c = RwLock::new(0i64);
     let odd = Mutex::new(0i64);
     thread::scope(|s| {
@@ -122,7 +122,7 @@ fn rwmutex() {
             });
         }
     });
-    println!("rwmutex {} {}", c.into_inner().unwrap(), odd.into_inner().unwrap());
+    format!("rwmutex {} {}", c.into_inner().unwrap(), odd.into_inner().unwrap())
 }
 
 fn steps(x: i64) -> i64 {
@@ -134,7 +134,7 @@ fn steps(x: i64) -> i64 {
     c
 }
 
-fn pmap() {
+fn pmap() -> String {
     const SIZE: i64 = 200000;
     const CHUNKS: i64 = 64;
     let mut total = 0i64;
@@ -147,12 +147,27 @@ fn pmap() {
         });
         total += out.iter().sum::<i64>();
     }
-    println!("pmap {}", total);
+    format!("pmap {}", total)
 }
 
+// REPEAT, the second argument (default 1; task #687, as the Xo and Go twins since #686): the workload
+// runs that many times and every run must give the first run's line.
 fn main() {
-    let w = env::args().nth(1).unwrap_or_default();
-    match w.as_str() {
+    let args: Vec<String> = env::args().collect();
+    let w = args.get(1).cloned().unwrap_or_default();
+    let reps: i64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(1);
+    let first = work(&w);
+    for _ in 1..reps {
+        if work(&w) != first {
+            println!("repeat: a run printed something else");
+            process::exit(1);
+        }
+    }
+    println!("{}", first);
+}
+
+fn work(w: &str) -> String {
+    match w {
         "spawn" => spawn(),
         "fanout" => fanout(),
         "pingpong" => pingpong(),

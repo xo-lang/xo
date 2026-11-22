@@ -37,11 +37,13 @@ fn text(u: User) -> Str {
 
 fn main(os: Os) {
   let w = os.env.args().get(0) ?? "decode"
+  // REPEAT, the second argument (default 1; task #687), multiplies the rounds: the hash then covers ROUNDS * REPEAT rounds, the same in every twin
+  let rounds = ROUNDS * (Int.parse(os.env.args().get(1) ?? "1") ?? 1)
   let us = users()
   var h = 0
   if w == "decode" {
     let ds = us.map(text)
-    for _ in 0..ROUNDS {
+    for _ in 0..rounds {
       for d in ds {
         match json.decode_str[User](d) {
           Ok(u) => h = (h * 31 + u.id + u.name.len() + u.email.len() + u.tags.len() + Int(u.score) % 100 + (if u.active { 1 } else { 0 })) % 1000000007
@@ -50,7 +52,7 @@ fn main(os: Os) {
       }
     }
   } else {
-    for _ in 0..ROUNDS {
+    for _ in 0..rounds {
       for u in us {
         h = (h * 31 + json.encode_str(u).len()) % 1000000007
       }

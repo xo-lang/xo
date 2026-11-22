@@ -59,6 +59,13 @@ func main() {
 	if len(os.Args) > 1 {
 		w = os.Args[1]
 	}
+	// REPEAT, the second argument (default 1; task #687), multiplies the rounds: the hash then covers ROUNDS * REPEAT rounds, the same in every twin
+	n := rounds
+	if len(os.Args) > 2 {
+		if k, err := strconv.Atoi(os.Args[2]); err == nil {
+			n = rounds * k
+		}
+	}
 	us := users()
 	h := 0
 	switch w {
@@ -67,7 +74,7 @@ func main() {
 		for i, u := range us {
 			ds[i] = []byte(text(u))
 		}
-		for r := 0; r < rounds; r++ {
+		for r := 0; r < n; r++ {
 			for _, d := range ds {
 				var u User
 				if err := json.Unmarshal(d, &u); err != nil {
@@ -81,7 +88,7 @@ func main() {
 			}
 		}
 	case "encode":
-		for r := 0; r < rounds; r++ {
+		for r := 0; r < n; r++ {
 			for _, u := range us {
 				b, err := json.Marshal(u)
 				if err != nil {

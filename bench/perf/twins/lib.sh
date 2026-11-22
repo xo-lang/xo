@@ -12,12 +12,34 @@
 load() { sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}' || awk '{print $1}' /proc/loadavg; }
 wait_load() { while [ "$(load | awk '{print int($1)}')" -ge "$maxload" ]; do sleep 20; done; }
 
-# ab NAME A B [ARG]: one `xo bench --ab` table
+# reps ROW: the REPEAT count every program of ROW takes as its second
+# argument (task #687): each runs the same work that many times in one
+# process, so the faster side takes about 1 s and `xo bench --ab` gives a
+# wall verdict (it reads "too short" under 100 ms). The compute and
+# concurrency counts are scripts/release-vs-go.sh's (Go and Xo on host 1,
+# 0.55.0); the JSON counts make Xo and Rust about 1 s. TWIN_REPEAT=N runs
+# every row N times (1: the runs before #687).
+reps() {
+	if [ -n "${TWIN_REPEAT:-}" ]; then
+		echo "$TWIN_REPEAT"
+		return
+	fi
+	case $1 in
+	fib) echo 5 ;; sieve | nbody) echo 6 ;; sort) echo 4 ;; interp) echo 24 ;; collatz) echo 3 ;; strings) echo 18 ;;
+	spawn) echo 58 ;; fanout) echo 70 ;; pingpong) echo 65 ;; mutex) echo 278 ;; rwmutex) echo 202 ;; pmap) echo 19 ;;
+	decode) echo 45 ;; encode) echo 85 ;;
+	*) echo 1 ;;
+	esac
+}
+
+# ab NAME A B ROW: one `xo bench --ab` table, both programs run as
+# `PROGRAM ROW REPEAT` (reps above)
 ab() {
-	name=$1; a=$2; b=$3; shift 3
+	name=$1; a=$2; b=$3; row=$4
+	n=$(reps "$row")
 	wait_load
-	echo "| $name | load $(load) |"
-	"$xo" bench --ab --rounds="$rounds" "$a" "$b" ${1:+-- "$@"} 2>&1 | grep -E '^(wall_ms|cpu_ms|instructions|max_rss_kb)' | sed 's/^/    /'
+	echo "| $name, repeat $n | load $(load) |"
+	"$xo" bench --ab --rounds="$rounds" "$a" "$b" -- "$row" "$n" 2>&1 | grep -E '^(wall_ms|cpu_ms|instructions|max_rss_kb)' | sed 's/^/    /'
 }
 
 # agree NAME A B [ARG]: both programs print the same first line

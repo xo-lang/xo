@@ -29,7 +29,7 @@ async def spawn():
 
     for _ in range(200):
         await asyncio.gather(*(one(i) for i in range(1000)))
-    print(f"spawn {count}")
+    return f"spawn {count}"
 
 
 async def fanout():
@@ -44,7 +44,7 @@ async def fanout():
         for f in res:
             acc += await f
         total += acc
-    print(f"fanout {total}")
+    return f"fanout {total}"
 
 
 async def pingpong():
@@ -65,7 +65,7 @@ async def pingpong():
         v = await pong.get()
     await ping.put(None)
     await t
-    print(f"pingpong {v}")
+    return f"pingpong {v}"
 
 
 def mutex():
@@ -82,7 +82,7 @@ def mutex():
         t.start()
     for t in ts:
         t.join()
-    print(f"mutex {c[0]}")
+    return f"mutex {c[0]}"
 
 
 SIZE, CHUNKS = 200000, 64
@@ -101,17 +101,28 @@ def pmap():
     with multiprocessing.Pool(os.cpu_count()) as pool:
         for r in range(20):
             total += sum(pool.map(chunk, [(r, k) for k in range(CHUNKS)]))
-    print(f"pmap {total}")
+    return f"pmap {total}"
 
 
 if __name__ == "__main__":
     row = sys.argv[1] if len(sys.argv) > 1 else ""
+    # REPEAT, the second argument (default 1; task #687, as the Xo and Go twins since #686):
+    # the row runs that many times and every run must give the first run's line.
+    reps = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     if row in ("spawn", "fanout", "pingpong"):
-        asyncio.run({"spawn": spawn, "fanout": fanout, "pingpong": pingpong}[row]())
-    elif row == "mutex":
-        mutex()
-    elif row == "pmap":
-        pmap()
+        f = {"spawn": spawn, "fanout": fanout, "pingpong": pingpong}[row]
+
+        def work():
+            return asyncio.run(f())
+
+    elif row in ("mutex", "pmap"):
+        work = {"mutex": mutex, "pmap": pmap}[row]
     else:
-        print("usage: conc.py spawn|fanout|pingpong|mutex|pmap", file=sys.stderr)
+        print("usage: conc.py spawn|fanout|pingpong|mutex|pmap [REPEAT]", file=sys.stderr)
         sys.exit(2)
+    first = work()
+    for _ in range(1, reps):
+        if work() != first:
+            print("repeat: a run printed something else")
+            sys.exit(1)
+    print(first)

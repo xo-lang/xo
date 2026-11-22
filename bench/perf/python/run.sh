@@ -17,7 +17,7 @@
 #             through bench/perf/http/run.sh
 #
 # A Python program takes seconds where the others take milliseconds, so the
-# slow rows (fib, pmap) run SLOW_ROUNDS rounds (default 3) instead of ROUNDS.
+# slow rows (fib, pmap, pingpong: Python takes minutes a run at their REPEAT) run SLOW_ROUNDS rounds (default 3) instead of ROUNDS.
 # See bench/perf/twins/lib.sh and bench/perf/rust/run.sh. Writes
 # bench/results/python-vs-xo-DATE.md.
 set -eu
@@ -45,15 +45,15 @@ for r in $rows; do
 		(cd "$here/../llvm/xo/fib" && "$xo" build -o "$out/fib-xo" . >/dev/null)
 		wrapper "$out/fib-py" "$py" "$here/compute/fib.py"
 		echo "## Compute (recursive fib 40, $slow rounds)" >> "$out/body.md"; echo >> "$out/body.md"
-		agree fib "$out/fib-py" "$out/fib-xo"
-		(rounds=$slow; ab fib "$out/fib-py" "$out/fib-xo" >> "$out/body.md") ;;
+		agree fib "$out/fib-py" "$out/fib-xo" fib
+		(rounds=$slow; ab fib "$out/fib-py" "$out/fib-xo" fib >> "$out/body.md") ;;
 	conc)
 		wrapper "$out/conc-py" "$py" "$here/conc/conc.py"
 		echo >> "$out/body.md"; echo "## Concurrency (asyncio, threading, multiprocessing; no rwmutex row: the standard library has no read write lock)" >> "$out/body.md"; echo >> "$out/body.md"
 		for w in spawn fanout pingpong mutex pmap; do
 			(cd "$here/../conc/xo/$w" && "$xo" build -o "$out/conc-xo-$w" . >/dev/null)
 			agree "$w" "$out/conc-py" "$out/conc-xo-$w" "$w"
-			case $w in pmap) (rounds=$slow; ab "$w" "$out/conc-py" "$out/conc-xo-$w" "$w" >> "$out/body.md") ;; *) ab "$w" "$out/conc-py" "$out/conc-xo-$w" "$w" >> "$out/body.md" ;; esac
+			case $w in pmap | pingpong) (rounds=$slow; ab "$w" "$out/conc-py" "$out/conc-xo-$w" "$w" >> "$out/body.md") ;; *) ab "$w" "$out/conc-py" "$out/conc-xo-$w" "$w" >> "$out/body.md" ;; esac
 		done ;;
 	json)
 		wrapper "$out/json-py" "$py" "$here/json/jsontwin.py"

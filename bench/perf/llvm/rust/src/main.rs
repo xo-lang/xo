@@ -284,13 +284,12 @@ fn strings_workload() -> i64 {
     total
 }
 
-fn main() {
-    let w = env::args().nth(1).unwrap_or_else(|| "fib".to_string());
-    match w.as_str() {
-        "fib" => println!("fib {}", fib(40)),
+fn work(w: &str) -> String {
+    match w {
+        "fib" => format!("fib {}", fib(40)),
         "sieve" => {
             let total: i64 = (0..5).map(|_| sieve(10_000_000)).sum();
-            println!("sieve {}", total);
+            format!("sieve {}", total)
         }
         "nbody" => {
             let mut bs = bodies();
@@ -300,10 +299,10 @@ fn main() {
                 advance(&mut bs, 0.01);
             }
             let after = energy(&bs);
-            println!("nbody {} {}", (before * 1e9) as i64, (after * 1e9) as i64);
+            format!("nbody {} {}", (before * 1e9) as i64, (after * 1e9) as i64)
         }
-        "sort" => println!("sort {}", sort_workload()),
-        "interp" => println!("interp {}", run(&interp_prog(), 3_000_000)),
+        "sort" => format!("sort {}", sort_workload()),
+        "interp" => format!("interp {}", run(&interp_prog(), 3_000_000)),
         "collatz" => {
             let (mut total, mut best) = (0, 0);
             for i in 1..3_000_000 {
@@ -311,12 +310,28 @@ fn main() {
                 total += s;
                 best = best.max(s);
             }
-            println!("collatz {} {}", total, best);
+            format!("collatz {} {}", total, best)
         }
-        "strings" => println!("strings {}", strings_workload()),
+        "strings" => format!("strings {}", strings_workload()),
         _ => {
             eprintln!("unknown workload {}", w);
             process::exit(2);
         }
     }
+}
+
+// REPEAT, the second argument (default 1; task #687, as the Xo and Go twins since #686): the workload
+// runs that many times and every run must give the first run's line.
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    let w = args.get(1).cloned().unwrap_or_else(|| "fib".to_string());
+    let reps: i64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(1);
+    let first = work(&w);
+    for _ in 1..reps {
+        if work(&w) != first {
+            println!("repeat: a run printed something else");
+            process::exit(1);
+        }
+    }
+    println!("{}", first);
 }
