@@ -2475,8 +2475,9 @@ on. Rows: agent-rules.md. Last verified: 2026-11-16.
 Every alert, inbox and decision reaches agents through xw, so an outage of
 Docker's engine, xw-postgres or xw's server is silent there (2026-11-20:
 23:16 to 23:25, no alert for 9 minutes). heavyd (launchd, independent of
-Docker) probes them every minute (`docker info`, a TCP dial to
-`XW_PG_PORT`, `GET /health`; scripts/lead/heavyd/xwwatch.go). Two failed
+Docker) probes xw every minute (`GET /health` only since 2026-11-22: with xw on
+SQLite, Docker stopped and a closed `XW_PG_PORT` are not xw down;
+scripts/lead/heavyd/xwwatch.go). Two failed
 rounds in a row write `$LEAD/xw/DOWN` (`since=`, `why=`, `by=heavyd`), log
 `XW DOWN:` to heavyd.log and show the owner a macOS notification; the first
 passing round removes it and logs `XW UP after`. xw-cc-hook.sh prints
@@ -2485,7 +2486,7 @@ per 10 minutes (`XW_DOWN_SECS`). Seeing it: tell the lead; never restart
 Docker or xw yourself (the owner's call). The watch only reads;
 `HEAVYD_XWWATCH=0` turns it off. While xw is down the tools keep working:
 events spool and replay (xwhook.sh), pushq notes the holds and `--tool`
-checks it could not make (3172597ea). Last verified: 2026-11-20.
+checks it could not make (3172597ea). Last verified: 2026-11-22.
 
 #### heavyd admission by policy (0733, owner question #240)
 
