@@ -417,13 +417,33 @@ ab() { # NAME GOBIN XOBIN ARG
 	echo '```' >>"$report"
 	echo >>"$report"
 }
+# pair BIN SIDE DIR ARG: builds BIN from DIR, untimed, when ARG runs and
+# the compile section did not build it (SECTIONS=run alone, or a part of
+# RVG_PART without that row; task #645: a run-only lease on host 1 had no
+# binaries, every --ab said "executable file not found")
+pair() {
+	want "$4" || return 0
+	[ -x "$1" ] && return 0
+	local log=$OUT/run-build-${1##*/}.log
+	if [ "$2" = go ]; then
+		(cd "$3" && GOFLAGS=-trimpath go build -o "$1" .) >"$log" 2>&1
+	else
+		(cd "$3" && "$XO" build -o "$1" .) >"$log" 2>&1
+	fi || echo "release-vs-go: building ${1##*/} for the run section failed ($log)" >&2
+}
 for w in fib sieve nbody sort interp collatz strings; do
+	pair "$work/llvm.go" go "$perf/llvm/go" "$w"
+	pair "$work/llvm-$w.xo" xo "$perf/llvm/xo/$w" "$w"
 	ab llvm "$work/llvm.go" "$work/llvm-$w.xo" "$w"
 done
 for w in putget get push update iter copymut branch; do
+	pair "$work/coll.go" go "$perf/go" "$w"
+	pair "$work/coll.xo" xo "$perf/xo" "$w"
 	ab coll "$work/coll.go" "$work/coll.xo" "$w"
 done
 for w in spawn fanout pingpong mutex rwmutex pmap; do
+	pair "$work/conc.go" go "$perf/conc/go" "$w"
+	pair "$work/conc-$w.xo" xo "$perf/conc/xo/$w" "$w"
 	ab conc "$work/conc.go" "$work/conc-$w.xo" "$w"
 done
 
