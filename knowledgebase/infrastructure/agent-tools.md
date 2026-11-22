@@ -2589,7 +2589,10 @@ for HEAVYD_REACH_SEC (60; 0 turns the check off) and refreshes it in the
 background. A lease that takes another lane too (`pass3|pass2`) goes
 there; one for the down lane alone waits, its status saying `host
 ENV unreachable (REASON, probed N ago; #693)`. Running leases are left
-alone. Last verified: 2026-11-22.
+alone. A down lane is also never a move target: a lease's `-move` and
+late spec (offload-gate.sh's and stdproven-offload.sh's reroute) skip it
+(2026-11-22 09:32, the hourly check moved from pass2 to a down pass3
+until this). Last verified: 2026-11-22. Last verified: 2026-11-22.
 
 ### ccguard: the Claude Code hook (#138)
 
