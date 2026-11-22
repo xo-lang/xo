@@ -1,6 +1,9 @@
 # DeepSeek/Pi experiment
 
-Started: 2026-10-23. Status: running.
+Started: 2026-10-23. Status: ended (no session since 2026-11-16); its
+launcher deepseek.sh, gate base ds-gate-base.sh and push helper pick.sh
+were deleted 2026-11-21 (owner, task #248). The guard (scripts/lead/pi)
+stays: its Claude Code hook is still installed.
 
 Can a non-Claude model, DeepSeek (v4.1 flash marathon, through the
 Subconscious gateway) driven by the Pi coding agent (v1.4.0), work on Xo
@@ -114,7 +117,7 @@ under the main checkout) as a second layer.
 
 Its home is the persistent worktree ~/godev/claude-space/xolang/pi-deepseek
 (since 2026-10-23, replacing /tmp/pi-count; /tmp is wiped on a reboot), started with
-`~/xo-lead/agents/deepseek.sh [--continue]`, which refuses to start
+`~/xo-lead/agents/deepseek.sh [--continue]` (deleted 2026-11-21), which refuses to start
 without the worktree, its guard settings, the installed hook, or the
 gateway variable, or with a CLAUDE.local.md present. One task at a time
 there: reset it to origin/main per task instead of new worktrees, which

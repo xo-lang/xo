@@ -216,7 +216,7 @@ over 5 days or replaced:
   (EC2 runs; CI retired by 0423);
 - zc-check.sh (the zero-C push of 2026-10-14, done);
 - deepseek.sh, ds-gate-base.sh, pick.sh (the DeepSeek experiment; no
-  session since 2026-11-16);
+  session since 2026-11-16; deleted 2026-11-21, owner, task #248);
 - gate-in.sh (no caller, no use since 2026-11-17);
 - sdk-daily.sh, sdk-daily-remote.sh (not scheduled; sdk-stress.sh runs
   in every tier);
