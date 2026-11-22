@@ -2501,7 +2501,13 @@ row has the Mac as an ancestor (pass3, pass4, docker), while the Mac's
 does the same under that free memory percent. A lease that also takes
 another lane (pass2|pass3) goes there. The waiter's reason names the
 version: `admission v2: load 62.10 over 1.5 x 30 cores (45)`. Both are
-null (off) until the owner answers #240. heavyd reads the rows every
+null (off) until the owner answers #240. Since #690 (2026-11-22), while heavyd has a CPU busy sample (top -l 2
+every 10 s), the load rule (and HEAVY_GATE_MAX_LOAD, HEAVY_LOAD5_HOLD)
+waits on the CPU instead: at least `cpu_busy_max_pct` (90;
+HEAVY_CPU_BUSY_MAX for gates) busy, or the load over `load_cap_per_core`
+(6) x the cores, since macOS counts disk waits in the load
+(gotchas/macos-load-counts-disk-waits.md): `admission v3: CPU 95% busy
+(28.5 of 30 cores) over 90%`. heavyd reads the rows every
 minute through the tools token, keeps the last good copy an hour, and
 otherwise fails open to its built-in rules; `HEAVYD_ADMISSION=0` turns
 the reading off. `"fit": true` in the same row (0733's fit rule, off by
