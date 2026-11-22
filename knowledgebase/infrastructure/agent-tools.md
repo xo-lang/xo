@@ -2514,7 +2514,11 @@ far, and a stem with fewer than 3 runs is never held by it. The reason
 reads `admission v3 fit: 61.0 GB admitted + 30.0 GB over 88 (mac 96 -
 reserve 8)`. The containers of the machines under the Mac
 (xo-host3, xo-host4: "xo-" plus the machine row's name) count at their
-`docker stats` use, read once a minute with the policy; a failed read
+`docker stats` use, read once a minute with the policy (since task #682,
+2026-11-22, the container's own cgroup memory.stat when `docker exec
+NAME cat /sys/fs/cgroup/memory.stat` answers: anon, shmem and kernel
+memory, never the active_file page cache docker stats counts as used,
+which held mainsmall 2h8m on an idle host 4); a failed read
 or one older than 3 minutes counts as 0 (fail open), and with fit off
 docker is never asked. A new lease on pass3 or pass4 (not `-p`) waits too
 while its p90 peak (`lease NAME` in heavyd-peaks.json: the container's
