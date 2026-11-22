@@ -134,6 +134,14 @@ Where the port differs from the plan above:
   both export a DOCKER_HOST pointing at a dead socket and run serve with
   PATH=/usr/bin:/bin (no docker), and db_test fails when serve logs
   anything about Docker.
+- Cutover: the lead installed workstream 63dcf80 at 2026-11-21 11:27 and
+  the smoke check passed (xw-1's resume note of that day). Step 6's code
+  part landed in workstream 91e9228 (2026-11-21 23:20): `xw
+  migrate-to-sqlite`, migrate_pg.xo and its tests are gone; pg_test.sh
+  was already db_test.sh. XW_PG_PASSWORD stays in xw's redaction list
+  while an env file may still hold it. The xw-postgres container,
+  ~/xo-lead/xw/pgdata and the final dump are the lead's to remove (the
+  dump is kept for 30 days).
 
 ## Consequences
 
