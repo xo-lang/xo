@@ -204,6 +204,22 @@ func TestReplLineEditing(t *testing.T) {
 	}
 	c.ExtraFiles = inner.ExtraFiles
 	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+cfg, "HOME="+cfg)
+	// the history file goes to the temporary config dir, but xo's caches
+	// stay the user's: a HOME with none made the repl's warm-up build std
+	// from nothing (two xo dev stdcache runs, 62 s and 70 s on the Intel
+	// Mac), past the 90 s wait for a prompt (task #649)
+	if cache, err := os.UserCacheDir(); err == nil {
+		if runtime.GOOS == "darwin" {
+			if err := os.MkdirAll(filepath.Join(cfg, "Library"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(cache, filepath.Join(cfg, "Library", "Caches")); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			c.Env = append(c.Env, "XDG_CACHE_HOME="+cache)
+		}
+	}
 	in, err := c.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
