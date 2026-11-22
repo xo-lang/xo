@@ -2592,7 +2592,12 @@ ENV unreachable (REASON, probed N ago; #693)`. Running leases are left
 alone. A down lane is also never a move target: a lease's `-move` and
 late spec (offload-gate.sh's and stdproven-offload.sh's reroute) skip it
 (2026-11-22 09:32, the hourly check moved from pass2 to a down pass3
-until this). Last verified: 2026-11-22. Last verified: 2026-11-22.
+until this). `heavy.sh --status` prints `    DOWN host ENV unreachable
+(...)` under such a lane, and offload-gate.sh's own reroute (a plain
+gate's 10 minute give-up, og_move) and its move and late lists skip the
+hosts it marks (gatelib.sh gate_lanes_down; 2026-11-22 10:04, l607i left
+pass2's queue for a down pass3 and lost its connection). Last verified:
+2026-11-22.
 
 ### ccguard: the Claude Code hook (#138)
 
