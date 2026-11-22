@@ -113,6 +113,17 @@ running jobs are requeued and placed on the Mac or host 2, and one
 lease-blocked alert for them. When Docker comes back, the rows come
 back up and the next replan uses them.
 
+Built (xw-1, 2026-11-22, task #600, workstream 4ba561e, bfd795e,
+6da17d5): `xw plan run SPEC` drives a batch. SPEC names the run and its
+steps (cmd, dir); the plan comes from op plan.batch's history or SPEC's
+own stats and caps. Each start runs through `xw run-job` over the host's
+channel (its machine row's ssh, decision 0735). Every host's ssh port is
+probed each `--probe-s`; two missed probes or a host leaving requeues its
+running step, which runs again elsewhere as STEP.try2, and replans the
+rest (`machine-down: H missed 2 probes`). An old attempt that ends later
+changes nothing. Hosts 3 and 4 have no ssh in their rows yet
+(2026-11-22), so a Docker-stop run waits on those rows.
+
 Time limits scale with the parent's load. A job's limit is its
 predicted minutes times max(1, load at start / cores of the parent),
 times 1.5. A gate on host 3 at Mac load 24 gets more time than at load
