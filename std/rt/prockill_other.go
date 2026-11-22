@@ -5,6 +5,7 @@ package rt
 import (
 	"errors"
 	"os"
+	"os/exec"
 )
 
 // sendSignal: only KILL can be sent where there are no Unix signals
@@ -19,3 +20,10 @@ func sendSignal(pid int, sig string) error {
 	}
 	return killProcess(p)
 }
+
+// groupsSupported: no process groups here; Child.kill_group is an error
+// (decision 0739).
+const groupsSupported = false
+
+// setGroup does nothing where there are no process groups.
+func setGroup(*exec.Cmd) {}

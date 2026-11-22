@@ -380,6 +380,7 @@ var (
 	_ func(*Cmd, *Task, Bytes) Cmd                                                                         = (*Cmd).M_stdin
 	_ func(*Cmd, *Task) Cmd                                                                                = (*Cmd).M_inherit
 	_ func(*Cmd, *Task) Cmd                                                                                = (*Cmd).M_merge_stderr
+	_ func(*Cmd, *Task) Cmd                                                                                = (*Cmd).M_new_group
 	_ func(*Cmd, *Task) Result[ProcOutput, ProcErr]                                                        = (*Cmd).M_output
 	_ func(*Cmd, *Task) Result[int64, ProcErr]                                                             = (*Cmd).M_run
 	_ func(*Cmd, *Task) Result[Child, ProcErr]                                                             = (*Cmd).M_spawn
@@ -393,4 +394,5 @@ var (
 	_ func(*Child, *Task) Result[int64, ProcErr]                                                           = (*Child).M_wait
 	_ func(*Child, *Task) Result[Tuple2[int64, ProcUsage], ProcErr]                                        = (*Child).M_wait_usage
 	_ func(*Child, *Task)                                                                                  = (*Child).M_kill
+	_ func(*Child, *Task, string) Result[Unit, ProcErr]                                                    = (*Child).M_kill_group
 )

@@ -41,6 +41,7 @@ type procCmd struct {
 	hasStdin bool
 	inherit  bool
 	merge    bool
+	group    bool // new_group: the child leads a process group (decision 0739)
 }
 
 // Cmd is `Cmd`, a command that has not run: a value (each builder
@@ -99,6 +100,14 @@ func (c Cmd) M_inherit(*Task) Cmd {
 func (c Cmd) M_merge_stderr(*Task) Cmd {
 	x := c.clone()
 	x.merge = true
+	return Cmd{x}
+}
+
+// M_new_group starts the child in a process group of its own (decision
+// 0739; SysProcAttr.Setpgid).
+func (c Cmd) M_new_group(*Task) Cmd {
+	x := c.clone()
+	x.group = true
 	return Cmd{x}
 }
 
@@ -204,6 +213,9 @@ func (c *procCmd) exec(ctx context.Context) *exec.Cmd {
 		}
 		x.Env = append(append([]string{}, env...), c.extra...)
 	}
+	if c.group {
+		setGroup(x)
+	}
 	return x
 }
 
@@ -301,6 +313,7 @@ type child struct {
 	err    error
 	usage  ProcUsage
 	fake   *fakeChild
+	group  bool      // started with new_group where groups exist (decision 0739)
 	rdl    time.Time // the read deadline of both pipes (decision 0611), zero none
 	part   string    // a line's start read before a failed read_line, kept for the next
 }
@@ -342,7 +355,7 @@ func (c Child) M_debug(*Task) string     { return Debug(c) }
 func (realProc) spawn(tk *Task, c *procCmd) Result[Child, ProcErr] {
 	ctx, cancel := context.WithCancel(context.Background())
 	x := c.exec(ctx)
-	ch := &child{x: x, cancel: cancel}
+	ch := &child{x: x, cancel: cancel, group: c.group && groupsSupported}
 	var closeAfter []*os.File
 	pipe := func() (*os.File, *os.File, error) {
 		r, w, err := os.Pipe()
@@ -621,6 +634,37 @@ func (c Child) M_kill(*Task) {
 		return
 	}
 	killProcess(c.c.x.Process)
+}
+
+// M_kill_group signals the process group the child leads (decision
+// 0739): only a child new_group started, also after wait; a test's
+// FakeProc records "NAME group".
+func (c Child) M_kill_group(tk *Task, sig string) Result[Unit, ProcErr] {
+	if e := killCheck(1, sig); e != nil {
+		return Err[Unit](*e)
+	}
+	if fc := c.c.fake; fc != nil {
+		if !fc.group {
+			return Err[Unit](procIo("the child was not started with new_group"))
+		}
+		fc.p.mu.Lock()
+		fc.p.killed = append(fc.p.killed, sig+" group")
+		fc.p.mu.Unlock()
+		return Ok[Unit, ProcErr](Unit{})
+	}
+	if !groupsSupported {
+		return Err[Unit](procIo("process groups are not supported on this system"))
+	}
+	if !c.c.group {
+		return Err[Unit](procIo("the child was not started with new_group"))
+	}
+	if c.c.x.Process == nil {
+		return Err[Unit](procIo("the child did not start"))
+	}
+	if err := sendSignal(-c.c.x.Process.Pid, sig); err != nil {
+		return Err[Unit](procIo(err.Error()))
+	}
+	return Ok[Unit, ProcErr](Unit{})
 }
 
 func (realProc) pipeline(tk *Task, cs []*procCmd) Result[ProcOutput, ProcErr] {

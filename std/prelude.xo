@@ -2243,6 +2243,11 @@ fn (c: Cmd) stdin(data: Bytes) -> Cmd
 fn (c: Cmd) inherit() -> Cmd
 /// The child's standard error goes into its standard output stream.
 fn (c: Cmd) merge_stderr() -> Cmd
+/// The child leads a new process group of its own (Go's
+/// SysProcAttr.Setpgid), so Child.kill_group reaches what it starts
+/// too (decision 0739). With inherit it is not the terminal's
+/// foreground group: reading the terminal stops it.
+fn (c: Cmd) new_group() -> Cmd
 /// Runs to the end and collects both streams.
 fn (c: Cmd) output() -> ProcOutput ! ProcErr uses proc
 /// Runs on the terminal and returns the exit status.
@@ -2277,3 +2282,8 @@ fn (c: Child) wait() -> Int ! ProcErr uses proc
 fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc
 /// Kills the child (SIGKILL on Unix; status 137 on Windows too).
 fn (c: Child) kill()
+/// Sends the signal named (HUP, INT, QUIT, KILL, TERM, USR1, USR2,
+/// CONT, STOP) to the process group the child leads, the child and what
+/// it started; also after wait. Only a child started with new_group:
+/// any other is an `Io` error, and so is Windows (decision 0739).
+fn (c: Child) kill_group(signal: Str = "TERM") -> () ! ProcErr uses proc

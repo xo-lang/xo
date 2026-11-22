@@ -844,7 +844,8 @@ fn flush()
 // ---------------------------------------------------------------------------
 // Processes (decision 0107): commands, children, and pipelines (decisions 0161 and 0172). A command
 // is a spec (std/native/prelude.xo cmd_spec): name, dir, flags (1 env set,
-// 2 inherit, 4 merge_stderr), the count of args and the args, the count
+// 2 inherit, 4 merge_stderr, 8 the environment final (procspec.xo), 16
+// new_group), the count of args and the args, the count
 // of env entries and the entries, the count of set_env entries and the
 // entries. An outcome is a list whose first element is the status: "0"
 // done (then the values), "e" the end of a stream, "1" not found (the

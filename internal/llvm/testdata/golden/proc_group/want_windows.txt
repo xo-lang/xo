@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+plain line "up"
+plain err process groups are not supported on this system
+plain killed 137
+group line "up"
+bad err unknown signal "BOGUS"
+group err process groups are not supported on this system
+group timeout
+group wait 137
+--- stderr

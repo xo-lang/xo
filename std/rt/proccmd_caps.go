@@ -103,6 +103,8 @@ type fakeChild struct {
 	mu       sync.Mutex
 	out, err string
 	code     int64
+	p        *fakeProc // records kill_group
+	group    bool
 }
 
 func (p *fakeProc) spawn(_ *Task, c *procCmd) Result[Child, ProcErr] {
@@ -110,7 +112,7 @@ func (p *fakeProc) spawn(_ *Task, c *procCmd) Result[Child, ProcErr] {
 	if !ok {
 		return Err[Child](procNotFound(c.name))
 	}
-	fc := &fakeChild{out: string(out.F_stdout), err: string(out.F_stderr), code: out.F_code}
+	fc := &fakeChild{out: string(out.F_stdout), err: string(out.F_stderr), code: out.F_code, p: p, group: c.group}
 	if c.merge {
 		fc.out, fc.err = fc.out+fc.err, ""
 	}

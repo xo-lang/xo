@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+plain line "up"
+plain err the child was not started with new_group
+plain killed 137
+group line "up"
+bad err unknown signal "BOGUS"
+group ok
+group end
+group wait 143
+--- stderr

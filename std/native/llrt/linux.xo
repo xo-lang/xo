@@ -893,6 +893,10 @@ pub fn dup3(fd: Int, newfd: Int, flags: Int) -> Int {
 /// fcntl(2) F_SETFD of fd: 0, or the negative errno.
 pub fn set_fd_flags(fd: Int, flags: Int) -> Int { rt.sys6(nrf(25, 72, 92), fd, 2, flags, 0, 0, 0) }
 
+/// setpgid(2): process pid (0 itself) joins or leads group pgid (0 its
+/// own pid; decision 0739): 0, or the negative errno.
+pub fn setpgid(pid: Int, pgid: Int) -> Int { rt.sys6(nrf(154, 109, 82), pid, pgid, 0, 0, 0, 0) }
+
 /// chdir(2) of the zero terminated path at a: 0, or the negative errno.
 pub fn chdir_at(a: Int) -> Int { rt.sys6(nrf(49, 80, 12), a, 0, 0, 0, 0, 0) }
 

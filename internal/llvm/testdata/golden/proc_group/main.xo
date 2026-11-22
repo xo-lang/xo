@@ -1,0 +1,46 @@
+// Cmd.new_group and Child.kill_group (decision 0739): a child without
+// new_group is refused and nothing is signalled; with new_group the
+// signal reaches the child and the grandchild it started, so the
+// output pipe the grandchild also holds ends at once (a surviving sleep
+// would hold it past the 3 s read deadline); an unknown signal is an
+// Io error.
+
+fn show(r: Result[(), ProcErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn line(r: Result[Str?, ProcErr]) -> Str {
+  match r {
+    Ok(Some(l)) => "line ${l.quote()}"
+    Ok(None) => "end"
+    Err(e) => match e {
+      ProcErr.Timeout => "timeout"
+      _ => "err ${e}"
+    }
+  }
+}
+
+fn main(os: Os) ! {
+  let p = os.proc
+  let out = os.stdio
+  let clock = os.clock
+  let plain = p.cmd("sh", ["-c", "echo up; sleep 30"]).spawn()?
+  out.println("plain ${line(plain.read_line())}")
+  out.println("plain ${show(plain.kill_group("KILL"))}")
+  plain.kill()
+  out.println("plain killed ${plain.wait()?}")
+  let g = p.cmd("sh", ["-c", "sleep 6 & echo up; wait"]).new_group().spawn()?
+  out.println("group ${line(g.read_line())}")
+  out.println("bad ${show(g.kill_group("BOGUS"))}")
+  let r = g.kill_group()
+  out.println("group ${show(r)}")
+  g.set_read_deadline(clock, Some(clock.now() + 3s))
+  out.println("group ${line(g.read_line())}")
+  if r.is_err() {
+    g.kill()
+  }
+  out.println("group wait ${g.wait()?}")
+}

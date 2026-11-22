@@ -26,11 +26,12 @@ fn windows() -> Bool {
 /// out: name, dir, flags, the arguments, the environment, the variables
 /// added (none: Xo merged them), and the Windows command line. Flag 8
 /// tells xo_proc.c that the environment is final (flag 1: there is one,
-/// else the program's) and the command line follows.
+/// else the program's) and the command line follows; 2, 4 and 16
+/// (new_group, decision 0739) pass through.
 pub fn spec(name: Str, dir: Str, flags0: Int, args: List[Str], env: List[Str], extra: List[Str], var out: List[Str]) {
   let win = windows()
   let env_set = (flags0 & 1) != 0
-  var flags = (flags0 & 6) | 8
+  var flags = (flags0 & 22) | 8
   var final: List[Str] = []
   // os/exec sets no PWD on Windows; the program's environment as it is
   // needs none

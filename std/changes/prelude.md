@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-21: feature: Cmd.new_group and Child.kill_group
+
+- Kind: feature
+- Commit: this push
+- Found by: task #660 (owner answer xw #261, option 1; xw-1's runner, task #600)
+- Go reference: syscall.SysProcAttr.Setpgid and syscall.Kill with a negative pid
+- Change: Cmd.new_group() starts the child in its own process group (darwin posix_spawnattr_setpgroup, linux setpgid in the child before exec, the Go backend Setpgid); Child.kill_group(signal = "TERM") signals that group only, and fails for a child started without new_group and on Windows; Proc.kill still refuses pid <= 0 (decision 0190); decision 0739
+- Measured: no speed claim
+- Test: golden proc_group (a shell's background sleep ends with its group; a plain child is refused)
+
 ## 2026-11-21: fix: Fs.read of a file named with a trailing separator fails under WASI
 
 - Kind: fix

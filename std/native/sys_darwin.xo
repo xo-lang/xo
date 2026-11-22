@@ -117,6 +117,7 @@ fn posix_spawnattr_destroy(at: Int) -> Int32
 fn posix_spawnattr_setflags(at: Int, flags: Int) -> Int32
 fn posix_spawnattr_setsigmask(at: Int, set: Int) -> Int32
 fn posix_spawnattr_setsigdefault(at: Int, set: Int) -> Int32
+fn posix_spawnattr_setpgroup(at: Int, pgroup: Int) -> Int32
 fn flock(fd: Int, op: Int) -> Int32
 /// __getdirentries64 (what readdir(3) calls): the next entries of the
 /// directory fd as struct dirent (64 bit inodes) records into n bytes at

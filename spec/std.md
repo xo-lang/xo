@@ -1695,6 +1695,7 @@ fn (c: Cmd) set_env(name: Str, value: Str) -> Cmd
 fn (c: Cmd) stdin(data: Bytes) -> Cmd         // its standard input
 fn (c: Cmd) inherit() -> Cmd                  // standard streams are the program's (the terminal)
 fn (c: Cmd) merge_stderr() -> Cmd             // standard error into the standard output stream
+fn (c: Cmd) new_group() -> Cmd                // start in its own process group (decision 0739)
 fn (c: Cmd) output() -> ProcOutput ! ProcErr uses proc   // run to the end, collect the streams
 fn (c: Cmd) run() -> Int ! ProcErr uses proc            // run on the terminal; the exit status
 fn (c: Cmd) spawn() -> Child ! ProcErr uses proc        // start; returns at once
@@ -1710,6 +1711,7 @@ fn (c: Child) set_read_deadline(clock: Clock, t: Time?) uses clock // decision 0
 fn (c: Child) wait() -> Int ! ProcErr uses proc                   // closes its input; the status
 fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc // wait, and the child's own usage
 fn (c: Child) kill()
+fn (c: Child) kill_group(signal: Str = "TERM") -> () ! ProcErr uses proc // its group; needs new_group (0739)
 ```
 
 ```
@@ -1749,6 +1751,15 @@ fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
 - Exit status: the child's exit code; a child ended by a signal is 128
   plus the signal number. On Windows `Child.kill` (and cancellation)
   ends the child with the status 137, as SIGKILL does on Unix.
+- Process groups (decision 0739): `new_group` starts the child in a new
+  process group whose id is its pid, and `kill_group(signal)` signals
+  every process in it (`kill(-pid)`), so a shell's own children stop
+  with it. `kill_group` fails with `ProcErr.Io` for a child started
+  without `new_group`, for an unknown signal name (`Child.kill`'s), and
+  on Windows (no process groups). The group stays signalable after
+  `wait`. `Proc.kill` still refuses a pid of 0 or less (decision 0190).
+  A group child started with `inherit` is not the terminal's foreground
+  group, so the terminal's Ctrl-C does not reach it.
 - `read` returns at most `max` bytes (at most 1 MiB) as they arrive and
   `None` at the end of the stream; `read_line` strips `\n` and `\r\n`.
   Reads and `wait` are cancellation points; cancelling the task that
@@ -7778,7 +7789,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-636 declarations.
+638 declarations.
 
 ### Range
 
@@ -8723,6 +8734,7 @@ fn (c: Cmd) set_env(name: Str, value: Str) -> Cmd
 fn (c: Cmd) stdin(data: Bytes) -> Cmd
 fn (c: Cmd) inherit() -> Cmd
 fn (c: Cmd) merge_stderr() -> Cmd
+fn (c: Cmd) new_group() -> Cmd
 fn (c: Cmd) output() -> ProcOutput ! ProcErr uses proc
 fn (c: Cmd) run() -> Int ! ProcErr uses proc
 fn (c: Cmd) spawn() -> Child ! ProcErr uses proc
@@ -8741,6 +8753,7 @@ fn (c: Child) set_read_deadline(clock: Clock, t: Time?) uses clock
 fn (c: Child) wait() -> Int ! ProcErr uses proc
 fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc
 fn (c: Child) kill()
+fn (c: Child) kill_group(signal: Str = "TERM") -> () ! ProcErr uses proc
 ```
 
 ### Functions

@@ -6153,6 +6153,7 @@ struct Cmd {
   has_input: Bool
   inherit: Bool
   merge: Bool
+  group: Bool
 }
 
 struct Child {
@@ -6160,7 +6161,7 @@ struct Child {
 }
 
 fn proc_cmd(p: Proc, name: Str, args: List[Str] = []) -> Cmd {
-  Cmd{lists: rt.proc_lists(p), name: name, args: args, dir: "", env: [], env_set: false, extra: [], input: b"", has_input: false, inherit: false, merge: false}
+  Cmd{lists: rt.proc_lists(p), name: name, args: args, dir: "", env: [], env_set: false, extra: [], input: b"", has_input: false, inherit: false, merge: false, group: false}
 }
 
 fn cmd_dir(c: Cmd, path: Str) -> Cmd {
@@ -6206,6 +6207,13 @@ fn cmd_merge_stderr(c: Cmd) -> Cmd {
   x
 }
 
+/// The child leads a process group of its own (decision 0739).
+fn cmd_new_group(c: Cmd) -> Cmd {
+  var x = c
+  x.group = true
+  x
+}
+
 /// The spec of c for the runtime (std/native/rt.xo proc_exec), appended
 /// to out.
 fn cmd_spec(c: Cmd, var out: List[Str]) {
@@ -6218,6 +6226,9 @@ fn cmd_spec(c: Cmd, var out: List[Str]) {
   }
   if c.merge {
     flags = flags | 4
+  }
+  if c.group {
+    flags = flags | 16
   }
   // the environment and the Windows command line (decision 0193 step 6)
   procspec.spec(c.name, c.dir, flags, c.args, c.env, c.extra, out)
@@ -6387,6 +6398,25 @@ fn child_wait_usage(c: Child) -> (Int, ProcUsage) ! ProcErr uses proc {
 }
 
 fn child_kill(c: Child) { proc.child_kill(c.h) }
+
+/// Child.kill_group (decision 0739): the signal to the group new_group
+/// made, never to any other.
+fn child_kill_group(c: Child, signal: Str = "TERM") -> () ! ProcErr uses proc {
+  let names = ["HUP", "INT", "QUIT", "KILL", "TERM", "USR1", "USR2", "CONT", "STOP"]
+  var sig = -1
+  for (i, n) in names.indexed() {
+    if n == signal {
+      sig = i
+    }
+  }
+  if sig < 0 {
+    return Err(ProcErr.Io("unknown signal ${signal.quote()}"))
+  }
+  match proc.child_kill_group(c.h, sig).get(0) {
+    Some(msg) => Err(ProcErr.Io(msg))
+    None => Ok(())
+  }
+}
 
 fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {
   let (line, st, msg) = stdinrt.read(false)

@@ -1,7 +1,10 @@
 package arm64
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,7 +33,23 @@ func stdRun(run func() ([]byte, error)) ([]byte, error) {
 	stdSlots.once.Do(func() { stdSlots.ch = make(chan struct{}, stdBuildSlots()) })
 	stdSlots.ch <- struct{}{}
 	defer func() { <-stdSlots.ch }()
-	return run()
+	out, err := run()
+	return out, withStderr(err)
+}
+
+// withStderr adds the stderr an exec.Cmd's Output kept in its ExitError
+// to err's text, last 2 KB: TestStdRecordJsonDefaults failed a gate on
+// host 2 with only "exit status 1" (2026-11-21, task #660).
+func withStderr(err error) error {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || len(ee.Stderr) == 0 {
+		return err
+	}
+	msg := ee.Stderr
+	if len(msg) > 2048 {
+		msg = msg[len(msg)-2048:]
+	}
+	return fmt.Errorf("%w\n%s", err, msg)
 }
 
 // stdBuildSlots is XO_TEST_STD_BUILDS, else as many std builds as half
