@@ -165,6 +165,13 @@ quiet log alone is never a hang.
   limit is named as skipped); a passing job sends none. They land in
   `RUNS/RUN/STEP.detail/`, each path's segments joined with `_`.
   Retention and `xw result` are not built yet.
+- Files for a job (task #600, workstream 59560fb, 2026-11-22): `xw
+  run-job --put LOCAL[=NAME],...` sends each file to the runner's
+  `DIR/in/NAME` before the start, in 48 KB chunks written to `NAME.part`
+  and renamed at the last; the job reads them under `XW_IN`. A name is
+  one word (never a path, never ending `.part`), a chunk out of order is
+  refused, and a refusal ends the drive with no start. This replaces
+  offload.sh's bundle copy once the host runner is live.
 
 ## Alternatives
 
