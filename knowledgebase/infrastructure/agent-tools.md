@@ -1704,8 +1704,10 @@ caller starts under nohup or with `HEAVYD_DETACHED=1`. Last verified:
   stopped past 32 GB (HEAVY_MAX_GB). Owner, 2026-11-09, for the 96 GB, 30-core
   Mac Studio. Last verified: 2026-11-09.
   A new slot run also waits (it is never stopped for it) while the Mac's
-  swap is over 70% (HEAVY_SWAP_HOLD) or its 5 minute load over 48
-  (HEAVY_LOAD5_HOLD), and the admission policy's load rule counts each
+  swap is over 70% (HEAVY_SWAP_HOLD) at a memory pressure level that
+  is not normal (kern.memorystatus_vm_pressure_level 2 or 4; any swap
+  at 4, task #663: swap in use stays high after the pressure is gone) or
+  its 5 minute load over 48 (HEAVY_LOAD5_HOLD), and the admission policy's load rule counts each
   running pass3/pass4 lease at its machine's cores (hosts 3 and 4 run in
   the Mac's Docker VM; task #661, 2026-11-21).
 - Quick runs (2026-11-15): `HEAVY_CLASS=quick ~/xo-lead/agents/heavy.sh
