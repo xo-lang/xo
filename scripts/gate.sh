@@ -1598,7 +1598,12 @@ run_step_body() {
     # every corpus of internal/stdtest on every backend, non -short (under
     # -short the corpora run the host backend alone). 10 min 32 s measured
     # 2026-10-26, mostly the LLVM corpora's clang links.
-    full corpora ./internal/stdtest -run '^TestStdCorpora$' ;;
+    # XO_GATE_CORPORA_PARALLEL=N caps go test -parallel (task #525: tier
+    # 926's Mac step ran 11,459 s of subtests in 404 s, about 28 cores at
+    # once; the tier sets 12, lead 2026-11-22); unset, go's default.
+    cpar=${XO_GATE_CORPORA_PARALLEL:-}
+    case $cpar in '' ) ;; *[!0-9]* | 0) echo "gate.sh: XO_GATE_CORPORA_PARALLEL=$cpar is not a positive number"; failed=1; return ;; esac
+    full corpora ./internal/stdtest -run '^TestStdCorpora$' ${cpar:+-parallel "$cpar"} ;;
   corpuscheck)
     # stdcorpus -check: every committed corpus against its generator, so a
     # change to Go, an oracle or a generator shows (lead, 2026-11-15: a
