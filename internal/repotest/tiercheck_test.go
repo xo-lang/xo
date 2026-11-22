@@ -88,6 +88,17 @@ func noGitIdentity(t *testing.T, env []string) []string {
 	return append(out, "HOME="+t.TempDir(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=user.useConfigOnly", "GIT_CONFIG_VALUE_0=true")
 }
 
+// TestOffloadTierUnknownStep runs scripts/lead/offload_tier_step_test.sh
+// (task #714): offload-tier.sh refuses a STEP it has no step for, which
+// ran nothing and exited 0 for tier 928's sdk-stress rerun.
+func TestOffloadTierUnknownStep(t *testing.T) {
+	s := filepath.Join("..", "..", "scripts", "lead", "offload_tier_step_test.sh")
+	out, err := leadScript(s).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", s, err, out)
+	}
+}
+
 // TestTierHeavyClass: every heavy.sh run in scripts/lead/tier.sh is bulk
 // class with HEAVY_DARWIN=1 (task #556): a tier step runs for minutes on
 // the Mac, and the docs step (docs-check.sh, 12+ min in tier 918) ran as
