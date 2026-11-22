@@ -1,14 +1,17 @@
 # 0745: LLVM's role, and the native backends better than LLVM
 
 Status: Accepted (owner, 2026-11-22, xw decision #279; task #715).
+Corrected the same day (xw decision #282, xo-5b's review): `--race` is
+not LLVM's alone, the native backends have it by default (decision
+0273).
 
 ## Context
 
 Xo has two ways to machine code: its own native backends (arm64 and
 x86-64, compiler/arm64, with Xo's assembler and linker) and the LLVM
 backend (compiler/llvm, through clang). The native backends are the
-default on the targets they serve. LLVM came first on several targets,
-carries `--race`, and is what native output is compared with: rows such
+default on the targets they serve. LLVM came first on several targets
+and is what native output is compared with: rows such
 as bench/perf/portable are read as native instructions and time against
 LLVM's (decision 0727).
 
@@ -20,9 +23,11 @@ and what the native backends are aiming at.
 ## Decision
 
 1. **LLVM stays a supported backend.** It is the bring-up path of a
-   new target (riscv64: decision 0571, then 0645), the backend of
-   `--race` (decision 0241's addendum, and 0273), and the reference the native
-   output is checked against.
+   new target (riscv64: decision 0571, then 0645) and the reference the
+   native output is checked against. That includes the sanitizers:
+   `--race` is the native backends' by default (decision 0273), and
+   internal/llvm's TestGoldenTasks and TestGoldenASan are the clang
+   reference for it.
 2. **Compliance.** Every language and runtime feature keeps working on
    LLVM. A feature is not done until its LLVM lowering and its goldens
    pass there.
@@ -76,7 +81,7 @@ Each gets its own decision before it is built.
 ## Alternatives
 
 - Drop the LLVM backend once the native ones lead: loses the bring-up
-  path, `--race` and the reference.
+  path and the reference.
 - Keep testing LLVM as much as the native backends: about an hour of
   each tier for a backend that is not the default.
 - LLVM as the default for release builds: the native backends would
