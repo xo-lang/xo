@@ -80,7 +80,7 @@ func TestH2Diff(t *testing.T) {
 					t.Fatalf("build (%s) failed: %v", be, res.Output)
 				}
 				outs[i], _ = runH2Diff(t, res.Binaries[xotool.Host()], pki, be != xotool.BackendGo)
-				outs[i] = rejectRace(outs[i])
+				outs[i] = resetRace(rejectRace(outs[i]))
 			})
 		}
 	})
@@ -113,6 +113,18 @@ func rejectRace(out string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// resetRace makes the "stream window overflow twice" probe one answer
+// (task #657): Go's server closes a stream it resets only when the
+// RST_STREAM's write is done (wroteFrame), so a second overflowing
+// WINDOW_UPDATE read before then gets a second reset, and one read after
+// is ignored on the closed stream; both are what h2spec 6.9.1 #3 asks.
+// The native server ignores it always (d9e6a97b6). Tier 924 saw two
+// from the Go backend on host 3.
+func resetRace(out string) string {
+	const twice = "raw stream window overflow twice: 1[RST_STREAM FLOW_CONTROL_ERROR RST_STREAM FLOW_CONTROL_ERROR]"
+	return strings.ReplaceAll(out, twice, "raw stream window overflow twice: 1[RST_STREAM FLOW_CONTROL_ERROR]")
 }
 
 // lineDiff shows the lines of got that differ from want.
@@ -1280,4 +1292,22 @@ func TestH2Sanitizers(t *testing.T) {
 // 2026-11-13).
 func h2Intended(goOut string) string {
 	return strings.ReplaceAll(goOut, "raw header list far too large: open", "raw header list far too large: GOAWAY last=1 PROTOCOL_ERROR, closed")
+}
+
+// TestH2ResetRace: the Go backend's two resets for "stream window
+// overflow twice" (tier 924, task #657) compare equal to the native
+// server's one; other lines stay as they are.
+func TestH2ResetRace(t *testing.T) {
+	one := "raw stream window overflow twice: 1[RST_STREAM FLOW_CONTROL_ERROR], open\n"
+	two := "raw stream window overflow twice: 1[RST_STREAM FLOW_CONTROL_ERROR RST_STREAM FLOW_CONTROL_ERROR], open\n"
+	other := "raw stream window overflow: 1[RST_STREAM FLOW_CONTROL_ERROR RST_STREAM FLOW_CONTROL_ERROR], open\n"
+	if got := resetRace(two); got != one {
+		t.Errorf("resetRace(two resets) = %q, want %q", got, one)
+	}
+	if got := resetRace(one); got != one {
+		t.Errorf("resetRace(one reset) = %q", got)
+	}
+	if got := resetRace(other); got != other {
+		t.Errorf("resetRace changed another probe: %q", got)
+	}
 }
