@@ -107,7 +107,7 @@ phase insert_rc.keys 0.20 ms heap_mb=32 peak_mb=53
 phase insert_rc.plan 1.22 ms heap_mb=32 peak_mb=53
 ```
 
-The heap in use at the front end's peak (XO_PROF=heap at fe.build): none in this report. The heap-profiled build of xo 0.55.0 exited 139 (a segfault, task #658), and the script then stopped before its run and test sections; those ran in a second run (SECTIONS="run test", 2026-11-22, same xo and Go), below. The script now reports a failed profiled build and goes on (58546ef1bf).
+The heap in use at the front end's peak (XO_PROF=heap at fe.build, every byte sampled): the profiled build of xo 0.55.0 exited 139 (a segfault, task #658), and the script then stopped before its run and test sections; those ran in a second run (SECTIONS="run test", 2026-11-22, same xo and Go), below. The heap row is in "Heap at fe.build" at the end of this file, from an xo with #658's fix (task #676).
 
 
 ## A large program: the Azure compute client (armcompute)
@@ -345,3 +345,29 @@ max_rss_kb            186264      253824      0.511% 0.704%     1.363   1.356 to
 load: median 5.72 (A) / 5.72 (B); loaded: 0 of 4 rounds (at or above 8.72; baseline 5.72 + 3.0, at least 6.0)
 ```
 
+## Heap at fe.build (rerun, xo at main a7dd3ce726)
+
+Rerun on the Mac on 2026-11-22 (task #676) with an xo built at main
+a7dd3ce726, which has #658's fix (cf31a1379) that 0.55.0 lacks, and its own
+std: coll (bench/perf/xo of v0.55.0), a cold build, a warm build, then 3
+builds with `XO_PROF=heap XO_PROF_HEAP_RATE=1 XO_PROF_HEAP_AT=fe.build` and
+`xo prof`, the run cache off. They report 112.58MB, 112.54MB, 112.53MB in use
+(allocated 301.02MB, 304.90MB, 312.71MB); the first, top 12:
+
+```
+xo heap profile: 242529 samples at one per 1B allocated (estimated totals)
+in use: 112.58MB in 190995 objects; allocated: 301.02MB in 725656 objects
+      flat  flat%   sum%        cum   cum%  line (the largest)  function
+   17.17MB 15.26% 15.26%    17.17MB 15.26%  raw.xo:32           raw.bytes_buf
+   11.29MB 10.03% 25.28%    47.25MB 41.97%  astcodec.xo:2024    parser.decode_parse
+   10.69MB  9.50% 34.78%    14.46MB 12.84%  astcodec.xo:1231    parser.Dec.params
+    9.85MB  8.75% 43.53%    15.19MB 13.50%  rccache.xo:993      ssa.decode_func_at
+    7.96MB  7.07% 50.60%     9.84MB  8.74%  astcodec.xo:1466    parser.Dec.block
+    6.62MB  5.88% 56.49%     6.96MB  6.18%  stmt.xo:343         check.Checker.force_body
+    5.66MB  5.03% 61.52%     5.67MB  5.04%  load.xo:1497        check.Checker.new_module
+    5.52MB  4.91% 66.42%     5.52MB  4.91%  astcodec.xo:1083    parser.Dec.idents
+    4.96MB  4.40% 70.83%     6.81MB  6.05%  astcodec.xo:1483    parser.Dec.exprs
+    4.78MB  4.25% 75.07%     5.22MB  4.64%  decl.xo:146         check.Checker.declare
+    3.68MB  3.27% 78.34%     9.39MB  8.34%  astcodec.xo:1806    parser.Dec.expr
+    3.65MB  3.24% 81.58%     4.95MB  4.40%  base.xo:284         check.Checker.record_rec
+```
