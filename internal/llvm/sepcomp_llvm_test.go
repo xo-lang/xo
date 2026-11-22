@@ -143,6 +143,41 @@ func TestSepcompLLVM(t *testing.T) {
 			t.Errorf("xo_tlocal_get is %d bytes in std's objects: want the local exec read (20 bytes: mrs, add, add, ldr, ret), not the descriptor's", n)
 		}
 	})
+	// std's objects that cannot be built are said, on a build without
+	// --phase-times too: the build links the whole program instead, and
+	// said so only in the phase lines. A change that broke std's IR then
+	// measured as the whole program's time on every row, the two
+	// binaries the same size to the byte (task #607). Here clang fails
+	// on std's split modules alone (prog.N.ll, given by base name in
+	// their directory); the program's one module still builds and runs
+	t.Run("objects not built are said", func(t *testing.T) {
+		real := os.Getenv("XO_CLANG_CACHED")
+		if real == "" {
+			cl, err := xotool.Clang()
+			if err != nil {
+				t.Skip("clang not found")
+			}
+			real = cl
+		}
+		wrap := filepath.Join(t.TempDir(), "clang")
+		script := "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in prog.[0-9]*.ll|*/prog.[0-9]*.ll|*/llvm-split*) echo 'clang: error: refused by the test' >&2; exit 1;; esac; done\nexec '" + real + "' \"$@\"\n"
+		if err := os.WriteFile(wrap, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join("testdata", "golden", "arith")
+		env := []string{"XO_SEPCOMP_LLVM=1", "XO_SEPCOMP=", "XO_WHOLE_BUILD=off", "XO_BIN_CACHE=off", "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=" + t.TempDir(), "XO_CLANG=" + wrap}
+		res, build := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: env})
+		if !strings.Contains(build.Output, "xo: warning: std's LLVM objects were not built") || !strings.Contains(build.Output, "the whole program is built") {
+			t.Errorf("a build whose std objects failed says nothing of it (want `xo: warning: std's LLVM objects were not built (...); the whole program is built`):\n%s", build.Output)
+		}
+		want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(want) != res.String() {
+			t.Errorf("the whole program built in their place differs from want.txt\n--- want\n%s\n--- got\n%s", want, res)
+		}
+	})
 	// two builds of std's objects, each in a cache of its own, hold the
 	// same code and the same symbols. They did not (task #607): a ThinLTO
 	// module is identified by the path clang was given, the modules sat

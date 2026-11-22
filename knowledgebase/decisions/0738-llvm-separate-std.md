@@ -443,6 +443,27 @@ behind it inlines as it does in a whole program. The calls of
 `cabi.obj_str_eq` in bench/perf text went from 118 to 0, the text grew
 9% (1,414,316 to 1,540,192 bytes), and no row moved beyond the noise.
 
+Also tried and dropped (pf2.out, uw1.out, tl5.out, branch
+l607-solecall-tried): the fault rows lose in the unwinder. A whole
+program's cabi.fault_raise_cur is one function of 5,632 bytes holding
+unwind.raise, personality, frame, dframe and cstep, since each is
+internal there with one caller and LLVM inlines such a function
+whatever its size; in std's objects each is a function of its own (540
+to 1,960 bytes). Marking, in std's own build, the one call of every
+function that nothing else in std names grew the text 15% (bench/perf
+ctx 864,467 to 1,000,651 bytes) and left the unwinder as it was (63
+symbols on the fault path to 55), with no row clearly faster on a
+loaded host 2: across all of std those functions have more than one
+user. "One caller" is a fact about a program, after its unused code is
+pruned, and std's own build cannot know it. Closing these rows needs
+the program's link to see std's bitcode with what the program reaches,
+which this decision's stages do not have.
+
+A first measurement of that change read 1.00 on every row and was void:
+std's objects had failed to compile and the whole program was linked
+without a word (gotchas/sepcomp-llvm-silent-whole-build.md); the build
+warns now.
+
 Still open: the nine rows above. The counts of calls by callee (sz4.out) name nothing more that is
 a call in the opt in and inlined in the whole program: the other names
 that differ (cabi.fault_continue, obj_rs_push_byte, the drop helpers)

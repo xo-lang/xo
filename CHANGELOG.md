@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- LLVM backend, opt in (`XO_SEPCOMP_LLVM=1`; task #607): a build that cannot make std's objects says so (`xo: warning: std's LLVM objects were not built (...); the whole program is built`). It built the whole program in their place and said it only under `--phase-times`.
 - Fix (native backends, `use c`; task #697): a C call made right after another is no longer interrupted by the scheduler's preemption signal. A C `nanosleep` in a loop beside busy tasks returned early with EINTR now and then (1 of 80 sleeps of 100 ms in one test run; with 1 ms sleeps, most runs). The scheduler signals only a thread that made no C call since its last check.
 - Fix (std/jwt; task #696): a token whose payload is not JSON is a Malformed error before the key and signature checks, as golang-jwt's; it was a Signature error when the signature segment was not base64url.
 - `xo debug` on Windows arm64 (decision 0253, task #634): launching, attaching, breakpoints, stepping, locals, backtraces and tasks work natively, as on Windows amd64. Before, the debugger there read the amd64 register layout and could not walk the stack.
