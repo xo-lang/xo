@@ -325,7 +325,15 @@ and runs `gh release create`. The order:
    amend its row of bench/results/browser-memory.md into the version
    commit before pushing it (gotchas/release-kit-ordering.md), since
    release-publish.sh refuses a tag with no ok row (decision 0615, owner,
-   2026-11-12). Last verified: 2026-11-12;
+   2026-11-12). Last verified: 2026-11-12. With
+   `BROWSER_MEMORY_PLAYGROUND=1` the same build also runs the site's
+   test-playground.mjs (every example and the REPL; "playground: ok" or
+   "playground: FAIL NAME, ...") and appends the first load and packs
+   in brotli bytes to `$PLAYGROUND_LOG`; the 8-hour tier runs it so
+   (task #722, xw decision #284), its rows in
+   ~/xo-lead/notes/lead/playground.md, its result line "playground and
+   REPL (test-playground.mjs)" read by tier-check.py
+   (browser_memory_test.sh). Last verified: 2026-11-22;
 4. in `../xo-publish`, `scripts/release.sh`, then release-verify.sh per
    host. The release host sets
    `XO_CLANG=~/xo-tools/winxc/LLVM-23.1.3-macOS-ARM64/bin/clang` (with

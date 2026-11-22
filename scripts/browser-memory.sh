@@ -30,6 +30,18 @@
 # that has the test, laid over the revision (lead, 2026-11-12: tier 71
 # found no test on the site's main).
 #
+# BROWSER_MEMORY_PLAYGROUND=1 (the lead's 8-hour tier; owner, 2026-11-22,
+# xw decision #284, task #722) also runs the site's
+# scripts/test-playground.mjs on the same build: every playground example
+# and the REPL in headless Chrome. It prints "playground: ok (...)" or
+# "playground: FAIL NAME, ..." naming each failing check (an example's
+# name), keeps the test's output in $PLAYGROUND_OUT when set, and appends
+# a row to $PLAYGROUND_LOG (default bench/results/playground.md): the label,
+# the date, the commit, the first load and the packs in brotli bytes (as
+# build-playground.py prints them, the figures a release's site batch
+# records) and the result. A failing playground makes the exit 1. It never
+# writes the site repository: the build is in a scratch worktree.
+#
 # Exit 0 within budget, 1 over a budget or a wrong REPL value, 2 when it
 # could not run: it prints "browser-memory.sh: not run: REASON" and
 # appends a row whose result is "not run: REASON", never FAIL. Run it under heavy.sh (HEAVY_CLASS=bulk HEAVY_DARWIN=1:
@@ -86,4 +98,27 @@ EOF
 ) || die "no numbers"
 echo "$row" >> "$log"
 echo "browser-memory.sh: $row (appended to $log)"
+if [ "${BROWSER_MEMORY_PLAYGROUND:-0}" = 1 ]; then
+  # test-playground.mjs serves the site's public/
+  [ -e "$work/site/public" ] || ln -s "$work/public" "$work/site/public"
+  ps=0; node "$work/site/scripts/test-playground.mjs" > "$work/play.txt" 2>&1 || ps=$?
+  [ -z "${PLAYGROUND_OUT:-}" ] || cp "$work/play.txt" "$PLAYGROUND_OUT"
+  # "first load: N brotli; M packs, P brotli in all" (build-playground.py)
+  first=$(sed -n 's/^first load: \([0-9]*\) brotli; \([0-9]*\) packs, \([0-9]*\) brotli in all.*/\1 \2 \3/p' "$work/assets.log" | tail -1)
+  set -- $first
+  fl=${1:--} np=${2:--} pb=${3:--}
+  checks=$(grep -c '^ok ' "$work/play.txt")
+  fails=$(sed -n 's/^FAIL \([^:]*\):.*/\1/p' "$work/play.txt" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')
+  if [ "$ps" = 0 ] && [ -z "$fails" ]; then
+    res=ok; echo "playground: ok ($checks checks, first load $fl brotli, $np packs $pb brotli)"
+  else
+    res="FAIL ${fails:-exit $ps}"; echo "playground: FAIL ${fails:-test-playground.mjs exit $ps} (first load $fl brotli)"
+    grep -E '^FAIL ' "$work/play.txt" | head -15
+    [ -n "$fails" ] || tail -5 "$work/play.txt"
+  fi
+  plog=${PLAYGROUND_LOG:-$tree/bench/results/playground.md}
+  [ -f "$plog" ] || printf '# Playground and REPL check (test-playground.mjs, task #722)\n\n| label | date | xo commit | first load (brotli bytes) | packs (count, brotli bytes) | result |\n|---|---|---|---|---|---|\n' > "$plog"
+  echo "| $label | $(date -u +%Y-%m-%d) | $rev | $fl | $np, $pb | $res |" >> "$plog"
+  [ "$res" = ok ] || s=1
+fi
 exit $s
