@@ -9,6 +9,8 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+## v0.55.1 (2026-11-22)
+
 - `xo debug` on Windows arm64 (decision 0253, task #634): launching, attaching, breakpoints, stepping, locals, backtraces and tasks work natively, as on Windows amd64. Before, the debugger there read the amd64 register layout and could not walk the stack.
 - LLVM backend, opt in (`XO_SEPCOMP_LLVM=1`, decision 0738, task #607): on Linux two runtime paths every program runs are the whole program's code again. The read of a thread's table was 11 instructions for 5 (std's objects were compiled as position independent code), and the budget check at each loop head went through one more call (the compiler's own inline choice was lost between two of std's modules). Measured on a shared linux/arm64 host against the whole program: bench/perf ctx defer 1.32 to about 1.05, ctx budget 1.16 to 1.00, text cut 1.34 to 1.28, fault isolate 1.26 to 1.19.
 - Fix (LLVM backend, `XO_SEPCOMP_LLVM=1`; task #607): programs that failed to link with `undefined hidden symbol: xo.dropp...llvm...` link. Their code inlined std functions that call helpers std's cached objects did not export (two of eight programs tried, among them one that formats times with named layouts).
