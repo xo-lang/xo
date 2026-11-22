@@ -14,9 +14,13 @@
 //   recorded) are checked. These fakes record their history by design,
 //   so their memory grows with the rounds and is not judged.
 // - MemFs and FakeEnv alone for LONG rounds, which keep no history: the
-//   resident set, sampled 30 times, must level off (the median of the 3
-//   samples from half way against the median of the last 3: under 10%
-//   or 4 MB of growth; minute 15 of a 30 minute run is the mark).
+//   test samples the resident set every EVERY rounds from round MARK
+//   (about 10 s apart from minute 15 of a 30 minute run, decision 0717)
+//   and logs the samples; this program reads them from `xo test -v` and
+//   judges them with rss_medians, the rule every stress program shares
+//   (decision 0616 as amended 2026-11-17: the median of the 2 minutes
+//   after the mark against the median of the last 3, under 10% or 4 MB
+//   of growth).
 //
 // A first run with LONG = 1000 times the rounds; LONG is then set so the
 // second run takes MINUTES (0: the first run only).
@@ -37,22 +41,42 @@ fn rss_kib(os: Os) -> Int {
   0
 }
 
-fn test_file(tasks: Int, long: Int, mem: Bool) -> Str {
-  TEST.replace("@TEST@", "test").replace("@TASKS@", "${tasks}").replace("@LONG@", "${long}").replace("@MEM@", "${mem}")
+fn test_file(tasks: Int, long: Int, mark: Int, every: Int) -> Str {
+  TEST.replace("@TEST@", "test").replace("@TASKS@", "${tasks}").replace("@LONG@", "${long}").replace("@MARK@", "${mark}").replace("@EVERY@", "${every}")
 }
 
-/// Runs the test file in dir with xo: its wall time in milliseconds.
-/// minutes bounds the run (xo test's own limit is 1 minute of real time
-/// a test, shorter than the long run).
-fn run(os: Os, xo: Str, dir: Str, what: Str, minutes: Int) -> Int ! {
+/// Runs the test file in dir with xo -v: its wall time in milliseconds
+/// and its output. minutes bounds the run (xo test's own limit is 1
+/// minute of real time a test, shorter than the long run).
+fn run(os: Os, xo: Str, dir: Str, what: Str, minutes: Int) -> (Int, Str) ! {
   let t0 = os.clock.now()
-  let out = os.proc.run(xo, ["test", "--count=1", "--timeout=${minutes}m", dir])?
+  let out = os.proc.run(xo, ["test", "-v", "--count=1", "--timeout=${minutes}m", dir])?
   let ms = (os.clock.now() - t0).millis()
   let text = out.stdout.to_str_lossy() + out.stderr.to_str_lossy()
   if out.code != 0 || !text.contains("ok: 2 passed, 0 failed") {
     return Err("the ${what} run: exit ${out.code}\n${text}")
   }
-  ms
+  (ms, text)
+}
+
+/// The resident set samples (KiB) the long test logged: the words after
+/// "kib=" on its log line, comma separated.
+fn logged_rss(text: Str) -> List[Int] {
+  var xs: List[Int] = []
+  for line in text.lines() {
+    match line.find("kib=") {
+      Some(i) => {
+        for w in line[i + 4..].trim().trim_prefix("\"").trim_suffix("\"").split(",") {
+          match Int.parse(w.trim()) {
+            Some(v) => xs.push(v)
+            None => {}
+          }
+        }
+      }
+      None => {}
+    }
+  }
+  xs
 }
 
 fn main(os: Os) ! {
@@ -67,32 +91,64 @@ fn main(os: Os) ! {
   // XO_STRESS_CHECK (the leak report judges memory there)
   let mem = rss_kib(os) > 0
   var long = 1020
-  os.fs.write(file, test_file(tasks, long, mem).bytes())?
+  os.fs.write(file, test_file(tasks, long, 0, 34).bytes())?
   // the first run builds the test: the second times 1020 rounds
   let r1 = run(os, xo, dir, "first", 10)
   let r2 = if r1.is_ok() { run(os, xo, dir, "timing", 10) } else { r1 }
-  var ms = r2.ok() ?? 0
-  var r = r2.map(fn(_m: Int) {})
+  var ms = r2.map(fn(t: (Int, Str)) -> Int { t.0 }).ok() ?? 0
+  var r = r2.map(fn(_t: (Int, Str)) {})
+  var rss_after: List[Int] = []
+  // the long run's rounds stand for its minutes (the timing run set
+  // LONG): the test samples from the mark's round, one every 10 s of rounds
+  let clock = os.clock
+  let start = clock.now()
+  let mark_s = if minutes >= 30 { 900 } else { minutes * 30 } // decision 0717: minute 15 of a 30 minute run
+  let mark = start + Duration.from_secs(Float(mark_s))
   if r.is_ok() && minutes > 0 {
     long = Int(Float(1020) * Float(minutes * 60000) / Float(if ms > 0 { ms } else { 1 }))
     long = (long / 30 + 1) * 30
-    os.fs.write(file, test_file(tasks, long, mem).bytes())?
+    let every = if long / (minutes * 6) > 0 { long / (minutes * 6) } else { 1 }
+    os.fs.write(file, test_file(tasks, long, long * mark_s / (minutes * 60), every).bytes())?
     let r3 = run(os, xo, dir, "long", minutes * 2 + 10)
-    ms = r3.ok() ?? 0
-    r = r3.map(fn(_m: Int) {})
+    ms = r3.map(fn(t: (Int, Str)) -> Int { t.0 }).ok() ?? 0
+    rss_after = logged_rss(r3.map(fn(t: (Int, Str)) -> Str { t.1 }).ok() ?? "")
+    r = r3.map(fn(_t: (Int, Str)) {})
+    if r.is_ok() && clock.now() < mark {
+      r = Err("the long run ended before the mark (${mark_s} s): its samples are not from after minute ${mark_s / 60}")
+    }
+    if r.is_ok() && rss_after.is_empty() {
+      r = Err("the long run logged no resident set samples")
+    }
   }
   os.fs.remove_all(dir)?
   r?
 
-  os.stdio.println("testing stress: 400 rounds of every fake, then ${long} rounds of MemFs and FakeEnv (${long * tasks} task rounds) by ${tasks} tasks in ${ms / 1000} s, 0 mismatches, memory level from half way, pass")
+  if !mem {
+    rss_after = []
+  }
+  var peak = 0
+  for v in rss_after {
+    if v > peak { peak = v }
+  }
+  let (at_mark, last) = rss_medians(rss_after)
+  let growth = if at_mark > 0 { Float(last - at_mark) * 100.0 / Float(at_mark) } else { 0.0 }
+  let mem_text = if at_mark > 0 { "rss ${at_mark / 1024} MB at the mark (median of minutes ${mark_s / 60} to ${mark_s / 60 + 2}), ${last / 1024} MB at the end (median of the last 3 minutes; ${growth.round()}%), peak ${peak / 1024} MB" } else { "rss not sampled" }
+  let ok = at_mark == 0 || growth < 10.0 || last - at_mark < 4096
+  os.stdio.println("testing stress: 400 rounds of every fake, then ${long} rounds of MemFs and FakeEnv (${long * tasks} task rounds) by ${tasks} tasks in ${ms / 1000} s, 0 mismatches, ${mem_text}, ${if ok { "pass" } else { "FAIL (memory grew)" }}")
+  if !ok {
+    return Err("memory grew ${growth}%")
+  }
 }
 
 /// The test each run executes (std/testing's fakes under TASKS tasks).
 const TEST: Str = r#"// std/testing stress round, written by std/evidence/testing/stress/main.xo.
+use std/log
+
 const TASKS: Int = @TASKS@
 const ROUNDS: Int = 400
 const LONG: Int = @LONG@
-const MEM: Bool = @MEM@
+const MARK: Int = @MARK@
+const EVERY: Int = @EVERY@
 
 /// A step of a 64-bit LCG (Knuth's MMIX constants), kept to 62 bits.
 fn next(x: Int) -> Int { x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0x3fffffffffffffff }
@@ -201,19 +257,11 @@ fn fs_round(fs: Fs, t: Int, r: Int, seed: Int) -> Int uses fs {
   expect(ops) >= ROUNDS * TASKS * 5
 }
 
-/// The median of xs[from..to].
-fn median(xs: List[Int], from: Int, to: Int) -> Int {
-  var part: List[Int] = []
-  for i in from..to { part.push(xs[i]) }
-  let s = part.sort()
-  s[s.len() / 2]
-}
-
 @TEST@ "MemFs and FakeEnv hold their memory over LONG rounds" {
   // the fakes that keep no history, so the resident set must level off:
-  // 30 samples, the median of the 3 from half way against the median of
-  // the last 3 (decision 0616: under 10% or 4 MB of growth)
-  var rss: List[Int] = []
+  // a sample (KiB) every EVERY rounds from round MARK, logged for main.xo,
+  // which judges them (rss_medians, decision 0616 as amended 2026-11-17)
+  var rss: List[Str] = []
   var ops = 0
   for r in 0..LONG {
     var tasks: List[Task[Int, Never]] = []
@@ -233,17 +281,30 @@ fn median(xs: List[Int], from: Int, to: Int) -> Int {
     for h in tasks {
       ops += h.await
     }
-    if (r + 1) % (LONG / 30) == 0 && rss.len() < 30 {
-      rss.push(os.proc.usage().max_rss)
+    if r + 1 >= MARK && (r + 1 - MARK) % EVERY == 0 {
+      rss.push("${os.proc.usage().max_rss / 1024}")
     }
   }
-  expect(rss.len()) == 30
-  let mark = median(rss, 15, 18)
-  let last = median(rss, 27, 30)
-  let mb = fn(b: Int) -> Int { b / 1048576 }
-  if MEM && last - mark > mark / 10 && last - mark > 4 * 1048576 {
-    fault("MEMORY ${mb(mark)} MB half way, ${mb(last)} MB at the end")
-  }
+  log.info("rss", {"kib": rss.join(",")})
   expect(ops) >= LONG * TASKS * 3
 }
 "#
+
+/// The resident set early and late, in KiB (decision 0616 as amended
+/// 2026-11-17, owner): the median of the samples in the 2 minutes after
+/// the mark (minutes 15 to 17 of a 30 minute run, decision 0717) and the median of the last
+/// 3 minutes' samples, 10 s apart, so one dip or spike does not decide; a
+/// short run takes a third of its samples each. (0, 0) when none.
+fn rss_medians(xs: List[Int]) -> (Int, Int) {
+  if xs.is_empty() {
+    return (0, 0)
+  }
+  let early = if xs.len() >= 30 { 12 } else { (xs.len() + 2) / 3 }
+  let late = if xs.len() >= 30 { 18 } else { (xs.len() + 2) / 3 }
+  (rss_median(xs[0..early]), rss_median(xs[xs.len() - late..]))
+}
+
+fn rss_median(xs: List[Int]) -> Int {
+  let s = xs.sort()
+  s[s.len() / 2]
+}
