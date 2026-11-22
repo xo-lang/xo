@@ -1,7 +1,10 @@
 # 0746: Retire the Go backend and `use go`
 
 Status: Accepted (owner, 2026-11-22, xw decision #283; task #721). The
-stages below are the plan; each lands by its own change.
+stages below are the plan; each lands by its own change. Amended the
+same day by the owner's two answers (xw decisions #287 and #288):
+`--hybrid` goes at stage 1, `xo run --record` gets a native recorder as
+a stage of its own, and stage 2 ships in 0.56.
 
 ## Context
 
@@ -23,20 +26,27 @@ instead of leaning on Go's. C interop (`use c`, spec 4.5) stays.
 
 ## Decision
 
-The Go backend and `use go` are retired, in three stages. Until stage
+The Go backend and `use go` are retired, in four stages. Until stage
 1 lands, std work goes on as today, and no new feature is added that
 only the Go backend has.
 
 1. **std no longer needs a Go backend version.** The rule that a std
    feature works on the Go backend (decision 0312 and the goldens that
    run on `go`) is lifted. New std work targets the native backends and
-   LLVM (decision 0745).
-2. **`use go` and gobind are removed.** `use go` becomes an error with
-   a message that names the replacement (port the package, or `use c`
-   for a C library); internal/gobind, cmd/xo-gobind, the `go` effect of
-   bindings and the vouch rules for Go packages leave the spec.
-3. **compiler/gen and std/rt are removed**, with `--backend=go`, the
-   flags only it has, and the tier's gen step.
+   LLVM (decision 0745). `--hybrid` is removed with this stage
+   (CHANGELOG Breaking: drop the flag; decision 0084 is superseded).
+2. **`use go` and gobind are removed, in 0.56.** `use go` becomes an
+   error with a message that names what to do: port the Go library to
+   Xo, or call it over a process or network boundary (`use c` reaches
+   a C library). internal/gobind, cmd/xo-gobind, the `go` effect of
+   bindings and the vouch rules for Go packages leave the spec. The
+   website's pages that teach `use go` change with it (xo-4c).
+3. **A native recorder for `xo run --record`.** The native backends
+   write the trace format std/rt/replay.go writes, so
+   compiler/cli/servers/replay.xo replays native programs. It lands
+   before stage 4, which removes the only recorder there is today.
+4. **compiler/gen and std/rt are removed**, with `--backend=go` and
+   the tier's gen step.
 
 Each stage updates spec/core.md, CHANGELOG.md (Breaking, with what
 users do) and the website's documentation in the same change.
@@ -54,9 +64,8 @@ What goes:
 | std/go.xo (the values that cross the Go boundary) and the lists std/go_compiled.txt, go_optional.txt, go_proto_free.txt (which std modules the Go backend compiles, decision 0312) | 1 module, 3 lists |
 
 Only the Go backend has today (compiler/xo main.xo, the choice of the
-backend): `--hybrid`, `xo run --record`, and `use go`. Stage 3 names
-what becomes of the first two (dropped, or made native) before it
-removes them.
+backend): `--hybrid` (dropped at stage 1), `xo run --record` (made
+native at stage 3), and `use go` (removed at stage 2).
 
 `use go` in this repository, outside internal/gen's own goldens (22
 files there): bench/usego-workflows (aws, chi, pgx, toml, yaml, zap),
@@ -69,8 +78,9 @@ Not counted here, to be listed before the stage that needs it:
 - Targets a user builds with `--backend=go` that no native backend or
   LLVM serves (Go cross compiles to every GOOS and GOARCH).
 - Outside users of `use go`: it has been public since the 0.x
-  releases, so stage 2 is a breaking change announced one release
-  ahead (CHANGELOG, release notes, the website).
+  releases, so stage 2 is a breaking change. The owner ships it in
+  0.56 without a release of notice (xw decision #288); the CHANGELOG's
+  Breaking entry, the release notes and the website say what users do.
 - std modules or functions that exist only in std/rt.
 - The checks that run through the Go backend: the tier's gen step
   (446 to 788 s by the lead's count), internal/gen's tests, the
@@ -87,8 +97,9 @@ the tests are written in.
 
 - One runtime (std/native) and one set of semantics for std; a std
   change is proven on the native backends and on LLVM.
-- A program that uses `use go` stops building at stage 2. What its
-  author does: port the Go package to Xo, use std where it has the
+- A program that uses `use go` stops building at stage 2 (0.56). What
+  its author does: port the Go package to Xo, or call it over a process
+  or network boundary; use std where it has the
   module (of what bench/usego-workflows reached Go for, std has http,
   sql, sqlite, toml, yaml and log; a Postgres driver and the cloud
   SDKs are outside std), or reach a C library with `use c`.
@@ -105,5 +116,7 @@ the tests are written in.
   that is no longer anyone's default.
 - Keep `use go` on its own: it needs the Go backend, so it keeps all of
   it.
-- Remove everything in one change: three breaking steps at once, and
-  no release in which users are told before `use go` stops working.
+- Remove everything in one change: every breaking step at once, with
+  `xo run --record` gone before its native recorder exists.
+- Announce the removal of `use go` a release ahead: the owner chose
+  0.56 (xw decision #288).
