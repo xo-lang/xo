@@ -2,9 +2,22 @@
 
 Status: Accepted (owner 2026-11-22, xw decision #274; task #691, from
 #263; xo-4c). Stage 1 (2026-11-22): macOS, Linux and FreeBSD on the native
-and Go backends. Stage 2: Windows ConPTY, verified on the windows/arm64 VM;
-until then Windows returns ProcErr.Io "pseudo-terminals are not supported
-on this system", as wasm does.
+and Go backends. Stage 2: Windows ConPTY (task #704). The native backend
+landed 2026-11-22, checked on the Windows amd64 host (open, size, start,
+exit, write, start with a size, ControllingOnly, read deadline); the Go
+backend on Windows still returns ProcErr.Io "pseudo-terminals are not
+supported on this system", as wasm does, until its own CreateProcess
+lands, and the windows/arm64 run waits for the VM (#693).
+
+Stage 2 notes (2026-11-22): the child's streams under `Attach.All` are
+null handles with `STARTF_USESTDHANDLES` (without the flag it inherits the
+parent's handles and writes past the ConPTY). The ConPTY's output pipe
+does not end when the child exits: a read that finds the pipe empty and
+the child gone waits for 100 ms of quiet output, then calls
+`ClosePseudoConsole`, whose last bytes come next and then the pipe's end.
+The three ConPTY calls are looked up at run time (the seed's import table
+cannot gain names) and `CreatePseudoConsole`'s five arguments go through
+process.xo's call6 trampoline.
 
 ## Context
 

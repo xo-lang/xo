@@ -57,6 +57,11 @@ pub fn spawn(p: Pty, cmd: Cmd, attach: pty.Attach = pty.Attach.All, size: pty.Si
   proc.pty_clear()
   // the child holds the slave now: the master reads the end once it exits
   ptyos.close_slave(fd)
+  match r {
+    // Windows: the child whose exit ends the ConPTY's output
+    Ok(c) => ptyos.set_child(p.h, c.pid())
+    Err(_e) => {}
+  }
   r
 }
 

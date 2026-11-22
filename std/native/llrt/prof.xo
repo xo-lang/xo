@@ -2209,41 +2209,14 @@ fn win_tick(r: Int, w: Int) {
 fn win_procs(w: Int) {
   let g = process.win_proc(w + WB_NAME, "kernel32.dll", "GetThreadId")
   let n = process.win_proc(w + WB_NAME, "ntdll.dll", "NtGetNextThread")
-  let c = call6_make()
+  // amd64 only: the arm64 path keeps the snapshot (untested there)
+  let c = if target.arch == TargetArch.Amd64 { process.call6_make() } else { 0 }
   if g == 0 || n == 0 || c == 0 {
     return
   }
   st(w, WB_GTI, g)
   st(w, WB_NGT, n)
   st(w, WB_CALL6, c)
-}
-
-/// The Win64 call of a function with six word arguments, as machine code
-/// on a page of its own (PAGE_EXECUTE_READWRITE), or 0. Called as
-/// rt.call_c2(c, a, 0) with a block a of the function then its arguments:
-///   push rbx; sub rsp, 0x30; mov rbx, rcx
-///   mov rax, [rbx+48]; mov [rsp+40], rax; mov rax, [rbx+40]; mov [rsp+32], rax
-///   mov rcx, [rbx+8]; mov rdx, [rbx+16]; mov r8, [rbx+24]; mov r9, [rbx+32]
-///   call [rbx]; add rsp, 0x30; pop rbx; ret
-/// (clang -target x86_64-pc-windows-msvc). Entry rsp is 8 mod 16: the
-/// push and the 48 bytes (shadow space and the two stack arguments) align
-/// the call.
-fn call6_make() -> Int {
-  match target.arch {
-    TargetArch.Amd64 => {}
-    TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => return 0
-  }
-  // MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
-  let c = sys_windows.VirtualAlloc(0, 4096, 12288, 64)
-  if c == 0 {
-    return 0
-  }
-  let code = [83, 72, 131, 236, 48, 72, 137, 203, 72, 139, 67, 48, 72, 137, 68, 36, 40, 72, 139, 67, 40, 72, 137, 68, 36, 32, 72, 139, 75, 8, 72, 139, 83, 16, 76, 139, 67, 24, 76, 139, 75, 32, 255, 19, 72, 131, 196, 48, 91, 195]
-  for (i, x) in code.indexed() {
-    rt.mem_store(c, i, x, 1)
-  }
-  let _f = sys_windows.FlushInstructionCache(sys_windows.GetCurrentProcess(), c, code.len())
-  c
 }
 
 /// NtGetNextThread through call6: its NTSTATUS, sign extended.

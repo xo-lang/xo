@@ -1,4 +1,5 @@
-// Pseudo-terminals on macOS, Linux and FreeBSD (std/pty, decision 0740):
+// Pseudo-terminals on macOS, Linux, FreeBSD and Windows (std/pty,
+// decision 0740):
 // the master's record (a handle whose free function is cabi_pty.xo's
 // pty_drop), opening a pair as creack/pty v1.1.24 does (Darwin's
 // /dev/ptmx with TIOCPTYGRANT, TIOCPTYUNLK and TIOCPTYGNAME; Linux's
@@ -6,16 +7,20 @@
 // TIOCGPTN), the window size (TIOCGWINSZ, TIOCSWINSZ), raw mode (the
 // flags of cfmakeraw), and reads and writes on the poller. proc.xo's
 // spawn makes the slave the controlling terminal of a child (flag 32).
+// Windows opens a ConPTY instead (the W section at the end).
 use native/llrt/darwin
 use native/llrt/heapblk
 use native/llrt/linux
 use native/llrt/poll
+use native/llrt/process
 use native/llrt/raw
 use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/tasks
+use native/llrt/windows
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 // the record: the master's descriptor (-1 once closed), its poller
 // record (0 none), the read deadline (poll.deadline's clock, 0 none,
@@ -42,11 +47,12 @@ fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
 fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
 
-/// Whether this target has pseudo-terminals here (macOS, Linux, FreeBSD).
+/// Whether this target has pseudo-terminals here (macOS, Linux, FreeBSD,
+/// and Windows with ConPTY, 10 1809 on).
 pub fn supported() -> Bool {
   let l = sysio.layer()
   // FreeBSD is layer 4, on linux.xo's calls with the BSD numbers
-  l == 1 || l == 2 || l == 4
+  l == 1 || l == 2 || l == 4 || (l == 3 && w_has())
 }
 
 /// ioctl(2): the result, or the negative errno.
@@ -69,6 +75,9 @@ pub fn open() -> (rt.PtyFile, Str, Int) {
   rt.mem_set(p + tasks.HANDLE_FIELDS, 0, PT_SIZE - tasks.HANDLE_FIELDS)
   st(p, PT_FD, -1)
   st(p, PT_SLAVE, -1)
+  if sysio.layer() == 3 {
+    return w_open(h, p)
+  }
   let b = rt.heap_large(128)
   rt.mem_set(b, 0, 128)
   let (fd, e) = open_master(b)
@@ -180,6 +189,10 @@ pub fn take_slave(h: rt.PtyFile, path: Str) -> Int {
   if ld(p, PT_FD) < 0 {
     return -9
   }
+  if sysio.layer() == 3 {
+    // the ConPTY's HPCON, which proc.xo passes in the slave's place
+    return if ld(p, PW_CLOSED) != 0 { -9 } else { ld(p, PW_HPC) }
+  }
   let sl = ld(p, PT_SLAVE)
   if sl >= 0 {
     st(p, PT_SLAVE, -1)
@@ -190,7 +203,7 @@ pub fn take_slave(h: rt.PtyFile, path: Str) -> Int {
 
 /// Closes a descriptor open_slave gave.
 pub fn close_slave(fd: Int) {
-  if fd >= 0 {
+  if fd >= 0 && sysio.layer() != 3 {
     close_raw(fd)
   }
 }
@@ -206,6 +219,9 @@ pub fn err_msg(e: Int) -> Str { sysio.err_msg(sysio.layer(), e) }
 /// every holder of the slave closed it: the end, as a 0 read elsewhere.
 pub fn read(h: rt.PtyFile, a: Int, n: Int) -> Int {
   let p = rt.obj_addr(h)
+  if sysio.layer() == 3 {
+    return w_read(p, a, n)
+  }
   let fd = ld(p, PT_FD)
   if fd < 0 {
     return -100 - 9
@@ -258,6 +274,9 @@ fn rdl_passed(p: Int) -> Bool {
 /// input queue is full: 0, CANCELED, or the errno.
 pub fn write(h: rt.PtyFile, a: Int, n: Int) -> Int {
   let p = rt.obj_addr(h)
+  if sysio.layer() == 3 {
+    return w_write(p, a, n)
+  }
   let fd = ld(p, PT_FD)
   if fd < 0 {
     return 9
@@ -310,6 +329,9 @@ fn winsz_req(set: Bool) -> Int {
 /// The window size of descriptor fd (rows, columns, x and y pixels), and
 /// 0, or the errno.
 pub fn fd_size(fd: Int) -> (Int, Int, Int, Int, Int) {
+  if sysio.layer() == 3 {
+    return w_fd_size(fd)
+  }
   let b = rt.heap_large(8)
   rt.mem_set(b, 0, 8)
   let r = ioctl(fd, winsz_req(false), b)
@@ -324,6 +346,11 @@ pub fn size(h: rt.PtyFile) -> (Int, Int, Int, Int, Int) {
   if fd < 0 {
     return (0, 0, 0, 0, 9)
   }
+  if sysio.layer() == 3 {
+    // what was last set (ConPTY has no query)
+    let p = rt.obj_addr(h)
+    return (ld(p, PW_ROWS), ld(p, PW_COLS), 0, 0, 0)
+  }
   fd_size(fd)
 }
 
@@ -332,6 +359,9 @@ pub fn set_size(h: rt.PtyFile, rows: Int, cols: Int, xp: Int, yp: Int) -> Int {
   let fd = fd_of(h)
   if fd < 0 {
     return 9
+  }
+  if sysio.layer() == 3 {
+    return w_set_size(rt.obj_addr(h), rows, cols)
   }
   let b = rt.heap_large(8)
   rt.mem_store(b, 0, rows, 2)
@@ -361,6 +391,10 @@ pub fn set_raw(h: rt.PtyFile, on: Bool) -> Int {
   let fd = ld(p, PT_FD)
   if fd < 0 {
     return 9
+  }
+  if sysio.layer() == 3 {
+    // ConPTY has no line discipline the parent sets (decision 0740)
+    return 0
   }
   if !on {
     if ld(p, PT_SAVED) == 0 {
@@ -438,6 +472,9 @@ pub fn close(h: rt.PtyFile) { free(rt.obj_addr(h)) }
 
 /// The record's descriptor and poller record (close and pty_drop).
 pub fn free(p: Int) {
+  if sysio.layer() == 3 {
+    return w_free(p)
+  }
   let sl = ld(p, PT_SLAVE)
   if sl >= 0 {
     st(p, PT_SLAVE, -1)
@@ -454,4 +491,249 @@ pub fn free(p: Int) {
     poll.pd_free(pd)
   }
   close_raw(fd)
+}
+
+// W: Windows ConPTY (CreatePseudoConsole over two pipes). PT_FD holds
+// the output pipe's read end (PIPE_NOWAIT); the TIO area holds the input
+// pipe's write end (PIPE_NOWAIT), the HPCON, the last spawned child (a
+// SYNCHRONIZE handle, 0 none), the size last set, whether the pseudo
+// console was closed, and ResizePseudoConsole's and ClosePseudoConsole's
+// addresses, and the clock reading since which the output has been quiet
+// after the child's exit (0 before it). The three calls are found in kernel32's exports at run time:
+// the seed's PE import table lacks them (task #689); CreatePseudoConsole's
+// five arguments go through process.call6_make's trampoline.
+// ConPTY never ends its output when the child exits (probe on Windows
+// amd64, 2026-11-22, ~/xo-lead/notes/xo-4c/t691/w3/FINDINGS.md): a read
+// with nothing to read whose child has exited closes the pseudo console,
+// which writes its last bytes and ends the pipe, and so the read's END.
+const PW_IN = 48
+const PW_HPC = 56
+const PW_CHILD = 64
+const PW_ROWS = 72
+const PW_COLS = 80
+const PW_CLOSED = 88
+const PW_RESIZE = 96
+const PW_CLOSE = 104
+const PW_QUIET = 112
+
+/// How long the output stays quiet after the child's exit before the
+/// pseudo console is closed: conhost renders the child's last writes on
+/// its own schedule, and ClosePseudoConsole ends the pipe after what it
+/// has rendered so far.
+const PW_GRACE_NS = 100000000
+
+/// Whether kernel32 has the ConPTY calls.
+fn w_has() -> Bool {
+  let b = rt.heap_large(256)
+  let ok = process.win_proc(b, "kernel32.dll", "ClosePseudoConsole") != 0
+  heapblk.release(b)
+  ok
+}
+
+/// open on Windows: a ConPTY of 24 rows and 80 columns, its slave path
+/// empty.
+fn w_open(h: rt.PtyFile, p: Int) -> (rt.PtyFile, Str, Int) {
+  let b = rt.heap_large(320)
+  let fc = process.win_proc(b, "kernel32.dll", "CreatePseudoConsole")
+  let fz = process.win_proc(b, "kernel32.dll", "ResizePseudoConsole")
+  let fx = process.win_proc(b, "kernel32.dll", "ClosePseudoConsole")
+  let c = if fc != 0 && fz != 0 && fx != 0 { process.call6_make() } else { 0 }
+  if c == 0 {
+    heapblk.release(b)
+    // ENOSYS
+    return (h, "", 40)
+  }
+  // ours nonblocking: the input pipe's write end, the output's read end
+  let (ir, iw, e1) = windows.pipe(1)
+  if e1 != 0 {
+    w_unmake(c)
+    heapblk.release(b)
+    return (h, "", e1)
+  }
+  let (orr, ow, e2) = windows.pipe(0)
+  if e2 != 0 {
+    let _a = windows.close(ir)
+    let _b = windows.close(iw)
+    w_unmake(c)
+    heapblk.release(b)
+    return (h, "", e2)
+  }
+  // CreatePseudoConsole(COORD{X: cols, Y: rows}, input, output, 0, &hpc)
+  let a = b + 256
+  st(a, 0, fc)
+  st(a, 8, 80 | (24 << 16))
+  st(a, 16, ir)
+  st(a, 24, ow)
+  st(a, 32, 0)
+  st(a, 40, a + 56)
+  st(a, 48, 0)
+  st(a, 56, 0)
+  let hr = rt.call_c2(c, a, 0) & 4294967295
+  let hpc = ld(a, 56)
+  w_unmake(c)
+  heapblk.release(b)
+  // the pseudo console holds its own copies of its ends
+  let _r = windows.close(ir)
+  let _w = windows.close(ow)
+  if hr != 0 || hpc == 0 {
+    let _x = windows.close(iw)
+    let _y = windows.close(orr)
+    // the HRESULT's Win32 code
+    return (h, "", windows.dos_errno(hr & 65535))
+  }
+  st(p, PT_FD, orr)
+  st(p, PW_IN, iw)
+  st(p, PW_HPC, hpc)
+  st(p, PW_ROWS, 24)
+  st(p, PW_COLS, 80)
+  st(p, PW_RESIZE, fz)
+  st(p, PW_CLOSE, fx)
+  (h, "", 0)
+}
+
+/// Frees call6_make's page.
+fn w_unmake(c: Int) {
+  // MEM_RELEASE
+  let _f = sys_windows.VirtualFree(c, 0, 32768)
+}
+
+/// Records pid, a child spawned on the ConPTY, whose exit lets a read end.
+pub fn set_child(h: rt.PtyFile, pid: Int) {
+  if sysio.layer() != 3 || pid <= 0 {
+    return
+  }
+  let p = rt.obj_addr(h)
+  if ld(p, PT_FD) < 0 {
+    return
+  }
+  let old = ld(p, PW_CHILD)
+  // SYNCHRONIZE
+  st(p, PW_CHILD, sys_windows.OpenProcess(1048576, 0, pid))
+  if old != 0 {
+    let _c = sys_windows.CloseHandle(old)
+  }
+}
+
+/// Closes the pseudo console (once).
+fn w_close_pc(p: Int) {
+  if ld(p, PW_CLOSED) != 0 {
+    return
+  }
+  st(p, PW_CLOSED, 1)
+  let _c = rt.call_c2(ld(p, PW_CLOSE), ld(p, PW_HPC), 0)
+}
+
+/// read on Windows: the output pipe polled in 1 ms steps.
+fn w_read(p: Int, a: Int, n: Int) -> Int {
+  while true {
+    let fd = ld(p, PT_FD)
+    if fd < 0 {
+      return END
+    }
+    if rdl_passed(p) {
+      return TIMEOUT
+    }
+    let r = windows.pipe_read(fd, a, n)
+    if r > 0 {
+      if ld(p, PW_QUIET) != 0 {
+        st(p, PW_QUIET, sysio.mono_ns())
+      }
+      return r
+    }
+    if r == 0 {
+      return END
+    }
+    if r != -windows.EAGAIN {
+      return -100 + r
+    }
+    let ch = ld(p, PW_CHILD)
+    if ld(p, PW_CLOSED) == 0 && ch != 0 && Int(sys_windows.WaitForSingleObject(ch, 0)) == 0 {
+      // the child exited: once its last output is out, close the pseudo
+      // console, which writes its own last bytes and ends the pipe
+      let now = sysio.mono_ns()
+      if ld(p, PW_QUIET) == 0 {
+        st(p, PW_QUIET, now)
+      } else if now - ld(p, PW_QUIET) >= PW_GRACE_NS {
+        w_close_pc(p)
+        continue
+      }
+    }
+    if poll.sleep_until(sysio.mono_ns() + 1000000) == poll.CANCELED {
+      return CANCELED
+    }
+  }
+  END
+}
+
+/// write on Windows: the input pipe, polled in 1 ms steps while full.
+fn w_write(p: Int, a: Int, n: Int) -> Int {
+  var off = 0
+  while off < n {
+    if ld(p, PT_FD) < 0 {
+      return 9
+    }
+    let r = windows.pipe_write(ld(p, PW_IN), a + off, n - off)
+    if r > 0 {
+      off += r
+      continue
+    }
+    if r != -windows.EAGAIN {
+      return -r
+    }
+    if poll.sleep_until(sysio.mono_ns() + 1000000) == poll.CANCELED {
+      return CANCELED
+    }
+  }
+  0
+}
+
+/// ResizePseudoConsole: 0, or the errno.
+fn w_set_size(p: Int, rows: Int, cols: Int) -> Int {
+  if ld(p, PW_CLOSED) != 0 {
+    return 9
+  }
+  let hr = rt.call_c2(ld(p, PW_RESIZE), ld(p, PW_HPC), (cols & 65535) | ((rows & 65535) << 16)) & 4294967295
+  if hr != 0 {
+    return windows.dos_errno(hr & 65535)
+  }
+  st(p, PW_ROWS, rows)
+  st(p, PW_COLS, cols)
+  0
+}
+
+/// fd_size on Windows: the console window of standard stream fd
+/// (CONSOLE_SCREEN_BUFFER_INFO's srWindow at 10), no pixels; ENOTTY when
+/// it is not a console.
+fn w_fd_size(fd: Int) -> (Int, Int, Int, Int, Int) {
+  let b = rt.heap_large(32)
+  rt.mem_set(b, 0, 32)
+  let ok = Int(sys_windows.GetConsoleScreenBufferInfo(sys_windows.GetStdHandle(-10 - fd), b)) != 0
+  let cols = s16(rt.mem_load(b, 14, 2)) - s16(rt.mem_load(b, 10, 2)) + 1
+  let rows = s16(rt.mem_load(b, 16, 2)) - s16(rt.mem_load(b, 12, 2)) + 1
+  heapblk.release(b)
+  if !ok || rows <= 0 || cols <= 0 {
+    return (0, 0, 0, 0, 25)
+  }
+  (rows, cols, 0, 0, 0)
+}
+
+fn s16(v: Int) -> Int { if v >= 32768 { v - 65536 } else { v } }
+
+/// free on Windows: the output's read end first (so the pseudo console
+/// cannot wait on a full pipe), the input's write end, the pseudo
+/// console, the child's handle.
+fn w_free(p: Int) {
+  let fd = ld(p, PT_FD)
+  if fd < 0 {
+    return
+  }
+  st(p, PT_FD, -1)
+  let _o = windows.close(fd)
+  let _i = windows.close(ld(p, PW_IN))
+  w_close_pc(p)
+  let ch = ld(p, PW_CHILD)
+  st(p, PW_CHILD, 0)
+  if ch != 0 {
+    let _c = sys_windows.CloseHandle(ch)
+  }
 }

@@ -627,3 +627,47 @@ fn export_of(b: Int, m: Int, want: Int, n: Int, follow: Bool) -> Int {
   }
   0
 }
+
+/// The call of a function with six word arguments by the Windows C
+/// convention, as machine code on a page of its own
+/// (PAGE_EXECUTE_READWRITE), or 0 (another arch, or no page). Called as
+/// rt.call_c2(c, a, 0) with a block a of the function then its six
+/// arguments (rt.call_c2 and call_c4 pass two and four): prof.xo's
+/// NtGetNextThread and ptyos.xo's CreatePseudoConsole, found at run time
+/// since the seed's import table lacks them (task #689). Win64 (clang
+/// -target x86_64-pc-windows-msvc):
+///   push rbx; sub rsp, 0x30; mov rbx, rcx
+///   mov rax, [rbx+48]; mov [rsp+40], rax; mov rax, [rbx+40]; mov [rsp+32], rax
+///   mov rcx, [rbx+8]; mov rdx, [rbx+16]; mov r8, [rbx+24]; mov r9, [rbx+32]
+///   call [rbx]; add rsp, 0x30; pop rbx; ret
+/// Entry rsp is 8 mod 16: the push and the 48 bytes (shadow space and the
+/// two stack arguments) align the call. arm64 (a tail call, the six
+/// arguments in x0 to x5):
+///   mov x9, x0; ldr x16, [x9]; ldp x0, x1, [x9, #8]
+///   ldp x2, x3, [x9, #24]; ldp x4, x5, [x9, #40]; br x16
+pub fn call6_make() -> Int {
+  var code: List[Int] = []
+  match target.arch {
+    TargetArch.Amd64 => {
+      code = [83, 72, 131, 236, 48, 72, 137, 203, 72, 139, 67, 48, 72, 137, 68, 36, 40, 72, 139, 67, 40, 72, 137, 68, 36, 32, 72, 139, 75, 8, 72, 139, 83, 16, 76, 139, 67, 24, 76, 139, 75, 32, 255, 19, 72, 131, 196, 48, 91, 195]
+    }
+    TargetArch.Arm64 => {
+      for w in [2852127721, 4181721392, 2839577888, 2839645474, 2839713060, 3592356352] {
+        for k in 0..4 {
+          code.push((w >> (8 * k)) & 255)
+        }
+      }
+    }
+    TargetArch.Riscv64 | TargetArch.Wasm32 => return 0
+  }
+  // MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
+  let c = sys_windows.VirtualAlloc(0, 4096, 12288, 64)
+  if c == 0 {
+    return 0
+  }
+  for (i, x) in code.indexed() {
+    rt.mem_store(c, i, x, 1)
+  }
+  let _f = sys_windows.FlushInstructionCache(sys_windows.GetCurrentProcess(), c, code.len())
+  c
+}

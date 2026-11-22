@@ -144,6 +144,8 @@ pub fn killed() -> List[Str] {
 const FD_NULL = -1
 const FD_INHERIT = -2
 const FD_DUP_OUT = -3
+// Windows only: no handle (a ConPTY child's streams; windows.spawn)
+const FD_NONE = -4
 
 /// The zero terminated string at address a.
 fn cstr(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
@@ -733,7 +735,9 @@ fn launch_windows(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
     }
     cl = parts.join(" ")
   }
-  let (h, e) = windows.spawn(file, cl, c.dir, c.env, (c.flags & 1) != 0, [inf, outf, errf])
+  // a ConPTY's HPCON in the pty slave's place (ptyos.xo)
+  let pc = ctty_of(c)
+  let (h, e) = windows.spawn(file, cl, c.dir, c.env, (c.flags & 1) != 0, [inf, outf, errf], if pc > 0 { pc } else { 0 })
   if e == 0 {
     return ("0", h, "")
   }
@@ -1406,7 +1410,12 @@ pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
   // flag 64: the pty slave on all three streams (std/native/pty.xo
   // refuses input data and merging then)
   let ctty = ctty_of(c)
-  if ctty >= 0 && (c.flags & 64) != 0 {
+  if ctty >= 0 && (c.flags & 64) != 0 && l == 3 {
+    // the ConPTY serves the streams that have no handle
+    ifd = FD_NONE
+    ofd = FD_NONE
+    efd = FD_NONE
+  } else if ctty >= 0 && (c.flags & 64) != 0 {
     ifd = ctty
     ofd = ctty
     efd = ctty
@@ -1427,7 +1436,7 @@ pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
       ifd = r
     }
   }
-  if !inherit && ofd != ctty {
+  if !inherit && ofd != ctty && ofd != FD_NONE {
     let (r, w, e) = pipe(l, 0)
     if e == 0 {
       o0 = r

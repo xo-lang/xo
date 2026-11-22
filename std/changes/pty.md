@@ -1,5 +1,16 @@
 # std/pty changes
 
+## 2026-11-22: feature: std/pty on Windows over a ConPTY (native backend)
+
+- Kind: feature
+- Commit: this commit
+- Found by: task #704, decision 0740 stage 2
+- Go reference: github.com/creack/pty v1.1.24 has no Windows pty; the ConPTY calls follow Microsoft's CreatePseudoConsole documentation
+- Test: a Windows amd64 check program (open, set_size then size, start with output then end, exit code, write reaching the child, start with a size, ControllingOnly, read deadline): 8 pass
+- Shipped in: not yet released
+
+`pty.open`, `pty.spawn` and `pty.start` work on Windows on the native backend: the Pty is a pseudo console (CreatePseudoConsole over two pipes), a child gets it with PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, and reads end after the child exits and its last output is out. The slave path is empty, `size` returns what was last set, and `set_raw` changes nothing. The Go backend on Windows still returns the `Io` error.
+
 ## 2026-11-22: feature: std/pty, pseudo-terminals and a child with a controlling terminal
 
 - Kind: feature

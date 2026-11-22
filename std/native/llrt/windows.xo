@@ -1488,6 +1488,7 @@ const INFINITE: Int = 4294967295
 const DUPLICATE_SAME_ACCESS: Int = 2
 const STARTF_USESTDHANDLES: Int = 256
 const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: Int = 131074
+const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: Int = 131094
 const CREATE_UNICODE_ENVIRONMENT: Int = 1024
 const EXTENDED_STARTUPINFO_PRESENT: Int = 524288
 /// The status a killed process gets: 128 plus SIGKILL's number, as on
@@ -1784,16 +1785,18 @@ fn env_block(env: List[Str]) -> Bytes {
 /// handle, or proc.xo's FD_NULL -1, FD_INHERIT -2, FD_DUP_OUT -3):
 /// CreateProcessW with exactly those three handles inherited (an explicit
 /// handle list, STARTUPINFOEXW). The process handle and 0, or 0 and the
-/// Win32 error. UNTESTED on windows.
-pub fn spawn(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, fds: List[Int]) -> (Int, Int) {
-  spawn_via(file, cmdline, dir, env, has_env, fds, 0, fn(a) { create_at(a) })
+/// Win32 error. A pseudo console hpcon (not 0, ptyos.xo) is given in
+/// PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE; a stream given as FD_NONE -4
+/// then has no handle, so the child's console (the ConPTY) serves it.
+pub fn spawn(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, fds: List[Int], hpcon: Int = 0) -> (Int, Int) {
+  spawn_via(file, cmdline, dir, env, has_env, fds, 0, fn(a) { create_at(a) }, hpcon)
 }
 
 /// spawn with flags added to CreateProcessW's creation flags, the call
 /// itself made by create with the address of its ten arguments (a word
 /// each), which answers create_at's result: `xo debug` (dbgwin.xo) makes
 /// it on its debugger thread, with DEBUG_ONLY_THIS_PROCESS.
-pub fn spawn_via(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, fds: List[Int], flags: Int, create: fn(Int) -> Int) -> (Int, Int) {
+pub fn spawn_via(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, fds: List[Int], flags: Int, create: fn(Int) -> Int, hpcon: Int = 0) -> (Int, Int) {
   var hs = [0, 0, 0]
   for k in 0..3 {
     let fd = fds[k]
@@ -1804,7 +1807,7 @@ pub fn spawn_via(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Boo
     } else if fd >= 0 {
       hs[k] = inheritable(fd)
     }
-    if hs[k] == 0 {
+    if hs[k] == 0 && fd != -4 {
       hs[k] = null_for(k)
     }
   }
@@ -1825,15 +1828,21 @@ pub fn spawn_via(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Boo
   let szb = raw.bytes_buf(8)
   let sz = raw.bytes_addr(szb)
   rt.mem_store(sz, 0, 0, 8)
-  let _q = sys_windows.InitializeProcThreadAttributeList(0, 1, 0, sz)
+  let na = if hpcon != 0 { 2 } else { 1 }
+  let _q = sys_windows.InitializeProcThreadAttributeList(0, na, 0, sz)
   let alb = raw.bytes_buf(rt.mem_load(sz, 0, 8) + 16)
   let al = raw.bytes_addr(alb)
-  var ok = Int(sys_windows.InitializeProcThreadAttributeList(al, 1, 0, sz)) != 0
+  var ok = Int(sys_windows.InitializeProcThreadAttributeList(al, na, 0, sz)) != 0
   var e = 0
   var started = false
   if !ok {
     e = Int(sys_windows.GetLastError())
   } else if nl > 0 && Int(sys_windows.UpdateProcThreadAttribute(al, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, la, 8 * nl, 0, 0)) == 0 {
+    e = Int(sys_windows.GetLastError())
+    ok = false
+  }
+  // the pseudo console: the attribute's value is the HPCON itself
+  if ok && hpcon != 0 && Int(sys_windows.UpdateProcThreadAttribute(al, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hpcon, 8, 0, 0)) == 0 {
     e = Int(sys_windows.GetLastError())
     ok = false
   }
